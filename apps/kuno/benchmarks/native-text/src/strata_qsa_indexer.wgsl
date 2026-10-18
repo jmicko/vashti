@@ -1,12 +1,14 @@
 // MIT Strata fb58e0 native_qsa_indexer.dp.cpp::append<false>.
 // INDEXER_BEGIN
 // STRATA_ROUND_PRODUCTS: original materialized F32 pooled values and products.
-@group(0) @binding(0) var<storage,read> cache:array<u32>;
-@group(0) @binding(1) var<storage,read> candidate:array<u32>;
+@group(0) @binding(0) var<storage,read_write> tail_state:array<f32>;
+@group(0) @binding(1) var<storage,read> raw:array<f32>;
 @group(0) @binding(2) var<storage,read> gamma:array<f32>;
 @group(0) @binding(3) var<storage,read_write> pooled:array<f32>;
 @group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
-@group(0) @binding(5) var<uniform> p:Params;
+@group(0) @binding(5) var<storage,read_write> snapshot:array<f32>;
+@group(0) @binding(6) var<storage,read_write> window:array<f32>;
+@group(0) @binding(7) var<uniform> p:Params;
 var<workgroup> tail:array<f32,384>;
 var<workgroup> values:array<f32,128>;
 var<workgroup> partial:array<f32,8>;
@@ -16,16 +18,12 @@ fn main(@builtin(local_invocation_index) d:u32,@builtin(subgroup_invocation_id) 
     if sw!=32u {if d==0u {atomicOr(&fault[0],1u);}return;}
     if d==0u {atomicStore(&broken,0u);}
     workgroupBarrier();
-    // Only the current incomplete block needs its preceding RAW FP16 keys.
-    // Cache is the authenticated pre-window prefix; candidate owns new rows.
+    // Save the actual prewindow tail, including inactive slots, before updates.
     if d<128u {
         for(var j=0u;j<3u;j++) {
-            var x=0.0;
-            if j<p.start%4u {
-                x=bitcast<f32>(cache[((p.start/4u)*4u+j)*CACHE_WORDS+INDEX_OFFSET+d]);
-                if !finite(x) {atomicOr(&broken,1u);}
-            }
-            tail[j*128u+d]=x;
+            let x=tail_state[j*128u+d];
+            snapshot[j*128u+d]=x;tail[j*128u+d]=x;
+            if !finite(x) {atomicOr(&broken,1u);}
         }
     }
     workgroupBarrier();
@@ -33,7 +31,10 @@ fn main(@builtin(local_invocation_index) d:u32,@builtin(subgroup_invocation_id) 
         let pos=p.start+t;let slot=pos%4u;
         var incoming=0.0;
         if d<128u {
-            incoming=bitcast<f32>(candidate[t*CACHE_WORDS+INDEX_OFFSET+d]);
+            let original=raw[t*128u+d];
+            incoming=unpack2x16float(pack2x16float(vec2<f32>(original,0.0))).x;
+            window[t*128u+d]=original;
+            if !finite(original) {atomicOr(&broken,1u);}
             if !finite(incoming) {atomicOr(&broken,1u);}
             if slot<3u {tail[slot*128u+d]=incoming;}
         }
@@ -73,6 +74,7 @@ fn main(@builtin(local_invocation_index) d:u32,@builtin(subgroup_invocation_id) 
         }
         workgroupBarrier();
     }
+    if d<128u {for(var j=0u;j<3u;j++) {tail_state[j*128u+d]=tail[j*128u+d];}}
     if d==0u && atomicLoad(&broken)!=0u {atomicOr(&fault[0],1u);}
 }
 // INDEXER_END
@@ -90,3 +92,37 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
     prepared[t*p.status_stride+block]=ok;normalized[t*p.status_stride+block]=ok;
 }
 // INDEXER_FLAGS_END
+
+// PROMPT_TAIL_BEGIN
+// Parallel append_tail from native_qsa_indexer: retain only the final cell of
+// each slot. Earlier prompt pooling reads the old tail before this dispatch.
+@group(0) @binding(0) var<storage,read> raw:array<f32>;
+@group(0) @binding(1) var<storage,read_write> tail_state:array<f32>;
+@group(0) @binding(2) var<storage,read_write> snapshot:array<f32>;
+@group(0) @binding(3) var<storage,read_write> window:array<f32>;
+@group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(5) var<uniform> p:Params;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
+    let i=gid.x;if i>=384u {return;}
+    let old=tail_state[i];snapshot[i]=old;if !finite(old){atomicOr(&fault[0],1u);}
+    let slot=i/128u;let d=i%128u;let last=p.start+p.count-1u;
+    if last>=slot {
+        let cell=last-(last-slot)%4u;
+        if cell>=p.start {
+            let x=raw[(cell-p.start)*128u+d];
+            let y=unpack2x16float(pack2x16float(vec2<f32>(x,0.0))).x;
+            if !finite(x)||!finite(y){atomicOr(&fault[0],1u);}
+            tail_state[i]=select(0.0,y,finite(y));
+        }
+    }
+    // Short prompt transactions may also use MAX8 checkpoint/repair consumers.
+    // Every slot is written once; a large prompt has no MAX8 restore permit.
+    for(var t=slot;t<8u;t+=3u) {
+        if p.count<=8u && t<p.count {
+            let x=raw[t*128u+d];
+            window[t*128u+d]=x;
+        }else{window[t*128u+d]=0.0;}
+    }
+}
+// PROMPT_TAIL_END

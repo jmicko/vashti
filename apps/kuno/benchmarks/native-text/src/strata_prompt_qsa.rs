@@ -12,7 +12,7 @@ pub(crate) const SELECT_BATCH: usize = 256;
 pub(crate) const INFO_BYTES: u64 = 12
     * (2 * crate::strata_prompt::groups::CAPACITY.div_ceil(32) as u64
         + 3 * crate::strata_prompt::groups::CAPACITY.div_ceil(SELECT_BATCH) as u64
-        + 17)
+        + 18)
     * 2048;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -210,8 +210,8 @@ pub(crate) fn split(arena: &PrivateArena, p: [u32; 12], h: [Handle; 3]) -> Resul
 /// them. Pooled state is private and cannot publish before the model fence.
 pub(crate) fn pool(arena: &PrivateArena, mut p: [u32; 12], h: [Handle; 2]) -> Result<()> {
     let q = crate::strata_prompt::qsa_workspace()?;
-    span(&h[0], p[2] as usize * CACHE_WORDS)?;
-    span(&h[1], p[0] as usize * CACHE_WORDS)?;
+    span(&h[0], INDEX_TAIL_WORDS)?;
+    span(&h[1], p[0] as usize * 128)?;
     span(&q[12], (p[2] as usize / 4) * 128)?;
     span(&q[13], p[2] as usize / 4)?;
     p[3] = (p[2] / 4) * 128;
@@ -284,7 +284,7 @@ pub(crate) fn attention(
     span(&q[9], count * 6144)?;
     span(&q[10], 32 * PARTIAL_WORDS)?;
     span(&q[11], 32 * STATS_WORDS)?;
-    span(&h[0], p[2] as usize * CACHE_WORDS)?;
+    span(&h[0], INDEX_TAIL_WORDS)?;
     span(&h[1], count * 2051)?;
     span(&h[2], count * p[5] as usize)?;
     span(&h[3], count * merge_stride)?;

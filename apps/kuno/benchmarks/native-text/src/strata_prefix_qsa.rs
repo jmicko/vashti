@@ -81,17 +81,31 @@ pub(crate) fn launch(
     accepted: usize,
 ) -> Result<()> {
     if !crate::strata_intel_core::enabled()
-        || !(2..=8).contains(&proposed)
-        || !(1..=proposed).contains(&accepted)
+        || !(1..=8).contains(&proposed)
+        || accepted > proposed
         || start
             .checked_add(proposed)
             .is_none_or(|end| end > crate::qsa_gpu::MAX_CONTEXT)
-        || handles.len() != 4
+        || handles.len() != 7
         || handles.iter().any(|h| h.stream != handles[0].stream)
     {
         return Err(Error::InvalidBufferLength);
     }
+    let end = start + proposed;
     let stride = crate::strata_qsa::cache_words();
+    for (h, n) in handles.iter().zip([
+        end * stride,
+        end,
+        end / 4 * 128,
+        1,
+        crate::strata_qsa::INDEX_TAIL_WORDS,
+        crate::strata_qsa::INDEX_TAIL_WORDS,
+        crate::strata_qsa::INDEX_WINDOW_WORDS,
+    ]) {
+        if h.size_in_used() < (n * 4) as u64 {
+            return Err(Error::InvalidBufferLength);
+        }
+    }
     let info = [
         proposed as u32,
         start as u32,
@@ -114,7 +128,9 @@ pub(crate) fn launch(
         args = args.with_buffer(h.binding());
     }
     args = args.with_info(metadata);
-    let words = (proposed * stride).max(proposed.div_ceil(4) * 128);
+    let words = (proposed * stride)
+        .max(proposed.div_ceil(4) * 128)
+        .max(crate::strata_qsa::INDEX_TAIL_WORDS);
     // SAFETY: caller checks original pending roots and physical inventories;
     // fixed proposed-span dispatches guard every current accepted suffix.
     unsafe {

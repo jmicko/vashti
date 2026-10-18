@@ -7,7 +7,7 @@ pub(crate) struct Pending {
     binding: Option<GraphBindingId>,
     sequence: Zeroizing<SequenceKey>,
     stamp: Zeroizing<[u64; 4]>, // stage, layer, start, count
-    roots: [BufferId; 4],
+    roots: [BufferId; 7],
     poison: Arc<AtomicBool>,
     armed: bool,
 }
@@ -67,11 +67,9 @@ impl ResidentQsa<'_> {
             return Err(crate::strata_prompt::invalid_buffer_length());
         }
         batch::latest_qsa_roots(self, arena, fault_id)?;
+        let state = self.state_owners();
         let roots = [
-            self.ids[CACHE],
-            self.ids[POSITIONS],
-            self.ids[POOLED],
-            fault_id,
+            state[0], state[1], state[2], fault_id, state[3], state[4], state[5],
         ];
         self.lifecycle.phase = Phase::PendingBatch(start as u64, count);
         self.batch_poison = Some(poison.clone());
@@ -122,7 +120,15 @@ impl ResidentQsa<'_> {
             arena,
             p,
             std::array::from_fn(|i| public.vectors[i].clone()),
-            [h(roots[0])?, h(roots[1])?, h(roots[2])?, h(fault_id)?],
+            [
+                h(roots[0])?,
+                h(roots[1])?,
+                h(roots[2])?,
+                h(fault_id)?,
+                h(roots[4])?,
+                h(roots[5])?,
+                h(roots[6])?,
+            ],
         )?;
         executor.enqueue_strata_prompt_prepacked_projection(
             self.projections.output.tensor,
@@ -153,6 +159,9 @@ impl ResidentQsa<'_> {
                     self.ids[POSITIONS],
                     self.ids[POOLED],
                     fault_id,
+                    self.ids[KEY],
+                    self.ids[RAWK],
+                    self.ids[RAWIK],
                 ]
             || self.lifecycle.phase != Phase::PendingBatch(start as u64, count)
             || self.batch_pending.is_some()

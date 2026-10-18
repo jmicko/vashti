@@ -118,7 +118,7 @@ fn launch(
     }
     Ok(())
 }
-/// Candidate (rounded raw IK), gamma, authoritative pooled/dead, sticky fault.
+/// Raw IK (rounded here through FP16), gamma, pooled/dead, sticky fault.
 /// Dead occupies the extra128 words after all completed-block slots and is
 /// immutable once cell zero is accepted, including speculative suffix repair.
 pub(crate) fn initialize(arena: &PrivateArena, owners: [Handle; 4], capacity: usize) -> Result<()> {
@@ -126,7 +126,7 @@ pub(crate) fn initialize(arena: &PrivateArena, owners: [Handle; 4], capacity: us
         return Err(Error::InvalidBufferLength);
     }
     let dead = (capacity / 4) * 128;
-    for (h, n) in owners.iter().zip([super::CACHE_WORDS, 128, dead + 128, 1]) {
+    for (h, n) in owners.iter().zip([128, 128, dead + 128, 1]) {
         span(h, n)?;
     }
     launch(

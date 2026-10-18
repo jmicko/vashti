@@ -243,7 +243,7 @@ impl Zeroize for Stamp {
 struct Metadata {
     stamp: Stamp,
     scratch: [BufferId; S],
-    owners: [BufferId; 3],
+    owners: [BufferId; 6],
     input: BufferId,
     output: BufferId,
     fault: BufferId,
@@ -589,7 +589,7 @@ impl QsaBatchWorkspace {
             || stage.layout != self.layout.stage
             || m.scratch != *self.ids
             || Some(m.fault) != self.fault
-            || m.owners != [stage.ids[CACHE], stage.ids[POSITIONS], stage.ids[POOLED]]
+            || m.owners != stage.state_owners()
             || stage
                 .batch_pending
                 .as_ref()
@@ -738,6 +738,19 @@ impl Drop for ResidentQsa<'_> {
         if self.batch_pending.is_some() {
             self.poison();
         }
+    }
+}
+impl ResidentQsa<'_> {
+    // Original scalar-native-unused owners, already fully admitted/erased.
+    pub(super) fn state_owners(&self) -> [BufferId; 6] {
+        [
+            self.ids[CACHE],
+            self.ids[POSITIONS],
+            self.ids[POOLED],
+            self.ids[super::KEY],
+            self.ids[super::RAWK],
+            self.ids[super::RAWIK],
+        ]
     }
 }
 pub(super) fn ensure_scalar(stage: &ResidentQsa<'_>) -> Result<()> {
@@ -1328,6 +1341,9 @@ impl ResidentQsa<'_> {
                             h(self.ids[POSITIONS])?,
                             h(self.ids[POOLED])?,
                             h(fault_id)?,
+                            h(self.ids[super::KEY])?,
+                            h(self.ids[super::RAWK])?,
+                            h(self.ids[super::RAWIK])?,
                         ],
                     )?;
                     // The native full family uses only compact/scoped flags
@@ -1391,7 +1407,7 @@ impl ResidentQsa<'_> {
                     native::selection::initialize(
                         arena,
                         [
-                            if prompt { view(8)? } else { h(ids[CAND])? },
+                            if prompt { view(4)? } else { h(ids[RIK])? },
                             public.vectors[3].clone(),
                             h(self.ids[POOLED])?,
                             h(fault_id)?,
@@ -1484,7 +1500,7 @@ impl ResidentQsa<'_> {
             }
             Operation::Pool => {
                 if prompt {
-                    native::prompt::pool(arena, info, [h(self.ids[CACHE])?, view(8)?])?;
+                    native::prompt::pool(arena, info, [h(self.ids[super::KEY])?, view(4)?])?;
                     return Ok(true);
                 }
                 info[5] = l.widths[FLAGS + 5] as u32;
@@ -1493,11 +1509,13 @@ impl ResidentQsa<'_> {
                     Kernel::Indexer,
                     [1, 1, 1],
                     vec![
-                        h(self.ids[CACHE])?,
-                        h(ids[CAND])?,
+                        h(self.ids[super::KEY])?,
+                        h(ids[RIK])?,
                         public.vectors[3].clone(),
                         h(self.ids[POOLED])?,
                         h(fault_id)?,
+                        h(self.ids[super::RAWK])?,
+                        h(self.ids[super::RAWIK])?,
                     ],
                     info,
                 )?;
@@ -1634,6 +1652,7 @@ impl ResidentQsa<'_> {
                         h(self.ids[CACHE])?,
                         h(self.ids[POSITIONS])?,
                         h(ids[APPEND])?,
+                        if prompt { view(4)? } else { h(ids[RIK])? },
                     ],
                     info,
                 )?;
@@ -1806,7 +1825,7 @@ impl ResidentQsa<'_> {
                 output_stride: spans.output_stride(),
             },
             scratch: *workspace.ids,
-            owners: [self.ids[CACHE], self.ids[POSITIONS], self.ids[POOLED]],
+            owners: self.state_owners(),
             input,
             output,
             fault: fault_id,
@@ -2408,7 +2427,7 @@ struct LatestQsaMetadata {
     count: usize,
     chunk: u64,
     generation: u64,
-    owners: [BufferId; 3],
+    owners: [BufferId; 6],
     fault: BufferId,
 }
 impl Zeroize for LatestQsaMetadata {
@@ -2443,19 +2462,21 @@ pub(super) fn latest_qsa_roots(
     arena: &PrivateArena,
     fault_id: BufferId,
 ) -> Result<()> {
+    let state = stage.state_owners();
     let ids = [
-        stage.ids[CACHE],
-        stage.ids[POSITIONS],
-        stage.ids[POOLED],
-        fault_id,
+        state[0], state[1], state[2], state[3], state[4], state[5], fault_id,
     ];
+    let allocation = stage.layout.allocation_words();
     let words = [
-        stage.layout.max_context * crate::strata_qsa::cache_words(),
-        stage.layout.max_context,
-        stage.layout.allocation_words()[POOLED],
+        allocation[CACHE],
+        allocation[POSITIONS],
+        allocation[POOLED],
+        allocation[super::KEY],
+        allocation[super::RAWK],
+        allocation[super::RAWIK],
         1,
     ];
-    let mut handles = Vec::with_capacity(4);
+    let mut handles = Vec::with_capacity(ids.len());
     for (i, (id, words)) in ids.into_iter().zip(words).enumerate() {
         if ids[..i].contains(&id) {
             return Err(fault("native latest QSA root alias"));
@@ -2476,7 +2497,7 @@ pub(super) fn latest_qsa_roots(
         handles.push(handle.clone());
     }
     let resources = u::resources(arena.client().map_err(arena_fault)?, handles)?;
-    if resources.len() != 4 {
+    if resources.len() != ids.len() {
         return Err(Error::InvalidBufferLength);
     }
     for (i, r) in resources.iter().enumerate() {
@@ -2560,7 +2581,7 @@ impl QsaBatchWorkspace {
                 count,
                 chunk: *self.policy.chunk,
                 generation: *self.policy.generation,
-                owners: [stage.ids[CACHE], stage.ids[POSITIONS], stage.ids[POOLED]],
+                owners: stage.state_owners(),
                 fault: fault_id,
             }),
             binding: Some(self.binding),
@@ -2628,7 +2649,7 @@ impl LatestQsaCheckpoint {
                 count: self.metadata.count,
                 chunk: *workspace.policy.chunk,
                 generation: *workspace.policy.generation,
-                owners: [stage.ids[CACHE], stage.ids[POSITIONS], stage.ids[POOLED]],
+                owners: stage.state_owners(),
                 fault: completed_fault,
             },
             workspace.policy.expected.count_ones(),
@@ -2721,13 +2742,35 @@ impl<'a, 'f> LatestQsaRestore<'a, 'f> {
         {
             return Err(fault("native latest QSA clear fault owner"));
         }
-        enqueue_suffix_clear(
-            arena,
-            ids,
-            fault_id,
-            self.checkpoint.metadata.start as usize + self.accepted,
-            self.checkpoint.metadata.count - self.accepted,
-        )?;
+        if crate::strata_intel_core::enabled() {
+            use crate::strata_prefix_qsa::{Kernel, launch};
+            for kernel in [Kernel::Clear, Kernel::Fold] {
+                launch(
+                    arena,
+                    kernel,
+                    vec![
+                        u::handle(arena, ids[0])?,
+                        u::handle(arena, ids[1])?,
+                        u::handle(arena, ids[2])?,
+                        u::handle(arena, fault_id)?,
+                        u::handle(arena, ids[3])?,
+                        u::handle(arena, ids[4])?,
+                        u::handle(arena, ids[5])?,
+                    ],
+                    self.checkpoint.metadata.count,
+                    self.checkpoint.metadata.start as usize,
+                    self.accepted,
+                )?;
+            }
+        } else {
+            enqueue_suffix_clear(
+                arena,
+                [ids[0], ids[1], ids[2]],
+                fault_id,
+                self.checkpoint.metadata.start as usize + self.accepted,
+                self.checkpoint.metadata.count - self.accepted,
+            )?;
+        }
         cancelled(cancel)?;
         Ok(LatestQsaCleared {
             checkpoint: self.checkpoint,
@@ -2778,6 +2821,9 @@ impl QsaBatchWorkspace {
                         u::handle(arena, m.owners[1])?,
                         u::handle(arena, m.owners[2])?,
                         u::handle(arena, m.fault)?,
+                        u::handle(arena, m.owners[3])?,
+                        u::handle(arena, m.owners[4])?,
+                        u::handle(arena, m.owners[5])?,
                     ],
                     m.stamp.count,
                     m.stamp.start as usize,
@@ -3108,7 +3154,7 @@ mod tests {
             chunk: 29,
             generation: 100,
             owners: std::array::from_fn(|i| BufferId::metadata_fixture(31, 37, i)),
-            fault: BufferId::metadata_fixture(31, 37, 3),
+            fault: BufferId::metadata_fixture(31, 37, 6),
         }
     }
     #[test]
@@ -3118,7 +3164,7 @@ mod tests {
         completed.chunk += 1;
         completed.generation += 12;
         latest_qsa_order(&old, &completed, 12).unwrap();
-        for field in 0..11 {
+        for field in 0..16 {
             let mut wrong = completed.clone();
             match field {
                 0 => wrong.workspace += 1,
@@ -3130,7 +3176,7 @@ mod tests {
                 6 => wrong.count -= 1,
                 7 => wrong.chunk += 1,
                 8 => wrong.generation -= 1,
-                9 => wrong.owners[0] = BufferId::metadata_fixture(31, 38, 0),
+                9..=14 => wrong.owners[field - 9] = BufferId::metadata_fixture(31, 38, field - 9),
                 _ => wrong.fault = BufferId::metadata_fixture(31, 38, 2),
             }
             assert!(latest_qsa_order(&old, &wrong, 12).is_err());
@@ -3270,9 +3316,9 @@ mod tests {
             stamp,
             scratch: std::array::from_fn(|i| BufferId::metadata_fixture(7, 13, i)),
             owners: std::array::from_fn(|i| BufferId::metadata_fixture(7, 13, S + i)),
-            input: BufferId::metadata_fixture(7, 13, S + 3),
-            output: BufferId::metadata_fixture(7, 13, S + 4),
-            fault: BufferId::metadata_fixture(7, 13, S + 5),
+            input: BufferId::metadata_fixture(7, 13, S + 6),
+            output: BufferId::metadata_fixture(7, 13, S + 7),
+            fault: BufferId::metadata_fixture(7, 13, S + 8),
         }
     }
     #[test]
@@ -3296,7 +3342,7 @@ mod tests {
         assert_eq!(l.requests().unwrap(), expected);
         assert_eq!(
             l.stage.owned_bytes().unwrap(),
-            if core { 11_665_408 } else { 36_306_944 }
+            if core { 9_568_256 } else { 36_306_944 }
         );
         if !core {
             assert_eq!(785_186_816 + l.bytes().unwrap(), 803_012_608);
@@ -3814,7 +3860,7 @@ mod context32768_tests {
         }
         assert_eq!(layout.bytes().unwrap(), 81_690_624);
         assert_eq!(layout.io_bytes(true).unwrap() * 12, 18_874_368);
-        assert_eq!(layout.stage.owned_bytes().unwrap(), 64_716_800);
+        assert_eq!(layout.stage.owned_bytes().unwrap(), 47_939_584);
         let last = layout.token(7, qsa::MAX_CONTEXT - 8).unwrap();
         assert_eq!(last.visible, qsa::MAX_CONTEXT);
         assert_eq!(last.complete, 8192);

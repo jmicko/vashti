@@ -262,7 +262,7 @@ impl StageLayout {
         // EARLIER incomplete tail. Capacity must cover every intermediate step.
         let selected = self.max_context.min(qsa::BUDGET + qsa::BLOCK - 1);
         let logits = qsa::QH * selected;
-        [
+        let mut words = [
             self.max_context * crate::strata_qsa::cache_words(),
             self.max_context,
             qsa::QUERY * 2,
@@ -294,7 +294,11 @@ impl StageLayout {
             qsa::QH,
             qsa::QUERY,
             qsa::TOKEN + 1,
-        ]
+        ];
+        if crate::strata_intel_core::enabled() {
+            words[RAWIK] = crate::strata_qsa::INDEX_WINDOW_WORDS;
+        }
+        words
     }
     pub fn owned_bytes(self) -> Result<usize> {
         self.allocation_words()
@@ -1665,6 +1669,34 @@ mod tests {
                 conv_kernel: 4,
                 conv_dilation: 3,
             },
+        }
+    }
+    #[test]
+    fn native_bounded_indexer_uses_original_full_owners_and_prices_only_packed_kv() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        for context in [4, 4096, 32768] {
+            let l = StageLayout {
+                input_words: 2560,
+                max_context: context,
+                epsilon: qsa::EPSILON,
+            };
+            let words = l.allocation_words();
+            assert_eq!(words.len(), 31);
+            assert_eq!(words[CACHE], context * 264);
+            assert_eq!(words[KEY], 512);
+            assert_eq!(words[RAWK], 512);
+            assert_eq!(words[RAWIK], 8 * 128);
+            for i in [KEY, RAWK, RAWIK] {
+                assert_eq!(BufferLayout::new(words[i]).unwrap().owned_bytes, 32768);
+            }
+            if context == 32768 {
+                assert_eq!(
+                    BufferLayout::new(words[CACHE]).unwrap().owned_bytes,
+                    34 * 1024 * 1024
+                );
+            }
         }
     }
     #[test]

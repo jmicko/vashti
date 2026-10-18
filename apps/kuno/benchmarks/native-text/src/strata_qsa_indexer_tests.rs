@@ -145,27 +145,125 @@ fn native_indexer_tail_and_pooled_addresses_stay_within_original_owners() {
     assert_eq!(Kernel::Indexer.lanes(), 256);
     assert_eq!(Kernel::IndexerFlags.lanes(), 64);
     assert_eq!(Kernel::DirectScore.lanes(), 256);
+    assert_eq!(CACHE_WORDS, 264);
+    assert_eq!(INDEX_TAIL_WORDS, 384);
+    assert_eq!(INDEX_WINDOW_WORDS, 1024);
     for count in 1..=8 {
         for start in [0usize, 1, 2, 3, 63, 32768 - count] {
-            let mut old_reads = 0;
-            for j in 0..start % 4 {
-                let cell = start / 4 * 4 + j;
-                assert!(cell < start && start - cell <= 3);
+            for j in 0..3 {
                 for d in 0..128 {
-                    assert!(cell * CACHE_WORDS + INDEX_OFFSET + d < start * CACHE_WORDS);
+                    assert!(j * 128 + d < INDEX_TAIL_WORDS);
                 }
-                old_reads += 1;
             }
-            assert!(old_reads <= 3);
             for t in 0..count {
                 let pos = start + t;
                 if pos == 0 || pos % 4 == 3 {
                     assert!((pos / 4) * 128 + 127 < 32768 / 4 * 128);
                 }
                 for d in 0..128 {
-                    assert!(t * CACHE_WORDS + INDEX_OFFSET + d < count * CACHE_WORDS);
+                    assert!(t * 128 + d < INDEX_WINDOW_WORDS);
                 }
             }
         }
     }
+}
+
+// Full chronological history is an independent oracle for the bounded tail;
+// restoring an accepted prefix must also preserve inactive slots exactly.
+fn serial_tail(rows: &[Key]) -> [Key; 3] {
+    let mut tail = [[0.; 128]; 3];
+    for (cell, row) in rows.iter().enumerate() {
+        if cell % 4 < 3 {
+            tail[cell % 4] = row.map(|x| half::f16::from_f32(x).to_f32());
+        }
+    }
+    tail
+}
+fn bounded_tail(snapshot: [Key; 3], raw: &[Key], start: usize, accepted: usize) -> [Key; 3] {
+    let mut result = snapshot;
+    if accepted != 0 {
+        let last = start + accepted - 1;
+        for (slot, dest) in result.iter_mut().enumerate() {
+            if last >= slot {
+                let cell = last - (last - slot) % 4;
+                if cell >= start {
+                    *dest = raw[cell - start].map(|x| half::f16::from_f32(x).to_f32());
+                }
+            }
+        }
+    }
+    result
+}
+fn raw_keys(count: usize) -> Vec<Key> {
+    (0..count)
+        .map(|t| {
+            std::array::from_fn(|d| {
+                // Include halfway cases where preserving RTE through FP16 matters.
+                if d % 17 == 0 {
+                    1. + ((t + d) % 5) as f32 / 2048.
+                } else {
+                    ((t * 31 + d * 13) % 137) as f32 / 37. - 1.1
+                }
+            })
+        })
+        .collect()
+}
+#[test]
+fn bounded_window_restore_matches_full_history_for_every_prefix_and_replacement() {
+    let raw = raw_keys(32776);
+    let starts = (0..32).chain([2047, 2048, 2049, 2051, 32760]);
+    for start in starts {
+        let snapshot = serial_tail(&raw[..start]);
+        for count in 1..=8 {
+            for accepted in 0..=count {
+                let restored = bounded_tail(snapshot, &raw[start..start + count], start, accepted);
+                assert_eq!(restored, serial_tail(&raw[..start + accepted]));
+                let mut history = raw[..start + accepted].to_vec();
+                history.extend_from_slice(&raw[32768..32776]);
+                assert_eq!(
+                    bounded_tail(restored, &raw[32768..32776], start + accepted, 8),
+                    serial_tail(&history)
+                );
+            }
+        }
+    }
+    // These are the actual GPU formulas, not a second unconnected host path.
+    let prefix = include_str!("strata_prefix_qsa.wgsl");
+    assert!(prefix.contains("last-(last-slot)%4u"));
+    assert!(prefix.contains("tail_state[i]=accepted_tail(i)"));
+    assert!(prefix.contains("bitcast<u32>(tail_state[i])!=bitcast<u32>(accepted_tail(i))"));
+    assert!(!include_str!("strata_qsa_indexer.wgsl").contains("CACHE_WORDS"));
+}
+#[test]
+fn bounded_large_prompt_tail_and_boundary_means_match_materialized_history() {
+    let raw = raw_keys(32768);
+    for count in [1, 2, 3, 4, 5, 7, 8, 9, 127, 4095, 4096] {
+        for start in (0..8).chain([32768 - count]) {
+            let snapshot = serial_tail(&raw[..start]);
+            let incoming = &raw[start..start + count];
+            assert_eq!(
+                bounded_tail(snapshot, incoming, start, count),
+                serial_tail(&raw[..start + count])
+            );
+            for block in start / 4..(start + count) / 4 {
+                let gathered: [Key; 4] = std::array::from_fn(|j| {
+                    let cell = block * 4 + j;
+                    if cell < start {
+                        snapshot[j]
+                    } else {
+                        incoming[cell - start].map(|x| half::f16::from_f32(x).to_f32())
+                    }
+                });
+                let direct: Vec<_> = raw[block * 4..block * 4 + 4]
+                    .iter()
+                    .map(|r| r.map(|x| half::f16::from_f32(x).to_f32()))
+                    .collect();
+                assert_eq!(mean(&gathered), mean(&direct));
+            }
+        }
+    }
+    let source = Kernel::PromptTail.source();
+    assert!(source.contains("last-(last-slot)%4u"));
+    assert!(source.contains("snapshot[i]=old"));
+    assert_eq!(Kernel::PromptTail.lanes(), 64);
 }

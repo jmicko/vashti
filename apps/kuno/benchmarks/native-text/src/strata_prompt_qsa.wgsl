@@ -35,8 +35,8 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>){
 }
 // COMPATIBILITY_END
 // POOL_MEAN_BEGIN
-@group(0) @binding(0) var<storage,read> cache:array<u32>;
-@group(0) @binding(1) var<storage,read> candidate:array<u32>;
+@group(0) @binding(0) var<storage,read> tail_state:array<f32>;
+@group(0) @binding(1) var<storage,read> raw:array<f32>;
 @group(0) @binding(2) var<storage,read_write> means:array<f32>;
 @group(0) @binding(3) var<storage,read_write> status:array<u32>;
 @group(0) @binding(4) var<uniform> p:Params;
@@ -46,9 +46,9 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) d:u3
     let block=g.x;if block<p.start/4u||block>=(p.start+p.count)/4u{return;}
     var sum=0.0;var valid=1u;
     for(var j=0u;j<4u;j++) {
-        let token=block*4u+j;var bits=0u;
-        if token<p.start {bits=cache[token*392u+264u+d];}else{bits=candidate[(token-p.start)*392u+264u+d];}
-        let x=bitcast<f32>(bits);if j==0u {sum=x;}else{sum+=x;}if !finite(x){valid=0u;}
+        let token=block*4u+j;var x=0.0;
+        if token<p.start {x=tail_state[j*128u+d];}else{x=unpack2x16float(pack2x16float(vec2<f32>(raw[(token-p.start)*128u+d],0.0))).x;}
+        if j==0u {sum=x;}else{sum+=x;}if !finite(x){valid=0u;}
     }
     let mean=fma(0.25,sum,0.0);if !finite(mean){valid=0u;}
     means[block*128u+d]=select(0.0,mean,valid==1u);good[d]=valid;workgroupBarrier();

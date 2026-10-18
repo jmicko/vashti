@@ -49,13 +49,13 @@ fn score_query_view(root: &Handle, batch: ScoreBatch) -> Result<Handle> {
         .offset_end(root.size_in_used() - end as u64))
 }
 
-/// Four RMS gammas; authoritative cache, positions, pooled/dead, model fault.
+/// Four RMS gammas; cache, positions, pooled/dead, fault, tail/snapshot/window.
 /// This enqueues the full family and packed output, not a state acceptance.
 pub(crate) fn run(
     arena: &PrivateArena,
     p: [u32; 12],
     gamma: [Handle; 4],
-    owners: [Handle; 4],
+    owners: [Handle; 7],
 ) -> Result<()> {
     let count = p[0] as usize;
     let start = p[1] as usize;
@@ -73,12 +73,19 @@ pub(crate) fn run(
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
     let blocks = capacity / 4;
-    let [cache, positions, pooled, fault] = owners;
+    let [cache, positions, pooled, fault, tail, snapshot, window] = owners;
     for (h, n) in [&cache, &positions, &pooled, &fault].into_iter().zip([
         capacity * CACHE_WORDS,
         capacity,
         (blocks + 1) * 128,
         1,
+    ]) {
+        span(h, n)?;
+    }
+    for (h, n) in [&tail, &snapshot, &window].into_iter().zip([
+        INDEX_TAIL_WORDS,
+        INDEX_TAIL_WORDS,
+        INDEX_WINDOW_WORDS,
     ]) {
         span(h, n)?;
     }
@@ -165,7 +172,7 @@ pub(crate) fn run(
         selection::initialize(
             arena,
             [
-                q[8].clone(),
+                q[4].clone(),
                 gamma[3].clone(),
                 pooled.clone(),
                 fault.clone(),
@@ -182,10 +189,18 @@ pub(crate) fn run(
             cache.clone(),
             positions.clone(),
             fault.clone(),
+            q[4].clone(),
         ],
         p,
     )?;
-    pool(arena, p, [cache.clone(), q[8].clone()])?;
+    pool(arena, p, [tail.clone(), q[4].clone()])?;
+    super::super::launch(
+        arena,
+        Kernel::PromptTail,
+        [6, 1, 1],
+        vec![q[4].clone(), tail, snapshot, window, fault.clone()],
+        p,
+    )?;
     let mut np = p;
     np[3] = (blocks * 128) as u32;
     np[4] = np[3];
@@ -413,8 +428,8 @@ mod score_batch_tests {
     #[test]
     fn every_score_selection_record_is_priced_at_full_prompt_capacity() {
         let n = crate::strata_prompt::groups::CAPACITY;
-        let calls = 3 * score_batches(0, n, 32768).unwrap().count() + 2 * n.div_ceil(32) + 17;
+        let calls = 3 * score_batches(0, n, 32768).unwrap().count() + 2 * n.div_ceil(32) + 18;
         assert_eq!(super::super::INFO_BYTES, 12 * calls as u64 * 2048);
-        assert_eq!(super::super::INFO_BYTES, 7_888_896);
+        assert_eq!(super::super::INFO_BYTES, 7_913_472);
     }
 }

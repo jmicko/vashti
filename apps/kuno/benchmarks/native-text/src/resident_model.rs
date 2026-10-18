@@ -1281,14 +1281,14 @@ mod admission_tests {
         let native = crate::strata_intel_core::enabled();
         assert_eq!(
             total,
-            if native { 1_126_105_088 } else { 785_186_816 }
+            if native { 924_778_496 } else { 785_186_816 }
                 + crate::resident_gdn::batch::strata_replay::MAIN_BYTES
         );
         assert_eq!(total, batch::OLD_MAIN);
         // Full cache owners include padding, never just logical packed bytes.
         assert_eq!(
             requests.iter().copied().max(),
-            Some(if native { 50 } else { 32 } * 1024 * 1024)
+            Some(if native { 34 } else { 32 } * 1024 * 1024)
         );
         assert_eq!(
             requests.len(),

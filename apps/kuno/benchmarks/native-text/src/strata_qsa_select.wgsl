@@ -4,7 +4,7 @@ struct Params {count:u32,start:u32,blocks:u32,stride:u32,score_stride:u32,status
 fn finite(x:f32)->bool{return abs(x)<=3.4028234663852886e38;}
 // COMMON_END
 // DEAD_BEGIN
-@group(0) @binding(0) var<storage,read> candidate:array<u32>;
+@group(0) @binding(0) var<storage,read> raw:array<f32>;
 @group(0) @binding(1) var<storage,read> gamma:array<f32>;
 @group(0) @binding(2) var<storage,read_write> pooled:array<f32>;
 @group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
@@ -16,7 +16,7 @@ fn main(@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id
     if sw!=32u {if tid==0u{atomicOr(&fault[0],1u);}return;}
     var mean=0.0;var ss=0.0;var ok=1u;
     if tid<128u {
-        let incoming=bitcast<f32>(candidate[264u+tid]);
+        let incoming=unpack2x16float(pack2x16float(vec2<f32>(raw[tid],0.0))).x;
         var sum=incoming;for(var j=1u;j<4u;j++){sum+=incoming;}
         mean=fma(0.25,sum,0.0);ss=mean*mean;
         if !finite(incoming)||!finite(mean)||!finite(gamma[tid]){ok=0u;}

@@ -22,10 +22,11 @@ pub(crate) mod prompt;
 #[path = "strata_qsa_select.rs"]
 pub(crate) mod selection;
 
-// Original64-value quantization groups: 1024 signed codes,16 half scales,
-// followed by the128 FP16-rounded F32 index-key values.
-pub(crate) const INDEX_OFFSET: usize = 264;
-pub(crate) const CACHE_WORDS: usize = INDEX_OFFSET + 128;
+// Original64-value quantization groups: 1024 signed codes and16 half scales.
+// Raw index keys live only in the three-row tail and the current MAX8 window.
+pub(crate) const CACHE_WORDS: usize = 264;
+pub(crate) const INDEX_TAIL_WORDS: usize = 3 * 128;
+pub(crate) const INDEX_WINDOW_WORDS: usize = 8 * 128;
 pub(crate) const PACK_GROUPS: usize = 8;
 pub(crate) const CHUNKS: usize = 33; // ceil((2048 + incomplete tail <=3)/64)
 pub(crate) const PARTIAL_WORDS: usize = 24 * CHUNKS * 256;
@@ -50,6 +51,7 @@ pub(crate) enum Kernel {
     PublishPool,
     Indexer,
     IndexerFlags,
+    PromptTail,
     Score,
     DirectScore,
     PromptScore,
@@ -131,6 +133,7 @@ impl Kernel {
             Self::PublishPool => "PUBLISH_POOL",
             Self::Indexer => "INDEXER",
             Self::IndexerFlags => "INDEXER_FLAGS",
+            Self::PromptTail => "PROMPT_TAIL",
             Self::DirectScore => "SCORE_MULTI",
             Self::Score | Self::PromptScore | Self::PromptScoreFault => "SCORE",
             Self::Attention
@@ -286,6 +289,7 @@ impl KernelMetadata for Kernel {
             Self::PublishPool => "StrataQsaPublishIndexerBlocks",
             Self::Indexer => "StrataQsaNativeIndexerAppendSteps",
             Self::IndexerFlags => "StrataQsaNativeIndexerReceiptFlags",
+            Self::PromptTail => "StrataQsaPromptBoundedTail",
             Self::Score => "StrataQsaIndexerScore",
             Self::DirectScore => "StrataQsaNativeWindowScore",
             Self::PromptScore => "StrataPromptSharedIndexerScore",
@@ -364,6 +368,7 @@ pub(crate) fn launch(
                 | Kernel::PromptPackFault
                 | Kernel::PromptAppendFault
                 | Kernel::PromptScoreFault
+                | Kernel::PromptTail
         ) && crate::strata_prompt::active()
         {
             crate::strata_prompt::groups::CAPACITY as u32
@@ -374,7 +379,8 @@ pub(crate) fn launch(
         || info[1].checked_add(info[0]).is_none_or(|end| end > info[2])
         || info[2] > crate::qsa_gpu::MAX_CONTEXT as u32
         || kernel == Kernel::Indexer
-            && (grid != [1, 1, 1] || handles.len() != 5 || !info[2].is_multiple_of(4))
+            && (grid != [1, 1, 1] || handles.len() != 7 || !info[2].is_multiple_of(4))
+        || kernel == Kernel::PromptTail && (grid != [6, 1, 1] || handles.len() != 5)
         || kernel == Kernel::IndexerFlags && (handles.len() != 3 || info[5] != info[2] / 4)
         || kernel == Kernel::DirectScore
             && (grid != WINDOW_SCORE_GRID
@@ -398,6 +404,47 @@ pub(crate) fn launch(
         } else {
             info[11] != 0
         }
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let count = info[0] as usize;
+    let capacity = info[2] as usize;
+    let required: &[usize] = match kernel {
+        Kernel::Indexer => &[
+            INDEX_TAIL_WORDS,
+            count * 128,
+            128,
+            (capacity / 4 + 1) * 128,
+            1,
+            INDEX_TAIL_WORDS,
+            INDEX_WINDOW_WORDS,
+        ],
+        Kernel::PromptTail => &[
+            count * 128,
+            INDEX_TAIL_WORDS,
+            INDEX_TAIL_WORDS,
+            INDEX_WINDOW_WORDS,
+            1,
+        ],
+        Kernel::Append | Kernel::PromptAppend | Kernel::PromptAppendFault => &[
+            count * CACHE_WORDS,
+            capacity * CACHE_WORDS,
+            capacity,
+            if kernel == Kernel::PromptAppendFault {
+                1
+            } else {
+                count * info[5] as usize
+            },
+            count * 128,
+        ],
+        _ => &[],
+    };
+    if !required.is_empty()
+        && (handles.len() != required.len()
+            || handles
+                .iter()
+                .zip(required)
+                .any(|(h, n)| h.size_in_used() < (n * 4) as u64))
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -442,6 +489,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::PublishPool,
         Kernel::Indexer,
         Kernel::IndexerFlags,
+        Kernel::PromptTail,
         Kernel::Score,
         Kernel::DirectScore,
         Kernel::PromptScore,
@@ -536,7 +584,7 @@ mod tests {
                     }
                 }
                 // Rejected suffix erasure preserves every byte of the accepted
-                // prefix, including codes, scales and historical index keys.
+                // prefix, including codes and scales.
                 for accepted in 1..=count {
                     let from = (start + accepted) * CACHE_WORDS;
                     let end = (start + count) * CACHE_WORDS;

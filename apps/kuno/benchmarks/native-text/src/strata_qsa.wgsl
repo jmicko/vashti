@@ -3,10 +3,9 @@
 struct Params {count:u32,start:u32,capacity:u32,input_stride:u32,output_stride:u32,status_stride:u32,heads:u32,width:u32,block_positions:u32,epsilon:f32,theta_scale:f32,reserved:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 fn cells(token:u32,start:u32)->u32 {let n=start+token+1u;return min(n,2051u);}
-// One token: 1024 signed codes, 16 FP16 scales, 128 F32 index-key values.
+// One token: 1024 signed codes and16 FP16 scales. Bounded index state is separate.
 // K/V use the original64-value grouping and quantize against the STORED scale.
-const CACHE_WORDS:u32=392u;
-const INDEX_OFFSET:u32=264u;
+const CACHE_WORDS:u32=264u;
 fn signed_code(bits:u32,index:u32)->i32 {return (bitcast<i32>((bits>>((index&3u)*8u))<<24u))>>24u;}
 fn scale_pair_valid(bits:u32)->bool {let s=unpack2x16float(bits);return finite(s.x)&&finite(s.y)&&s.x>=0.0&&s.y>=0.0;}
 fn q8_value(code:u32,scales:u32,element:u32)->f32 {let s=unpack2x16float(scales);return f32(signed_code(code,element))*select(s.x,s.y,((element/64u)&1u)!=0u);}
@@ -107,7 +106,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:
     record_valid(t,element,ok);workgroupBarrier();
     if tid<32u{let at=tid*4u;candidate[t*CACHE_WORDS+group*32u+tid]=codes[at]|(codes[at+1u]<<8u)|(codes[at+2u]<<16u)|(codes[at+3u]<<24u);}
     if tid==0u{candidate[t*CACHE_WORDS+256u+group]=pack2x16float(vec2<f32>(scales[0],scales[1]));}
-    if group==0u{let raw=index_key[t*128u+tid];let x=unpack2x16float(pack2x16float(vec2<f32>(raw,0.0))).x;let valid=finite(raw)&&finite(x);candidate[t*CACHE_WORDS+INDEX_OFFSET+tid]=select(0u,bitcast<u32>(x),valid);record_valid(t,1024u+tid,valid);}
+    if group==0u{let raw=index_key[t*128u+tid];let x=unpack2x16float(pack2x16float(vec2<f32>(raw,0.0))).x;let valid=finite(raw)&&finite(x);record_valid(t,1024u+tid,valid);}
 }
 // PACK_END
 // RETAINED_POOL_BEGIN
@@ -135,8 +134,8 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 }
 // PUBLISH_POOL_END
 // POOL_BEGIN
-@group(0) @binding(0) var<storage,read> cache:array<u32>;
-@group(0) @binding(1) var<storage,read> candidate:array<u32>;
+@group(0) @binding(0) var<storage,read> tail_state:array<f32>;
+@group(0) @binding(1) var<storage,read> raw:array<f32>;
 @group(0) @binding(2) var<storage,read_write> means:array<f32>;
 @group(0) @binding(3) var<storage,read_write> status:array<u32>;
 @group(0) @binding(4) var<uniform> p:Params;
@@ -148,9 +147,9 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     for(var tile=0u;tile<2u;tile++) {
         let d=tile*64u+lane;var sum=0.0;
         for(var j=0u;j<4u;j++) {
-            let token=block*4u+j;var bits=0u;
-            if token<p.start {bits=cache[token*CACHE_WORDS+INDEX_OFFSET+d];}else {bits=candidate[(token-p.start)*CACHE_WORDS+INDEX_OFFSET+d];}
-            let x=bitcast<f32>(bits);sum+=x;if !finite(x) {good=0u;}
+            let token=block*4u+j;var x=0.0;
+            if token<p.start {x=tail_state[j*128u+d];}else {x=unpack2x16float(pack2x16float(vec2<f32>(raw[(token-p.start)*128u+d],0.0))).x;}
+            sum+=x;if !finite(x) {good=0u;}
         }
         let mean=fma(0.25,sum,0.0);means[t*p.output_stride+block*128u+d]=select(0.0,mean,finite(mean));if !finite(mean) {good=0u;}
     }
@@ -297,7 +296,8 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 @group(0) @binding(1) var<storage,read_write> cache:array<u32>;
 @group(0) @binding(2) var<storage,read> positions:array<u32>;
 @group(0) @binding(3) var<storage,read_write> status:array<u32>;
-@group(0) @binding(4) var<uniform> p:Params;
+@group(0) @binding(4) var<storage,read> raw:array<f32>;
+@group(0) @binding(5) var<uniform> p:Params;
 fn record_valid(t:u32,element:u32,ok:bool) {status[t*p.status_stride+element]=select(0u,1u,ok);}
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -307,8 +307,8 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
         let scale=candidate[t*CACHE_WORDS+256u+i/32u];ok=ok&&scale_pair_valid(scale);
         for(var j=0u;j<4u;j++){ok=ok&&signed_code(bits,j)!=-128;}
         for(var j=0u;j<4u;j++){record_valid(t,i*4u+j,ok);}
-    }else if i<INDEX_OFFSET {ok=ok&&scale_pair_valid(bits);}
-    else {ok=ok&&finite(bitcast<f32>(bits));record_valid(t,1024u+i-INDEX_OFFSET,ok);}
+    }else {ok=ok&&scale_pair_valid(bits);}
+    if i<128u {let x=raw[t*128u+i];let y=unpack2x16float(pack2x16float(vec2<f32>(x,0.0))).x;record_valid(t,1024u+i,finite(x)&&finite(y));}
     cache[position*CACHE_WORDS+i]=select(0u,bits,ok);
 }
 // APPEND_END
