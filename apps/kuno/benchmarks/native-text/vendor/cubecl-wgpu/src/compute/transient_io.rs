@@ -778,7 +778,9 @@ impl LeaseTracker {
             let source = std::panic::Location::caller();
             eprintln!(
                 "native_public_io_first_failure code={} source_file={} source_line={}",
-                category.code(), source.file(), source.line()
+                category.code(),
+                source.file(),
+                source.line()
             );
         }
     }

@@ -1093,12 +1093,20 @@ impl ComputeServer for WgpuServer {
             return;
         }
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        let native_operator_name = kernel.name();
         let pipeline = match self.pipeline(kernel, &args, mode) {
             Ok(val) => val,
             Err(err) => {
                 // We make the stream that would execute the kernel in error.
                 let stream = self.scheduler.stream(&stream_id);
-                stream.errors.push(ServerError::Launch(err));
+                if super::strata_graph::enabled()
+                    && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+                {
+                    // KernelMetadata names are static source labels, not shader
+                    // text or request values. Keep the actual error redacted.
+                    eprintln!("native_public_launch_fault kernel={native_operator_name}");
+                }
+                stream.error(ServerError::Launch(err));
                 return;
             }
         };
@@ -1114,7 +1122,7 @@ impl ComputeServer for WgpuServer {
             Err(err) => {
                 // We make the stream that would execute the kernel in error.
                 let stream = self.scheduler.stream(&stream_id);
-                stream.errors.push(ServerError::Io(err));
+                stream.error(ServerError::Io(err));
                 return;
             }
         };
