@@ -1,66 +1,43 @@
 # Kuno and Vashti Coordination
 
-**Resumed numerical checkpoint (2026-10-18):** the human renewed both GPU
-permissions and shared-shell sudo. Work stays in the isolated
-`codex/strata-rust-port` checkout. No installation, public API, frontend, GPU
-reset or release changes.
+**Selected Intel rewrite accepted for fixed-public engine measurements (2026-10-18).**
+The connected Rust port is now past the source-wiring, representative numerical,
+whole-model completion and physical recovery gates for the selected B70 / original
+DASLab IQ3_S / original Q2 MTP configuration. See the
+[completion decision](kuno-strata-current-source-audit.md#selected-engine-completeness-and-correctness-decision-2026-10-18)
+for exact scope and exclusions. This is not private-caller, service, installation
+or release acceptance.
 
-The diagnostic loader now opens the complete two original DASLab shards without
-merging/copying them (`2da5ac64`, `aeaac923`). Actual B70 checks pass all48 GR
-stage comparisons and18 packed-dense/Q8-plane cases across raw formats
-8/12/13/14/20/23. The full physical vocabulary head also matches independent
-canonical CPU decoding across all248,320 rows (max absolute error2.3841858e-7).
-BF16 cooperative matrix checks pass counts1/8/35.
+Runtime source `299579b52f9e4b9d8feaaaedb41eec4c193fcb83`, frozen artifact
+`strata-fp16-preserve-coupled-20261018`, SHA256
+`852a0dbd7dbdd11a3a1eb8e3447a9006dbe7fae2b56d8d3ecd1fb3ccd7c473e1`.
+`f0707ddb` requests supported FP16 DenormPreserve16; `299579b5` applies the
+same transformation to the actual native replay module as the HAL module.
+All74 original-weight operator cases now pass the ORIGINAL IEEE reference and
+unchanged tolerances, including FP16/BF16 counts1/8/35. Maximum matrix error is
+4.2915344e-6. The old29-mismatch/FTZ diagnosis remains failed historical evidence;
+it is not used as the new reference. The aligned embedding fix remains exact.
 
-**A concrete embedding bug was found and corrected:** at`10e3f9bd` and
-`e03e7f6a`, address-based embedding output mismatched78,791 of81,920 values
-(max error0.10574341), while ordinary direct-page decoding of the SAME original
-rows had zero mismatches. `b6744323` uses original aligned `vec4<u32>` source
-addressing in that shader. The same32 rows across every page then match the CPU
-exactly (zero mismatches, max error0). No weight conversion, fallback decoder,
-changed model or tolerance relaxation supplies that result. The deeper cause
-of the scalar-address shader discrepancy is not yet isolated. Invalid mapped
-embedding geometry now sets a fault instead of silently returning.
+Protected `strata-fp16-preserve-retained-20261018` passes two requests through
+one loaded Session: identical362 outputs/EOS,110 windows and31 real repairs per
+reported second request. Protected `strata-fp16-preserve-prose-20261018` passes
+512 outputs/no EOS,194 windows and83 repairs. Both display coherent public prose
+without saving it; target/draft request erasure, final all-peer close and physical
+recovery pass. Final Intel50,688,000B, NVIDIA compute0, all HTTP200, normal admission
+and zero classified driver-fault deltas. Swap/core protection was observed active.
+633 selected CPU cases/88 suites, core/off strict binary Clippy and pinned offline
+397 shader variants/32 matrix configurations pass. Artifacts are under
+`/media/jmicko/faststore/kuno-development`.
 
-Frozen corrected source`b67443235bf5a82180b3b651ad05f7a78f3840a8`, artifact
-`strata-embedding-vector-20261018`, SHA256
-`a386ea21bd45167a8f5420e3debd3d28140ad6680208ae84fad952c1d32f7872`.
-Protected operator output`strata-embedding-vector-check-20261018` still exits1
-without a success receipt: a separate FP16 matrix case has29 IEEE-reference
-mismatches (max0.0005930662). An additional flush-subnormal CPU diagnosis has
-zero mismatches (max2.1457672e-6); it does NOT replace the original acceptance
-reference. All these operator runs restored normal admission, Intel50,688,000B,
-NVIDIA compute0, HTTP200 and unchanged zero classified faults. All artifacts
-are under `/media/jmicko/faststore/kuno-development`.
-
-The complete corrected engine run`strata-embedding-vector-whole-20261018`
-exits0 with a coherent public coding response (visible unsaved tail correctly
-explains merge complexity),491 outputs, EOS,150 windows and45 repairs. Target
-and draft request erasure plus final close pass. Its observed active protection
-receipt verifies MemoryMax51,745,128,448B, swap0/core0 and a20-minute outer bound.
-Final state: Intel50,688,000B, NVIDIA compute0, all HTTP200, normal admission,
-zero classified fault deltas. No response content is saved. This supersedes
-the special-token-loop whole-output failure, but not the separate FP16 IEEE
-operator limitation above. The two-request SAME-loaded-session check
-`strata-embedding-vector-retained-20261018` also exits0: both requests produce
-identical491-token outputs/EOS through real reset/rebind of retained weights.
-Both erasure receipts and final close/recovery pass, with the same clean physical
-and service baseline. The separate prose check`strata-embedding-vector-prose-20261018` exits0 with
-coherent hash-table prose,512 outputs capped without EOS,178 windows/66 repairs.
-Compiled-public cap source`09ad8f26` also passes protected
-`strata-embedding-vector-cap-whole-20261018`: exactly16 requested/delivered
-outputs, no EOS,6 windows/2 repairs. Both erase target/draft state, complete
-final close and restore the same clean physical/service baseline. All GPU tests
-in this block are terminal. No throughput result or full-rewrite acceptance is
-claimed yet; resolve the selected FP16 reference contract before opening that
-stage. No private/general service integration has been tested here. Strict core
-Clippy passes atb6744323; non-core `strata-rust-port` Clippy passes at5e537e37
-(the latter only gates the matrix diagnostic reader out of non-core builds).
-
-This is the shared handoff between the **Build Kuno inference helper** task
-(Kuno backend) and the **Vashti** task (frontend and application integration).
-Repository contracts and decisions should survive switching tasks; neither task
-should depend on having the other's entire conversation history.
+The speed gate is now open ONLY for the exact accepted artifact and unchanged
+fixed-public retained configuration. The committed acceptance manifest is checked
+by the outer timing runner. Timing uses trusted static phase lines and writes
+only numeric results after successful repeat/erasure/physical recovery; no kernel
+profiles, response contents or content hashes. No throughput result exists yet.
+The original execution-check receipts retain their static `benchmark=false` and
+`whole_rewrite_accepted=false` fields; the documented audit and separate timing
+receipt provide the later decision without rewriting historical evidence.
+No Vashti consumer/API change, installation, reset, reboot or release occurred.
 
 **Previous execution and numerical checkpoint (2026-10-18):** isolated
 `codex/strata-rust-port`. The human paused the goal and requested a final

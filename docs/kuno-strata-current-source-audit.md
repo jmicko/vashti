@@ -1,61 +1,43 @@
 # Current Strata source audit
 
-**Resumed numerical checkpoint (2026-10-18):** the human renewed both GPU
-permissions and shared-shell sudo. Work stays in the isolated
-`codex/strata-rust-port` checkout. No installation, public API, frontend, GPU
-reset or release changes.
+**Selected Intel rewrite accepted for fixed-public engine measurements (2026-10-18).**
+The connected Rust port is now past the source-wiring, representative numerical,
+whole-model completion and physical recovery gates for the selected B70 / original
+DASLab IQ3_S / original Q2 MTP configuration. See the
+[completion decision](kuno-strata-current-source-audit.md#selected-engine-completeness-and-correctness-decision-2026-10-18)
+for exact scope and exclusions. This is not private-caller, service, installation
+or release acceptance.
 
-The diagnostic loader now opens the complete two original DASLab shards without
-merging/copying them (`2da5ac64`, `aeaac923`). Actual B70 checks pass all48 GR
-stage comparisons and18 packed-dense/Q8-plane cases across raw formats
-8/12/13/14/20/23. The full physical vocabulary head also matches independent
-canonical CPU decoding across all248,320 rows (max absolute error2.3841858e-7).
-BF16 cooperative matrix checks pass counts1/8/35.
+Runtime source `299579b52f9e4b9d8feaaaedb41eec4c193fcb83`, frozen artifact
+`strata-fp16-preserve-coupled-20261018`, SHA256
+`852a0dbd7dbdd11a3a1eb8e3447a9006dbe7fae2b56d8d3ecd1fb3ccd7c473e1`.
+`f0707ddb` requests supported FP16 DenormPreserve16; `299579b5` applies the
+same transformation to the actual native replay module as the HAL module.
+All74 original-weight operator cases now pass the ORIGINAL IEEE reference and
+unchanged tolerances, including FP16/BF16 counts1/8/35. Maximum matrix error is
+4.2915344e-6. The old29-mismatch/FTZ diagnosis remains failed historical evidence;
+it is not used as the new reference. The aligned embedding fix remains exact.
 
-**A concrete embedding bug was found and corrected:** at`10e3f9bd` and
-`e03e7f6a`, address-based embedding output mismatched78,791 of81,920 values
-(max error0.10574341), while ordinary direct-page decoding of the SAME original
-rows had zero mismatches. `b6744323` uses original aligned `vec4<u32>` source
-addressing in that shader. The same32 rows across every page then match the CPU
-exactly (zero mismatches, max error0). No weight conversion, fallback decoder,
-changed model or tolerance relaxation supplies that result. The deeper cause
-of the scalar-address shader discrepancy is not yet isolated. Invalid mapped
-embedding geometry now sets a fault instead of silently returning.
+Protected `strata-fp16-preserve-retained-20261018` passes two requests through
+one loaded Session: identical362 outputs/EOS,110 windows and31 real repairs per
+reported second request. Protected `strata-fp16-preserve-prose-20261018` passes
+512 outputs/no EOS,194 windows and83 repairs. Both display coherent public prose
+without saving it; target/draft request erasure, final all-peer close and physical
+recovery pass. Final Intel50,688,000B, NVIDIA compute0, all HTTP200, normal admission
+and zero classified driver-fault deltas. Swap/core protection was observed active.
+633 selected CPU cases/88 suites, core/off strict binary Clippy and pinned offline
+397 shader variants/32 matrix configurations pass. Artifacts are under
+`/media/jmicko/faststore/kuno-development`.
 
-Frozen corrected source`b67443235bf5a82180b3b651ad05f7a78f3840a8`, artifact
-`strata-embedding-vector-20261018`, SHA256
-`a386ea21bd45167a8f5420e3debd3d28140ad6680208ae84fad952c1d32f7872`.
-Protected operator output`strata-embedding-vector-check-20261018` still exits1
-without a success receipt: a separate FP16 matrix case has29 IEEE-reference
-mismatches (max0.0005930662). An additional flush-subnormal CPU diagnosis has
-zero mismatches (max2.1457672e-6); it does NOT replace the original acceptance
-reference. All these operator runs restored normal admission, Intel50,688,000B,
-NVIDIA compute0, HTTP200 and unchanged zero classified faults. All artifacts
-are under `/media/jmicko/faststore/kuno-development`.
-
-The complete corrected engine run`strata-embedding-vector-whole-20261018`
-exits0 with a coherent public coding response (visible unsaved tail correctly
-explains merge complexity),491 outputs, EOS,150 windows and45 repairs. Target
-and draft request erasure plus final close pass. Its observed active protection
-receipt verifies MemoryMax51,745,128,448B, swap0/core0 and a20-minute outer bound.
-Final state: Intel50,688,000B, NVIDIA compute0, all HTTP200, normal admission,
-zero classified fault deltas. No response content is saved. This supersedes
-the special-token-loop whole-output failure, but not the separate FP16 IEEE
-operator limitation above. The two-request SAME-loaded-session check
-`strata-embedding-vector-retained-20261018` also exits0: both requests produce
-identical491-token outputs/EOS through real reset/rebind of retained weights.
-Both erasure receipts and final close/recovery pass, with the same clean physical
-and service baseline. The separate prose check`strata-embedding-vector-prose-20261018` exits0 with
-coherent hash-table prose,512 outputs capped without EOS,178 windows/66 repairs.
-Compiled-public cap source`09ad8f26` also passes protected
-`strata-embedding-vector-cap-whole-20261018`: exactly16 requested/delivered
-outputs, no EOS,6 windows/2 repairs. Both erase target/draft state, complete
-final close and restore the same clean physical/service baseline. All GPU tests
-in this block are terminal. No throughput result or full-rewrite acceptance is
-claimed yet; resolve the selected FP16 reference contract before opening that
-stage. No private/general service integration has been tested here. Strict core
-Clippy passes atb6744323; non-core `strata-rust-port` Clippy passes at5e537e37
-(the latter only gates the matrix diagnostic reader out of non-core builds).
+The speed gate is now open ONLY for the exact accepted artifact and unchanged
+fixed-public retained configuration. The committed acceptance manifest is checked
+by the outer timing runner. Timing uses trusted static phase lines and writes
+only numeric results after successful repeat/erasure/physical recovery; no kernel
+profiles, response contents or content hashes. No throughput result exists yet.
+The original execution-check receipts retain their static `benchmark=false` and
+`whole_rewrite_accepted=false` fields; the documented audit and separate timing
+receipt provide the later decision without rewriting historical evidence.
+No Vashti consumer/API change, installation, reset, reboot or release occurred.
 
 **Earlier checkpoint, superseded by the numerical results above:**
 
@@ -898,7 +880,7 @@ for this core entry; other lab modes retain their separate existing seed. This
 reports actual controls without changing inference or retroactively certifying
 other historical entries. Physical repeat acceptance is still open.
 
-## Remaining acceptance work
+## Historical remaining acceptance work before the 2026-10-18 device decision
 
 - Hardware/unload/sudo access is resolved. Actual execution corrected shared
   accounting, router capability, implicit scheduler submission, MTP confidence
@@ -922,3 +904,73 @@ other historical entries. Physical repeat acceptance is still open.
   Preserve all source-selected dependencies while fixing any device failures.
 - Only after source wiring **and** whole-model correctness/recovery acceptance
   pass may live whole-engine throughput comparisons begin.
+
+## Selected engine completeness and correctness decision (2026-10-18)
+
+**PASS for the selected, connected Intel engine and its fixed-public throughput
+trial.** This extends the 2026-10-17 source-wiring decision with actual protected
+device evidence. It supersedes historical pending numerical/completion/repeat
+gates above for this configuration, not the exclusions below. Runtime source is
+`299579b52f9e4b9d8feaaaedb41eec4c193fcb83`, pinned MIT upstream remains
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. The complete chosen inference path
+remains selected together; no coupled component was removed for a timing result.
+No live speed test preceded this decision.
+
+| Gate | Current evidence and decision |
+| --- | --- |
+| Complete source/dependency connection | Earlier requirement matrix and consumer audit pass. Comparison against frozen runtime shows no unreviewed removal. Exact loading/residency, original mapped HOST complement, real experts/router, native families, graphs/queues, original Q2 MTP, target verification/commit and closure remain connected. |
+| Original-weight numerical checks | `strata-fp16-preserve-coupled-check-20261018/numerics.json`:74 cases pass:48 GR stages,18 packed-dense/Q8 cases, full248,320-row physical head,32 embedding rows spanning all16 original pages,6 BF16/FP16 cooperative products at counts1/8/35. Original CPU decoding/reference and tolerances remain unchanged. |
+| Complete actual model | `strata-fp16-preserve-retained-20261018/intel.json`: two actual requests on one loaded Session, identical362-token output/EOS,110 windows/31 repairs in the reported second request; real reset/rebind after the first. Human-readable unsaved public tail is coherent. |
+| Other prompt and output stop | `strata-fp16-preserve-prose-20261018/intel.json`:512 outputs without EOS,194 windows/83 repairs, coherent visible prose. Earlier explicit16 cap also passes on the unchanged cap/control implementation; this new512 cap and EOS run use the current numerical artifact. |
+| Request and terminal recovery | Both current full runs erase actual target and draft request owners, complete all-peer close and restore Intel50,688,000B/NVIDIA compute0, all HTTP200 and normal admission with no recovery latch. Classified fault deltas all0. Prior strict numerical failure also completed checked close/recovery. Active systemd receipts show swap0/core0 and the original48.2GiB cap. |
+| CPU/compiler checks |633 distinct selected cases/88 suites, strict core/off binary Clippy,397 offline variants and32 cooperative matrix configurations pass. Installed `spirv-val` cannot parse BF16 capability5116; the pinned matrix-capable validator passes the original complete set. |
+
+### The two numerical fixes and necessary backend controls
+
+The mapped original embedding uses aligned original `vec4<u32>` source reads
+(`b6744323`). Every checked value matches canonical CPU decoding exactly; ordinary
+scalar direct-page control also remains exact. Its lower-level physical scalar
+read discrepancy is unisolated, so this is a validated selected-path correction,
+not a general claim about scalar buffer reads.
+
+`f0707ddb` adds DenormPreserve16 to actual ordinary-FP16 cooperative SPIR-V only;
+BF16 types are excluded. The actual B70 FloatControls property is queried before
+module creation and unsupported preservation is rejected. `299579b5` couples
+the SAME pure transformation into native replay's own VkShaderModule words, not
+only the ordinary HAL module and offline validator. The original matrix kernels,
+weights, packing, shapes, accumulation and CPU reference remain unchanged.
+The strict FP16 error drops from29 failing outputs at count8 to zero at all tested
+counts; maximum matrix error is4.2915344e-6. The additional FTZ oracle now differs,
+as expected; it never replaces the IEEE reference or grants acceptance. The
+original failed receipts remain failed. Supported floating-point control is the
+explicit Vulkan substitute needed here for the pinned Intel precision contract;
+no arbitrary tolerance change or alternate expert/model supplies the pass.
+
+### Exact timing permission and limits
+
+`apps/kuno/benchmarks/text/strata-core-public-acceptance.json` permits only frozen
+SHA256 `852a0dbd7dbdd11a3a1eb8e3447a9006dbe7fae2b56d8d3ecd1fb3ccd7c473e1`,
+source299579b5, original requested core features, code fixture/Q2 and two identical
+requests on one loaded Session. The runner rejects changed options/artifacts.
+Four synthetic observer tests cover incomplete runs, bad ordering, failed repeat,
+missing erasure, unhealthy admission/services and residual/faulted GPUs. The
+observer drains and joins a child before rejecting invalid timing. Only successful
+completion/repeat and root physical recovery can write a separate throughput
+receipt. It never changes the frozen execution-check receipt's static flags.
+
+The last-prompt-inclusive interval includes ordinary final prompt input, first
+prediction, target/MTP windows and host controller/delivery. It excludes request
+erasure and final model close. It is NOT a pure GPU kernel or cache-free token
+rate. Prefix/preflight, runtime setup and request-before-erasure intervals are
+reported separately. Response text and tokens remain transient; metadata contains
+counts and numeric durations, no contents, prompts, seeds from private requests,
+routing trace or content hash. No repeated Ollama baseline is required.
+
+This passes completeness and representative correctness for the chosen engine,
+not universal numerical equivalence or production readiness. Independently
+protected arbitrary/private callers, mixed requests on one retained Session,
+physical maximum-context stress, broader stochastic controls and long soak remain
+additional acceptance work before production claims. There is no bitwise whole
+model comparison with Strata/CPU, executed-code quality test, public API/UI change,
+installed native backend or release acceptance. Those limitations do not indicate
+a missing selected source dependency and must not be represented as already tested.

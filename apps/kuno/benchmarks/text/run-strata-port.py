@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixed PUBLIC fixtures only. Inference and request history remain in Rust/RAM."""
 import datetime,hashlib,importlib.util,json,os,pathlib,pwd,subprocess,sys,time
+from strata_throughput import PublicThroughput
 BASE=pathlib.Path('/media/jmicko/faststore/kuno-development')
 ROOT=pathlib.Path(__file__).resolve().parents[4]
 spec=importlib.util.spec_from_file_location('protected',BASE/'run-native-strata-public-protected-20261009.py')
@@ -13,9 +14,12 @@ def run():
  if not 5<=len(sys.argv)<=12:raise ValueError('root BUILD OUT code|prose q8|q2 --execution-check [--intel-core]')
  build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:5]
  options=set(sys.argv[5:])
- if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots','--constant-codebook','--ranked-fill','--profile-first','--intel-core','--member-widths','--native-profile','--execution-check','--retained-check'}:raise ValueError('port selector')
- # User-approved rewrite stage: completion/correctness only, no speed trials.
- # Remove this restriction only after the documented whole-port audit passes.
+ if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots','--constant-codebook','--ranked-fill','--profile-first','--intel-core','--member-widths','--native-profile','--execution-check','--retained-check','--throughput-check'}:raise ValueError('port selector')
+ # A timing run still requires the same whole-engine completion/erasure checks.
+ # Only the exact artifact accepted by the committed audit may be measured.
+ measure='--throughput-check' in options
+ if measure and (options!={'--execution-check','--retained-check','--intel-core','--throughput-check'} or fixture!='code' or profile!='q2'):
+  raise ValueError('throughput requires unchanged accepted core/Q2 public repeat')
  if '--execution-check' not in options:
   raise ValueError('rewrite incomplete: only --execution-check is allowed before the completion audit')
  if options & {'--profile','--native-profile'}:
@@ -32,6 +36,13 @@ def run():
  binary=bins[0];digest=hashlib.sha256(binary.read_bytes()).hexdigest()
  if binary.name!='kuno-strata-rust-'+digest:raise ValueError('artifact hash')
  build_features=set(json.loads((build/'build-features.json').read_text())['features'])
+ acceptance=None
+ if measure:
+  acceptance=json.loads((pathlib.Path(__file__).with_name('strata-core-public-acceptance.json')).read_text())
+  if (acceptance['format']!=1 or acceptance['completeness_accepted'] is not True or acceptance['scope']!='selected-intel-core-fixed-public-engine'
+      or digest!=acceptance['artifact_sha256'] or (build/'source-commit.txt').read_text().strip()!=acceptance['runtime_source_commit']
+      or build_features!=set(acceptance['build_features'])):raise ValueError('artifact not accepted by the whole-port audit')
+ observer=PublicThroughput() if measure else None
  if fixture not in ('code','prose') or profile not in ('q8','q2'):raise ValueError('public scope')
  label=f'language-{fixture}-intel-mtp-four-lookahead-down-integer-grouped-ple-gu-stride-shared-head-gpu-host'
  env,memory,mode=protected.select_trial(label,out/'intel.json')
@@ -69,7 +80,7 @@ def run():
  sources=[]
  for path in sorted(protected.MODEL.glob('*.gguf')):
   st=path.stat();sources.append({'path':str(path),'size':st.st_size,'mtime_ns':st.st_mtime_ns})
- (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':json.loads((build/'build-features.json').read_text())['features'],'fixture':fixture,'draft_profile':profile,'seed':0 if 'strata-intel-core' in build_features else 424242,'loaded_session_requests':2 if '--retained-check' in options else 1,'temperature':0,'port_options':sorted(options),'validation_purpose':'execution-and-correctness-only','throughput_acceptance_allowed':False,'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
+ (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':json.loads((build/'build-features.json').read_text())['features'],'fixture':fixture,'draft_profile':profile,'seed':0 if 'strata-intel-core' in build_features else 424242,'loaded_session_requests':2 if '--retained-check' in options else 1,'temperature':0,'port_options':sorted(options),'validation_purpose':'accepted-public-retained-throughput' if measure else 'execution-and-correctness-only','throughput_acceptance_allowed':measure,'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
  before=helper('final-secondary-state.py');(out/'host-before.json').write_text(json.dumps(before,indent=2)+'\n')
  if before['nvidia_compute_process_count'] or any(r['used_bytes']>160*1024**2 for r in before['intel']['xe_memory']):raise ValueError('GPU not free')
  if before['admission']['state']['admission']['active'] or before['admission']['state']['admission']['waiting']:raise ValueError('admission not idle')
@@ -90,6 +101,9 @@ def run():
     if line.startswith('strata_public_preview='):
      text=json.loads(line.split('=',1)[1]);print('Public fixture generation (not saved):\n'+text,flush=True)
     else:
+     if observer:
+      try:observer.observe(line)
+      except ValueError:observer.failed=True  # Drain and join the child before rejecting timing.
      log.write(line);log.flush()
      if line.rstrip()=='strata_decode_start':
       # Root observer only: aggregate physical residency; no GPU submission or
@@ -105,6 +119,11 @@ def run():
   good=not after['admission']['state']['admission']['paused'] and after['kernel_fault_counts']==before['kernel_fault_counts'] and not after['nvidia_compute_process_count'] and all(r['used_bytes']<160*1024**2 for r in after['intel']['xe_memory'])
   print(json.dumps({'normal_admission_restored':not after['admission']['state']['admission']['paused'],'faults_unchanged':after['kernel_fault_counts']==before['kernel_fault_counts'],'intel_used_bytes':[r['used_bytes'] for r in after['intel']['xe_memory']],'cleanup_accepted':good}),flush=True)
   if not good:raise ValueError('cleanup evidence failed')
+ if observer:
+  timing=observer.finish(json.loads((out/'intel.json').read_text()),before,after)
+  timing.update({'runtime_source_commit':acceptance['runtime_source_commit'],'artifact_sha256':digest,'audit_reference':acceptance['audit_reference']})
+  (out/'throughput.json').write_text(json.dumps(timing,indent=2)+'\n')
+  print(json.dumps({'accepted_engine_throughput':[r['last_prompt_inclusive_tokens_per_second'] for r in timing['requests']]}),flush=True)
 def registration_probe():
  # An explicitly synthetic parser check: no privileged query, model load or GPU.
  build=BASE/sys.argv[2];profile=sys.argv[3]
