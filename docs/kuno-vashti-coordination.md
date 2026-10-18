@@ -6,9 +6,9 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `9bd006d68ea5dd98a0d16d9ecf4dc6394fb26337`. Read the
+`codex/strata-rust-port`, runtime source `e1ba6d5be310f1b5d41aaea7ded885e753aa2d51`. Read the
 [current source audit](kuno-strata-current-source-audit.md),
-[grouped replay/completion receipt](kuno-strata-rewrite-completion.md#native-grouped-replay-and-fused-gr-completion-inventory-2026-10-17)
+[native dense/prompt receipt](kuno-strata-rewrite-completion.md#default-native-wide-dense-and-prompt-helper-connection-2026-10-17)
 and [completion gate](kuno-strata-rewrite-completion.md). Rewrite incomplete;
 speed gate closed, work CPU-only. Required Vashti changes: none.
 

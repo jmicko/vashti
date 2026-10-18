@@ -1,40 +1,41 @@
-<!-- Current resume: 2026-10-17, source 3d7b0752f34d0ecdaee0817a7483d87ecc926a98, codex/strata-rust-port.
-CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 # Native DASLab/Strata checkpoint — 2026-10-17
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `9bd006d68ea5dd98a0d16d9ecf4dc6394fb26337`, branch
+**Current CPU-only source:** `e1ba6d5be310f1b5d41aaea7ded885e753aa2d51`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [grouped replay/completion receipt](kuno-strata-rewrite-completion.md#native-grouped-replay-and-fused-gr-completion-inventory-2026-10-17).
-Two actual connection defects are corrected: normal grouped native windows now
-admit direct replay with a distinct immutable fold-mode key, and completion/report
-inventories use native `[0,36,12]` separate status folds instead of legacy
-`[97,36,12]`. GR math still writes its sticky fault directly. Prepared stage/fault/
-state proofs, exact family deltas, commit and erasure gates remain mandatory.
-The conservative selected namespace inventory is 126 within the original 128
-branch bound. Previous bounded QSA state and the whole native branch remain.
+and [native dense/prompt receipt](kuno-strata-rewrite-completion.md#default-native-wide-dense-and-prompt-helper-connection-2026-10-17).
+Original default wide Q4_K/Q5_K/IQ4_XS/Q8_0/IQ4_NL kernels now connect target and
+MTP consumers alongside Q6_K, with exact RHS counts1..8, original packed loads,
+contribution groups and XOR reductions. The shared packed-helper dependency in
+all six prompt dequantizers is preserved and regression-tested. Original native
+replay/fold inventories, private owners and prior bounded QSA state remain.
+The selected126/128 branch inventory is per request: actual drain/erase clears
+recordings/templates before retained rebinding, while model weights stay loaded.
 
-596 distinct selected CPU cases / 84 nonempty suites, strict core/off binary lint,
-changed formatting and whitespace pass. Frozen artifact SHA256
-`044f92abe50b5337f309831564bdbaf3979e5ad2ffd5d0d91a442db34f08726b`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
-verified. Only its early pre-adapter offline branch ran: 372 shader variants /
-139 physical-pointer compiler checks / five rounded-product modules / 32 matrix
-configurations pass. No arithmetic shader, GPU heap owner, model copy, content
-persistence, public API or configuration changed. These are CPU/compiler results,
-not evidence of physical numerical/model/recovery/throughput acceptance.
+600 distinct selected CPU cases / 85 nonempty suites, strict core/off **binary**
+Clippy, changed Rust formatting and whitespace pass. This is not an unfiltered
+repository test run. Frozen artifact SHA256
+`fd679d6f010624aded6b1e0367826bf54a99a894bbdbd874636674b0f3f2656f`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
+verified. Only its early pre-adapter offline branch ran: 397 shader variants /
+139 physical-pointer compiler checks / 72 rounded-product modules / 32 matrix
+configurations pass. The first dense artifact failed on the prompt helper include;
+the final source/artifact above fixes that coupled consumer. See the full receipt.
+No new GPU heap owner, model duplicate, content persistence, public API or
+configuration change; shader producers changed. These are CPU/compiler results.
 
-**Whole rewrite incomplete; speed gate closed.** The indexed audit traces entry,
-loading/cleanup, sampling and accepted-token flow, then records the real replay/
-completion defects and their correction. Next finish selected operator/dense/
-expert/prompt/queue/ownership source review and retained mixed-request graph
-capacity/lifetime accounting. Protected whole-model prompt/count1/multirow,
-accept/reject/EOS/cap/context, retained/hot-request and failure/all-resource
-recovery acceptance remain required before speed. CLI compiled-public/one-request;
+**Whole rewrite incomplete; speed gate closed.** Finish remaining actual selected
+operator/prompt/queue/ownership source review and necessary backend substitutions.
+The next focused PLE audit should inspect emitted materialized-product rounding
+for both Gate/PromptGate against native `gate_kernel`, not infer it from a WGSL
+product temporary. Protected whole-model prompt/count1/multirow, accept/reject/
+EOS/cap/context, retained mixed/hot-request and failure/all-resource recovery
+acceptance remain required before speed. CLI compiled-public/one-request;
 private caller independently gated. Goal active CPU-only; sudo refresh only
 currently authorized. No GPU/model inference/service/install/release/frontend
 operation. Required Vashti/API changes: none. Canonical checkout and inherited
 untracked cache preserved.
+
 
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths

@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `9bd006d68ea5dd98a0d16d9ecf4dc6394fb26337`, isolated `codex/strata-rust-port`.
+Runtime source: `e1ba6d5be310f1b5d41aaea7ded885e753aa2d51`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -97,11 +97,106 @@ remain excluded. Cold count1's ungrouped namespace is separate. A conservative
 selected-shape inventory is 126 within the original 128-branch bound, including
 all four cold count-one roles. This does not claim an unbounded cache of every
 optional diagnostic/full-row/coupled-mode combination in one retained context.
-That broader reuse/capacity contract remains part of the final audit.
+The retained request boundary below closes the cross-request accumulation
+question; it does not authorize changing modes during an active request.
 
 CPU evidence is in the linked completion receipt. No new arithmetic kernel, GPU
 heap owner, model copy, content persistence, protocol endpoint or Vashti behavior.
 The artifact's offline shader branch is permitted; no live model/speed test ran.
+
+## Retained graph lifetime: cross-request capacity traced
+
+`ResidentAdmission::end_request_io_reuse` consumes the actual inspected erase
+receipt before releasing its nonce. The backend's `end_transient_io_reuse`
+performs `sanitize_transient_io(true)` and only then `finish_reuse`.
+`sanitize_transient_io` refuses outstanding leases, drains the original streams,
+completes primary access, and calls `clear_completed_recordings` before erasing
+request state. That method refuses live flights/uploads, finishes ordinary and
+draft handoffs, drops request scopes, and clears recordings/initialized branches.
+`TransientIo::erase_checked` also clears binding/INFO caches, branch parameter
+templates and their private invocation, and zeroes INFO pages. `finish_reuse`
+requires no buffers, charged private bytes, pending INFO or caches before nonce
+reuse. `bind_completed_native_request` authenticates that original reset receipt,
+restores the actual route map/usage, checks faults, and rearms a new scope. Its
+paired MTP reset joins the original native request before accepting original
+private owner erasure; failure retires the context instead of publishing cursor0.
+
+Thus the selected 126/128 inventory is **per request**. Sequential greedy and
+coupled requests do not accumulate branch shapes. Original model weights and
+kernel programs remain retained, but command recordings and mutable parameter
+templates are recorded again for each request. This is an explicit privacy and
+request-ownership backend substitution, with an unmeasured recording cost; it is
+not a claim of hot command-graph reuse across requests or measured recovery.
+Current source: `executor.rs::end_request_io_reuse`, vendor `stream.rs::{end_transient_io_reuse,sanitize_transient_io}`,
+`strata_graph.rs::clear_completed_recordings`, `transient_io.rs::{erase_checked,finish_reuse}`,
+`strata_parameters.rs::clear`, and `resident_model_public_reset.rs`/`resident_mtp_device.rs`.
+
+## Default dense wide paths: missing coupled producers now connected
+
+Pinned Intel `native_mmvq.dp.cpp::wide_k/try_wide` defaults Q4_K/Q5_K/IQ4_XS to
+its wide kernel; `wide_32/try_wide32` defaults Q8_0/IQ4_NL to wide32. Rust already
+selected its native Q6_K wide path, but these other formats still used a generic
+32-value/lane kernel with FMA and unspecified `subgroupAdd` order. This was a real
+selected-path difference, not an optional upstream experiment. Original header
+inspection confirms actual target attention/shared matrices in all these formats:
+47 shared DOWN IQ4_NL plus layer47 Q8_0, and Q4_K/Q5_K/IQ4_XS attention/shared
+roles. Original MTP's nine converted projection matrices are Q8_0. Embedding
+formats in that header inventory do not imply GEMV consumers; their distinct
+original gather paths remain.
+
+`strata_dense::project` now selects exact real RHS counts1..8 for all six formats;
+`project_indexed` uses the same native Q8_0 wide path with its original ID/page
+bounds. `strata_native_dense.wgsl` connects original packed weights, existing
+single Q8_1 planes, one row/32-lane subgroup and four rows/128-thread block:
+Q8_0 has two lanes/block, IQ4_NL one lane/block, and K formats eight lanes/block.
+Each lane loads its original weight fields once and applies them across all real
+RHS; Q4/Q5 retain separate minima, IQ4 retains its register codebook and signed
+scales. Original native contribution grouping and XOR16/8/4/2/1 reductions replace
+the generic FMA/reduction path. The superseded generic compute body is removed.
+Output/fault owners, graph dependencies and Q8 preparation remain original.
+
+All native dense descriptors use the original padded aligned owner. Q4/Q5's
+aligned16-byte loads remain aligned; IQ4_XS's two8-byte reads use the same checked
+A2 aligned-vector reconstruction as the already ported Q6_K and wide32 kernels.
+The host checks owner size/base alignment; no repack, model duplicate or private
+scratch is introduced. `STRATA_ROUND_PRODUCTS` sends these native expressions,
+including Q6_K/head variants, through the existing actual registry's FMul
+NoContraction postpass. This explicitly fixes backend product-rounding rather
+than assuming WGSL/Vulkan and Intel precise-mode compilation choose identical
+contraction. Physical numerical agreement remains unproved.
+
+CPU tests independently decode original packed GGUF values for five new formats,
+all eight RHS, signed/high-scale/minimum fields and partial block waves; check
+actual A2 reconstruction against original bytes within padded owners; and parse,
+validate and emit all48 dense plus one indexed specialization, with actual
+owner READ/WRITE use and real rounding postpass. See the completion receipt for
+the complete selected suite/offline artifact (600 CPU cases/85 suites and
+397 offline variants/139 physical checks/72 rounded modules/32 matrix configs).
+The prompt dequantizers are real shared-helper consumers: the first offline
+artifact caught the removed delimiter dependency; final source preserves all
+original factors/codes helpers and directly includes them in prompt Dequant.
+This does not establish physical
+memory traffic, numerical output, whole-model acceptance or performance.
+
+## GR/GDN selected defaults: call sites traced further
+
+Actual `resident_model_batch::run_global` consumes pending GR writes, PLE at
+layer1, GR attention read, prepared GDN/QSA, GR FFN read, actual routed/shared
+fork/join and final GR/head. Pinned `fused_gr.dp.cpp` selects `gr_norm_split()`
+and `gr_down_sliced()` by default: split256-thread stream normalization,
+80 slices, ordered slice reduction, then up/read. Rust's actual prepared roots
+and `strata_gr` dispatches select that family. The newer hc checks/variants in
+the same upstream file are not this default: absent `STRATA_HC_CHECK`, its actual
+selector is kHcPlain. This traces the selected family; remaining numeric details
+and physical source/layout acceptance still belong to the full operator audit.
+
+Pinned `verify.cpp` invokes multi conv/L2, BF16 alpha/beta, native quantized Z and
+`gdn_step_norm_multi`. Its default in `verify_kernels.dp.cpp` is the512-thread
+four-row-group/128-column step; `STRATA_GDN_SPLIT` is opt-in. Rust's actual
+`resident_gdn_batch` uses that512-thread recurrence, original deferred raw history
+and state pair; native128-thread accepted-state commit and deferred prefix state
+remain as documented earlier. Do not mistake that separate commit default for a
+missing split-step optimization or infer defaults from the CUDA sibling.
 
 ## Source review still to finish
 
@@ -109,9 +204,12 @@ The artifact's offline shader branch is permitted; no live model/speed test ran.
   producers, GR/GDN/QSA/PLE operators and prompt overlays against the pinned
   call sites and prior receipts. Explicitly accept or resolve every remaining
   storage, grouping, queue and math substitution; filenames alone do not pass.
-- Complete default and retained mixed-request graph-shape/lifetime accounting,
-  including optional sampling modes, without inventing uncharged metadata or
-  permitting stale programs. Preserve the finite cache and exact original roots.
+- Preserve the now-traced per-request126/128 graph lifetime and original
+  owner erasure. Physical retained mixed-request execution still needs acceptance.
+- Inspect actual PLE Gate/PromptGate emitted product materialization against
+  native `gate_kernel`'s explicit MUL requirement; the WGSL temporary alone is
+  not evidence of NoContraction or physical parity. Resolve both consumers and
+  any coupled rounding dependency together.
 - Review remaining queue/INFO/descriptor hazards, shared/MTP fork/commit order,
   sampler state and output/resource closure as one connected schedule.
 
