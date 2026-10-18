@@ -43,47 +43,31 @@ impl Kernel {
             self.columns / 2 + self.columns / 16,
             include_str!("strata_dense.wgsl")
         );
-        if self.dtype == 14 && !self.indexed {
-            // Native A2 loads are real aligned16-byte buffer reads. Keep the
-            // same original padded owner; only this selected Q6 descriptor is
-            // vectorized. The byte/half helpers still address original bytes.
-            let prefix = source
-                .split_once("@compute")
-                .unwrap()
-                .0
-                .replace("weight:array<u32>", "weight:array<vec4<u32>>")
-                .replace("weight[at/4u]", "weight[at/16u][(at/4u)%4u]")
-                .replace("weight[at/4u+1u]", "weight[(at/4u+1u)/4u][(at/4u+1u)%4u]");
-            return format!("{prefix}{}", include_str!("strata_native_q6.wgsl"));
-        }
-        // Match upstream native_mmvq's compile-time packed dot expansion. Keep
-        // integer accumulation order, original weight addresses and Q8 scales.
-        let start = source
-            .find("            for(var word=0u;word<GROUP_VALUES/4u;word++) {")
-            .expect("dense packed dot loop");
-        let end = source[start..]
-            .find("            let at=2u*PACKED_WORDS")
-            .unwrap()
-            + start;
-        let loop_source = &source[start..end];
-        let body = loop_source.split_once('{').unwrap().1;
-        let body = &body[..body.rfind('}').unwrap()];
-        let expansion = (0..if self.dtype == 14 { 4 } else { 8 })
-            .map(|word| format!("{{let word={word}u;{body}}}\n"))
-            .collect::<String>();
-        source.replace_range(start..end, &expansion);
+        // Native default wide K/32 paths share each packed weight load across
+        // all real RHS. Every descriptor keeps its original padded owner.
+        let prefix = source
+            .replace("weight:array<u32>", "weight:array<vec4<u32>>")
+            .replace("weight[at/4u]", "weight[at/16u][(at/4u)%4u]")
+            .replace("weight[at/4u+1u]", "weight[(at/4u+1u)/4u][(at/4u+1u)%4u]");
+        let body = if self.dtype == 14 {
+            include_str!("strata_native_q6.wgsl")
+        } else {
+            include_str!("strata_native_dense.wgsl")
+        };
+        // The registry and offline validator apply the same NoContraction
+        // materialization to the original native multiply/add expressions.
+        source =
+            format!("// STRATA_ROUND_PRODUCTS: original native dense expressions.\n{prefix}{body}");
         if self.indexed {
             source = source.replace(
                 "count:u32}",
                 "count:u32,source_first:u32,source_rows:u32,subset_first:u32,reserved:u32}",
             );
             source=source.replace("@group(0) @binding(4) var<uniform> p:Params;","@group(0) @binding(4) var<storage,read> row_ids:array<u32>;\n@group(0) @binding(5) var<uniform> p:Params;");
-            source=source.replace("arrayLength(&weight)*4u<ROWS*ROW_BYTES","arrayLength(&weight)*4u<p.source_rows*ROW_BYTES || p.subset_first>arrayLength(&row_ids) || ROWS>arrayLength(&row_ids)-p.subset_first");
-            source=source.replace("let row=g.x*4u+sg;var sum=vec4<f32>(0.0);",r#"let ordinal=g.x*4u+sg;var row=0u;var valid_row=ordinal<ROWS;
-            if valid_row {let selected=row_ids[p.subset_first+ordinal];if selected<p.source_first || selected-p.source_first>=p.source_rows {valid_row=false;if lane==0u {atomicOr(&fault[0],8u);}}else{row=selected-p.source_first;}}
-            var sum=vec4<f32>(0.0);"#);
+            source=source.replace("arrayLength(&weight)*16u<ROWS*ROW_BYTES","arrayLength(&weight)*16u<p.source_rows*ROW_BYTES || p.subset_first>arrayLength(&row_ids) || ROWS>arrayLength(&row_ids)-p.subset_first");
+            source=source.replace("let row=group.x*4u+sg;",r#"let ordinal=group.x*4u+sg;var row=0u;var valid_row=ordinal<ROWS;
+            if valid_row {let selected=row_ids[p.subset_first+ordinal];if selected<p.source_first || selected-p.source_first>=p.source_rows {valid_row=false;if lane==0u {atomicOr(&fault[0],8u);}}else{row=selected-p.source_first;}}"#);
             source = source.replace("if row<ROWS", "if valid_row");
-            // Bound writes against the complete original source page interval.
             source = source
                 .replace("p.output_stride<ROWS", "p.output_stride<p.source_rows")
                 .replace(
@@ -363,6 +347,10 @@ static PREPARES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 pub(crate) fn prepares() -> u64 {
     PREPARES.load(std::sync::atomic::Ordering::Relaxed)
 }
+
+#[cfg(test)]
+#[path = "strata_native_dense_tests.rs"]
+mod native_wide_tests;
 
 #[cfg(test)]
 mod native_q6_tests {
@@ -685,9 +673,8 @@ pub(crate) fn project(
         || rows > 16384
         || fault.size_in_used() != 4
         || weight.size_in_used() < layout.total_bytes as u64
-        || dtype == 14
-            && (!weight.size_in_used().is_multiple_of(16)
-                || !weight.offset_start.unwrap_or(0).is_multiple_of(16))
+        || !weight.size_in_used().is_multiple_of(16)
+        || !weight.offset_start.unwrap_or(0).is_multiple_of(16)
         || ![&weight, &planes, &output, &fault]
             .iter()
             .all(|h| h.stream == planes.stream)
@@ -724,15 +711,7 @@ pub(crate) fn project(
                 rows,
                 columns,
                 row_bytes: layout.row_bytes,
-                members: if dtype == 14 {
-                    count
-                } else if count == 1 {
-                    1
-                } else if count <= 4 {
-                    4
-                } else {
-                    8
-                },
+                members: count,
                 indexed: false,
             }),
             CubeCount::Static(rows.div_ceil(4) as u32, 1, 1),
@@ -747,7 +726,6 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         .flat_map(|members| {
             [8, 12, 13, 14, 20, 23]
                 .into_iter()
-                .filter(move |&dtype| dtype == 14 || [1, 4, 8].contains(&members))
                 .map(move |dtype| (members, dtype))
         })
         .map(|(members, dtype)| {
@@ -858,6 +836,8 @@ pub(crate) fn project_indexed(
         || subset_rows > source_rows
         || fault.size_in_used() != 4
         || weight.size_in_used() < (source_rows * row_bytes) as u64
+        || !weight.size_in_used().is_multiple_of(16)
+        || !weight.offset_start.unwrap_or(0).is_multiple_of(16)
         || subset_first
             .checked_add(subset_rows)
             .is_none_or(|n| n as u64 * 4 > ids.size_in_used())
