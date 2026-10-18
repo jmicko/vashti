@@ -106,6 +106,32 @@ pub(crate) fn profile_native_target() -> bool {
     crate::strata_intel_core::enabled()
         && std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("round-8")
 }
+/// Only the protected compiled-public caller can select operator timing. The
+/// ordinary engine path remains uninstrumented, including private callers.
+pub(crate) fn native_profile_authorized() -> bool {
+    !profile_native_target() || std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+}
+
+/// One actual global-controller verification window. Pending commit/draft work
+/// retains its original fences and recordings; no extra host drain is added.
+/// Each profiling flight owns its query pool independently of this selector.
+pub(crate) struct NativeProfileRound(bool);
+impl NativeProfileRound {
+    pub(crate) fn new(round: u64) -> Self {
+        let active = profile_native_target() && native_profile_authorized() && round == 8;
+        if active {
+            cubecl::wgpu::set_native_strata_profile_active(true);
+        }
+        Self(active)
+    }
+}
+impl Drop for NativeProfileRound {
+    fn drop(&mut self) {
+        if self.0 {
+            cubecl::wgpu::set_native_strata_profile_active(false);
+        }
+    }
+}
 pub(crate) fn specialized_members() -> bool {
     crate::strata_intel_core::enabled()
         && std::env::var("KUNO_STRATA_MEMBER_WIDTHS").as_deref() == Ok("classified-public")

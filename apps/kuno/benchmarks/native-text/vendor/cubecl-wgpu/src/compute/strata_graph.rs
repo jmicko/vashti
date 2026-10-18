@@ -1828,6 +1828,9 @@ impl Graph {
                     && r.key == key
                     && r.family == self.family
                     && r.signature == signature
+                    // A timestamped recording must not become the ordinary
+                    // replay after the one sampled window has ended.
+                    && r.profile.is_some() == profiling
                     && !self.flights.live(r.id)
             })
             .filter(|_| !profiling)

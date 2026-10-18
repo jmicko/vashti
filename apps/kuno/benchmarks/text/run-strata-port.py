@@ -18,12 +18,15 @@ def run():
  # A timing run still requires the same whole-engine completion/erasure checks.
  # Only the exact artifact accepted by the committed audit may be measured.
  measure='--throughput-check' in options
+ operator_check='--native-profile' in options
+ if operator_check and (options!={'--execution-check','--intel-core','--native-profile'} or fixture!='code' or profile!='q2'):
+  raise ValueError('operator sample requires unchanged core/Q2 public code request')
  if measure and (options!={'--execution-check','--retained-check','--intel-core','--throughput-check'} or fixture!='code' or profile!='q2'):
   raise ValueError('throughput requires unchanged accepted core/Q2 public repeat')
  if '--execution-check' not in options:
   raise ValueError('rewrite incomplete: only --execution-check is allowed before the completion audit')
- if options & {'--profile','--native-profile'}:
-  raise ValueError('operator profiling is disabled until the whole rewrite is complete')
+ if '--profile' in options:
+  raise ValueError('legacy operator profiling is not part of the accepted core')
  if '--retained-check' in options and ('--intel-core' not in options or profile!='q2'):
   raise ValueError('retained check requires the coherent Intel core and original Q2 sidecar')
  if os.getuid()!=0:raise ValueError('execution checks require protected root runner')
@@ -80,7 +83,7 @@ def run():
  sources=[]
  for path in sorted(protected.MODEL.glob('*.gguf')):
   st=path.stat();sources.append({'path':str(path),'size':st.st_size,'mtime_ns':st.st_mtime_ns})
- (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':json.loads((build/'build-features.json').read_text())['features'],'fixture':fixture,'draft_profile':profile,'seed':0 if 'strata-intel-core' in build_features else 424242,'loaded_session_requests':2 if '--retained-check' in options else 1,'temperature':0,'port_options':sorted(options),'validation_purpose':'accepted-public-retained-throughput' if measure else 'execution-and-correctness-only','throughput_acceptance_allowed':measure,'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
+ (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':json.loads((build/'build-features.json').read_text())['features'],'fixture':fixture,'draft_profile':profile,'seed':0 if 'strata-intel-core' in build_features else 424242,'loaded_session_requests':2 if '--retained-check' in options else 1,'temperature':0,'port_options':sorted(options),'validation_purpose':'accepted-public-retained-throughput' if measure else 'selected-public-operator-diagnosis' if operator_check else 'execution-and-correctness-only','throughput_acceptance_allowed':measure,'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
  before=helper('final-secondary-state.py');(out/'host-before.json').write_text(json.dumps(before,indent=2)+'\n')
  if before['nvidia_compute_process_count'] or any(r['used_bytes']>160*1024**2 for r in before['intel']['xe_memory']):raise ValueError('GPU not free')
  if before['admission']['state']['admission']['active'] or before['admission']['state']['admission']['waiting']:raise ValueError('admission not idle')
@@ -113,6 +116,10 @@ def run():
    status=p.wait()
   print(json.dumps({'exit':status,'receipt':(out/'intel.json').exists()}),flush=True)
   if status or not (out/'intel.json').exists():raise ValueError('whole port run failed')
+  if operator_check:
+   report=json.loads((out/'intel.json').read_text())['record']
+   if not report['native_operator_profile_requested'] or not report['native_operator_profile']:
+    raise ValueError('actual selected operator sample is missing')
  finally:
   helper('host-state.py','resume')
   after=helper('final-secondary-state.py');(out/'host-after.json').write_text(json.dumps(after,indent=2)+'\n')

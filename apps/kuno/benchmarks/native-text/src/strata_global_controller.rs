@@ -309,7 +309,7 @@ pub(super) fn run<'m, 'f>(
         || !executor.global_target_scope()?
         || target.completed_target_rows_cursor(executor)? != 0
         || crate::strata_port::profile_target()
-        || crate::strata_port::profile_native_target()
+        || !crate::strata_port::native_profile_authorized()
     {
         return Err("global request controller scope rejected".into());
     }
@@ -600,6 +600,7 @@ pub(super) fn run<'m, 'f>(
         let previous_total = history.len();
         let mut delivered = None;
         let mut delivery_error = None;
+        let native_profile = crate::strata_port::NativeProfileRound::new(rounds);
         let verification = target.verify_native_prefix(executor, &inputs, cancel, &mut |phase| {
             use crate::resident_model::batch::PrefixPhase;
             match phase {
@@ -677,6 +678,7 @@ pub(super) fn run<'m, 'f>(
                 }
             }
         });
+        drop(native_profile);
         // The original model already ran its terminal failure cleanup. Preserve
         // the original delivery error rather than replacing its typed cause.
         if let Some(error) = delivery_error {

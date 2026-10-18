@@ -1296,6 +1296,8 @@ pub(crate) fn run(
             "loaded_session_requests":if input.retained_check {2}else{1},
             "identical_public_repeat_matched":input.retained_check,
             "native_graph_phase_counters":graph_snapshots,
+            "native_operator_profile_requested":crate::strata_port::profile_native_target(),
+            "native_operator_profile":cubecl::wgpu::native_strata_operator_profile(),
             "target_close":{"main_buffers":done.target_main.buffers,"main_bytes":done.target_main.bytes,
                 "source_buffers":done.target_sources.buffers,"source_bytes":done.target_sources.bytes},
             "speed_acceptance":false,"full_rewrite_accepted":false});

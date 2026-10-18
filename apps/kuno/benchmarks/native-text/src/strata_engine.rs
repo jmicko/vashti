@@ -367,7 +367,7 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
             || device.adapter_info().vendor != 0x8086
             || cancel.load(Ordering::Acquire)
             || crate::strata_port::profile_target()
-            || crate::strata_port::profile_native_target()
+            || !crate::strata_port::native_profile_authorized()
             || graph.verify_unchanged().is_err()
             || draft_graph.is_some_and(|d| {
                 d.target_binding_id() != Some(graph.binding_id()) || d.verify_unchanged().is_err()
