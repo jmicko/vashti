@@ -1715,6 +1715,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_dispatch = if let Some(selected) = public_target_dispatch {
         target_lab_build::validate_runtime(selected)?;
         target_lab_build::name(selected)
+    } else if mode == "gr-batch-probe" && strata_intel_core::enabled() {
+        if !inline_dispatch
+            || raw_dispatch.as_deref() != Some(std::ffi::OsStr::new("inline"))
+            || count1_hybrid_cap.is_some()
+        {
+            return Err(
+                "Native GR numeric probe requires explicit original inline dispatch".into(),
+            );
+        }
+        "inline"
     } else if resident_expert_calibration && inline_dispatch {
         if raw_dispatch.as_deref() != Some(std::ffi::OsStr::new("inline"))
             || count1_hybrid_cap.is_some()
