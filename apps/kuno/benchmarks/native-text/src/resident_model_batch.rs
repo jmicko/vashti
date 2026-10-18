@@ -5368,11 +5368,17 @@ impl Workspace {
         }
         self.global_moe
             .as_ref()
-            .ok_or(chunk_error!())?
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?
             .validate_idle()
             .inspect_err(|_| chunk_failure_site!())?;
-        e.check_client(m.arena.client().map_err(u::fault)?)
-            .inspect_err(|_| chunk_failure_site!())?;
+        e.check_client(
+            m.arena
+                .client()
+                .map_err(u::fault)
+                .inspect_err(|_| chunk_failure_site!())?,
+        )
+        .inspect_err(|_| chunk_failure_site!())?;
         e.check_resident_admission(&m.admission)
             .inspect_err(|_| chunk_failure_site!())?;
         m.graph
@@ -5415,22 +5421,25 @@ impl Workspace {
             u::zero_many(&m.arena, &rows.ids()).inspect_err(|_| chunk_failure_site!())?;
         }
         m.admission
-            .shared_target_weights()?
+            .shared_target_weights()
+            .inspect_err(|_| chunk_failure_site!())?
             .gather(
                 m.graph,
                 &m.arena,
                 m.b.logit_packet,
                 m.b.fault,
                 tokens,
-                u::handle(&m.arena, self.outer.block[0])?,
-                u::handle(&m.arena, self.outer.residual[0])?,
+                u::handle(&m.arena, self.outer.block[0]).inspect_err(|_| chunk_failure_site!())?,
+                u::handle(&m.arena, self.outer.residual[0])
+                    .inspect_err(|_| chunk_failure_site!())?,
                 false,
                 cancel,
             )
             .inspect_err(|_| chunk_failure_site!())?;
         self.global_moe
             .as_mut()
-            .ok_or(chunk_error!())?
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?
             .begin(m.graph, &m.arena, *count)
             .inspect_err(|_| chunk_failure_site!())?;
         // Layer0 performs attention+FFN, hence two residual swaps. The actual
@@ -5438,27 +5447,31 @@ impl Workspace {
         // Request-owned reads start now; selected decode joins/uploads EMB
         // after the real layer0 prefix. Uploads stay outside retained math.
         let mut ple_invocation = Some(if deferred_ple {
-            self.ple.prepare_deferred(
-                m,
-                self.outer.residual[0],
-                self.outer.residual[1],
-                &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
-                *start,
-                &ids,
-                &positions,
-                cancel,
-            )?
+            self.ple
+                .prepare_deferred(
+                    m,
+                    self.outer.residual[0],
+                    self.outer.residual[1],
+                    &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
+                    *start,
+                    &ids,
+                    &positions,
+                    cancel,
+                )
+                .inspect_err(|_| chunk_failure_site!())?
         } else {
-            self.ple.prepare_invocation(
-                m,
-                self.outer.residual[0],
-                self.outer.residual[1],
-                &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
-                *start,
-                &ids,
-                &positions,
-                cancel,
-            )?
+            self.ple
+                .prepare_invocation(
+                    m,
+                    self.outer.residual[0],
+                    self.outer.residual[1],
+                    &BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D),
+                    *start,
+                    &ids,
+                    &positions,
+                    cancel,
+                )
+                .inspect_err(|_| chunk_failure_site!())?
         });
         // Arm each original state transaction before capture. All attention
         // inputs use the same authenticated GR MIXED scratch owner; each layer
@@ -5474,36 +5487,44 @@ impl Workspace {
             u::cancel(cancel).inspect_err(|_| chunk_failure_site!())?;
             match stage {
                 Layer::Gdn(stage, public) => {
-                    attention_invocations.gdn[layer] = Some(stage.prepare_batch(
-                        m.graph,
-                        &m.arena,
-                        public,
-                        &mut self.gdn,
-                        mixed,
-                        self.outer.block[0],
-                        &attention_spans,
-                        *start as u64,
-                        m.b.fault,
-                        select.is_some(),
-                        cancel,
-                    )?);
+                    attention_invocations.gdn[layer] = Some(
+                        stage
+                            .prepare_batch(
+                                m.graph,
+                                &m.arena,
+                                public,
+                                &mut self.gdn,
+                                mixed,
+                                self.outer.block[0],
+                                &attention_spans,
+                                *start as u64,
+                                m.b.fault,
+                                select.is_some(),
+                                cancel,
+                            )
+                            .inspect_err(|_| chunk_failure_site!())?,
+                    );
                 }
                 Layer::Qsa(stage, public) => {
                     let mut selector =
                         qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
-                    attention_invocations.qsa[layer] = Some(stage.prepare_batch(
-                        m.graph,
-                        &m.arena,
-                        public,
-                        &mut selector,
-                        &mut self.qsa,
-                        mixed,
-                        self.outer.block[0],
-                        &attention_spans,
-                        *start as u64,
-                        m.b.fault,
-                        cancel,
-                    )?);
+                    attention_invocations.qsa[layer] = Some(
+                        stage
+                            .prepare_batch(
+                                m.graph,
+                                &m.arena,
+                                public,
+                                &mut selector,
+                                &mut self.qsa,
+                                mixed,
+                                self.outer.block[0],
+                                &attention_spans,
+                                *start as u64,
+                                m.b.fault,
+                                cancel,
+                            )
+                            .inspect_err(|_| chunk_failure_site!())?,
+                    );
                 }
             }
         }
@@ -5532,15 +5553,26 @@ impl Workspace {
             }
             Some(
                 cubecl_runtime::server::NativeStrataBranch::target_window_with_state(
-                    u8::try_from(*count).map_err(u::fault)?,
-                    u16::try_from(m.context).map_err(u::fault)?,
-                    state_role.ok_or(chunk_error!())?
-                        | (self.ple.native_capture_history_role()? << 1),
+                    u8::try_from(*count)
+                        .map_err(u::fault)
+                        .inspect_err(|_| chunk_failure_site!())?,
+                    u16::try_from(m.context)
+                        .map_err(u::fault)
+                        .inspect_err(|_| chunk_failure_site!())?,
+                    state_role
+                        .ok_or(chunk_error!())
+                        .inspect_err(|_| chunk_failure_site!())?
+                        | (self
+                            .ple
+                            .native_capture_history_role()
+                            .inspect_err(|_| chunk_failure_site!())?
+                            << 1),
                 )
                 .and_then(|key| key.with_deferred_gdn_state(select.is_some() && *count > 1))
                 .and_then(|key| key.with_target_grouped_status_folds(grouped_status_folds))
                 .and_then(|key| key.with_target_ple_handoff(deferred_ple))
-                .map_err(u::fault)?,
+                .map_err(u::fault)
+                .inspect_err(|_| chunk_failure_site!())?,
             )
         } else {
             None
@@ -5562,7 +5594,8 @@ impl Workspace {
                 // source publication/loan boundary, even without enqueue_data.
                 e.strata_global_sources
                     .as_ref()
-                    .ok_or(chunk_error!())?
+                    .ok_or(chunk_error!())
+                    .inspect_err(|_| chunk_failure_site!())?
                     .validate_graph_ready(m.graph)
                     .inspect_err(|_| chunk_failure_site!())?;
                 if deferred_ple {
@@ -5571,8 +5604,10 @@ impl Workspace {
                         key,
                         self.global_moe
                             .as_ref()
-                            .ok_or(chunk_error!())?
-                            .invocation_controls(*start)?,
+                            .ok_or(chunk_error!())
+                            .inspect_err(|_| chunk_failure_site!())?
+                            .invocation_controls(*start)
+                            .inspect_err(|_| chunk_failure_site!())?,
                         m.b.fault,
                         m.retired.clone(),
                     )
@@ -5582,18 +5617,22 @@ impl Workspace {
                             .ple
                             .finish_deferred(
                                 m,
-                                ple_invocation.take().ok_or(chunk_error!())?,
+                                ple_invocation
+                                    .take()
+                                    .ok_or(chunk_error!())
+                                    .inspect_err(|_| chunk_failure_site!())?,
                                 cancel,
                             )
                             .inspect_err(|_| chunk_failure_site!())?;
                         ple_invocation = Some(ready);
                         m.arena
                             .client()
-                            .map_err(u::fault)?
+                            .map_err(u::fault)
+                            .inspect_err(|_| chunk_failure_site!())?
                             .submit_native_strata_experts()
                             .map_err(u::fault)
                             .inspect_err(|_| chunk_failure_site!())?;
-                        Some(prefix.finish()?)
+                        Some(prefix.finish().inspect_err(|_| chunk_failure_site!())?)
                     } else {
                         None
                     }
@@ -5603,10 +5642,13 @@ impl Workspace {
                         key,
                         self.global_moe
                             .as_ref()
-                            .ok_or(chunk_error!())?
-                            .invocation_controls(*start)?,
+                            .ok_or(chunk_error!())
+                            .inspect_err(|_| chunk_failure_site!())?
+                            .invocation_controls(*start)
+                            .inspect_err(|_| chunk_failure_site!())?,
                         m.b.fault,
-                    )?
+                    )
+                    .inspect_err(|_| chunk_failure_site!())?
                 }
             } else {
                 None
@@ -5617,13 +5659,16 @@ impl Workspace {
         if let Some(key) = branch.filter(|_| replay.is_none()) {
             m.arena
                 .client()
-                .map_err(u::fault)?
+                .map_err(u::fault)
+                .inspect_err(|_| chunk_failure_site!())?
                 .begin_native_strata_invocation(
                     key,
                     self.global_moe
                         .as_ref()
-                        .ok_or(chunk_error!())?
-                        .invocation_controls(*start)?,
+                        .ok_or(chunk_error!())
+                        .inspect_err(|_| chunk_failure_site!())?
+                        .invocation_controls(*start)
+                        .inspect_err(|_| chunk_failure_site!())?,
                 )
                 .map_err(u::fault)
                 .inspect_err(|_| chunk_failure_site!())?;
@@ -5645,53 +5690,67 @@ impl Workspace {
             self.shared
                 .complete_native_replay(m.graph, &m.arena, m.b.fault, completed)
                 .inspect_err(|_| chunk_failure_site!())?;
-            pending.ple = Some(self.ple.complete_prepared_replay(
-                m,
-                ple_invocation.take().ok_or(chunk_error!())?,
-                completed,
-                cancel,
-            )?);
+            pending.ple = Some(
+                self.ple
+                    .complete_prepared_replay(
+                        m,
+                        ple_invocation
+                            .take()
+                            .ok_or(chunk_error!())
+                            .inspect_err(|_| chunk_failure_site!())?,
+                        completed,
+                        cancel,
+                    )
+                    .inspect_err(|_| chunk_failure_site!())?,
+            );
             for (layer, stage) in m.layers.iter_mut().enumerate() {
                 u::cancel(cancel).inspect_err(|_| chunk_failure_site!())?;
                 match stage {
                     Layer::Gdn(stage, public) => {
                         pending.gdn[layer] = Some(
-                            stage.complete_prepared_replay(
-                                m.graph,
-                                &m.arena,
-                                public,
-                                &mut self.gdn,
-                                attention_invocations.gdn[layer]
-                                    .take()
-                                    .ok_or(chunk_error!())?,
-                                completed,
-                                cancel,
-                            )?,
+                            stage
+                                .complete_prepared_replay(
+                                    m.graph,
+                                    &m.arena,
+                                    public,
+                                    &mut self.gdn,
+                                    attention_invocations.gdn[layer]
+                                        .take()
+                                        .ok_or(chunk_error!())
+                                        .inspect_err(|_| chunk_failure_site!())?,
+                                    completed,
+                                    cancel,
+                                )
+                                .inspect_err(|_| chunk_failure_site!())?,
                         );
                     }
                     Layer::Qsa(stage, public) => {
                         let mut selector =
                             qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
                         pending.qsa[layer] = Some(
-                            stage.complete_prepared_replay(
-                                m.graph,
-                                &m.arena,
-                                public,
-                                &mut selector,
-                                &mut self.qsa,
-                                attention_invocations.qsa[layer]
-                                    .take()
-                                    .ok_or(chunk_error!())?,
-                                completed,
-                                cancel,
-                            )?,
+                            stage
+                                .complete_prepared_replay(
+                                    m.graph,
+                                    &m.arena,
+                                    public,
+                                    &mut selector,
+                                    &mut self.qsa,
+                                    attention_invocations.qsa[layer]
+                                        .take()
+                                        .ok_or(chunk_error!())
+                                        .inspect_err(|_| chunk_failure_site!())?,
+                                    completed,
+                                    cancel,
+                                )
+                                .inspect_err(|_| chunk_failure_site!())?,
                         );
                     }
                 }
             }
             self.global_moe
                 .as_mut()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .complete_native_replay(m.graph, &m.arena, m.b.fault, *start as u64, completed)
                 .inspect_err(|_| chunk_failure_site!())?;
         } else {
@@ -5714,7 +5773,8 @@ impl Workspace {
                         // retained math programs, never a fake math segment.
                         m.arena
                             .client()
-                            .map_err(u::fault)?
+                            .map_err(u::fault)
+                            .inspect_err(|_| chunk_failure_site!())?
                             .submit_native_strata_experts()
                             .map_err(u::fault)
                             .inspect_err(|_| chunk_failure_site!())?;
@@ -5722,14 +5782,18 @@ impl Workspace {
                             .ple
                             .finish_deferred(
                                 m,
-                                ple_invocation.take().ok_or(chunk_error!())?,
+                                ple_invocation
+                                    .take()
+                                    .ok_or(chunk_error!())
+                                    .inspect_err(|_| chunk_failure_site!())?,
                                 cancel,
                             )
                             .inspect_err(|_| chunk_failure_site!())?;
                         ple_invocation = Some(ready);
                         m.arena
                             .client()
-                            .map_err(u::fault)?
+                            .map_err(u::fault)
+                            .inspect_err(|_| chunk_failure_site!())?
                             .submit_native_strata_experts()
                             .map_err(u::fault)
                             .inspect_err(|_| chunk_failure_site!())?;
@@ -5753,15 +5817,22 @@ impl Workspace {
                         dense_q8,
                     };
                     let spans = BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D);
-                    pending.ple = Some(self.ple.enqueue_prepared(
-                        m,
-                        &mut projector,
-                        self.outer.residual[*current],
-                        self.outer.residual[1 - *current],
-                        &spans,
-                        ple_invocation.take().ok_or(chunk_error!())?,
-                        cancel,
-                    )?);
+                    pending.ple = Some(
+                        self.ple
+                            .enqueue_prepared(
+                                m,
+                                &mut projector,
+                                self.outer.residual[*current],
+                                self.outer.residual[1 - *current],
+                                &spans,
+                                ple_invocation
+                                    .take()
+                                    .ok_or(chunk_error!())
+                                    .inspect_err(|_| chunk_failure_site!())?,
+                                cancel,
+                            )
+                            .inspect_err(|_| chunk_failure_site!())?,
+                    );
                     m.numeric_boundary
                         .observe(
                             numeric_boundaries::Boundary::Injected,
@@ -5800,41 +5871,47 @@ impl Workspace {
                 match &mut m.layers[layer] {
                     Layer::Gdn(stage, public) => {
                         pending.gdn[layer] = Some(
-                            stage.enqueue_prepared(
-                                m.graph,
-                                &m.arena,
-                                public,
-                                &mut projector,
-                                &mut self.gdn,
-                                prepared.mixed(),
-                                self.outer.block[0],
-                                &spans,
-                                attention_invocations.gdn[layer]
-                                    .take()
-                                    .ok_or(chunk_error!())?,
-                                cancel,
-                            )?,
+                            stage
+                                .enqueue_prepared(
+                                    m.graph,
+                                    &m.arena,
+                                    public,
+                                    &mut projector,
+                                    &mut self.gdn,
+                                    prepared.mixed(),
+                                    self.outer.block[0],
+                                    &spans,
+                                    attention_invocations.gdn[layer]
+                                        .take()
+                                        .ok_or(chunk_error!())
+                                        .inspect_err(|_| chunk_failure_site!())?,
+                                    cancel,
+                                )
+                                .inspect_err(|_| chunk_failure_site!())?,
                         )
                     }
                     Layer::Qsa(stage, public) => {
                         let mut selector =
                             qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
                         pending.qsa[layer] = Some(
-                            stage.enqueue_prepared(
-                                m.graph,
-                                &m.arena,
-                                public,
-                                &mut projector,
-                                &mut selector,
-                                &mut self.qsa,
-                                prepared.mixed(),
-                                self.outer.block[0],
-                                &spans,
-                                attention_invocations.qsa[layer]
-                                    .take()
-                                    .ok_or(chunk_error!())?,
-                                cancel,
-                            )?,
+                            stage
+                                .enqueue_prepared(
+                                    m.graph,
+                                    &m.arena,
+                                    public,
+                                    &mut projector,
+                                    &mut selector,
+                                    &mut self.qsa,
+                                    prepared.mixed(),
+                                    self.outer.block[0],
+                                    &spans,
+                                    attention_invocations.qsa[layer]
+                                        .take()
+                                        .ok_or(chunk_error!())
+                                        .inspect_err(|_| chunk_failure_site!())?,
+                                    cancel,
+                                )
+                                .inspect_err(|_| chunk_failure_site!())?,
                         );
                     }
                 }
@@ -5898,7 +5975,8 @@ impl Workspace {
                 let sources = e
                     .strata_global_sources
                     .as_ref()
-                    .ok_or(chunk_error!())?
+                    .ok_or(chunk_error!())
+                    .inspect_err(|_| chunk_failure_site!())?
                     .clone();
                 let shared_start = Instant::now();
                 let shared_fault = self
@@ -5910,7 +5988,8 @@ impl Workspace {
                     .inspect_err(|_| chunk_failure_site!())?;
                 self.global_moe
                     .as_mut()
-                    .ok_or(chunk_error!())?
+                    .ok_or(chunk_error!())
+                    .inspect_err(|_| chunk_failure_site!())?
                     .enqueue_with_shared(
                         m.graph,
                         &m.arena,
@@ -5924,7 +6003,10 @@ impl Workspace {
                         cancel,
                         &mut || {
                             let scope = crate::strata_shared_native::QueueScope::begin(
-                                m.arena.client().map_err(u::fault)?,
+                                m.arena
+                                    .client()
+                                    .map_err(u::fault)
+                                    .inspect_err(|_| chunk_failure_site!())?,
                             )
                             .inspect_err(|_| chunk_failure_site!())?;
                             let mut projector = ResidentBatchProjection {
@@ -5952,8 +6034,13 @@ impl Workspace {
                         },
                     )
                     .inspect_err(|_| chunk_failure_site!())?;
-                crate::strata_shared_native::release_main(m.arena.client().map_err(u::fault)?)
-                    .inspect_err(|_| chunk_failure_site!())?;
+                crate::strata_shared_native::release_main(
+                    m.arena
+                        .client()
+                        .map_err(u::fault)
+                        .inspect_err(|_| chunk_failure_site!())?,
+                )
+                .inspect_err(|_| chunk_failure_site!())?;
                 self.shared
                     .finish_native(
                         m.graph,
@@ -5969,7 +6056,8 @@ impl Workspace {
                         |shared| {
                             self.global_moe
                                 .as_mut()
-                                .ok_or(chunk_error!())?
+                                .ok_or(chunk_error!())
+                                .inspect_err(|_| chunk_failure_site!())?
                                 .finish_layer_shared(
                                     &m.arena,
                                     layer,
@@ -6016,7 +6104,8 @@ impl Workspace {
                         *count,
                         m.b.fault,
                         cancel,
-                    )?
+                    )
+                    .inspect_err(|_| chunk_failure_site!())?
                     .enqueue_final_head(m.graph, &mut projector, m.b.logits)
                     .inspect_err(|_| chunk_failure_site!())?;
             } else if purpose == Purpose::AllRowsWithCarry {
@@ -6045,7 +6134,8 @@ impl Workspace {
                         *count,
                         m.b.fault,
                         cancel,
-                    )?
+                    )
+                    .inspect_err(|_| chunk_failure_site!())?
                     .enqueue_final_head_with_target_capacity(
                         m.graph,
                         &mut projector,
@@ -6099,33 +6189,44 @@ impl Workspace {
             // completed_proof below retains both original observations.
             m.arena
                 .client()
-                .map_err(u::fault)?
+                .map_err(u::fault)
+                .inspect_err(|_| chunk_failure_site!())?
                 .end_native_strata_branch(key)
                 .map_err(u::fault)
                 .inspect_err(|_| chunk_failure_site!())?;
         }
         let final_proof_start = Instant::now();
         let mut output = if purpose == Purpose::LastLogits {
-            ChunkOutput::Legacy(batch_io::read_last_logits(
-                m.graph,
-                &m.arena,
-                &m.admission,
-                m.b.logits,
-                m.b.logit_packet,
-                m.b.fault,
-                cancel,
-            )?)
+            ChunkOutput::Legacy(
+                batch_io::read_last_logits(
+                    m.graph,
+                    &m.arena,
+                    &m.admission,
+                    m.b.logits,
+                    m.b.logit_packet,
+                    m.b.fault,
+                    cancel,
+                )
+                .inspect_err(|_| chunk_failure_site!())?,
+            )
         } else if purpose == Purpose::AllRowsWithCarry {
-            ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(chunk_error!())?.read(
-                m.graph,
-                &m.arena,
-                &m.admission,
-                self.outer.residual[*current],
-                m.b.fault,
-                *count,
-                *start,
-                cancel,
-            )?)
+            ChunkOutput::TargetRows(
+                self.target_rows
+                    .as_ref()
+                    .ok_or(chunk_error!())
+                    .inspect_err(|_| chunk_failure_site!())?
+                    .read(
+                        m.graph,
+                        &m.arena,
+                        &m.admission,
+                        self.outer.residual[*current],
+                        m.b.fault,
+                        *count,
+                        *start,
+                        cancel,
+                    )
+                    .inspect_err(|_| chunk_failure_site!())?,
+            )
         } else {
             batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)
                 .inspect_err(|_| chunk_failure_site!())?;
@@ -6138,19 +6239,22 @@ impl Workspace {
         let selected_prefix = if let Some(select) = select {
             let keep = match output {
                 ChunkOutput::TargetRows(rows) => {
-                    select_verified_rows(rows, *count, |rows| select(PrefixPhase::Verified(rows)))?
+                    select_verified_rows(rows, *count, |rows| select(PrefixPhase::Verified(rows)))
+                        .inspect_err(|_| chunk_failure_site!())?
                 }
                 _ => return Err(chunk_error!()),
             };
             self.target_rows
                 .as_ref()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .check_no_live_output()
                 .inspect_err(|_| chunk_failure_site!())?;
             adaptation = self
                 .global_moe
                 .as_mut()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .begin_adaptation_after_verified(
                     m.graph,
                     &m.arena,
@@ -6158,7 +6262,8 @@ impl Workspace {
                     e.strata_global_sources
                         .as_mut()
                         .and_then(std::sync::Arc::get_mut)
-                        .ok_or(chunk_error!())?,
+                        .ok_or(chunk_error!())
+                        .inspect_err(|_| chunk_failure_site!())?,
                     cancel,
                 )
                 .inspect_err(|_| chunk_failure_site!())?;
@@ -6167,16 +6272,20 @@ impl Workspace {
             // scope cannot publish target state or erase/reuse that source.
             let draft_scope = m
                 .admission
-                .prepare_native_draft_scope(gr::full_private(
-                    &m.arena,
-                    self.outer.residual[*current],
-                    MAX_BATCH * target_rows::HC_WIDTH,
-                )?)
+                .prepare_native_draft_scope(
+                    gr::full_private(
+                        &m.arena,
+                        self.outer.residual[*current],
+                        MAX_BATCH * target_rows::HC_WIDTH,
+                    )
+                    .inspect_err(|_| chunk_failure_site!())?,
+                )
                 .inspect_err(|_| chunk_failure_site!())?;
             // Real retained commit uses original candidate roots and typed n.
             // Its original recording still needs the real join/fault/family proof.
             let commit = self
-                .submit_native_prefix_commit(m, &pending, *count, keep, cancel)?
+                .submit_native_prefix_commit(m, &pending, *count, keep, cancel)
+                .inspect_err(|_| chunk_failure_site!())?
                 .map(|submission| m.admission.retain_native_commit(submission))
                 .transpose()
                 .inspect_err(|_| chunk_failure_site!())?;
@@ -6186,7 +6295,8 @@ impl Workspace {
             let source = self
                 .target_rows
                 .as_ref()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .verified_carry_context(
                     &m.arena,
                     &m.retired,
@@ -6198,7 +6308,9 @@ impl Workspace {
             if select(PrefixPhase::Pending {
                 source,
                 accepted: keep,
-            })? != keep
+            })
+            .inspect_err(|_| chunk_failure_site!())?
+                != keep
             {
                 return Err(chunk_error!());
             }
@@ -6234,7 +6346,11 @@ impl Workspace {
                         fault: m.b.fault,
                         scalar_ids: [m.b.ple_emb, m.b.ple_key, m.b.ple_value],
                     },
-                    pending.ple.take().ok_or(chunk_error!())?,
+                    pending
+                        .ple
+                        .take()
+                        .ok_or(chunk_error!())
+                        .inspect_err(|_| chunk_failure_site!())?,
                     selected_prefix.unwrap_or(*count),
                     cancel,
                 )
@@ -6262,7 +6378,13 @@ impl Workspace {
             let mut at = 0;
             for layer in 0..LAYERS {
                 if let Layer::Gdn(s, _) = &m.layers[layer] {
-                    refs[at] = (s, pending.gdn[layer].as_ref().ok_or(chunk_error!())?);
+                    refs[at] = (
+                        s,
+                        pending.gdn[layer]
+                            .as_ref()
+                            .ok_or(chunk_error!())
+                            .inspect_err(|_| chunk_failure_site!())?,
+                    );
                     at += 1;
                 }
             }
@@ -6273,7 +6395,8 @@ impl Workspace {
                 )));
             }
             self.gdn
-                .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
+                .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)
+                .inspect_err(|_| chunk_failure_site!())?
         };
         let mut qa = {
             let (first_stage, first_receipt) = match (&m.layers[3], pending.qsa[3].as_ref()) {
@@ -6284,7 +6407,13 @@ impl Workspace {
             let mut at = 0;
             for layer in 0..LAYERS {
                 if let Layer::Qsa(s, _) = &m.layers[layer] {
-                    refs[at] = (s, pending.qsa[layer].as_ref().ok_or(chunk_error!())?);
+                    refs[at] = (
+                        s,
+                        pending.qsa[layer]
+                            .as_ref()
+                            .ok_or(chunk_error!())
+                            .inspect_err(|_| chunk_failure_site!())?,
+                    );
                     at += 1;
                 }
             }
@@ -6295,7 +6424,8 @@ impl Workspace {
                 )));
             }
             self.qsa
-                .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
+                .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)
+                .inspect_err(|_| chunk_failure_site!())?
         };
         if let Some(keep) = selected_prefix {
             ga.select_prefix(keep)
@@ -6305,7 +6435,8 @@ impl Workspace {
         }
         self.global_moe
             .as_mut()
-            .ok_or(chunk_error!())?
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?
             .accept(&m.arena, &m.admission, cancel)
             .inspect_err(|_| chunk_failure_site!())?;
         ple.preflight(cancel)
@@ -6340,7 +6471,8 @@ impl Workspace {
             if decode_policy == NativeDecodeKernels::FourGdn && *count == 4 {
                 self.four_rows_completed_chunks
                     .checked_add(1)
-                    .ok_or(Error::ArithmeticOverflow)?
+                    .ok_or(Error::ArithmeticOverflow)
+                    .inspect_err(|_| chunk_failure_site!())?
             } else {
                 self.four_rows_completed_chunks
             };
@@ -6370,7 +6502,10 @@ impl Workspace {
                 Layer::Gdn(stage, _) => {
                     stage
                         .commit_after_whole_chunk_acceptance(
-                            pending.gdn[layer].take().ok_or(chunk_error!())?,
+                            pending.gdn[layer]
+                                .take()
+                                .ok_or(chunk_error!())
+                                .inspect_err(|_| chunk_failure_site!())?,
                             &m.arena,
                             &mut ga,
                             cancel,
@@ -6380,12 +6515,17 @@ impl Workspace {
                     // next real commit must reject and destroy this sequence.
                     m.lifecycle_hooks.after_gdn_commit(layer, cancel);
                 }
-                Layer::Qsa(stage, _) => stage.commit_after_whole_chunk_acceptance(
-                    pending.qsa[layer].take().ok_or(chunk_error!())?,
-                    &m.arena,
-                    &mut qa,
-                    cancel,
-                )?,
+                Layer::Qsa(stage, _) => stage
+                    .commit_after_whole_chunk_acceptance(
+                        pending.qsa[layer]
+                            .take()
+                            .ok_or(chunk_error!())
+                            .inspect_err(|_| chunk_failure_site!())?,
+                        &m.arena,
+                        &mut qa,
+                        cancel,
+                    )
+                    .inspect_err(|_| chunk_failure_site!())?,
             }
         }
         ga.finish(&m.arena, cancel)
@@ -6394,7 +6534,8 @@ impl Workspace {
             .inspect_err(|_| chunk_failure_site!())?;
         self.global_moe
             .as_mut()
-            .ok_or(chunk_error!())?
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?
             .finish()
             .inspect_err(|_| chunk_failure_site!())?;
         ple.commit(cancel).inspect_err(|_| chunk_failure_site!())?;
@@ -6415,13 +6556,15 @@ impl Workspace {
         if adaptation.is_some() {
             self.global_moe
                 .as_mut()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .finish_adaptation(
                     &m.arena,
                     e.strata_global_sources
                         .as_mut()
                         .and_then(std::sync::Arc::get_mut)
-                        .ok_or(chunk_error!())?,
+                        .ok_or(chunk_error!())
+                        .inspect_err(|_| chunk_failure_site!())?,
                     adaptation,
                 )
                 .inspect_err(|_| chunk_failure_site!())?;
