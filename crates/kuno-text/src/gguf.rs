@@ -16,7 +16,7 @@ use crate::{Error, Result, TensorType};
 
 #[path = "gguf_positional.rs"]
 mod positional;
-pub use positional::PositionalReader;
+pub use positional::{DirectSource, PositionalReader};
 
 #[derive(Clone, Debug)]
 pub struct GgufLimits {

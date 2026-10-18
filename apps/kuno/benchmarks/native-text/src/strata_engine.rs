@@ -471,30 +471,33 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
                 sampling,
             } = request;
             let mut delivered = Zeroizing::new(0usize);
-            let done = controller::run(
-                t,
-                e,
-                self.draft.as_mut(),
-                &mut self.policy,
-                controller::Request {
-                    prompt: &prompt,
-                    max_outputs: *outputs,
-                    eos: *eos,
-                    speculation,
-                    draft_min_probability: *minimum,
-                    sampling,
-                },
-                cancel,
-                &mut |token| {
-                    if *delivered >= *outputs || token as usize >= VOCAB {
-                        return Err("native output delivery bound".into());
-                    }
-                    emit(token)?;
-                    *delivered += 1;
-                    Ok(())
-                },
-                phase,
-            )
+            let done = crate::strata_ple_reader::with_request(self.graph, cancel, || {
+                controller::run(
+                    t,
+                    e,
+                    self.draft.as_mut(),
+                    &mut self.policy,
+                    controller::Request {
+                        prompt: &prompt,
+                        max_outputs: *outputs,
+                        eos: *eos,
+                        speculation,
+                        draft_min_probability: *minimum,
+                        sampling,
+                    },
+                    cancel,
+                    &mut |token| {
+                        if *delivered >= *outputs || token as usize >= VOCAB {
+                            return Err("native output delivery bound".into());
+                        }
+                        emit(token)?;
+                        *delivered += 1;
+                        Ok(())
+                    },
+                    phase,
+                )
+                .map_err(|_| kuno_text::Error::InvalidFormat("native controller execution failed"))
+            })
             .map_err(|_| Failure::Inference)?;
             if done.outputs != *delivered {
                 return Err(Failure::Inference);

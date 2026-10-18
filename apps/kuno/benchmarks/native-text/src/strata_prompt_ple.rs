@@ -97,6 +97,7 @@ pub(crate) fn run<T>(
     // and one next embedding may exist. The producer cannot prepare a third
     // chunk before the current chunk has completed and landed its successor.
     let (tx, rx) = mpsc::sync_channel(0);
+    let direct = crate::strata_ple_reader::current();
     let stopped = AtomicBool::new(false);
     std::thread::scope(|scope| -> Result<T> {
         let stopped = &stopped;
@@ -129,7 +130,14 @@ pub(crate) fn run<T>(
                             table.info().dimensions(),
                             table.info().row_bytes(),
                         )?;
-                        let data = native_embedding(graph, table, profile, &rows[..count], cancel)?;
+                        let data = native_embedding(
+                            graph,
+                            table,
+                            profile,
+                            &rows[..count],
+                            cancel,
+                            direct.as_ref(),
+                        )?;
                         Ok(Prepared {
                             binding: graph.binding_id(),
                             start,

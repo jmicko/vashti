@@ -1,5 +1,7 @@
 //! Bounded positional reads through clones of the already-inspected descriptors.
-//! No path reopen, shared seek cursor, mapping, model copy or payload retention.
+//! Ordinary reads clone descriptors. Linux direct reads reopen their pinned
+//! descriptor links with independent flags, never the replaceable model path.
+//! No shared seek cursor, model copy or retained inference payload.
 use super::{GgufFile, TensorView};
 use crate::{Error, Result};
 use std::fs::File;
@@ -10,6 +12,84 @@ use std::fs::File;
 pub struct PositionalReader<'m> {
     model: &'m GgufFile,
     files: Vec<File>,
+}
+
+/// Read-only Linux direct-I/O view of one original tensor's inspected inode.
+/// Reopening `/proc/self/fd` creates independent O_DIRECT flags, unlike dup,
+/// without resolving the model's replaceable pathname. Original owners stay
+/// borrowed and both inode identity and the existing stat guards are checked.
+pub struct DirectSource<'m> {
+    model: &'m GgufFile,
+    file: File,
+    shard: usize,
+    offset: u64,
+    row_bytes: u64,
+    rows: u64,
+}
+impl DirectSource<'_> {
+    pub fn table_offset(&self) -> u64 {
+        self.offset
+    }
+    pub fn row_bytes(&self) -> u64 {
+        self.row_bytes
+    }
+    pub fn rows(&self) -> u64 {
+        self.rows
+    }
+    pub fn verify_file_unchanged(&self) -> Result<()> {
+        self.model.verify_file_unchanged()?;
+        self.model.sources[self.shard].check_stat(&self.file)
+    }
+    /// Read an aligned original file page, including a short final page.
+    /// Only pages intersecting this tensor are permitted. A caller must prove
+    /// each requested tensor byte exists in the returned prefix before use,
+    /// and verify original source stats before/after its complete read batch.
+    pub fn read_aligned(&self, offset: u64, output: &mut [u8]) -> Result<usize> {
+        let end = self
+            .offset
+            .checked_add(
+                self.rows
+                    .checked_mul(self.row_bytes)
+                    .ok_or(Error::ArithmeticOverflow)?,
+            )
+            .ok_or(Error::ArithmeticOverflow)?;
+        let page_end = end.checked_add(4095).ok_or(Error::ArithmeticOverflow)? / 4096 * 4096;
+        if !offset.is_multiple_of(4096)
+            || output.is_empty()
+            || output.len() > 8192
+            || !output.len().is_multiple_of(4096)
+            || !(output.as_ptr() as usize).is_multiple_of(4096)
+            || offset < self.offset / 4096 * 4096
+            || offset >= end
+            || offset
+                .checked_add(output.len() as u64)
+                .is_none_or(|n| n > page_end)
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            let result = loop {
+                match self.file.read_at(output, offset) {
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    result => break result,
+                }
+            };
+            match result {
+                Ok(n) => Ok(n),
+                Err(e) => {
+                    output.fill(0);
+                    Err(e.into())
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            output.fill(0);
+            Err(Error::InvalidFormat("direct reader requires Linux x86_64"))
+        }
+    }
 }
 
 impl GgufFile {
@@ -228,6 +308,49 @@ impl GgufFile {
 }
 
 impl<'m> PositionalReader<'m> {
+    /// Independent read-only direct flags, tied to the original descriptor.
+    pub fn direct_source(&self, tensor: TensorView<'m>) -> Result<DirectSource<'m>> {
+        if !self.owns(tensor) {
+            return Err(Error::InvalidFormat("direct tensor ownership"));
+        }
+        self.verify_file_unchanged()?;
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            use std::os::{
+                fd::AsRawFd,
+                unix::fs::{MetadataExt, OpenOptionsExt},
+            };
+            let original = &self.files[tensor.info.shard_index];
+            // Linux x86_64 UAPI O_DIRECT. No F_SETFL on a dup: that would alter
+            // the original GGUF descriptor and break unaligned header reads.
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(0o40000)
+                .open(format!("/proc/self/fd/{}", original.as_raw_fd()))?;
+            let before = original.metadata()?;
+            let reopened = file.metadata()?;
+            if (before.dev(), before.ino()) != (reopened.dev(), reopened.ino()) {
+                return Err(Error::FileChanged);
+            }
+            let source = tensor.source();
+            source.check_stat(&file)?;
+            let result = DirectSource {
+                model: self.model,
+                file,
+                shard: tensor.info.shard_index,
+                offset: source
+                    .data_offset
+                    .checked_add(tensor.info.offset)
+                    .ok_or(Error::ArithmeticOverflow)?,
+                row_bytes: tensor.info.row_bytes,
+                rows: tensor.info.row_count,
+            };
+            result.verify_file_unchanged()?;
+            Ok(result)
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        Err(Error::InvalidFormat("direct reader requires Linux x86_64"))
+    }
     pub fn belongs_to(&self, model: &GgufFile) -> bool {
         std::ptr::eq(self.model, model)
     }

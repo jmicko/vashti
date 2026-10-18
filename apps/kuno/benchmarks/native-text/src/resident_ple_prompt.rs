@@ -110,6 +110,7 @@ impl PleBatchWorkspace {
                 self.profile,
                 &rows,
                 cancel,
+                crate::strata_ple_reader::current().as_ref(),
             )?
         };
         let v = crate::strata_prompt::ple_workspace()?;

@@ -1626,7 +1626,14 @@ fn embedding(
             u::cancel(cancel)?;
             return Ok(ready);
         }
-        return native_embedding(graph, table, profile, &rows[..count], cancel);
+        return native_embedding(
+            graph,
+            table,
+            profile,
+            &rows[..count],
+            cancel,
+            crate::strata_ple_reader::current().as_ref(),
+        );
     }
     let mut upload = source(BufferLayout::new(words(EMB)).map_err(u::fault)?.owned_bytes)?;
     let mut packed = Zeroizing::new([0u8; 110]);
@@ -1691,65 +1698,74 @@ fn native_embedding(
     profile: OriginalPackedProfile,
     rows: &[[u32; 16]],
     cancel: &AtomicBool,
+    direct: Option<&crate::strata_ple_reader::Lease>,
 ) -> Result<Zeroizing<Vec<u8>>> {
     let RowReadPlan { unique, slots } = unique_row_plan(rows)?;
     let rb = profile.ple_row_bytes();
     if rb != table.info().row_bytes() as usize {
         return Err(error());
     }
-    let mut raw = source(unique.len() * rb)?;
-    let reader = table.positional_reader()?;
-    graph.verify_unchanged()?;
-    // Four finite scoped workers, not per-row jobs. Each has a96 KiB requested
-    // stack plus32 KiB runtime allowance, charged with raw/plan storage above.
-    // All join before this borrow returns, including cancellation/error paths.
-    let per_worker = unique.len().div_ceil(4);
-    std::thread::scope(|scope| -> Result<()> {
-        let mut jobs = Vec::with_capacity(4);
-        let mut failure = None;
-        for (worker, bytes) in raw.chunks_mut(per_worker * rb).enumerate() {
-            let ids = &unique
-                [worker * per_worker..(worker * per_worker + bytes.len() / rb).min(unique.len())];
-            let reader = &reader;
-            let job = std::thread::Builder::new()
-                .stack_size(96 * 1024)
-                .spawn_scoped(scope, move || -> Result<()> {
-                    for (&row, output) in ids.iter().zip(bytes.chunks_exact_mut(rb)) {
-                        u::cancel(cancel)?;
-                        reader.read_row(table, u64::from(row), output)?;
-                    }
-                    u::cancel(cancel)
-                });
-            match job {
-                Ok(job) => jobs.push(job),
-                Err(_) => {
-                    failure = Some(error());
-                    break;
-                }
-            }
-        }
-        for job in jobs {
-            match job.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    if failure.is_none() {
-                        failure = Some(e);
-                    }
-                }
-                Err(_) => {
-                    if failure.is_none() {
+    let raw = if let Some(direct) = direct {
+        direct.gather(graph.binding_id(), rb, &unique, cancel)?
+    } else {
+        // Only standalone operator diagnostics lack the engine request owner.
+        // Normal Session execution and its prompt producer share the reader.
+        let mut raw = source(unique.len() * rb)?;
+        let reader = table.positional_reader()?;
+        graph.verify_unchanged()?;
+        // Four finite scoped workers, not per-row jobs. Each has a96 KiB requested
+        // stack plus32 KiB runtime allowance, charged with raw/plan storage above.
+        // All join before this borrow returns, including cancellation/error paths.
+        let per_worker = unique.len().div_ceil(4);
+        std::thread::scope(|scope| -> Result<()> {
+            let mut jobs = Vec::with_capacity(4);
+            let mut failure = None;
+            for (worker, bytes) in raw.chunks_mut(per_worker * rb).enumerate() {
+                let ids = &unique[worker * per_worker
+                    ..(worker * per_worker + bytes.len() / rb).min(unique.len())];
+                let reader = &reader;
+                let job = std::thread::Builder::new()
+                    .stack_size(96 * 1024)
+                    .spawn_scoped(scope, move || -> Result<()> {
+                        for (&row, output) in ids.iter().zip(bytes.chunks_exact_mut(rb)) {
+                            u::cancel(cancel)?;
+                            reader.read_row(table, u64::from(row), output)?;
+                        }
+                        u::cancel(cancel)
+                    });
+                match job {
+                    Ok(job) => jobs.push(job),
+                    Err(_) => {
                         failure = Some(error());
+                        break;
                     }
                 }
             }
-        }
-        if let Some(e) = failure {
-            Err(e)
-        } else {
-            Ok(())
-        }
-    })?;
-    graph.verify_unchanged()?;
+            for job in jobs {
+                match job.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        if failure.is_none() {
+                            failure = Some(e);
+                        }
+                    }
+                    Err(_) => {
+                        if failure.is_none() {
+                            failure = Some(error());
+                        }
+                    }
+                }
+            }
+            if let Some(e) = failure {
+                Err(e)
+            } else {
+                Ok(())
+            }
+        })?;
+        graph.verify_unchanged()?;
+        raw
+    };
+
     u::cancel(cancel)?;
     let output_bytes = if rows.len() > MAX_BATCH {
         rows.len() * WIDTH * 4

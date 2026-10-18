@@ -144,6 +144,7 @@ const PUBLIC_MAIN: u64 = 25_165_824
     };
 const CORE_CACHE_HOST: usize = if cfg!(feature = "strata-intel-core") {
     crate::executor::native_static::HOST_BYTES
+        + crate::strata_ple_reader::HOST_BYTES
         // Retained target/MTP erasure is sequential, with one full cleanup
         // window live. Never borrow MTP's normal16MiB input/output allowance.
         + crate::private_arena::OWNED_ZERO_AUDIT_HOST_BYTES
