@@ -309,6 +309,20 @@ fn decode_device(bytes: &[u8], count: usize, start: usize) -> Result<Payload> {
     .enumerate()
     {
         if word(bytes, i)? != v {
+            if crate::strata_intel_core::enabled()
+                && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+            {
+                // Header field identity and kernel fault categories only.
+                // Never report coordinates, selected tokens or residual data.
+                if i == 6 {
+                    eprintln!(
+                        "native_public_target_packet_fault mask={:#x}",
+                        word(bytes, i)?
+                    );
+                } else {
+                    eprintln!("native_public_target_packet_header field={i}");
+                }
+            }
             return Err(rejected!());
         }
     }
