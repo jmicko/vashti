@@ -4,38 +4,34 @@ CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `3d7b0752f34d0ecdaee0817a7483d87ecc926a98`, branch
-`codex/strata-rust-port`. Read the [native payload-clear and KV audit receipt](kuno-strata-rewrite-completion.md#native-qsa-live-payload-clear-and-kv-mode-audit-2026-10-17).
-Actual native decode no longer clears fully overwritten temporary payloads before
-their producers. Both individual and grouped schedules retain all 12 readiness/
-append clears exactly once. Prompt/feature-off clearing, initial allocation,
-complete owner retention/pricing and full-request owning erasure are unchanged.
-The saved reference CLI confirms INT8/32K without a KV residency/growth override;
-upstream's fully resident default uses identity pages and a no-op resolver.
+**Current CPU-only source:** `2f928c9e250ae6b6441f6f73ea03d28f356bfea2`, branch
+`codex/strata-rust-port`. Read the [bounded QSA state receipt](kuno-strata-rewrite-completion.md#native-bounded-qsa-indexer-state-2026-10-17).
+Native decode and full prompt now use three-row tail/snapshot and original F32
+MAX8 windows. Packed 264-word KV no longer retains full-context raw index keys.
+Actual prompt/decode/append/selection/prefix/diagnostic consumers, original owner
+identities, full-padding erasure and admission quotes change together. At 32K,
+cache owners change 50 MiB to 34 MiB per layer:192 MiB less across 12 QSA layers.
+The prompt-tail dispatch also matches native's three 128-thread slot groups.
 
-585 distinct selected CPU cases/81 nonempty suites, strict core/off binary lint,
-changed formatting and whitespace pass. Stable-source frozen artifact SHA256
-`3a0b8975348577bf8dd0db536810ce4702e67d0e722039abd02f678c12f4aa03`, independently source/ordinary/frozen/mode 0500/default-features
-verified, not executed. All WGSL and all four CubeCL producer functions are
-unchanged from source 31c46e47; its existing 371 shaders/139 physical-pointer checks/
-five product modules/32 matrix configurations remain the compiler receipt.
-No shader or live GPU benchmark was rerun for this host-schedule-only change.
+588 distinct selected CPU cases/82 nonempty suites, strict core/off binary lint,
+changed formatting and whitespace pass. Frozen artifact SHA256
+`23037328db7eaa4cc93eaf108b1dcbd91d73ac9bdb58882e921114e0823b3e44`, independently source/ordinary/frozen/mode0500/default-features
+verified. Only its early pre-adapter offline branch executes: 372 shaders/139
+physical-pointer compiler checks/five rounded-product modules/32 matrix
+configurations pass. No physical numerical/model/recovery/throughput claim.
+No new GPU heap owner, model copy, content persistence, API or configuration.
+Previous original model/Q8/tokenizer/MTP/GDN/score/queue receipts remain selected.
 
-**Whole rewrite incomplete; speed gate closed.** A concrete storage-fidelity gap
-is now quantified: target CACHE still retains 128 F32-expanded raw index words per
-context cell (16MiB/layer at 32K) versus native's bounded three-row tail/snapshot
-and current-window raw keys. The existing suffix rollback is correct by its
-current design, but this full-history storage is not intrinsically required by
-Rust. Next port bounded tail/snapshot/window retention across decode, prompt,
-commit, quote/identity/rebind and complete erasure together; do not merely shrink
-CACHE_WORDS and break one of its real consumers. Keep existing native indexer/
-window scoring and the whole coupled branch. Finish remaining source/placement/
-selection/math/sampling/queue/pricing/substitution audit and protected whole-model
-numerical/context/retained/hot-request/failure/all-resource recovery before speed.
-No new GPU heap owner/model copy/content persistence/API/configuration. CLI stays
-compiled-public/one-request; private caller separately gated. Goal active CPU-only;
-sudo refresh only authorized. No GPU/model inference/service/install/release/UI
-action. Vashti changes none; canonical checkout/inherited cache preserved.
+**Whole rewrite incomplete; speed gate closed.** The specific full-history QSA
+storage gap is closed in source. Next consolidate the current completeness matrix
+against actual selected prompt/selection/sampling/queue/ownership call paths,
+resolve genuine remaining substitution dependencies, and distinguish superseded
+findings from open work. Protected count1/multirow/prompt/context/retained/hot
+request/accept-reject/all-resource failure and recovery acceptance must precede
+speed. CLI compiled-public/one-request; private caller independently gated.
+Goal active CPU-only; sudo refresh only authorized. No GPU/model inference,
+service/install/release/frontend action. Required Vashti/API changes: none.
+Canonical checkout and inherited untracked cache preserved.
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
 mutate penalties once, build fixed 64 lists and merge with request K. Source

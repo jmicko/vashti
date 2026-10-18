@@ -6,8 +6,8 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `1a034311407a39d06a714090f82e506b5ef5174a`. Read the
-[native routed Q8/fused handoff](#active-kuno-engine-handoff--native-routed-q8-and-fused-producers-2026-10-17)
+`codex/strata-rust-port`, runtime source `2f928c9e250ae6b6441f6f73ea03d28f356bfea2`. Read the
+[bounded QSA state receipt](kuno-strata-rewrite-completion.md#native-bounded-qsa-indexer-state-2026-10-17)
 and [completion gate](kuno-strata-rewrite-completion.md). Rewrite incomplete;
 speed gate closed, work CPU-only. Required Vashti changes: none.
 
@@ -7942,3 +7942,42 @@ shader provenance and tested artifact. Evidence prefix:
 `/media/jmicko/faststore/kuno-development/strata-qsa-live-payload-*20261017*`.
 No consumer/API changes required. No handoff authorizes GPU use, installation,
 release or another task message.
+
+
+## Active Kuno engine handoff — bounded QSA state (2026-10-17)
+
+**Current CPU-only source:** `2f928c9e250ae6b6441f6f73ea03d28f356bfea2`, following
+`2282982494cc7876bc87b8758ee7f8a576ff793e`, branch `codex/strata-rust-port`.
+Read the [bounded QSA state receipt](kuno-strata-rewrite-completion.md#native-bounded-qsa-indexer-state-2026-10-17).
+Actual native decode, full prompt, packed KV, append/selection, accepted prefix,
+diagnostic restore, owner identity/rebind/erase and admission now share the
+bounded tail/snapshot/original F32 MAX8 contract. Full-context raw index history
+is removed:at 32K full cache owners50MiB to34MiB/layer,192 MiB less across 12 layers.
+All31 original per-layer owners remain fully charged/erased; three scalar-native-
+unused owners carry the bounded state. No new GPU owner or uncharged source.
+Prompt-tail grouping matches original three 128-thread groups. Original native
+indexer/scoring/GDN/MTP and the whole coupled branch remain selected.
+
+588 distinct selected CPU cases/82 nonempty suites, strict core/off binary lint,
+changed formatting and whitespace pass. Stable-source frozen artifact SHA256
+`23037328db7eaa4cc93eaf108b1dcbd91d73ac9bdb58882e921114e0823b3e44`, independently source/ordinary/frozen/mode0500/default-features verified.
+Only its pre-adapter offline branch ran: 372 shaders/139 physical-pointer compiler
+checks/five rounded-product modules/32 matrix configurations pass. These are CPU/
+compiler receipts; physical numerical/model/context/replay/recovery/throughput
+acceptance remains unproven. Initial 22829824 frozen build is superseded by the
+native launch alignment; use the final artifact in the linked receipt.
+
+**Whole rewrite incomplete; speed gate closed.** Next consolidate current source
+completeness against actual selected prompt/selection/sampling/queue/ownership
+call paths and resolve genuine remaining substitution dependencies. Distinguish
+old superseded findings from open work. Then protected count1/multirow/prompt/
+context/retained/hot-request/accept-reject/all-resource failure and recovery
+acceptance must precede speed. CLI compiled-public/one-request; private caller
+independently gated. Goal active CPU-only; sudo refresh only authorized. No GPU/
+model inference/service/install/release/frontend operation. Required Vashti/API
+changes: none; no protocol/configuration behavior changed. Canonical checkout and
+inherited untracked cache preserved. No handoff grants GPU use or deployment.
+
+Evidence prefix: `/media/jmicko/faststore/kuno-development/strata-qsa-bounded-tail-*20261017*`.
+The linked receipt records exact changed commits, actual owner/consumer contract,
+reviewed commit/storage substitutions, byte quotes, tests and remaining gates.
