@@ -33,7 +33,13 @@ The speed gate is now open ONLY for the exact accepted artifact and unchanged
 fixed-public retained configuration. The committed acceptance manifest is checked
 by the outer timing runner. Timing uses trusted static phase lines and writes
 only numeric results after successful repeat/erasure/physical recovery; no kernel
-profiles, response contents or content hashes. No throughput result exists yet.
+profiles, response contents or content hashes. The first accepted trial
+`strata-accepted-retained-throughput-20261018` completes successfully:19.7811 and
+20.6089 delivered tokens/s for362 outputs on each request, with17.5652s warm
+generation and5.2670s warm prefix/preflight. Full warm request before erasure is
+22.8322s (15.8548 tokens/s); selected runtime setup is101.1493s. These are
+last-prompt-inclusive engine rates, not pure GPU decode. Final physical recovery
+again passes with the same clean baseline. The30 tokens/s target is not met.
 The original execution-check receipts retain their static `benchmark=false` and
 `whole_rewrite_accepted=false` fields; the documented audit and separate timing
 receipt provide the later decision without rewriting historical evidence.
@@ -974,3 +980,40 @@ additional acceptance work before production claims. There is no bitwise whole
 model comparison with Strata/CPU, executed-code quality test, public API/UI change,
 installed native backend or release acceptance. Those limitations do not indicate
 a missing selected source dependency and must not be represented as already tested.
+
+
+### First accepted whole-engine throughput (2026-10-18)
+
+`strata-accepted-retained-throughput-20261018/throughput.json` is emitted only
+after the same actual362-token repeat/EOS, target/draft erase, checked final close
+and clean root after-state. Runtime remains frozen299579b5/SHA852a0dbd; observer
+was committed at9666324b before this first speed run. The pinned-source selected
+engine was complete and accepted before timing started.
+
+| Interval | First request | Second request, same loaded Session |
+| --- | ---: | ---: |
+| Prefix/preflight |5.4624s |5.2670s |
+| Final-prompt-inclusive generation |18.3003s |17.5652s |
+| Delivered outputs including EOS |362 |362 |
+| Generation delivery rate |19.7811 tokens/s |20.6089 tokens/s |
+| Entire request before erasure |23.7627s |22.8322s |
+| Entire request delivery rate |15.2340 tokens/s |15.8548 tokens/s |
+
+Selected runtime construction from its trusted `target` phase to first request
+is101.1493s. This excludes earlier file/tokenizer/device setup and is not a full
+process cold-start metric. No request erasure or final model close is hidden
+inside the generation interval. These are two identical fixed-public requests,
+not a broad prompt-distribution benchmark or an apples-to-apples new Ollama
+comparison. The human's accepted10 tokens/s reference is for a different quant;
+we do not claim a measured2x comparison.30 tokens/s remains the performance target.
+
+Physical recovery is independently checked: Intel50,688,000B, NVIDIA compute0,
+all HTTP200, no active/waiting/paused/recovery admission and unchanged zero
+classified faults. Active-unit properties confirm swap0/core0/48.2GiB. No service
+installation, reset/reboot, model substitution or private content persistence.
+
+Next performance diagnosis should sample the native graph's ALREADY COLLECTED
+aggregate capture/wait/submit/replay counters at the same three static request
+phases. That distinguishes CPU recording cost from GPU/fence time without
+serializing every kernel with timestamps. Preserve the complete engine. Do not
+return to testing and abandoning isolated coupled components.

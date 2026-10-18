@@ -33,7 +33,13 @@ The speed gate is now open ONLY for the exact accepted artifact and unchanged
 fixed-public retained configuration. The committed acceptance manifest is checked
 by the outer timing runner. Timing uses trusted static phase lines and writes
 only numeric results after successful repeat/erasure/physical recovery; no kernel
-profiles, response contents or content hashes. No throughput result exists yet.
+profiles, response contents or content hashes. The first accepted trial
+`strata-accepted-retained-throughput-20261018` completes successfully:19.7811 and
+20.6089 delivered tokens/s for362 outputs on each request, with17.5652s warm
+generation and5.2670s warm prefix/preflight. Full warm request before erasure is
+22.8322s (15.8548 tokens/s); selected runtime setup is101.1493s. These are
+last-prompt-inclusive engine rates, not pure GPU decode. Final physical recovery
+again passes with the same clean baseline. The30 tokens/s target is not met.
 The original execution-check receipts retain their static `benchmark=false` and
 `whole_rewrite_accepted=false` fields; the documented audit and separate timing
 receipt provide the later decision without rewriting historical evidence.
