@@ -28,6 +28,8 @@ const PUBLIC_MAX: usize = 128 * 1024 * 1024;
 const GAP: f32 = -12345.;
 const STATUS_GAP: u32 = 0xe1234567;
 const TILE: usize = 8;
+#[path = "strata_gr_numeric_probe.rs"]
+mod native;
 
 struct Matrix {
     geometry: MatrixGeometry,
@@ -1022,7 +1024,11 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, storage_alignment: usize) -> Res
         PrivateArena::new_transient(client.clone(), MAIN_BUDGET, IO_BUDGET, retired.clone())?;
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        cases(client, &mut arena, graph, &public, &retired)
+        if crate::strata_intel_core::enabled() {
+            native::cases(client, &mut arena, &public)
+        } else {
+            cases(client, &mut arena, graph, &public, &retired)
+        }
     }));
     let close = arena.close();
     let reports = finish_probe(attempt, close.is_ok(), retired.load(Ordering::Acquire))?;
