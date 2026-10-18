@@ -4129,7 +4129,13 @@ impl ResidentMtp<'_, '_> {
                     self.client()?,
                     u::handle(&self.arena, self.id(B::Logits))?,
                     u::handle(&self.arena, self.id(B::Greedy))?,
-                    u::handle(&self.arena, self.id(B::Candidates))?,
+                    // logical_handle exposes only183 legacy greedy words.
+                    // Native confidence carves two disjoint views out of the
+                    // existing full32KiB page; lend that original owner.
+                    self.arena
+                        .handle(self.id(B::Candidates))
+                        .cloned()
+                        .map_err(error)?,
                     u::handle(&self.arena, self.id(B::Fault))?,
                     self.public()?.cjk.is_some(),
                 )?;
