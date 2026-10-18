@@ -1040,7 +1040,8 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, storage_alignment: usize) -> Res
             file.tensors()
                 .iter()
                 .map(|(name, t)| (name.as_str(), t.dtype().gguf_id())),
-        )?;
+        )
+        .map_err(|_| "public native GR original DAS inventory")?;
         file
     } else {
         GgufFile::open(path, GgufLimits::default())?
