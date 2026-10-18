@@ -6,9 +6,9 @@ This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
 **Selected engine source-wiring audit passed; whole rewrite acceptance remains
 open.** See the explicit decision and scope below. Physical correctness,
-resource recovery and performance are separate gates. Work remains CPU-only
-pending renewed B70 authorization; this document grants no GPU/service/install/
-release authorization.
+resource recovery and performance are separate gates. Human B70 testing/unload authorization is now granted; see the current
+protected-device checkpoint for execution findings. This document itself grants
+no GPU/service/install/release authorization.
 
 ## Entry, loading and cleanup: call chain traced
 

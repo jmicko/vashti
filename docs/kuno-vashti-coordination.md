@@ -6,28 +6,29 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current protected-device checkpoint (2026-10-18):** isolated
-`codex/strata-rust-port`, runtime `7f4552d20ab7f6bb92d65b97989f3f6856919b46`.
-Human B70 testing/unload authorization and shared-shell sudo are resolved. Six
-connected corrections remain enabled: shared owner count/charge (`366955ce`),
-router SUBGROUP_BARRIER capability (`8d3eb711`), scheduler submission ownership
-(`8c82f8b0`), full32KiB MTP confidence owner (`9d061bcc`), matching the existing
-runtime quote to its actual target/language permit (`4669b075`), and independent
-GDN/PLE replay pointer-role checks (`7f4552d2`).118 selected CPU tests and strict
-core/off binary Clippy pass. The initial target result and next draft now complete
-and generation reaches retained replay. The previous replay attempt rejects in
-GDN completion: a combined2-bit GDN/PLE key was compared to GDN's single bit.
-The fix preserves the complete key and validates each family's own component;
-PLE gets an additional explicit role check. Existing state/shape/fault/queue
-checks stay intact. Protected `strata-replay-role-whole-20261018` is running;
-wait for actual terminal state/recovery. Frozen SHA256
-`d9f0f2aad59413298c90761b30884d33f05e833bdf1ae61b6120919d1a67fb4f` in
-`strata-replay-role-fixed-20261018` under the development artifact root.
+`codex/strata-rust-port`, runtime `8fb70457`, following diagnostic `1278ca4f`.
+Human B70/unload authorization and shared-shell sudo are resolved. The six
+connected execution corrections through `7f4552d2` remain selected. Whole-model
+`strata-replay-role-whole-20261018` now completes the generation controller but
+rejects request erasure. The protected diagnostic repeat
+`strata-private-reset-trace-whole-20261018` proves draft erasure succeeds;
+target reset incorrectly asks the dormant legacy MoE family for completion.
+The selected global engine never dispatches that family. `8fb70457` validates
+the actual global completed/idle/binding/epoch scope and strictly proves the
+legacy family stayed unstarted, with original owner/admission/identity checks.
+The old public13 reset still requires real legacy completion. No erasure,
+fault, inventory or family reset is skipped.28 selected CPU cases pass,
+including the new untouched-versus-executed regression. A broader legacy suite
+has three core-inapplicable hardcoded144-slot/old-scratch fixture failures;
+see the receipt rather than claiming the entire suite passes. Diagnostic core/off
+strict binary Clippy pass; current corrected runtime build/device acceptance
+is pending. The latest successful device observation is generation plus draft
+reset, not a completed response or retained repeat.
 All completed attempts restored admission, HTTP services and Intel50,688,000B,
-with NVIDIA compute empty and zero kernel fault deltas. Process-level recovery
-does not accept failed request erasure/hot reuse. Whole-model completion/repeat,
-independent numerics/state/context/footprint/private-caller and speed remain gated.
-No speed measurements, model substitutions, API/frontend or installed-service
-changes. See the [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
+with NVIDIA compute empty and zero kernel fault deltas. No `intel.json` success
+receipt yet. Independent numerics/state/context/footprint/private-caller and
+speed gates remain open. No API/frontend, installed-service or model changes.
+See the [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
 ## Ownership
 

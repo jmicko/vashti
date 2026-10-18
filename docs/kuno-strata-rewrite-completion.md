@@ -1,28 +1,29 @@
 # Complete Strata Intel inference rewrite: completion gate
 
 **Current protected-device checkpoint (2026-10-18):** isolated
-`codex/strata-rust-port`, runtime `7f4552d20ab7f6bb92d65b97989f3f6856919b46`.
-Human B70 testing/unload authorization and shared-shell sudo are resolved. Six
-connected corrections remain enabled: shared owner count/charge (`366955ce`),
-router SUBGROUP_BARRIER capability (`8d3eb711`), scheduler submission ownership
-(`8c82f8b0`), full32KiB MTP confidence owner (`9d061bcc`), matching the existing
-runtime quote to its actual target/language permit (`4669b075`), and independent
-GDN/PLE replay pointer-role checks (`7f4552d2`).118 selected CPU tests and strict
-core/off binary Clippy pass. The initial target result and next draft now complete
-and generation reaches retained replay. The previous replay attempt rejects in
-GDN completion: a combined2-bit GDN/PLE key was compared to GDN's single bit.
-The fix preserves the complete key and validates each family's own component;
-PLE gets an additional explicit role check. Existing state/shape/fault/queue
-checks stay intact. Protected `strata-replay-role-whole-20261018` is running;
-wait for actual terminal state/recovery. Frozen SHA256
-`d9f0f2aad59413298c90761b30884d33f05e833bdf1ae61b6120919d1a67fb4f` in
-`strata-replay-role-fixed-20261018` under the development artifact root.
+`codex/strata-rust-port`, runtime `8fb70457`, following diagnostic `1278ca4f`.
+Human B70/unload authorization and shared-shell sudo are resolved. The six
+connected execution corrections through `7f4552d2` remain selected. Whole-model
+`strata-replay-role-whole-20261018` now completes the generation controller but
+rejects request erasure. The protected diagnostic repeat
+`strata-private-reset-trace-whole-20261018` proves draft erasure succeeds;
+target reset incorrectly asks the dormant legacy MoE family for completion.
+The selected global engine never dispatches that family. `8fb70457` validates
+the actual global completed/idle/binding/epoch scope and strictly proves the
+legacy family stayed unstarted, with original owner/admission/identity checks.
+The old public13 reset still requires real legacy completion. No erasure,
+fault, inventory or family reset is skipped.28 selected CPU cases pass,
+including the new untouched-versus-executed regression. A broader legacy suite
+has three core-inapplicable hardcoded144-slot/old-scratch fixture failures;
+see the receipt rather than claiming the entire suite passes. Diagnostic core/off
+strict binary Clippy pass; current corrected runtime build/device acceptance
+is pending. The latest successful device observation is generation plus draft
+reset, not a completed response or retained repeat.
 All completed attempts restored admission, HTTP services and Intel50,688,000B,
-with NVIDIA compute empty and zero kernel fault deltas. Process-level recovery
-does not accept failed request erasure/hot reuse. Whole-model completion/repeat,
-independent numerics/state/context/footprint/private-caller and speed remain gated.
-No speed measurements, model substitutions, API/frontend or installed-service
-changes. See the [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
+with NVIDIA compute empty and zero kernel fault deltas. No `intel.json` success
+receipt yet. Independent numerics/state/context/footprint/private-caller and
+speed gates remain open. No API/frontend, installed-service or model changes.
+See the [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
 Approved 2026-10-14. This is backend engine work, not gateway/API/UI/release work.
 The user requires a complete coherent Rust port before live speed testing. This
@@ -53,7 +54,7 @@ offline check passes397 variants/139 physical-pointer checks/77 rounded-product
 modules/32 matrix configs. No GPU/repeat run, numerical or recovery acceptance.
 
 **Earlier CPU-only stop is superseded by the protected-device checkpoint above.**
-The runtime now passes construction but has not completed inference. All work
+The runtime now passes construction and generation; accepted complete request erasure is still pending. All work
 remains in this isolated checkout; canonical checkout and inherited cache remain
 preserved.
 
@@ -11896,7 +11897,67 @@ CPU cases (previous101 plus1 coordinate,1 actual GDN guard and15 PLE cases).
 Frozen `strata-replay-role-fixed-20261018`, source
 `7f4552d20ab7f6bb92d65b97989f3f6856919b46`, SHA256
 `d9f0f2aad59413298c90761b30884d33f05e833bdf1ae61b6120919d1a67fb4f`.
-Protected `strata-replay-role-whole-20261018` is the actual current retry. All
-completed prior host-after receipts still pass physical memory/service/fault
-recovery; successful response, retained-session repeat, independent numerics and
-speed are not yet accepted. No APIs, frontend, installation or release changes.
+Protected `strata-replay-role-whole-20261018` subsequently completed the
+generation controller, then rejected private reset. See the next receipt for
+that terminal result and its diagnosed cause. All completed prior host-after
+receipts pass physical memory/service/fault recovery. No APIs, frontend,
+installation or release changes.
+
+
+### Completed generation, draft reset and actual routed-family erasure gate (2026-10-18)
+
+Protected replay-role run terminated after entering `request_private_erasure`;
+it did not return a successful response or create `intel.json`. The controller
+had completed and delivered-count accounting passed, but Session correctly
+refused publication after reusable-state reset failed. Kernel fault deltas0;
+Intel returned50,688,000B; NVIDIA compute0; Kuno/Ollama/Vashti HTTP200 and
+admission active/waiting/paused/recovery_required false. Ordinary process cleanup
+is accepted; hot/private-state reset is not inferred from that result.
+
+Diagnostic source `1278ca4f1961bf147f27e1c871753c5b78deecb6` adds only fixed-public
+phase/source/typed error labels; arbitrary errors, tokens, request values and
+panic payloads are not formatted. Frozen `strata-private-reset-trace-20261018`,
+SHA256 `76a9caa697e2b5b6c3994b69fcd70545b8a6305ddf6662526725aec5a3c1df8e`.
+Protected `strata-private-reset-trace-whole-20261018` completed generation AND
+the draft's original full private-owner erasure/reset. Target reset then rejected
+`native routed projection policy boundary`. Physical after-state again passed
+all original memory/service/admission/fault checks; no success receipt.
+
+Actual source cause: `reset_retained_checked` called the old
+`native.moe.validate_public_warm_boundary` for both old public13 replay and the
+new global engine. That old policy requires chunk>0 after a completed legacy
+routed transaction. The global engine never invokes that transaction; it owns
+separate original global routing/accept/finish state. Pretending the old family
+ran or skipping its owning arena would both be incorrect.
+
+Correction `8fb7045730fc3797448de0b8f41539f262b18129` keeps the old public13
+completion gate. The native request reset validates the actual global execution
+scope, actual global idle/binding/nonzero-epoch/verified-window boundary, and the
+old family's strictly UNSTARTED policy with all original identity, client,
+admission, owner-layout, health and inactive-source checks. Unexpected legacy
+execution, mixed modes, live routers, fills or source state reject. Reserved
+legacy private owners remain charged and fully erased along with the target;
+no synthetic completion or zero-audit exemption is introduced. Error-location
+closures preserve the actual call site instead of Rust's function-pointer shim.
+
+CPU build log `strata-native-reset-family-tests-build-20261018.log`; exact
+selection `strata-native-reset-family-selected-exact-20261018.log`:28 pass,
+including the new untouched/partial/complete/corrupted-policy regression,10
+language-scope cases,6 original/native reset cases and original global quote.
+Broader `strata-native-reset-family-selected-20261018.log` reports11/14; three
+historical fixtures hardcode144 bank slots or old4MiB runtime while the coherent
+core uses its existing different slot/scratch contract. They are not changed or
+claimed passing: `exact_complete_owned_scratch_and_separate_runtime_envelope`,
+`public_existing_policy_is_explicit_daslab144_max8_count1_to3_only`,
+`public_fill_counts_distinguish_first_touch_from_real_protected_victims`.
+The diagnostics-only1278 source passes strict core/off binary Clippy. The exact
+CPU behavioral fix tests preceded call-site-only closure polishing; latest
+corrected runtime Clippy/device acceptance is pending.
+
+Frozen correction `strata-native-reset-family-fixed-20261018`, SHA256
+`ac10242554524818619de8bde5342fc65d25ec96b621993490817e9bfd583650`.
+Protected `strata-native-reset-family-whole-20261018` is running; await actual
+terminal state and original recovery proof. No successful whole response,
+retained repeat, independent numerics/context/footprint/private-caller or speed
+acceptance yet. Preserve all coupled changes; no GPU resets, model substitutions,
+API/frontend/install/release work is part of this block.
