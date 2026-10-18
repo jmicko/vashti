@@ -558,7 +558,24 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
                     },
                     phase,
                 )
-                .map_err(|_| kuno_text::Error::InvalidFormat("native controller execution failed"))
+                .map_err(|error| {
+                    // Keep original fixed verifier labels before checked
+                    // cleanup can replace the outer result with retirement.
+                    // Arbitrary callback/backend error payloads stay redacted.
+                    phase("controller_execution_error");
+                    phase(match error.downcast_ref::<kuno_text::Error>() {
+                        Some(
+                            kuno_text::Error::InvalidFormat(label)
+                            | kuno_text::Error::LimitExceeded(label),
+                        ) => label,
+                        Some(kuno_text::Error::InvalidBufferLength) => "controller_buffer_length",
+                        Some(kuno_text::Error::OutOfBounds) => "controller_range",
+                        Some(kuno_text::Error::FileChanged) => "controller_file_changed",
+                        Some(_) => "controller_model_error",
+                        None => "controller_state_or_callback_error",
+                    });
+                    kuno_text::Error::InvalidFormat("native controller execution failed")
+                })
             })
             .map_err(|_| Failure::Inference)?;
             if done.outputs != *delivered {
