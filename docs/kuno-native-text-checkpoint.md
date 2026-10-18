@@ -2,42 +2,41 @@
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `83d690e1f3b690d9d97d76ec9c617bf4cee30927`, branch
+**Current CPU-only source:** `2899011f35c4695e293100fc6aadd230cbc9fc81`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [connected PLE reader receipt](kuno-strata-rewrite-completion.md#connected-native-ple-cache-and-linux-direct-reader-2026-10-17).
-Normal requests now share an original1M-row eight-way packed cache,256 aligned
-read slots,64 persistent Linux O_DIRECT readers and coordinator across decode,
-prompt prefetch and fallback. Original source inode/stat ownership is preserved.
-Reader success/error/unwind joins workers and wipes original request-owned cache/
-plans/staging before retained model reset. Native constructor HOST reservation
-includes the full maximum151,453,696B reader class; GPU weights remain retained.
-No new dependency or GPU heap owner, no content persistence or public API change.
+and [connected deferred PLE handoff receipt](kuno-strata-rewrite-completion.md#connected-deferred-ple-read-and-target-graph-handoff-2026-10-17).
+The actual target now submits layer0 before collecting the request-owned PLE
+rows, transfers EMB outside retained math and executes layer1..47/head as the
+second original program. Cold/capture/replay share that ordering. Two retained
+Vulkan segments replace upstream's in-graph host-ready flag; issuance may start
+earlier than its post-launch gather. This substitution is explicit and still
+requires physical acceptance. Original1M-row cache,256 slots/64 direct readers,
+151,453,696B HOST reservation and request-only wiping lifetime remain connected.
+Actual pending/ready/returned row owners share a maximum-two-operation quota.
+No public API/Vashti change, new dependency or GPU heap owner.
 
-611 distinct selected CPU cases / 86 nonempty suites and eight core positional
-cases pass, with strict core/off **binary** Clippy, changed formatting/whitespace.
-This is not an unfiltered repository run. A CPU-only actual original two-shard
-DASLab audit compares eight fixed public rows cold/warm (including the final row)
-against the independent GGUF reader and verifies scope erasure/original stats.
-It executes no model inference or GPU work. Frozen artifact SHA256
-`1d9d442340bf26c23be9751ba781a3ee9db11107026a338602aff69b414acb68`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
-verified. Only early pre-adapter offline validation ran:397 shader variants /
-139 physical-pointer checks /77 rounded-product modules /32 matrix configs pass.
-These are CPU/compiler/read-backend results, not whole-engine physical acceptance.
+621 distinct selected CPU cases /86 nonempty suites pass, with strict core/off
+**binary** Clippy and changed formatting/whitespace. The unchanged core's eight
+positional-reader cases retain their preceding receipt; they were not rerun.
+The actual original two-shard CPU audit collects two pending fixed-public row
+requests in reverse order; cold/warm bytes match the independent GGUF reader,
+original metadata and real scope join/erasure pass. Frozen ordinary artifact
+SHA256 `627b73bb5018ff04d36e2346164685664c594c14c2191a0330f6cb52dadd87d2`,
+source/ordinary/frozen/mode0500/requested-and-resolved-features independently
+verified. Its early pre-adapter offline branch passes397 shader variants /
+139 physical-pointer checks /77 rounded-product modules /32 matrix configs.
+No GPU, model inference or speed measurement ran.
 
-**Whole rewrite incomplete; speed gate closed.** The read backend is connected,
-but current Rust still joins PLE during preparation before target submission.
-Pinned native `verify.cpp::run` launches its graph before collecting the PLE
-embedding and publishing the layer1 readiness flag. Next connect real target
-prefix submission, deferred source completion/upload and original layer1 readiness
-across cold/capture/replay, preserving actual owner/fault/nonce/INFO dependencies
-and failure/all-family commit. An unused async ticket or eager wait is not that
-schedule. Continue remaining selected operator/prompt/queue/ownership audit too.
-Protected whole-model prompt/count1/multirow, accept/reject/EOS/cap/context,
-retained mixed/hot-request and failure/all-resource recovery acceptance remain
-required before speed. CLI compiled-public/one-request; private caller separately
-gated. Goal active CPU-only; sudo refresh only currently authorized. No GPU/model
-inference/service/install/release/frontend operation. Required Vashti/API changes:
-none. Canonical checkout and inherited untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** Finish selected operator/prompt/
+placement and queue/INFO/descriptor/shared/MTP/commit/cleanup source consolidation.
+Connected PLE cold/capture/replay/failure joins, extra segment/page pricing and
+full physical overlap/numerics remain unverified. Then require protected whole-
+model prompt/count1/multirow, accept/reject/EOS/cap/context, retained mixed/hot-
+request and all-resource recovery acceptance before speed. CLI remains compiled-
+public/one-request; private caller separately gated. Goal active CPU-only; sudo
+cache is expired, but this block required no privileged work. No GPU/service/
+install/release/frontend action. Required API/Vashti changes: none. Canonical
+checkout and inherited untracked cache preserved.
 
 
 

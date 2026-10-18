@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `83d690e1f3b690d9d97d76ec9c617bf4cee30927`, isolated `codex/strata-rust-port`.
+Runtime source: `2899011f35c4695e293100fc6aadd230cbc9fc81`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -310,26 +310,59 @@ original metadata remains unchanged and scope joins/erases. It performs no model
 inference or GPU/device work. Exact artifact receipt follows in the completion
 log. These checks do not establish full physical engine execution.
 
-## Remaining PLE graph handoff: launch before the layer1 input join
+## Connected PLE graph handoff: launch before the layer1 input join
 
-The reader backend is now real, but the whole selected schedule is not yet
-accepted. Pinned `verify.cpp::run` captures/stages and launches the graph before
-`gather_batch` at1947 (actual `ar_on` arm); the host then publishes PLE readiness.
-The doorbell alternative at2035..2044 gathers after releasing layer0's work.
-`pl_launch/service` similarly separates launch and gather before ready flag1.
-Current Rust `prepare_invocation_checked`/`native_embedding` still joins the
-reader and stages EMB before the target window is submitted. Prompt next-chunk
-prefetch already overlaps source work; that is not proof of the decode ordering.
-Existing MTP overlap also does not prove the original target/PLE join boundary.
+Pinned `sycl/src/core/verify.cpp::run` launches its graph before `gather_batch`
+at1947 (actual `ar_on` arm), then publishes the layer1 ready flag. The doorbell
+alternative at2035..2044 gathers after releasing layer0; `pl_launch/service`
+similarly separates launch and gather. The prior eager Rust EMB preparation was
+a real scheduling gap, not closed by prompt prefetch or MTP overlap.
 
-Next connect the actual target-prefix launch, deferred source completion/upload
-and original layer1 consumer readiness as one schedule, preserving cold/capture/
-replay, real owner/INFO/fault/nonce dependencies, all-family commit and failure
-closure. Inspect the actual selected upstream flag placement and current Vulkan
-stage/recording facilities before choosing a necessary backend substitution.
-Do not claim an unused async ticket, fake readiness bit, an eager pre-launch wait
-or source-only scalar wrapper closes this remaining coupled scheduling gap.
-No speed test may select an easier subset or discard the new reader/cache.
+The current connected Rust path issues request-owned direct reads during
+`prepare_deferred`, then submits actual layer0 plus the pending GR FFN write
+before `finish_deferred` collects/scatters/uploads EMB. Layer1 PLE and layers1..47/
+head follow that upload. Issuance can start earlier than upstream's post-launch
+gather; the real read operation still belongs to the same original request,
+source descriptor/stat guard and pending PLE transaction. No PLE consumer or
+state publication runs before actual rows are ready.
+
+**Necessary Vulkan substitution:** two retained math programs replace the
+single SYCL graph's host-ready spin/doorbell. Prefix submits without a CPU join;
+only after source collection can the real prefix fence/input upload be joined.
+The EMB upload is an unnamed Copy/Fill-only submission, not part of either
+retained math program, so a later replay cannot read a stale/wiped upload source.
+The suffix consumes original EMB/history/residual/fault owners. No simulated
+readiness, uncharged GPU flag or GPU spin was introduced. Cold unrecorded count1,
+first capture and retained replay use the same read/submission/layer1 ordering.
+Diagnostic paths with additional observations keep their own boundaries and
+remain ineligible for direct replay.
+
+A target-only immutable handoff bit separates old one-program diagnoses from
+selected two-program keys. The ordinary replay API still refuses multi-segment
+branches; the specialized target API preflights exactly two sealed typed original
+programs and both actual graph recordings. Continuation requires the same
+request nonce, original arena/client, branch, segment1 and every original private
+control. A dropped submitted-prefix receipt retires the context; it cannot grant
+numerical/fault/state/erasure credit. Suffix joins before creating the existing
+Completed receipt, and original all-family observations/commit/cleanup still
+follow. Transfer-only detection is restricted to that exact empty segment1
+boundary and does not call the mutating parameter-recording accessor.
+
+Actual read tickets/results share a maximum-two-operation quota. The quota
+remains held by queued, reading, ready and returned row owners, including after
+a caller drops a ticket; only destruction of the final physical owner releases
+it. A capacity-one reply permits a ready result to wait for layer1 without
+stalling coordinator delivery. Request cleanup joins all real workers and
+refuses successful scope return while tickets/results escape. Existing full
+reader HOST reservation, source/caller bounds, GPU owners and private accounting
+remain in force. Extra segment/page rounding and actual full-model pricing
+still require physical admission acceptance under those unchanged quotas. EMB
+staging moves its wiping allocation into the original
+private upload path, rather than cloning it.
+
+Source substitution is connected; physical overlap, numerical equivalence,
+retained execution and whole-resource recovery are not yet accepted. Exact CPU
+and frozen-artifact evidence is recorded in the completion receipt.
 
 ## Source review still to finish
 
@@ -339,8 +372,9 @@ No speed test may select an easier subset or discard the new reader/cache.
   storage, grouping, queue and math substitution; filenames alone do not pass.
 - Preserve the now-traced per-request126/128 graph lifetime and original
   owner erasure. Physical retained mixed-request execution still needs acceptance.
-- Finish the actual PLE launch/source-completion/layer1 readiness handoff above;
-  the new read backend alone does not establish this original graph ordering.
+- Validate the connected two-program PLE handoff above on the real protected
+  device, including cold/capture/replay and failure joins; source connection
+  and CPU parameter/reader coverage are not physical fence/overlap proof.
 - Review remaining queue/INFO/descriptor hazards, shared/MTP fork/commit order,
   sampler state and output/resource closure as one connected schedule.
 
