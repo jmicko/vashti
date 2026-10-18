@@ -5045,62 +5045,96 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         {
             return Err(chunk_error!());
         }
-        self.validate_native_request_boundary(executor)?;
+        self.validate_native_request_boundary(executor)
+            .inspect_err(|_| chunk_failure_site!())?;
         let permit = self
             .native_batch
             .as_ref()
-            .ok_or(chunk_error!())?
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?
             .public_language_request_io
             .as_ref()
-            .ok_or(chunk_error!())?;
-        permit.identity(self.graph.binding_id(), self.context)?;
-        permit.validate_initial_begin(self.position, self.admission.request_io_reuse_active())?;
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?;
+        permit
+            .identity(self.graph.binding_id(), self.context)
+            .inspect_err(|_| chunk_failure_site!())?;
+        permit
+            .validate_initial_begin(self.position, self.admission.request_io_reuse_active())
+            .inspect_err(|_| chunk_failure_site!())?;
         // The original scoped graph consumer requires a REAL backend nonce.
         // Keep this short scope distinct from immutable decode-policy selection
         // and the following long generation scope. Both close actual full I/O.
         self.lab_oracle_attempt(executor, |model, executor| {
-            model.admission.begin_public_target_request_io_reuse()?;
+            model
+                .admission
+                .begin_public_target_request_io_reuse()
+                .inspect_err(|_| chunk_failure_site!())?;
             model
                 .native_batch
                 .as_mut()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .public_language_request_io
                 .as_mut()
-                .ok_or(chunk_error!())?
-                .begin_initial(model.position, model.admission.request_io_reuse_active())?;
-            model.execute_native_chunk(
-                executor,
-                tokens,
-                Purpose::AllRowsWithCarry,
-                Some(select),
-                cancel,
-                |output| match output {
-                    ChunkOutput::AcceptedPrefix(1) => Ok(()),
-                    _ => Err(chunk_error!()),
-                },
-            )?;
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
+                .begin_initial(model.position, model.admission.request_io_reuse_active())
+                .inspect_err(|_| chunk_failure_site!())?;
+            model
+                .execute_native_chunk(
+                    executor,
+                    tokens,
+                    Purpose::AllRowsWithCarry,
+                    Some(select),
+                    cancel,
+                    |output| match output {
+                        ChunkOutput::AcceptedPrefix(1) => Ok(()),
+                        _ => Err(chunk_error!()),
+                    },
+                )
+                .inspect_err(|_| chunk_failure_site!())?;
             // No caller-declared completion: original chunk/family acceptance,
             // original fault and owning runtime closing audit all precede end.
-            model.completed_native_projection_boundary(executor)?;
+            model
+                .completed_native_projection_boundary(executor)
+                .inspect_err(|_| chunk_failure_site!())?;
             model
                 .native_batch
                 .as_ref()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .public_language_request_io
                 .as_ref()
-                .ok_or(chunk_error!())?
-                .validate_initial_end(model.position, model.admission.request_io_reuse_active())?;
-            batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel)?;
-            model.admission.end_request_io_reuse()?;
-            public_language_request_io::check_runtime(model.arena.client().map_err(u::fault)?)?;
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
+                .validate_initial_end(model.position, model.admission.request_io_reuse_active())
+                .inspect_err(|_| chunk_failure_site!())?;
+            batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel)
+                .inspect_err(|_| chunk_failure_site!())?;
+            model
+                .admission
+                .end_request_io_reuse()
+                .inspect_err(|_| chunk_failure_site!())?;
+            public_language_request_io::check_runtime(
+                model
+                    .arena
+                    .client()
+                    .map_err(u::fault)
+                    .inspect_err(|_| chunk_failure_site!())?,
+            )
+            .inspect_err(|_| chunk_failure_site!())?;
             model
                 .native_batch
                 .as_mut()
-                .ok_or(chunk_error!())?
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
                 .public_language_request_io
                 .as_mut()
-                .ok_or(chunk_error!())?
-                .end_initial(model.position, model.admission.request_io_reuse_active())?;
+                .ok_or(chunk_error!())
+                .inspect_err(|_| chunk_failure_site!())?
+                .end_initial(model.position, model.admission.request_io_reuse_active())
+                .inspect_err(|_| chunk_failure_site!())?;
             u::cancel(cancel)
         })
     }
@@ -5173,15 +5207,22 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if let Some(rows) = &self
             .native_batch
             .as_ref()
-            .ok_or(chunk_error!())?
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?
             .target_rows
         {
             // No command/state mutation occurs while an admitted output-host
             // payload is still held. This guard also covers legacy purposes.
-            rows.check_no_live_output()?;
-            rows.invalidate_carry()?;
+            rows.check_no_live_output()
+                .inspect_err(|_| chunk_failure_site!())?;
+            rows.invalidate_carry()
+                .inspect_err(|_| chunk_failure_site!())?;
         }
-        let mut native = self.native_batch.take().ok_or(chunk_error!())?;
+        let mut native = self
+            .native_batch
+            .take()
+            .ok_or(chunk_error!())
+            .inspect_err(|_| chunk_failure_site!())?;
         let mut flight = Flight {
             poison: native.poison.clone(),
             accepted: false,
@@ -5202,16 +5243,22 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 native
                     .global_moe
                     .as_mut()
-                    .ok_or(chunk_error!())?
-                    .set_verified_window(true)?;
+                    .ok_or(chunk_error!())
+                    .inspect_err(|_| chunk_failure_site!())?
+                    .set_verified_window(true)
+                    .inspect_err(|_| chunk_failure_site!())?;
             }
-            let output = native.run(self, executor, tokens, purpose, select, cancel)?;
+            let output = native
+                .run(self, executor, tokens, purpose, select, cancel)
+                .inspect_err(|_| chunk_failure_site!())?;
             if tracking {
                 native
                     .global_moe
                     .as_mut()
-                    .ok_or(chunk_error!())?
-                    .set_verified_window(false)?;
+                    .ok_or(chunk_error!())
+                    .inspect_err(|_| chunk_failure_site!())?
+                    .set_verified_window(false)
+                    .inspect_err(|_| chunk_failure_site!())?;
             }
             accept(output)
         }));
