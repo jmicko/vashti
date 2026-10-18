@@ -175,6 +175,52 @@ pub(crate) unsafe fn execute<'m, 'f>(
     emit: &mut dyn FnMut(u32) -> kuno_text::Result<()>,
     phase: &mut dyn FnMut(&'static str),
 ) -> Result<Completion, Failure> {
+    // SAFETY: identical caller protection/ownership contract; this wrapper
+    // still performs exactly one real request followed by checked close.
+    unsafe {
+        with_loaded_session(
+            file,
+            graph,
+            draft_graph,
+            client,
+            limits,
+            device,
+            queue,
+            backlog,
+            request,
+            cancel,
+            phase,
+            |session, request, phase| session.run(request, cancel, emit, phase),
+        )
+    }
+}
+
+/// Run a bounded caller-owned sequence through the SAME loaded model. The
+/// callback cannot export the session; every return/unwind still owes the
+/// original checked all-peer close. No token/input storage is added here.
+///
+/// # Safety
+/// The complete artifact, exclusive runtime and process protection contract
+/// of `execute` must hold until this function returns, including all requests.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn with_loaded_session<'m, 'f, 'd, 'df>(
+    file: &'f GgufFile,
+    graph: BoundGraph<'m, 'f>,
+    draft_graph: Option<&'d MtpGraph<'df>>,
+    client: &ComputeClient<WgpuRuntime>,
+    limits: &wgpu::Limits,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    backlog: cubecl_runtime::server::PublicTargetSubmissionBacklog,
+    request: Request,
+    cancel: &AtomicBool,
+    phase: &mut dyn FnMut(&'static str),
+    run: impl FnOnce(
+        &mut Session<'m, 'f, 'd, 'df>,
+        Request,
+        &mut dyn FnMut(&'static str),
+    ) -> Result<controller::Completion, Failure>,
+) -> Result<Completion, Failure> {
     let mut session = unsafe {
         Session::load(
             file,
@@ -190,11 +236,11 @@ pub(crate) unsafe fn execute<'m, 'f>(
             phase,
         )?
     };
-    let generation = match session.run(request, cancel, emit, phase) {
+    let generation = match checked(|| run(&mut session, request, phase)) {
         Ok(done) => done,
         Err(failure) => {
             // A preflight rejection may deliberately leave a reusable session
-            // untouched. This one-shot wrapper still owes an explicit checked
+            // untouched. This loaded wrapper still owes an explicit checked
             // close, so Drop cannot hide a recovery failure behind Rejected.
             if !session.close_attempted {
                 session.close()?;

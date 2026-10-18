@@ -110,7 +110,15 @@ impl DecodeMode {
         }
     }
 }
+fn retained_check_selection(value: Option<&OsStr>) -> std::result::Result<bool, &'static str> {
+    match value {
+        None => Ok(false),
+        Some(v) if v == "two-identical-public" && crate::strata_intel_core::enabled() => Ok(true),
+        _ => Err("retained check requires the fixed public Intel core case"),
+    }
+}
 pub(crate) struct Inputs {
+    retained_check: bool,
     pub(crate) decode_mode: DecodeMode,
     pub(crate) inline_dispatch: bool,
     pub(crate) fused_sweeps: bool,
@@ -179,6 +187,7 @@ pub(crate) fn registration(
                 "KUNO_LAB_LANGUAGE_PUBLIC_ONLY"
                     | "KUNO_LAB_LANGUAGE_DECODE"
                     | "KUNO_LAB_LANGUAGE_FIXTURE"
+                    | "KUNO_LAB_LANGUAGE_SESSION"
                     | "KUNO_TEST_Q3_DIR"
                     | "KUNO_TEST_MTP"
                     | "KUNO_PUBLIC_RECEIPT"
@@ -235,6 +244,11 @@ pub(crate) fn registration(
     {
         return Err("compiled language/cache gates missing");
     }
+    let retained_check = retained_check_selection(
+        values
+            .remove(OsStr::new("KUNO_LAB_LANGUAGE_SESSION"))
+            .as_deref(),
+    )?;
     let decode_mode = DecodeMode::parse(
         values
             .remove(OsStr::new("KUNO_LAB_LANGUAGE_DECODE"))
@@ -630,6 +644,7 @@ pub(crate) fn registration(
             .ok_or("language public path missing")
     };
     Ok(Inputs {
+        retained_check,
         decode_mode,
         inline_dispatch,
         fused_sweeps,
@@ -1106,50 +1121,111 @@ pub(crate) fn run(
         // Rust tokenizer intended for a separately protected arbitrary caller.
         // It still accepts NO private stdin or public-receipt content override.
         drop(prompt);
-        let rendered = input.fixture.rendered();
-        let request = crate::strata_engine::input::request(
-            &mut std::io::Cursor::new(rendered.as_bytes()),
-            &tokenizer,
-            crate::strata_engine::input::Controls {
-                outputs: MAX_OUTPUTS,
-                eos: graph.eos_token(),
-                sampling: crate::strata_sampler::Params {
-                    greedy: true,
-                    temperature: 0.,
-                    ..Default::default()
+        let public_request = || {
+            let rendered = input.fixture.rendered();
+            crate::strata_engine::input::request(
+                &mut std::io::Cursor::new(rendered.as_bytes()),
+                &tokenizer,
+                crate::strata_engine::input::Controls {
+                    outputs: MAX_OUTPUTS,
+                    eos: graph.eos_token(),
+                    sampling: crate::strata_sampler::Params {
+                        greedy: true,
+                        temperature: 0.,
+                        ..Default::default()
+                    },
+                    speculation: crate::strata_speculation::Config::native(4),
+                    minimum: 0.5,
                 },
-                speculation: crate::strata_speculation::Config::native(4),
-                minimum: 0.5,
-            },
-        )?;
-        drop(rendered);
+            )
+        };
+        let request = public_request()?;
         if request.geometry()?.0 != input.fixture.prompt_tokens() {
             return Err("native fixture input geometry rejected".into());
         }
         let mut emitted = Zeroizing::new(Vec::with_capacity(MAX_OUTPUTS));
         // SAFETY: the protected original-source launcher owns full authentication,
         // memory/driver admission, swap/core protection and a redacted panic hook.
-        let done = unsafe {
-            crate::strata_engine::execute(
-                &file,
-                graph.bound_graph(),
-                draft_graph.as_ref(),
-                client,
-                limits,
-                host_device.ok_or("native target device missing")?,
-                host_queue.ok_or("native target queue missing")?,
-                input.target_submission_backlog,
-                request,
-                &AtomicBool::new(false),
-                &mut |token| {
-                    if emitted.len() >= MAX_OUTPUTS {
-                        return Err(kuno_text::Error::InvalidBufferLength);
-                    }
-                    emitted.push(token);
-                    Ok(())
-                },
-                &mut |phase| eprintln!("native_public_execution phase={phase}"),
-            )
+        let cancel = AtomicBool::new(false);
+        let mut phases = |phase| eprintln!("native_public_execution phase={phase}");
+        let done = if input.retained_check {
+            // SAFETY: the SAME protected caller contract remains active across
+            // both requests and checked close; no model/runtime is reconstructed.
+            unsafe {
+                crate::strata_engine::with_loaded_session(
+                    &file,
+                    graph.bound_graph(),
+                    draft_graph.as_ref(),
+                    client,
+                    limits,
+                    host_device.ok_or("native target device missing")?,
+                    host_queue.ok_or("native target queue missing")?,
+                    input.target_submission_backlog,
+                    request,
+                    &cancel,
+                    &mut phases,
+                    |session, first, phases| {
+                        let mut deliver = |token| {
+                            if emitted.len() >= MAX_OUTPUTS {
+                                return Err(kuno_text::Error::InvalidBufferLength);
+                            }
+                            emitted.push(token);
+                            Ok(())
+                        };
+                        let first = session.run(first, &cancel, &mut deliver, phases)?;
+                        if first.outputs != emitted.len() {
+                            return Err(crate::strata_engine::Failure::Inference);
+                        }
+                        // Fixed PUBLIC fixture tokens only. The existing fixture
+                        // host allowance covers this bounded MAX_OUTPUTS*4-byte comparison.
+                        let expected = Zeroizing::new(emitted.to_vec());
+                        zeroize::Zeroize::zeroize(&mut *emitted);
+                        let second = session.run(
+                            public_request()?,
+                            &cancel,
+                            &mut |token| {
+                                if emitted.len() >= MAX_OUTPUTS {
+                                    return Err(kuno_text::Error::InvalidBufferLength);
+                                }
+                                emitted.push(token);
+                                Ok(())
+                            },
+                            phases,
+                        )?;
+                        if second.outputs != emitted.len()
+                            || *expected != *emitted
+                            || first.eos != second.eos
+                            || first.greedy != second.greedy
+                        {
+                            return Err(crate::strata_engine::Failure::Inference);
+                        }
+                        Ok(second)
+                    },
+                )
+            }
+        } else {
+            unsafe {
+                crate::strata_engine::execute(
+                    &file,
+                    graph.bound_graph(),
+                    draft_graph.as_ref(),
+                    client,
+                    limits,
+                    host_device.ok_or("native target device missing")?,
+                    host_queue.ok_or("native target queue missing")?,
+                    input.target_submission_backlog,
+                    request,
+                    &AtomicBool::new(false),
+                    &mut |token| {
+                        if emitted.len() >= MAX_OUTPUTS {
+                            return Err(kuno_text::Error::InvalidBufferLength);
+                        }
+                        emitted.push(token);
+                        Ok(())
+                    },
+                    &mut |phase| eprintln!("native_public_execution phase={phase}"),
+                )
+            }
         }?;
         if let Some(sidecar) = &sidecar {
             sidecar.verify_file_unchanged()?;
@@ -1188,6 +1264,8 @@ pub(crate) fn run(
             "windows":done.generation.windows,"state_repairs":done.generation.state_repairs,
             "public_response_nonempty":!preview.trim().is_empty(),
             "eos":done.generation.eos,"request_scope_erased":true,"content_persisted":false,
+            "loaded_session_requests":if input.retained_check {2}else{1},
+            "identical_public_repeat_matched":input.retained_check,
             "target_close":{"main_buffers":done.target_main.buffers,"main_bytes":done.target_main.bytes,
                 "source_buffers":done.target_sources.buffers,"source_bytes":done.target_sources.bytes},
             "speed_acceptance":false,"full_rewrite_accepted":false});
@@ -2851,6 +2929,20 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retained_public_selector_defaults_off_and_rejects_private_or_unbounded_cases() {
+        assert!(!super::retained_check_selection(None).unwrap());
+        for raw in ["", "1", "2", "private", "forever", "two-identical-public "] {
+            assert!(super::retained_check_selection(Some(std::ffi::OsStr::new(raw))).is_err());
+        }
+        let selected =
+            super::retained_check_selection(Some(std::ffi::OsStr::new("two-identical-public")));
+        if crate::strata_intel_core::enabled() {
+            assert!(selected.unwrap());
+        } else {
+            assert!(selected.is_err());
+        }
+    }
     #[test]
     fn integer_verify_head_default_off_and_original_three_four_composition() {
         let args = ["lab", "intel", "daslab-language-probe"].map(OsString::from);

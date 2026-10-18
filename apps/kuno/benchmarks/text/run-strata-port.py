@@ -13,13 +13,15 @@ def run():
  if not 5<=len(sys.argv)<=12:raise ValueError('root BUILD OUT code|prose q8|q2 --execution-check [--intel-core]')
  build=BASE/sys.argv[1];out=BASE/sys.argv[2];fixture,profile=sys.argv[3:5]
  options=set(sys.argv[5:])
- if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots','--constant-codebook','--ranked-fill','--profile-first','--intel-core','--member-widths','--native-profile','--execution-check'}:raise ValueError('port selector')
+ if options-{'--profile','--integer-head','--fused-experts','--wide-experts','--expert-lanes16','--cache-eight','--mtp-eight','--independent-groups','--unroll-dots','--constant-codebook','--ranked-fill','--profile-first','--intel-core','--member-widths','--native-profile','--execution-check','--retained-check'}:raise ValueError('port selector')
  # User-approved rewrite stage: completion/correctness only, no speed trials.
  # Remove this restriction only after the documented whole-port audit passes.
  if '--execution-check' not in options:
   raise ValueError('rewrite incomplete: only --execution-check is allowed before the completion audit')
  if options & {'--profile','--native-profile'}:
   raise ValueError('operator profiling is disabled until the whole rewrite is complete')
+ if '--retained-check' in options and ('--intel-core' not in options or profile!='q2'):
+  raise ValueError('retained check requires the coherent Intel core and original Q2 sidecar')
  if os.getuid()!=0:raise ValueError('execution checks require protected root runner')
  target_profile='--profile' in options
  if out.exists():raise ValueError('fresh output required')
@@ -37,6 +39,7 @@ def run():
   env['KUNO_LAB_MTP_PROFILE']='strata-q2';env.pop('KUNO_LAB_MTP_Q8_HEAD',None)
  if set(json.loads((build/'build-features.json').read_text())['features']) & {'strata-resident-224','strata-resident-240','strata-intel-core'}:env['KUNO_LAB_STATIC_CACHE_BYTES']=str(5*1024**3)
  env.pop('KUNO_LAB_MTP_REPAIR',None)
+ if '--retained-check' in options:env['KUNO_LAB_LANGUAGE_SESSION']='two-identical-public'
  if '--intel-core' in options:
   if 'strata-intel-core' not in json.loads((build/'build-features.json').read_text())['features']:raise ValueError('coherent core artifact required')
   env['KUNO_STRATA_INTEL_CORE']='public';env['KUNO_STRATA_CACHE_SWAPS']='eight-public'
@@ -77,7 +80,7 @@ def run():
   # Remove only laboratory selectors from inherited environment. Secrets are never printed.
   child={k:v for k,v in os.environ.items() if not k.startswith(('KUNO_LAB_','KUNO_TEST_','KUNO_PUBLIC_','KUNO_STRATA_'))}
   child.update(env)
-  cmd=['systemd-run','--quiet','--wait','--pipe','--collect','--unit='+out.name,'--uid=jmicko','--property=MemoryMax='+str(memory),'--property=MemorySwapMax=0','--property=LimitCORE=0','--property=RuntimeMaxSec=1200']
+  cmd=['systemd-run','--quiet','--wait','--pipe','--collect','--unit='+out.name,'--uid=jmicko','--property=MemoryMax='+str(memory),'--property=MemorySwapMax=0','--property=LimitCORE=0','--property=RuntimeMaxSec='+('2400' if '--retained-check' in options else '1200')]
   cmd += ['--setenv='+k+'='+v for k,v in env.items()]
   cmd += [str(binary),'intel',mode]
   with (out/'intel.log').open('x') as log:
