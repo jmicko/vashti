@@ -4,7 +4,7 @@
 use super::*;
 use crate::strata_gr as native;
 
-fn read_id(arena: &PrivateArena, id: BufferId) -> Result<Zeroizing<Vec<u32>>> {
+pub(super) fn read_id(arena: &PrivateArena, id: BufferId) -> Result<Zeroizing<Vec<u32>>> {
     let layout = arena.layout(id)?;
     let mut bytes = arena.client()?.read_one(arena.handle(id)?.clone())?;
     let words = decode_read(&mut bytes, layout.owned_bytes);

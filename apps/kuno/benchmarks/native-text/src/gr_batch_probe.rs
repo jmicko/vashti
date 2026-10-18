@@ -28,6 +28,8 @@ const PUBLIC_MAX: usize = 128 * 1024 * 1024;
 const GAP: f32 = -12345.;
 const STATUS_GAP: u32 = 0xe1234567;
 const TILE: usize = 8;
+#[path = "strata_dense_numeric_probe.rs"]
+mod dense;
 #[path = "strata_gr_numeric_probe.rs"]
 mod native;
 
@@ -1055,7 +1057,9 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, storage_alignment: usize) -> Res
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if crate::strata_intel_core::enabled() {
-            native::cases(client, &mut arena, &public)
+            let mut reports = native::cases(client, &mut arena, &public)?;
+            reports.extend(dense::cases(client, &mut arena, &file)?);
+            Ok(reports)
         } else {
             cases(client, &mut arena, graph, &public, &retired)
         }
