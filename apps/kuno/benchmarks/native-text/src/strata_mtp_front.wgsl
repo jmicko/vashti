@@ -27,14 +27,15 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
 // EMBED_MAPPED_BEGIN
 // STRATA_PHYSICAL_EXPERTS: native_head.cpp / iq_kernels.dp.cpp::dq_iq4_xs.
 // One32-lane group per original256-value block; each lane owns two float4 runs.
-@group(0) @binding(0) var<storage,read> gate0:array<u32>;
+@group(0) @binding(0) var<storage,read> gate0:array<vec4<u32>>;
 @group(0) @binding(1) var<storage,read> tokens:array<u32>;
 @group(0) @binding(2) var<storage,read_write> output:array<vec4<f32>>;
 @group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(4) var<storage,read> addresses:array<vec4<u32>>;
 @group(0) @binding(5) var<uniform> p:Params;
 var<private> strata_gate_address:vec2<u32>;
-fn mapped_byte(at:u32)->u32 {return (gate0[at/4u]>>((at%4u)*8u))&255u;}
+fn mapped_word(at:u32)->u32 {return gate0[at/16u][(at/4u)%4u];}
+fn mapped_byte(at:u32)->u32 {return (mapped_word(at)>>((at%4u)*8u))&255u;}
 fn iq_value(code:u32)->f32 {
     let table=array<u32,4>(0xbfad9881u,0xf6eaddcfu,0x26190d01u,0x71594535u);
     let v=(table[code/4u]>>((code%4u)*8u))&255u;
@@ -54,7 +55,7 @@ fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) lane
     let low=(mapped_byte(b+4u+ib/2u)>>((ib%2u)*4u))&15u;
     let high=((mapped_byte(b+2u)|(mapped_byte(b+3u)<<8u))>>(ib*2u))&3u;
     let scale=unpack2x16float(mapped_byte(b)|(mapped_byte(b+1u)<<8u)).x*f32(i32(low|(high<<4u))-32);
-    let q4=gate0[(b+8u+ib*16u+il*4u)/4u];
+    let q4=mapped_word(b+8u+ib*16u+il*4u);
     let codes=(vec4<u32>(q4)>>vec4<u32>(0u,8u,16u,24u))&vec4<u32>(255u);
     let lo=scale*vec4<f32>(iq_value(codes.x&15u),iq_value(codes.y&15u),iq_value(codes.z&15u),iq_value(codes.w&15u));
     let hi=scale*vec4<f32>(iq_value(codes.x>>4u),iq_value(codes.y>>4u),iq_value(codes.z>>4u),iq_value(codes.w>>4u));
