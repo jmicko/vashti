@@ -1,10 +1,11 @@
 # Native DASLab/Strata checkpoint — 2026-10-17
 
-**Current paused checkpoint (2026-10-18):** isolated
+**Current protected-device checkpoint (2026-10-18):** isolated
 `codex/strata-rust-port`, runtime source
-`d271eb492c40023d0008fcdf5bf6219f88a90000`. Human requested GPU access and paused
-the goal. All protected test processes/units have exited; do not start GPU work
-until renewed authorization. No reset/reboot/install/API/frontend changes.
+`d271eb492c40023d0008fcdf5bf6219f88a90000`, frozen at snapshot
+`7233f75fb9f075541703e19fff94b5b7d23d0017`. The human renewed GPU authorization
+after the pause. The goal is active and shared-shell sudo is available.
+No reset/reboot/install/API/frontend changes.
 
 Generation now completes and the draft's complete private-state reset passes.
 The six coupled execution fixes through `7f4552d2` remain selected. `8fb70457`
@@ -24,12 +25,14 @@ checked window. The backend validates complete actual backing ownership first,
 then derives the bounded resource view. The scanner still inspects every byte
 and tail before any full-owner receipt. Ordinary/full cleanup reads, strict
 lease/stream/retirement checks and all privacy/admission limits remain intact.
-102 selected CPU tests pass. The latest correction has NOT run on the GPU,
-received final strict core/off Clippy, or been frozen as a normal runtime yet.
-The last runtime-tested artifact is8fb70457; do not call it current source.
+102 selected CPU tests and current strict core/off binary Clippy pass.
+Normal frozen artifact `strata-cleanup-window-fixed-20261018`, SHA256
+`9465232e773ea1ed5cb65b0d947ab537151b6c8f4fea45282d91572e66ec4dff`,
+mode0500/source/features/ordinary equality independently verified. Protected
+`strata-cleanup-window-whole-20261018` is now running; await actual terminal
+status and recovery. It has no acceptance receipt yet.
 
-Next, after renewed GPU authorization: finish strict binary checks, freeze the
-normal d271 source, run the ordinary protected completion check and inspect its
+Next: finish the active ordinary protected completion check and inspect its
 actual failure/erasure/recovery result. If and only if that completes, run the
 explicit retained two-request Session check. Independent numerical/context/
 footprint/private-caller acceptance and speed remain gated. No completed whole

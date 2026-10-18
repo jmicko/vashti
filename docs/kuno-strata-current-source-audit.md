@@ -2,8 +2,7 @@
 
 Source-audit baseline: `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, isolated `codex/strata-rust-port`.
 Current execution corrections reach `d271eb492c40023d0008fcdf5bf6219f88a90000`;
-see the latest [checkpoint](kuno-native-text-checkpoint.md). The goal/GPU work
-is paused at the human request. Generation and draft reset are observed; target
+see the latest [checkpoint](kuno-native-text-checkpoint.md). The human renewed GPU access and the goal is active. Generation and draft reset are observed; target
 request erasure and whole-response/repeat acceptance remain unproven.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
