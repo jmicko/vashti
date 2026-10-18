@@ -33,6 +33,7 @@ mod dense;
 #[path = "strata_shared_numeric_probe.rs"]
 mod shared_numeric;
 
+#[cfg(feature = "strata-intel-core")]
 pub(crate) fn read_native_public(
     arena: &PrivateArena,
     id: BufferId,
