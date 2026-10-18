@@ -1,19 +1,28 @@
 # Complete Strata Intel inference rewrite: completion gate
 
-**Protected execution preflight (2026-10-18):** the human has authorized B70
-correctness/recovery testing, and shared-shell sudo was verified available. The
-first ordinary execution attempt (`strata-whole-completion-intel-20261018`, frozen
-runtime `fad14f5d`) stopped at its initial clean-state guard **before admission
-pause, adapter creation or model loading**: Intel used21,029,142,528B, one NVIDIA
-compute process, no active/waiting Kuno requests. Kuno/Ollama/Vashti HTTP checks
-passed; recorded kernel fault counts were zero. Two idle models remain cached.
-A question is pending for permission to unload both cached models, since the
-latest hardware authorization covered B70 only and the existing recovery test
-also requires NVIDIA idle. Do not bypass that guard or unload an unrelated job.
-Sudo-refresh helper was stopped; no inference test process remains. Retry with
-a **fresh** output directory after authorized unloading and actual clean-memory
-proof. The earlier unanswered-GPU/expired-sudo checkpoint below is superseded;
-whole-model acceptance and speed trials remain gated. API/Vashti changes: none.
+**Current protected-device checkpoint (2026-10-18):** isolated
+`codex/strata-rust-port`, runtime `7f4552d20ab7f6bb92d65b97989f3f6856919b46`.
+Human B70 testing/unload authorization and shared-shell sudo are resolved. Six
+connected corrections remain enabled: shared owner count/charge (`366955ce`),
+router SUBGROUP_BARRIER capability (`8d3eb711`), scheduler submission ownership
+(`8c82f8b0`), full32KiB MTP confidence owner (`9d061bcc`), matching the existing
+runtime quote to its actual target/language permit (`4669b075`), and independent
+GDN/PLE replay pointer-role checks (`7f4552d2`).118 selected CPU tests and strict
+core/off binary Clippy pass. The initial target result and next draft now complete
+and generation reaches retained replay. The previous replay attempt rejects in
+GDN completion: a combined2-bit GDN/PLE key was compared to GDN's single bit.
+The fix preserves the complete key and validates each family's own component;
+PLE gets an additional explicit role check. Existing state/shape/fault/queue
+checks stay intact. Protected `strata-replay-role-whole-20261018` is running;
+wait for actual terminal state/recovery. Frozen SHA256
+`d9f0f2aad59413298c90761b30884d33f05e833bdf1ae61b6120919d1a67fb4f` in
+`strata-replay-role-fixed-20261018` under the development artifact root.
+All completed attempts restored admission, HTTP services and Intel50,688,000B,
+with NVIDIA compute empty and zero kernel fault deltas. Process-level recovery
+does not accept failed request erasure/hot reuse. Whole-model completion/repeat,
+independent numerics/state/context/footprint/private-caller and speed remain gated.
+No speed measurements, model substitutions, API/frontend or installed-service
+changes. See the [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
 Approved 2026-10-14. This is backend engine work, not gateway/API/UI/release work.
 The user requires a complete coherent Rust port before live speed testing. This
@@ -21,7 +30,7 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, branch
+**Prior CPU-only build receipt:** `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, branch
 `codex/strata-rust-port`. Read the [public retained-session receipt](kuno-strata-rewrite-completion.md#protected-public-loaded-session-repeat-harness-2026-10-17)
 and [source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17).
 Selected engine wiring remains reviewed/passed; whole-model correctness/recovery
@@ -43,15 +52,10 @@ and requested/resolved features independently checked. Its early pre-adapter
 offline check passes397 variants/139 physical-pointer checks/77 rounded-product
 modules/32 matrix configs. No GPU/repeat run, numerical or recovery acceptance.
 
-**Stop checkpoint:** B70 availability question still pending; current permission
-remains CPU-only. Shared Demons shell's `sudo -n -v` reports credential unavailable.
-No privilege workaround or protected run. Once authorized/protected, first run
-ordinary whole-model completion; only then the explicit loaded-session repeat.
-Mixed/independent numerical/state/context/footprint/failure/private-caller gates
-remain open before speed. No service/install/release or API/Vashti/frontend
-change. Goal blocked/incomplete pending B70 authorization and fresh shared-shell sudo.
-Canonical checkout and inherited untracked
-cache preserved.
+**Earlier CPU-only stop is superseded by the protected-device checkpoint above.**
+The runtime now passes construction but has not completed inference. All work
+remains in this isolated checkout; canonical checkout and inherited cache remain
+preserved.
 
 
 
@@ -11702,3 +11706,197 @@ Canonical checkout and inherited untracked cache preserved. Stop at this clean
 CPU checkpoint with goal active/incomplete. Remaining actual whole-model,
 independent numerical/state, mixed-session/context/failure/footprint/recovery
 and private-caller gates still block overall acceptance and speed measurements.
+
+## Protected construction and first prompt execution (2026-10-18)
+
+The human explicitly authorized B70 correctness/recovery tests, then unloading
+both cached models. Kuno unload calls completed and its model list emptied;
+physical Intel memory returned to50,688,000B and NVIDIA compute count to0. Sudo
+was refreshed in Demons shell. No GPU reset, reboot or service installation.
+
+The fixed original IQ3_S/Q2 public code fixture remains greedy/seed0, MAX512,
+window4/minimum0.5. All commands include `--intel-core --execution-check`, without
+profiling or timing acceptance. Artifacts below are under
+`/media/jmicko/faststore/kuno-development`:
+
+- `strata-whole-completion-intel-20261018` was the early clean-state rejection
+  before unloading. `strata-whole-completion-intel-20261018-clear` then reached
+  target construction and returned redacted Inference without loading experts.
+- Source `c012459d` adds fixed static constructor error labels, never backend or
+  request payload formatting. Frozen artifact in
+  `strata-target-constructor-diagnostic-20261018` SHA256
+  `8b2665d5f25a09ec6cf60b023c67b53575aa4f87011fb216293bb9efbd16d551`.
+  `strata-target-constructor-check-20261018` identifies aggregate plan source
+  line1659: shared layout owns6 pages/294,912B in core, but aggregate used5 and
+  262,144B. No quantization/kernel/numerical rollback is involved.
+- Source `366955ce` derives aggregate family count/charge from the actual shared
+  layout. Ordinary/non-core count remains90; native becomes91. Full MAIN charges
+  add the already-existing32KiB fault owner, subtracting real available model
+  capacity through the existing admission owner. No cap/metadata/HOST/runtime
+  limit increases. `strata-shared-accounting-tests-20261018.log` builds; selected
+  log passes32 aggregate tests,1 native context test,3 shared tests and1 complete
+  original target-owner test. The first selection script stopped on an empty
+  module-qualified selector after36 passes; the actual test is in
+  `resident_model::admission_tests` and its subsequent exact-name run passed.
+- `strata-shared-accounting-fixed-20261018` is the normal frozen build at366955ce,
+  SHA256 `1e251f2a095a82c7d6d1125013bbc86c69b615fcb17c072e472a2c2e01271431`.
+  `strata-shared-accounting-whole-20261018` physically loaded target, original
+  global sources, shared target and Q2 draft, entered request/prompt prefix/chunk,
+  then failed at last prompt input. Its actual live systemd protection is saved
+  in `live-unit-protection.json`: MemorySwapMax0, LimitCORE0. No completion JSON.
+- Source `dfaf4041` records the first fixed-category private-I/O failure rather
+  than letting later cleanup errors obscure it. Frozen
+  `strata-first-io-fault-20261018` SHA256
+  `12f597204beab1266fb4b9789607e74ebe6216a608250892225e15e63ee9b19e`;
+  `strata-first-io-fault-check-20261018` repeats the same real selected path and
+  reveals `mutation_abandoned`. No panic/output or successful completion receipt.
+  Source `3511f5e4` adds static kernel-name/redacted error classification to the
+  launch error path that previously pushed directly into the stream's error
+  list. Error admission/retirement behavior is unchanged; its retry is next.
+
+Every completed protected attempt has host-after evidence: active/waiting0,
+admission resumed/recovery_required false, HTTP Kuno/Ollama/Vashti200, Intel
+50,688,000B, NVIDIA compute0 and kernel fault counts unchanged at0. The engine
+correctly returned RecoveryRequired when request cleanup could not be accepted;
+process destruction released physical memory. This does NOT prove in-session
+sanitization, original numerical/state behavior, hot repeat or successful model
+completion. Do not run retained repeat or speed measurements until the ordinary
+path completes and remaining acceptance gates are addressed. No Vashti/API change.
+
+### Native router capability and scheduler submission corrections
+
+- `strata-launch-fault-20261018` at `3511f5e4`, frozen SHA256
+  `8ad542319185d6913b611c8e302092e5e5fac864050c12d4b5df7fc59aa073d8`,
+  and protected `strata-launch-fault-check-20261018` identify the actual first
+  launch failure: `StrataGlobalNativeRoutes`, class `launch_compile`. The router
+  source calls subgroupBarrier. Wgpu29 requires the separate SUBGROUP_BARRIER
+  feature; old device setup requested SUBGROUP only. Offline validators used
+  all capabilities, hiding that device-creation mismatch.
+- Source `8d3eb711` centralizes native required features (SHADER_INT64, SUBGROUP,
+  SUBGROUP_BARRIER), checks adapter support, requests them on the actual path,
+  and checks the native matrix device wrapper receives them. Actual-router
+  regression rejects missing-barrier Naga capabilities and accepts the actual
+  requested feature set. No shader/barrier/math removal.38 selected tests pass;
+  strict core/off binary Clippy logs are `strata-router-feature-{core,off}-clippy-20261018.log`.
+  Frozen `strata-router-feature-fixed-20261018` SHA256
+  `8732f029be3a3f904a289cfa5d33f3f20f8ff3216de62e6e65dcdaa0630ab9de`.
+- Protected `strata-router-feature-whole-20261018` passes router compilation and
+  stops at Graph::shared_boundary source1067: **no original queued MAIN node**.
+  Earlier conversational suspicion that the last node was a peer is superseded
+  by the exact source location; it is the empty-list branch. Source review finds
+  Scheduler::execute_schedules_sequence always invokes Backend::flush after
+  enqueue_many; Wgpu backend unconditionally called actual stream.flush. This
+  submitted/emptied the graph before its ReleaseMain marker. The prior native
+  automatic256-task policy did not cover that separate scheduler hook.
+- Source `8c82f8b0` uses one native request/branch ownership predicate for both
+  automatic task-threshold and scheduler-boundary submissions. Scheduler drains
+  still enqueue all original tasks/INFO/markers, but an active, exclusively
+  admitted native request retains them until its real explicit boundaries.
+  Non-native/outside-request scheduling stays unchanged. No foreign logical
+  stream or completion grant; original source/queue/readback/PLE/branch-end/
+  cleanup operations still submit/join, and all existing capacities remain.
+  No removing shared lanes or recording dependencies to make a test pass.
+- `strata-scheduler-boundary-tests-20261018.log` builds actual selected tests;
+  `strata-scheduler-boundary-selected-20261018.log` passes88 distinct selected
+  cases:27 parameter/branch tests,23 queue/hazard planner tests,32 aggregate-plan,
+  3 shared,1 context,1 complete target owner,1 actual-router feature regression.
+  These are CPU evidence; they do not pretend to execute or erase GPU state.
+  Normal frozen `strata-scheduler-boundary-fixed-20261018`, SHA256
+  `b9e5940931f9b1c073de55e1c025a3cdc81fc7c53528ed80ec00cd1f95c900d9`,
+  is being tested in `strata-scheduler-boundary-whole-20261018` with existing
+  protected execution-check controls. Wait for its actual terminal state and
+  recovery receipt; do not infer a completion or speed result from these fixes.
+
+### Initial target observer and full MTP confidence owner
+
+Scheduler build `8c82f8b0` passed strict core/off binary Clippy (the two
+`strata-scheduler-boundary-*-clippy-20261018.log` files). Its protected whole-model
+run no longer fails shared release/launch, but the initial scope returns
+RecoveryRequired; the installed host still recovers completely. This is not
+successful request/reset acceptance. All original math/source/queue components
+remain selected; no throughput measurement or direction change.
+
+The remaining cause was obscured twice: controller boxing and the initial
+`lab_oracle_attempt` replaced original typed errors during terminal cleanup.
+`fbffdbf4` exposes only fixed typed-controller labels; `900d46c4` gives actual
+compile-time rejection sites; `70818730` preserves the original content-free
+`kuno_text::Error` through the same poison/checked-close path (panic payloads stay
+suppressed). `72c26a9c` adds only header-field identity/kernel fault categories on
+rejected public target packets, never selected IDs/coordinates/residuals. Its
+packet diagnostic stayed silent; this did NOT prove the error preceded packet
+validation. `28fd4cdb`/`19055b75`/`2f94b7ee` cover actual nested Result propagation
+and initial-window setup/completion with error-only source locations; no values,
+error consumption, capacity or arithmetic changes.
+
+Protected `strata-full-initial-location-check-20261018` at2f94b7ee (frozen
+`strata-full-initial-location-20261018`, SHA256
+`57d4996aab48ff1a844535441385e3aaf93330ccdda45027131d6e68d1692329`)
+locates the first propagation at `resident_model_batch.rs:6359`, the actual
+PrefixPhase::Pending observer. Verified packet/greedy/device carry setup has
+already passed. Prefix state publication is still pending: do not claim a fully
+committed target step or completed response. The callback prepares the next draft;
+the root typed cause is InvalidBufferLength, not an observed driver/launch fault.
+All completed attempt host-after receipts still show admission/HTTP/memory/fault
+recovery. No GPU reset or reboot.
+
+Source review independently proves a native MTP ABI violation: Candidates is
+allocated for61*3=183 legacy greedy words (732 logical bytes) in a32KiB original
+arena page. u::handle returns that logical slice. Native probability::launch
+requires the COMPLETE32KiB owner (zero offsets) to carve disjoint scratch and
+probability views; its existing strict check must reject the732B view. Source
+`9d061bcc` replaces only that argument with arena.handle(...).cloned(), retaining
+the same actual owner/fences/erasure ledger. Greedy argmax, coupled non-greedy
+sampling, original source/profile, probability reduction and limits are unchanged.
+This is source proof of a required fix, not yet physical completion acceptance.
+
+Normal frozen `strata-mtp-confidence-owner-fixed-20261018`, source
+`9d061bccdc7f4de2efe2f386f7a2f6be22d41112`, SHA256
+`8e667408f490af4157191c23eae03c4ab4b40fb972f1dbcd6f43023c323ba688`.
+Protected `strata-mtp-confidence-owner-whole-20261018` is the active retry;
+read its actual unit/process and host-after receipt before proceeding. The
+intermediate nested-only build19055b75 was frozen but not run; the combined
+initial-window diagnostic2f94b7ee was used instead. All diagnostics accept only
+compiled-public fixtures and fixed categories/source locations, with no prompt,
+token, residual or private backend payload persistence. No Vashti/API changes.
+
+### Original runtime permit and independent replay-role coordinates
+
+The protected9d061bcc run `strata-mtp-confidence-owner-whole-20261018` gets past
+the original invalid-length Pending callback: first target commit/next draft and
+short initial I/O scope complete. It then rejects long generation entry as
+`public target request I/O boundary rejected`. Source proof: the shared execution
+validator always required the old target-only256MiB quote, although the actual
+language permit/executor had already reserved its existing512MiB.4669b075 selects
+only the actual mutually exclusive constructor permit's quote. Both/neither
+permit and a foreign quote reject. No budget increase, geometry-based grant or
+removed transient/audit/profile/state check.101 selected tests and strict core/off
+binary Clippy pass at4669b075. Normal frozen `strata-runtime-permit-fixed-20261018`
+SHA256 `5f8237deb22ad585c1c5c795f848b80d61333995bf704ede07fed95aed683d80`.
+
+Protected `strata-runtime-permit-whole-20261018` enters the long generation scope
+(the second actual private binding-cache scope) and reaches native retained
+replay. GDN completion rejects at resident_model_batch.rs:5771 with the old
+blanket guarded error. Source inspection finds GDN comparing its one-bit original
+state-pair role with Completed's combined recording role (GDN | PLE<<1). A valid
+PLE history role1 makes that comparison impossible even with the correct GDN
+pair. This is not evidence to remove replay or substitute a different graph.
+
+7f4552d2 projects both components from the SAME original completed key. GDN checks
+bit0 and PLE checks bit1 against its actual original OLD/NEXT pair. The whole key,
+real graph receipt, original owner/state/fault/count/mode/epoch checks remain.
+A pure coordinate regression runs all four real NativeStrataBranch key encodings;
+no joined receipt/GPU authority is fabricated. GDN guarded execution now preserves
+its original content-free typed error while retaining poison and redacted panic
+behavior; the actual31-boundary failure/panic/cancellation test also checks that
+InvalidBufferLength is preserved.
+
+`strata-replay-role-tests-20261018.log` builds; the selected log passes118 distinct
+CPU cases (previous101 plus1 coordinate,1 actual GDN guard and15 PLE cases).
+`strata-replay-role-{core,off}-clippy-20261018.log` strict binary checks pass.
+Frozen `strata-replay-role-fixed-20261018`, source
+`7f4552d20ab7f6bb92d65b97989f3f6856919b46`, SHA256
+`d9f0f2aad59413298c90761b30884d33f05e833bdf1ae61b6120919d1a67fb4f`.
+Protected `strata-replay-role-whole-20261018` is the actual current retry. All
+completed prior host-after receipts still pass physical memory/service/fault
+recovery; successful response, retained-session repeat, independent numerics and
+speed are not yet accepted. No APIs, frontend, installation or release changes.

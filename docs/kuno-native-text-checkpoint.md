@@ -1,23 +1,32 @@
 # Native DASLab/Strata checkpoint — 2026-10-17
 
-**Protected execution preflight (2026-10-18):** the human has authorized B70
-correctness/recovery testing, and shared-shell sudo was verified available. The
-first ordinary execution attempt (`strata-whole-completion-intel-20261018`, frozen
-runtime `fad14f5d`) stopped at its initial clean-state guard **before admission
-pause, adapter creation or model loading**: Intel used21,029,142,528B, one NVIDIA
-compute process, no active/waiting Kuno requests. Kuno/Ollama/Vashti HTTP checks
-passed; recorded kernel fault counts were zero. Two idle models remain cached.
-A question is pending for permission to unload both cached models, since the
-latest hardware authorization covered B70 only and the existing recovery test
-also requires NVIDIA idle. Do not bypass that guard or unload an unrelated job.
-Sudo-refresh helper was stopped; no inference test process remains. Retry with
-a **fresh** output directory after authorized unloading and actual clean-memory
-proof. The earlier unanswered-GPU/expired-sudo checkpoint below is superseded;
-whole-model acceptance and speed trials remain gated. API/Vashti changes: none.
+**Current protected-device checkpoint (2026-10-18):** isolated
+`codex/strata-rust-port`, runtime `7f4552d20ab7f6bb92d65b97989f3f6856919b46`.
+Human B70 testing/unload authorization and shared-shell sudo are resolved. Six
+connected corrections remain enabled: shared owner count/charge (`366955ce`),
+router SUBGROUP_BARRIER capability (`8d3eb711`), scheduler submission ownership
+(`8c82f8b0`), full32KiB MTP confidence owner (`9d061bcc`), matching the existing
+runtime quote to its actual target/language permit (`4669b075`), and independent
+GDN/PLE replay pointer-role checks (`7f4552d2`).118 selected CPU tests and strict
+core/off binary Clippy pass. The initial target result and next draft now complete
+and generation reaches retained replay. The previous replay attempt rejects in
+GDN completion: a combined2-bit GDN/PLE key was compared to GDN's single bit.
+The fix preserves the complete key and validates each family's own component;
+PLE gets an additional explicit role check. Existing state/shape/fault/queue
+checks stay intact. Protected `strata-replay-role-whole-20261018` is running;
+wait for actual terminal state/recovery. Frozen SHA256
+`d9f0f2aad59413298c90761b30884d33f05e833bdf1ae61b6120919d1a67fb4f` in
+`strata-replay-role-fixed-20261018` under the development artifact root.
+All completed attempts restored admission, HTTP services and Intel50,688,000B,
+with NVIDIA compute empty and zero kernel fault deltas. Process-level recovery
+does not accept failed request erasure/hot reuse. Whole-model completion/repeat,
+independent numerics/state/context/footprint/private-caller and speed remain gated.
+No speed measurements, model substitutions, API/frontend or installed-service
+changes. See the [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, branch
+**Prior CPU-only build receipt:** `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, branch
 `codex/strata-rust-port`. Read the [public retained-session receipt](kuno-strata-rewrite-completion.md#protected-public-loaded-session-repeat-harness-2026-10-17)
 and [source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17).
 Selected engine wiring remains reviewed/passed; whole-model correctness/recovery
@@ -39,15 +48,10 @@ and requested/resolved features independently checked. Its early pre-adapter
 offline check passes397 variants/139 physical-pointer checks/77 rounded-product
 modules/32 matrix configs. No GPU/repeat run, numerical or recovery acceptance.
 
-**Stop checkpoint:** B70 availability question still pending; current permission
-remains CPU-only. Shared Demons shell's `sudo -n -v` reports credential unavailable.
-No privilege workaround or protected run. Once authorized/protected, first run
-ordinary whole-model completion; only then the explicit loaded-session repeat.
-Mixed/independent numerical/state/context/footprint/failure/private-caller gates
-remain open before speed. No service/install/release or API/Vashti/frontend
-change. Goal blocked/incomplete pending B70 authorization and fresh shared-shell sudo.
-Canonical checkout and inherited untracked
-cache preserved.
+**Earlier CPU-only stop is superseded by the protected-device checkpoint above.**
+The runtime now passes construction but has not completed inference. All work
+remains in this isolated checkout; canonical checkout and inherited cache remain
+preserved.
 
 
 

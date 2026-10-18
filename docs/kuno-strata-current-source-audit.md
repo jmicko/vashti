@@ -830,11 +830,14 @@ other historical entries. Physical repeat acceptance is still open.
 
 ## Remaining acceptance work
 
-- B70 correctness/recovery testing is authorized as of2026-10-18 and shared-shell
-  sudo was available. First ordinary preflight stopped before loading: cached
-  models occupy both cards despite idle admission. Await permission to unload
-  both, then recheck actual clean memory and use a fresh output directory. See
-  the current coordination/checkpoint note. No whole-model execution occurred.
+- Hardware/unload/sudo access is resolved. Actual execution corrected shared
+  accounting, router capability, implicit scheduler submission, MTP confidence
+  owner view, target/language runtime-permit quote and combined replay-role
+  interpretation. Current7f4552d2 passes118 selected CPU tests and core/off binary
+  lint. Initial target/draft and long generation entry now work; the current
+  protected retained-replay retry is running. Wait for actual terminal result,
+  then continue remaining acceptance; do not infer success/throughput from source
+  fixes. All completed attempts recover physical memory/services/fault counters.
 - Run protected whole-model prompt/count-one/multirow completion, then independent
   numerical/target-verification and accepted/rejected-prefix state checks.
   Validate actual cold/capture/replay, two-program PLE dependencies, EOS/cap,
