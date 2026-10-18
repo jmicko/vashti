@@ -14,7 +14,7 @@ use ash::{ext, vk};
 use hashbrown::hash_map::Entry;
 use parking_lot::Mutex;
 
-use super::{RawTlasInstance, conv};
+use super::{conv, RawTlasInstance};
 use crate::TlasInstance;
 
 impl super::DeviceShared {
@@ -740,10 +740,29 @@ impl super::Device {
     ) -> Result<vk::ShaderModule, crate::DeviceError> {
         let native_words;
         let spv = if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public") {
-            native_words = kuno_native_workgroup_layout(spv).map_err(|reason| {
+            let canonical = kuno_native_workgroup_layout(spv).map_err(|reason| {
                 log::error!("{reason}");
                 crate::DeviceError::Unexpected
             })?;
+            native_words = if let Some(precise) = super::kuno_cooperative_fp16_preserve(&canonical)
+                .map_err(|_| crate::DeviceError::Unexpected)?
+            {
+                let mut controls = vk::PhysicalDeviceFloatControlsProperties::default();
+                let mut properties =
+                    vk::PhysicalDeviceProperties2::default().push_next(&mut controls);
+                unsafe {
+                    self.shared.instance.raw.get_physical_device_properties2(
+                        self.shared.physical_device,
+                        &mut properties,
+                    );
+                }
+                if controls.shader_denorm_preserve_float16 != vk::TRUE {
+                    return Err(crate::DeviceError::Unexpected);
+                }
+                precise
+            } else {
+                canonical
+            };
             &native_words
         } else {
             spv

@@ -556,6 +556,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 };
                 let canonical =
                     wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)?;
+                let canonical = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&canonical)?
+                    .unwrap_or(canonical);
                 let words = &canonical;
                 if wgpu::hal::vulkan::kuno_cooperative_subgroup(words) != Some(16) {
                     return Err("matrix pipeline subgroup geometry".into());
@@ -614,6 +616,67 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
 #[cfg(test)]
 mod tests {
     use wgpu::hal::vulkan::kuno_native_workgroup_layout as layout;
+
+    #[cfg(feature = "strata-intel-core")]
+    #[test]
+    fn actual_fp16_cooperative_module_requests_preservation_and_rejects_conflicting_control() {
+        use cubecl::ir::{ElemType, StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, ExecutionMode, WgpuCompilationOptions};
+        let definition = super::native::definitions()
+            .into_iter()
+            .find(|(name, _)| *name == "dense_fp16")
+            .unwrap()
+            .1;
+        let mut options = WgpuCompilationOptions {
+            supports_vulkan: true,
+            ..Default::default()
+        };
+        options.vulkan.max_spirv_version = (1, 6);
+        let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+            &mut AutoCompiler::SpirV(Default::default()),
+            definition,
+            &options,
+            ExecutionMode::Unchecked,
+            StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+        )
+        .unwrap() else {
+            panic!("native SPIRV required")
+        };
+        let precise = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&kernel.assembled_module)
+            .unwrap()
+            .expect("ordinary FP16 cooperative module");
+        assert_eq!(
+            wgpu::hal::vulkan::kuno_cooperative_subgroup(&precise),
+            Some(16)
+        );
+        assert_eq!(
+            wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&precise)
+                .unwrap()
+                .unwrap(),
+            precise
+        );
+        let mut at = 5;
+        let mut entry = None;
+        while at < precise.len() {
+            let n = (precise[at] >> 16) as usize;
+            if precise[at] & 65535 == 16 && n == 4 && precise[at + 2..at + 4] == [4459, 16] {
+                assert!(entry.replace(precise[at + 1]).is_none());
+            }
+            at += n;
+        }
+        let entry = entry.expect("actual DenormPreserve16 mode");
+        let mut conflicting = precise;
+        conflicting.extend_from_slice(&[(4 << 16) | 16, entry, 4460, 16]);
+        assert!(wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&conflicting).is_err());
+        assert!(wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&[0; 5]).is_err());
+        assert!(
+            wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&[
+                0x07230203, 0x00010600, 0, 1, 0, 0
+            ])
+            .is_err()
+        );
+    }
 
     #[cfg(feature = "strata-intel-core")]
     #[test]

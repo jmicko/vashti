@@ -29,6 +29,8 @@ mod command;
 pub mod conv;
 mod device;
 pub use device::{kuno_cooperative_subgroup, kuno_native_workgroup_layout};
+mod kuno_fp16;
+pub use kuno_fp16::kuno_cooperative_fp16_preserve;
 mod drm;
 mod instance;
 mod sampler;
