@@ -81,6 +81,8 @@ pub(crate) fn cases(
             }
             let mut mismatches = 0usize;
             let mut max_abs = 0f32;
+            let mut ftz_mismatches = 0usize;
+            let mut ftz_max_abs = 0f32;
             for (i, &bits) in actual.iter().enumerate() {
                 if i >= count * rows {
                     if bits != 0 {
@@ -100,14 +102,35 @@ pub(crate) fn cases(
                 mismatches +=
                     usize::from(!value.is_finite() || error > 1e-4 + 3e-4 * reference.abs());
                 max_abs = max_abs.max(error);
+                if !bfloat {
+                    // Additional diagnosis only: do not replace the IEEE
+                    // reference or its unchanged acceptance threshold.
+                    let minimum = half::f16::MIN_POSITIVE.to_f32();
+                    let ftz = w
+                        .iter()
+                        .zip(x)
+                        .map(|(&w, &x)| {
+                            if w.abs() < minimum || x.abs() < minimum {
+                                0.
+                            } else {
+                                f64::from(w) * f64::from(x)
+                            }
+                        })
+                        .sum::<f64>() as f32;
+                    let e = (value - ftz).abs();
+                    ftz_mismatches +=
+                        usize::from(!value.is_finite() || e > 1e-4 + 3e-4 * ftz.abs());
+                    ftz_max_abs = ftz_max_abs.max(e);
+                }
             }
             println!(
-                "public_native_matrix_numeric bfloat={bfloat} count={count} rows={rows} columns={columns} mismatches={mismatches} max_abs={max_abs}"
+                "public_native_matrix_numeric bfloat={bfloat} count={count} rows={rows} columns={columns} mismatches={mismatches} max_abs={max_abs} ftz_mismatches={ftz_mismatches} ftz_max_abs={ftz_max_abs}"
             );
             reports.push(
                 serde_json::json!({"family":"cooperative-matrix","bfloat":bfloat,
                 "count":count,"rows":rows,"columns":columns,"mismatches":mismatches,
-                "max_abs":max_abs,"actual_native_kernels":true,"full_owner_and_tail_checked":true}),
+                "max_abs":max_abs,"ftz_oracle_mismatches":ftz_mismatches,"ftz_max_abs":ftz_max_abs,
+                "ftz_is_additional_diagnosis_only":true,"actual_native_kernels":true,"full_owner_and_tail_checked":true}),
             );
             arena.reset()?;
             if mismatches != 0 {
