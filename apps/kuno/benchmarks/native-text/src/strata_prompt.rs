@@ -383,12 +383,9 @@ impl Kernel {
         if let Self::Dequant(dtype) = self {
             let bytes = crate::quant_matvec::block_layout(dtype).unwrap().1;
             source.push_str(&format!("const DTYPE:u32={dtype}u;const GROUP_VALUES:u32={}u;const BLOCK_BYTES:u32={bytes}u;\n",if dtype==14 {16}else{32}));
-            source.push_str(
-                include_str!("strata_dense.wgsl")
-                    .split_once("@compute")
-                    .unwrap()
-                    .0,
-            );
+            // Shared original packed helpers also feed native dense source.
+            // They contain no compute entrypoint; prompt retains factors/codes.
+            source.push_str(include_str!("strata_dense.wgsl"));
         }
         source.push_str(section(match self {
             Self::Pack => "PACK",

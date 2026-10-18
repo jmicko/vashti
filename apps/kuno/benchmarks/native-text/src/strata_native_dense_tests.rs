@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn prompt_dequant_remains_connected_to_original_shared_packed_helpers() {
+    use wgpu::naga as n;
+    let mut formats = 0;
+    for compiled in crate::strata_prompt::sources() {
+        if !compiled.source.contains("const DTYPE:") {
+            continue;
+        }
+        formats += 1;
+        let module = n::front::wgsl::parse_str(&compiled.source).unwrap();
+        let info = n::valid::Validator::new(
+            n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        for helper in ["factors", "codes"] {
+            assert!(
+                module
+                    .functions
+                    .iter()
+                    .any(|(_, f)| f.name.as_deref() == Some(helper))
+            );
+        }
+        n::back::spv::write_vec(
+            &module,
+            &info,
+            &Default::default(),
+            Some(&n::back::spv::PipelineOptions {
+                shader_stage: n::ShaderStage::Compute,
+                entry_point: "main".into(),
+            }),
+        )
+        .unwrap();
+    }
+    assert_eq!(formats, 6);
+}
+
+#[test]
 fn original_wide_lane_fields_cover_canonical_gguf_values_and_all_rhs() {
     // Independent GGUF decoding is the oracle, not the old generic GPU kernel.
     // Public synthetic packed bytes exercise signed codes, high scale bits,

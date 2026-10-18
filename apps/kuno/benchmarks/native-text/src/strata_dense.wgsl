@@ -24,3 +24,45 @@ fn scale_at(b:u32,g:u32,minimum:bool)->f32 {
     }
     return f32(value);
 }
+fn factors(row:u32,group:u32)->vec2<f32> {
+    if DTYPE==14u {
+        let b=row+(group/16u)*210u;
+        return vec2<f32>(half_at(b+208u)*f32(signed_byte(byte_at(b+192u+group%16u))),0.0);
+    }
+    if DTYPE==12u || DTYPE==13u {
+        let b=row+(group/8u)*BLOCK_BYTES;
+        return vec2<f32>(half_at(b)*scale_at(b,group%8u,false),half_at(b+2u)*scale_at(b,group%8u,true));
+    }
+    if DTYPE==23u {
+        let b=row+(group/8u)*136u;let sub=group%8u;
+        let lo=(byte_at(b+4u+sub/2u)>>((sub%2u)*4u))&15u;
+        let hi=((byte_at(b+2u)|(byte_at(b+3u)<<8u))>>(sub*2u))&3u;
+        return vec2<f32>(half_at(b)*f32(i32(lo|(hi<<4u))-32),0.0);
+    }
+    return vec2<f32>(half_at(row+group*BLOCK_BYTES),0.0);
+}
+fn codes(row:u32,group:u32,word:u32)->u32 {
+    if DTYPE==14u {
+        let b=row+(group/16u)*210u;let sub=group%16u;
+        let half=sub/8u;let quarter=(sub%8u)/2u;let offset=(sub%2u)*16u+word*4u;
+        let low=word_at(b+half*64u+(quarter%2u)*32u+offset);
+        let high=word_at(b+128u+half*32u+offset);
+        let nibble=select(low&0x0f0f0f0fu,(low>>4u)&0x0f0f0f0fu,quarter>=2u);
+        let q=nibble|(((high>>(quarter*2u))&0x03030303u)<<4u);
+        return (q+0x60606060u)^0x80808080u;
+    }
+    if DTYPE==12u || DTYPE==13u {
+        let b=row+(group/8u)*BLOCK_BYTES;let sub=group%8u;
+        let q=word_at(b+select(16u,48u,DTYPE==13u)+(sub/2u)*32u+word*4u);
+        var out=select(q&0x0f0f0f0fu,(q>>4u)&0x0f0f0f0fu,sub%2u==1u);
+        if DTYPE==13u {out|=((word_at(b+16u+word*4u)>>sub)&0x01010101u)<<4u;}
+        return out;
+    }
+    if DTYPE==23u || DTYPE==20u {
+        let b=row+(group/select(1u,8u,DTYPE==23u))*BLOCK_BYTES;
+        let at=b+select(2u,8u+(group%8u)*16u,DTYPE==23u)+(word%4u)*4u;
+        let q=word_at(at);
+        return nonlinear(select(q&0x0f0f0f0fu,(q>>4u)&0x0f0f0f0fu,word>=4u));
+    }
+    return word_at(row+group*34u+2u+word*4u); // original Q8_0
+}
