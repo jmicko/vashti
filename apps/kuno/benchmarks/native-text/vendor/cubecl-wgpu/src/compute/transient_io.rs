@@ -763,13 +763,24 @@ struct LeaseTracker {
     first_failure: AtomicUsize,
 }
 impl LeaseTracker {
+    #[track_caller]
     fn record(&self, category: Failure) {
-        let _ = self.first_failure.compare_exchange(
+        let first = self.first_failure.compare_exchange(
             0,
             category as usize + 1,
             Ordering::AcqRel,
             Ordering::Acquire,
         );
+        if first.is_ok()
+            && super::strata_graph::enabled()
+            && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+        {
+            let source = std::panic::Location::caller();
+            eprintln!(
+                "native_public_io_first_failure code={} source_file={} source_line={}",
+                category.code(), source.file(), source.line()
+            );
+        }
     }
     fn reason(&self, fallback: Failure) -> &'static str {
         self.first_failure
