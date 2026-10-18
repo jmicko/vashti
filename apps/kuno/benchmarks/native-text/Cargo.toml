@@ -48,6 +48,8 @@ strata-eight-window = ["strata-rust-port"]
 strata-resident-224 = ["strata-rust-port"]
 strata-resident-240 = ["strata-resident-224"]
 strata-intel-core = ["strata-resident-240", "cubecl/wgpu-spirv", "cubecl-wgpu/kuno-strata-shared"]
+# Fixed public completion check; changes only the harness request, not the engine.
+strata-public-cap-check = ["strata-intel-core"]
 # Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.
 # Never selected implicitly by the faithful Intel port or its builder.
 strata-gpu-adaptive-usage = ["strata-intel-core"]

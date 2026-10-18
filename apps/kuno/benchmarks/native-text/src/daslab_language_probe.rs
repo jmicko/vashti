@@ -1127,7 +1127,11 @@ pub(crate) fn run(
                 &mut std::io::Cursor::new(rendered.as_bytes()),
                 &tokenizer,
                 crate::strata_engine::input::Controls {
-                    outputs: MAX_OUTPUTS,
+                    outputs: if cfg!(feature = "strata-public-cap-check") {
+                        16
+                    } else {
+                        MAX_OUTPUTS
+                    },
                     eos: graph.eos_token(),
                     sampling: crate::strata_sampler::Params {
                         greedy: true,
@@ -1233,6 +1237,11 @@ pub(crate) fn run(
         if emitted.len() != done.generation.outputs {
             return Err("native public output delivery count".into());
         }
+        if cfg!(feature = "strata-public-cap-check")
+            && (done.generation.outputs != 16 || done.generation.eos)
+        {
+            return Err("fixed public output cap check rejected".into());
+        }
         let visible = Zeroizing::new(
             emitted
                 .iter()
@@ -1260,6 +1269,8 @@ pub(crate) fn run(
             })
             .transpose()?;
         let record = serde_json::json!({"controller":"global-original-sources",
+            "requested_output_limit":if cfg!(feature = "strata-public-cap-check"){16}else{MAX_OUTPUTS},
+            "fixed_public_cap_checked":cfg!(feature = "strata-public-cap-check"),
             "greedy_target_verification":done.generation.greedy,"outputs":done.generation.outputs,
             "windows":done.generation.windows,"state_repairs":done.generation.state_repairs,
             "public_response_nonempty":!preview.trim().is_empty(),
