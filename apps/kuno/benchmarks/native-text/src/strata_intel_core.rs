@@ -34,6 +34,13 @@ thread_local! {static TABLE:RefCell<Option<Handle>>=const {RefCell::new(None)};s
 pub(crate) const fn enabled() -> bool {
     cfg!(feature = "strata-intel-core")
 }
+pub(crate) fn device_features() -> wgpu::Features {
+    if enabled() {
+        wgpu::Features::SHADER_INT64 | wgpu::Features::SUBGROUP | wgpu::Features::SUBGROUP_BARRIER
+    } else {
+        wgpu::Features::empty()
+    }
+}
 fn reject() -> Error {
     Error::InvalidFormat("Strata Intel public table scope")
 }
@@ -218,4 +225,30 @@ pub(crate) fn bind_addresses(
         state.tables[index].roots = roots;
         Ok(args.with_buffer(handle.binding()))
     })
+}
+
+#[cfg(all(test, feature = "strata-intel-core"))]
+mod device_feature_tests {
+    #[test]
+    fn actual_router_requires_the_barrier_capability_requested_by_the_device() {
+        use wgpu::naga as n;
+        let source = include_str!("strata_global_route.wgsl");
+        let module = n::front::wgsl::parse_str(source).unwrap();
+        let without = n::valid::Capabilities::all() - n::valid::Capabilities::SUBGROUP_BARRIER;
+        assert!(
+            n::valid::Validator::new(n::valid::ValidationFlags::all(), without)
+                .validate(&module)
+                .is_err()
+        );
+        let features = super::device_features();
+        assert!(features.contains(wgpu::Features::SHADER_INT64 | wgpu::Features::SUBGROUP));
+        let requested = if features.contains(wgpu::Features::SUBGROUP_BARRIER) {
+            without | n::valid::Capabilities::SUBGROUP_BARRIER
+        } else {
+            without
+        };
+        n::valid::Validator::new(n::valid::ValidationFlags::all(), requested)
+            .validate(&module)
+            .unwrap();
+    }
 }

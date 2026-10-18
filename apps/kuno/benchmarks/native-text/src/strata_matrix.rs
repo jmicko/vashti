@@ -9,6 +9,12 @@ pub(crate) async fn request_device(
 ) -> std::result::Result<(wgpu::Device, wgpu::Queue), Box<dyn std::error::Error>> {
     #[cfg(feature = "strata-intel-core")]
     {
+        if !descriptor
+            .required_features
+            .contains(crate::strata_intel_core::device_features())
+        {
+            return Err("native inference device features rejected".into());
+        }
         if descriptor.required_limits.max_storage_buffer_binding_size
             < crate::strata_prompt::allocation::ROOT_BYTES
             || descriptor.required_limits.max_buffer_size

@@ -2467,9 +2467,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         strata_port::validate_limits(&adapter.limits())?;
         if strata_intel_core::enabled()
-            && !adapter.features().contains(wgpu::Features::SHADER_INT64)
+            && !adapter
+                .features()
+                .contains(strata_intel_core::device_features())
         {
-            return Err("native expert pointers require shader int64".into());
+            return Err("native inference requires int64, subgroups and subgroup barriers".into());
         }
         let device_result = strata_matrix::request_device(
             &adapter,
@@ -2486,11 +2488,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 wgpu::Features::empty()
                             }
                             | wgpu::Features::SUBGROUP
-                            | if strata_intel_core::enabled() {
-                                wgpu::Features::SHADER_INT64
-                            } else {
-                                wgpu::Features::empty()
-                            }
+                            | strata_intel_core::device_features()
                             | if kernel_profile || public_target_profile {
                                 wgpu::Features::TIMESTAMP_QUERY
                                     | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
