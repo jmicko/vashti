@@ -189,7 +189,9 @@ mod native {
                         if valid && status[route] == 1 {
                             good = 1;
                         }
-                        status[20480 + route] = good;
+                        // Same full-capacity plane as prompt activation and
+                        // the rank-ordered reducer, including routes >20479.
+                        status[comptime!(crate::strata_prompt::groups::ROUTES) + route] = good;
                     }
                 } else {
                     fault[0].fetch_or(128);
@@ -600,6 +602,109 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
 #[cfg(test)]
 mod tests {
     use wgpu::hal::vulkan::kuno_native_workgroup_layout as layout;
+
+    #[cfg(feature = "strata-intel-core")]
+    #[test]
+    fn compiled_expert_down_writes_the_same_full_prompt_status_plane_the_reducer_reads() {
+        use cubecl::ir::{ElemType, StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, ExecutionMode, WgpuCompilationOptions};
+        use std::collections::BTreeMap;
+
+        // Inspect the real cooperative kernel, not the legacy scalar WGSL
+        // diagnostic. Its first status read is activation[route]; its sole
+        // status store must be down[route], in the consumer's second plane.
+        let reducer = crate::strata_prompt::groups::shader_prefix();
+        assert!(reducer.contains(&format!(
+            "const PROMPT_ROUTES:u32={}u;",
+            crate::strata_prompt::groups::ROUTES
+        )));
+        assert!(
+            include_str!("strata_prompt_reduce.wgsl").contains("status[PROMPT_ROUTES+route]==1u")
+        );
+
+        for mask in 0..8u8 {
+            let mut options = WgpuCompilationOptions {
+                supports_vulkan: true,
+                ..Default::default()
+            };
+            options.vulkan.max_spirv_version = (1, 6);
+            options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+            options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+            options.vulkan.supports_explicit_smem = mask & 4 != 0;
+            let definition = super::native::definitions()
+                .into_iter()
+                .find(|(name, _)| *name == "expert_down")
+                .unwrap()
+                .1;
+            let compiled = Compiler::compile(
+                &mut AutoCompiler::SpirV(Default::default()),
+                definition,
+                &options,
+                ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap();
+            let AutoRepresentation::SpirV(kernel) = compiled else {
+                panic!("actual native matrix compiler required");
+            };
+            let words = layout(&kernel.assembled_module).unwrap();
+            let mut at = 5;
+            let mut bindings = BTreeMap::new();
+            let mut constants = BTreeMap::new();
+            let mut adds = BTreeMap::new();
+            let mut pointers = BTreeMap::new();
+            let mut loads = Vec::new();
+            let mut stores = Vec::new();
+            while at < words.len() {
+                let n = (words[at] >> 16) as usize;
+                assert!(n > 0 && at + n <= words.len());
+                let operands = &words[at + 1..at + n];
+                match words[at] & 65535 {
+                    71 if operands.len() == 3 && operands[1] == 33 => {
+                        bindings.insert(operands[0], operands[2]); // Binding.
+                    }
+                    43 if operands.len() == 3 => {
+                        constants.insert(operands[1], operands[2]); // OpConstant.
+                    }
+                    128 if operands.len() == 4 => {
+                        adds.insert(operands[1], [operands[2], operands[3]]); // IAdd.
+                    }
+                    65 if operands.len() == 5 => {
+                        pointers.insert(operands[1], (operands[2], operands[4]));
+                    }
+                    61 if operands.len() >= 3 => loads.push(operands[2]),
+                    62 if operands.len() >= 2 => stores.push(operands[0]),
+                    _ => {}
+                }
+                at += n;
+            }
+            let status = *bindings.iter().find(|(_, b)| **b == 4).unwrap().0;
+            let indices = |accesses: &[u32]| {
+                accesses
+                    .iter()
+                    .filter_map(|p| pointers.get(p))
+                    .filter_map(|&(base, index)| (base == status).then_some(index))
+                    .collect::<Vec<_>>()
+            };
+            let reads = indices(&loads);
+            let writes = indices(&stores);
+            assert_eq!(reads.len(), 1, "mask={mask}");
+            assert_eq!(writes.len(), 1, "mask={mask}");
+            let operands = adds[&writes[0]];
+            let offset = if operands[0] == reads[0] {
+                constants[&operands[1]]
+            } else {
+                assert_eq!(operands[1], reads[0]);
+                constants[&operands[0]]
+            } as usize;
+            assert_eq!(offset, crate::strata_prompt::groups::ROUTES, "mask={mask}");
+            for route in [0, 9, 20479, 20480, crate::strata_prompt::groups::ROUTES - 1] {
+                assert!(offset + route >= crate::strata_prompt::groups::ROUTES);
+                assert!(offset + route < crate::strata_prompt::groups::STATUS_WORDS);
+            }
+        }
+    }
 
     // Public, content-free type graphs exercise the unsafe native boundary:
     // changing a host/explicit byte ABI would silently address the wrong data.
