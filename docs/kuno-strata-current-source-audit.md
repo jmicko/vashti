@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `d70bcb162fe70a4eeafd4aab6848bd6d0d344654`, isolated `codex/strata-rust-port`.
+Runtime source: `1b8d354d56c501cda08ec6404ce2f5427732e507`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -36,6 +36,63 @@ checks shared-root recovery and retires failed contexts. Source-owner closure
 joins readers before HOST detach/free; failed close quarantines roots instead of
 pretending completion. **Actual driver residency, no-swap protection, repeat
 request execution and full GPU recovery remain unverified.**
+
+## Dense and ranked source placement: actual owners traced further
+
+`executor::begin_resident` constructs actual `strata_static_weights::Plan` and
+subtracts its owned bytes, target private state, baseline, I/O/runtime, public
+pages, source windows, original MTP capacity and48 source-table roots from the
+shared MAIN grant before computing `native_expert_budget`. The complete selected
+static matrix inventory owns3,644,840,960B at256-byte alignment, apart from the
+separately accounted shared head/vectors. `prepare_native_static_weights_inner`
+checks original graph binding and absence of old cache/banks/sources, loads and
+joins every exact tile and seals only after actual cache count/bytes equal that
+inventory. `resident_model_batch::prepare_global_sources_before_prefill` consumes
+that sealed preparation before expert allocation. No old fixed5GiB allowance,
+second legacy uniform bank, or resident ghost expert supplies this selected path.
+
+Pinned Intel `generate.cpp` constructs dense/session/draft/head owners before
+`ExpertCache::open_sized`. Its native-pack profile walk stops at the first
+aligned heterogeneous blob beyond its byte cap; `open_sized` aligns slots256.
+Rust `strata_global_plan::Plan::from_graph/from_roles` derives all144 role sizes
+and types from the actual original tensors, uses the same complete ranked pair
+profile (its full fixture and pinned data both hash
+`8f59b4aa8873209dff11c11e37bcda9529a1335b724a1afeea37bf6388975baf`),
+stops at that first non-fitting triple and preserves exact256-byte slot
+order. The byte cap comes from Kuno's explicit original-owner admission rather
+than copying Strata's free-memory heuristic/reserve; physical fit/cache capacity
+and backend allocation pricing still require acceptance.
+
+Rust divides native's one contiguous expert arena into <=512MiB owning roots,
+without splitting a slot, while HOST complements use <=128MiB role pieces.
+`strata_global_gpu::Cache::load` initializes every actual root and all padding
+from bounded16MiB original-byte upload windows; each window joins before staging
+reuse. No full GPU-root/model host mirror is allocated for startup. `Host::load`
+creates the original nonlocal HOST-visible complement and shared target/MTP
+embedding pages under the sole immutable registry; its quote includes actual
+heap alignment, metadata and bounded setup windows. This is the deliberate
+Vulkan allocation/registration substitution for original SYCL/model source
+pointers. It preserves actual weights and role offsets, not only residency IDs.
+
+`Sources::build_tables` obtains device addresses only for original complete
+registered owning resources, rejects duplicate roots/unaligned/out-of-owner
+ranges, and publishes each expert/role's actual address/extent in its original
+layer table with retained physical READ dependencies. Target/device routing and
+prompt grouping consume that same plan. Missing GPU experts remain original
+HOST sources; the default selected NO_HOST path does not invoke CPU expert math
+or upload every miss. Original source/binding checks surround publication.
+
+Prompt lending is also connected to actual owners. `prompt_loan_quote` chooses
+three real consecutive fitting tail roots, with a bounded original-weight HOST
+shadow for only those roots. `begin_prompt_loan` joins prior use, refreshes the
+shadow, redirects every lent expert pointer/read dependency to original HOST
+bytes and joins publication before registering any lent root as private scratch.
+The prompt Scope ends before `finish_prompt_loan`; original private close/erase
+receipts are checked before restoring original bytes, source tables and real
+queue completion. Partial failure retains source exclusion and retires the
+shared context; it cannot publish original model residency. Embedding consumers
+must drop their actual owner loans before HOST detach. Physical loan/restore,
+source placement/RSS and retained multi-request recovery remain unverified.
 
 ## Sampling and accepted-token flow: selected source traced
 
@@ -103,6 +160,42 @@ question; it does not authorize changing modes during an active request.
 CPU evidence is in the linked completion receipt. No new arithmetic kernel, GPU
 heap owner, model copy, content persistence, protocol endpoint or Vashti behavior.
 The artifact's offline shader branch is permitted; no live model/speed test ran.
+
+## Native program boundaries: ordinary auto-flush connection defect corrected
+
+`WgpuStream::register_pipeline` pushes actual native nodes and increments the
+same task count as ordinary WGPU. Its `flush_if_needed` previously flushed at
+the ordinary256-task threshold even inside a native request/typed branch.
+This is a concrete whole-program defect: the target suffix alone enqueues at
+least47 layers x2 GR reads x4 actual GR dispatches =376 math nodes, before any
+attention/expert/status work. Thus the ordinary threshold could split a captured
+suffix and add host joins/segments. Earlier branch-layout eligibility tests
+alone did not establish that the real capture produced the required programs.
+This finding comes from the connected source, not a GPU timing observation.
+
+The actual stream now uses the original `TransientIo::reuse_active()` nonce
+state and real `Parameters::active` state for automatic-flush policy. An active
+native request or branch keeps its explicit boundaries even beyond256 tasks.
+This also covers initial uncaptured count1 and prompt work; no fabricated
+position-zero typed invocation, new scope/API or cache key is required. Outside
+those original states, or outside the native graph, ordinary batching remains.
+
+Actual PLE prefix/input transfer/suffix, target commit/pending export, draft
+entry/end, scoped readback, prompt router readback, cleanup and real fence/error
+joins remain explicit and independent of the automatic threshold. Holding nodes
+does not authorize publication or conceal a failed dispatch. Existing32768-node
+and32768-record limits,4096 pages,2MiB templates/4MiB program metadata,64MiB
+retained recording metadata, private I/O/admission limits and request erasure
+remain unchanged. Actual full-window/all-shape footprint under these quotas
+still requires protected execution; no pressure-driven partial replay/fallback
+or cap increase is introduced by this fix.
+
+CPU regression uses the actual source policy and typed parameter owners: two
+original805-record programs cross three ordinary task batches each, retain
+exactly two segment/page inventories and render fresh controls on replay.
+Uncaptured request holding, ordinary idle threshold, named commit/draft and
+failed-layout clear are covered too. These tests grant no GPU-fence/numerical
+acceptance. See the boundary receipt for final source/artifact evidence.
 
 ## Retained graph lifetime: cross-request capacity traced
 
@@ -463,10 +556,11 @@ and frozen-artifact evidence is recorded in the completion receipt.
 
 ## Source review still to finish
 
-- Consolidate actual selected dense/expert matrix and quantized arithmetic
-  producers and remaining prompt dense/expert overlays against the pinned
+- Consolidate selected quantized arithmetic and remaining prompt dense/expert
+  overlays against the pinned
   call sites and prior receipts. GR/GDN/QSA decode/prompt consumer review is
-  indexed above; physical numeric/state acceptance is still open. Explicitly
+  indexed above. Dense/ranked source/loan ownership is traced above; physical
+  placement/numeric/state acceptance is still open. Explicitly
   accept or resolve every remaining storage, grouping, queue and math
   substitution; filenames alone do not pass.
 - Preserve the now-traced per-request126/128 graph lifetime and original

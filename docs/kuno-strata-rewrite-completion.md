@@ -6,40 +6,41 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `d70bcb162fe70a4eeafd4aab6848bd6d0d344654`, branch
+**Current CPU-only source:** `1b8d354d56c501cda08ec6404ce2f5427732e507`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [GR/GDN/QSA audit receipt](kuno-strata-rewrite-completion.md#gr-gdn-qsa-source-audit-and-gate-arithmetic-correction-2026-10-17).
-Actual GR low SiLU now preserves native division; target/MTP and both prompt QSA
-gates preserve native rounded sigmoid/product, then original prompt F16 packing.
-Native256-output gate grouping and actual launch metadata/consumers change together.
-The indexed audit maps selected GR/GDN/QSA decode/prompt defaults, actual buffers,
-MTP consumers and explicit Vulkan packing/layout/scheduling substitutions.
-The preceding deferred PLE prefix/read/transfer/suffix and request-owned original
-reader/cache stay connected. No GPU owner, dependency, public API or Vashti change.
+and [native boundary/placement receipt](kuno-strata-rewrite-completion.md#native-request-submission-boundaries-and-placement-audit-2026-10-17).
+The actual native request/program now keeps its explicit submission boundaries:
+WGPU's ordinary256-task threshold cannot split initial/prompt/target/commit/draft
+work inside original request/branch ownership. Ordinary execution outside those
+states stays unchanged. All node/parameter/retained-metadata/I/O quotas remain;
+no fake completion, new scope/API or cap increase. Actual source trace proves
+target suffix GR alone exceeds that ordinary threshold (376 math nodes).
 
-623 distinct selected CPU cases /87 nonempty suites pass, with strict core/off
-**binary** Clippy and changed formatting/whitespace. Actual shader IR/metadata/
-SPIRV and fixed public F32/F16 rounding witnesses cover the corrected consumers.
-Unchanged original-file deferred row reads and eight core positional cases retain
-their preceding receipts; they were not rerun or relabeled as new evidence.
-Frozen ordinary artifact SHA256
-`054d0bb5a959ce7704dfdc9b00ed5fe0d984a541b6f14708bc68f2bca832b5db`,
+The audit also traces static preload before expert sizing, exact ranked bytes,
+full GPU/HOST pointer owners and private prompt loan/erase/restore. Compiled full
+ranked fixture matches pinned Strata data SHA256. Earlier native GR/QSA arithmetic
+and deferred PLE prefix/read/transfer/suffix stay connected. No API/Vashti change.
+
+629 distinct selected CPU cases /87 nonempty suites pass, with strict core/off
+**binary** Clippy and changed formatting/whitespace. Actual policy/typed-page
+regressions retain/replay two805-record programs across ordinary task thresholds,
+and cover uncaptured request holding and failed-state clear. They grant no
+GPU-fence/physical-memory authority. Frozen ordinary SHA256
+`da0fdadf397c7b98447941efc516b1a297386c1de34084d6536236e23a706b2c`,
 source/ordinary/frozen/mode0500/requested-and-resolved-features independently
-verified. Its early pre-adapter offline branch passes397 shader variants /
-139 physical-pointer checks /77 rounded-product modules /32 matrix configs.
-No GPU, model inference or speed measurement ran.
+verified; its early pre-adapter offline branch passes397 variants/139 physical
+checks/77 rounded-product modules/32 matrix configs. No GPU/inference/speed ran.
 
-**Whole rewrite incomplete; speed gate closed.** Continue selected dense/expert
-arithmetic/prompt matrix/source placement and queue/INFO/descriptor/shared/MTP/
-commit/cleanup consolidation. GR/GDN/QSA source consumer/default review is indexed;
-physical numerics/state remain open. Deferred PLE cold/capture/replay/failure
-joins and extra segment/page pricing still need protected acceptance. Then require
-whole-model prompt/count1/multirow, accept/reject/EOS/cap/context, retained mixed/
-hot requests and all-resource recovery before speed. CLI remains compiled-public/
-one-request; private caller separately gated. Goal active CPU-only; sudo is expired
-and no privileged work was required. No GPU/service/install/release/frontend action.
-Required API/Vashti changes: none. Canonical checkout and inherited untracked cache
-preserved.
+**Whole rewrite incomplete; speed gate closed.** Continue selected quantized
+arithmetic/prompt matrix consumers and remaining shared/MTP/INFO/descriptor/
+output/resource queue review. Actual full-program/all-shape footprint under
+unchanged quotas still needs protected acceptance. Then require whole-model
+numerics/context/cold/capture/replay, acceptance/repair, EOS/cap, retained mixed
+requests and full recovery before speed. CLI remains compiled-public/one-request;
+private caller separately gated. Goal active CPU-only. Last checked sudo cache
+was expired; this block needed no root. No GPU/service/install/release/frontend
+action. Required API/Vashti changes: none. Canonical checkout and inherited
+untracked cache preserved.
 
 
 
@@ -11349,3 +11350,117 @@ workgroup corrections. Finish the complete source audit before protected whole-
 model correctness and subsequent throughput. Do not discard these based on a
 partial speed report. Goal active CPU-only; sudo is expired and no privileged
 work was required. Canonical checkout and inherited untracked cache preserved.
+
+
+## Native request submission boundaries and placement audit (2026-10-17)
+
+Runtime source: `1b8d354d56c501cda08ec6404ce2f5427732e507`, isolated
+`codex/strata-rust-port`. Whole rewrite incomplete; speed gate closed; CPU-only.
+This continues actual dense/ranked source and queue/recording review. It does
+not abandon the connected deferred PLE handoff or earlier arithmetic corrections.
+
+### Actual queue connection defect and coupled fix
+
+`WgpuStream::register_pipeline` enqueues the actual native node, increments the
+ordinary task count and calls `flush_if_needed`. That function still flushed
+at256 tasks inside the native request/typed program. The source establishes a
+concrete conflict with whole-window replay:47 suffix layers x2 GR reads x4 actual
+GR launches =376 math nodes before attention/expert/status work. The automatic
+threshold can therefore add segments/host joins before the intended target
+suffix end. The earlier layout tests showed that two programs could replay;
+they did not establish that the actual stream captured exactly those programs.
+This is source evidence, not a measured GPU latency or correctness failure.
+
+The actual stream now delegates its automatic-flush decision to original native
+request/program state. `TransientIo` passes its actual `reuse_scope.nonce` presence
+through `reuse_active`, and `Parameters` checks its actual active branch. While
+either original owner is active, the ordinary task threshold cannot submit work.
+No substitute request token, native position-zero typed branch, scope/API, ready
+bit or completion receipt was added. Initial uncaptured count1, prompt, named
+prefix/suffix, commit and draft retain their actual explicit boundaries. Non-
+native execution and native setup outside an original request/branch retain
+ordinary batching. A named branch alone also refuses automatic splitting.
+
+Explicit `submit_native_strata_experts`, branch end/pending commit export,
+draft entry/end, source/readback/primary-access joins, prompt router readback and
+terminal cleanup are untouched. Real mutation/fault/fence and all-family state
+publication remain authoritative. The fix cannot authorize a completed prefix
+or clear an error merely because a counter threshold was crossed. Existing
+32768 nodes/records,4096 parameter pages,2MiB template/4MiB program metadata,
+64MiB retained graph metadata, private I/O/admission and erasure limits remain;
+no cap was raised. Whole-window/all-shape physical footprint under these same
+quotas is explicitly unverified. Refusal under a quota is not permission to
+silently split/drop part of the selected inference path.
+
+### Dense/cache/HOST/prompt source audit
+
+The current indexed audit now traces actual static preload, native byte budget,
+ranked cache, full HOST complement, immutable embedding and pointer-table
+consumers. Dense matrix tiles are3,644,840,960B at256-byte alignment, separately
+from shared head/vector owners; they preload and seal before expert allocation.
+The shared MAIN fixed inventory includes actual private/runtime/source/MTP/table
+classes before the remaining byte grant selects experts. Native pack follows
+original full ranked pair order/256-byte heterogeneous slots, stopping at the
+first non-fitting blob. Startup reads/uploads stay in bounded original-byte
+windows, not a full additional model/root copy. Native's single GPU arena is
+split into actual <=512MiB roots for Vulkan allocation/borrowing; HOST complement
+pieces are <=128MiB and retain actual registered original source addresses.
+Source tables authenticate real full resources/extent/alignment and retain
+physical READ dependencies rather than exporting residency labels as authority.
+
+Pinned `data/expert-profile.bin` and actual compiled full Rust fixture both hash
+`8f59b4aa8873209dff11c11e37bcda9529a1335b724a1afeea37bf6388975baf`.
+The fixture README is corrected: coherent core compiles the full196,632-byte
+original, while the older compact top144 table belongs to the per-layer bank
+path. No source bytes were changed. Rust uses explicit admitted budget instead
+of native's hardware-free-memory reserve heuristic; physical pricing remains
+unverified. Lending three actual tail roots redirects all lent readers to the
+bounded original-weight HOST shadow before scratch registration, then requires
+real private erase and exact original-byte/table restoration before decode.
+Failure preserves exclusion/retires; no cache-lend acknowledgement grants memory
+recovery or model residency. The original runtime proof still needs GPU tests.
+
+### CPU/compiler evidence
+
+Evidence root: `/media/jmicko/faststore/kuno-development`.
+
+- `strata-native-boundary-final-validate-20261017.py/.log`, final-final test build,
+  final full-cpu and core/off Clippy logs: **629 distinct selected CPU cases /
+  87 nonempty suites**, zero failures; strict core/off **binary** Clippy, all
+  three changed Rust files' formatting and git whitespace pass. The first
+  `strata-native-boundary-*` run is superseded by final request-scope coverage.
+- Three new actual policy/parameter cases run through both existing vendor-source
+  CPU inclusions. Two original805-record typed programs cross three ordinary
+  task batches each, remain exactly two original pages/segments, and replay with
+  fresh controls. Uncaptured initial/prompt request holding, ordinary idle limits,
+  named draft/commit, invalid layout refusal and failed-state clear are covered.
+  These are actual parameter/policy sources, not simulated queue/fence execution;
+  they prove no GPU correctness, overlap, footprint or speed result.
+- Original-file row audit, unchanged core positional tests and earlier directed
+  arithmetic checks retain their preceding receipts. No redundant model read or
+  GPU test was run in this boundary block. No arithmetic shader changed.
+
+- `strata-native-boundary-ordinary-20261017`, corresponding ordinary-build log
+  and `strata-native-boundary-artifact-proof-20261017.json`: normal stable source
+  build, frozen SHA256 `da0fdadf397c7b98447941efc516b1a297386c1de34084d6536236e23a706b2c`.
+  Exact source/ordinary/frozen equality and mode0500 verified. Requested
+  `[strata-rust-port,strata-intel-core]`; resolved
+  `[direct-device,strata-intel-core,strata-resident-224,strata-resident-240,strata-rust-port]`.
+- `strata-native-boundary-shaders-20261017.log`: actual frozen executable runs
+  only its early pre-adapter offline branch;397 shader variants/139 physical
+  checks/77 rounded-product modules/32 matrix configs pass. No GPU adapter opens.
+
+No model inference, speed, GPU, service/install/release/frontend or public contract
+change. Required API/Vashti changes: none. Last checked sudo cache was expired;
+this work needed no root. Canonical checkout/untracked cache preserved.
+
+### Remaining gate
+
+Continue exact selected quantized arithmetic/prompt matrix/source consumers and
+remaining shared/MTP/INFO/descriptor/output/resource queue review. Then complete
+protected whole-model numerics/context/cold/capture/replay, acceptance/repair,
+EOS/cap, retained mixed requests and full recovery before speed. In particular,
+physical full-program/all-shape metadata/owner pricing needs acceptance after
+removing artificial256-task cuts. Keep the original quotas and actual failure
+closure; neither an easier subset nor implicit partial replay satisfies the
+complete rewrite. Goal active CPU-only and incomplete.
