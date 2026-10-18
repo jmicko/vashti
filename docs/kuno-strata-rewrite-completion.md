@@ -1,8 +1,9 @@
 # Complete Strata Intel inference rewrite: completion gate
 
 **Current execution and numerical checkpoint (2026-10-18):** isolated
-`codex/strata-rust-port`. The human renewed GPU access; the goal is active and
-shared-shell sudo is available. No reset/reboot/install/API/frontend changes.
+`codex/strata-rust-port`. The human paused the goal and requested a final
+checkpoint before updating ChatGPT. This block is finished; no GPU test remains
+running. No reset/reboot/install/API/frontend changes.
 
 The complete selected engine now returns through generation, target AND draft
 retained request erasure, final all-peer close and physical recovery. Protected
@@ -28,8 +29,26 @@ Diagnostic source `72f0b24a` connects the actual selected `strata_gr` kernels to
 the existing original-weight CPU operator oracle via the fixed public
 `gr-batch-probe` only. Counts1/4/8 compare normalization/down/low/mix/injection/
 combined outputs and full inactive padding with the existing tolerances. No
-production math or API changes. Its CPU comparison test passes; the normal
-frozen diagnostic build and protected operator run are pending. Resume here,
+production math or API changes. Its CPU comparison test and strict core binary
+Clippy pass. Both protected diagnostic attempts are terminal and stopped before
+numerical comparison: the first rejected its dispatch configuration; `4a712a0e`
+fixes only that explicit fixed-probe admission. The second created the actual
+B70 device, then rejected the GGUF open. No numerical receipt was written.
+
+Latest frozen diagnostic `strata-gr-native-dispatch-20261018` is source
+`4a712a0e719deeb589ad8d4b041b4149785d6d85`, SHA256
+`c905e937b3240c527ba8a65d36dc6c247ad8b21ce5ace9203ae217d3d9c269a3`.
+Protected output `strata-gr-native-dispatch-check-20261018/host-after.json`
+confirms normal admission, all three HTTP200, Intel50,688,000B, NVIDIA compute0
+and unchanged zero classified driver faults. The unit is inactive with PID0.
+Strict Clippy log `strata-gr-native-dispatch-core-clippy-20261018.log` finished
+successfully. Artifact paths are under `/media/jmicko/faststore/kuno-development`.
+
+Next inspect the original typed GGUF-open error and connect the diagnostic to
+the engine's original split-aware loading/limits; the probe currently uses the
+old single-file `GgufFile::open` path on the first shard. This is a loader
+hypothesis, not a demonstrated numerical cause. Do not duplicate or merge the
+model merely to run the probe. Resume numerical checks after the human returns,
 not with a throughput benchmark. See the
 [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
@@ -62,7 +81,7 @@ offline check passes397 variants/139 physical-pointer checks/77 rounded-product
 modules/32 matrix configs. No GPU/repeat run, numerical or recovery acceptance.
 
 **Earlier CPU-only stop is superseded by the protected-device checkpoint above.**
-The runtime now passes construction and generation; accepted complete request erasure is still pending. All work
+The runtime now passes construction, generation and complete request erasure; numerical correctness is still failing. All work
 remains in this isolated checkout; canonical checkout and inherited cache remain
 preserved.
 
@@ -12094,3 +12113,29 @@ and restores admission in finally. It stores aggregates only; no user input,
 raw activations or output strings. AST parsing passes. These are development
 artifacts, not installed services or an API. Do not claim a device result until
 the actual unit exits and its original after-state accepts recovery.
+
+
+### Native GR diagnostic pre-math failures and paused checkpoint (2026-10-18)
+
+Source `72f0b24abf8d9447d62da5a37596eb00b29af367`, frozen
+`strata-gr-native-numeric-20261018` SHA256
+`81f6744d9dbfdfc457046226a09a985ae841c577387551ea225802f2f54f730f`,
+passed its CPU comparison test and strict core Clippy. Protected
+`strata-gr-native-numeric-check-20261018` rejected the inherited count1 dispatch
+guard before device construction. No math or inference acceptance follows.
+
+`4a712a0e719deeb589ad8d4b041b4149785d6d85` admits only the explicit compiled
+public GR probe with inline dispatch and no hybrid cap; ordinary count1 dispatch
+requirements remain unchanged. Frozen SHA256 and terminal second-run recovery
+are recorded at this document's current checkpoint above. That run reached the
+actual Intel B70 Vulkan device, then returned the redacted GGUF-open error.
+Neither run wrote `numerics.json`. Do not describe either as numerical failure
+of GR itself: no comparison ran. Inspect split loading and original limits next.
+
+The actual whole-engine numerical failure remains unresolved; lifecycle success
+does not reopen the speed gate. Latest strict core binary Clippy exits0. Both
+protected diagnostic attempts restored admission and physical baseline with
+unchanged zero classified faults. The human paused the goal for an app update;
+all GPU work and CPU validation in this block are terminal. Canonical checkout,
+inherited untracked Python cache, installed services, API and frontend are
+unchanged. No new release or installation is authorized by this handoff.

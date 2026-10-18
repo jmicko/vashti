@@ -1,8 +1,9 @@
 # Native DASLab/Strata checkpoint — 2026-10-17
 
 **Current execution and numerical checkpoint (2026-10-18):** isolated
-`codex/strata-rust-port`. The human renewed GPU access; the goal is active and
-shared-shell sudo is available. No reset/reboot/install/API/frontend changes.
+`codex/strata-rust-port`. The human paused the goal and requested a final
+checkpoint before updating ChatGPT. This block is finished; no GPU test remains
+running. No reset/reboot/install/API/frontend changes.
 
 The complete selected engine now returns through generation, target AND draft
 retained request erasure, final all-peer close and physical recovery. Protected
@@ -28,8 +29,26 @@ Diagnostic source `72f0b24a` connects the actual selected `strata_gr` kernels to
 the existing original-weight CPU operator oracle via the fixed public
 `gr-batch-probe` only. Counts1/4/8 compare normalization/down/low/mix/injection/
 combined outputs and full inactive padding with the existing tolerances. No
-production math or API changes. Its CPU comparison test passes; the normal
-frozen diagnostic build and protected operator run are pending. Resume here,
+production math or API changes. Its CPU comparison test and strict core binary
+Clippy pass. Both protected diagnostic attempts are terminal and stopped before
+numerical comparison: the first rejected its dispatch configuration; `4a712a0e`
+fixes only that explicit fixed-probe admission. The second created the actual
+B70 device, then rejected the GGUF open. No numerical receipt was written.
+
+Latest frozen diagnostic `strata-gr-native-dispatch-20261018` is source
+`4a712a0e719deeb589ad8d4b041b4149785d6d85`, SHA256
+`c905e937b3240c527ba8a65d36dc6c247ad8b21ce5ace9203ae217d3d9c269a3`.
+Protected output `strata-gr-native-dispatch-check-20261018/host-after.json`
+confirms normal admission, all three HTTP200, Intel50,688,000B, NVIDIA compute0
+and unchanged zero classified driver faults. The unit is inactive with PID0.
+Strict Clippy log `strata-gr-native-dispatch-core-clippy-20261018.log` finished
+successfully. Artifact paths are under `/media/jmicko/faststore/kuno-development`.
+
+Next inspect the original typed GGUF-open error and connect the diagnostic to
+the engine's original split-aware loading/limits; the probe currently uses the
+old single-file `GgufFile::open` path on the first shard. This is a loader
+hypothesis, not a demonstrated numerical cause. Do not duplicate or merge the
+model merely to run the probe. Resume numerical checks after the human returns,
 not with a throughput benchmark. See the
 [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
@@ -58,7 +77,7 @@ offline check passes397 variants/139 physical-pointer checks/77 rounded-product
 modules/32 matrix configs. No GPU/repeat run, numerical or recovery acceptance.
 
 **Earlier CPU-only stop is superseded by the protected-device checkpoint above.**
-The runtime now passes construction and generation; accepted complete request erasure is still pending. All work
+The runtime now passes construction, generation and complete request erasure; numerical correctness is still failing. All work
 remains in this isolated checkout; canonical checkout and inherited cache remain
 preserved.
 

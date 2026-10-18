@@ -5,9 +5,12 @@ Current inference corrections reach `d271eb492c40023d0008fcdf5bf6219f88a90000`.
 Protected execution/target+draft erasure/final recovery now pass, but the public
 code output is numerically wrong (special-token loop). Whole rewrite and speed
 acceptance remain unproven. Diagnostic72f0b24a adds actual native GR versus CPU
-oracle comparison in the fixed public operator probe. See the latest
-[checkpoint](kuno-native-text-checkpoint.md). Human GPU access is renewed and
-the goal is active.
+oracle comparison in the fixed public operator probe; `4a712a0e` admits its
+explicit compiled inline dispatch. Both diagnostic runs stopped before the
+numerical comparison (dispatch guard, then GGUF-open error). Latest recovery
+passes with no GPU unit left running. The goal is paused for the human's app
+update. See the latest [checkpoint](kuno-native-text-checkpoint.md); resume at
+the diagnostic loader, not throughput testing.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
