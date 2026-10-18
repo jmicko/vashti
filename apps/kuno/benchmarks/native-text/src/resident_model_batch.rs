@@ -357,6 +357,16 @@ fn checked_cpu_miss_total(current: u64, completed_chunk: u64) -> Result<Zeroizin
         .ok_or(Error::ArithmeticOverflow)
 }
 
+macro_rules! chunk_error {
+    () => {
+        Error::InvalidFormat(if crate::strata_intel_core::enabled() {
+            concat!("native model chunk rejected at source line ", line!())
+        } else {
+            "native model chunk rejected"
+        })
+    };
+}
+#[allow(dead_code)] // Child modules can retain the original generic constructor.
 fn error() -> Error {
     Error::InvalidFormat("native model chunk rejected")
 }
@@ -390,7 +400,7 @@ impl NativeDecodeKernels {
             "single-gdn" => Ok(Self::SingleGdn),
             "single-all" => Ok(Self::SingleAll),
             "single-q4-all" => Ok(Self::SingleQ4All),
-            _ => Err(error()),
+            _ => Err(chunk_error!()),
         }
     }
     pub(crate) fn label(self) -> &'static str {
@@ -1892,7 +1902,7 @@ fn decode_family_policy(
         (1, SingleStreaming, true, 1) => NativeDecodeKernels::SingleQ4All,
         (8, ThreeStreaming, false, 8) => NativeDecodeKernels::ThreeGdn,
         (8, FourStreaming, false, 8) => NativeDecodeKernels::FourGdn,
-        _ => return Err(error()),
+        _ => return Err(chunk_error!()),
     })
 }
 #[derive(Clone, Copy)]
@@ -2101,14 +2111,14 @@ impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
         if crate::strata_intel_core::enabled() {
             if self.global_moe.is_none() || self.dense_member_capacity != 8 {
-                return Err(error());
+                return Err(chunk_error!());
             }
             return match self.gdn.recurrence_policy() {
                 crate::gdn_chunk::RecurrencePolicy::Chunk => Ok(NativeDecodeKernels::Chunk),
                 crate::gdn_chunk::RecurrencePolicy::FourStreaming => {
                     Ok(NativeDecodeKernels::FourGdn)
                 }
-                _ => Err(error()),
+                _ => Err(chunk_error!()),
             };
         }
         decode_family_policy(
@@ -2182,7 +2192,7 @@ impl Workspace {
                 }
                 self.three_gdn_scope(executor, admission)?.validate()
             }
-            _ => Err(error()),
+            _ => Err(chunk_error!()),
         }
     }
     fn validate_execution_scope(
@@ -2228,7 +2238,10 @@ impl Workspace {
         {
             return Err(Error::InvalidFormat("global native controller authority"));
         }
-        self.global_moe.as_ref().ok_or(error())?.validate_idle()?;
+        self.global_moe
+            .as_ref()
+            .ok_or(chunk_error!())?
+            .validate_idle()?;
         executor.check_target_rows_policy()
     }
     fn three_gdn_scope(
@@ -2729,10 +2742,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<crate::strata_sampler::request::Scope> {
         self.validate_native_request_boundary(executor)?;
         if self.position != prefix.len() {
-            return Err(error());
+            return Err(chunk_error!());
         }
-        let native = self.native_batch.as_ref().ok_or(error())?;
-        let global = native.global_moe.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
+        let global = native.global_moe.as_ref().ok_or(chunk_error!())?;
         global.validate_idle()?;
         unsafe {
             crate::strata_sampler::request::Scope::new(
@@ -2770,21 +2783,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || self
                 .native_batch
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .moe
                 .frozen_host_source_down_integer_selected()
                 && tile != 8
             || self
                 .native_batch
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .grouped_status_state()?
                 .0
                 && tile != 8
             || self
                 .native_batch
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .ple
                 .public_grouped_reads()
                 && tile != 8
@@ -2811,7 +2824,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<()> {
         self.validate_unstarted_native_boundary(executor)?;
         if self.position != 0 || !crate::strata_intel_core::enabled() {
-            return Err(error());
+            return Err(chunk_error!());
         }
         let client = self.arena.client().map_err(u::fault)?;
         executor.prepare_native_static_weights(self.graph)?;
@@ -2825,10 +2838,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let prompt_stages = self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .global_moe
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .prompt_stage_handles(&self.arena)?;
         unsafe {
             executor.prepare_strata_global_sources(self.graph, plan, device, reserved)?;
@@ -2837,22 +2850,22 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .strata_global_sources
             .as_mut()
             .and_then(std::sync::Arc::get_mut)
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .attach_execution_queue(device, queue)?;
         let sources = executor
             .strata_global_sources
             .as_mut()
             .and_then(std::sync::Arc::get_mut)
-            .ok_or(error())?;
+            .ok_or(chunk_error!())?;
         if let Some(prompt_stages) = prompt_stages {
             if prompt_host_grant != 0 {
-                return Err(error());
+                return Err(chunk_error!());
             }
             sources.attach_prompt_stage(prompt_stages[2].clone())?;
         } else {
             let (indices, extra_host) = sources.prompt_loan_quote(self.graph)?;
             if extra_host != prompt_host_grant {
-                return Err(error());
+                return Err(chunk_error!());
             }
             // Separate exact caller-held RAM grant, never GPU pricing credit.
             unsafe {
@@ -2883,7 +2896,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.admission
             .check_client(self.io.client().map_err(u::fault)?)?;
         executor.check_resident_admission(&self.admission)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native.prove_outer(self)?;
         native.gr.validate_all_consumers_queued()?;
         native.shared.validate_all_consumers_queued()?;
@@ -2892,7 +2905,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             match &executor.strata_global_sources {
                 Some(sources) => sources.validate_execution_boundary(self.graph)?,
                 None if self.position == 0 && !executor.target_four_rows_active => (),
-                None => return Err(error()),
+                None => return Err(chunk_error!()),
             }
         }
         Ok(())
@@ -2905,7 +2918,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.validate_native_projection_owners(executor)?;
         self.native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .ple
             .validate_completed_projection_boundary(self)?;
         Ok(CompletedNativeProjectionBoundary { _private: () })
@@ -2918,11 +2931,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || self.ple_history.tokens().iter().any(|&t| t != -1)
             || self.ple_conv.history().iter().any(|&v| v != 0.)
         {
-            return Err(error());
+            return Err(chunk_error!());
         }
         self.native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .ple
             .validate_unstarted_projection_boundary(self)
     }
@@ -2930,7 +2943,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     // No completed-policy token escapes this initial-or-committed request gate.
     fn validate_native_request_boundary(&self, executor: &GpuExecutor<'f>) -> Result<()> {
         if crate::strata_intel_core::enabled() && self.position == 0 {
-            if let Some(ready) = &self.native_batch.as_ref().ok_or(error())?.retained_ready {
+            if let Some(ready) = &self
+                .native_batch
+                .as_ref()
+                .ok_or(chunk_error!())?
+                .retained_ready
+            {
                 ready.check(self, executor)
             } else {
                 self.validate_unstarted_native_boundary(executor)
@@ -2951,7 +2969,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         u::cancel(cancel)?;
         self.completed_native_projection_boundary(executor)?;
         if !crate::strata_intel_core::enabled() {
-            return Err(error());
+            return Err(chunk_error!());
         }
         match self.native_decode_kernels()? {
             NativeDecodeKernels::Chunk if !executor.target_four_rows_active => {
@@ -2960,19 +2978,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 self.set_public_grouped_status_folds(executor, true, cancel)
             }
             NativeDecodeKernels::FourGdn if executor.target_four_rows_active => {
-                let native = self.native_batch.as_ref().ok_or(error())?;
+                let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
                 native.validate_global_scope(executor, &self.admission)?;
                 native.ple.validate_native_selected_policies()?;
                 if !native.grouped_status_state()?.0 || self.admission.request_io_reuse_active() {
-                    return Err(error());
+                    return Err(chunk_error!());
                 }
                 native
                     .public_language_request_io
                     .as_ref()
-                    .ok_or(error())?
+                    .ok_or(chunk_error!())?
                     .validate_begin(self.position, false)
             }
-            _ => Err(error()),
+            _ => Err(chunk_error!()),
         }
     }
     pub(crate) fn validate_global_request_geometry(
@@ -2982,9 +3000,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         outputs: usize,
     ) -> Result<()> {
         self.validate_native_request_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native.validate_global_scope(executor, &self.admission)?;
-        let permit = native.public_language_request_io.as_ref().ok_or(error())?;
+        let permit = native
+            .public_language_request_io
+            .as_ref()
+            .ok_or(chunk_error!())?;
         permit.identity(self.graph.binding_id(), self.context)?;
         permit.validate_geometry(prompt, outputs)
     }
@@ -2993,7 +3014,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     /// infer completion from the returned result's start/count metadata.
     #[allow(dead_code)] // Parent owns the dedicated fixed-public registration.
     pub(crate) fn completed_target_rows_cursor(&self, executor: &GpuExecutor<'f>) -> Result<usize> {
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !executor.target_rows_reserved || native.target_rows.is_none() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3046,7 +3067,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 executor.poison_resident();
                 let _ = self.close();
                 let _ = executor.close_transient_resident();
-                Err(error())
+                Err(chunk_error!())
             }
         }
     }
@@ -3094,7 +3115,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
     ) -> Result<crate::oracle_trace::Trace> {
         self.lab_oracle_attempt(executor, |model, executor| {
-            let trace = executor.oracle_trace.as_ref().ok_or(error())?;
+            let trace = executor.oracle_trace.as_ref().ok_or(chunk_error!())?;
             model.lab_oracle_boundary(executor, trace.start() + trace.decode(), trace.fixture())?;
             trace.validated_replay_copy()
         })
@@ -3139,7 +3160,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
     ) -> Result<()> {
         self.lab_oracle_attempt(executor, |model, executor| {
-            let trace = executor.oracle_trace.as_ref().ok_or(error())?;
+            let trace = executor.oracle_trace.as_ref().ok_or(chunk_error!())?;
             if !trace.is_replay() {
                 return Err(Error::InvalidFormat(concat!(
                     "native model chunk rejected at source line ",
@@ -3147,7 +3168,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 )));
             }
             let boundary = model.lab_oracle_boundary(executor, trace.start(), trace.fixture())?;
-            let native = model.native_batch.as_mut().ok_or(error())?;
+            let native = model.native_batch.as_mut().ok_or(chunk_error!())?;
             native
                 .moe
                 .enable_resident_router(executor, model.graph, &model.arena, &boundary)
@@ -3159,7 +3180,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
     ) -> Result<()> {
         self.lab_oracle_attempt(executor, |model, executor| {
-            let trace = executor.oracle_trace.as_ref().ok_or(error())?;
+            let trace = executor.oracle_trace.as_ref().ok_or(chunk_error!())?;
             model.lab_oracle_boundary(executor, trace.start() + trace.decode(), trace.fixture())?;
             if !trace.is_replay() {
                 return Err(Error::InvalidFormat(concat!(
@@ -3174,7 +3195,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     /// Read the actual installed family policies rather than echoing an env
     /// selection. No private metadata or model state is exposed.
     pub(crate) fn native_decode_kernels(&self) -> Result<NativeDecodeKernels> {
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native.decode_kernels()
     }
     pub(crate) fn advise_gpu_sources_not_needed(
@@ -3194,7 +3215,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
 
     #[allow(dead_code)] // Protected receipt exposure is owned separately.
     pub(crate) fn native_dense_member_capacity(&self) -> Result<usize> {
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native.decode_kernels()?;
         Ok(native.dense_member_capacity)
     }
@@ -3203,7 +3224,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_miss_cap())
     }
@@ -3216,7 +3237,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_workers_pooled())
     }
@@ -3229,7 +3250,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_arithmetic_geometry())
     }
@@ -3241,7 +3262,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_phase_ns())
     }
@@ -3250,7 +3271,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<(bool, batch_moe::PublicFillCounters)> {
         self.completed_native_projection_boundary(executor)?;
-        let moe = &self.native_batch.as_ref().ok_or(error())?.moe;
+        let moe = &self.native_batch.as_ref().ok_or(chunk_error!())?.moe;
         Ok((
             moe.public_existing_fill_enabled(),
             moe.public_fill_counters(),
@@ -3261,7 +3282,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     #[allow(dead_code)] // Parent owns the protected public receipt.
     pub(crate) fn native_live_member_reduction(&self, executor: &GpuExecutor<'f>) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if native.target_rows.is_none() || !executor.target_rows_reserved {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3283,7 +3304,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_buffered_weights())
     }
@@ -3296,7 +3317,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_mapped_prefetch())
     }
@@ -3308,7 +3329,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_q8_residual())
     }
@@ -3320,7 +3341,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_q8_activations())
     }
@@ -3349,7 +3370,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .cpu_gpu_overlap())
     }
@@ -3365,7 +3386,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .gdn
             .shared_vector_calls)
     }
@@ -3389,7 +3410,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             prepared,
             reader,
             executor,
-            &self.native_batch.as_ref().ok_or(error())?.moe,
+            &self.native_batch.as_ref().ok_or(chunk_error!())?.moe,
             layer,
             cancel,
         )
@@ -3425,7 +3446,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         crate::expert_banks::FillStats,
     )> {
         u::cancel(cancel)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources {
             return Err(Error::InvalidFormat(
                 "public host prepare construction reserve",
@@ -3770,7 +3791,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 line!()
             )));
         }
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources
             || native.moe.frozen_host_sources_enabled()
             || (gu_integer || down_stride_four || down_integer)
@@ -3844,12 +3865,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let four_rows = self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .public_four_rows_reserved;
         if four_rows {
             self.native_batch
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .moe
                 .set_public_four_members_policy(executor, self.graph, &self.arena, true)?;
         }
@@ -3859,7 +3880,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 device,
                 self.arena.client().map_err(u::fault)?,
                 executor,
-                &mut self.native_batch.as_mut().ok_or(error())?.moe,
+                &mut self.native_batch.as_mut().ok_or(chunk_error!())?.moe,
                 &self.arena,
                 reserved,
                 inactive_partition_exit,
@@ -3886,7 +3907,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<crate::executor::CompletedPublicHostBankFill> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native
             .moe
             .frozen_host_source_bank_fill(executor, self.graph)
@@ -3897,7 +3918,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<batch_moe::frozen_sources::Counters> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3912,7 +3933,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3927,7 +3948,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3942,7 +3963,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3957,7 +3978,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3971,7 +3992,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -3985,7 +4006,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4001,7 +4022,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4016,7 +4037,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'_>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4031,7 +4052,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'_>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4046,7 +4067,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'_>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4064,7 +4085,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'_>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4079,7 +4100,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'_>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4093,7 +4114,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'_>,
     ) -> Result<bool> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources || !native.moe.frozen_host_sources_enabled() {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
@@ -4144,7 +4165,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         } else {
             self.completed_native_projection_boundary(executor)?;
         }
-        let native = self.native_batch.as_mut().ok_or(error())?;
+        let native = self.native_batch.as_mut().ok_or(chunk_error!())?;
         if !native.public_frozen_host_sources
             || !native.public_frozen_host_router
             || !native.moe.frozen_host_sources_enabled()
@@ -4182,7 +4203,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         }
         self.native_batch
             .as_mut()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .activate_batch_router(executor, self.graph, &self.arena)?;
         self.admission.checkpoint_public_router_activation()
@@ -4217,7 +4238,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<()> {
         u::cancel(cancel)?;
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         let accepted_prefill = match (
             &native.public_target_request_io,
             &native.public_language_request_io,
@@ -4267,7 +4288,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 executor.poison_resident();
                 let _ = self.close();
                 let _ = executor.close_transient_resident();
-                Err(error())
+                Err(chunk_error!())
             }
         }
     }
@@ -4294,14 +4315,14 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .frozen_host_source_down_integer_selected()
             || cap > 10
             || self
                 .native_batch
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .ple
                 .public_grouped_reads()
         {
@@ -4313,7 +4334,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let boundary = self.completed_native_projection_boundary(executor)?;
         let attempt =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<usize> {
-                let native = self.native_batch.as_mut().ok_or(error())?;
+                let native = self.native_batch.as_mut().ok_or(chunk_error!())?;
                 let observed = native.moe.set_lab_count1_cpu_misses(
                     executor,
                     self.graph,
@@ -4334,7 +4355,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 executor.poison_resident();
                 let _ = self.close();
                 let _ = executor.close_transient_resident();
-                Err(error())
+                Err(chunk_error!())
             }
         }
     }
@@ -4349,7 +4370,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         u::cancel(cancel)?;
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.check_target_rows_policy()?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native.validate_execution_scope(executor, &self.admission)?;
         let accepted_prefill = match (
             &native.public_target_request_io,
@@ -4382,7 +4403,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             )));
         }
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let native = self.native_batch.as_mut().ok_or(error())?;
+            let native = self.native_batch.as_mut().ok_or(chunk_error!())?;
             native.gdn.set_lab_recurrence_policy(
                 executor,
                 &self.arena,
@@ -4409,7 +4430,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 executor.poison_resident();
                 let _ = self.close();
                 let _ = executor.close_transient_resident();
-                Err(error())
+                Err(chunk_error!())
             }
         }
     }
@@ -4464,7 +4485,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 line!()
             )));
         }
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         if !native.public_four_rows_reserved
             || !crate::strata_intel_core::enabled()
                 && (!native.moe.public_four_members_policy()
@@ -4507,7 +4528,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             )));
         }
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let native = self.native_batch.as_mut().ok_or(error())?;
+            let native = self.native_batch.as_mut().ok_or(chunk_error!())?;
             native.gdn.set_lab_recurrence_policy(
                 executor,
                 &self.arena,
@@ -4542,7 +4563,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 executor.poison_resident();
                 let _ = self.close();
                 let _ = executor.close_transient_resident();
-                Err(error())
+                Err(chunk_error!())
             }
         }
     }
@@ -4554,7 +4575,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<(bool, u64)> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         let selected = native.decode_kernels()? == NativeDecodeKernels::FourGdn;
         if !selected {
             if executor.target_four_rows_active
@@ -4588,7 +4609,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<(bool, u64)> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         let selected = native.decode_kernels()? == NativeDecodeKernels::ThreeGdn;
         if selected {
             native.validate_target_decode_policy(executor, &self.admission)?;
@@ -4618,7 +4639,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         u::cancel(cancel)?;
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.check_target_rows_policy()?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native.validate_execution_scope(executor, &self.admission)?;
         let accepted_prefill = match (
             &native.public_target_request_io,
@@ -4657,7 +4678,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if selected {
             self.native_batch
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .ple
                 .select_public_grouped_reads(self.position, &boundary)?;
         }
@@ -4671,7 +4692,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<(bool, u64)> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         let selected = native.ple.public_grouped_reads();
         if selected {
             native.validate_target_decode_policy(executor, &self.admission)?;
@@ -4690,7 +4711,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         u::cancel(cancel)?;
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.check_target_rows_policy()?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         native.validate_execution_scope(executor, &self.admission)?;
         let accepted_prefill = match (
             &native.public_target_request_io,
@@ -4738,7 +4759,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .qsa
             .validate_public_grouped_status_selection(&self.arena, cancel)?;
         if selected {
-            let native = self.native_batch.as_mut().ok_or(error())?;
+            let native = self.native_batch.as_mut().ok_or(chunk_error!())?;
             native.gr.enable_public_grouped_status_folds(&boundary);
             native.gdn.enable_public_grouped_status_folds(&boundary);
             native.qsa.enable_public_grouped_status_folds(&boundary);
@@ -4752,7 +4773,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &GpuExecutor<'f>,
     ) -> Result<(bool, crate::status_fold_batch::Completed)> {
         self.completed_native_projection_boundary(executor)?;
-        let native = self.native_batch.as_ref().ok_or(error())?;
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
         let (selected, actual) = native.grouped_status_state()?;
         if selected {
             native.validate_target_decode_policy(executor, &self.admission)?;
@@ -4770,7 +4791,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || self
                 .native_batch
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .moe
                 .frozen_host_source_down_integer_selected()
                 && policy != NativeDecodeKernels::Chunk
@@ -4783,7 +4804,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .grouped_status_state()?
             .0
             && policy != NativeDecodeKernels::Chunk
@@ -4796,7 +4817,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .ple
             .public_grouped_reads()
             && policy != NativeDecodeKernels::Chunk
@@ -4811,7 +4832,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .moe
             .live_member_reduction_enabled()
             && policy != NativeDecodeKernels::Chunk
@@ -4832,7 +4853,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             )));
         }
         let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let native = self.native_batch.as_mut().ok_or(error())?;
+            let native = self.native_batch.as_mut().ok_or(chunk_error!())?;
             native.gdn.set_lab_recurrence_policy(
                 executor,
                 &self.arena,
@@ -4884,7 +4905,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 executor.poison_resident();
                 let _ = self.close();
                 let _ = executor.close_transient_resident();
-                Err(error())
+                Err(chunk_error!())
             }
         }
     }
@@ -4966,7 +4987,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
             |output| match output {
                 ChunkOutput::Legacy(logits) => Ok(logits),
-                ChunkOutput::TargetRows(_) | ChunkOutput::AcceptedPrefix(_) => Err(error()),
+                ChunkOutput::TargetRows(_) | ChunkOutput::AcceptedPrefix(_) => Err(chunk_error!()),
             },
         )
     }
@@ -4987,7 +5008,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
             |output| match output {
                 ChunkOutput::TargetRows(rows) => Ok(rows),
-                ChunkOutput::Legacy(_) | ChunkOutput::AcceptedPrefix(_) => Err(error()),
+                ChunkOutput::Legacy(_) | ChunkOutput::AcceptedPrefix(_) => Err(chunk_error!()),
             },
         )
     }
@@ -5005,16 +5026,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             || crate::strata_prompt::active()
             || tokens.len() != 1
         {
-            return Err(error());
+            return Err(chunk_error!());
         }
         self.validate_native_request_boundary(executor)?;
         let permit = self
             .native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .public_language_request_io
             .as_ref()
-            .ok_or(error())?;
+            .ok_or(chunk_error!())?;
         permit.identity(self.graph.binding_id(), self.context)?;
         permit.validate_initial_begin(self.position, self.admission.request_io_reuse_active())?;
         // The original scoped graph consumer requires a REAL backend nonce.
@@ -5025,10 +5046,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             model
                 .native_batch
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .public_language_request_io
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .begin_initial(model.position, model.admission.request_io_reuse_active())?;
             model.execute_native_chunk(
                 executor,
@@ -5038,7 +5059,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 cancel,
                 |output| match output {
                     ChunkOutput::AcceptedPrefix(1) => Ok(()),
-                    _ => Err(error()),
+                    _ => Err(chunk_error!()),
                 },
             )?;
             // No caller-declared completion: original chunk/family acceptance,
@@ -5047,10 +5068,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             model
                 .native_batch
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .public_language_request_io
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .validate_initial_end(model.position, model.admission.request_io_reuse_active())?;
             batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel)?;
             model.admission.end_request_io_reuse()?;
@@ -5058,10 +5079,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             model
                 .native_batch
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .public_language_request_io
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .end_initial(model.position, model.admission.request_io_reuse_active())?;
             u::cancel(cancel)
         })
@@ -5081,12 +5102,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         select: &mut dyn for<'rows> FnMut(PrefixPhase<'rows>) -> Result<usize>,
     ) -> Result<usize> {
         if !crate::strata_intel_core::enabled() {
-            return Err(error());
+            return Err(chunk_error!());
         }
         self.validate_native_request_boundary(executor)?;
         self.native_batch
             .as_ref()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .validate_target_decode_policy(executor, &self.admission)?;
         executor.check_target_rows_policy()?;
         self.execute_native_chunk(
@@ -5097,7 +5118,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
             |output| match output {
                 ChunkOutput::AcceptedPrefix(n) => Ok(n),
-                _ => Err(error()),
+                _ => Err(chunk_error!()),
             },
         )
     }
@@ -5113,7 +5134,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         body: impl FnOnce(&mut Self, &mut GpuExecutor<'f>) -> Result<T>,
     ) -> Result<T> {
         if self.position != 0 || self.poisoned || self.ple_batch_pending.is_some() {
-            return Err(error());
+            return Err(chunk_error!());
         }
         let graph = self.graph;
         let old = Zeroizing::new([self.ple_history.tokens()[0], self.ple_history.tokens()[1]]);
@@ -5132,13 +5153,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         cancel: &AtomicBool,
         accept: impl FnOnce(ChunkOutput) -> Result<T>,
     ) -> Result<T> {
-        if let Some(rows) = &self.native_batch.as_ref().ok_or(error())?.target_rows {
+        if let Some(rows) = &self
+            .native_batch
+            .as_ref()
+            .ok_or(chunk_error!())?
+            .target_rows
+        {
             // No command/state mutation occurs while an admitted output-host
             // payload is still held. This guard also covers legacy purposes.
             rows.check_no_live_output()?;
             rows.invalidate_carry()?;
         }
-        let mut native = self.native_batch.take().ok_or(error())?;
+        let mut native = self.native_batch.take().ok_or(chunk_error!())?;
         let mut flight = Flight {
             poison: native.poison.clone(),
             accepted: false,
@@ -5153,13 +5179,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     || crate::strata_prompt::active()
                     || purpose != Purpose::AllRowsWithCarry)
             {
-                return Err(error());
+                return Err(chunk_error!());
             }
             if tracking {
                 native
                     .global_moe
                     .as_mut()
-                    .ok_or(error())?
+                    .ok_or(chunk_error!())?
                     .set_verified_window(true)?;
             }
             let output = native.run(self, executor, tokens, purpose, select, cancel)?;
@@ -5167,7 +5193,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 native
                     .global_moe
                     .as_mut()
-                    .ok_or(error())?
+                    .ok_or(chunk_error!())?
                     .set_verified_window(false)?;
             }
             accept(output)
@@ -5191,7 +5217,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 // remain suppressed and no request values are added.
                 Err(match failure {
                     Ok(Err(cause)) => cause,
-                    _ => error(),
+                    _ => chunk_error!(),
                 })
             }
         }
@@ -5248,11 +5274,11 @@ fn select_verified_rows<R>(
     select: impl FnOnce(&mut R) -> Result<usize>,
 ) -> Result<usize> {
     if !(1..=MAX_BATCH).contains(&count) {
-        return Err(error());
+        return Err(chunk_error!());
     }
     let keep = select(&mut rows)?;
     if !(1..=count).contains(&keep) {
-        return Err(error());
+        return Err(chunk_error!());
     }
     Ok(keep)
 }
@@ -5307,7 +5333,7 @@ impl Workspace {
         cancel: &AtomicBool,
     ) -> Result<ChunkOutput> {
         if select.is_some() && purpose != Purpose::AllRowsWithCarry {
-            return Err(error());
+            return Err(chunk_error!());
         }
         self.prove_outer(m)?;
         if !crate::strata_intel_core::enabled()
@@ -5323,7 +5349,10 @@ impl Workspace {
         {
             return Err(Error::InvalidFormat("global native chunk boundary"));
         }
-        self.global_moe.as_ref().ok_or(error())?.validate_idle()?;
+        self.global_moe
+            .as_ref()
+            .ok_or(chunk_error!())?
+            .validate_idle()?;
         e.check_client(m.arena.client().map_err(u::fault)?)?;
         e.check_resident_admission(&m.admission)?;
         m.graph.verify_unchanged()?;
@@ -5367,7 +5396,7 @@ impl Workspace {
         )?;
         self.global_moe
             .as_mut()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .begin(m.graph, &m.arena, *count)?;
         // Layer0 performs attention+FFN, hence two residual swaps. The actual
         // layer1 PLE input/output roots are known before its math is queued.
@@ -5464,7 +5493,8 @@ impl Workspace {
                 cubecl_runtime::server::NativeStrataBranch::target_window_with_state(
                     u8::try_from(*count).map_err(u::fault)?,
                     u16::try_from(m.context).map_err(u::fault)?,
-                    state_role.ok_or(error())? | (self.ple.native_capture_history_role()? << 1),
+                    state_role.ok_or(chunk_error!())?
+                        | (self.ple.native_capture_history_role()? << 1),
                 )
                 .and_then(|key| key.with_deferred_gdn_state(select.is_some() && *count > 1))
                 .and_then(|key| key.with_target_grouped_status_folds(grouped_status_folds))
@@ -5491,7 +5521,7 @@ impl Workspace {
                 // source publication/loan boundary, even without enqueue_data.
                 e.strata_global_sources
                     .as_ref()
-                    .ok_or(error())?
+                    .ok_or(chunk_error!())?
                     .validate_graph_ready(m.graph)?;
                 if deferred_ple {
                     let prefix = super::target_replay::try_prefix(
@@ -5499,7 +5529,7 @@ impl Workspace {
                         key,
                         self.global_moe
                             .as_ref()
-                            .ok_or(error())?
+                            .ok_or(chunk_error!())?
                             .invocation_controls(*start)?,
                         m.b.fault,
                         m.retired.clone(),
@@ -5507,7 +5537,7 @@ impl Workspace {
                     if let Some(prefix) = prefix {
                         let ready = self.ple.finish_deferred(
                             m,
-                            ple_invocation.take().ok_or(error())?,
+                            ple_invocation.take().ok_or(chunk_error!())?,
                             cancel,
                         )?;
                         ple_invocation = Some(ready);
@@ -5526,7 +5556,7 @@ impl Workspace {
                         key,
                         self.global_moe
                             .as_ref()
-                            .ok_or(error())?
+                            .ok_or(chunk_error!())?
                             .invocation_controls(*start)?,
                         m.b.fault,
                     )?
@@ -5545,7 +5575,7 @@ impl Workspace {
                     key,
                     self.global_moe
                         .as_ref()
-                        .ok_or(error())?
+                        .ok_or(chunk_error!())?
                         .invocation_controls(*start)?,
                 )
                 .map_err(u::fault)?;
@@ -5566,7 +5596,7 @@ impl Workspace {
                 .complete_native_replay(m.graph, &m.arena, m.b.fault, completed)?;
             pending.ple = Some(self.ple.complete_prepared_replay(
                 m,
-                ple_invocation.take().ok_or(error())?,
+                ple_invocation.take().ok_or(chunk_error!())?,
                 completed,
                 cancel,
             )?);
@@ -5574,35 +5604,43 @@ impl Workspace {
                 u::cancel(cancel)?;
                 match stage {
                     Layer::Gdn(stage, public) => {
-                        pending.gdn[layer] = Some(stage.complete_prepared_replay(
-                            m.graph,
-                            &m.arena,
-                            public,
-                            &mut self.gdn,
-                            attention_invocations.gdn[layer].take().ok_or(error())?,
-                            completed,
-                            cancel,
-                        )?);
+                        pending.gdn[layer] = Some(
+                            stage.complete_prepared_replay(
+                                m.graph,
+                                &m.arena,
+                                public,
+                                &mut self.gdn,
+                                attention_invocations.gdn[layer]
+                                    .take()
+                                    .ok_or(chunk_error!())?,
+                                completed,
+                                cancel,
+                            )?,
+                        );
                     }
                     Layer::Qsa(stage, public) => {
                         let mut selector =
                             qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
-                        pending.qsa[layer] = Some(stage.complete_prepared_replay(
-                            m.graph,
-                            &m.arena,
-                            public,
-                            &mut selector,
-                            &mut self.qsa,
-                            attention_invocations.qsa[layer].take().ok_or(error())?,
-                            completed,
-                            cancel,
-                        )?);
+                        pending.qsa[layer] = Some(
+                            stage.complete_prepared_replay(
+                                m.graph,
+                                &m.arena,
+                                public,
+                                &mut selector,
+                                &mut self.qsa,
+                                attention_invocations.qsa[layer]
+                                    .take()
+                                    .ok_or(chunk_error!())?,
+                                completed,
+                                cancel,
+                            )?,
+                        );
                     }
                 }
             }
             self.global_moe
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .complete_native_replay(m.graph, &m.arena, m.b.fault, *start as u64, completed)?;
         } else {
             drive_layers(cancel, |layer| {
@@ -5627,7 +5665,7 @@ impl Workspace {
                             .map_err(u::fault)?;
                         let ready = self.ple.finish_deferred(
                             m,
-                            ple_invocation.take().ok_or(error())?,
+                            ple_invocation.take().ok_or(chunk_error!())?,
                             cancel,
                         )?;
                         ple_invocation = Some(ready);
@@ -5660,7 +5698,7 @@ impl Workspace {
                         self.outer.residual[*current],
                         self.outer.residual[1 - *current],
                         &spans,
-                        ple_invocation.take().ok_or(error())?,
+                        ple_invocation.take().ok_or(chunk_error!())?,
                         cancel,
                     )?);
                     m.numeric_boundary.observe(
@@ -5695,35 +5733,43 @@ impl Workspace {
                 let spans = BatchSpans::new(*count, 0, 0, D, 0, D);
                 match &mut m.layers[layer] {
                     Layer::Gdn(stage, public) => {
-                        pending.gdn[layer] = Some(stage.enqueue_prepared(
-                            m.graph,
-                            &m.arena,
-                            public,
-                            &mut projector,
-                            &mut self.gdn,
-                            prepared.mixed(),
-                            self.outer.block[0],
-                            &spans,
-                            attention_invocations.gdn[layer].take().ok_or(error())?,
-                            cancel,
-                        )?)
+                        pending.gdn[layer] = Some(
+                            stage.enqueue_prepared(
+                                m.graph,
+                                &m.arena,
+                                public,
+                                &mut projector,
+                                &mut self.gdn,
+                                prepared.mixed(),
+                                self.outer.block[0],
+                                &spans,
+                                attention_invocations.gdn[layer]
+                                    .take()
+                                    .ok_or(chunk_error!())?,
+                                cancel,
+                            )?,
+                        )
                     }
                     Layer::Qsa(stage, public) => {
                         let mut selector =
                             qsa::BatchSelector::new(&m.admission, self.public_gpu_qsa_selector);
-                        pending.qsa[layer] = Some(stage.enqueue_prepared(
-                            m.graph,
-                            &m.arena,
-                            public,
-                            &mut projector,
-                            &mut selector,
-                            &mut self.qsa,
-                            prepared.mixed(),
-                            self.outer.block[0],
-                            &spans,
-                            attention_invocations.qsa[layer].take().ok_or(error())?,
-                            cancel,
-                        )?);
+                        pending.qsa[layer] = Some(
+                            stage.enqueue_prepared(
+                                m.graph,
+                                &m.arena,
+                                public,
+                                &mut projector,
+                                &mut selector,
+                                &mut self.qsa,
+                                prepared.mixed(),
+                                self.outer.block[0],
+                                &spans,
+                                attention_invocations.qsa[layer]
+                                    .take()
+                                    .ok_or(chunk_error!())?,
+                                cancel,
+                            )?,
+                        );
                     }
                 }
                 prepared.combine(self.outer.block[0], self.outer.residual[1 - *current])?;
@@ -5774,13 +5820,17 @@ impl Workspace {
                 *m.phase_ns
                     .entry("native_ffn_gr_and_router_enqueue")
                     .or_default() += router_enqueue_start.elapsed().as_nanos();
-                let sources = e.strata_global_sources.as_ref().ok_or(error())?.clone();
+                let sources = e
+                    .strata_global_sources
+                    .as_ref()
+                    .ok_or(chunk_error!())?
+                    .clone();
                 let shared_start = Instant::now();
                 let shared_fault = self.shared.native_fault()?;
-                let shared_planes = dense_q8.ok_or(error())?;
+                let shared_planes = dense_q8.ok_or(chunk_error!())?;
                 self.global_moe
                     .as_mut()
-                    .ok_or(error())?
+                    .ok_or(chunk_error!())?
                     .enqueue_with_shared(
                         m.graph,
                         &m.arena,
@@ -5833,7 +5883,7 @@ impl Workspace {
                     |shared| {
                         self.global_moe
                             .as_mut()
-                            .ok_or(error())?
+                            .ok_or(chunk_error!())?
                             .finish_layer_shared(
                                 &m.arena,
                                 layer,
@@ -5877,7 +5927,7 @@ impl Workspace {
                     )?
                     .enqueue_final_head(m.graph, &mut projector, m.b.logits)?;
             } else if purpose == Purpose::AllRowsWithCarry {
-                let rows = self.target_rows.as_ref().ok_or(error())?;
+                let rows = self.target_rows.as_ref().ok_or(chunk_error!())?;
                 let mut projector = ResidentBatchProjection {
                     executor: e,
                     fault: m.b.fault,
@@ -5957,7 +6007,7 @@ impl Workspace {
                 cancel,
             )?)
         } else if purpose == Purpose::AllRowsWithCarry {
-            ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(error())?.read(
+            ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(chunk_error!())?.read(
                 m.graph,
                 &m.arena,
                 &m.admission,
@@ -5980,16 +6030,16 @@ impl Workspace {
                 ChunkOutput::TargetRows(rows) => {
                     select_verified_rows(rows, *count, |rows| select(PrefixPhase::Verified(rows)))?
                 }
-                _ => return Err(error()),
+                _ => return Err(chunk_error!()),
             };
             self.target_rows
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .check_no_live_output()?;
             adaptation = self
                 .global_moe
                 .as_mut()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .begin_adaptation_after_verified(
                     m.graph,
                     &m.arena,
@@ -5997,7 +6047,7 @@ impl Workspace {
                     e.strata_global_sources
                         .as_mut()
                         .and_then(std::sync::Arc::get_mut)
-                        .ok_or(error())?,
+                        .ok_or(chunk_error!())?,
                     cancel,
                 )?;
             // Pin the ACTUAL original observed R owner and enqueue its real
@@ -6020,7 +6070,7 @@ impl Workspace {
             let source = self
                 .target_rows
                 .as_ref()
-                .ok_or(error())?
+                .ok_or(chunk_error!())?
                 .verified_carry_context(
                     &m.arena,
                     &m.retired,
@@ -6033,7 +6083,7 @@ impl Workspace {
                 accepted: keep,
             })? != keep
             {
-                return Err(error());
+                return Err(chunk_error!());
             }
             draft_scope.finish()?;
             if let Some(commit) = commit {
@@ -6065,7 +6115,7 @@ impl Workspace {
                         fault: m.b.fault,
                         scalar_ids: [m.b.ple_emb, m.b.ple_key, m.b.ple_value],
                     },
-                    pending.ple.take().ok_or(error())?,
+                    pending.ple.take().ok_or(chunk_error!())?,
                     selected_prefix.unwrap_or(*count),
                     cancel,
                 )
@@ -6084,13 +6134,13 @@ impl Workspace {
         let mut ga = {
             let (first_stage, first_receipt) = match (&m.layers[0], pending.gdn[0].as_ref()) {
                 (Layer::Gdn(s, _), Some(r)) => (s.as_ref(), r),
-                _ => return Err(error()),
+                _ => return Err(chunk_error!()),
             };
             let mut refs = [(first_stage, first_receipt); 36];
             let mut at = 0;
             for layer in 0..LAYERS {
                 if let Layer::Gdn(s, _) = &m.layers[layer] {
-                    refs[at] = (s, pending.gdn[layer].as_ref().ok_or(error())?);
+                    refs[at] = (s, pending.gdn[layer].as_ref().ok_or(chunk_error!())?);
                     at += 1;
                 }
             }
@@ -6106,13 +6156,13 @@ impl Workspace {
         let mut qa = {
             let (first_stage, first_receipt) = match (&m.layers[3], pending.qsa[3].as_ref()) {
                 (Layer::Qsa(s, _), Some(r)) => (s.as_ref(), r),
-                _ => return Err(error()),
+                _ => return Err(chunk_error!()),
             };
             let mut refs = [(first_stage, first_receipt); 12];
             let mut at = 0;
             for layer in 0..LAYERS {
                 if let Layer::Qsa(s, _) = &m.layers[layer] {
-                    refs[at] = (s, pending.qsa[layer].as_ref().ok_or(error())?);
+                    refs[at] = (s, pending.qsa[layer].as_ref().ok_or(chunk_error!())?);
                     at += 1;
                 }
             }
@@ -6131,7 +6181,7 @@ impl Workspace {
         }
         self.global_moe
             .as_mut()
-            .ok_or(error())?
+            .ok_or(chunk_error!())?
             .accept(&m.arena, &m.admission, cancel)?;
         ple.preflight(cancel)?;
         self.gr.validate_all_consumers_queued()?;
@@ -6181,7 +6231,7 @@ impl Workspace {
             match owner {
                 Layer::Gdn(stage, _) => {
                     stage.commit_after_whole_chunk_acceptance(
-                        pending.gdn[layer].take().ok_or(error())?,
+                        pending.gdn[layer].take().ok_or(chunk_error!())?,
                         &m.arena,
                         &mut ga,
                         cancel,
@@ -6191,7 +6241,7 @@ impl Workspace {
                     m.lifecycle_hooks.after_gdn_commit(layer, cancel);
                 }
                 Layer::Qsa(stage, _) => stage.commit_after_whole_chunk_acceptance(
-                    pending.qsa[layer].take().ok_or(error())?,
+                    pending.qsa[layer].take().ok_or(chunk_error!())?,
                     &m.arena,
                     &mut qa,
                     cancel,
@@ -6200,7 +6250,7 @@ impl Workspace {
         }
         ga.finish(&m.arena, cancel)?;
         qa.finish(&m.arena, cancel)?;
-        self.global_moe.as_mut().ok_or(error())?.finish()?;
+        self.global_moe.as_mut().ok_or(chunk_error!())?.finish()?;
         ple.commit(cancel)?;
         *m.phase_ns.entry("native_all_family_commit").or_default() +=
             commit_start.elapsed().as_nanos();
@@ -6217,14 +6267,17 @@ impl Workspace {
         self.grouped_ple_completed_chunks = grouped_ple_completed_chunks;
         self.grouped_status_completed = grouped_status_completed;
         if adaptation.is_some() {
-            self.global_moe.as_mut().ok_or(error())?.finish_adaptation(
-                &m.arena,
-                e.strata_global_sources
-                    .as_mut()
-                    .and_then(std::sync::Arc::get_mut)
-                    .ok_or(error())?,
-                adaptation,
-            )?;
+            self.global_moe
+                .as_mut()
+                .ok_or(chunk_error!())?
+                .finish_adaptation(
+                    &m.arena,
+                    e.strata_global_sources
+                        .as_mut()
+                        .and_then(std::sync::Arc::get_mut)
+                        .ok_or(chunk_error!())?,
+                    adaptation,
+                )?;
         }
         m.position = *start + selected_prefix.unwrap_or(*count);
         Ok(output)
@@ -6243,7 +6296,7 @@ impl Workspace {
             return self.run_global(m, e, tokens, purpose, select, cancel);
         }
         if select.is_some() {
-            return Err(error());
+            return Err(chunk_error!());
         }
         self.prove_outer(m)?;
         // Immutable for this exclusive transaction; capture before real PLE
@@ -6726,7 +6779,7 @@ impl Workspace {
                 let logits = match (&hybrid_packet, &ordinary_logits) {
                     (Some(packet), None) => packet.logits(),
                     (None, Some(logits)) => logits,
-                    _ => return Err(error()),
+                    _ => return Err(chunk_error!()),
                 };
                 *m.phase_ns.entry("native_router_fence").or_default() +=
                     router_fence_start.elapsed().as_nanos();
@@ -6749,7 +6802,7 @@ impl Workspace {
                 }
                 let expert_start = Instant::now();
                 let mut routes = token_waves::Input::new(*count, self.moe.capacity(), ROUTER)
-                    .map_err(|_| error())?;
+                    .map_err(|_| chunk_error!())?;
                 for token in 0..*count {
                     let selection = if use_gpu_router {
                         None
@@ -6761,16 +6814,19 @@ impl Workspace {
                     };
                     let selected = match (&selection, &hybrid_packet) {
                         (Some(selection), _) => selection.as_slice(),
-                        (None, Some(packet)) => packet.gpu_selection().ok_or(error())?.as_slice(),
-                        _ => return Err(error()),
+                        (None, Some(packet)) => {
+                            packet.gpu_selection().ok_or(chunk_error!())?.as_slice()
+                        }
+                        _ => return Err(chunk_error!()),
                     };
                     for (rank, &(expert, probability)) in selected.iter().enumerate() {
                         routes
                             .set(token, rank, expert, probability)
-                            .map_err(|_| error())?;
+                            .map_err(|_| chunk_error!())?;
                     }
                 }
-                let waves = token_waves::Plan::build(&routes, cancel).map_err(|_| error())?;
+                let waves =
+                    token_waves::Plan::build(&routes, cancel).map_err(|_| chunk_error!())?;
                 let overlap_shared =
                     hybrid_packet.is_some() && self.moe.cpu_gpu_overlap() == Some(true);
                 if overlap_shared {
@@ -6925,7 +6981,7 @@ impl Workspace {
                 )?
                 .enqueue_final_head(m.graph, &mut projector, m.b.logits)?;
         } else if purpose == Purpose::AllRowsWithCarry {
-            let rows = self.target_rows.as_ref().ok_or(error())?;
+            let rows = self.target_rows.as_ref().ok_or(chunk_error!())?;
             let mut projector = ResidentBatchProjection {
                 executor: e,
                 fault: m.b.fault,
@@ -6995,7 +7051,7 @@ impl Workspace {
                         cancel,
                     )?)
                 } else if purpose == Purpose::AllRowsWithCarry {
-                    ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(error())?.read(
+                    ChunkOutput::TargetRows(self.target_rows.as_ref().ok_or(chunk_error!())?.read(
                         m.graph,
                         &m.arena,
                         &m.admission,
@@ -7027,7 +7083,7 @@ impl Workspace {
                         fault: m.b.fault,
                         scalar_ids: [m.b.ple_emb, m.b.ple_key, m.b.ple_value],
                     },
-                    pending.ple.take().ok_or(error())?,
+                    pending.ple.take().ok_or(chunk_error!())?,
                     cancel,
                 )
             },
@@ -7072,13 +7128,13 @@ impl Workspace {
         let mut ga = {
             let (first_stage, first_receipt) = match (&m.layers[0], pending.gdn[0].as_ref()) {
                 (Layer::Gdn(s, _), Some(r)) => (s.as_ref(), r),
-                _ => return Err(error()),
+                _ => return Err(chunk_error!()),
             };
             let mut refs = [(first_stage, first_receipt); 36];
             let mut at = 0;
             for layer in 0..LAYERS {
                 if let Layer::Gdn(s, _) = &m.layers[layer] {
-                    refs[at] = (s, pending.gdn[layer].as_ref().ok_or(error())?);
+                    refs[at] = (s, pending.gdn[layer].as_ref().ok_or(chunk_error!())?);
                     at += 1;
                 }
             }
@@ -7094,13 +7150,13 @@ impl Workspace {
         let mut qa = {
             let (first_stage, first_receipt) = match (&m.layers[3], pending.qsa[3].as_ref()) {
                 (Layer::Qsa(s, _), Some(r)) => (s.as_ref(), r),
-                _ => return Err(error()),
+                _ => return Err(chunk_error!()),
             };
             let mut refs = [(first_stage, first_receipt); 12];
             let mut at = 0;
             for layer in 0..LAYERS {
                 if let Layer::Qsa(s, _) = &m.layers[layer] {
-                    refs[at] = (s, pending.qsa[layer].as_ref().ok_or(error())?);
+                    refs[at] = (s, pending.qsa[layer].as_ref().ok_or(chunk_error!())?);
                     at += 1;
                 }
             }
@@ -7119,10 +7175,10 @@ impl Workspace {
             e.target_verify4_fused_calls,
         );
         let mut ma = {
-            let first = pending.moe[0].as_ref().ok_or(error())?;
+            let first = pending.moe[0].as_ref().ok_or(chunk_error!())?;
             let mut refs = [first; LAYERS];
             for (i, r) in refs.iter_mut().enumerate() {
-                *r = pending.moe[i].as_ref().ok_or(error())?;
+                *r = pending.moe[i].as_ref().ok_or(chunk_error!())?;
             }
             self.moe.accept_after_whole_model_chunk_acceptance(
                 e,
@@ -7179,7 +7235,7 @@ impl Workspace {
             match owner {
                 Layer::Gdn(stage, _) => {
                     stage.commit_after_whole_chunk_acceptance(
-                        pending.gdn[layer].take().ok_or(error())?,
+                        pending.gdn[layer].take().ok_or(chunk_error!())?,
                         &m.arena,
                         &mut ga,
                         cancel,
@@ -7189,7 +7245,7 @@ impl Workspace {
                     m.lifecycle_hooks.after_gdn_commit(layer, cancel);
                 }
                 Layer::Qsa(stage, _) => stage.commit_after_whole_chunk_acceptance(
-                    pending.qsa[layer].take().ok_or(error())?,
+                    pending.qsa[layer].take().ok_or(chunk_error!())?,
                     &m.arena,
                     &mut qa,
                     cancel,
@@ -7197,7 +7253,7 @@ impl Workspace {
             }
         }
         for receipt in pending.moe.iter_mut() {
-            ma.commit(receipt.take().ok_or(error())?, &m.arena, cancel)?;
+            ma.commit(receipt.take().ok_or(chunk_error!())?, &m.arena, cancel)?;
         }
         ga.finish(&m.arena, cancel)?;
         qa.finish(&m.arena, cancel)?;
@@ -7333,7 +7389,7 @@ mod tests {
             }
         }
         let dropped = Cell::new(false);
-        assert!(select_verified_rows(Rows(&dropped), 3, |_| Err(error())).is_err());
+        assert!(select_verified_rows(Rows(&dropped), 3, |_| Err(chunk_error!())).is_err());
         assert!(dropped.get());
     }
     #[test]
@@ -8130,7 +8186,7 @@ mod tests {
                         flight.accepted = true;
                         Ok(())
                     }
-                    1 => Err(error()),
+                    1 => Err(chunk_error!()),
                     2 => Ok(()),
                     _ => panic!("public injected chunk panic"),
                 }
@@ -8146,7 +8202,7 @@ mod tests {
             let result = drive_layers(&AtomicBool::new(false), |layer| {
                 queued.push(layer);
                 if failed == Some(layer) {
-                    Err(error())
+                    Err(chunk_error!())
                 } else {
                     Ok(())
                 }
@@ -8186,7 +8242,7 @@ mod tests {
                 || {
                     events.borrow_mut().push("first model owning fence/audit");
                     if failure == Some(0) {
-                        Err(error())
+                        Err(chunk_error!())
                     } else {
                         Ok(DropProof(&events, "output dropped"))
                     }
@@ -8194,7 +8250,7 @@ mod tests {
                 || {
                     events.borrow_mut().push("PLE owning maps/audit/prepare");
                     if failure == Some(1) {
-                        Err(error())
+                        Err(chunk_error!())
                     } else {
                         Ok(DropProof(&events, "PLE permit dropped"))
                     }
@@ -8202,7 +8258,7 @@ mod tests {
                 || {
                     events.borrow_mut().push("second model fault/cleanup proof");
                     if failure == Some(2) {
-                        Err(error())
+                        Err(chunk_error!())
                     } else {
                         Ok(())
                     }
