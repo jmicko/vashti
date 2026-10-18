@@ -1,6 +1,63 @@
 # Native DASLab/Strata checkpoint — 2026-10-17
 
-**Current execution and numerical checkpoint (2026-10-18):** isolated
+**Resumed numerical checkpoint (2026-10-18):** the human renewed both GPU
+permissions and shared-shell sudo. Work stays in the isolated
+`codex/strata-rust-port` checkout. No installation, public API, frontend, GPU
+reset or release changes.
+
+The diagnostic loader now opens the complete two original DASLab shards without
+merging/copying them (`2da5ac64`, `aeaac923`). Actual B70 checks pass all48 GR
+stage comparisons and18 packed-dense/Q8-plane cases across raw formats
+8/12/13/14/20/23. The full physical vocabulary head also matches independent
+canonical CPU decoding across all248,320 rows (max absolute error2.3841858e-7).
+BF16 cooperative matrix checks pass counts1/8/35.
+
+**A concrete embedding bug was found and corrected:** at`10e3f9bd` and
+`e03e7f6a`, address-based embedding output mismatched78,791 of81,920 values
+(max error0.10574341), while ordinary direct-page decoding of the SAME original
+rows had zero mismatches. `b6744323` uses original aligned `vec4<u32>` source
+addressing in that shader. The same32 rows across every page then match the CPU
+exactly (zero mismatches, max error0). No weight conversion, fallback decoder,
+changed model or tolerance relaxation supplies that result. The deeper cause
+of the scalar-address shader discrepancy is not yet isolated. Invalid mapped
+embedding geometry now sets a fault instead of silently returning.
+
+Frozen corrected source`b67443235bf5a82180b3b651ad05f7a78f3840a8`, artifact
+`strata-embedding-vector-20261018`, SHA256
+`a386ea21bd45167a8f5420e3debd3d28140ad6680208ae84fad952c1d32f7872`.
+Protected operator output`strata-embedding-vector-check-20261018` still exits1
+without a success receipt: a separate FP16 matrix case has29 IEEE-reference
+mismatches (max0.0005930662). An additional flush-subnormal CPU diagnosis has
+zero mismatches (max2.1457672e-6); it does NOT replace the original acceptance
+reference. All these operator runs restored normal admission, Intel50,688,000B,
+NVIDIA compute0, HTTP200 and unchanged zero classified faults. All artifacts
+are under `/media/jmicko/faststore/kuno-development`.
+
+The complete corrected engine run`strata-embedding-vector-whole-20261018`
+exits0 with a coherent public coding response (visible unsaved tail correctly
+explains merge complexity),491 outputs, EOS,150 windows and45 repairs. Target
+and draft request erasure plus final close pass. Its observed active protection
+receipt verifies MemoryMax51,745,128,448B, swap0/core0 and a20-minute outer bound.
+Final state: Intel50,688,000B, NVIDIA compute0, all HTTP200, normal admission,
+zero classified fault deltas. No response content is saved. This supersedes
+the special-token-loop whole-output failure, but not the separate FP16 IEEE
+operator limitation above. The two-request SAME-loaded-session check
+`strata-embedding-vector-retained-20261018` also exits0: both requests produce
+identical491-token outputs/EOS through real reset/rebind of retained weights.
+Both erasure receipts and final close/recovery pass, with the same clean physical
+and service baseline. The separate prose check`strata-embedding-vector-prose-20261018` exits0 with
+coherent hash-table prose,512 outputs capped without EOS,178 windows/66 repairs.
+Compiled-public cap source`09ad8f26` also passes protected
+`strata-embedding-vector-cap-whole-20261018`: exactly16 requested/delivered
+outputs, no EOS,6 windows/2 repairs. Both erase target/draft state, complete
+final close and restore the same clean physical/service baseline. All GPU tests
+in this block are terminal. No throughput result or full-rewrite acceptance is
+claimed yet; resolve the selected FP16 reference contract before opening that
+stage. No private/general service integration has been tested here. Strict core
+Clippy passes atb6744323; non-core `strata-rust-port` Clippy passes at5e537e37
+(the latter only gates the matrix diagnostic reader out of non-core builds).
+
+**Previous execution and numerical checkpoint (2026-10-18):** isolated
 `codex/strata-rust-port`. The human paused the goal and requested a final
 checkpoint before updating ChatGPT. This block is finished; no GPU test remains
 running. No reset/reboot/install/API/frontend changes.

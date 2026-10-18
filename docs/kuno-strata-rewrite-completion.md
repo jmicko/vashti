@@ -1,6 +1,63 @@
 # Complete Strata Intel inference rewrite: completion gate
 
-**Current execution and numerical checkpoint (2026-10-18):** isolated
+**Resumed numerical checkpoint (2026-10-18):** the human renewed both GPU
+permissions and shared-shell sudo. Work stays in the isolated
+`codex/strata-rust-port` checkout. No installation, public API, frontend, GPU
+reset or release changes.
+
+The diagnostic loader now opens the complete two original DASLab shards without
+merging/copying them (`2da5ac64`, `aeaac923`). Actual B70 checks pass all48 GR
+stage comparisons and18 packed-dense/Q8-plane cases across raw formats
+8/12/13/14/20/23. The full physical vocabulary head also matches independent
+canonical CPU decoding across all248,320 rows (max absolute error2.3841858e-7).
+BF16 cooperative matrix checks pass counts1/8/35.
+
+**A concrete embedding bug was found and corrected:** at`10e3f9bd` and
+`e03e7f6a`, address-based embedding output mismatched78,791 of81,920 values
+(max error0.10574341), while ordinary direct-page decoding of the SAME original
+rows had zero mismatches. `b6744323` uses original aligned `vec4<u32>` source
+addressing in that shader. The same32 rows across every page then match the CPU
+exactly (zero mismatches, max error0). No weight conversion, fallback decoder,
+changed model or tolerance relaxation supplies that result. The deeper cause
+of the scalar-address shader discrepancy is not yet isolated. Invalid mapped
+embedding geometry now sets a fault instead of silently returning.
+
+Frozen corrected source`b67443235bf5a82180b3b651ad05f7a78f3840a8`, artifact
+`strata-embedding-vector-20261018`, SHA256
+`a386ea21bd45167a8f5420e3debd3d28140ad6680208ae84fad952c1d32f7872`.
+Protected operator output`strata-embedding-vector-check-20261018` still exits1
+without a success receipt: a separate FP16 matrix case has29 IEEE-reference
+mismatches (max0.0005930662). An additional flush-subnormal CPU diagnosis has
+zero mismatches (max2.1457672e-6); it does NOT replace the original acceptance
+reference. All these operator runs restored normal admission, Intel50,688,000B,
+NVIDIA compute0, HTTP200 and unchanged zero classified faults. All artifacts
+are under `/media/jmicko/faststore/kuno-development`.
+
+The complete corrected engine run`strata-embedding-vector-whole-20261018`
+exits0 with a coherent public coding response (visible unsaved tail correctly
+explains merge complexity),491 outputs, EOS,150 windows and45 repairs. Target
+and draft request erasure plus final close pass. Its observed active protection
+receipt verifies MemoryMax51,745,128,448B, swap0/core0 and a20-minute outer bound.
+Final state: Intel50,688,000B, NVIDIA compute0, all HTTP200, normal admission,
+zero classified fault deltas. No response content is saved. This supersedes
+the special-token-loop whole-output failure, but not the separate FP16 IEEE
+operator limitation above. The two-request SAME-loaded-session check
+`strata-embedding-vector-retained-20261018` also exits0: both requests produce
+identical491-token outputs/EOS through real reset/rebind of retained weights.
+Both erasure receipts and final close/recovery pass, with the same clean physical
+and service baseline. The separate prose check`strata-embedding-vector-prose-20261018` exits0 with
+coherent hash-table prose,512 outputs capped without EOS,178 windows/66 repairs.
+Compiled-public cap source`09ad8f26` also passes protected
+`strata-embedding-vector-cap-whole-20261018`: exactly16 requested/delivered
+outputs, no EOS,6 windows/2 repairs. Both erase target/draft state, complete
+final close and restore the same clean physical/service baseline. All GPU tests
+in this block are terminal. No throughput result or full-rewrite acceptance is
+claimed yet; resolve the selected FP16 reference contract before opening that
+stage. No private/general service integration has been tested here. Strict core
+Clippy passes atb6744323; non-core `strata-rust-port` Clippy passes at5e537e37
+(the latter only gates the matrix diagnostic reader out of non-core builds).
+
+**Previous execution and numerical checkpoint (2026-10-18):** isolated
 `codex/strata-rust-port`. The human paused the goal and requested a final
 checkpoint before updating ChatGPT. This block is finished; no GPU test remains
 running. No reset/reboot/install/API/frontend changes.
@@ -12139,3 +12196,99 @@ unchanged zero classified faults. The human paused the goal for an app update;
 all GPU work and CPU validation in this block are terminal. Canonical checkout,
 inherited untracked Python cache, installed services, API and frontend are
 unchanged. No new release or installation is authorized by this handoff.
+
+
+### Original embedding corruption isolated and corrected (2026-10-18)
+
+`2da5ac64`/`aeaac923` open the complete original DASLab shards in the fixed
+operator probe. Their split descriptor,83,617,662,656B extent, inventory and
+unchanged-file checks remain mandatory. Neither payload is merged or copied.
+`d9085f44` adds actual native Q8 producers/packed dense consumers versus canonical
+CPU decoding and independently quantized input buffers for original rows.
+`ad7d8c94`/`a1a9a3be` add the actual cooperative matrix primitive and full
+physical head check. These change diagnostic reach, not production math.
+
+The fixed32-row embedding comparison covers both ends of all16 original pages.
+At`10e3f9bd`/`e03e7f6a`, mapped decoding has78,791 mismatches out of81,920
+values (max0.10574341). The direct original-page scalar control matches CPU
+exactly on those same rows. Nonzero mapped values rule out a silent all-zero
+return. Original dimensions, page pointer geometry and private full-owner/tail
+checks hold. `e03e7f6a` also makes malformed mapped geometry set fault8 rather
+than silently pass.
+
+`b6744323` changes the mapped source binding to aligned `vec4<u32>` addressing
+and takes packed/header words through that original vector owner. The decoder,
+IQ4 lookup table, lane/float4 output layout, source offsets, original bytes and
+CPU tolerance are unchanged. Every tested mapped value then matches exactly.
+This is a demonstrated fix for the selected B70 path; the lower-level cause of
+the scalar physical-address discrepancy is still unisolated. It is not evidence
+that ordinary scalar buffer reads or original IQ4 decoding are wrong.
+
+The same frozen binary completes the full coding request coherently (491
+outputs/EOS,150 windows,45 repairs) and then passes two identical requests
+through one loaded Session with actual erasure/rebind and matching full token
+sequences. Both final recovery checks restore Intel50,688,000B, NVIDIA compute0,
+normal admission, all HTTP200 and unchanged zero classified driver faults.
+No prompt, response, raw activation, routing trace or hash is persisted.
+
+Strict core Clippy, strict non-core `strata-rust-port` Clippy and all6 existing
+front-shader/lane/layout CPU tests pass. `5e537e37` only compiles the public
+matrix reader in core builds. `09ad8f26` adds an explicit build-only public
+16-output cap check; it changes the fixed harness request, not the engine's
+limits or serving API. Both prose and fixed16 cap runs now pass; see the current checkpoint for exact results.
+
+FP16 matrix diagnosis remains separate. The stricter IEEE/f64 reference has29
+count8 mismatches (max0.0005930662), while an additional independent CPU model
+that flushes FP16 subnormal operands matches within the SAME numerical bound
+(zero mismatches, max2.1457672e-6). BF16 counts1/8/35 pass the original
+reference. No tolerance was increased and no original failed receipt is
+converted to success. [Khronos's Vulkan SPIR-V environment](https://docs.vulkan.org/spec/latest/appendices/spirvenv.html)
+defines cooperative matrix multiply-add order/internal precision as implementation
+dependent; it does not establish the exact policy of this device. The observed
+FTZ agreement is live evidence, not a claim that every device or upstream
+oneMKL run must do the same. Resolve/document the selected numerical contract
+before treating the extended operator suite as passed.
+
+
+### Coherent prose and explicit capped completion confirmed (2026-10-18)
+
+Normal frozen`b6744323` also completes the separate30-token prose fixture with
+512 outputs/no EOS,178 target windows and66 real state repairs. The unsaved
+visible tail coherently explains hash-table collision handling. Its protected
+output is`strata-embedding-vector-prose-20261018`; it contains an independently
+observed active-unit swap0/core0/48.2GiB protection receipt. This is functional
+public response review, not bitwise full-model CPU parity or an executed-code
+quality test.
+
+The cap-only artifact is source`09ad8f26d1e31005c89cad9eea2433bd23da2792`,
+`strata-embedding-vector-cap-20261018`, SHA256
+`508e19cb1360027124636c30d1bee735dd72290427dc06a83d3393de959705af`,
+requested features`strata-rust-port,strata-intel-core,strata-public-cap-check`.
+Builder requires explicit`--intel-core --capped-check`. Only the compiled-public
+harness request changes to16; no engine bound, sampler rule or API changes.
+`strata-embedding-vector-cap-whole-20261018` exits0 with requested/delivered16,
+`fixed_public_cap_checked=true`, EOSfalse,6 windows and2 repairs. Its actual
+active-unit protection receipt confirms swap0/core0/48.2GiB. Strict capped-core
+binary Clippy passes in`strata-embedding-vector-cap-clippy-20261018.log`.
+
+Both final root after-states confirm Intel50,688,000B, NVIDIA compute0, normal
+admission with no active/waiting/recovery state, HTTP200 from Kuno/Ollama/Vashti
+and zero classified driver-fault deltas. All protected runs and CPU checks in
+this block are terminal. No model content or output was saved. The canonical
+checkout and inherited Python cache remain unchanged. No installation/release
+or Vashti consumer change is part of this work.
+
+Next checkpoint: retain the corrected embedding vector addressing; audit the
+FP16 hardware reference contract described above and explicitly record the
+remaining numerical limitation in the completeness decision. Do not silently
+turn a failed strict IEEE diagnostic into a passing receipt. Once the whole
+selected engine is accepted, measure the assembled engine without revisiting
+Ollama baselines. A minimal observer can time trusted static
+`request_preflight`, `last_prompt_input`, and `request_private_erasure` markers
+on two identical requests through one loaded Session. Count accepted outputs
+from the successful checked receipt only; validate both repeated-output and
+root recovery receipts first. Label the last-prompt-inclusive generation rate
+accurately, separate prompt/load/reset intervals, and do not call it a pure GPU
+operator or steady per-token rate. Never persist the displayed public preview
+or accept timing markers from generated text. Existing timing/profiling gates
+remain closed until that explicit decision.
