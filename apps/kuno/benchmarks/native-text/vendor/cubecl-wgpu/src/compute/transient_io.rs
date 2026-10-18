@@ -3243,6 +3243,10 @@ impl TransientIo {
     pub(crate) fn native_branch_submitted(&mut self) -> Result<(), ServerError> {
         self.branch_parameters.submitted()
     }
+    pub(crate) fn native_automatic_flush_due(&self, tasks: usize, limit: usize) -> bool {
+        self.branch_parameters
+            .automatic_flush_due(tasks, limit, self.reuse_active())
+    }
     fn check_branch_metadata(&mut self) -> Result<(), ServerError> {
         self.check_reuse_metadata(
             self.buffers.capacity(),

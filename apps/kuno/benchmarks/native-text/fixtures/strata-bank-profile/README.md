@@ -7,7 +7,9 @@ Original `data/expert-profile.bin`: SHA256
 
 The compact table filters the original pair list by layer, keeps each layer's
 first144 IDs in original rank order, then concatenates layers0..47 as little
-endian u16. No native routes or workload traces enter the derivation. Only the
-13,824-byte compact table is compiled into the laboratory runtime. The full
-196,632-byte original is an independent test fixture. Complete MIT notice in
+endian u16. No native routes or workload traces enter the derivation. The
+13,824-byte compact table serves the older per-layer bank path. The coherent
+Intel port compiles the full 196,632-byte original profile for its globally
+ranked, byte-sized cache; it is also the independent compact-table test fixture.
+Complete MIT notice in
 [LICENSE](LICENSE). See the normative bank filler document for scope/caps.

@@ -1457,7 +1457,15 @@ impl WgpuStream {
         // Flush when there are too many tasks, or when too many handles are locked.
         // Locked handles should only accumulate in rare circumstances (where uniforms
         // are being created but no work is submitted).
-        if self.tasks_count >= self.tasks_max {
+        // A selected native request/program instead retains its actual explicit
+        // initial/prompt/prefix/suffix/commit/draft boundaries. Its 32768-node, parameter,
+        // retained-metadata and private-I/O quotas still refuse excess work;
+        // the ordinary threshold must not silently create extra math segments.
+        let due = match (&self.strata_graph, &self.transient_io) {
+            (Some(_), Some(io)) => io.native_automatic_flush_due(self.tasks_count, self.tasks_max),
+            _ => self.tasks_count >= self.tasks_max,
+        };
+        if due {
             let _ = self
                 .flush(StreamErrorMode {
                     ignore: true,

@@ -73,6 +73,18 @@ pub(crate) struct Parameters {
     active: Option<Active>,
 }
 impl Parameters {
+    /// The original native request/program owns its submission boundaries,
+    /// including uncaptured initial and prompt work. The ordinary threshold
+    /// cannot cut those programs or manufacture host joins. Explicit stream
+    /// flush/cleanup and all existing capacity guards remain independent.
+    pub(crate) fn automatic_flush_due(
+        &self,
+        tasks: usize,
+        limit: usize,
+        request_active: bool,
+    ) -> bool {
+        !request_active && self.active.is_none() && tasks >= limit
+    }
     /// Only a fully sealed, typed, single-submission branch can bypass enqueue.
     /// Multiple segments may have host observations between them; they must not
     /// be flattened into a speculative submission by this path.
@@ -1211,6 +1223,98 @@ mod tests {
         assert!(p.set_phase(NativeStrataPhase::Draft { index: 0 }).is_err());
         p.set_phase(NativeStrataPhase::Front).unwrap();
         p.clear();
+    }
+    #[test]
+    fn original_native_request_also_keeps_uncaptured_initial_and_prompt_boundaries() {
+        let p = Parameters::default();
+        assert!(!p.active()); // No invented named/typed/cold-position-zero branch.
+        for tasks in [0, 255, 256, 805, 4096, 32768] {
+            assert!(!p.automatic_flush_due(tasks, 256, true));
+            assert_eq!(p.automatic_flush_due(tasks, 256, false), tasks >= 256);
+        }
+        assert!(!p.active());
+        assert!(p.branches.is_empty()); // No cache/nonce or completion created.
+    }
+    #[test]
+    fn native_program_keeps_explicit_segments_beyond_ordinary_task_threshold() {
+        let key = NativeStrataBranch::target_window(4)
+            .unwrap()
+            .with_target_ple_handoff(true)
+            .unwrap();
+        let mut p = Parameters::default();
+        assert!(!p.automatic_flush_due(255, 256, false));
+        assert!(p.automatic_flush_due(256, 256, false));
+        let invocation = NativeStrataInvocation::target(11, 7).unwrap();
+        p.begin_invocation(key, 5, Some(invocation)).unwrap();
+        let rows = 3 * 256 + 37;
+        let mut actual = Vec::new();
+        for page in [17, 31] {
+            for i in 0..rows {
+                // The real stream calls this same policy after native math,
+                // copy and fill enqueue. More than three ordinary batches must
+                // remain ONE actual original typed program, not four segments.
+                assert!(!p.automatic_flush_due(i + 1, 256, false));
+                p.record_info(&payload(11, 7, 123), &fields()).unwrap();
+                if i == 0 {
+                    p.use_page(page).unwrap();
+                }
+                p.bind_current(page, (i * 16) as u64).unwrap();
+            }
+            actual.push(p.recording().unwrap().unwrap());
+            p.submitted().unwrap();
+            assert!(!p.automatic_flush_due(4096, 256, false));
+        }
+        assert_eq!(p.branches[0].segments.len(), 2);
+        assert!(
+            p.branches[0]
+                .segments
+                .iter()
+                .all(|s| s.records.len() == rows)
+        );
+        p.end(key, 5).unwrap();
+        assert!(p.automatic_flush_due(4096, 256, false));
+        let keys = p.target_replay_keys(key, 5, false).unwrap().unwrap();
+        assert_eq!(keys.as_slice(), &actual);
+        let next = NativeStrataInvocation::target(31, 8).unwrap();
+        for (i, &recording) in keys.iter().enumerate() {
+            p.begin_target_replay(recording, next, i != 0).unwrap();
+            assert!(!p.automatic_flush_due(rows, 256, false));
+            let mut emitted = vec![0; rows * 16];
+            p.write_replay_page([17, 31][i], emitted.len(), |at, bytes| {
+                emitted[at..at + bytes.len()].copy_from_slice(bytes);
+            })
+            .unwrap();
+            for record in emitted.chunks_exact(16) {
+                assert_eq!(record, &payload(31, 8, 123));
+            }
+            p.submitted().unwrap();
+        }
+        p.end(key, 5).unwrap();
+        assert!(p.automatic_flush_due(256, 256, false));
+    }
+    #[test]
+    fn named_commit_and_draft_keep_boundaries_until_real_end_or_failure_clear() {
+        for (key, invocation) in [
+            (
+                NativeStrataBranch::target_commit(4, 4096, 0).unwrap(),
+                NativeStrataInvocation::commit(11, 2).unwrap(),
+            ),
+            (
+                NativeStrataBranch::mtp_round(4, 2).unwrap(),
+                NativeStrataInvocation::mtp(11).unwrap(),
+            ),
+        ] {
+            let mut p = Parameters::default();
+            p.begin_invocation(key, 5, Some(invocation)).unwrap();
+            assert!(!p.automatic_flush_due(32768, 256, false));
+            // An invalid layout never gains an automatic submission/acceptance.
+            p.record(16).unwrap();
+            assert!(p.end(key, 5).is_err());
+            assert!(!p.automatic_flush_due(32768, 256, false));
+            p.clear();
+            assert!(p.automatic_flush_due(256, 256, false));
+            assert!(!p.automatic_flush_due(0, 256, false));
+        }
     }
     fn split_target() -> (Parameters, NativeStrataBranch, [RecordingKey; 2]) {
         let key = NativeStrataBranch::target_window(4)
