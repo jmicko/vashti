@@ -159,6 +159,19 @@ impl Kernel {
                 s = s.replace(old, new);
             }
         }
+        if matches!(
+            self,
+            Self::Gate | Self::PromptGate | Self::Conv | Self::PromptConv | Self::PromptConvInPlace
+        ) {
+            // Native PLE gate/conv consume materialized MUL terms. A WGSL
+            // temporary alone does not prevent backend multiply/add fusion.
+            // Cold and replay registration share the same annotation pass;
+            // explicit scale FMA, owners and ordered sums remain untouched.
+            s.insert_str(
+                0,
+                "// STRATA_ROUND_PRODUCTS: native PLE materialized gate/conv terms.\n",
+            );
+        }
         s
     }
 }
@@ -339,6 +352,134 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
 #[cfg(test)]
 mod tests {
     use kuno_text::ops::{self, CausalConvState, GatedResidualShape};
+    #[test]
+    fn actual_decode_and_prompt_ple_products_are_materialized_without_changing_fma_or_owners() {
+        use super::*;
+        use std::collections::BTreeSet;
+        use wgpu::naga as n;
+        fn instructions(words: &[u32]) -> Vec<&[u32]> {
+            let mut at = 5;
+            let mut result = Vec::new();
+            while at < words.len() {
+                let len = (words[at] >> 16) as usize;
+                assert!(len > 0 && at + len <= words.len());
+                result.push(&words[at..at + len]);
+                at += len;
+            }
+            result
+        }
+        fn products(words: &[u32]) -> BTreeSet<u32> {
+            instructions(words)
+                .into_iter()
+                .filter(|i| i[0] & 65535 == 133)
+                .map(|i| i[2])
+                .collect()
+        }
+        fn materialized(words: &[u32]) -> BTreeSet<u32> {
+            instructions(words)
+                .into_iter()
+                .filter(|i| i[0] & 65535 == 71 && i.len() == 3 && i[2] == 42)
+                .map(|i| i[1])
+                .collect()
+        }
+        for kernel in [
+            Kernel::Gate,
+            Kernel::PromptGate,
+            Kernel::Conv,
+            Kernel::PromptConv,
+            Kernel::PromptConvInPlace,
+        ] {
+            let compiled = kernel
+                .compile(
+                    &mut AutoCompiler::Wgsl(Default::default()),
+                    &Default::default(),
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap();
+            assert!(compiled.source.contains("STRATA_ROUND_PRODUCTS"));
+            let module = n::front::wgsl::parse_str(&compiled.source).unwrap();
+            let info = n::valid::Validator::new(
+                n::valid::ValidationFlags::all(),
+                n::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            assert_eq!(
+                module.entry_points[0].workgroup_size,
+                [kernel.lanes(), 1, 1]
+            );
+            let words = n::back::spv::write_vec(
+                &module,
+                &info,
+                &n::back::spv::Options {
+                    lang_version: (1, 3),
+                    zero_initialize_workgroup_memory:
+                        n::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
+                    ..Default::default()
+                },
+                Some(&n::back::spv::PipelineOptions {
+                    shader_stage: n::ShaderStage::Compute,
+                    entry_point: "main".into(),
+                }),
+            )
+            .unwrap();
+            let products = products(&words);
+            assert!(!products.is_empty());
+            // This is the actual unpatched Naga image, including the WGSL
+            // product temporary: it had no NoContraction decorations.
+            assert!(materialized(&words).is_empty());
+            let pinned = cubecl::wgpu::preserve_native_product_rounding(&words).unwrap();
+            assert_eq!(materialized(&pinned), products);
+            assert_eq!(words[..5], pinned[..5]);
+            let non_annotations = |w: &[u32]| {
+                instructions(w)
+                    .into_iter()
+                    .filter(|i| i[0] & 65535 != 71)
+                    .map(|i| i.to_vec())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(non_annotations(&words), non_annotations(&pinned));
+            let fmas = instructions(&pinned)
+                .into_iter()
+                .filter(|i| i[0] & 65535 == 12 && i.len() >= 5 && i[4] == 50)
+                .count();
+            assert_eq!(
+                fmas,
+                usize::from(matches!(kernel, Kernel::Gate | Kernel::PromptGate))
+            );
+            assert_eq!(
+                cubecl::wgpu::preserve_native_product_rounding(&pinned).unwrap(),
+                pinned
+            );
+        }
+        // These unrelated operator families retain their own native arithmetic.
+        for kernel in [
+            Kernel::Norm,
+            Kernel::PromptNorm,
+            Kernel::Projection,
+            Kernel::History,
+        ] {
+            assert!(!kernel.source().contains("STRATA_ROUND_PRODUCTS"));
+        }
+    }
+    #[test]
+    fn materialized_gate_terms_preserve_zero_sign_decision_at_the_native_clamp() {
+        let mut key = vec![0f32; 10240];
+        let mut query = key.clone();
+        key[0] = -1.0;
+        query[0] = 1.0;
+        key[512] = f32::from_bits(0x3f800001);
+        query[512] = f32::from_bits(0x3f7ffffe);
+        let rounded = key[512] * query[512];
+        assert_eq!(rounded, 1.0);
+        assert_eq!(gate(&key, &query), [0.5; 4]);
+        let fused = key[512].mul_add(query[512], -1.0);
+        assert!(fused < 0.0);
+        let s = (1.0 / 2560f32.sqrt()).mul_add(fused, 0.0);
+        let fused_gate = 1.0 / (1.0 + (-(s.signum() * s.abs().max(1e-6).sqrt())).exp());
+        assert!(0.5 - fused_gate > 0.0002);
+    }
     fn xor32(mut x: [f32; 32]) -> f32 {
         for d in [16, 8, 4, 2, 1] {
             let old = x;
