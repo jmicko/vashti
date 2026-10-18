@@ -1014,8 +1014,37 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, storage_alignment: usize) -> Res
     validate_storage_alignment(storage_alignment)?;
     let path = std::env::var_os("KUNO_TEST_GGUF")
         .ok_or("existing original GGUF required for public GR probe")?;
-    let file =
-        GgufFile::open(path, GgufLimits::default()).map_err(|_| "public GR GGUF open failed")?;
+    // The selected native engine consumes both original DASLab shards. The
+    // single-file loader deliberately rejects a partial split; retain that
+    // protection and the original descriptors rather than merging payloads.
+    let file = if crate::strata_intel_core::enabled() {
+        let first = std::path::Path::new(&path);
+        if first.file_name().and_then(|name| name.to_str())
+            != Some("Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf")
+        {
+            return Err("public native GR requires original DAS first shard".into());
+        }
+        let directory = first.parent().ok_or("public native GR shard directory")?;
+        let paths: Vec<_> = (1..=2)
+            .map(|i| {
+                directory.join(format!(
+                    "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-{i:05}-of-00002.gguf"
+                ))
+            })
+            .collect();
+        let file = GgufFile::open_shards(&paths, GgufLimits::default())?;
+        if file.file_len() != 83_617_662_656 {
+            return Err("public native GR original DAS extent".into());
+        }
+        crate::daslab_profile::validate_inventory(
+            file.tensors()
+                .iter()
+                .map(|(name, t)| (name.as_str(), t.dtype().gguf_id())),
+        )?;
+        file
+    } else {
+        GgufFile::open(path, GgufLimits::default())?
+    };
     let model = Qwen4Exp::bind(&file).map_err(|_| "public GR model binding failed")?;
     let graph = model.bound_graph();
     let public = load(client, graph)?;
