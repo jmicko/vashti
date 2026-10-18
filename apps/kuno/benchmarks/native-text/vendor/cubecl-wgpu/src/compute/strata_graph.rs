@@ -1453,7 +1453,11 @@ impl Graph {
     pub(crate) fn has_recording(&self, key: super::strata_parameters::RecordingKey) -> bool {
         !profile_active()
             && self.recordings.iter().any(|r| {
-                r.ready && r.key == Some(key) && r.family == self.family && !self.flights.live(r.id)
+                r.ready
+                    && r.key == Some(key)
+                    && r.family == self.family
+                    && r.profile.is_none()
+                    && !self.flights.live(r.id)
             })
     }
     /// Submit the original retained commands/resources without building nodes,
@@ -1474,7 +1478,11 @@ impl Graph {
             .recordings
             .iter()
             .find(|r| {
-                r.ready && r.key == Some(key) && r.family == self.family && !self.flights.live(r.id)
+                r.ready
+                    && r.key == Some(key)
+                    && r.family == self.family
+                    && r.profile.is_none()
+                    && !self.flights.live(r.id)
             })
             .ok_or_else(|| fault("native direct replay recording missing"))?;
         let id = original.id;

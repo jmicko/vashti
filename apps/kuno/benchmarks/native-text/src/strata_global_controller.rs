@@ -600,11 +600,14 @@ pub(super) fn run<'m, 'f>(
         let previous_total = history.len();
         let mut delivered = None;
         let mut delivery_error = None;
-        let native_profile = crate::strata_port::NativeProfileRound::new(rounds);
+        let mut native_profile = Some(crate::strata_port::NativeProfileRound::new(rounds));
         let verification = target.verify_native_prefix(executor, &inputs, cancel, &mut |phase| {
             use crate::resident_model::batch::PrefixPhase;
             match phase {
                 PrefixPhase::Verified(rows) => {
+                    // Target math has completed. Commit export and next-draft
+                    // work retain their original unprofiled pending protocol.
+                    drop(native_profile.take());
                     if rows.start() != position || rows.count() != count {
                         return Err(Error::InvalidFormat(
                             "global verification identity rejected",

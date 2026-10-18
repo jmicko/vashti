@@ -1891,9 +1891,9 @@ impl WgpuStream {
         // scope supplies the nonce; named inference branches must still match.
         // Graph independently checks MAIN/no-draft or an active original draft
         // scope whose request matches this exact nonce, before side tagging.
-        let recording = io
-            .native_branch_recording()?
-            .map(|key| (key.nonce, key.branch));
+        // This is a mid-walk family/nonce check, not submission. A profiler
+        // recapturing a sealed branch still owes the rest of its INFO layout.
+        let recording = io.native_branch_identity()?;
         super::strata_schedule::shared_recording(request, recording)
             .map_err(super::transient_io::fault)?;
         self.strata_graph

@@ -3264,6 +3264,13 @@ impl TransientIo {
         }
         self.branch_parameters.end(key, nonce)
     }
+    pub(crate) fn native_branch_identity(
+        &mut self,
+    ) -> Result<Option<(u64, cubecl_runtime::server::NativeStrataBranch)>, ServerError> {
+        let identity = self.branch_parameters.active_identity();
+        self.check_branch_metadata()?;
+        Ok(identity)
+    }
     pub(crate) fn native_branch_recording(
         &mut self,
     ) -> Result<Option<super::strata_parameters::RecordingKey>, ServerError> {

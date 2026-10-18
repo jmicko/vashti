@@ -366,6 +366,15 @@ impl Parameters {
     pub(crate) fn active(&self) -> bool {
         self.active.is_some()
     }
+    /// Identity is valid throughout an admitted branch walk, including a
+    /// partially rebuilt sealed program. It grants NO submission/completion
+    /// authority; recording() still requires the complete exact inventory.
+    pub(crate) fn active_identity(&self) -> Option<(u64, NativeStrataBranch)> {
+        self.active.map(|a| {
+            let b = &self.branches[a.branch];
+            (b.nonce, b.key)
+        })
+    }
     pub(crate) fn metadata_bytes(&self) -> usize {
         self.branches.capacity() * size_of::<Branch>()
             + self
@@ -788,6 +797,33 @@ impl Parameters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sealed_recapture_has_original_identity_but_never_partial_submission_authority() {
+        let key = NativeStrataBranch::target_window(4).unwrap();
+        let mut p = Parameters::default();
+        p.begin(key, 5).unwrap();
+        p.record(16).unwrap();
+        p.record(32).unwrap();
+        p.use_page(17).unwrap();
+        let original = p.recording().unwrap().unwrap();
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        assert!(p.active_identity().is_none());
+
+        p.begin(key, 5).unwrap();
+        assert_eq!(p.active_identity(), Some((5, key)));
+        assert!(p.recording().is_err());
+        p.record(16).unwrap();
+        assert_eq!(p.active_identity(), Some((5, key)));
+        assert!(p.recording().is_err());
+        p.record(32).unwrap();
+        assert!(p.recording().is_err()); // The original page is still owed.
+        p.use_page(17).unwrap();
+        assert_eq!(p.recording().unwrap(), Some(original));
+        p.submitted().unwrap();
+        p.end(key, 5).unwrap();
+        assert!(p.active_identity().is_none());
+    }
     #[test]
     fn target_state_modes_never_replay_each_others_actual_recording() {
         for rows in 2..=8 {
