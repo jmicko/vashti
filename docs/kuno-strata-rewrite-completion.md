@@ -1,42 +1,36 @@
 # Complete Strata Intel inference rewrite: completion gate
 
-**Current protected-device checkpoint (2026-10-18):** isolated
-`codex/strata-rust-port`, runtime source
-`d271eb492c40023d0008fcdf5bf6219f88a90000`, frozen at snapshot
-`7233f75fb9f075541703e19fff94b5b7d23d0017`. The human renewed GPU authorization
-after the pause. The goal is active and shared-shell sudo is available.
-No reset/reboot/install/API/frontend changes.
+**Current execution and numerical checkpoint (2026-10-18):** isolated
+`codex/strata-rust-port`. The human renewed GPU access; the goal is active and
+shared-shell sudo is available. No reset/reboot/install/API/frontend changes.
 
-Generation now completes and the draft's complete private-state reset passes.
-The six coupled execution fixes through `7f4552d2` remain selected. `8fb70457`
-corrects target reset to validate the actual completed global MoE family and
-prove its dormant legacy owner stayed unstarted; the old public13 route still
-requires actual legacy completion. Protected
-`strata-native-reset-family-whole-20261018` passes that gate but rejects later
-with a redacted device-operation error during target reset. It has no success
-`intel.json`. Full process recovery passes: Intel50,688,000B, NVIDIA compute0,
-admission restored, all HTTP200 and zero driver fault deltas.
+The complete selected engine now returns through generation, target AND draft
+retained request erasure, final all-peer close and physical recovery. Protected
+`strata-cleanup-window-whole-20261018` exits0 and writes `intel.json` with both
+`*_owners_erased=true`. Runtime source isd271eb49, frozen at snapshot
+`7233f75fb9f075541703e19fff94b5b7d23d0017`, SHA256
+`9465232e773ea1ed5cb65b0d947ab537151b6c8f4fea45282d91572e66ec4dff`.
+102 selected CPU cases, strict core/off binary Clippy and independent frozen
+mode/source/features/ordinary-equality checks pass. The original full-owner
+bounded scan fixes the target erasure failure; no checks or tails are omitted.
+After-state: Intel50,688,000B, NVIDIA compute0, all HTTP200, normal admission,
+zero driver fault deltas. Live protection receipt verifies swap0/core0 and the
+original48.2GiB cgroup cap.
 
-The subsequent source audit found a definite cleanup contract mismatch: the
-arena scans original large owners in32MiB windows, while its old backend call
-rejects trimmed handles and requires the complete physical owner. `d271eb49`
-adds an internal bounded cleanup read receiving the ORIGINAL full owner plus a
-checked window. The backend validates complete actual backing ownership first,
-then derives the bounded resource view. The scanner still inspects every byte
-and tail before any full-owner receipt. Ordinary/full cleanup reads, strict
-lease/stream/retirement checks and all privacy/admission limits remain intact.
-102 selected CPU tests and current strict core/off binary Clippy pass.
-Normal frozen artifact `strata-cleanup-window-fixed-20261018`, SHA256
-`9465232e773ea1ed5cb65b0d947ab537151b6c8f4fea45282d91572e66ec4dff`,
-mode0500/source/features/ordinary equality independently verified. Protected
-`strata-cleanup-window-whole-20261018` is now running; await actual terminal
-status and recovery. It has no acceptance receipt yet.
+**Numerical acceptance FAILED:** the public code request emits11 outputs then
+EOS, but the unsaved preview loops through special tokens rather than answering.
+A successful lifecycle receipt does NOT establish correct inference, retained
+repeat, whole rewrite acceptance or speed. Both speed/whole-rewrite acceptance
+fields remainfalse. Retained-repeat validation is deferred behind this concrete
+numerical failure; do not use repeated nonsense as quality proof.
 
-Next: finish the active ordinary protected completion check and inspect its
-actual failure/erasure/recovery result. If and only if that completes, run the
-explicit retained two-request Session check. Independent numerical/context/
-footprint/private-caller acceptance and speed remain gated. No completed whole
-response or throughput accepted yet. See the
+Diagnostic source `72f0b24a` connects the actual selected `strata_gr` kernels to
+the existing original-weight CPU operator oracle via the fixed public
+`gr-batch-probe` only. Counts1/4/8 compare normalization/down/low/mix/injection/
+combined outputs and full inactive padding with the existing tolerances. No
+production math or API changes. Its CPU comparison test passes; the normal
+frozen diagnostic build and protected operator run are pending. Resume here,
+not with a throughput benchmark. See the
 [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
 Approved 2026-10-14. This is backend engine work, not gateway/API/UI/release work.
@@ -12042,3 +12036,61 @@ passes; if not, the added main-arena error attribution will narrow the next
 failure. Do not bypass reset to create a receipt. Only an accepted ordinary
 request permits `--retained-check`; then finish independent numerical/state/
 context/footprint/private-caller/failure/recovery gates before speed measurements.
+
+
+### Full engine lifecycle completes; public numerical output rejects acceptance (2026-10-18)
+
+After renewed human GPU authorization, the idle cached model was unloaded via
+the existing gateway and original physical baseline was verified. Sudo refreshed
+in the shared shell. Current strict binary core/off Clippy passes in
+`strata-cleanup-window-{core,off}-clippy-20261018.log`. The102 selected CPU
+cases remain the latest cleanup/source acceptance. Frozen normal build
+`strata-cleanup-window-fixed-20261018` records snapshot
+`7233f75fb9f075541703e19fff94b5b7d23d0017` (runtime coded271eb49), SHA256
+`9465232e773ea1ed5cb65b0d947ab537151b6c8f4fea45282d91572e66ec4dff`.
+Independent checks confirm mode0500, exact source/features, requested Intel core
+and resolved direct-device/resident224/resident240/core/port features, and
+ordinary/frozen executable byte equality.
+
+Protected `strata-cleanup-window-whole-20261018` is terminal exit0 with
+`intel.json`. It reports actual target AND draft owning erasure, original
+request-scope reset, all-peer final close and recovered runtime. The public
+code fixture uses the unchanged seed0/greedy/window4 and original model/sidecar;
+it completes11 outputs/10 windows/1 state repair/EOS. A live unit snapshot
+`live-unit-protection.json` verifies the actual PID, MemoryMax51745128448,
+MemorySwapMax0, LimitCORE0 and diagnostic-only20-minute outer bound. Host-after
+proves Intel50,688,000B, NVIDIA compute0, HTTP200 Kuno/Ollama/Vashti, admission
+paused/recovery_required/active false, waiting0, and zero new classified faults.
+The full-owner bounded scanner now accepts real target pages and final cleanup;
+physical release alone is not used as its proof.
+
+**This is execution/lifecycle acceptance only. Numerical output is wrong.** The
+unsaved public preview consists of a repeated special-token loop rather than
+code. No raw generated output is copied into this receipt or persisted log.
+The JSON deliberately keeps benchmark/whole_rewrite_accepted/speed_acceptance
+false. Do not claim correct text inference, retained hot reuse, or throughput.
+The next meaningful action is numerical first-divergence tracing, not another
+speed run. The retained-repeat check is deferred because deterministic bad
+output would not fix the observed failure.
+
+Diagnostic `72f0b24a` adds a core-only branch to the existing fixed public
+`gr-batch-probe`. It invokes the SAME selected native GR shader emitter/launch
+path with original attn/ffn/output-HC BF16 weights and fixed synthetic inputs.
+The existing independent CPU oracle supplies normalization/down/SILU/mix/
+injection/combined references. Count1/4/8 and complete inactive/padded owners
+are checked under the existing1e-4+3e-4*abs reference tolerance; no tolerance
+is relaxed. CPU test validates wrong active data, NaN and full tail rejection;
+it passes in `strata-gr-native-numeric-tests-20261018.log`. The final source
+only additionally checks actual client identity/removes an unused import.
+No inference math/placement/caching/request/API behavior changes. Normal frozen
+build/protected operator evidence is pending.
+
+Fixed-purpose runner artifacts `run-strata-gr-numerics-20261018.py` and
+`run-strata-gr-numerics-shell-20261018.sh` under the development root keep the
+existing root admission/physical-memory/kernel-fault before/after guards,
+immutable executable verification and synthetic-only original-model inputs.
+The operator unit uses MemoryMax4GiB, swap0/core0, fixed300s diagnostic bound,
+and restores admission in finally. It stores aggregates only; no user input,
+raw activations or output strings. AST parsing passes. These are development
+artifacts, not installed services or an API. Do not claim a device result until
+the actual unit exits and its original after-state accepts recovery.

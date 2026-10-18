@@ -1,9 +1,13 @@
 # Current Strata source audit
 
 Source-audit baseline: `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, isolated `codex/strata-rust-port`.
-Current execution corrections reach `d271eb492c40023d0008fcdf5bf6219f88a90000`;
-see the latest [checkpoint](kuno-native-text-checkpoint.md). The human renewed GPU access and the goal is active. Generation and draft reset are observed; target
-request erasure and whole-response/repeat acceptance remain unproven.
+Current inference corrections reach `d271eb492c40023d0008fcdf5bf6219f88a90000`.
+Protected execution/target+draft erasure/final recovery now pass, but the public
+code output is numerically wrong (special-token loop). Whole rewrite and speed
+acceptance remain unproven. Diagnostic72f0b24a adds actual native GR versus CPU
+oracle comparison in the fixed public operator probe. See the latest
+[checkpoint](kuno-native-text-checkpoint.md). Human GPU access is renewed and
+the goal is active.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -41,8 +45,9 @@ Success erases request state in both target and draft while retaining weights.
 `Session::close_inner` attempts all peer cleanup paths even after an error,
 checks shared-root recovery and retires failed contexts. Source-owner closure
 joins readers before HOST detach/free; failed close quarantines roots instead of
-pretending completion. **Actual driver residency, no-swap protection, repeat
-request execution and full GPU recovery remain unverified.**
+pretending completion. **Single-request device completion, no-swap protection, actual target/draft
+erasure and final physical recovery now pass atd271eb49. Repeat-request and
+numerical correctness remain unverified; generated content is currently wrong.**
 
 ## Dense and ranked source placement: actual owners traced further
 
