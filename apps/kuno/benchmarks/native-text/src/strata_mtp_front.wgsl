@@ -43,8 +43,9 @@ fn iq_value(code:u32)->f32 {
 @compute @workgroup_size(32)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
     let t=g.y;if t>=p.count || g.x>=10u {return;}
+    if arrayLength(&fault)!=1u {return;}
     if p.columns!=248320u || p.rows!=16384u || p.first!=1536u || p.stride!=16u || arrayLength(&addresses)!=2048u
-        || arrayLength(&tokens)<p.count || arrayLength(&output)<p.count*640u || arrayLength(&fault)!=1u {return;}
+        || arrayLength(&tokens)<p.count || arrayLength(&output)<p.count*640u {if lane==0u {atomicOr(&fault[0],8u);}return;}
     let token=tokens[t];if token>=p.columns {atomicOr(&fault[0],1u);return;}
     let page=token/p.rows;let row=token%p.rows;let src=addresses[p.first+page];
     if all(src.xy==vec2<u32>(0u)) || src.x%16u!=0u || row>=src.w || src.w>p.rows || src.z!=src.w*340u {atomicOr(&fault[0],1u);return;}

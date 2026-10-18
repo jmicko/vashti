@@ -163,7 +163,9 @@ fn embedding(
     let table = original_page(client, u32::as_bytes(&table).to_vec())?;
     let mut mismatches = 0;
     let mut max_abs = 0f32;
-    for tile in &tiles {
+    let mut scalar_mismatches = 0usize;
+    let mut zero_values = 0usize;
+    for (page_index, tile) in tiles.iter().enumerate() {
         let tokens = [tile.first as u32, (tile.first + tile.rows - 1) as u32];
         let ids = arena.upload_u32(&tokens)?;
         let output = arena.allocate_zeroed(8 * shared::COLUMNS)?;
@@ -193,6 +195,33 @@ fn embedding(
         if native::read_id(arena, fault)?.iter().any(|&v| v != 0) {
             return Err("public embedding actual native fault".into());
         }
+        let scalar_output = arena.allocate_zeroed(8 * shared::COLUMNS)?;
+        crate::strata_mtp_front::launch(
+            arena,
+            crate::strata_mtp_front::Kernel::Embed,
+            [40, 2, 1],
+            vec![
+                pages[page_index].clone(),
+                u::handle(arena, ids)?,
+                u::handle(arena, scalar_output)?,
+                u::handle(arena, fault)?,
+            ],
+            [
+                2,
+                0,
+                shared::ROWS as u32,
+                tile.rows as u32,
+                tile.first as u32,
+                0,
+                0,
+                0,
+            ],
+        )?;
+        let scalar = native::read_id(arena, scalar_output)?;
+        if native::read_id(arena, fault)?.iter().any(|&v| v != 0) {
+            return Err("public scalar embedding actual fault".into());
+        }
+        let before = mismatches;
         for (i, &token) in tokens.iter().enumerate() {
             let mut packed = Zeroizing::new(vec![0; kind.row_bytes()]);
             tensor.read_range(u64::from(token) * kind.row_bytes() as u64, &mut packed)?;
@@ -204,18 +233,27 @@ fn embedding(
                 mismatches +=
                     usize::from(!value.is_finite() || error > 1e-6 + 1e-6 * reference.abs());
                 max_abs = max_abs.max(error);
+                zero_values += usize::from(value == 0.);
+                let value = f32::from_bits(scalar[i * shared::COLUMNS + d]);
+                scalar_mismatches += usize::from(
+                    !value.is_finite() || (value - reference).abs() > 1e-6 + 1e-6 * reference.abs(),
+                );
             }
         }
         if actual[2 * shared::COLUMNS..].iter().any(|&v| v != 0) {
             return Err("public embedding inactive/full owner padding".into());
         }
+        println!(
+            "public_native_embedding_page page={page_index} mismatches={} scalar_mismatches={scalar_mismatches} zero_values={zero_values}",
+            mismatches - before
+        );
         arena.reset()?;
     }
     println!(
         "public_native_physical_numeric family=embedding rows={} mismatches={mismatches} max_abs={max_abs}",
         2 * tiles.len()
     );
-    if mismatches != 0 {
+    if mismatches != 0 || scalar_mismatches != 0 {
         return Err("public original physical embedding numerical parity failed".into());
     }
     Ok(
