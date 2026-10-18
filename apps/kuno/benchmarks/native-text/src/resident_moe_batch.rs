@@ -197,6 +197,18 @@ impl Policy {
         }
         Ok(())
     }
+    fn unstarted_boundary(&self) -> Result<()> {
+        if self.phase != Phase::Idle
+            || *self.chunk != 0
+            || *self.issued != 0
+            || *self.committed != 0
+            || *self.start != 0
+            || *self.count != 0
+        {
+            return Err(err("unused native routed projection policy boundary"));
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, PartialEq, Eq)]
 struct Stamp {
@@ -1323,8 +1335,42 @@ impl Workspace {
         graph: BoundGraph<'_, '_>,
         arena: &PrivateArena,
     ) -> Result<()> {
-        self.healthy(arena)?;
         self.policy.completed_boundary()?;
+        self.validate_retained_owner_boundary(executor, graph, arena)
+    }
+    /// The connected global engine never dispatches this older routed family.
+    /// Its reserved owners still need full identity/health/erasure checks, but
+    /// must prove they were NEVER executed, rather than minting a completion.
+    pub(crate) fn validate_unused_global_boundary(
+        &self,
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+    ) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || !executor.global_target_scope()?
+            || self.batch_router_active()
+            || self.frozen_sources.is_some()
+            || self.prepared_verify3.is_some()
+            || self.frozen_staging.is_some()
+            || self.live_member_reduction_enabled()
+            || self.public_existing_fill
+            || self.public_four_members
+            || self.public_fill_counters != PublicFillCounters::default()
+            || self.frozen_source_counters != frozen_sources::Counters::default()
+        {
+            return Err(err("unused global native routed family"));
+        }
+        self.policy.unstarted_boundary()?;
+        self.validate_retained_owner_boundary(executor, graph, arena)
+    }
+    fn validate_retained_owner_boundary(
+        &self,
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+    ) -> Result<()> {
+        self.healthy(arena)?;
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
         graph.verify_unchanged()?;
@@ -3415,6 +3461,38 @@ mod tests {
         }
         for c in [0, 9, 73, 95, 97, usize::MAX] {
             assert!(StagedSlots::bounded_native_metadata_bytes(c).is_err());
+        }
+    }
+    #[test]
+    fn unused_global_owner_cannot_claim_or_accept_legacy_execution() {
+        let mut policy = Policy::new(48).unwrap();
+        policy.unstarted_boundary().unwrap();
+        assert!(policy.completed_boundary().is_err());
+        policy.begin(12, 4).unwrap();
+        assert!(policy.unstarted_boundary().is_err());
+        for layer in 0..48 {
+            policy.issue(layer).unwrap();
+            assert!(policy.unstarted_boundary().is_err());
+        }
+        policy.preflight((1u64 << 48) - 1).unwrap();
+        for layer in 0..48 {
+            policy.commit(layer).unwrap();
+            assert!(policy.unstarted_boundary().is_err());
+        }
+        policy.finish().unwrap();
+        policy.completed_boundary().unwrap();
+        assert!(policy.unstarted_boundary().is_err());
+        // Even an idle owner with a corrupted partial stamp is not unused.
+        for field in 0..5 {
+            let mut policy = Policy::new(48).unwrap();
+            match field {
+                0 => *policy.chunk = 1,
+                1 => *policy.issued = 1,
+                2 => *policy.committed = 1,
+                3 => *policy.start = 1,
+                _ => *policy.count = 1,
+            }
+            assert!(policy.unstarted_boundary().is_err());
         }
     }
     #[test]

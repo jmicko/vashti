@@ -88,37 +88,37 @@ impl ResidentMtp<'_, '_> {
     ) -> Result<NativeRequestResetReceipt> {
         u::cancel(cancel)?;
         self.finish_native_request()
-            .map_err(crate::strata_engine::report_private_reset_error)?;
+            .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
         if self.ledger.shared().is_none() || self.native_front_pending.load(Ordering::Acquire) {
             return Err(Error::InvalidFormat("native MTP retained reset scope"));
         }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || -> Result<crate::private_arena::OwnedZeroAudit> {
                 self.physical()
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 self.verify_source()
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 // Observe the original fault before rewind/erasure can clear it.
                 self.complete_fault()
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 self.rewind(0)
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 self.poisoned = true;
                 let private = self
                     .arena
                     .erase_retained_public_owners()
                     .map_err(error)
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 let (buffers, bytes) = private_owned_geometry()?;
                 if private.bytes != bytes || private.buffers != buffers {
                     return Err(Error::InvalidFormat("native MTP retained reset inventory"));
                 }
                 self.verify_source()
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 self.complete_fault()
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 self.audit_io()
-                    .map_err(crate::strata_engine::report_private_reset_error)?;
+                    .map_err(|error| crate::strata_engine::report_private_reset_error(error))?;
                 u::cancel(cancel)?;
                 self.position = 0;
                 self.poisoned = false;

@@ -812,6 +812,16 @@ impl Workspace {
             Ok(())
         }
     }
+    pub(crate) fn validate_completed_request_boundary(
+        &self,
+        graph: BoundGraph<'_, '_>,
+    ) -> Result<()> {
+        self.validate_idle()?;
+        if self.epoch == 0 || self.verified_window || self.binding != graph.binding_id() {
+            return Err(reject());
+        }
+        graph.verify_unchanged()
+    }
     /// Only completed, closed request scopes reach this hook. Keep aggregate
     /// expert counters with the original loaded model before FULL arena erase.
     /// No token, prompt, seed, suffix or KV data crosses this boundary.
