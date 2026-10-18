@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `9a3567e6afe57de88835645786c72a0012b86200`, isolated `codex/strata-rust-port`.
+Runtime source: `83d690e1f3b690d9d97d76ec9c617bf4cee30927`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -241,50 +241,95 @@ accepted normalized prefix. The CPU advances two token IDs, not a float mirror.
 Original nonce/generation/sequence/state/reset guards remain. Physical numerical,
 retained execution and full recovery acceptance still remain unverified.
 
-## Concrete remaining PLE reader gap: default cache and asynchronous transport
+## Default PLE reader backend: original cache and Linux pool connected
 
-Allowlisted extraction from the saved reference argv records `--ple-io direct`,
-with no `--ple-row-cache`, `--ple-inflight` or `--ple-sync-submit` override.
-`strata-ple-reference-options-20261017.json` contains only those public fields.
-Pinned Intel `generate.cpp:429..434,2926..2929` therefore selects its original
-1,048,576-row cache,256 inflight jobs and I/O worker; the default SSD keepalive
-is100ms for60 seconds after row requests. `ngram/ple_reader.cpp::RowCache`
-uses eight ways/set, original64-bit wrapping mix, round-robin replacement and
-packed original bytes. The actual target's table is IQ4_NL `[160,320001536]`,
-90B/row. Cache data/keys/replacement owners alone total98,697,216B (94.125MiB),
-plus metadata. This is a derived source inventory, not runtime measurement.
+Source `83d690e1` connects `strata_ple_reader` to actual `Session::run` around the
+controller. A single request owner serves decode, captured prompt prefetch leases
+and synchronous prompt fallback. All use original packed rows from the same
+validated table/model binding. Normal engine execution cannot silently fall back
+to the old four-worker path; that path remains only for standalone operator probes
+without an engine request owner. Full request success requires actual reader/
+worker completion and owning cache erasure before retained target/draft reset.
 
-Current `resident_ple_batch::native_embedding` has a stable sorted/unique plan,
-four joined positional workers, original decoder and destination scatter. Prompt
-already double-buffers next-chunk source work. Neither path has the native bounded
-row cache or original256-job direct-I/O engine. Deduplication within one batch is
-not reuse across batches. These are genuine remaining selected-source differences,
-not optional tuning or proof that the whole reader has been ported. Existing
-privacy statements forbidding persistence do not prohibit a wiped request cache.
+The selected Linux source is `sycl/src/platform/direct_file.cpp`, not io_uring:
+its actual `DirectFile::open` calls `io_threads(64)`, despite the earlier generic
+comment saying16. The pinned CLI defaults1M cache rows and256 pending slots;
+this matches saved-reference allowlisted `--ple-io direct` with no cache/inflight/
+sync-submit override. Process environment overrides are not independently
+attested. The Rust backend now has one coordinator,64 persistent blocking read
+workers,256 aligned two-page slots, original sorted page grouping (including
+straddling90-byte rows and short final pages), completion-based scatter and
+original eight-way/round-robin64-bit hash cache. It caches packed original bytes,
+not a full decoded table. The chosen direct format is actual IQ4_NL
+`[160,320001536]`/90B. Default data/keys/replacement owners total98,697,216B.
 
-Next implementation must connect the reader as a whole:
+`kuno_text::gguf::DirectSource` reopens only `/proc/self/fd/<original fd>` read-only
+with independent Linux x86_64 O_DIRECT flags; dup/F_SETFL would wrongly affect the
+original descriptor. Dev/inode comparison, original model borrow and stat guards
+retain the original identity even after pathname replacement. Range/alignment
+checks permit only table-intersecting pages; caller verifies each row is within
+the actual returned prefix. Complete batch stats are checked before/after reads,
+including cache-only requests. Linux x86_64 is the supported direct backend;
+unsupported direct I/O fails explicitly instead of silently changing mode.
+Original immutable-file/mapped-source obligations remain necessary.
 
-- One original bounded packed-row cache shared by decode and actual prompt
-  prefetch/fallback, authenticated to the original model/table binding. Preserve
-  eight-way replacement and real hit/miss reads; never return stale/cross-model
-  data or silently treat fresh rows as cached. Inspect the original page grouping,
-  aligned direct reads, inflight queue/completions and actual gather issuance/join
-  points before choosing a Rust transport. Document necessary backend substitutions.
-- Explicit request lifetime/worker ownership, including error/cancellation/unwind,
-  original descriptor/stat checks and joins before source closure. Kuno must wipe
-  all allocated row IDs, cached bytes, replacement state, queued plans and private
-  staging before request completion/retained rebinding. No row cache/prompt/content
-  persists or enters a log. A cache retained across requests would violate this
-  privacy boundary; rebuilding it is a necessary lifetime substitution.
-- Charge actual cache/queue/aligned buffer/worker/metadata capacity in the original
-  HOST constructor/reservation inventory (including peak coexistence with prompt
-  sources and cleanup). It is not covered by merely enlarging the old4MiB reader
-  cap or borrowing uncharged GPU MAIN. Preserve original no-swap/core protections.
-- Prove original packed hit/miss bytes, collisions/replacement/duplicate rows,
-  page-straddling/tails, prompt/decode shared use, original identity/stat refusal,
-  bounded admission, cancellation/error/drain and actual erasure with public CPU
-  fixtures, then normal build/offline/full-engine correctness gates. Do not use
-  a microbenchmark or interim speed result to replace the complete reader port.
+Privacy requires a request lifetime instead of Strata's retained model-lifetime
+row cache. The scope shares private endpoint leases only with the actual prompt
+producer, rejects wrong model/row geometry/stale leases, and clears main TLS on
+success/error/unwind. Stop/disconnect ends keepalive; queued reads and workers
+join before descriptor or buffer release. Already entered blocking pread must
+return; there is no false cancellation/freed-memory credit. Failure/unwind also
+joins the pool, then fails the request. Page slots are wiped after completion and
+again after joins. Cache keys/packed bytes/replacement state are volatile-wiped
+and inspected while the full original capacities/addresses remain owned. Wiping
+plans keep initialized tails clear; popped read-job offsets are volatile-wiped
+in the queue before moving them. There is no row/content logging or disk cache.
+The default100ms/60s keepalive uses original bounded random public table pages;
+read activity rather than cache lookup rearms idle time. All work ends with the
+request, so no cross-request row-cache warmth is claimed. GPU model weights stay.
+
+The complete maximum reader HOST reservation is151,453,696B (144.4375MiB), now
+included in the actual native `CORE_CACHE_HOST` constructor/admission inventory.
+It derives from the largest supported original110-byte row cache (90B for the
+selected model),64 finite reader stack allowances plus coordinator,256 aligned
+slots/control, and coexistence of two bounded caller plans/raw results. Cache/caller raw/plan Vec capacities are checked and queue occupancy is bounded; no uninitialized tails or uncharged GPU MAIN are
+borrowed. This maximum overreserves the90-byte profile explicitly. Existing
+prompt/current-next source and model cleanup quotas remain charged too. This
+is a source/declared-capacity inventory, not observed whole-model RSS pricing.
+
+CPU evidence:611 distinct selected cases/86 suites, strict core/off binary Clippy;
+all eight existing core positional cases also pass. New reader cases cover
+original hash/cache replacement, full default owner capacity and actual erasure,
+real direct pages/crossings/duplicates/EOF/warm-hit plans, independent flags and
+original inode after replacement, queued failure/cancellation/drain, shared
+prompt/decode leases, stat change on warm requests, body/coordinator unwind and real worker joins,
+and maximum65536-row plans. An external CPU-only audit includes this exact Rust
+module and actual original two-shard graph, comparing eight fixed public rows
+(including the final table row) cold and warm with the independent GGUF reader;
+original metadata remains unchanged and scope joins/erases. It performs no model
+inference or GPU/device work. Exact artifact receipt follows in the completion
+log. These checks do not establish full physical engine execution.
+
+## Remaining PLE graph handoff: launch before the layer1 input join
+
+The reader backend is now real, but the whole selected schedule is not yet
+accepted. Pinned `verify.cpp::run` captures/stages and launches the graph before
+`gather_batch` at1947 (actual `ar_on` arm); the host then publishes PLE readiness.
+The doorbell alternative at2035..2044 gathers after releasing layer0's work.
+`pl_launch/service` similarly separates launch and gather before ready flag1.
+Current Rust `prepare_invocation_checked`/`native_embedding` still joins the
+reader and stages EMB before the target window is submitted. Prompt next-chunk
+prefetch already overlaps source work; that is not proof of the decode ordering.
+Existing MTP overlap also does not prove the original target/PLE join boundary.
+
+Next connect the actual target-prefix launch, deferred source completion/upload
+and original layer1 consumer readiness as one schedule, preserving cold/capture/
+replay, real owner/INFO/fault/nonce dependencies, all-family commit and failure
+closure. Inspect the actual selected upstream flag placement and current Vulkan
+stage/recording facilities before choosing a necessary backend substitution.
+Do not claim an unused async ticket, fake readiness bit, an eager pre-launch wait
+or source-only scalar wrapper closes this remaining coupled scheduling gap.
+No speed test may select an easier subset or discard the new reader/cache.
 
 ## Source review still to finish
 
@@ -294,8 +339,8 @@ Next implementation must connect the reader as a whole:
   storage, grouping, queue and math substitution; filenames alone do not pass.
 - Preserve the now-traced per-request126/128 graph lifetime and original
   owner erasure. Physical retained mixed-request execution still needs acceptance.
-- Port the actual default PLE row cache/asynchronous reader described above,
-  including its connected decode/prompt request ownership and full HOST pricing.
+- Finish the actual PLE launch/source-completion/layer1 readiness handoff above;
+  the new read backend alone does not establish this original graph ordering.
 - Review remaining queue/INFO/descriptor hazards, shared/MTP fork/commit order,
   sampler state and output/resource closure as one connected schedule.
 

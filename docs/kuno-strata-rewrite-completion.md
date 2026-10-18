@@ -6,39 +6,43 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `9a3567e6afe57de88835645786c72a0012b86200`, branch
+**Current CPU-only source:** `83d690e1f3b690d9d97d76ec9c617bf4cee30927`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [PLE arithmetic/reader receipt](kuno-strata-rewrite-completion.md#native-ple-materialized-products-and-default-reader-audit-2026-10-17).
-Actual decode/prompt PLE gate and convolution variants now enforce original
-materialized product rounding in native SPIR-V. Original explicit SCALE FMA,
-complete nonannotation instructions, owners, state and graph identity remain.
-The prior default wide dense target/MTP and prompt-helper fixes remain connected.
+and [connected PLE reader receipt](kuno-strata-rewrite-completion.md#connected-native-ple-cache-and-linux-direct-reader-2026-10-17).
+Normal requests now share an original1M-row eight-way packed cache,256 aligned
+read slots,64 persistent Linux O_DIRECT readers and coordinator across decode,
+prompt prefetch and fallback. Original source inode/stat ownership is preserved.
+Reader success/error/unwind joins workers and wipes original request-owned cache/
+plans/staging before retained model reset. Native constructor HOST reservation
+includes the full maximum151,453,696B reader class; GPU weights remain retained.
+No new dependency or GPU heap owner, no content persistence or public API change.
 
-602 distinct selected CPU cases / 85 nonempty suites, strict core/off **binary**
-Clippy, changed Rust formatting and whitespace pass. This is not an unfiltered
-repository test run. Frozen artifact SHA256
-`32cc84cc18a4389d373fcafb80a3f63bcb70913af90153763e0a4658564a55b7`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
-verified. Only its early pre-adapter offline branch ran: 397 shader variants /
-139 physical-pointer compiler checks / 77 rounded-product modules / 32 matrix
-configurations pass. A public cancellation witness and actual five-kernel SPIR-V
-regression demonstrate the materialization requirement; they do not establish
-physical numerical/model/recovery/throughput acceptance. No new GPU heap owner,
-model duplicate, content persistence, public API or configuration change.
+611 distinct selected CPU cases / 86 nonempty suites and eight core positional
+cases pass, with strict core/off **binary** Clippy, changed formatting/whitespace.
+This is not an unfiltered repository run. A CPU-only actual original two-shard
+DASLab audit compares eight fixed public rows cold/warm (including the final row)
+against the independent GGUF reader and verifies scope erasure/original stats.
+It executes no model inference or GPU work. Frozen artifact SHA256
+`1d9d442340bf26c23be9751ba781a3ee9db11107026a338602aff69b414acb68`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
+verified. Only early pre-adapter offline validation ran:397 shader variants /
+139 physical-pointer checks /77 rounded-product modules /32 matrix configs pass.
+These are CPU/compiler/read-backend results, not whole-engine physical acceptance.
 
-**Whole rewrite incomplete; speed gate closed.** A concrete remaining selected
-PLE reader gap is now mapped: the saved reference selects direct I/O and defaults
-to a1M-row eight-way packed cache/256 inflight jobs, while current Rust has only
-per-batch deduplication/four joined positional workers plus prompt prefetch.
-Port that complete reader/cache/request lifetime and HOST pricing next; see the
-normalized audit for exact current callers, default evidence and required joins/
-erasure. This is required source work, not optional speed tuning. Finish the
-remaining operator/prompt/queue/ownership audit and necessary substitutions too.
+**Whole rewrite incomplete; speed gate closed.** The read backend is connected,
+but current Rust still joins PLE during preparation before target submission.
+Pinned native `verify.cpp::run` launches its graph before collecting the PLE
+embedding and publishing the layer1 readiness flag. Next connect real target
+prefix submission, deferred source completion/upload and original layer1 readiness
+across cold/capture/replay, preserving actual owner/fault/nonce/INFO dependencies
+and failure/all-family commit. An unused async ticket or eager wait is not that
+schedule. Continue remaining selected operator/prompt/queue/ownership audit too.
 Protected whole-model prompt/count1/multirow, accept/reject/EOS/cap/context,
 retained mixed/hot-request and failure/all-resource recovery acceptance remain
 required before speed. CLI compiled-public/one-request; private caller separately
 gated. Goal active CPU-only; sudo refresh only currently authorized. No GPU/model
 inference/service/install/release/frontend operation. Required Vashti/API changes:
 none. Canonical checkout and inherited untracked cache preserved.
+
 
 
 
@@ -97,7 +101,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. Source 39c8d9e1 connects default native 128-thread/four-column-tile accepted-prefix state commit over actual retained roots, replacing512-thread state-only output replay. See latest receipt; Source 7a0489d3 now connects authenticated verification-only deferral for recurrent/history writes, static replay mode and native history-only commit; see the latest receipt. Physical numerical/context/failure acceptance remains open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. Source e5981a13 connects native 256-thread serial-window indexer and direct retained pooled scoring; separate per-query copying/mean/norm/publication and unused pooling clears are removed from decode. Original suffix acceptance and full ownership/erase remain. See latest source/substitution receipt; physical numerics and full QSA/placement audit remain open. Source 31c46e47 also connects actual default multi-query scoring, fixed 256 grid and shared query/key reuse; no arithmetic substitution to the unrelated scalar native_qsa_score path. Remaining scratch/KV-placement and protected whole-model acceptance stay open. Source 3d7b0752 removes native payload clears while keeping all status/full-request erasure and existing admission. Saved CLI confirms default fully resident INT8 KV. Sources 22829824/2f928c9e connect bounded tail/snapshot/F32 MAX8 retention across decode, full prompt, normal prefix and diagnostic restore; full-context raw history is removed from actual CACHE/CAND strides and exact admission. See bounded-state receipt. Physical numerical/replay/recovery acceptance and final whole-source audit remain open. |
-| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams.  Source `9a3567e6` connects actual materialized gate/conv products for decode and prompt, with unchanged original explicit FMA/owners/state. Current audit confirms the reference default 1M-row eight-way cache and 256-job direct reader are still missing; per-batch deduplication is not that cache. Port reader/request lifetime/HOST pricing before source acceptance. |
+| PLE source rows, projection and history | `verify.cpp`, native PLE/BF16 kernels, original ngram/direct reader | Native BF16 projections, postops/materialized gate+conv terms and authoritative GPU history remain. Source `83d690e1` connects the default1M-row eight-way packed cache,256 slots/64 Linux O_DIRECT workers and coordinator to actual request/decode/prompt owners, original inode/stat guards, joined erasure and complete151,453,696B HOST reservation.611 selected CPU/eight core positional cases and actual original cold/warm row checks pass. Target launch before deferred PLE collection/layer1 readiness remains a real schedule gap; physical numerical/whole-model/recovery acceptance remains required. See the connected reader receipt. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Source `12a60bf` connects native phase overlays, actual2080MiB admitted roots and256-query score/selection reuse; see the latest prompt-overlay receipt. Packed/in-place prompt scratch is connected in the latest receipts. Source allocation granularity and shared inventory are connected in the latest exact-page receipt. Physical/runtime/HOST pricing and lifetimes still require final review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. Source35f0990f connects actual shared-side fork, independent fault/scaling, original vec4/FMA combination and owning draft fence using the opposite existing compute queue. Its queue sharing with MAIN commit is an explicit backend substitution, not physical overlap proof. See the latest MTP shared receipt. |
@@ -11008,3 +11012,126 @@ choosing the Rust transport and preserve source closure/failure joins.
 Whole rewrite incomplete; speed gate remains closed. CPU-only authorization
 continues; no GPU/model/service/install/release/frontend operation. No API or
 Vashti consumer changes. The canonical checkout/untracked cache remain preserved.
+
+
+## Connected native PLE cache and Linux direct reader (2026-10-17)
+
+Runtime source `83d690e1f3b690d9d97d76ec9c617bf4cee30927`, pinned MIT Intel source
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. This ports real reader/cache consumers
+and lifetime rather than adding an unused helper or discarding coupled paths on
+an interim speed result. No live model inference or speed experiment ran.
+
+### Selected original backend and connected consumers
+
+The actual SYCL Linux `src/platform/direct_file.cpp` uses a persistent blocking
+O_DIRECT pread pool: `DirectFile::open` calls `io_threads(64)`; an older generic
+comment says16. It does not use io_uring. The actual original PLE coordinator has
+256 queued/aligned slots and a1M-row eight-way packed cache. Rust now uses those
+default structures, sorted original page grouping/straddles, completion scatter,
+64-bit wrapping hash and round-robin replacement. It never reconstructs a whole
+float table. The previous reader's sorted unique/destination scatter and original
+packed decoder remain; only standalone probes without an engine scope retain
+the old four-worker fallback. Normal request construction does not silently
+fallback if direct I/O fails.
+
+`Session::run` owns `strata_ple_reader::with_request` around the actual controller.
+Decode obtains its model-bound lease, prompt prefetch captures that same lease
+before crossing its thread boundary, and synchronous prompt fallback obtains the
+same current owner. Cross-model/geometry/stale leases fail. Full/partial model
+state transition, original target verification and all-family fences remain.
+No request reset receipt can be published before the enclosing read scope joins/
+erases. Cache erasure does not unload retained model weights or graph kernels.
+
+Core additive `kuno_text::gguf::DirectSource` reopens only the already-inspected
+`/proc/self/fd` link with independent read-only Linux x86_64 O_DIRECT flags; it
+never resolves the replaceable model path or changes shared dup flags. Dev/inode
+and original stat checks authenticate the same original model owner. Complete
+batch stats are checked on warm hits too. Alignment/table-page bounds and actual
+completion byte extents protect every returned row, including the final short
+page. Linux x86_64/direct-I/O availability is explicit; other modes are not
+silently substituted. Existing immutable-file/mapped-source obligations remain.
+No Cargo dependency or public inference/protocol/configuration change.
+
+### Request ownership, erasure and pricing
+
+Kuno necessarily uses request scope rather than native retained model-lifetime
+row-cache warmth. One coordinator owns cache mutation; read workers exclusively
+borrow checked aligned slots. Submitted blocking preads actually finish before
+workers/buffers/descriptors release, including errors/cancellation/unwind. There
+is no false canceled-read or freed-byte credit; a stuck kernel read must return
+before its join can finish. Worker error notification wakes a blocked collector;
+coordinator/body panic cleanup stops/joins before propagating. TLS endpoints are
+cleared and stale leases cannot begin work.
+
+Cache keys/packed data/replacement arrays are volatile-wiped and inspected with
+original address/capacity unchanged; plans wipe initialized/truncated tails,
+popped queue offsets are volatile-wiped in-place, slots wipe after completion
+and after actual worker joins. No row trace, cache contents, prompt, model input
+or summary enters persistence/logs.100ms/60s idle keepalive uses bounded original
+public table pages and ends with the request. This lifetime substitution means
+no cross-request cache warmth claim. Read dispatch activity rather than cache
+lookup controls idle keepalive. Operator math/state were not replaced.
+
+The actual90B-row default cache payload/keys/replacement capacities total
+98,697,216B. The complete maximum HOST class151,453,696B (144.4375MiB) derives
+from the largest supported original110B-row cache, finite64 reader/coordinator
+stack allowances,256 aligned slots/control and two bounded caller plans/raw
+results. It explicitly overreserves the selected90B profile. Native constructor
+`CORE_CACHE_HOST` includes that entire class; original prompt/source/cleanup
+classes stay charged and no GPU MAIN is borrowed. Caller/cache/plan capacities
+are checked; actual peak whole-model runtime RSS/physical pricing still needs
+protected acceptance. No current GPU private owner/branch/metadata bound relaxed.
+
+### CPU/compiler and original-file evidence
+
+All external evidence under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-ple-reader-final-validate-20261017.py`, final test-build/full-cpu/core-
+  clippy/off-clippy logs and matching validation `.out`:611 distinct selected
+  CPU cases/86 nonempty suites, zero failures; strict core/off **binary** lint,
+  changed formatting and git whitespace pass. This is not all repository tests.
+  Nine new cases exercise real direct I/O and original GGUF byte oracle, cache
+  collisions/replacement/duplicates/warm-hit empty plans, page crossings/EOF,
+  independent flags/original inode after replacement, queued failure/drain,
+  cancellation and body/coordinator unwind, main/prompt cloned leases, stale/
+  foreign refusal, changed stats even on warm cache and maximum65536-row planning.
+  Original cache erasure tests inspect actual owner addresses/capacities/bytes.
+  Initial610-case pass plus one style lint failure are retained in `*-initial-*`;
+  final611-case source includes the maximum-plan and erasure/idle-time tightening.
+- `strata-ple-reader-core-tests-20261017.py/.out` and
+  `strata-ple-reader-core-positional-20261017.log`:all eight existing library
+  positional-reader tests pass independently; ordinary reader semantics remain.
+- `strata-artifact-audit-20261017/src/bin/ple_reader.rs` includes the actual new
+  module. `strata-ple-reader-original-20261017.json`/build log compare eight fixed
+  public original model rows (including the final PLE table row) cold and warm
+  against independent GGUF reads with original two-shard binding. Normal scope
+  factory/worker/cache join+erasure and original unchanged metadata pass. This is
+  pure file/CPU work; no GPU, adapter, generation, timing or private prompt used.
+- `strata-ple-reader-ordinary-20261017` and matching `.out`:normal stable source
+  build, frozen SHA256 `1d9d442340bf26c23be9751ba781a3ee9db11107026a338602aff69b414acb68`.
+  `strata-ple-reader-artifact-proof-20261017.json` verifies commit/original/frozen
+  equality, mode0500, requested `[strata-rust-port,strata-intel-core]` and resolved
+  `[direct-device,strata-intel-core,strata-resident-224,strata-resident-240,strata-rust-port]`.
+- `strata-ple-reader-shaders-20261017.log`:actual frozen executable ran only its
+  early pre-adapter offline branch;397 variants/139 physical checks/77 rounded
+  modules/32 matrix configs pass. No arithmetic shader producer changed in this
+  reader block; the complete set still passes in the new ordinary artifact.
+
+### Remaining coupled target/PLE schedule — do not mark complete
+
+Pinned `verify.cpp::run` launches its real graph before gathering PLE into the
+original staging and publishing readiness (`ar_on`1947; doorbell2035..2044).
+`pl_launch/service` similarly separates launch/collect. Current Rust reader is
+shared/asynchronous internally, but `prepare_invocation_checked` still joins and
+stages EMB before target submission. Prompt next-chunk prefetch/MTP overlap does
+not prove the original target-prefix/layer1 boundary. This is now the next real
+implementation gap, not an optional speed tweak or accepted eager-wait substitute.
+
+Inspect selected flag placement/current Vulkan stage facilities, then connect
+actual prefix submission, deferred read completion/upload and original layer1
+ready dependency together across cold/capture/replay, with authentic owner/INFO/
+fault/nonce, all-family state commit and failure closure. An unused ticket or
+fake ready bit cannot pass. Finish remaining source audit, then protected whole-
+model/numerical/context/retained/recovery acceptance, before any speed measurement.
+Whole rewrite incomplete; goal active CPU-only. No service/install/release/frontend
+or GPU operation; API/Vashti changes none. Canonical checkout/cache preserved.

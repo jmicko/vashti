@@ -6,9 +6,9 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `9a3567e6afe57de88835645786c72a0012b86200`. Read the
+`codex/strata-rust-port`, runtime source `83d690e1f3b690d9d97d76ec9c617bf4cee30927`. Read the
 [current source audit](kuno-strata-current-source-audit.md),
-[PLE arithmetic/reader receipt](kuno-strata-rewrite-completion.md#native-ple-materialized-products-and-default-reader-audit-2026-10-17)
+[connected PLE reader receipt](kuno-strata-rewrite-completion.md#connected-native-ple-cache-and-linux-direct-reader-2026-10-17)
 and [completion gate](kuno-strata-rewrite-completion.md). Rewrite incomplete;
 speed gate closed, work CPU-only. Required Vashti changes: none.
 
