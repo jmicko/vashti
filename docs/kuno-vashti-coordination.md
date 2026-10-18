@@ -7,17 +7,17 @@ should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
 `codex/strata-rust-port`, runtime source `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`. Read the
-[current source audit](kuno-strata-current-source-audit.md),
-[prompt matrix/source receipt](kuno-strata-rewrite-completion.md#prompt-matrix-completion-plane-and-quantized-consumer-audit-2026-10-17)
-and [completion gate](kuno-strata-rewrite-completion.md). Cooperative prompt
-DOWN now writes the same full-capacity status plane the reducer reads; actual
-compiled-kernel before/after regression passes across all eight compiler layouts.
-Quantized expert/prompt matrix consumers and additional shared/MTP/INFO/descriptor
-owners are traced with explicit backend substitutions.630 selected CPU cases/
-87 suites, core/off binary lint and normal frozen offline shader checks pass.
-Whole rewrite incomplete; speed gate closed, work CPU-only. Finish remaining
-controller/repair/output closure source review, then protected whole-program
-numerical/footprint/recovery acceptance. Required Vashti/API changes: none.
+[selected engine source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17)
+and [completion gate](kuno-strata-rewrite-completion.md). Source wiring now
+passes for the pinned Intel/DASLab IQ3_S/Q2 MTP path, including final controller,
+accepted-prefix commit/repair, teacher/output and request/closure ownership.
+Whole rewrite correctness/recovery remains unaccepted; speed gate stays closed.
+Runtime unchanged: existing630 selected CPU cases/87 suites, core/off binary lint
+and frozen offline397/139/77/32 receipts remain current, not new device evidence.
+Work stays CPU-only pending requested B70 availability and valid protected sudo.
+Next require whole-model numerical/state/context/footprint, retained-session and
+physical recovery acceptance. Private caller acceptance remains separately gated.
+Required Vashti/API changes: none; no service/install/release action authorized.
 
 ## Ownership
 

@@ -4,9 +4,11 @@ Runtime source: `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, isolated `codex/stra
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
-**Whole-source completeness is not yet accepted.** CPU/source review, physical
-correctness, resource recovery and performance are separate gates. Work remains
-CPU-only; this document grants no GPU/service/install/release authorization.
+**Selected engine source-wiring audit passed; whole rewrite acceptance remains
+open.** See the explicit decision and scope below. Physical correctness,
+resource recovery and performance are separate gates. Work remains CPU-only
+pending renewed B70 authorization; this document grants no GPU/service/install/
+release authorization.
 
 ## Entry, loading and cleanup: call chain traced
 
@@ -680,25 +682,136 @@ and actual conflicting peers; ordinary/final closure still drains both lanes.
 This trace does not accept every controller/repair transition, full retained
 recording footprint or physical Vulkan ordering. Those gates remain open.
 
-## Source review still to finish
+## Controller, accepted-prefix state and closure: final source trace
 
-- Complete the remaining shared/MTP controller, accepted-prefix repair and
-  output/resource closure comparison against the original serving loop. The
-  selected quantized role, prompt grouping/matrix, GR/GDN/QSA and dense/source/
-  loan consumers are traced above. Explicitly resolve remaining substitutions
-  as a connected schedule; filenames and isolated helpers alone do not pass.
-  Physical placement/numeric/state acceptance remains open for all of them.
-- Preserve the now-traced per-request126/128 graph lifetime and original
-  owner erasure. Physical retained mixed-request execution still needs acceptance.
-- Validate the connected two-program PLE handoff above on the real protected
-  device, including cold/capture/replay and failure joins; source connection
-  and CPU parameter/reader coverage are not physical fence/overlap proof.
-- Finish whole-schedule acceptance of the traced queue/INFO/descriptor and
-  shared/MTP fork/commit owners with the controller transitions, sampler state
-  and output/resource closure. The additional trace above is not complete
-  physical hazard, retained-footprint or failure/recovery acceptance.
+Pinned `sycl/src/program/generate.cpp`'s selected serial serving loop verifies
+`[confirmed input, drafts...]`, counts matching draft/target pairs, commits
+`a+1` inputs, emits at most `a+1` target predictions, then drafts from the verified
+rows. The source explicitly separates consumed input history from emitted
+predictions and does not shorten the verification window at the output cap.
+`strata_global_controller::{PromptPlan,accepted,emitted,prepare_next_draft,run}`
+connects those same transitions to actual target/MTP owners:
 
-Then, with renewed GPU authorization and supported protection, require whole-
-model prompt/count1/multirow, acceptance/rejection, EOS/cap, context, retained/
-hot-request and failure/all-resource recovery acceptance. Only after source
-completeness and those correctness gates pass may live speed measurements begin.
+- Prompt prefill consumes exactly `n_prompt-1` inputs, in bounded native chunks.
+  Its MTP teacher tokens are the real one-position-shifted prompt slice,
+  including the final prompt token; target residuals are actual device rows.
+  `resident_model_prompt::prefill_prompt_chunk` invokes
+  `ResidentMtp::append_prompt_device` inside the same prompt owner. The final
+  prompt input uses the ordinary count-one target path, including the same
+  Verified/Pending observer and actual draft-readiness preparation as later
+  windows. One-token prompts do not manufacture a teacher row.
+- The initial prediction is emitted once. Subsequent confirmed inputs and MTP
+  proposals retain their original position/binding/token identity. Confidence
+  truncates only the usable proposal prefix; suffix/optional lookup chains remain
+  target-verified. Counter and consumed-history ownership follow the sampling
+  audit above. Bounded MAX8/request headroom guards run before inference.
+- `resident_model_batch::run_global` observes actual target prediction/fault
+  packets while all original state transactions remain open. It selects the
+  accepted input prefix, releases the real output lease, begins the original
+  adaptation flight, pins verified R and submits its precommit readiness
+  dependency, then submits the retained accepted-prefix commit. Pending output
+  delivery and MTP run inside the authenticated original draft scope. Its finish
+  and exact exported commit join precede final family/cursor acceptance.
+- `resident_native_commit::submit_native_prefix_commit` authenticates all 36
+  original GDN, 12 QSA and PLE transactions against proposed count/start and
+  accepted count. Native Intel `one_token_self_commit` defaults on: count one
+  keeps its already-computed candidate; multirow commits use real runtime
+  accepted-count/position controls and the original state/history owners.
+  `strata_gdn_replay::enqueue_pending_prefix` restores original convolution/
+  recurrence state and replays only the accepted prefix without recomputing
+  output logits. `strata_ple_history::enqueue_pending_prefix` selects the real
+  accepted history snapshot. QSA restores the accepted index tail and clears
+  rejected suffix cells/pools through `strata_prefix_qsa`; it does not publish
+  the whole provisional window as accepted.
+- Pinned `MtpDrafter::draft` defaults `mtp_catchup_all` off: only the accepted
+  rows teach the next draft. Rust `prepare_next_draft` supplies exactly those
+  predictions/R rows to `draft_accepted_device_window`, rewinds speculative
+  cache coordinates, batches the accepted front, and retains only completed
+  proposals. Count-one proposal policy still appends the real front; EOS/cap
+  exits invalidate forward/front authority without an unnecessary catch-up.
+- Actual family fault/I/O proofs, original-source checks and every family permit
+  precede logical target cursor publication. Dropped/failed draft or commit
+  guards retire the shared context rather than authorizing resumed inference.
+  Output already delivered before a later failure is not a success/state receipt.
+- `Session::run` compares actual callback delivery with controller completion,
+  erases completed MTP/target private owners, and retains their original reset
+  receipts before allowing the next run. New geometry consumes those receipts;
+  no constructor-zero substitute is accepted. Failures attempt checked close.
+  `Session::close_inner` attempts draft, target, executor, table and root cleanup
+  even when another peer fails, and independently audits original source/file
+  identity, request I/O and physical-root recovery. Failed/unknown recovery
+  retires the context. Reader scopes join and wipe actual request caches before
+  returning; fixed aggregate model policy bins contain no request text/tokens.
+
+Explicit state/backend substitutions: Rust keeps bounded INT8 QSA storage with
+F16 tail/snapshot owners rather than the native pointer layout; rejected suffix
+clearing is additional cleanup, not acceptance of a different prefix. Scoped
+Vulkan fences/timeline dependencies replace native stream events. Rust requires
+joined original-family/fault/source receipts before logical cursor publication,
+even though target predictions may already have been streamed, matching native
+output-before-next-draft order. Successful request boundaries erase private
+recording/control state while retaining weights and only fixed content-free
+policy aggregates. Within-request graph reuse remains connected; cross-request
+private recording retention is not claimed. Numerical/storage/driver behavior
+of these substitutions is still a physical acceptance requirement.
+
+## Selected engine source-wiring completeness decision (2026-10-17)
+
+**PASS for the selected engine dependency/call-chain review**, runtime source
+`07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, pinned MIT Intel source
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. The reviewed configuration is Intel
+B70, original DASLab IQ3_S plus original Q2 MTP, `DEVICE_PLAN=1,NO_HOST=1`,
+non-profiled serial serving. This decision addresses completion-gate item 3's
+source wiring; it does not pass item 4's whole-model correctness/recovery gate
+or authorize item 5's speed trials. No installed backend is changed.
+
+| Requirement | Actual Rust owner/consumer and source evidence | Source result |
+| --- | --- | --- |
+| Original artifacts, packing, vocabulary | GGUF/model binding; original tensor inventory and nine MTP Q8 conversion receipts; bounded `strata_input`/original Rust tokenizer | Connected; original-file receipts retained |
+| Loading and CPU/GPU placement | `Session::load`, static preload, ranked `Plan`, original VRAM chunks and mapped HOST complement | Connected; exact owner/loan substitutions above |
+| Expert residency/transfers | Original `Sources`, registered tables/read dependencies, prompt staging and joined loan/restore | Connected; selected NO_HOST counters remain zero; GPU-trained promotion is an explicit extension |
+| Routing and grouped quantized roles | Actual GPU route/plan, per-role 4/2/1 or scalar native grouping, Q8 planes, PART/reduction | Connected; native format/integer finish audit above |
+| Dense projections/output heads | Selected native wide kernels for original formats and whole original target/CJK heads | Connected; compiler/layout substitutions explicit |
+| Shared experts | Actual target and MTP separate packed/fault owners, fork/release/fold/combine | Connected; opposite adopted compute peer substitution explicit |
+| GR/GDN/QSA/PLE decode and prompt | Selected original family consumers, native reader/cache, full prompt matrix and state owners | Connected; current completion-plane fix and all reviewed substitutions above |
+| Prompt and MTP teaching | Full prompt controller, real shifted next tokens and device residuals, ordinary final count one | Connected; bounded shapes/owner overlays explicit |
+| Graphs, queues and synchronization | Actual recordings/descriptors/INFO epochs, range hazards, original flights/fences and pending commit identity | Connected; native request boundaries, two-program PLE and Vulkan queue substitutions explicit |
+| MTP draft/target verification | Original sidecar/front, compact/full sampler domains, actual proposal packets and target picks | Connected; original positions/history/draw audit retained |
+| Accepted-prefix commit and repair | Original full-window transactions, retained commit, accepted family candidates and original source checks | Connected; source trace above, physical state equivalence unproved |
+| EOS/cap, output and policy | Separate accepted input count/delivered predictions; real callbacks and bounded suffix/cost policy | Connected; no fake target/route substitution |
+| Request privacy/reuse and recovery | Joined wiping reader/request scopes, reset receipt-gated loaded Session and all-peer checked close | Connected; actual GPU/hot/failure recovery still unproved |
+
+The generic Rust request and bounded reader/tokenizer accept owned arbitrary
+input internally without logging it. The executable's selected launcher still
+uses compiled **public** fixtures; an independently protected private caller is
+not accepted by this source decision and remains a separate required gate before
+private/production inference. No public fixture output or internal test count
+proves that private caller exists. API/UI/service/release work is outside this
+engine source decision.
+
+The latest runtime is unchanged by this audit. Existing 630 selected CPU cases,
+87 suites, core/off binary Clippy and normal frozen offline 397/139/77/32 checks
+remain the current receipts; they were not rerun for documentation alone. Tracked
+selected sources were compared with the frozen runtime commit and are unchanged;
+the pinned upstream SYCL tree remains unchanged. See the latest completion receipt
+for artifact identity and the exact limits of those checks.
+
+## Remaining acceptance work
+
+- Obtain renewed B70 availability/authorization and verify protected caller,
+  disabled swap/core dumps, original artifacts and actual clean memory. A
+  question was sent after the CPU-only checkpoint; no GPU work has started.
+  If required sudo is unavailable, checkpoint and stop without a workaround.
+- Run protected whole-model prompt/count-one/multirow completion, then independent
+  numerical/target-verification and accepted/rejected-prefix state checks.
+  Validate actual cold/capture/replay, two-program PLE dependencies, EOS/cap,
+  context boundaries, full retained recording footprint and unchanged quotas.
+- Exercise actual loaded-session hot/mixed request reset and failure recovery,
+  including original private erasure and physical GPU memory recovery. The
+  current normal public launcher is one request per process, so it alone cannot
+  pass retained-session acceptance. Use the original `Session::load/run/close`
+  owner for that test; do not infer it from host state tests.
+- Complete the protected private caller gate before private/production claims.
+  Preserve all source-selected dependencies while fixing any device failures.
+- Only after source wiring **and** whole-model correctness/recovery acceptance
+  pass may live whole-engine throughput comparisons begin.

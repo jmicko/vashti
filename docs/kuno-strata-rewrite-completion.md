@@ -7,34 +7,37 @@ Each row needs its connected consumer, real ownership/placement and state contra
 adding an unused helper or optional switch does not complete a row.
 
 **Current CPU-only source:** `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436`, branch
-`codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [prompt matrix/source receipt](kuno-strata-rewrite-completion.md#prompt-matrix-completion-plane-and-quantized-consumer-audit-2026-10-17).
-The active cooperative expert DOWN kernel now uses the shared full4096-row
-completion plane; its stale20480 offset disagreed with the reducer's40960.
-The actual compiled-kernel regression fails before the fix and passes after it
-for all eight compiler layout combinations. No new owner, quota or API.
+`codex/strata-rust-port`. The [selected engine source-wiring audit](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17)
+is now **passed** for pinned Intel source
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`, original DASLab IQ3_S/Q2 MTP,
+`DEVICE_PLAN=1,NO_HOST=1`. This passes the source/call-chain review only;
+**whole rewrite correctness/recovery and speed acceptance remain open**.
 
-Selected quantized role and prompt grouping/staging/matrix consumers are traced
-against pinned Intel source, including explicit oneMKL-to-Rust cooperative
-matrix and ring/layout substitutions. Additional actual shared/MTP/INFO/
-descriptor ownership and original commit readiness are indexed in the audit.
-Earlier native request boundaries, GR/QSA arithmetic and deferred PLE remain.
+The final source trace covers prompt/teacher boundaries, real prediction/R-row
+delivery, accepted-input prefix commit, rejected MTP cache rewind, actual
+pending commit/draft scopes, EOS/cap, receipt-gated request erasure/rebind and
+all-peer close. Earlier dense/expert/prompt matrix/GR/GDN/QSA/PLE/graph owners
+and backend substitutions remain indexed in the audit. The active cooperative
+prompt completion-plane correction remains selected. No source path was removed
+or replaced because of timing.
 
-630 distinct selected CPU cases /87 nonempty suites, strict core/off **binary**
-Clippy and changed-file formatting/whitespace pass. Frozen ordinary SHA256
-`444985020026902c60a37b26cd98b0a35dc1e80de652f890c6eaf81b3335e376` has independently checked source/ordinary/frozen
-identity, mode0500 and requested/resolved features. Its early pre-adapter offline
-branch passes397 variants/139 physical-pointer checks/77 rounded-product modules/
-32 matrix configurations. These are compiler checks, not physical GPU execution.
+No runtime change in this audit block. Existing 630 selected CPU cases /87
+suites, strict core/off **binary** Clippy and changed-file formatting pass.
+The unchanged normal frozen artifact SHA256 is
+`444985020026902c60a37b26cd98b0a35dc1e80de652f890c6eaf81b3335e376`;
+its prior offline receipt is397 variants/139 physical-pointer checks/77 rounded
+modules/32 matrix configurations. Those are compiler checks, not device proof;
+they were not rerun for documentation. Tracked sources still match that runtime.
 
-**Whole rewrite incomplete; speed gate closed.** Finish remaining shared/MTP
-controller, accepted-prefix repair and output/resource closure comparison. Then
-require protected whole-model numerics/context/cold/capture/replay, acceptance/
-repair, EOS/cap, retained mixed requests, full footprint and recovery acceptance.
-CLI remains compiled-public/one-request; private caller separately gated. Goal
-active CPU-only. No GPU/inference/speed, service/install/release or frontend
-change. This block needed no sudo. API/Vashti changes: none. Canonical checkout
-and inherited untracked cache preserved.
+**Next:** protected whole-model correctness/state/context/footprint and physical
+recovery acceptance, with no throughput trials yet. B70 availability was requested
+following the CPU-only checkpoint; authorization is pending and no GPU run has
+started. Required sudo must be checked before protected work; stop if unavailable.
+The public launcher remains one request per process, so retained/mixed-session
+acceptance must call the real `Session::load/run/close` owner. Private caller
+acceptance remains separately required before private/production use. Goal
+active/incomplete. No service/install/release or API/Vashti/frontend change.
+Canonical checkout and inherited untracked cache preserved.
 
 
 
@@ -79,8 +82,12 @@ recorded as a remaining gap until reviewed, not silently described as parity.
 
 ## Connected dependency checklist
 
-Current state is **incomplete**. Entries below are preliminary source findings;
-all need a final audit of actual connected dispatches, not just file names.
+Whole rewrite acceptance is **incomplete**. The selected engine source-wiring
+review now passes in the [current decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17).
+The table and receipts below preserve implementation findings and their physical
+limitations; earlier pending source-review notes are superseded by that decision.
+They are not whole-model numerical, private-caller or recovery acceptance.
+Device/state gates remain mandatory before speed comparisons.
 
 | Component | Pinned upstream | Current Rust connection and required completion |
 | --- | --- | --- |
@@ -11542,3 +11549,53 @@ Whole rewrite and physical acceptance remain incomplete; goal active CPU-only.
 Next finish source/controller closure, then obtain the required protected GPU
 acceptance before measuring speed. Neither these tests nor any source percentage
 estimate proves whole-engine numerical, retained-state or recovery correctness.
+
+
+## Selected source wiring accepted; device acceptance still open (2026-10-17)
+
+No runtime change: source `07ed2a2c88ff02ef3f1bcf5841da104a9d29c436` remains the
+actual compiled artifact. This documentation follows the final selected serial
+controller/state/closure comparison against pinned Intel upstream
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
+
+The [source-wiring decision and requirement matrix](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17)
+records a source-level pass. Actual generic request, model loaders, resident/HOST
+sources, decode/prompt kernels, shared/MTP branches, queues/graphs, target
+verification, accepted-prefix state and request/closure consumers are connected.
+No new missing selected inference dependency was found in the final controller
+comparison. Explicit backend/storage/schedule/privacy substitutions are recorded
+at their actual consumers. This is completion-gate item 3's wiring review, not
+whole-model acceptance or a declaration that numerical/physical bugs are absent.
+
+The final trace explicitly covers shifted prompt teacher tokens, ordinary final
+count one, real target prediction/R packets, consumed inputs versus delivered
+predictions, target-authoritative acceptance, original GDN/QSA/PLE commit,
+accepted-only MTP catch-up/cache rewind, original commit/draft scope joins,
+EOS/cap and all-peer failure/erasure/source closure. It preserves the earlier
+sampling/history and actual descriptor/INFO/range/fence reviews. The generic
+Rust request and reader are present; the executable remains public-fixture-only.
+A protected private caller and its acceptance are still required before private
+or production inference claims.
+
+Validation is deliberately unchanged: selected sources were compared with the
+frozen runtime commit and have no tracked difference; the pinned upstream SYCL
+tree is unchanged. The existing630 selected CPU cases/87 suites, strict core/off
+binary Clippy and frozen397/139/77/32 offline receipts remain current. No new
+runtime tests/builds were run for this documentation-only decision. No GPU,
+model, speed, services, configuration, install, release or frontend work ran.
+Canonical checkout and inherited untracked cache were preserved; no sudo needed.
+
+The next acceptance is protected whole-model completion and independent
+numerical/state correctness, including actual prompt/count-one/multirow,
+accept/reject/repair, cold/capture/replay, context/EOS/cap, full retained-program
+footprint, actual hot/mixed requests and failure/physical memory recovery. The
+current one-request public executable cannot itself prove retained-session
+acceptance; use the existing real loaded Session for that test. Keep all quotas
+and source-selected dependencies; fix errors without selecting an easier subset.
+
+A B70 availability/authorization question was sent because the checkpoint remains
+CPU-only. No GPU work begins before that answer; verify real protected sudo before
+required tests and stop/checkpoint if unavailable. Goal remains active and
+incomplete. Live speed gate stays closed until the whole-model correctness and
+recovery gate passes; source audit, host tests or incidental timing are not a
+substitute. No required Vashti/API changes.
