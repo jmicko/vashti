@@ -6,39 +6,40 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `e1ba6d5be310f1b5d41aaea7ded885e753aa2d51`, branch
+**Current CPU-only source:** `9a3567e6afe57de88835645786c72a0012b86200`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [native dense/prompt receipt](kuno-strata-rewrite-completion.md#default-native-wide-dense-and-prompt-helper-connection-2026-10-17).
-Original default wide Q4_K/Q5_K/IQ4_XS/Q8_0/IQ4_NL kernels now connect target and
-MTP consumers alongside Q6_K, with exact RHS counts1..8, original packed loads,
-contribution groups and XOR reductions. The shared packed-helper dependency in
-all six prompt dequantizers is preserved and regression-tested. Original native
-replay/fold inventories, private owners and prior bounded QSA state remain.
-The selected126/128 branch inventory is per request: actual drain/erase clears
-recordings/templates before retained rebinding, while model weights stay loaded.
+and [PLE arithmetic/reader receipt](kuno-strata-rewrite-completion.md#native-ple-materialized-products-and-default-reader-audit-2026-10-17).
+Actual decode/prompt PLE gate and convolution variants now enforce original
+materialized product rounding in native SPIR-V. Original explicit SCALE FMA,
+complete nonannotation instructions, owners, state and graph identity remain.
+The prior default wide dense target/MTP and prompt-helper fixes remain connected.
 
-600 distinct selected CPU cases / 85 nonempty suites, strict core/off **binary**
+602 distinct selected CPU cases / 85 nonempty suites, strict core/off **binary**
 Clippy, changed Rust formatting and whitespace pass. This is not an unfiltered
 repository test run. Frozen artifact SHA256
-`fd679d6f010624aded6b1e0367826bf54a99a894bbdbd874636674b0f3f2656f`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
+`32cc84cc18a4389d373fcafb80a3f63bcb70913af90153763e0a4658564a55b7`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
 verified. Only its early pre-adapter offline branch ran: 397 shader variants /
-139 physical-pointer compiler checks / 72 rounded-product modules / 32 matrix
-configurations pass. The first dense artifact failed on the prompt helper include;
-the final source/artifact above fixes that coupled consumer. See the full receipt.
-No new GPU heap owner, model duplicate, content persistence, public API or
-configuration change; shader producers changed. These are CPU/compiler results.
+139 physical-pointer compiler checks / 77 rounded-product modules / 32 matrix
+configurations pass. A public cancellation witness and actual five-kernel SPIR-V
+regression demonstrate the materialization requirement; they do not establish
+physical numerical/model/recovery/throughput acceptance. No new GPU heap owner,
+model duplicate, content persistence, public API or configuration change.
 
-**Whole rewrite incomplete; speed gate closed.** Finish remaining actual selected
-operator/prompt/queue/ownership source review and necessary backend substitutions.
-The next focused PLE audit should inspect emitted materialized-product rounding
-for both Gate/PromptGate against native `gate_kernel`, not infer it from a WGSL
-product temporary. Protected whole-model prompt/count1/multirow, accept/reject/
-EOS/cap/context, retained mixed/hot-request and failure/all-resource recovery
-acceptance remain required before speed. CLI compiled-public/one-request;
-private caller independently gated. Goal active CPU-only; sudo refresh only
-currently authorized. No GPU/model inference/service/install/release/frontend
-operation. Required Vashti/API changes: none. Canonical checkout and inherited
-untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** A concrete remaining selected
+PLE reader gap is now mapped: the saved reference selects direct I/O and defaults
+to a1M-row eight-way packed cache/256 inflight jobs, while current Rust has only
+per-batch deduplication/four joined positional workers plus prompt prefetch.
+Port that complete reader/cache/request lifetime and HOST pricing next; see the
+normalized audit for exact current callers, default evidence and required joins/
+erasure. This is required source work, not optional speed tuning. Finish the
+remaining operator/prompt/queue/ownership audit and necessary substitutions too.
+Protected whole-model prompt/count1/multirow, accept/reject/EOS/cap/context,
+retained mixed/hot-request and failure/all-resource recovery acceptance remain
+required before speed. CLI compiled-public/one-request; private caller separately
+gated. Goal active CPU-only; sudo refresh only currently authorized. No GPU/model
+inference/service/install/release/frontend operation. Required Vashti/API changes:
+none. Canonical checkout and inherited untracked cache preserved.
+
 
 
 
@@ -96,7 +97,7 @@ all need a final audit of actual connected dispatches, not just file names.
 | GR write/read/norm/down/up/injection | `sycl/src/kernels/cuda/fused_gr.dp.cpp::fused_gr_read_multi`; `verify.cpp::gr_read_group` | Native pending-write norm, sliced BF16 down/injection, fixed slice reduction and up/mix/commit are now connected and unconditionally selected in the core, including explicit PLE/final boundary writes. Resident original weights and the enlarged private scratch owner are charged together. Structural acceptance passes; numerical/model execution acceptance and final substitution audit remain pending. Source `37dced9` connects default full-prompt F1 row scales, packed BF16 norm/SiLU images, direct original projection consumers and residual-based mix recomputation together; see the packed-GR receipt. Sources `40fe97e` and the latest sole-residual receipt connect mixed images and prompt GR/PLE in-place storage, including actual MTP teacher scratch. Final substitution/numerical/device acceptance remains open. |
 | GDN projection/conv/gates/recurrence | `verify.cpp`, `cuda/native_gdn*.dp.cpp`, `cuda/fused_gdn.dp.cpp`, `cuda/verify_kernels.dp.cpp`, `prefill/kernels.dp.cpp` | Core connects native BF16 alpha/beta, controls, recurrence/norm and accepted-prefix replay. Prompt scope selects contiguous H, causal convolution/history/L2, CB32 recurrence and directly consumed FP16 output. Source 9a7a23b connects prompt-capacity whole-chunk math without per-element status/replay owners, carved AB staging, and native row/value-head recurrent state shared by prompt/decode/repair. The large chunk caller/acceptance is connected in the latest controller receipt; physical execution and final numerical/queue audit remain open. Split verifier mode is an optional upstream path, not selected by the measured server. Source 39c8d9e1 connects default native 128-thread/four-column-tile accepted-prefix state commit over actual retained roots, replacing512-thread state-only output replay. See latest receipt; Source 7a0489d3 now connects authenticated verification-only deferral for recurrent/history writes, static replay mode and native history-only commit; see the latest receipt. Physical numerical/context/failure acceptance remains open. |
 | QSA projection/norm/RoPE/KV/indexer | `verify.cpp`, `cuda/native_qsa*.dp.cpp`, `cuda/qsa*.dp.cpp` | Core now connects INT8 KV for current and committed rows, native fused norm/RoPE, FP16-rounded raw index keys, retained pooled blocks, native Intel scores, 64-cell attention/merge and rejection clearing together. The measured server explicitly selects INT8 for target and MTP; source2a3d1ad ports both together and the combined CPU shader/layout checks now pass. Numerical/GPU acceptance is pending. Earlier generic-default FP16 scope claims below are superseded. Numerical/state acceptance remains required. Source e5981a13 connects native 256-thread serial-window indexer and direct retained pooled scoring; separate per-query copying/mean/norm/publication and unused pooling clears are removed from decode. Original suffix acceptance and full ownership/erase remain. See latest source/substitution receipt; physical numerics and full QSA/placement audit remain open. Source 31c46e47 also connects actual default multi-query scoring, fixed 256 grid and shared query/key reuse; no arithmetic substitution to the unrelated scalar native_qsa_score path. Remaining scratch/KV-placement and protected whole-model acceptance stay open. Source 3d7b0752 removes native payload clears while keeping all status/full-request erasure and existing admission. Saved CLI confirms default fully resident INT8 KV. Sources 22829824/2f928c9e connect bounded tail/snapshot/F32 MAX8 retention across decode, full prompt, normal prefix and diagnostic restore; full-context raw history is removed from actual CACHE/CAND strides and exact admission. See bounded-state receipt. Physical numerical/replay/recovery acceptance and final whole-source audit remain open. |
-| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams. |
+| PLE source rows, projection and history | `verify.cpp`, `ngram`/`ple` kernels, PLE table reader | Core connects native BF16 MAX8 projections, normalization/gate/conv/history, deduplicated positional reads and accepted-prefix ownership. Prompt calls now consume a bounded, joined double-buffered source prefetch. The latest controller receipt connects native large chunk geometry, joined uploads, retained tail and exact history acceptance. Sources `595393e` and `57147a8` make actual decode and prompt history GPU-authoritative in existing OLD/NEXT roots, with checked CPU token-only publication, GPU accepted-prefix history and independent PLE capture roles. Default prompt/decode float readbacks and prompt diagnostic tail copies are removed; explicit diagnostics and the legacy CPU oracle remain. Source `131d29c` selects the native scoped accepted-prefix consumer before state/cursor publication; the diagnostic checkpoint path keeps the older schedule. Pending event/graph fidelity and numerical/device acceptance remain open. Prompt loans are disabled in the measured32768-context configuration and are not a completion prerequisite. Never persist request n-grams.  Source `9a3567e6` connects actual materialized gate/conv products for decode and prompt, with unchanged original explicit FMA/owners/state. Current audit confirms the reference default 1M-row eight-way cache and 256-job direct reader are still missing; per-batch deduplication is not that cache. Port reader/request lifetime/HOST pricing before source acceptance. |
 | Prompt prefill and streamed experts | `sycl/src/prefill/prefill.cpp`, `gemm.dp.cpp`, Intel CMake build selection | Rounded BF16/FP16 GEMM, prompt GR/AB/head and original-source FP16 expert consumers connect to actual initial prompt calls. The bounded prompt path now uses logical-ID expert order, checked native transfer nodes, an eight-slot raw ring and two paired dequantization slots. The latest owned-consumer receipt connects full2048-row owners, non-overlapping raw/grouped route packets, causal math/state scopes, the unbatched final prompt input uses normal count1 decode for the first head, and full device MTP teaching covers the preceding prefix (up to8192 matrix rows). Independent transfer/compute queues and real release boundaries are connected. The measured server uses4096 prompt rows and32768 context. Source `bcc30dd` connects4096-row prompt owners/ABI; source `8d301b1` subsequently connects32768 runtime context; full-prefix/device acceptance is open. Source `12a60bf` connects native phase overlays, actual2080MiB admitted roots and256-query score/selection reuse; see the latest prompt-overlay receipt. Packed/in-place prompt scratch is connected in the latest receipts. Source allocation granularity and shared inventory are connected in the latest exact-page receipt. Physical/runtime/HOST pricing and lifetimes still require final review. Its no-borrow selection and nonresident fraction select the existing eight-slot/two-dequant-ring path; alternative loans/ring sizes are not prerequisites. Physical whole-model acceptance remains open. Pinned SYCL CMake does not build the CUDA/HIP MMQ/fused implementation. |
 | Prompt dense/expert matrix backend | Intel oneMKL rounded BF16/FP16 GEMMs | Connected Rust cooperative8x16x16/F32 kernels now consume the actual rounded dense and grouped GU/DOWN images, with enabled device features, SPIR-V native registration and required16 subgroup in both pipeline paths. See the cooperative-matrix receipt; physical numerical/model acceptance remains open. |
 | MTP loading/prefill/draft/head | `src/core/mtp.cpp` as built by Intel target, Intel kernels | Core connects MAX8 front, packed native INT8 cache, dense attention, BF16 FF/head GR and native scaled Q2/router/fused-shared consumers. Positive-threshold chains now keep hidden carries on device and observe the same token/probability/fault packet as zero-threshold chains; mapped/event scheduling remains open. First/grouped device-source and ids-only target result consumers now exist; the shared-context constructor receipt below supersedes the separate-client blocker. Core construction now selects the actual target client and one combined account. Source9de7fef pins the original target embedding/head once, shares them with MTP and gathers target embeddings on GPU. Actual device/state acceptance is pending. Source0bfbea8 connects the original-order CJK106299-row Q6 draft head, inverse-ID history mapping, compact confidence and coupled sampling; source2a3d1ad connects INT8 caches. Combined CPU checks pass, with full numerical/GPU execution still pending. Source `862f5fa` separates first-front staging and actual observation from capture, and prestages all coupled draft controls once per round. Source `8262367` connects typed MTP phases/4096 boundaries and original model-instance graph namespaces; source `d0670b0` connects direct original MTP replay and capture-derived host/sampler handback. Physical acceptance, commit/event fidelity, numerical/state acceptance and runtime policy remain required. See the latest device-end receipt. Source35f0990f connects actual shared-side fork, independent fault/scaling, original vec4/FMA combination and owning draft fence using the opposite existing compute queue. Its queue sharing with MAIN commit is an explicit backend substitution, not physical overlap proof. See the latest MTP shared receipt. |
@@ -10921,3 +10922,89 @@ acceptance required above. This block does not prove GPU numerics, physical load
 traffic, residency, retained execution, recovery, throughput or installed behavior.
 CPU-only authorization remains; no API/Vashti/configuration change or service,
 installation, release or GPU operation. Canonical checkout/untracked cache remain.
+
+
+## Native PLE materialized products and default reader audit (2026-10-17)
+
+Runtime source `9a3567e6afe57de88835645786c72a0012b86200`, pinned MIT Intel source
+`fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. Decode and prompt consume the
+same actual materialized-product compiler pass. The default reader gap below
+remains required source work. No speed result selected implementation direction.
+
+### Real connected arithmetic correction
+
+Pinned `native_ple_postops.dp.cpp::gate_kernel` requires materialized F32 products
+before its ordered sum and explicit SCALE FMA. Single/batch conv similarly forms
+each original F16-weight term, assigns the first tap, then adds in original order.
+Rust used the right source-level temporaries, but its actual emitted raw SPIR-V
+had FMul with no NoContraction annotations. Source temporaries did not prove the
+native rounding obligation. The shared actual registry/offline product pass now
+consumes Gate, PromptGate, Conv, PromptConv and PromptConvInPlace. The other PLE
+families keep their own arithmetic. All complete nonannotation instructions,
+original header/IDs, descriptor owners and explicit FMA survive unchanged.
+
+A public cancellation witness has materialized products summing to0/gate0.5;
+contracting the second product leaves a negative residual whose sign changes
+Strata's clamped gate by>0.0002. This establishes why decoration matters; it is
+not a GPU failure report. The actual five-consumer shader regression verifies
+raw missing annotations, exact final FMul decorations, explicit FMA count,
+complete nonannotation identity and idempotence. No status guard was weakened.
+
+Further source trace connects actual decode/native tail and original BF16
+projection to prompt's rounded GEMM and legal in-place PLE consumers. Native
+2560-column BF16 default uses256 threads/ordered pairs/two explicit FMA and
+original32-lane/block reduction; the rows/aux branch is opt-in. Full/partial
+history still uses actual OLD/NORMALIZED/NEXT owners and accepted normalized
+prefix after joint fence/preflight; CPU publishes two token IDs only. These are
+source statements, not physical numerical/retained/recovery acceptance.
+
+### CPU-only receipt
+
+All external evidence is under `/media/jmicko/faststore/kuno-development`:
+
+- `strata-ple-materialized-validate-20261017.py`, final-test-build/full-cpu/core-
+  clippy/off-clippy logs, and `strata-ple-materialized-validation-20261017.out`:
+  602 distinct selected CPU cases/85 nonempty suites, zero failures; strict core/
+  off **binary** Clippy and changed rustfmt/git whitespace pass. Two new cases
+  cover actual generated SPIR-V and the independent F32 cancellation witness.
+  This is selected CPU coverage, not an unfiltered repository run.
+- `strata-ple-materialized-ordinary-20261017` plus matching `.out`: normal stable
+  source build, frozen SHA256 `32cc84cc18a4389d373fcafb80a3f63bcb70913af90153763e0a4658564a55b7`. Independent
+  `strata-ple-materialized-artifact-proof-20261017.json` checks source commit,
+  original/frozen equality, mode0500, requested features
+  `[strata-rust-port,strata-intel-core]` and resolved Cargo features
+  `[direct-device,strata-intel-core,strata-resident-224,strata-resident-240,strata-rust-port]`.
+- `strata-ple-materialized-shaders-20261017.log`: actual frozen executable ran
+  only early `--validate-port-shaders`, before vendor/device setup. All397 variants,
+  139 physical-pointer checks,77 rounded-product modules and32 matrix configs pass
+  with the retained pinned SPIR-V tools. No adapter/model execution occurred.
+
+### Next required connected implementation: original PLE reader/cache
+
+The normalized current audit records the real gap and exact next implementation
+obligations. Allowlisted saved-reference extraction
+`strata-ple-reference-options-20261017.json` records `--ple-io direct` and no
+cache/inflight/sync-submit override; no prompt, credentials or other config is
+copied. Pinned `generate.cpp:429..434,2926..2929` selects1,048,576 cached rows,
+256 inflight requests and I/O worker by default. Default keepalive is100ms/60s;
+historical process environment overrides are not independently established.
+Actual original target metadata proves its table IQ4_NL `[160,320001536]`/90B rows.
+Source cache data/keys/replacement owners alone total98,697,216B (94.125MiB),
+plus actual metadata. No whole-table float copy is intended.
+
+Current native decode and prompt have per-batch deduplication, four joined
+positional workers and prompt next-chunk prefetch, but no original bounded cache
+or256-job direct engine. Do not call this port complete, relabel the missing
+source as optional tuning or use an easier cached/fake execution to accept it.
+Port original hit/miss/eviction/page grouping/read/queue/gather ownership with
+real decode/prompt consumers, original descriptor/stat proof and full actual
+HOST/queue/worker capacity charging. Request-scoped erasure must cover all row
+IDs, cached original packed data, replacement state, pending plans and staging.
+A cache that survives requests would conflict with Kuno's content-free boundary;
+this necessary lifetime substitution must be explicit, with no cross-request
+cache-performance claim. Inspect actual native gather start/join points before
+choosing the Rust transport and preserve source closure/failure joins.
+
+Whole rewrite incomplete; speed gate remains closed. CPU-only authorization
+continues; no GPU/model/service/install/release/frontend operation. No API or
+Vashti consumer changes. The canonical checkout/untracked cache remain preserved.

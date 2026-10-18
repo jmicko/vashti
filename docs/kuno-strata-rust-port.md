@@ -1,38 +1,39 @@
 # Strata Rust whole-model port experiment
 
-**Current CPU-only source:** `e1ba6d5be310f1b5d41aaea7ded885e753aa2d51`, branch
+**Current CPU-only source:** `9a3567e6afe57de88835645786c72a0012b86200`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [native dense/prompt receipt](kuno-strata-rewrite-completion.md#default-native-wide-dense-and-prompt-helper-connection-2026-10-17).
-Original default wide Q4_K/Q5_K/IQ4_XS/Q8_0/IQ4_NL kernels now connect target and
-MTP consumers alongside Q6_K, with exact RHS counts1..8, original packed loads,
-contribution groups and XOR reductions. The shared packed-helper dependency in
-all six prompt dequantizers is preserved and regression-tested. Original native
-replay/fold inventories, private owners and prior bounded QSA state remain.
-The selected126/128 branch inventory is per request: actual drain/erase clears
-recordings/templates before retained rebinding, while model weights stay loaded.
+and [PLE arithmetic/reader receipt](kuno-strata-rewrite-completion.md#native-ple-materialized-products-and-default-reader-audit-2026-10-17).
+Actual decode/prompt PLE gate and convolution variants now enforce original
+materialized product rounding in native SPIR-V. Original explicit SCALE FMA,
+complete nonannotation instructions, owners, state and graph identity remain.
+The prior default wide dense target/MTP and prompt-helper fixes remain connected.
 
-600 distinct selected CPU cases / 85 nonempty suites, strict core/off **binary**
+602 distinct selected CPU cases / 85 nonempty suites, strict core/off **binary**
 Clippy, changed Rust formatting and whitespace pass. This is not an unfiltered
 repository test run. Frozen artifact SHA256
-`fd679d6f010624aded6b1e0367826bf54a99a894bbdbd874636674b0f3f2656f`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
+`32cc84cc18a4389d373fcafb80a3f63bcb70913af90153763e0a4658564a55b7`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
 verified. Only its early pre-adapter offline branch ran: 397 shader variants /
-139 physical-pointer compiler checks / 72 rounded-product modules / 32 matrix
-configurations pass. The first dense artifact failed on the prompt helper include;
-the final source/artifact above fixes that coupled consumer. See the full receipt.
-No new GPU heap owner, model duplicate, content persistence, public API or
-configuration change; shader producers changed. These are CPU/compiler results.
+139 physical-pointer compiler checks / 77 rounded-product modules / 32 matrix
+configurations pass. A public cancellation witness and actual five-kernel SPIR-V
+regression demonstrate the materialization requirement; they do not establish
+physical numerical/model/recovery/throughput acceptance. No new GPU heap owner,
+model duplicate, content persistence, public API or configuration change.
 
-**Whole rewrite incomplete; speed gate closed.** Finish remaining actual selected
-operator/prompt/queue/ownership source review and necessary backend substitutions.
-The next focused PLE audit should inspect emitted materialized-product rounding
-for both Gate/PromptGate against native `gate_kernel`, not infer it from a WGSL
-product temporary. Protected whole-model prompt/count1/multirow, accept/reject/
-EOS/cap/context, retained mixed/hot-request and failure/all-resource recovery
-acceptance remain required before speed. CLI compiled-public/one-request;
-private caller independently gated. Goal active CPU-only; sudo refresh only
-currently authorized. No GPU/model inference/service/install/release/frontend
-operation. Required Vashti/API changes: none. Canonical checkout and inherited
-untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** A concrete remaining selected
+PLE reader gap is now mapped: the saved reference selects direct I/O and defaults
+to a1M-row eight-way packed cache/256 inflight jobs, while current Rust has only
+per-batch deduplication/four joined positional workers plus prompt prefetch.
+Port that complete reader/cache/request lifetime and HOST pricing next; see the
+normalized audit for exact current callers, default evidence and required joins/
+erasure. This is required source work, not optional speed tuning. Finish the
+remaining operator/prompt/queue/ownership audit and necessary substitutions too.
+Protected whole-model prompt/count1/multirow, accept/reject/EOS/cap/context,
+retained mixed/hot-request and failure/all-resource recovery acceptance remain
+required before speed. CLI compiled-public/one-request; private caller separately
+gated. Goal active CPU-only; sudo refresh only currently authorized. No GPU/model
+inference/service/install/release/frontend operation. Required Vashti/API changes:
+none. Canonical checkout and inherited untracked cache preserved.
+
 
 
 

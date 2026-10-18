@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `e1ba6d5be310f1b5d41aaea7ded885e753aa2d51`, isolated `codex/strata-rust-port`.
+Runtime source: `9a3567e6afe57de88835645786c72a0012b86200`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -198,6 +198,94 @@ and state pair; native128-thread accepted-state commit and deferred prefix state
 remain as documented earlier. Do not mistake that separate commit default for a
 missing split-step optimization or infer defaults from the CUDA sibling.
 
+## PLE operators: actual decode/prompt consumers and materialized arithmetic
+
+`resident_ple_batch::enqueue_prepared_checked` authenticates the original prepared
+transaction, enqueues original key/value projections, selected native tail, seven
+status folds, history status and final finite check. `tail` chooses `native_tail`
+unconditionally in the Intel core. That tail uses original BF16 key/value,
+1024-thread per-stream key/query normalization,512-thread gate, gated broadcast,
+1024-thread norm,256-thread four-tap dilation3 convolution and history. The native
+BF16 projection uses ordered weight pairs/two explicit FMA and32-lane XOR/block
+reduction. For2560 inputs upstream `mmvf_block_size` selects256; its rows/aux path
+requires opt-in `STRATA_MMVF_ROWS`, not an additional default prerequisite.
+Prompt uses the same original format projections through its existing rounded
+GEMM consumer, then actual PromptNormInPlace/PromptNorm/PromptGate/Broadcast/Norm/
+Conv[InPlace]/History. Single writable descriptors retain legal key/result aliases.
+
+Pinned `native_ple_postops.dp.cpp::gate_kernel` explicitly requires materialized
+MUL products before ordered additions, with a separate explicit SCALE FMA.
+`conv_residual_kernel`/batch use materialized F32 terms from original F16 weights,
+assign the first tap, then add taps in order before SiLU and ordered residual sum.
+The Rust source already had temporaries/order, but actual raw SPIR-V had FMul
+with no NoContraction decoration. A source temporary did not enforce the native
+requirement. Source `9a3567e6` marks Gate, PromptGate, Conv, PromptConv and
+PromptConvInPlace for the existing actual native registry/offline product pass.
+All FMul products are now decorated; complete nonannotation instructions, IDs,
+header, original owners and explicit FMA remain unchanged. The unrelated norm,
+projection, broadcast and history families retain their own arithmetic contract.
+
+A directed public F32 cancellation witness demonstrates why this matters: two
+rounded gate products sum to0 and gate0.5; contracting the second product leaves
+a tiny negative residual whose sign changes the native clamped gate by>0.0002.
+This is operator arithmetic/compiler evidence, not a claim about an observed GPU
+failure or whole-model output. Actual kernel SPIR-V regression covers all five
+consumers, raw missing decorations, final exact product IDs, FMA preservation,
+idempotence and unchanged complete nonannotation instructions.602 selected CPU
+cases/85 suites and397/139/77/32 offline shader/physical/rounded/matrix checks pass.
+
+The original GPU OLD/NORMALIZED/NEXT history remains authoritative. Full accepted
+prefixes swap original histories only after joint family fence/preflight; partial
+repair reconstructs original nine rows from the original prewindow history and
+accepted normalized prefix. The CPU advances two token IDs, not a float mirror.
+Original nonce/generation/sequence/state/reset guards remain. Physical numerical,
+retained execution and full recovery acceptance still remain unverified.
+
+## Concrete remaining PLE reader gap: default cache and asynchronous transport
+
+Allowlisted extraction from the saved reference argv records `--ple-io direct`,
+with no `--ple-row-cache`, `--ple-inflight` or `--ple-sync-submit` override.
+`strata-ple-reference-options-20261017.json` contains only those public fields.
+Pinned Intel `generate.cpp:429..434,2926..2929` therefore selects its original
+1,048,576-row cache,256 inflight jobs and I/O worker; the default SSD keepalive
+is100ms for60 seconds after row requests. `ngram/ple_reader.cpp::RowCache`
+uses eight ways/set, original64-bit wrapping mix, round-robin replacement and
+packed original bytes. The actual target's table is IQ4_NL `[160,320001536]`,
+90B/row. Cache data/keys/replacement owners alone total98,697,216B (94.125MiB),
+plus metadata. This is a derived source inventory, not runtime measurement.
+
+Current `resident_ple_batch::native_embedding` has a stable sorted/unique plan,
+four joined positional workers, original decoder and destination scatter. Prompt
+already double-buffers next-chunk source work. Neither path has the native bounded
+row cache or original256-job direct-I/O engine. Deduplication within one batch is
+not reuse across batches. These are genuine remaining selected-source differences,
+not optional tuning or proof that the whole reader has been ported. Existing
+privacy statements forbidding persistence do not prohibit a wiped request cache.
+
+Next implementation must connect the reader as a whole:
+
+- One original bounded packed-row cache shared by decode and actual prompt
+  prefetch/fallback, authenticated to the original model/table binding. Preserve
+  eight-way replacement and real hit/miss reads; never return stale/cross-model
+  data or silently treat fresh rows as cached. Inspect the original page grouping,
+  aligned direct reads, inflight queue/completions and actual gather issuance/join
+  points before choosing a Rust transport. Document necessary backend substitutions.
+- Explicit request lifetime/worker ownership, including error/cancellation/unwind,
+  original descriptor/stat checks and joins before source closure. Kuno must wipe
+  all allocated row IDs, cached bytes, replacement state, queued plans and private
+  staging before request completion/retained rebinding. No row cache/prompt/content
+  persists or enters a log. A cache retained across requests would violate this
+  privacy boundary; rebuilding it is a necessary lifetime substitution.
+- Charge actual cache/queue/aligned buffer/worker/metadata capacity in the original
+  HOST constructor/reservation inventory (including peak coexistence with prompt
+  sources and cleanup). It is not covered by merely enlarging the old4MiB reader
+  cap or borrowing uncharged GPU MAIN. Preserve original no-swap/core protections.
+- Prove original packed hit/miss bytes, collisions/replacement/duplicate rows,
+  page-straddling/tails, prompt/decode shared use, original identity/stat refusal,
+  bounded admission, cancellation/error/drain and actual erasure with public CPU
+  fixtures, then normal build/offline/full-engine correctness gates. Do not use
+  a microbenchmark or interim speed result to replace the complete reader port.
+
 ## Source review still to finish
 
 - Consolidate actual selected dense/expert matrix and quantized arithmetic
@@ -206,10 +294,8 @@ missing split-step optimization or infer defaults from the CUDA sibling.
   storage, grouping, queue and math substitution; filenames alone do not pass.
 - Preserve the now-traced per-request126/128 graph lifetime and original
   owner erasure. Physical retained mixed-request execution still needs acceptance.
-- Inspect actual PLE Gate/PromptGate emitted product materialization against
-  native `gate_kernel`'s explicit MUL requirement; the WGSL temporary alone is
-  not evidence of NoContraction or physical parity. Resolve both consumers and
-  any coupled rounding dependency together.
+- Port the actual default PLE row cache/asynchronous reader described above,
+  including its connected decode/prompt request ownership and full HOST pricing.
 - Review remaining queue/INFO/descriptor hazards, shared/MTP fork/commit order,
   sampler state and output/resource closure as one connected schedule.
 
