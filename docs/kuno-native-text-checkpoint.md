@@ -1,29 +1,40 @@
 # Native DASLab/Strata checkpoint — 2026-10-17
 
-**Current protected-device checkpoint (2026-10-18):** isolated
-`codex/strata-rust-port`, runtime `8fb70457`, following diagnostic `1278ca4f`.
-Human B70/unload authorization and shared-shell sudo are resolved. The six
-connected execution corrections through `7f4552d2` remain selected. Whole-model
-`strata-replay-role-whole-20261018` now completes the generation controller but
-rejects request erasure. The protected diagnostic repeat
-`strata-private-reset-trace-whole-20261018` proves draft erasure succeeds;
-target reset incorrectly asks the dormant legacy MoE family for completion.
-The selected global engine never dispatches that family. `8fb70457` validates
-the actual global completed/idle/binding/epoch scope and strictly proves the
-legacy family stayed unstarted, with original owner/admission/identity checks.
-The old public13 reset still requires real legacy completion. No erasure,
-fault, inventory or family reset is skipped.28 selected CPU cases pass,
-including the new untouched-versus-executed regression. A broader legacy suite
-has three core-inapplicable hardcoded144-slot/old-scratch fixture failures;
-see the receipt rather than claiming the entire suite passes. Diagnostic core/off
-strict binary Clippy pass; current corrected runtime build/device acceptance
-is pending. The latest successful device observation is generation plus draft
-reset, not a completed response or retained repeat.
-All completed attempts restored admission, HTTP services and Intel50,688,000B,
-with NVIDIA compute empty and zero kernel fault deltas. No `intel.json` success
-receipt yet. Independent numerics/state/context/footprint/private-caller and
-speed gates remain open. No API/frontend, installed-service or model changes.
-See the [device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
+**Current paused checkpoint (2026-10-18):** isolated
+`codex/strata-rust-port`, runtime source
+`d271eb492c40023d0008fcdf5bf6219f88a90000`. Human requested GPU access and paused
+the goal. All protected test processes/units have exited; do not start GPU work
+until renewed authorization. No reset/reboot/install/API/frontend changes.
+
+Generation now completes and the draft's complete private-state reset passes.
+The six coupled execution fixes through `7f4552d2` remain selected. `8fb70457`
+corrects target reset to validate the actual completed global MoE family and
+prove its dormant legacy owner stayed unstarted; the old public13 route still
+requires actual legacy completion. Protected
+`strata-native-reset-family-whole-20261018` passes that gate but rejects later
+with a redacted device-operation error during target reset. It has no success
+`intel.json`. Full process recovery passes: Intel50,688,000B, NVIDIA compute0,
+admission restored, all HTTP200 and zero driver fault deltas.
+
+The subsequent source audit found a definite cleanup contract mismatch: the
+arena scans original large owners in32MiB windows, while its old backend call
+rejects trimmed handles and requires the complete physical owner. `d271eb49`
+adds an internal bounded cleanup read receiving the ORIGINAL full owner plus a
+checked window. The backend validates complete actual backing ownership first,
+then derives the bounded resource view. The scanner still inspects every byte
+and tail before any full-owner receipt. Ordinary/full cleanup reads, strict
+lease/stream/retirement checks and all privacy/admission limits remain intact.
+102 selected CPU tests pass. The latest correction has NOT run on the GPU,
+received final strict core/off Clippy, or been frozen as a normal runtime yet.
+The last runtime-tested artifact is8fb70457; do not call it current source.
+
+Next, after renewed GPU authorization: finish strict binary checks, freeze the
+normal d271 source, run the ordinary protected completion check and inspect its
+actual failure/erasure/recovery result. If and only if that completes, run the
+explicit retained two-request Session check. Independent numerical/context/
+footprint/private-caller acceptance and speed remain gated. No completed whole
+response or throughput accepted yet. See the
+[device execution receipt](kuno-strata-rewrite-completion.md#protected-construction-and-first-prompt-execution-2026-10-18).
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
