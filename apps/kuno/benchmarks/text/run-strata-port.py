@@ -31,17 +31,18 @@ def run():
  if len(bins)!=1:raise ValueError('one immutable Rust artifact required')
  binary=bins[0];digest=hashlib.sha256(binary.read_bytes()).hexdigest()
  if binary.name!='kuno-strata-rust-'+digest:raise ValueError('artifact hash')
+ build_features=set(json.loads((build/'build-features.json').read_text())['features'])
  if fixture not in ('code','prose') or profile not in ('q8','q2'):raise ValueError('public scope')
  label=f'language-{fixture}-intel-mtp-four-lookahead-down-integer-grouped-ple-gu-stride-shared-head-gpu-host'
  env,memory,mode=protected.select_trial(label,out/'intel.json')
  if profile=='q2':
   env['KUNO_TEST_MTP']=str(BASE/'kuno-strata-mtp-q2-20261009/mtp-q2_0.gguf')
   env['KUNO_LAB_MTP_PROFILE']='strata-q2';env.pop('KUNO_LAB_MTP_Q8_HEAD',None)
- if set(json.loads((build/'build-features.json').read_text())['features']) & {'strata-resident-224','strata-resident-240','strata-intel-core'}:env['KUNO_LAB_STATIC_CACHE_BYTES']=str(5*1024**3)
+ if build_features & {'strata-resident-224','strata-resident-240','strata-intel-core'}:env['KUNO_LAB_STATIC_CACHE_BYTES']=str(5*1024**3)
  env.pop('KUNO_LAB_MTP_REPAIR',None)
  if '--retained-check' in options:env['KUNO_LAB_LANGUAGE_SESSION']='two-identical-public'
  if '--intel-core' in options:
-  if 'strata-intel-core' not in json.loads((build/'build-features.json').read_text())['features']:raise ValueError('coherent core artifact required')
+  if 'strata-intel-core' not in build_features:raise ValueError('coherent core artifact required')
   env['KUNO_STRATA_INTEL_CORE']='public';env['KUNO_STRATA_CACHE_SWAPS']='eight-public'
   env['KUNO_LAB_FROZEN_BANK_FILL']='profile-ranked-public'
   env['KUNO_LAB_TARGET_HEAD']='integer-public';env['KUNO_LAB_TARGET_STATUS_FOLDS']='grouped-public'
@@ -68,7 +69,7 @@ def run():
  sources=[]
  for path in sorted(protected.MODEL.glob('*.gguf')):
   st=path.stat();sources.append({'path':str(path),'size':st.st_size,'mtime_ns':st.st_mtime_ns})
- (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':json.loads((build/'build-features.json').read_text())['features'],'fixture':fixture,'draft_profile':profile,'seed':424242,'temperature':0,'port_options':sorted(options),'validation_purpose':'execution-and-correctness-only','throughput_acceptance_allowed':False,'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
+ (out/'source.json').write_text(json.dumps({'commit':(build/'source-commit.txt').read_text().strip(),'artifact_sha256':digest,'features':json.loads((build/'build-features.json').read_text())['features'],'fixture':fixture,'draft_profile':profile,'seed':0 if 'strata-intel-core' in build_features else 424242,'loaded_session_requests':2 if '--retained-check' in options else 1,'temperature':0,'port_options':sorted(options),'validation_purpose':'execution-and-correctness-only','throughput_acceptance_allowed':False,'sources':sources,'source_full_sha_recheck_this_run':False,'original_full_sha_evidence':str(BASE/'native-next-v197-staged-down-code-intel-20261013/public-original-source-verification.json')},indent=2)+'\n')
  before=helper('final-secondary-state.py');(out/'host-before.json').write_text(json.dumps(before,indent=2)+'\n')
  if before['nvidia_compute_process_count'] or any(r['used_bytes']>160*1024**2 for r in before['intel']['xe_memory']):raise ValueError('GPU not free')
  if before['admission']['state']['admission']['active'] or before['admission']['state']['admission']['waiting']:raise ValueError('admission not idle')
