@@ -197,7 +197,7 @@ pub(crate) fn run(
     super::super::launch(
         arena,
         Kernel::PromptTail,
-        [6, 1, 1],
+        [3, 1, 1],
         vec![q[4].clone(), tail, snapshot, window, fault.clone()],
         p,
     )?;

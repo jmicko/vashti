@@ -73,7 +73,7 @@ pub(crate) enum Kernel {
 impl Kernel {
     fn lanes(self) -> u32 {
         match self {
-            Self::Pack | Self::PromptPack | Self::PromptPackFault => 128,
+            Self::Pack | Self::PromptPack | Self::PromptPackFault | Self::PromptTail => 128,
             Self::Norm
             | Self::PromptNorm
             | Self::Attention
@@ -380,7 +380,7 @@ pub(crate) fn launch(
         || info[2] > crate::qsa_gpu::MAX_CONTEXT as u32
         || kernel == Kernel::Indexer
             && (grid != [1, 1, 1] || handles.len() != 7 || !info[2].is_multiple_of(4))
-        || kernel == Kernel::PromptTail && (grid != [6, 1, 1] || handles.len() != 5)
+        || kernel == Kernel::PromptTail && (grid != [3, 1, 1] || handles.len() != 5)
         || kernel == Kernel::IndexerFlags && (handles.len() != 3 || info[5] != info[2] / 4)
         || kernel == Kernel::DirectScore
             && (grid != WINDOW_SCORE_GRID

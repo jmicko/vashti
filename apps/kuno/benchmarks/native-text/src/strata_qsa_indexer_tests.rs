@@ -265,5 +265,5 @@ fn bounded_large_prompt_tail_and_boundary_means_match_materialized_history() {
     let source = Kernel::PromptTail.source();
     assert!(source.contains("last-(last-slot)%4u"));
     assert!(source.contains("snapshot[i]=old"));
-    assert_eq!(Kernel::PromptTail.lanes(), 64);
+    assert_eq!(Kernel::PromptTail.lanes(), 128);
 }

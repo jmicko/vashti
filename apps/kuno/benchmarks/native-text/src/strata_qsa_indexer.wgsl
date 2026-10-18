@@ -102,7 +102,7 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
 @group(0) @binding(3) var<storage,read_write> window:array<f32>;
 @group(0) @binding(4) var<storage,read_write> fault:array<atomic<u32>>;
 @group(0) @binding(5) var<uniform> p:Params;
-@compute @workgroup_size(64)
+@compute @workgroup_size(128)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
     let i=gid.x;if i>=384u {return;}
     let old=tail_state[i];snapshot[i]=old;if !finite(old){atomicOr(&fault[0],1u);}
