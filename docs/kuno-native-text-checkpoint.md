@@ -4,34 +4,38 @@ CPU-only continuation. Whole rewrite incomplete; no speed trials. -->
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `2f928c9e250ae6b6441f6f73ea03d28f356bfea2`, branch
-`codex/strata-rust-port`. Read the [bounded QSA state receipt](kuno-strata-rewrite-completion.md#native-bounded-qsa-indexer-state-2026-10-17).
-Native decode and full prompt now use three-row tail/snapshot and original F32
-MAX8 windows. Packed 264-word KV no longer retains full-context raw index keys.
-Actual prompt/decode/append/selection/prefix/diagnostic consumers, original owner
-identities, full-padding erasure and admission quotes change together. At 32K,
-cache owners change 50 MiB to 34 MiB per layer:192 MiB less across 12 QSA layers.
-The prompt-tail dispatch also matches native's three 128-thread slot groups.
+**Current CPU-only source:** `9bd006d68ea5dd98a0d16d9ecf4dc6394fb26337`, branch
+`codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
+and [grouped replay/completion receipt](kuno-strata-rewrite-completion.md#native-grouped-replay-and-fused-gr-completion-inventory-2026-10-17).
+Two actual connection defects are corrected: normal grouped native windows now
+admit direct replay with a distinct immutable fold-mode key, and completion/report
+inventories use native `[0,36,12]` separate status folds instead of legacy
+`[97,36,12]`. GR math still writes its sticky fault directly. Prepared stage/fault/
+state proofs, exact family deltas, commit and erasure gates remain mandatory.
+The conservative selected namespace inventory is 126 within the original 128
+branch bound. Previous bounded QSA state and the whole native branch remain.
 
-588 distinct selected CPU cases/82 nonempty suites, strict core/off binary lint,
+596 distinct selected CPU cases / 84 nonempty suites, strict core/off binary lint,
 changed formatting and whitespace pass. Frozen artifact SHA256
-`23037328db7eaa4cc93eaf108b1dcbd91d73ac9bdb58882e921114e0823b3e44`, independently source/ordinary/frozen/mode0500/default-features
-verified. Only its early pre-adapter offline branch executes: 372 shaders/139
-physical-pointer compiler checks/five rounded-product modules/32 matrix
-configurations pass. No physical numerical/model/recovery/throughput claim.
-No new GPU heap owner, model copy, content persistence, API or configuration.
-Previous original model/Q8/tokenizer/MTP/GDN/score/queue receipts remain selected.
+`044f92abe50b5337f309831564bdbaf3979e5ad2ffd5d0d91a442db34f08726b`, independently source/ordinary/frozen/mode0500/requested-and-resolved-features
+verified. Only its early pre-adapter offline branch ran: 372 shader variants /
+139 physical-pointer compiler checks / five rounded-product modules / 32 matrix
+configurations pass. No arithmetic shader, GPU heap owner, model copy, content
+persistence, public API or configuration changed. These are CPU/compiler results,
+not evidence of physical numerical/model/recovery/throughput acceptance.
 
-**Whole rewrite incomplete; speed gate closed.** The specific full-history QSA
-storage gap is closed in source. Next consolidate the current completeness matrix
-against actual selected prompt/selection/sampling/queue/ownership call paths,
-resolve genuine remaining substitution dependencies, and distinguish superseded
-findings from open work. Protected count1/multirow/prompt/context/retained/hot
-request/accept-reject/all-resource failure and recovery acceptance must precede
-speed. CLI compiled-public/one-request; private caller independently gated.
-Goal active CPU-only; sudo refresh only authorized. No GPU/model inference,
-service/install/release/frontend action. Required Vashti/API changes: none.
-Canonical checkout and inherited untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** The indexed audit traces entry,
+loading/cleanup, sampling and accepted-token flow, then records the real replay/
+completion defects and their correction. Next finish selected operator/dense/
+expert/prompt/queue/ownership source review and retained mixed-request graph
+capacity/lifetime accounting. Protected whole-model prompt/count1/multirow,
+accept/reject/EOS/cap/context, retained/hot-request and failure/all-resource
+recovery acceptance remain required before speed. CLI compiled-public/one-request;
+private caller independently gated. Goal active CPU-only; sudo refresh only
+currently authorized. No GPU/model inference/service/install/release/frontend
+operation. Required Vashti/API changes: none. Canonical checkout and inherited
+untracked cache preserved.
+
 
 **Previous coupled-sampler block (`8a4ee5b`):** actual full and CJK MTP paths
 mutate penalties once, build fixed 64 lists and merge with request K. Source

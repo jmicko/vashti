@@ -6,8 +6,9 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `2f928c9e250ae6b6441f6f73ea03d28f356bfea2`. Read the
-[bounded QSA state receipt](kuno-strata-rewrite-completion.md#native-bounded-qsa-indexer-state-2026-10-17)
+`codex/strata-rust-port`, runtime source `9bd006d68ea5dd98a0d16d9ecf4dc6394fb26337`. Read the
+[current source audit](kuno-strata-current-source-audit.md),
+[grouped replay/completion receipt](kuno-strata-rewrite-completion.md#native-grouped-replay-and-fused-gr-completion-inventory-2026-10-17)
 and [completion gate](kuno-strata-rewrite-completion.md). Rewrite incomplete;
 speed gate closed, work CPU-only. Required Vashti changes: none.
 
@@ -43,6 +44,8 @@ UI or change its user-data storage.
 - [CPU/GPU calibration lab](kuno-native-text-cpu-gpu-calibration.md): approved
   bounded real-read operator, original-rank merge and completed joint controls;
   source/device/timing acceptance remain separate.
+- [Current Strata source audit](kuno-strata-current-source-audit.md): selected
+  call-chain review, genuine connection defects and remaining source/device gates.
 - [Native text checkpoint](kuno-native-text-checkpoint.md): current
   integrated source, isolated diagnostic candidate, completed checks and the
   next physical acceptance gates. Resume from this checkpoint first.
@@ -7981,3 +7984,40 @@ inherited untracked cache preserved. No handoff grants GPU use or deployment.
 Evidence prefix: `/media/jmicko/faststore/kuno-development/strata-qsa-bounded-tail-*20261017*`.
 The linked receipt records exact changed commits, actual owner/consumer contract,
 reviewed commit/storage substitutions, byte quotes, tests and remaining gates.
+
+
+## Active Kuno engine handoff — grouped replay and native completion (2026-10-17)
+
+**Current CPU-only runtime:** `9bd006d68ea5dd98a0d16d9ecf4dc6394fb26337`, branch
+`codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
+and [grouped replay/completion receipt](kuno-strata-rewrite-completion.md#native-grouped-replay-and-fused-gr-completion-inventory-2026-10-17).
+The audit found two actual defects: normal policy selected grouped checks while
+the direct replay path/adapters rejected them; native GR's direct sticky-fault
+writers expected zero separate GR folds, while the join/report still required 97.
+Both are corrected together. Immutable target fold mode separates graph programs;
+original prepared stage/fault/state proofs account real recorded GDN/QSA folds.
+Native completion uses `[0,36,12]`; legacy retains `[97,36,12]`. No GR math or
+status checks are removed. Conservative selected shapes 126 <= original 128 bound.
+The prior bounded QSA/native math/MTP/ownership/queue branch remains selected.
+
+596 selected CPU cases / 84 nonempty suites, strict core/off binary lint, changed
+formatting and whitespace pass. Frozen artifact SHA256
+`044f92abe50b5337f309831564bdbaf3979e5ad2ffd5d0d91a442db34f08726b`, independently source/ordinary/frozen/mode 0500/exact requested-and-resolved Cargo features
+verified. Only its pre-adapter offline branch ran: 372 shaders /139 physical-
+pointer compiler checks /five rounded-product modules /32 matrix configurations
+pass. No live model, numerical/physical replay, recovery or speed acceptance.
+No new GPU heap owner/model copy/content persistence/API/configuration behavior.
+
+**Whole rewrite incomplete; speed gate closed.** The new indexed audit records
+reviewed entry/loading/cleanup/sampling/target flow and the genuine integration
+fix. Finish selected dense/expert/operator/prompt/queue/ownership source review
+and retained mixed-request shape/lifetime accounting, then protected whole-model
+prompt/count1/multirow/accept-reject/EOS/cap/context/retained/hot-request/failure/
+all-resource recovery before any speed measurement. CLI compiled-public/one-
+request; private caller independently gated. Goal active CPU-only; authorized
+sudo refresh only. GPUs/services/install/release/frontend untouched. Required
+Vashti/API changes: none. Canonical checkout and inherited untracked cache kept.
+
+Evidence prefix: `/media/jmicko/faststore/kuno-development/strata-grouped-replay-*20261017*`.
+The linked receipt names exact source, consumers, proof boundaries, tests, frozen
+artifact and limitations. No handoff grants GPU use, installation or release.
