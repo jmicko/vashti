@@ -1,6 +1,6 @@
 # Current Strata source audit
 
-Runtime source: `2899011f35c4695e293100fc6aadd230cbc9fc81`, isolated `codex/strata-rust-port`.
+Runtime source: `d70bcb162fe70a4eeafd4aab6848bd6d0d344654`, isolated `codex/strata-rust-port`.
 Pinned Intel upstream: `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`.
 This is the current audit index, alongside the historical evidence in
 [kuno-strata-rewrite-completion.md](kuno-strata-rewrite-completion.md).
@@ -178,25 +178,122 @@ original factors/codes helpers and directly includes them in prompt Dequant.
 This does not establish physical
 memory traffic, numerical output, whole-model acceptance or performance.
 
-## GR/GDN selected defaults: call sites traced further
+## GR/GDN selected defaults: connected decode and prompt audit
 
-Actual `resident_model_batch::run_global` consumes pending GR writes, PLE at
-layer1, GR attention read, prepared GDN/QSA, GR FFN read, actual routed/shared
-fork/join and final GR/head. Pinned `fused_gr.dp.cpp` selects `gr_norm_split()`
-and `gr_down_sliced()` by default: split256-thread stream normalization,
-80 slices, ordered slice reduction, then up/read. Rust's actual prepared roots
-and `strata_gr` dispatches select that family. The newer hc checks/variants in
-the same upstream file are not this default: absent `STRATA_HC_CHECK`, its actual
-selector is kHcPlain. This traces the selected family; remaining numeric details
-and physical source/layout acceptance still belong to the full operator audit.
+The actual `resident_model_batch::run_global` and `resident_mtp` consumers call
+`strata_gr` over the original pending residual/block/injection owners. Pinned
+`sycl/src/kernels/cuda/fused_gr.dp.cpp` selects `gr_norm_split()` and
+`gr_down_sliced()` by default (explicit zero opts out). The hc check/variant
+family is not selected absent `STRATA_HC_CHECK`; CUDA/HIP alternatives are not
+additional dependencies of this Intel default.
 
-Pinned `verify.cpp` invokes multi conv/L2, BF16 alpha/beta, native quantized Z and
-`gdn_step_norm_multi`. Its default in `verify_kernels.dp.cpp` is the512-thread
-four-row-group/128-column step; `STRATA_GDN_SPLIT` is opt-in. Rust's actual
-`resident_gdn_batch` uses that512-thread recurrence, original deferred raw history
-and state pair; native128-thread accepted-state commit and deferred prefix state
-remain as documented earlier. Do not mistake that separate commit default for a
-missing split-step optimization or infer defaults from the CUDA sibling.
+The connected Rust `strata_gr.wgsl` Norm follows `gr_norm_split_port_kernel`:
+256 threads per token/HC stream, identical4t+1024k visits, at most three retained
+float4s, original pending residual FMA, weighted values before scale, XOR16..1
+and ordered eight-warp sum. Slices follows `gr_down_sliced_kernel`:80 slices of
+128 columns, four lanes/row, four aligned eight-BF16 packs shared across actual
+rows1..8, XOR1/2 and original324 down/injection rows. Reduce adds all80 slices in
+order. Up stages320 low activations/token, retains the same warp/column mapping,
+original BF16 dots and XOR, sigmoid mix across four streams and pending residual
+FMA. Write materializes the same pending write at PLE/final boundaries. A single
+LOW global writer replaces upstream's repeated identical stores; every Up block
+still stages the same values locally before its own dots. This avoids racing
+stores without moving a consumer or adding a new owner.
+
+A real arithmetic difference found here is corrected: native Up's low activation
+is `x / (1 + exp(-x))`, while Rust had `x * sigmoid(x)`. Prompt already divided
+for low activations; its injection now spells native `2 * sigmoid(x)` as well.
+Division and a rounded reciprocal product can differ; source equivalence cannot
+be inferred from their algebraic equality. This review does not claim native
+and Vulkan exp/rsqrt or contraction yield physical bit parity.
+
+The actual `resident_gdn_batch::enqueue_native_gdn_operation` uses prepared raw
+QKV/Z and the original BF16 alpha/beta producer, convolution/history pair,
+recurrent state pair and finite fault/status owners. AB follows Intel
+`verify_kernels.dp.cpp::gdn_ab_multi_kernel`:64 threads/two heads, eight BF16
+weights/lane, explicit ordered FMA across all real rows, XOR16..1, beta sigmoid
+and alpha log1p/softplus with threshold20 and original dt/ssm_a. Rust log1p is an
+explicit WGSL backend approximation, not a missing host projection; physical
+transcendental accuracy remains unverified.
+
+Conv follows `gdn_conv_l2_multi_kernel`:128 channels/block, original four RAW
+causal taps, SiLU, Q/K-only four-warp L2, and final three RAW history rows. Step
+follows the selected default `gdn_step_norm_multi_kernel`:512 threads/head,
+four row groups each carrying32 state values/column, double-buffered Q/K, ordered
+four-group prediction, beta delta, explicit state/readout FMA, four-warp output
+norm and gamma/sigmoid-Z. `STRATA_GDN_SPLIT` is opt-in; default accepted-prefix
+commit is a separate128-thread/four32-column-tile state replay, already selected
+by `strata_gdn::replay_grid`. Verify preserves original prewindow state/history;
+original bound accepted-prefix commit repairs/publishes only n. Candidate writes
+or a staged count never grant state/fault completion authority.
+
+Prompt `resident_gdn::prompt::enqueue_prompt_full` uses actual full QKV/Z GEMMs
+and original AB matrix consumer, then `strata_gdn::prompt::{convolution_full,
+recurrence_full}`. It selects128-channel/64-token causal conv tiles, separate
+Q/K L2, original128-thread/32-column software-pipelined recurrence and final F16
+norm output. Intel `prefill/kernels.dp.cpp` defaults to tiled conv (serial and
+CONVL2 are opt-in), `gdn_rec_cols_pipe_kernel` (KEYHEAD opt-in, AMD quad outside
+Intel path), and `gdn_out_norm_kernel`. Rust's contiguous token-major H, native
+row/value-head state, preloaded next Q/K/V/control tuple and ordered recurrence
+match these selected producers/consumers. Output is packed into the original
+activation stage consumed by attn_output GEMM. Original paired state/history
+roots and all-layer prompt ticket preflight precede publication; no CPU float
+state mirror or decode-sized substitute handles a large prompt.
+
+## QSA selected attention/indexer and gate audit
+
+`resident_qsa_batch::enqueue_native_qsa_operation` connects original Qfull split,
+Q/K/index-query projection,256-thread norm/RoPE, packed candidate, native
+indexer, score/selection,64-cell attention and merge, gate and output projection.
+GDN/QSA dispatch geometry remains selected from actual bound layer families.
+`resident_mtp` consumes the same selected attention/gate family with its own
+original dense INT8 cache and full context; it does not inherit target's sparse
+2051-cell cap.
+
+Target candidate/committed ABI is264 words:1024 INT8 codes plus16 F16 scales.
+The Rust128-thread pack combines two independent native64-value quantization
+groups, preserving separate maxima/stored-half scales, nearest-even codes and
+actual full-owner dependencies. Packed32-bit word ownership is a Vulkan storage
+substitution, not a change to the64-value quantization scale. Original per-query
+causal selection restricts every candidate/cache read. Norm/RoPE retains256-thread
+XOR/eight-warp grouping, gamma, the first64 rotated dimensions and original
+positions; transcendental/backend rounding remains a physical acceptance gate.
+
+`Kernel::Indexer` follows selected Intel `native_qsa_indexer_append_steps` over
+real contiguous positions: round incoming keys through F16, three-row tail,
+ordered four-key mean and materialized products, original gamma/norm/RoPE and
+retained completed pooled blocks. Snapshot/window owners retain only bounded
+checkpoint input for accepted-prefix repair, not a full F32 key history.
+`Kernel::DirectScore` follows `qsa_select.dp.cpp::block_scores_multi_kernel`:
+256 blocks, eight warps/block, actual <=8 query rows, four positive head scores
+with original float4/XOR grouping, incomplete-block1e9 boost and per-query
+completed/dead-block choice. The existing Rust ABI omits an empty exact-boundary
+block and stores its dead block at the fixed capacity slot; this is a reviewed
+layout substitution, not permission to score a future completed block.
+
+Attention/merge follow `qsa_decode_attn.dp.cpp`'s default256-thread chunk kernel:
+two KV heads, twelve query heads/KV,64-cell chunks, original eight-value partial
+dot/XOR, max/sum, ordered value FMA and stable chunk max/rescale/FMA merge.
+Target's fixed33-chunk scratch is a bounded layout substitute for dynamic native
+strides. `MtpAttention/MtpMerge` specialize the same body to the full32768 context
+and actual packed original K/V page layout, with no sparse target truncation.
+Prompt uses32-query scratch tiles with full-query indices for causal output and
+selection; it reads the authoritative appended cache only after actual append.
+
+Native decode/MTP `native_qsa::gate` multiplies attention by an already rounded
+sigmoid. Native prompt `gate_attn_kernel` does that before one F16 rounding.
+Rust had replaced these with direct division; the connected consumers are now
+corrected together. Decode/MTP use256-thread blocks/24 blocks per6144-value row,
+matching native. Prompt uses128 packed-pair writers/block (256 output values),
+with both regular and sticky-fault consumers and both actual launch grids
+updated. Pair ownership avoids two threads racing the same32-bit storage word;
+it preserves the original contiguous256-output grouping. No output owner,
+activation precision or fault/acceptance guard changed.
+
+Source arithmetic, storage and scheduling mappings above are reviewed for these
+operator families. Actual physical numerical/state, prompt/count1/multirow,
+retained and all-resource recovery acceptance remain required; CPU/compiler
+coverage does not substitute for them.
 
 ## PLE operators: actual decode/prompt consumers and materialized arithmetic
 
@@ -367,9 +464,11 @@ and frozen-artifact evidence is recorded in the completion receipt.
 ## Source review still to finish
 
 - Consolidate actual selected dense/expert matrix and quantized arithmetic
-  producers, GR/GDN/QSA/PLE operators and prompt overlays against the pinned
-  call sites and prior receipts. Explicitly accept or resolve every remaining
-  storage, grouping, queue and math substitution; filenames alone do not pass.
+  producers and remaining prompt dense/expert overlays against the pinned
+  call sites and prior receipts. GR/GDN/QSA decode/prompt consumer review is
+  indexed above; physical numeric/state acceptance is still open. Explicitly
+  accept or resolve every remaining storage, grouping, queue and math
+  substitution; filenames alone do not pass.
 - Preserve the now-traced per-request126/128 graph lifetime and original
   owner erasure. Physical retained mixed-request execution still needs acceptance.
 - Validate the connected two-program PLE handoff above on the real protected

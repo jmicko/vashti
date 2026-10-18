@@ -6,41 +6,40 @@ checklist is a source-to-source audit, not a sequence of throughput experiments.
 Each row needs its connected consumer, real ownership/placement and state contract;
 adding an unused helper or optional switch does not complete a row.
 
-**Current CPU-only source:** `2899011f35c4695e293100fc6aadd230cbc9fc81`, branch
+**Current CPU-only source:** `d70bcb162fe70a4eeafd4aab6848bd6d0d344654`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [connected deferred PLE handoff receipt](kuno-strata-rewrite-completion.md#connected-deferred-ple-read-and-target-graph-handoff-2026-10-17).
-The actual target now submits layer0 before collecting the request-owned PLE
-rows, transfers EMB outside retained math and executes layer1..47/head as the
-second original program. Cold/capture/replay share that ordering. Two retained
-Vulkan segments replace upstream's in-graph host-ready flag; issuance may start
-earlier than its post-launch gather. This substitution is explicit and still
-requires physical acceptance. Original1M-row cache,256 slots/64 direct readers,
-151,453,696B HOST reservation and request-only wiping lifetime remain connected.
-Actual pending/ready/returned row owners share a maximum-two-operation quota.
-No public API/Vashti change, new dependency or GPU heap owner.
+and [GR/GDN/QSA audit receipt](kuno-strata-rewrite-completion.md#gr-gdn-qsa-source-audit-and-gate-arithmetic-correction-2026-10-17).
+Actual GR low SiLU now preserves native division; target/MTP and both prompt QSA
+gates preserve native rounded sigmoid/product, then original prompt F16 packing.
+Native256-output gate grouping and actual launch metadata/consumers change together.
+The indexed audit maps selected GR/GDN/QSA decode/prompt defaults, actual buffers,
+MTP consumers and explicit Vulkan packing/layout/scheduling substitutions.
+The preceding deferred PLE prefix/read/transfer/suffix and request-owned original
+reader/cache stay connected. No GPU owner, dependency, public API or Vashti change.
 
-621 distinct selected CPU cases /86 nonempty suites pass, with strict core/off
-**binary** Clippy and changed formatting/whitespace. The unchanged core's eight
-positional-reader cases retain their preceding receipt; they were not rerun.
-The actual original two-shard CPU audit collects two pending fixed-public row
-requests in reverse order; cold/warm bytes match the independent GGUF reader,
-original metadata and real scope join/erasure pass. Frozen ordinary artifact
-SHA256 `627b73bb5018ff04d36e2346164685664c594c14c2191a0330f6cb52dadd87d2`,
+623 distinct selected CPU cases /87 nonempty suites pass, with strict core/off
+**binary** Clippy and changed formatting/whitespace. Actual shader IR/metadata/
+SPIRV and fixed public F32/F16 rounding witnesses cover the corrected consumers.
+Unchanged original-file deferred row reads and eight core positional cases retain
+their preceding receipts; they were not rerun or relabeled as new evidence.
+Frozen ordinary artifact SHA256
+`054d0bb5a959ce7704dfdc9b00ed5fe0d984a541b6f14708bc68f2bca832b5db`,
 source/ordinary/frozen/mode0500/requested-and-resolved-features independently
 verified. Its early pre-adapter offline branch passes397 shader variants /
 139 physical-pointer checks /77 rounded-product modules /32 matrix configs.
 No GPU, model inference or speed measurement ran.
 
-**Whole rewrite incomplete; speed gate closed.** Finish selected operator/prompt/
-placement and queue/INFO/descriptor/shared/MTP/commit/cleanup source consolidation.
-Connected PLE cold/capture/replay/failure joins, extra segment/page pricing and
-full physical overlap/numerics remain unverified. Then require protected whole-
-model prompt/count1/multirow, accept/reject/EOS/cap/context, retained mixed/hot-
-request and all-resource recovery acceptance before speed. CLI remains compiled-
-public/one-request; private caller separately gated. Goal active CPU-only; sudo
-cache is expired, but this block required no privileged work. No GPU/service/
-install/release/frontend action. Required API/Vashti changes: none. Canonical
-checkout and inherited untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** Continue selected dense/expert
+arithmetic/prompt matrix/source placement and queue/INFO/descriptor/shared/MTP/
+commit/cleanup consolidation. GR/GDN/QSA source consumer/default review is indexed;
+physical numerics/state remain open. Deferred PLE cold/capture/replay/failure
+joins and extra segment/page pricing still need protected acceptance. Then require
+whole-model prompt/count1/multirow, accept/reject/EOS/cap/context, retained mixed/
+hot requests and all-resource recovery before speed. CLI remains compiled-public/
+one-request; private caller separately gated. Goal active CPU-only; sudo is expired
+and no privileged work was required. No GPU/service/install/release/frontend action.
+Required API/Vashti changes: none. Canonical checkout and inherited untracked cache
+preserved.
 
 
 
@@ -11254,3 +11253,99 @@ mixed/hot requests and all-resource recovery. Do not use speed or a passing
 subset to discard coupled components or mark the rewrite complete. Sudo cache
 is expired, but no privileged work was needed for this CPU block. Canonical
 checkout and inherited untracked cache remain untouched.
+
+
+## GR GDN QSA source audit and gate arithmetic correction (2026-10-17)
+
+Runtime source: `d70bcb162fe70a4eeafd4aab6848bd6d0d344654`, isolated
+`codex/strata-rust-port`. This continues the whole source review rather than
+ranking individual changes by speed. Read the current indexed GR/GDN/QSA audit
+for actual source/default selection, owning buffers, dependent consumers and
+backend substitutions. Whole rewrite incomplete; speed gate closed; CPU-only.
+
+### Source comparison and coupled correction
+
+- Actual target and MTP GR use `strata_gr::{Norm,Slices,Reduce,Up,Write}`.
+  Pinned Intel `fused_gr.dp.cpp` default split norm/sliced down selects the same
+  256-thread per-stream normalized visits,80x128-column slices, original BF16
+  pack/FMA and four-lane dot grouping, ordered80-slice reduction and warp up/mix.
+  Native `gr_up_multi_kernel` uses SiLU as `x / (1 + exp(-x))`; Rust had used
+  `x * sigmoid(x)`. The actual Up shader now divides. Prompt low activation
+  already divided; its injection now explicitly scales the original rounded
+  sigmoid as native does. These algebraic rewrites are not generally identical
+  floating-point operations.
+- Pinned Intel `native_qsa.dp.cpp::gate` and prompt
+  `prefill/kernels.dp.cpp::gate_attn_kernel` multiply by an already computed
+  sigmoid; Rust had divided attention directly by its denominator. Actual target,
+  MTP, regular prompt and full sticky-fault prompt consumers now preserve that
+  reciprocal/product order, with the original prompt F16 conversion afterwards.
+  Target/MTP gate workgroups now use256 threads and24 groups per6144-value row;
+  both real consumers' launch grids changed with the metadata/WGSL. Prompt keeps
+  whole32-bit packed-pair writers:128 threads produce the same contiguous256
+  output values/native block; both real prompt launch grids and both shader
+  metadata variants changed together. This packed-pair ownership is a reviewed
+  Vulkan substitution, avoiding adjacent F16 writes racing one storage word.
+- The broader audit traces actual decode/prompt GDN AB/conv/L2/recurrence/norm
+  and separate accepted-prefix state commit against Intel defaults, not opt-in
+  split-step, key-head, AMD quad or serial alternatives. Prompt uses its real
+  contiguous H,128-thread/32-column pipeline and F16 output consumer. QSA trace
+  covers actual264-word INT8 rows, stored-half quantization scales, bounded
+  F16-rounded three-row index tail, current checkpoint window, retained completed
+  pools, multiquery scoring and incomplete/dead block choice,64-cell attention,
+  original merge FMA and full-context MTP specialization. The current source
+  audit records these exact layouts/scheduling substitutions. No new GPU owner,
+  content persistence, model copy, dependency or public API was introduced.
+
+The source math distinction has directed public examples: with x bits
+`0x3e4ccccd` and a fixed rounded denominator `0x3fe8cc2c`, division gives F32
+`0x3de13646` versus reciprocal-product `0x3de13645`. With attention bits
+`0x3e40633c` and the same public denominator, the native product rounds to F16
+`0x2e9c` versus division's `0x2e9d`. These are rounding witnesses, not a claim that
+native and Vulkan exp implementations produce the same denominator or that a
+whole-model/GPU mismatch has been physically observed.
+
+### CPU/compiler evidence and limitations
+
+Evidence root: `/media/jmicko/faststore/kuno-development`.
+
+- Final `strata-operator-audit-final-validate-20261017.py/.log`,
+  `strata-operator-audit-final-final-test-build-20261017.log`,
+  `strata-operator-audit-final-full-cpu-20261017.log` and core/off Clippy logs:
+  **623 distinct selected CPU cases /87 nonempty suites**, zero failures;
+  strict core/off **binary** Clippy, six changed Rust files' formatting and git
+  whitespace pass. Two additional tests validate actual shader IR/metadata/SPIRV
+  plus directed F32/F16 rounding witnesses. The GR test checks actual decode Up
+  division and actual prompt injection reciprocal/product. The QSA test checks
+  actual decode/MTP gate and both actual prompt normal/fault producers, including
+  compiled workgroup metadata. No source-text assertion alone grants numeric
+  acceptance. Earlier `strata-source-audit-test-build` is retained as an initial
+  test-only import-path compile failure; the final build resolves it through the
+  same direct wgpu Naga dependency already used by existing shader tests.
+- The original-file deferred row audit and unchanged eight core positional tests
+  retain their preceding receipts; neither was rerun or presented as new GPU
+  evidence for these arithmetic corrections.
+- `strata-operator-audit-ordinary-20261017`, corresponding ordinary-build log
+  and `strata-operator-audit-artifact-proof-20261017.json`: normal stable source
+  build, frozen SHA256 `054d0bb5a959ce7704dfdc9b00ed5fe0d984a541b6f14708bc68f2bca832b5db`.
+  Exact source/ordinary/frozen equality and mode0500 verified. Requested features
+  `[strata-rust-port,strata-intel-core]`; resolved
+  `[direct-device,strata-intel-core,strata-resident-224,strata-resident-240,strata-rust-port]`.
+- `strata-operator-audit-shaders-20261017.log`: the actual frozen executable ran
+  only its early pre-adapter offline branch;397 variants/139 physical checks/
+  77 rounded-product modules/32 matrix configs pass, including corrected actual
+  shader bodies and workgroup metadata.
+
+Backend exp/log/rsqrt, floating-point contraction, source/layout placement and
+whole-model physical numerics/state/recovery remain unverified. No live inference,
+timing, GPU, service, install, release or frontend action was performed. Required API/Vashti changes: none.
+
+### Remaining work
+
+Continue selected dense/expert arithmetic/prompt matrix/source-placement and
+queue/INFO/descriptor/shared/MTP/commit/cleanup consolidation. GR/GDN/QSA source
+consumer/default review is now indexed, but physical proof remains required.
+Preserve both the deferred PLE reader/graph handoff and these coupled arithmetic/
+workgroup corrections. Finish the complete source audit before protected whole-
+model correctness and subsequent throughput. Do not discard these based on a
+partial speed report. Goal active CPU-only; sudo is expired and no privileged
+work was required. Canonical checkout and inherited untracked cache preserved.

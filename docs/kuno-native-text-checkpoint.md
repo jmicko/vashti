@@ -2,41 +2,40 @@
 
 Working checkout: `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`.
 
-**Current CPU-only source:** `2899011f35c4695e293100fc6aadd230cbc9fc81`, branch
+**Current CPU-only source:** `d70bcb162fe70a4eeafd4aab6848bd6d0d344654`, branch
 `codex/strata-rust-port`. Read the [current source audit](kuno-strata-current-source-audit.md)
-and [connected deferred PLE handoff receipt](kuno-strata-rewrite-completion.md#connected-deferred-ple-read-and-target-graph-handoff-2026-10-17).
-The actual target now submits layer0 before collecting the request-owned PLE
-rows, transfers EMB outside retained math and executes layer1..47/head as the
-second original program. Cold/capture/replay share that ordering. Two retained
-Vulkan segments replace upstream's in-graph host-ready flag; issuance may start
-earlier than its post-launch gather. This substitution is explicit and still
-requires physical acceptance. Original1M-row cache,256 slots/64 direct readers,
-151,453,696B HOST reservation and request-only wiping lifetime remain connected.
-Actual pending/ready/returned row owners share a maximum-two-operation quota.
-No public API/Vashti change, new dependency or GPU heap owner.
+and [GR/GDN/QSA audit receipt](kuno-strata-rewrite-completion.md#gr-gdn-qsa-source-audit-and-gate-arithmetic-correction-2026-10-17).
+Actual GR low SiLU now preserves native division; target/MTP and both prompt QSA
+gates preserve native rounded sigmoid/product, then original prompt F16 packing.
+Native256-output gate grouping and actual launch metadata/consumers change together.
+The indexed audit maps selected GR/GDN/QSA decode/prompt defaults, actual buffers,
+MTP consumers and explicit Vulkan packing/layout/scheduling substitutions.
+The preceding deferred PLE prefix/read/transfer/suffix and request-owned original
+reader/cache stay connected. No GPU owner, dependency, public API or Vashti change.
 
-621 distinct selected CPU cases /86 nonempty suites pass, with strict core/off
-**binary** Clippy and changed formatting/whitespace. The unchanged core's eight
-positional-reader cases retain their preceding receipt; they were not rerun.
-The actual original two-shard CPU audit collects two pending fixed-public row
-requests in reverse order; cold/warm bytes match the independent GGUF reader,
-original metadata and real scope join/erasure pass. Frozen ordinary artifact
-SHA256 `627b73bb5018ff04d36e2346164685664c594c14c2191a0330f6cb52dadd87d2`,
+623 distinct selected CPU cases /87 nonempty suites pass, with strict core/off
+**binary** Clippy and changed formatting/whitespace. Actual shader IR/metadata/
+SPIRV and fixed public F32/F16 rounding witnesses cover the corrected consumers.
+Unchanged original-file deferred row reads and eight core positional cases retain
+their preceding receipts; they were not rerun or relabeled as new evidence.
+Frozen ordinary artifact SHA256
+`054d0bb5a959ce7704dfdc9b00ed5fe0d984a541b6f14708bc68f2bca832b5db`,
 source/ordinary/frozen/mode0500/requested-and-resolved-features independently
 verified. Its early pre-adapter offline branch passes397 shader variants /
 139 physical-pointer checks /77 rounded-product modules /32 matrix configs.
 No GPU, model inference or speed measurement ran.
 
-**Whole rewrite incomplete; speed gate closed.** Finish selected operator/prompt/
-placement and queue/INFO/descriptor/shared/MTP/commit/cleanup source consolidation.
-Connected PLE cold/capture/replay/failure joins, extra segment/page pricing and
-full physical overlap/numerics remain unverified. Then require protected whole-
-model prompt/count1/multirow, accept/reject/EOS/cap/context, retained mixed/hot-
-request and all-resource recovery acceptance before speed. CLI remains compiled-
-public/one-request; private caller separately gated. Goal active CPU-only; sudo
-cache is expired, but this block required no privileged work. No GPU/service/
-install/release/frontend action. Required API/Vashti changes: none. Canonical
-checkout and inherited untracked cache preserved.
+**Whole rewrite incomplete; speed gate closed.** Continue selected dense/expert
+arithmetic/prompt matrix/source placement and queue/INFO/descriptor/shared/MTP/
+commit/cleanup consolidation. GR/GDN/QSA source consumer/default review is indexed;
+physical numerics/state remain open. Deferred PLE cold/capture/replay/failure
+joins and extra segment/page pricing still need protected acceptance. Then require
+whole-model prompt/count1/multirow, accept/reject/EOS/cap/context, retained mixed/
+hot requests and all-resource recovery before speed. CLI remains compiled-public/
+one-request; private caller separately gated. Goal active CPU-only; sudo is expired
+and no privileged work was required. No GPU/service/install/release/frontend action.
+Required API/Vashti changes: none. Canonical checkout and inherited untracked cache
+preserved.
 
 
 

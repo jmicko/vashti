@@ -6,15 +6,15 @@ Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
 
 **Current native-engine resume pointer (2026-10-17):** isolated
-`codex/strata-rust-port`, runtime source `2899011f35c4695e293100fc6aadd230cbc9fc81`. Read the
+`codex/strata-rust-port`, runtime source `d70bcb162fe70a4eeafd4aab6848bd6d0d344654`. Read the
 [current source audit](kuno-strata-current-source-audit.md),
-[connected deferred PLE handoff receipt](kuno-strata-rewrite-completion.md#connected-deferred-ple-read-and-target-graph-handoff-2026-10-17)
-and [completion gate](kuno-strata-rewrite-completion.md). Actual target prefix/read/
-transfer/suffix is connected across cold/capture/replay; the two-program Vulkan
-substitution is documented.621 selected CPU cases/86 suites, core/off binary lint,
-actual-model deferred row reads and normal frozen offline shaders pass. Whole
-rewrite incomplete; speed gate closed, work CPU-only. Remaining source review
-and protected physical/numerical/recovery acceptance still required. Required
+[GR/GDN/QSA audit receipt](kuno-strata-rewrite-completion.md#gr-gdn-qsa-source-audit-and-gate-arithmetic-correction-2026-10-17)
+and [completion gate](kuno-strata-rewrite-completion.md). Actual GR low/QSA gate
+arithmetic and gate workgroups now match their selected native consumers across
+target, MTP and prompt.623 selected CPU cases/87 suites, core/off binary lint and
+normal frozen offline shaders pass. Earlier deferred PLE handoff stays connected.
+Whole rewrite incomplete; speed gate closed, work CPU-only. Continue remaining
+source review, then protected physical/numerical/recovery acceptance. Required
 Vashti/API changes: none.
 
 ## Ownership
