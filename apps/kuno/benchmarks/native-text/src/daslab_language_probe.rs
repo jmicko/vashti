@@ -1151,7 +1151,25 @@ pub(crate) fn run(
         // SAFETY: the protected original-source launcher owns full authentication,
         // memory/driver admission, swap/core protection and a redacted panic hook.
         let cancel = AtomicBool::new(false);
-        let mut phases = |phase| eprintln!("native_public_execution phase={phase}");
+        // The complete selected engine has passed its audit. These process
+        // counters are already maintained by native execution; snapshot only
+        // three fixed PUBLIC phases/request, with no GPU work or kernel query.
+        // Keep the existing static markers as the outer observer's boundaries.
+        let mut graph_snapshots = Vec::with_capacity(6);
+        let mut phases = |phase| {
+            if matches!(
+                phase,
+                "request_preflight" | "last_prompt_input" | "request_private_erasure"
+            ) && graph_snapshots.len() < 6
+            {
+                graph_snapshots.push(serde_json::json!({
+                    "phase":phase,
+                    "submissions_dispatches_replays":cubecl::wgpu::native_strata_graph_stats(),
+                    "capture_shapes_replay_shapes_capture_ns_wait_ns":cubecl::wgpu::native_strata_graph_execution_stats(),
+                }));
+            }
+            eprintln!("native_public_execution phase={phase}");
+        };
         let done = if input.retained_check {
             // SAFETY: the SAME protected caller contract remains active across
             // both requests and checked close; no model/runtime is reconstructed.
@@ -1277,6 +1295,7 @@ pub(crate) fn run(
             "eos":done.generation.eos,"request_scope_erased":true,"content_persisted":false,
             "loaded_session_requests":if input.retained_check {2}else{1},
             "identical_public_repeat_matched":input.retained_check,
+            "native_graph_phase_counters":graph_snapshots,
             "target_close":{"main_buffers":done.target_main.buffers,"main_bytes":done.target_main.bytes,
                 "source_buffers":done.target_sources.buffers,"source_bytes":done.target_sources.bytes},
             "speed_acceptance":false,"full_rewrite_accepted":false});
