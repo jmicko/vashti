@@ -46,6 +46,28 @@ const FLAGS: usize = 17;
 const APPEND: usize = 28;
 const IO_DISPATCH_BOUND: u64 = 128;
 const INFO_BYTES: u64 = 512;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScratchClear {
+    Skip,
+    One,
+    Range(usize, usize),
+}
+/// Native payloads are written on their exact live ranges before consumption.
+/// Keep all readiness/append initialization; this never erases persistent state
+/// or supplies a full-request erasure/completion receipt.
+fn scratch_clear(index: usize, native_decode: bool, grouped: bool) -> ScratchClear {
+    if grouped {
+        if index == 0 {
+            ScratchClear::Range(if native_decode { FLAGS } else { 0 }, S)
+        } else {
+            ScratchClear::Skip
+        }
+    } else if native_decode && index < FLAGS {
+        ScratchClear::Skip
+    } else {
+        ScratchClear::One
+    }
+}
 #[derive(Clone, Copy, PartialEq)]
 struct Layout {
     stage: StageLayout,
@@ -1258,12 +1280,7 @@ impl ResidentQsa<'_> {
         use crate::strata_qsa::{self as native, Kernel};
         let h = |id| u::handle(arena, id);
         let prompt = crate::strata_prompt::active();
-        if !prompt
-            && matches!(
-                op,
-                Operation::PoolNorm | Operation::Clear(MEAN) | Operation::Clear(POOL)
-            )
-        {
+        if !prompt && op == Operation::PoolNorm {
             return Ok(true);
         }
         let carved = if prompt {
@@ -1944,24 +1961,14 @@ impl ResidentQsa<'_> {
             }
             match op {
                 Operation::Clear(i) => {
-                    if u::grouped_scratch_clear_enabled() {
-                        if i == 0 {
-                            if crate::strata_intel_core::enabled()
-                                && !crate::strata_prompt::active()
-                            {
-                                let live = ids
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|(i, _)| !matches!(*i, MEAN | POOL))
-                                    .map(|(_, &id)| id)
-                                    .collect::<Vec<_>>();
-                                u::zero_many(arena, &live)?;
-                            } else {
-                                u::zero_many(arena, &**ids)?;
-                            }
-                        }
-                    } else {
-                        u::zero(arena, ids[i])?;
+                    match scratch_clear(
+                        i,
+                        crate::strata_intel_core::enabled() && !crate::strata_prompt::active(),
+                        u::grouped_scratch_clear_enabled(),
+                    ) {
+                        ScratchClear::Skip => {}
+                        ScratchClear::One => u::zero(arena, ids[i])?,
+                        ScratchClear::Range(first, end) => u::zero_many(arena, &ids[first..end])?,
                     }
                 }
                 Operation::Positions => positions_batch::launch::<WgpuRuntime>(
@@ -2977,6 +2984,81 @@ fn verify_latest_cleared(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_payload_clear_policy_keeps_each_status_owner_and_legacy_schedule() {
+        for native in [false, true] {
+            for grouped in [false, true] {
+                let mut cleared = [0u8; S];
+                for i in 0..S {
+                    match scratch_clear(i, native, grouped) {
+                        ScratchClear::Skip => {}
+                        ScratchClear::One => cleared[i] += 1,
+                        ScratchClear::Range(first, end) => {
+                            for n in &mut cleared[first..end] {
+                                *n += 1;
+                            }
+                        }
+                    }
+                }
+                for (i, &n) in cleared.iter().enumerate() {
+                    assert_eq!(n, u8::from(!native || i >= FLAGS));
+                }
+                assert_eq!(cleared[APPEND], 1);
+                assert!(cleared[FLAGS..].iter().all(|&n| n == 1));
+            }
+        }
+    }
+    #[cfg(feature = "strata-intel-core")]
+    #[test]
+    fn native_attention_consumers_never_read_stale_inactive_payload_after_shrinking_windows() {
+        let mut stage = layout().stage;
+        stage.max_context = 32768;
+        let l = Layout::new(stage).unwrap();
+        let quote = l.requests().unwrap();
+        let mut partial = vec![0xA5u8; l.words[LOGIT]];
+        let mut stats = vec![0xA5u8; l.words[PROB]];
+        for (epoch, count) in [8usize, 3, 1, 8].into_iter().enumerate() {
+            let tag = (epoch + 1) as u8;
+            for start in [0, 1, 3, 63, 2047, 32768 - count] {
+                // Actual chunk producer geometry: token, KV head, chunk,
+                // twelve heads and one value dimension per thread.
+                for t in 0..count {
+                    let chunks = (start + t + 1).min(2051).div_ceil(64);
+                    for kv in 0..2 {
+                        for chunk in 0..chunks {
+                            let slot = kv * crate::strata_qsa::CHUNKS + chunk;
+                            for h in 0..12 {
+                                partial[t*crate::strata_qsa::PARTIAL_WORDS+(slot*12+h)*256..t*crate::strata_qsa::PARTIAL_WORDS+(slot*12+h+1)*256].fill(tag);
+                                stats[t * crate::strata_qsa::STATS_WORDS + (slot * 12 + h) * 2
+                                    ..t * crate::strata_qsa::STATS_WORDS + (slot * 12 + h + 1) * 2]
+                                    .fill(tag);
+                            }
+                        }
+                    }
+                }
+                // Independent merge indexing reads only the active count of
+                // chunks, even when previous windows left more chunks/rows.
+                for t in 0..count {
+                    for h in 0..qsa::QH {
+                        let active = (start + t + 1).min(2051).div_ceil(64);
+                        for c in 0..active {
+                            let head = ((h / 12) * 33 + c) * 12 + h % 12;
+                            assert_eq!(stats[t * 1584 + head * 2], tag);
+                            assert_eq!(stats[t * 1584 + head * 2 + 1], tag);
+                            for d in 0..256 {
+                                assert_eq!(partial[t * 202752 + head * 256 + d], tag);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Removing command traffic must not discount or discard any owner.
+        assert_eq!(l.requests().unwrap(), quote);
+        assert_eq!(l.words[MEAN] * 4, 32 * 1024 * 1024);
+        assert_eq!(l.words[POOL] * 4, 32 * 1024 * 1024);
+        assert!(quote[..FLAGS].iter().sum::<u64>() > 64 * 1024 * 1024);
+    }
     #[test]
     fn original_pending_batch_publishes_only_selected_prefix_without_full_cursor() {
         for count in 1..=MAX_BATCH {
