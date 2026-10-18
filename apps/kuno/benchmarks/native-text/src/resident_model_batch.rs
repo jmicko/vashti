@@ -113,7 +113,12 @@ const QSA_RUNTIME: u64 = 7_864_320
     } else {
         0
     };
-const NEW_MAIN: u64 = 33_062_912 + NATIVE_GR_MAIN + NATIVE_QSA_BATCH_MAIN;
+// The native shared family owns a sixth32KiB fault page. Use its owning
+// layout in both aggregate count and charge, rather than the legacy five-page
+// quote: otherwise every selected native model is rejected before allocation.
+const BASE_FAMILY_BUFFERS: usize = 10 + 16 + 29 + 5 + 19 + shared_batch::N + 6;
+const NEW_MAIN: u64 =
+    33_062_912 - 262_144 + shared_batch::MAIN_BYTES + NATIVE_GR_MAIN + NATIVE_QSA_BATCH_MAIN;
 const NATIVE_GDN_RUNTIME_INFO: u64 = if cfg!(feature = "strata-intel-core") {
     // runtime_info_reservation(..., true) retains both audited copies.
     2 * crate::strata_gdn::prompt::INFO_BYTES
@@ -1377,12 +1382,7 @@ impl Plan {
             ),
             (
                 shared_batch::Workspace::allocation_requests(graph)?.to_vec(),
-                262_144
-                    + if crate::strata_intel_core::enabled() {
-                        32768
-                    } else {
-                        0
-                    },
+                shared_batch::MAIN_BYTES,
             ),
         ] {
             if sum(&pages)? != expected {
@@ -1636,7 +1636,7 @@ impl Plan {
                 0
             };
         if requests.len()
-            != 90
+            != BASE_FAMILY_BUFFERS
                 + if crate::strata_intel_core::enabled() {
                     crate::strata_global_moe::Workspace::requests_for_context(context)?.len()
                 } else {
@@ -7234,7 +7234,7 @@ mod tests {
     // cache/position/pooled roots, native GR and large selection planes together.
     fn expected_original_main() -> u64 {
         if crate::strata_intel_core::enabled() {
-            1_056_440_320
+            1_056_473_088
         } else if crate::strata_port::enabled() {
             852_459_520
         } else {
@@ -7253,7 +7253,7 @@ mod tests {
     }
     fn expected_target_main() -> u64 {
         if crate::strata_intel_core::enabled() {
-            2_576_711_680
+            2_576_744_448
         } else {
             expected_original_main()
                 + if crate::strata_port::eight_rows() {
@@ -8490,7 +8490,7 @@ mod context32768_tests {
         assert_eq!(QSA_RUNTIME, 18_874_368);
         assert_eq!(
             NEW_MAIN - NATIVE_GR_MAIN,
-            33_062_912 + 81_690_624 - 17_825_792
+            33_062_912 + 32_768 + 81_690_624 - 17_825_792
         );
         assert_eq!(PUBLIC_MAIN, 32_505_856);
         let target = runtime_bytes(16).unwrap()

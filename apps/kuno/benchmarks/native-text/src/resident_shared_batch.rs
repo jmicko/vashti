@@ -23,11 +23,17 @@ use kuno_text::{
 use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
 
-const N: usize = if crate::strata_intel_core::enabled() {
+pub(crate) const N: usize = if crate::strata_intel_core::enabled() {
     6
 } else {
     5
 };
+pub(crate) const MAIN_BYTES: u64 = 262_144
+    + if crate::strata_intel_core::enabled() {
+        32_768
+    } else {
+        0
+    };
 const GATE: usize = 0;
 const UP: usize = 1;
 const ACT: usize = 2;
@@ -692,10 +698,7 @@ mod tests {
         if N == 6 {
             assert_eq!(l.requests().unwrap().get(5), Some(&32768));
         }
-        assert_eq!(
-            l.requests().unwrap().into_iter().sum::<u64>(),
-            262144 + if N == 6 { 32768 } else { 0 }
-        );
+        assert_eq!(l.requests().unwrap().into_iter().sum::<u64>(), MAIN_BYTES);
         for count in [1, 3, 5, 8] {
             for (words, width) in [(l.words[GATE], 640), (l.words[DOWN], 2560)] {
                 assert_eq!(
