@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 static ENABLED: AtomicBool = AtomicBool::new(false);
-thread_local! { static TOTALS: RefCell<BTreeMap<&'static str, (u64,u64)>> = RefCell::new(BTreeMap::new()); }
+thread_local! { static TOTALS: RefCell<BTreeMap<&'static str, (u64,u64,u64)>> = const { RefCell::new(BTreeMap::new()) }; }
 pub(crate) fn enable_compiled_public() {
     ENABLED.store(true, Ordering::Release);
 }
@@ -36,6 +36,7 @@ impl Timer {
     }
     pub(crate) fn mark(&mut self, name: &'static str) -> kuno_text::Result<()> {
         if let Some((client, start)) = &mut self.0 {
+            let enqueue_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
             cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
             let ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
             TOTALS.with(|v| {
@@ -43,6 +44,7 @@ impl Timer {
                 let t = v.entry(name).or_default();
                 t.0 += 1;
                 t.1 = t.1.saturating_add(ns);
+                t.2 = t.2.saturating_add(enqueue_ns);
             });
             *start = Instant::now();
         }

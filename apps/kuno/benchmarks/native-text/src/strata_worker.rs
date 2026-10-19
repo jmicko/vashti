@@ -297,6 +297,12 @@ async fn serve(
                 &mut |phase| {
                     if public_check {
                         eprintln!("public_prefill_phase {phase}");
+                        if prefill_check == Some(true) {
+                            eprintln!(
+                                "public_prefill_phase_time {phase} {}",
+                                start.elapsed().as_nanos()
+                            );
+                        }
                     }
                     if phase == "request_private_erasure" {
                         generation_ns =

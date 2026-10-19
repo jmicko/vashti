@@ -204,6 +204,18 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
         .offset_end(root_bytes - end as u64))
 }
 
+/// Bound only the execution grid. The descriptors and shader Params retain
+/// the complete private prompt/map extents; no ownership check is narrowed.
+fn member_dispatches(members: usize, count: usize) -> Result<[usize; 2]> {
+    if !(1..=groups::ROUTE_CAPACITY).contains(&count) || !(1..=count).contains(&members) {
+        return Err(crate::strata_prompt::invalid_buffer_length());
+    }
+    Ok([
+        (members * 1280).div_ceil(256),
+        (members * 320).div_ceil(256),
+    ])
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enqueue(
     client: &ComputeClient<WgpuRuntime>,
@@ -273,6 +285,11 @@ pub(crate) fn enqueue(
             )?;
             issued += 1;
         }
+        // The route map was fully validated above. Each expert consumes only
+        // its routed members, not every token in the prompt. Keep p.count as
+        // the full prompt geometry for all shader ownership/route checks.
+        let members = map[516 + group] as usize;
+        let [gather_groups, activate_groups] = member_dispatches(members, count)?;
         let dq = (group % DEQUANT_SLOTS) * DQ_WORDS;
         let base = [
             count as u32,
@@ -298,13 +315,7 @@ pub(crate) fn enqueue(
             stage[0].clone().binding(),
             fault.clone().binding(),
         ]);
-        dispatch(
-            client,
-            Op::Gather,
-            [(count * 2560 / 2).div_ceil(256), 1, 1],
-            args,
-            base,
-        )?;
+        dispatch(client, Op::Gather, [gather_groups, 1, 1], args, base)?;
         // Both FP16 images are queued before their coupled expert products.
         for down in [false, true] {
             let mut words = base;
@@ -370,13 +381,7 @@ pub(crate) fn enqueue(
             owners[6].clone().binding(),
             fault.clone().binding(),
         ]);
-        dispatch(
-            client,
-            Op::Activate,
-            [(count * 640 / 2).div_ceil(256), 1, 1],
-            args,
-            base,
-        )?;
+        dispatch(client, Op::Activate, [activate_groups, 1, 1], args, base)?;
         crate::strata_matrix::expert(
             client,
             [
@@ -594,5 +599,26 @@ mod raw_slot_tests {
         assert!(raw_slot(&root, 0, [1025, 1025, 2048]).is_err());
         assert!(raw_slot(&root, 0, [0, 0, 2048]).is_err());
         assert!(raw_slot(&root, 0, [4 * 1024 * 1024; 3]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod member_dispatch_tests {
+    use super::*;
+    #[test]
+    fn routed_member_grids_cover_exact_work_and_preserve_full_prompt_bounds() {
+        for count in [1usize, 35, 256, 2048, 4096] {
+            for members in [1, count.div_ceil(2), count] {
+                let [gather, activate] = member_dispatches(members, count).unwrap();
+                for (grid, words) in [(gather, members * 1280), (activate, members * 320)] {
+                    assert!(grid * 256 >= words && (grid - 1) * 256 < words);
+                }
+            }
+        }
+        assert_eq!(member_dispatches(1, 4096).unwrap(), [5, 2]);
+        assert_eq!(member_dispatches(4096, 4096).unwrap(), [20480, 5120]);
+        for (members, count) in [(0, 1), (2, 1), (1, 0), (4097, 4096), (1, 4097)] {
+            assert!(member_dispatches(members, count).is_err());
+        }
     }
 }
