@@ -94,16 +94,20 @@ mod native {
         // Cooperative loads can consume these original global owners directly;
         // bouncing them through SLM adds loads, stores and barriers at every K16.
         // Keep the original masked staging path for any partial tile/reduction.
-        if token + 8 <= count && row + 16 <= rows && columns % 16 == 0 {
+        if token + 8 <= count && row + 16 <= rows && columns.is_multiple_of(16) {
             let mut k = 0usize;
             while k < columns {
                 let first_a = token * columns + k;
                 let first_b = weight_first + row * columns + k;
-                cmma::load(&am, &input.to_slice().slice(first_a, input.len()), columns);
+                cmma::load(
+                    &am,
+                    &input.to_slice().slice(first_a, input.len()),
+                    u32::cast_from(columns),
+                );
                 cmma::load(
                     &bm,
                     &weight.to_slice().slice(first_b, weight.len()),
-                    columns,
+                    u32::cast_from(columns),
                 );
                 cmma::execute::<F, F, f32, f32>(&am, &bm, &acc, &acc);
                 k += 16;
