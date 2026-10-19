@@ -1235,3 +1235,87 @@ preserve the accepted299579b5 baseline and measure the same retained workload.
 Neither offline validation nor the address equivalence argument proves a speed
 gain. Do not time this candidate before that acceptance, and do not roll back
 coupled port dependencies merely because an isolated timer regresses.
+
+
+## Direct expert products: strict rounding diagnosis (2026-10-18 local)
+
+User returned both GPUs and refreshed sudo. Initial preflight
+`strata-direct-expert-input-retained-20261019` rejected BEFORE admission/load:
+a cached idle Kuno image worker held17,637,675,008B on Intel. Graceful
+`systemctl restart kuno.service` evicted that owned worker. The immediate
+post-restart inspection raced listener startup and failed; the subsequent
+`strata-direct-expert-input-resume-ready-host-20261019.json` confirms allHTTP200,
+Intel50,688,000B and NVIDIA compute0. No driver/GPU reset or installation.
+
+`strata-direct-expert-input-retained-clear-20261019` then completed two identical
+491-output/EOS requests,151 windows/44 repairs, real erasure/close and clean
+physical recovery. It was NOT timed or accepted: historical baseline produced
+362 outputs. The original frozen299579b5 control
+`strata-direct-expert-input-original-control-20261019` reproduced362/EOS,
+110 windows/31 repairs and clean recovery on this same system.
+
+Source55294dda adds a bounded original-weight/synthetic-input comparison to the
+existing protected numerical harness. It invokes ACTUAL global physical-address
+expert shaders with both original staged and direct input modes, same real
+weights, same immutable Q8 planes, complete private owners and real indirect
+read dependencies. It tests10 roles/formats at counts1/3/7/8, including real
+4/2/1 groups and multiple chunks. Only numeric mismatch metadata persists.
+No generated text, activations or route traces are saved. The old staged
+variant is a diagnostic control; production dispatch stays direct.
+
+`strata-direct-expert-input-parity-check-20261019` correctly FAILED on one
+Q2_0 DOWN result at count3:1 bit mismatch, max absolute difference
+1.4901161e-8, with equal status. Preceding cases matched exactly. The failed
+receipt remains failed, with checked cleanup and normal physical recovery.
+The actual expert sources lacked STRATA_ROUND_PRODUCTS, so the existing
+NoContraction postpass was not being invoked for them. The result is consistent with a different contraction choice when activation
+storage changed; a changed response alone did
+not identify wrong plane addresses.
+
+Source883d584b applies the original contract(off) separately rounded product
+control to BOTH actual global expert input modes. The shared existing postpass
+marks real FMul results NoContraction and leaves explicit FMAs unchanged. No
+reference, tolerance, packing, source address, row-entry grouping or verification
+rule was weakened. This corrects a previously untested expert precision gap in
+the representative numerical audit, rather than removing a coupled dependency.
+
+Frozen `strata-direct-expert-rounded-20261019`, source
+`883d584b98fc30922f2272e8eb4e1228e4be8f46`, SHA256
+`32bd4bb33333f6e56d79a4d26d13de139144c1a8e839c05f1b6d9388f4fe6c1c`.
+`strata-direct-expert-rounded-numerics-20261019/numerics.json` passes114 cases:
+40 expert cases have ZERO bit/status differences and max_abs0; the original74
+cases also pass unchanged. Complete private cleanup and physical recovery pass.
+Pinned offline shader validation passes397 variants/32 matrix configurations.
+Full-model retained validation and throughput acceptance are still pending at
+this intermediate checkpoint; baseline20.6089 remains the only accepted warm
+rate. The goal remains paused; current work proceeds under the direct resume.
+
+
+## Rounded direct-input candidate acceptance (2026-10-18 local)
+
+PASS for fixed-public retained engine measurement on frozen883d584b/SHA32bd4bb3
+identified above. Full selected loading/placement, original GPU and mapped HOST
+weights, real experts, native quant/routing/dense/graph families and target/MTP
+verification/commit remain connected. The only production changes from the
+previous accepted path are paired activation staging/consumer removal and the
+original separately rounded expert products. Source55294dda also adds the
+bounded fixed-public diagnostic; ordinary requests never execute it.
+
+`strata-direct-expert-rounded-retained-20261019/intel.json` completes two same
+loaded-Session requests, identical362 outputs/EOS,108 windows/32 repairs in the
+reported second request. Both actual target and draft owners are erased, final
+close completes, all services/admission recover, Intel returns50,688,000B and
+NVIDIA compute0; all classified driver fault counts remain0. Active protection:
+MemorySwapMax0,LimitCORE0,MemoryMax51,745,128,448B,RuntimeMax40min. Visible
+unsaved public tail is coherent; no executed-code quality claim or bitwise
+cross-artifact token comparison is made from equal output counts. The prior
+build's110 windows/31 repairs differs, consistent with the precision correction.
+
+All114 numerical cases, including40 BIT-EXACT actual staged/direct expert
+comparisons, pass without relaxing any check. Both targeted actual source tests,
+strict selected-core Clippy and397 shader/32 matrix validations pass. The
+remaining private/production/max-context/soak exclusions of the prior audit stay.
+The timing manifest advances only to this frozen artifact, original code/Q2
+fixture and two identical requests; prior299579b5 acceptance is retained as
+`previous_acceptance` and its20.6089 warm result remains historical baseline.
+Timing has not yet been collected for the new artifact at this decision.
