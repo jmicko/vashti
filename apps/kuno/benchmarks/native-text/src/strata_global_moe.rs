@@ -56,6 +56,14 @@ pub(crate) const MAIN_BYTES: u64 = crate::strata_sampler::request::MAIN_BYTES
 fn reject() -> Error {
     Error::InvalidFormat("Strata global routed family")
 }
+/// The selected Intel prompt kernel owns eight independent token subgroups.
+/// This changes execution coverage only; each token keeps its32-lane math.
+fn prompt_route_groups(count: usize) -> Result<u32> {
+    if !(1..=crate::strata_prompt::groups::CAPACITY).contains(&count) {
+        return Err(reject());
+    }
+    u32::try_from(count.div_ceil(8)).map_err(|_| reject())
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kernel {
     Route,
@@ -63,6 +71,7 @@ enum Kernel {
     Reduce,
     SharedReduce,
     PromptRoute,
+    PromptRouteFinalize,
     PromptReduce,
 }
 impl Kernel {
@@ -83,6 +92,10 @@ impl Kernel {
                 crate::strata_prompt::groups::shader_prefix()
                     + include_str!("strata_prompt_route.wgsl")
             }
+            Self::PromptRouteFinalize => {
+                crate::strata_prompt::groups::shader_prefix()
+                    + include_str!("strata_prompt_route_finalize.wgsl")
+            }
             Self::PromptReduce => {
                 crate::strata_prompt::groups::shader_prefix()
                     + include_str!("strata_prompt_reduce.wgsl")
@@ -98,6 +111,7 @@ impl KernelMetadata for Kernel {
             Self::Reduce => "StrataGlobalRouteReduceAndStamp",
             Self::SharedReduce => "StrataGlobalSharedReduceAndStamp",
             Self::PromptRoute => "StrataPromptNativeRoutes",
+            Self::PromptRouteFinalize => "StrataPromptNativeRouteHeader",
             Self::PromptReduce => "StrataPromptRankReduceAndStamp",
         }
     }
@@ -499,10 +513,27 @@ impl Workspace {
                 } else {
                     Kernel::Route
                 }),
-                CubeCount::Static(if prompt { 1 } else { count as u32 }, 1, 1),
+                CubeCount::Static(
+                    if prompt {
+                        prompt_route_groups(count)?
+                    } else {
+                        count as u32
+                    },
+                    1,
+                    1,
+                ),
                 route_args()?,
             );
-            if !prompt {
+            if prompt {
+                // The independent token groups never publish a prefix header.
+                // Their real map/probability/fault dependencies precede this
+                // checked serial footer and the original audited host readback.
+                client.launch_unchecked(
+                    Box::new(Kernel::PromptRouteFinalize),
+                    CubeCount::Static(1, 1, 1),
+                    route_args()?,
+                );
+            } else {
                 // Selected Intel schedule: route<512> per token, then the
                 // original128-thread resident-plan scan. Both nodes bind the
                 // SAME private map root, so capture/replay owns the real RAW
@@ -947,6 +978,7 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
         Kernel::Reduce,
         Kernel::SharedReduce,
         Kernel::PromptRoute,
+        Kernel::PromptRouteFinalize,
         Kernel::PromptReduce,
     ]
     .into_iter()
@@ -986,6 +1018,84 @@ mod direct_quote_tests {
 
 #[cfg(test)]
 mod route_plan_tests {
+    #[test]
+    fn prompt_route_workgroups_cover_each_token_once_without_live_tail_rows() {
+        use super::*;
+        for count in [1, 8, 9, 35, crate::strata_prompt::groups::CAPACITY] {
+            let groups = prompt_route_groups(count).unwrap();
+            let mut written = vec![0u8; count];
+            for block in 0..groups as usize {
+                for subgroup in 0..8 {
+                    let token = block * 8 + subgroup;
+                    if token < count {
+                        written[token] += 1;
+                    }
+                }
+            }
+            assert!(written.iter().all(|&writes| writes == 1));
+            assert!((groups as usize) * 8 >= count);
+            assert!(((groups - 1) as usize) * 8 < count);
+        }
+        assert_eq!(prompt_route_groups(1).unwrap(), 1);
+        assert_eq!(prompt_route_groups(8).unwrap(), 1);
+        assert_eq!(prompt_route_groups(9).unwrap(), 2);
+        assert_eq!(prompt_route_groups(4096).unwrap(), 512);
+        assert!(prompt_route_groups(0).is_err());
+        assert!(prompt_route_groups(crate::strata_prompt::groups::CAPACITY + 1).is_err());
+    }
+
+    #[test]
+    fn prompt_route_and_checked_header_compile_with_actual_original_owner_bindings() {
+        use super::*;
+        use wgpu::naga as n;
+        for kernel in [Kernel::PromptRoute, Kernel::PromptRouteFinalize] {
+            let source = kernel.source();
+            let module = n::front::wgsl::parse_str(&source).unwrap();
+            let validation = n::valid::Validator::new(
+                n::valid::ValidationFlags::all(),
+                n::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            assert_eq!(module.entry_points[0].workgroup_size, [256, 1, 1]);
+            assert_eq!(kernel.dim(), CubeDim::new_1d(256));
+            let bindings = module
+                .global_variables
+                .iter()
+                .filter_map(|(_, g)| g.binding.as_ref().map(|b| (b.group, b.binding)))
+                .collect::<Vec<_>>();
+            assert_eq!(bindings, (0..7).map(|b| (0, b)).collect::<Vec<_>>());
+            let uses = validation.get_entry_point(0);
+            for (handle, _) in module.global_variables.iter().filter(|(_, g)| {
+                g.binding
+                    .as_ref()
+                    .is_some_and(|b| b.binding == 2 || b.binding == 4)
+            }) {
+                assert!(uses[handle].contains(n::valid::GlobalUse::WRITE));
+            }
+            n::back::spv::write_vec(
+                &module,
+                &validation,
+                &n::back::spv::Options::default(),
+                Some(&n::back::spv::PipelineOptions {
+                    shader_stage: n::ShaderStage::Compute,
+                    entry_point: "main".into(),
+                }),
+            )
+            .unwrap();
+        }
+        let routes = Kernel::PromptRoute.source();
+        assert!(routes.contains("let token=block.x*8u+sg;let live=token<p.count;"));
+        assert!(!routes.contains("first+=8u"));
+        assert!(!routes.contains("map[0]="));
+        let header = Kernel::PromptRouteFinalize.source();
+        let fault_gate = header
+            .find("if atomicLoad(&fault[0])!=0u {return;}")
+            .unwrap();
+        let publication = header.find("map[0]=p.count;").unwrap();
+        assert!(fault_gate < publication);
+    }
+
     #[test]
     fn actual_joined_vector_combine_has_native_geometry_and_binds_the_original_shared_result() {
         use super::*;

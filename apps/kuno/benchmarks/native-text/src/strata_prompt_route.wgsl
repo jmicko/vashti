@@ -1,6 +1,8 @@
-// MIT Strata Intel prompt router: all chunk rows, native top10/softmax.
+// MIT Strata Intel prompt router: eight independent tokens per workgroup,
+// matching prefill/kernels.dp.cpp::route_kernel<16> and ceil(T/8) launch.
 // CPU grouping consumes logical+physical route pairs once per layer.
 // Logical expert -> physical cell remap is request-private and bijective.
+// The following finalize dispatch publishes the header only after all groups.
 struct Params { count:u32,layer:u32,epoch:u32,r0:u32 }
 @group(0) @binding(0) var<storage,read> logits:array<f32>;
 @group(0) @binding(1) var<storage,read> remap:array<u32>;
@@ -12,17 +14,17 @@ struct Params { count:u32,layer:u32,epoch:u32,r0:u32 }
 var<workgroup> bad:atomic<u32>;
 fn finite(x:f32)->bool { return abs(x)<=bitcast<f32>(0x7f7fffffu); }
 @compute @workgroup_size(256)
-fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
+fn main(@builtin(workgroup_id) block:vec3<u32>,@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,
         @builtin(num_subgroups) nsg:u32) {
     if p.count<1u || p.count>PROMPT_MAX_ROWS || p.layer>=48u || p.epoch==0u || p.r0>3u
         || width!=32u || nsg!=8u || arrayLength(&logits)<p.count*512u
         || arrayLength(&remap)!=32768u || arrayLength(&map)!=PROMPT_RAW_WORDS
-        || arrayLength(&probability)!=PROMPT_PROB_WORDS || arrayLength(&usage)!=32768u || arrayLength(&fault)<1u {return;}
+        || arrayLength(&probability)!=PROMPT_PROB_WORDS || arrayLength(&usage)!=32768u || arrayLength(&fault)<1u
+        || block.x>=(p.count+7u)/8u || block.y!=0u || block.z!=0u {return;}
     if local==0u {atomicStore(&bad,0u);}
     workgroupBarrier();
-    for(var first=0u;first<p.count;first+=8u) {
-    let token=first+sg;let live=token<p.count;
+    let token=block.x*8u+sg;let live=token<p.count;
     var candidates:array<f32,16>;
     for(var i=0u;i<16u;i++) {
         var value=bitcast<f32>(0xff7fffffu);
@@ -63,11 +65,8 @@ fn main(@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,
         if !finite(value)||value<0.0||value>1.0 {atomicOr(&bad,4u);}
         probability[token*10u+lane]=value;
     }
-    }
     workgroupBarrier();
     if local==0u {
-        if atomicLoad(&bad)!=0u {atomicOr(&fault[0],128u);return;}
-        if (p.r0&1u)!=0u {for(var route=0u;route<p.count*10u;route++) {usage[p.layer*512u+map[PROMPT_LOGICAL+route]]+=1.0;}}
-        map[0]=p.count;map[1]=0u;map[2]=p.count;map[3]=0u;
+        if atomicLoad(&bad)!=0u {atomicOr(&fault[0],128u);}
     }
 }
