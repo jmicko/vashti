@@ -801,7 +801,10 @@ impl Workspace {
             )
             .map_err(u::fault)?;
         let cache = self.adaptive.as_mut().ok_or_else(reject)?;
-        sources.finish_publication(|| cache.commit(proposal))
+        let swaps = proposal.swaps.len();
+        sources.finish_publication(|| cache.commit(proposal))?;
+        crate::strata_global_adapt::record_published_swaps(swaps);
+        Ok(())
     }
     pub(crate) fn validate_idle(&self) -> Result<()> {
         if self.active.is_some() || self.layer_pending {

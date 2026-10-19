@@ -4,6 +4,15 @@
 use crate::strata_global_plan::{EXPERTS, LAYERS, Plan};
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
+// Resource count only, exposed solely by the fixed-public laboratory receipt.
+// Credit follows successful copy join AND map publication, never a proposal.
+static PUBLISHED_SWAPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn record_published_swaps(count: usize) {
+    PUBLISHED_SWAPS.fetch_add(count as u64, std::sync::atomic::Ordering::Relaxed);
+}
+pub(crate) fn published_swaps() -> u64 {
+    PUBLISHED_SWAPS.load(std::sync::atomic::Ordering::Relaxed)
+}
 pub(crate) const EVERY: u64 = 4;
 pub(crate) const MAX_SWAPS: usize = 96;
 pub(crate) const WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;

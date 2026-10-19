@@ -1298,6 +1298,8 @@ pub(crate) fn run(
             .transpose()?;
         let record = serde_json::json!({"controller":"global-original-sources",
             "speculation_window":public_speculation_window,
+            "gpu_adaptive_expert_cache":cfg!(feature="strata-gpu-adaptive-usage"),
+            "published_expert_swaps":crate::strata_global_adapt::published_swaps(),
             "requested_output_limit":if cfg!(feature = "strata-public-cap-check"){16}else{MAX_OUTPUTS},
             "fixed_public_cap_checked":cfg!(feature = "strata-public-cap-check"),
             "greedy_target_verification":done.generation.greedy,"outputs":done.generation.outputs,
