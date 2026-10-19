@@ -124,6 +124,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 return Err(error());
             }
             native.run_prompt_full(self, executor, tokens, cancel)?;
+            let mut timing =
+                crate::strata_prefill_profile::Timer::new(self.arena.client().map_err(u::fault)?)?;
             if let Some(draft) = draft.as_deref_mut() {
                 let carry =
                     p::outer_workspace()?[native.prompt_final_residual(tokens.len())?].clone();
@@ -136,6 +138,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     )?;
                 }
             }
+            timing.mark("mtp_teacher")?;
             u::cancel(cancel)?;
             Ok(())
         }));
@@ -217,6 +220,8 @@ impl Workspace {
         tokens: &[u32],
         cancel: &AtomicBool,
     ) -> Result<()> {
+        let mut timing =
+            crate::strata_prefill_profile::Timer::new(m.arena.client().map_err(u::fault)?)?;
         self.prove_outer(m)?;
         self.validate_global_scope(e, &m.admission)?;
         let start = m.position;
@@ -280,6 +285,7 @@ impl Workspace {
         let mut stages = Vec::with_capacity(LAYERS);
         let mut ple = None;
         let mut previous: Option<(Handle, Handle)> = None;
+        timing.mark("setup_embedding")?;
         for layer in 0..LAYERS {
             u::cancel(cancel)?;
             if layer == 1 {
@@ -312,6 +318,7 @@ impl Workspace {
                 0,
                 true,
             )?;
+            timing.mark("gr_attention_input")?;
             stages.push(match &mut m.layers[layer] {
                 Layer::Gdn(stage, public) => Stage::Gdn(stage.enqueue_prompt_full(
                     m.graph,
@@ -340,6 +347,7 @@ impl Workspace {
                     cancel,
                 )?),
             });
+            timing.mark("attention")?;
             previous = Some((v[0].clone(), v[2].clone()));
             Self::prompt_gr(
                 m,
@@ -364,6 +372,7 @@ impl Workspace {
                 &BatchSpans::new(count, 0, 0, D, 0, 512),
                 cancel,
             )?;
+            timing.mark("gr_router")?;
             let sources = e.strata_global_sources.as_ref().ok_or_else(error)?.clone();
             self.global_moe.as_mut().ok_or_else(error)?.enqueue_prompt(
                 m.graph,
@@ -375,6 +384,7 @@ impl Workspace {
                 m.b.fault,
                 cancel,
             )?;
+            timing.mark("experts")?;
             for (name, index, width) in [
                 ("ffn_gate_shexp.weight", 6, 640),
                 ("ffn_up_shexp.weight", 7, 640),
@@ -434,6 +444,7 @@ impl Workspace {
                 ],
                 info,
             )?;
+            timing.mark("shared_expert_merge")?;
             previous = Some((v[0].clone(), v[3].clone()));
         }
         if let Some((source, block)) = previous.take() {
@@ -511,6 +522,7 @@ impl Workspace {
         gdn_boundary.commit();
         qsa_boundary.commit();
         m.position = end;
+        timing.mark("boundary_commit")?;
         Ok(())
     }
 }

@@ -15,6 +15,7 @@ mod strata_cache;
 mod strata_dense;
 mod strata_engine;
 mod strata_expert_fused;
+mod strata_prefill_profile;
 mod strata_shared_native;
 mod strata_weight_q8;
 mod strata_worker;
@@ -1179,6 +1180,20 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("--public-prefill-profile" | "--public-prefill-check")
+    ) {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.len() != 3 {
+            return Err("native_settings_required".into());
+        }
+        return strata_worker::public_prefill_check(
+            std::path::Path::new(&args[2]),
+            args[1] == "--public-prefill-profile",
+        )
+        .map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--public-long-prompt-check") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {

@@ -16,24 +16,30 @@ use crate::native_artifact::{Settings, verify};
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false)
+    run_mode(path, false, None)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true)
+    run_mode(path, true, None)
 }
-fn public_prompt() -> Vec<u8> {
+pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
+    if profile {
+        crate::strata_prefill_profile::enable_compiled_public();
+    }
+    run_mode(path, true, Some(profile))
+}
+fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
         "<|im_start|>system\nYou are a helpful assistant. Reference material follows.\n",
     );
-    for _ in 0..600 {
+    for _ in 0..repeats {
         text.push_str("A calculator evaluates arithmetic. Notes organize information. Images illustrate ideas.\n");
     }
     text.push_str("<|im_end|>\n<|im_start|>user\nWhat is 17 times 19? Reply with the numerical answer.\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
     text.into_bytes()
 }
-fn run_mode(path: &Path, public_check: bool) -> Result<()> {
+fn run_mode(path: &Path, public_check: bool, prefill_check: Option<bool>) -> Result<()> {
     if public_check {
         crate::resident_util::enable_compiled_public_diagnostics();
     }
@@ -88,9 +94,14 @@ fn run_mode(path: &Path, public_check: bool) -> Result<()> {
         verify(artifact, trust_identity)?;
     }
     verify(&settings.mtp, trust_identity)?;
-    cubecl::future::block_on(serve(settings, worker_started, public_check))
+    cubecl::future::block_on(serve(settings, worker_started, public_check, prefill_check))
 }
-async fn serve(settings: Settings, worker_started: Instant, public_check: bool) -> Result<()> {
+async fn serve(
+    settings: Settings,
+    worker_started: Instant,
+    public_check: bool,
+    prefill_check: Option<bool>,
+) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -214,7 +225,7 @@ async fn serve(settings: Settings, worker_started: Instant, public_check: bool) 
     wire::write_response(&mut output, wire::READY, &[]).map_err(|_| "native_worker_pipe_failed")?;
     let first = if public_check {
         let request = wire::Generate {
-            prompt: Zeroizing::new(public_prompt()),
+            prompt: Zeroizing::new(public_prompt(if prefill_check.is_some() { 0 } else { 600 })),
             outputs: 32,
             context: 32768,
             temperature: 0.,
@@ -260,9 +271,11 @@ async fn serve(settings: Settings, worker_started: Instant, public_check: bool) 
         setup_ns.saturating_add(model_started.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     let mut current = Some(request);
     let mut preload = first_preload;
+    let mut public_index = 0;
     let attempted: Result<()> = (|| {
         while let Some(request) = current.take() {
             let prompt_count = request.geometry().map_err(|_| "native_request_invalid")?.0;
+            crate::strata_prefill_profile::begin();
             let start = Instant::now();
             let mut prompt_ns = 0;
             let mut generation_ns = None;
@@ -295,6 +308,7 @@ async fn serve(settings: Settings, worker_started: Instant, public_check: bool) 
                 },
             );
             let done = result.map_err(|_| "native_generation_failed")?;
+            crate::strata_prefill_profile::report();
             let total_ns = generation_ns.ok_or("native_generation_failed")?;
             let tail = Zeroizing::new(decoder.finish());
             if !tail.is_empty() {
@@ -314,6 +328,22 @@ async fn serve(settings: Settings, worker_started: Instant, public_check: bool) 
             wire::write_response(&mut output, wire::DONE, &receipt)
                 .map_err(|_| "native_worker_pipe_failed")?;
             load_ns = 0;
+            if prefill_check.is_some() && public_index < 2 {
+                public_index += 1;
+                current = Some(prepare(
+                    wire::Generate {
+                        prompt: Zeroizing::new(public_prompt(300)),
+                        outputs: 32,
+                        context: 32768,
+                        temperature: 0.,
+                        seed: 0,
+                        top_k: 20,
+                        top_p: 0.95,
+                        min_p: 0.,
+                    },
+                    &tokenizer,
+                )?);
+            }
             if !public_check
                 && let Some((request, is_preload)) =
                     next_request(&mut input, &mut output, &tokenizer)?
