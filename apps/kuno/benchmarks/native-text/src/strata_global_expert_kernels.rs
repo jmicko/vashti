@@ -180,7 +180,7 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
     let mut prefix = None;
     let signature = "fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index) local:u32,\n        @builtin(subgroup_id) sg:u32, @builtin(subgroup_invocation_id) sub_lane:u32,\n        @builtin(subgroup_size) subgroup_width:u32, @builtin(num_subgroups) subgroups:u32)";
     for width in [4, 2, 1] {
-        let mut variant = roles::source(base.clone(), down, dtype, width, 8, role);
+        let mut variant = roles::source(base.clone(), down, dtype, width, 8, role, true);
         if dtype == crate::quant_matvec::IQ4_XS && width == 1 {
             variant = variant.replace(
                 "let member_base=(length/2u)*2u;if group.z!=0u || length%2u==0u {return;}",
@@ -199,12 +199,13 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
         bodies.push('\n');
     }
     let loop_body = if dtype == crate::quant_matvec::IQ4_XS {
-        "for(var entry=0u;entry<length;entry++) {strata_chunk1(vec3<u32>(group.xy,entry),local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}"
+        "for(var entry=0u;entry<length;entry++) {strata_chunk1(vec3<u32>(group.xy,entry),local,sg,sub_lane,subgroup_width,subgroups);}"
     } else {
-        "for(var at=0u;at<length/4u;at++) {strata_chunk4(vec3<u32>(group.xy,at),local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}if length%4u>=2u {strata_chunk2(group,local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}if length%2u!=0u {strata_chunk1(group,local,sg,sub_lane,subgroup_width,subgroups);workgroupBarrier();}"
+        "for(var at=0u;at<length/4u;at++) {strata_chunk4(vec3<u32>(group.xy,at),local,sg,sub_lane,subgroup_width,subgroups);}if length%4u>=2u {strata_chunk2(group,local,sg,sub_lane,subgroup_width,subgroups);}if length%2u!=0u {strata_chunk1(group,local,sg,sub_lane,subgroup_width,subgroups);}"
     };
     // Pinned row_entries: all dependent cardinalities are in the SAME dispatch.
-    // The barrier between chunks also protects the shared DOWN input tile.
+    // Direct immutable input reads have no shared tile to overwrite; chunks
+    // publish distinct route rows and need no inter-chunk workgroup barrier.
     format!(
         "{}\n{bodies}\n@compute @workgroup_size(256)\n{signature} {{\nif group.z!=0u || subgroup_width!=32u || subgroups!=8u || !valid_group(group.y) {{return;}}\nlet length=map[p.a+84u+group.y];\n{loop_body}\n}}",
         prefix.unwrap()
@@ -456,6 +457,45 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
 #[cfg(all(test, feature = "strata-intel-core"))]
 mod direct_source_tests {
     use super::*;
+    #[test]
+    fn every_actual_global_role_validates_without_activation_workgroup_storage() {
+        use wgpu::naga::{AddressSpace, valid};
+        let mut roles = 0;
+        for compiled in compiled_sources() {
+            if !compiled.source.contains("fn strata_chunk4(") {
+                continue;
+            }
+            roles += 1;
+            let module = wgpu::naga::front::wgsl::parse_str(&compiled.source).unwrap();
+            valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::all())
+                .validate(&module)
+                .unwrap();
+            assert!(
+                module
+                    .global_variables
+                    .iter()
+                    .all(|(_, g)| g.space != AddressSpace::WorkGroup)
+            );
+            assert!(!compiled.source.contains("workgroupBarrier()"));
+            assert!(!compiled.source.contains("strata_input["));
+            for name in [
+                "strata_input_word",
+                "strata_chunk4",
+                "strata_chunk2",
+                "strata_chunk1",
+            ] {
+                assert_eq!(
+                    module
+                        .functions
+                        .iter()
+                        .filter(|(_, f)| f.name.as_deref() == Some(name))
+                        .count(),
+                    1
+                );
+            }
+        }
+        assert_eq!(roles, 10); // Both GU roles/four formats and both DOWN formats.
+    }
     #[test]
     fn actual_role_and_explicit_fetch_schemas_bind_original_addresses_without_a_dummy_stage_table()
     {

@@ -11,8 +11,18 @@ pub(super) fn source(
     width: usize,
     capacity: usize,
     role: u8,
+    direct_planes: bool,
 ) -> String {
     assert!(matches!(width, 1 | 2 | 4) && width <= capacity);
+    assert!(!direct_planes || capacity == 8);
+    if direct_planes {
+        // Selected global row_entries reads original quantized activations,
+        // like native Multi::acts. No per-workgroup full-window copy is needed.
+        let words = capacity * if down { 180 } else { 720 };
+        let declaration = format!("var<workgroup> strata_input:array<u32,{words}>;\n");
+        assert!(source.contains(&declaration));
+        source = source.replace(&declaration, "");
+    }
     assert!(if down {
         role == 3
     } else {
@@ -102,21 +112,27 @@ fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index)
         )
         .unwrap();
     }
-    if down {
+    if !direct_planes && down {
         // Copy just this chunk's route-indexed activation into shared memory.
         // All lanes in the workgroup agree on admission before the barrier.
         for i in 0..width {
             writeln!(body, "    for(var at=local;at<180u;at+=256u) {{let frame={header}u+route{i}*360u;var value=0u;if at<160u {{value=planes[frame+at];}}else {{value=planes[frame+320u+at-160u];}}strata_input[{}u+at]=value;}}", i*180, header=if capacity == 8 {128} else {64}).unwrap();
         }
-    } else {
+    } else if !direct_planes {
         writeln!(body, "    for(var word=local;word<{}u;word+=256u) {{let token=word/720u;let at=word%720u;var value=0u;if token<p.h {{let frame=64u+token*1440u;if at<640u {{value=planes[frame+at];}}else {{value=planes[frame+1280u+at-640u];}}}}strata_input[word]=value;}}", capacity*720).unwrap();
     }
-    body.push_str("    workgroupBarrier();\n");
+    if !direct_planes {
+        body.push_str("    workgroupBarrier();\n");
+    }
     for i in 0..width {
         writeln!(
             body,
             "    let frame{i}={};",
-            if down {
+            if direct_planes && down {
+                format!("128u+route{i}*360u")
+            } else if direct_planes {
+                format!("64u+(route{i}/10u)*1440u")
+            } else if down {
                 format!("{}u", i * 180)
             } else {
                 format!("(route{i}/10u)*720u")
@@ -154,9 +170,14 @@ fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index)
             )
             .unwrap();
             for i in 0..width {
+                let input = if direct_planes {
+                    format!("strata_input_word(frame{i},at)")
+                } else {
+                    format!("strata_input[frame{i}+at]")
+                };
                 writeln!(
                     body,
-                    "            {}{}+=dot4I8Packed(packed,strata_input[frame{i}+at]);",
+                    "            {}{}+=dot4I8Packed(packed,{input});",
                     if q < 4 { "first" } else { "second" },
                     axis(i)
                 )
@@ -181,7 +202,13 @@ fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index)
                 }
                 _ => format!("first{a}+second{a}"),
             };
-            writeln!(body,"        {{let weighted={weighted};let ds=bitcast<f32>(strata_input[frame{i}+{}u+block]);values{a}+=(prepared.d*ds)*f32(weighted);}}",if down {160}else{640}).unwrap();
+            let scale = if down { 160 } else { 640 };
+            let input = if direct_planes {
+                format!("strata_input_word(frame{i},{scale}u+block)")
+            } else {
+                format!("strata_input[frame{i}+{scale}u+block]")
+            };
+            writeln!(body,"        {{let weighted={weighted};let ds=bitcast<f32>({input});values{a}+=(prepared.d*ds)*f32(weighted);}}").unwrap();
         }
     } else {
         let halves = if !down && dtype == crate::quant_matvec::IQ2_S {
@@ -244,6 +271,13 @@ fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index)
     let end =
         crate::strata_port::function_end(&source, source[first..].find("fn main").unwrap() + first);
     source.replace_range(first..end, &body);
+    if direct_planes {
+        // Packed bytes and F32 scales occupy separate regions of the same
+        // original admitted owner. Keep the frame explicit: no division or
+        // remainder to recover a member from each dot-product input address.
+        let packed = if down { 160 } else { 640 };
+        writeln!(source, "\nfn strata_input_word(frame:u32,at:u32)->u32 {{if at<{packed}u {{return planes[frame+at];}}return planes[frame+{packed}u+at];}}").unwrap();
+    }
     source
 }
 

@@ -261,6 +261,7 @@ impl Kernel {
                 self.member_width as usize,
                 count,
                 self.native_role,
+                false,
             );
         }
         if self.member_width != 0 {
