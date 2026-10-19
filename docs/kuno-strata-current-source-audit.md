@@ -1457,3 +1457,48 @@ The outer runner verifies that field after completed recovery before writing
 throughput.json and records the chosen window with the numeric rate. Frozen
 four-input acceptance remains in previous_acceptance. All other request/timing
 scopes stay unchanged. No eight-input rate has yet been measured at this decision.
+
+
+## Eight-input result and adaptive-cache acceptance (2026-10-18 local)
+
+Eight-input accepted90968c5a/SHA7bba592c throughput:
+strata-native-eight-counter-throughput-20261019/throughput.json.362 outputs per
+request,81 windows/50 repairs; first20.185683657s=17.933502088 tokens/s,
+warm19.092841012s=18.959986090 tokens/s. Warm prefix5.280746620s, full request
+24.373587632s=14.852142633 tokens/s; target-phase setup98.012953067s. Clean
+physical/services/admission recovery and zero faults. Eight inputs reduce window
+count but increase work/repairs enough to be slower. Four stays the ordinary
+fixture default; the implemented eight-request mode and accounting fix remain.
+
+Next trial enables the ALREADY implemented GPU-usage/adaptive two-way cache
+extension, retaining four-input requests, direct expert input, explicit product
+rounding and joint GU. This is beyond pinned NO_HOST's zero counters: real GPU
+route counts now feed the same bounded every4-window rank/copy/publication path.
+Original expert bytes swap both ways between their actual GPU and mapped HOST
+cells; MTP overlaps the bounded host/copy job and next target waits on publication.
+No expert IDs/weights are substituted and no extra model copy is downloaded.
+
+Sourcedfe2e6f7 adds only a resource aggregate: record swap count AFTER successful
+copy join, private map/usage writes and publication. Only fixed-public completion
+metadata exports it; no routing sequence, prompts or tensor values persist.
+Frozen strata-adaptive-four-20261019, sourcedfe2e6f71ab4280efb216d687c4f3cddef4b457d,
+SHA2564cd6d4f7478e1393321a32cf17540213888663be6f7862b2d7e594a90aac78b6,
+features strata-rust-port,strata-intel-core,strata-gpu-adaptive-usage.
+37 actual global cache/source/ownership unit cases pass with the feature enabled;
+strict same-feature Clippy and401 shader/32 matrix validation pass. The earlier
+130 operator cases still cover unchanged projection math, not a rerun here.
+
+strata-adaptive-four-retained-20261019/intel.json passes two identical362-output/
+EOS requests,108 windows/32 repairs in the second report, explicit window4,
+gpu_adaptive_expert_cache=true and4887 FULLY PUBLISHED expert swaps over the
+loaded Session. Thus the actual mutable source/cache/copy/map/rebind path ran.
+Target/draft erasure, final close and root recovery pass: Intel50,688,000B,
+NVIDIA compute0, normal admission/allHTTP200 and all driver faults0. Active
+swap/core0 and original48.2GiB cap observed. Visible unsaved public tail coherent.
+No cross-artifact token equality, independent physical byte audit of every swap,
+private-caller, maximum-context, mixed-prompt or soak acceptance is implied.
+
+PASS for exact fixed-public retained performance measurement of this candidate.
+The manifest records window4 and requires enabled adaptive mode with nonzero
+published swaps before a timing receipt may be written. Older frozen acceptances
+remain nested historical controls. No adaptive speed result yet at this decision.

@@ -129,8 +129,11 @@ def run():
  if observer:
   completion=json.loads((out/'intel.json').read_text())
   if completion['record'].get('speculation_window',4)!=acceptance.get('speculation_window',4):raise ValueError('request window not accepted by audit')
+  if acceptance.get('gpu_adaptive_expert_cache',False) and (not completion['record'].get('gpu_adaptive_expert_cache',False) or completion['record'].get('published_expert_swaps',0)<=0):raise ValueError('accepted adaptive cache did not publish real exchanges')
   timing=observer.finish(completion,before,after)
   timing['speculation_window']=completion['record'].get('speculation_window',4)
+  timing['gpu_adaptive_expert_cache']=completion['record'].get('gpu_adaptive_expert_cache',False)
+  timing['published_expert_swaps']=completion['record'].get('published_expert_swaps',0)
   timing.update({'runtime_source_commit':acceptance['runtime_source_commit'],'artifact_sha256':digest,'audit_reference':acceptance['audit_reference']})
   (out/'throughput.json').write_text(json.dumps(timing,indent=2)+'\n')
   print(json.dumps({'accepted_engine_throughput':[r['last_prompt_inclusive_tokens_per_second'] for r in timing['requests']]}),flush=True)
