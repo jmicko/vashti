@@ -1384,3 +1384,76 @@ The exact-artifact manifest advances only after these gates. Prior883d584b
 acceptance and its21.3057 warm rate remain nested in previous_acceptance and
 unchanged historical evidence. No private-caller, production/API, maximum-context
 or soak acceptance is added. New timing remains pending at this decision.
+
+
+## Joint GU measurement and eight-input request accounting (2026-10-18 local)
+
+`strata-joint-gu-entry-throughput-20261019/throughput.json` passes accepted
+0b76f8bb/SHA91a23e78:362 outputs each,108 windows/32 repairs. First generation
+17.932528906s=20.186779115 tokens/s; warm17.248659086s=20.987138664 tokens/s.
+Warm prefix5.227776613s, full before-erasure22.476435699s=16.105756484 tokens/s.
+Target-phase setup101.529923409s. Clean after-state and zero driver faults.
+This is near the separate rounded GU trial21.3057, not evidence of a speed gain.
+Keep the complete coupled one-dispatch schedule rather than discarding it on
+this isolated small regression.30 remains unmet.
+
+Source45a8eb6a gives explicit --intel-core --eight builds a genuine eight-input
+public request, instead of merely reserving MAX8 buffers while requesting4.
+Ordinary core builds still request4. speculation_window is now recorded in
+content-free public completion metadata. The engine already accepts the
+request Config; this is a CONFIGURATION trial, not a new GPU math claim.
+The legacy launcher label supplies four-lookahead backend flags; the actual
+native Request config is independently explicit. The unchanged math has130
+prior operator cases at counts1/3/7/8.401 shaders/32 matrices and eight-feature
+strict Clippy pass on45a8eb6a.
+
+strata-native-eight-request-retained-20261019 FAILED with Q6 verifier head
+actual completed counters. No completion receipt or speed. Cleanup reports
+already_retired=true: do NOT claim software erasure acceptance. Process exit
+and root inspection restore Intel50,688,000B, NVIDIA compute0, normal admission,
+allHTTP200 and zero driver faults.
+
+The actual head contract/producer supports8, but completed-member accounting
+still capped at4*prepares.90968c5a uses the SAME admitted capacity:3 when the
+extended-row context is inactive, otherwise selected verify_capacity (4 or8).
+Unselected work, missing/extra tiles, fewer members than prepares, overcapacity
+and arithmetic overflow still reject; no counters are overwritten or skipped.
+The actual existing unit test covers3/4/8 boundaries and invalid capacities.
+Its actual functions/test are selected verbatim from executor.rs into a small
+Rust test linked to the same Cargo-resolved kuno_text rlib.1 test passes, log
+strata-eight-head-counter-actual-source-test-20261019.log; sourceSHA256
+4829cf8a50b39c687a85114f7c1ab88fbf44d98563e1fd22c6423061405517a8.
+This is not a whole-binary test-suite rerun.
+
+Frozen strata-native-eight-counter-20261019, source
+90968c5aa70956b3bbd66b809a5f6b7f27ecc067, SHA256
+7bba592cc2c539ae733e7ec11e81b2e40d499a20023119b4b99638d31806f7d9,
+passes strict eight-feature Clippy and401 shaders/32 matrices. Full retained
+validation is running; no eight-window throughput is yet accepted.
+
+
+## Eight-input configuration acceptance (2026-10-18 local)
+
+PASS for fixed-public retained measurement on90968c5a/SHA7bba592c above,
+features strata-rust-port,strata-intel-core,strata-eight-window. Same seed0,
+code prompt,Q2 MTP,greedy/minimum0.5, but Request Config is EIGHT instead of4.
+strata-native-eight-counter-retained-20261019/intel.json passes two identical
+362-output/EOS requests on the same loaded Session,81 windows/50 repairs in
+the second report, explicit speculation_window8. Target/draft erasure, final
+close and physical recovery pass with Intel50,688,000B,NVIDIA compute0,allHTTP200,
+normal admission and all driver faults0. Active swap/core0 observed. Unsaved
+public tail is coherent. Equal token count is not a cross-artifact token proof.
+
+The kernels and selected core max8 ownership/math do not change with this caller
+configuration: the earlier130 original-weight cases cover1/3/7/8; they were NOT
+rerun on this artifact. This artifact's401 shader/32 matrix validation, strict
+eight-feature Clippy and actual-source admitted-counter unit test pass. No
+capacity/tile/status/erasure check was relaxed to accept the earlier failure.
+Native8 numerical/state/mixed/private/long-soak coverage is still representative,
+not universal. No private caller/API/service installation is accepted.
+
+The exact-artifact timing manifest now explicitly includes speculation_window8.
+The outer runner verifies that field after completed recovery before writing
+throughput.json and records the chosen window with the numeric rate. Frozen
+four-input acceptance remains in previous_acceptance. All other request/timing
+scopes stay unchanged. No eight-input rate has yet been measured at this decision.

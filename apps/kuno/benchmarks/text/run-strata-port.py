@@ -127,7 +127,10 @@ def run():
   print(json.dumps({'normal_admission_restored':not after['admission']['state']['admission']['paused'],'faults_unchanged':after['kernel_fault_counts']==before['kernel_fault_counts'],'intel_used_bytes':[r['used_bytes'] for r in after['intel']['xe_memory']],'cleanup_accepted':good}),flush=True)
   if not good:raise ValueError('cleanup evidence failed')
  if observer:
-  timing=observer.finish(json.loads((out/'intel.json').read_text()),before,after)
+  completion=json.loads((out/'intel.json').read_text())
+  if completion['record'].get('speculation_window',4)!=acceptance.get('speculation_window',4):raise ValueError('request window not accepted by audit')
+  timing=observer.finish(completion,before,after)
+  timing['speculation_window']=completion['record'].get('speculation_window',4)
   timing.update({'runtime_source_commit':acceptance['runtime_source_commit'],'artifact_sha256':digest,'audit_reference':acceptance['audit_reference']})
   (out/'throughput.json').write_text(json.dumps(timing,indent=2)+'\n')
   print(json.dumps({'accepted_engine_throughput':[r['last_prompt_inclusive_tokens_per_second'] for r in timing['requests']]}),flush=True)
