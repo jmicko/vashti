@@ -14,6 +14,7 @@ enum Op {
         role: u8,
         dtype: u32,
         row_bytes: usize,
+        direct_planes: bool,
     },
     PrepareGu,
     PrepareDown,
@@ -26,7 +27,8 @@ impl Op {
                 role,
                 dtype,
                 row_bytes,
-            } => role_source(role, dtype, row_bytes),
+                direct_planes,
+            } => role_source(role, dtype, row_bytes, direct_planes),
             Self::PrepareGu => native_q8::source(false),
             Self::PrepareDown => native_q8::source(true),
         }
@@ -93,7 +95,7 @@ fn full(handles: impl Iterator<Item = Handle>) -> Result<()> {
     }
     Ok(())
 }
-fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
+fn role_source(role: u8, dtype: u32, row_bytes: usize, direct_planes: bool) -> String {
     let down = role == 3;
     let mut base = if down {
         crate::quant_matvec::frozen_down_integer::strata_fused_source(dtype, row_bytes, 8)
@@ -180,7 +182,7 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
     let mut prefix = None;
     let signature = "fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index) local:u32,\n        @builtin(subgroup_id) sg:u32, @builtin(subgroup_invocation_id) sub_lane:u32,\n        @builtin(subgroup_size) subgroup_width:u32, @builtin(num_subgroups) subgroups:u32)";
     for width in [4, 2, 1] {
-        let mut variant = roles::source(base.clone(), down, dtype, width, 8, role, true);
+        let mut variant = roles::source(base.clone(), down, dtype, width, 8, role, direct_planes);
         if dtype == crate::quant_matvec::IQ4_XS && width == 1 {
             variant = variant.replace(
                 "let member_base=(length/2u)*2u;if group.z!=0u || length%2u==0u {return;}",
@@ -206,6 +208,11 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize) -> String {
     // Pinned row_entries: all dependent cardinalities are in the SAME dispatch.
     // Direct immutable input reads have no shared tile to overwrite; chunks
     // publish distinct route rows and need no inter-chunk workgroup barrier.
+    let loop_body = if direct_planes {
+        loop_body.to_owned()
+    } else {
+        loop_body.replace(";}", ";workgroupBarrier();}")
+    };
     format!(
         "{}\n{bodies}\n@compute @workgroup_size(256)\n{signature} {{\nif group.z!=0u || subgroup_width!=32u || subgroups!=8u || !valid_group(group.y) {{return;}}\nlet length=map[p.a+84u+group.y];\n{loop_body}\n}}",
         prefix.unwrap()
@@ -331,6 +338,7 @@ pub(crate) fn role(
                 role,
                 dtype: projection.dtype(),
                 row_bytes: projection.row_bytes(),
+                direct_planes: true,
             }),
             CubeCount::Static(
                 (projection.rows() / (256 / crate::strata_port::expert_lanes())) as u32,
@@ -438,6 +446,7 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
                 role,
                 dtype,
                 row_bytes,
+                direct_planes: true,
             });
         }
     }
@@ -521,3 +530,7 @@ mod direct_source_tests {
         }
     }
 }
+
+#[path = "strata_expert_input_probe.rs"]
+mod input_probe;
+pub(crate) use input_probe::cases as input_numeric_cases;

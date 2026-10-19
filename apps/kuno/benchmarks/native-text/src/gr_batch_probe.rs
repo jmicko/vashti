@@ -1069,6 +1069,9 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, storage_alignment: usize) -> Res
         if crate::strata_intel_core::enabled() {
             let mut reports = native::cases(client, &mut arena, &public)?;
             reports.extend(dense::cases(client, &mut arena, &file)?);
+            reports.extend(crate::strata_expert_fused::global::input_numeric_cases(
+                client, &mut arena, &file,
+            )?);
             reports.extend(shared_numeric::cases(client, &mut arena, &file)?);
             #[cfg(feature = "strata-intel-core")]
             reports.extend(crate::strata_matrix::public_numeric(
