@@ -110,7 +110,9 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize, direct_planes: bool) -> S
     let end = first
         + base[first..].find("var<uniform> p:Params;").unwrap()
         + "var<uniform> p:Params;".len();
-    let mut descriptors = String::from("// STRATA_PHYSICAL_EXPERTS\n");
+    let mut descriptors = String::from(
+        "// STRATA_PHYSICAL_EXPERTS\n// STRATA_ROUND_PRODUCTS: original expert contract(off) multiply/add.\n",
+    );
     let mut index = 0;
     for name in names {
         descriptors.push_str(&format!(
@@ -475,6 +477,7 @@ mod direct_source_tests {
                 continue;
             }
             roles += 1;
+            assert!(compiled.source.contains("STRATA_ROUND_PRODUCTS"));
             let module = wgpu::naga::front::wgsl::parse_str(&compiled.source).unwrap();
             valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::all())
                 .validate(&module)
