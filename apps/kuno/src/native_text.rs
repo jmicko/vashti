@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
     process::Stdio,
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -273,6 +273,7 @@ pub struct Metrics {
     pub load_ns: u64,
     pub prompt_ns: u64,
     pub eval_ns: u64,
+    pub total_ns: u64,
     pub eos: bool,
 }
 pub enum Event {
@@ -320,6 +321,7 @@ impl Runtime {
         request: wire::Generate,
         events: mpsc::Sender<Event>,
     ) -> bool {
+        let started = Instant::now();
         let mut state = self.worker.lock().await;
         let result = async {
             if state.is_none() {
@@ -364,6 +366,7 @@ impl Runtime {
                                 prompt_ns: long(16),
                                 eval_ns: long(24),
                                 eos: bytes[32] != 0,
+                                total_ns: started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
                             }))
                             .await;
                         return Ok(());
@@ -511,11 +514,7 @@ pub fn chunk(model: &str, chat: bool, text: &str, done: Option<&Metrics>) -> Val
         value["prompt_eval_duration"] = m.prompt_ns.into();
         value["eval_count"] = m.outputs.into();
         value["eval_duration"] = m.eval_ns.into();
-        value["total_duration"] = m
-            .load_ns
-            .saturating_add(m.prompt_ns)
-            .saturating_add(m.eval_ns)
-            .into();
+        value["total_duration"] = m.total_ns.into();
     }
     value
 }

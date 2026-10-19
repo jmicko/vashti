@@ -739,7 +739,7 @@ impl super::Device {
         label: &crate::Label<'_>,
     ) -> Result<vk::ShaderModule, crate::DeviceError> {
         let native_words;
-        let spv = if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public") {
+        let spv = if matches!(std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(), Ok("public" | "protected-worker")) {
             let canonical = kuno_native_workgroup_layout(spv).map_err(|reason| {
                 log::error!("{reason}");
                 crate::DeviceError::Unexpected
@@ -1139,7 +1139,7 @@ impl crate::Device for super::Device {
             .size(desc.size)
             .usage(
                 conv::map_buffer_usage(desc.usage)
-                    | if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public") {
+                    | if matches!(std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(), Ok("public" | "protected-worker")) {
                         vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                     } else {
                         vk::BufferUsageFlags::empty()

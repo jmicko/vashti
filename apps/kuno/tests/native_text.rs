@@ -37,7 +37,7 @@ impl Fixture {
             async move {
                 match request.uri().path() {
                     "/api/tags" => axum::Json(
-                        json!({"models":[{"name":"original","custom":42}],"future_metadata":true}),
+                        json!({"models":[{"name":"original","custom":42}],"future_metadata":true,"query_seen":request.uri().query()}),
                     )
                     .into_response(),
                     "/v1/models" => {
@@ -108,7 +108,7 @@ async fn native_metadata_extends_catalog_without_discarding_upstream_fields() {
     let f = Fixture::new().await;
     let c = reqwest::Client::new();
     let tags: serde_json::Value = c
-        .get(format!("{}/api/tags", f.base))
+        .get(format!("{}/api/tags?future=kept", f.base))
         .send()
         .await
         .unwrap()
@@ -117,6 +117,7 @@ async fn native_metadata_extends_catalog_without_discarding_upstream_fields() {
         .unwrap();
     assert_eq!(tags["models"][0]["custom"], 42);
     assert_eq!(tags["future_metadata"], true);
+    assert_eq!(tags["query_seen"], "future=kept");
     assert_eq!(tags["models"][1]["name"], "kuno-test:iq3_s");
     let models: serde_json::Value = c
         .get(format!("{}/v1/models", f.base))
@@ -150,6 +151,10 @@ async fn owned_unsupported_calls_never_reach_ollama_and_opaque_bytes_still_proxy
             json!({"model":"kuno-test:iq3_s","prompt":"synthetic","format":"json"}),
         ),
         ("/api/create", json!({"model":"kuno-test:iq3_s"})),
+        (
+            "/api/copy",
+            json!({"source":"kuno-test:iq3_s","destination":"other"}),
+        ),
         (
             "/v1/chat/completions",
             json!({"model":"kuno-test:iq3_s","messages":[]}),

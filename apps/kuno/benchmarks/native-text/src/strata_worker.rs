@@ -108,7 +108,7 @@ pub(crate) fn run(path: &Path) -> Result<()> {
         verify(artifact)?;
     }
     verify(&settings.mtp)?;
-    cubecl::future::block_on(serve(settings, worker_started)).map_err(|_| "native_worker_failed")
+    cubecl::future::block_on(serve(settings, worker_started))
 }
 async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -265,6 +265,7 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
             let prompt_count = request.geometry().map_err(|_| "native_request_invalid")?.0;
             let start = Instant::now();
             let mut prompt_ns = 0;
+            let mut generation_ns = None;
             let mut decoder = tokenizer.stream_decoder();
             let result = session.run(
                 request,
@@ -281,13 +282,17 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
                     Ok(())
                 },
                 &mut |phase| {
+                    if phase == "request_private_erasure" {
+                        generation_ns =
+                            Some(start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+                    }
                     if phase == "last_prompt_input" {
                         prompt_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
                     }
                 },
             );
             let done = result.map_err(|_| "native_generation_failed")?;
-            let total_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            let total_ns = generation_ns.ok_or("native_generation_failed")?;
             let tail = Zeroizing::new(decoder.finish());
             if !tail.is_empty() {
                 wire::write_response(&mut output, wire::TEXT, tail.as_bytes())

@@ -268,6 +268,13 @@ impl Pool {
         Ok(())
     }
 
+    /// The native engine needs the complete Intel envelope. Clear owned workers
+    /// and original catalog residency (including idle direct-CLI loads).
+    pub async fn prepare_native_text(&self) -> Result<()> {
+        self.stop_all().await?;
+        self.release_catalog_residents().await
+    }
+
     /// The foreground lease prevents concurrent inference. Verified workers on
     /// other physical GPUs may remain resident; only the image GPU is cleared.
     pub async fn prepare_image(&self, pci_address: &str) -> Result<()> {

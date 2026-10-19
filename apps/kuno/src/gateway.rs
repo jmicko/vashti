@@ -643,11 +643,12 @@ async fn forward(
                 _ => return error(StatusCode::BAD_REQUEST, "native_request_body_unavailable"),
             };
             if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                if value
-                    .get("model")
-                    .or_else(|| value.get("name"))
-                    .and_then(serde_json::Value::as_str)
-                    == Some(config.model.as_str())
+                if ["model", "name", "source", "destination"]
+                    .iter()
+                    .any(|key| {
+                        value.get(key).and_then(serde_json::Value::as_str)
+                            == Some(config.model.as_str())
+                    })
                 {
                     if parts.uri.path() == "/api/show" {
                         return Json(config.show()).into_response();
@@ -1067,11 +1068,20 @@ impl Drop for LeasedBody {
 async fn native_catalog(gateway: Arc<Gateway>, request: Request) -> Response {
     let path = request.uri().path().to_owned();
     let (mut parts, body) = request.into_parts();
-    parts.uri = match format!("http://{}{}", gateway.config.upstream, path).parse() {
+    let target = parts
+        .uri
+        .path_and_query()
+        .map(|p| p.as_str())
+        .unwrap_or("/");
+    parts.uri = match format!("http://{}{}", gateway.config.upstream, target).parse() {
         Ok(uri) => uri,
         Err(_) => return error(StatusCode::BAD_GATEWAY, "upstream_uri_invalid"),
     };
     strip_hop_headers(&mut parts.headers);
+    parts.headers.insert(
+        header::HOST,
+        HeaderValue::from_str(&gateway.config.upstream.to_string()).unwrap(),
+    );
     let response = match gateway
         .client
         .request(Request::from_parts(parts, body))
@@ -1130,7 +1140,7 @@ async fn native_inference(
         return error(StatusCode::SERVICE_UNAVAILABLE, code);
     }
     if let Some(pool) = &gateway.managed
-        && let Err(code) = pool.stop_all().await
+        && let Err(code) = pool.prepare_native_text().await
     {
         return error(StatusCode::SERVICE_UNAVAILABLE, code);
     }

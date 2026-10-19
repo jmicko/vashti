@@ -2595,7 +2595,7 @@ impl TransientIo {
                 slab_bytes,
             )?;
             if info_batch {
-                println!("private_info_batch_upload enabled=true");
+                eprintln!("private_info_batch_upload enabled=true");
             }
             let raw_reuse = std::env::var_os("KUNO_LAB_READBACK_REUSE");
             let reuse = configured_readback_reuse(
@@ -2623,7 +2623,7 @@ impl TransientIo {
                     .contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS),
             )?;
             if gpu_upload_clear {
-                println!(
+                eprintln!(
                     "private_primary_upload_clear enabled=true two_gpu_passes=true direct_full_cpu_inspection=true"
                 );
             }
@@ -2641,13 +2641,13 @@ impl TransientIo {
                     == Some(std::ffi::OsStr::new("inline")),
             )?;
             if inline_readback {
-                println!(
+                eprintln!(
                     "private_inline_readback enabled=true checked_callbacks=true held_leases=true"
                 );
             }
             let clean_readbacks = CleanReadbacks::new(reuse)?;
             if reuse {
-                println!(
+                eprintln!(
                     "private_clean_readback_reuse enabled=true max_buffers=64 max_bytes=8388608"
                 );
             }
@@ -2909,7 +2909,7 @@ impl TransientIo {
                 NativeBindingCache::with_limit(config.binding_capacity)
                     .ok_or_else(|| fault("binding cache allocation"))?,
             );
-            println!(
+            eprintln!(
                 "private_binding_cache entries={} metadata_limit={}",
                 config.binding_capacity, config.metadata_bytes
             );
@@ -7269,7 +7269,7 @@ mod reuse_metadata_selection_tests {
             let keys = NativeBindingCache::maximum_key_bytes_for_limit(capacity).unwrap();
             let full =
                 reuse_metadata_bytes::<wgpu::Buffer>(2048, 64, info + entries + keys).unwrap();
-            println!(
+            eprintln!(
                 "fixed_public_binding_metadata capacity={capacity} entry_bytes={entries} maximum_key_bytes={keys} info_bytes={info} owners2048_pending64_total={full}"
             );
             for ceiling in [REUSE_METADATA_MAX, 1024 * 1024, LARGE_REUSE_METADATA_MAX] {

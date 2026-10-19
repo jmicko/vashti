@@ -1319,7 +1319,7 @@ impl PhysicalDeviceProperties {
 
         // Kuno's serialized native inference path uses physical storage pointers
         // without enabling ray tracing. Require the actual supported extension.
-        if std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public") {
+        if matches!(std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(), Ok("public" | "protected-worker")) {
             if self.supports_extension(khr::buffer_device_address::NAME) {
                 extensions.push(khr::buffer_device_address::NAME);
             }
