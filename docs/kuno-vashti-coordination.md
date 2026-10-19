@@ -1,12 +1,34 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno-only prompt-processing optimization (2026-10-19, in development).**
-The user reports repeated44s prompt eval and has authorized protected GPU
-profiling/fixes. See [measured phases, candidates and acceptance scope](kuno-prompt-processing-profile.md).
-The dominant measured paths are expert staging/scheduling and dense prompt
-projections. No prompt-cache retention, API or Vashti consumer change is planned.
-The installed toolbox repair below remains the live baseline until the new
-acceptance/install receipt is recorded. No release is authorized by this handoff.
+**Active Kuno-only prompt-processing optimization (2026-10-19, installed and backend-validated).**
+Worker source60c20e36 / SHA1db4664d is installed with unchanged image-enabled
+gateway36626d30 / SHAd3ed07f4. Forward source selectiona37db7da restores the exact
+accepted matrix implementation after an unsuccessful experimental variant.
+See [complete measurements, changes and receipt paths](kuno-prompt-processing-profile.md).
+The matched compiled-public4,245-token warm prompt falls55.821 ->43.205s (22.6%
+shorter); this is not a universal rate or a replay of the user's private chat.
+Actual FP16/BF16 original-weight checks,401 shader/32 matrix validation,27 prompt
+and4 original-scheduler tests pass; private staged ten-tool call/result, repeated
+code, zero disk writes, unload, Ollama coexistence and physical recovery pass.
+The official transaction preserves the complete configuration. Backup:
+`/var/lib/kuno-prompt-processing-20261019`. Final installed repeated-code and identity/mount checks pass, swap/core0, zero
+worker writes/OOM/driver faults, all services200 and normal admission. Intel weights
+remain warm (33,314,902,016B total device usage); NVIDIA compute0. Warm installed
+code prefix4.639s/decode10.899s for362 outputs (33.21 output tokens/s). Backend API
+acceptance only: no fresh Vashti browser/image suite or release/version change.
+The old toolbox browser acceptance below remains historical evidence. No test
+client/staged service or sudo refresh loop is left active. No release is authorized
+by this handoff.
+
+Contract/consumer requirements: **no API, private-wire or Vashti change**. Full
+systems/tools/history are still processed independently and request state erased;
+model weights remain warm by the existing policy. No shortened tools, truncated
+context or retained prompt cache. The user's Vashti-owned portable prefix-cache
+idea is recorded as a [future shared proposal](kuno-prompt-processing-profile.md#future-proposal-vashti-owned-portable-prefix-snapshots),
+not an implemented API. Compact selected-engine estimates are about133MB for1K,
+180MB for4K and243MB for8K tokens before transport overhead; exact export state,
+versioning, validation and encrypted Vashti handling need a later agreed contract.
+No Vashti connector work is requested in this internal optimization checkpoint.
 
 **Active Kuno-only toolbox repair (2026-10-19, installed and Vashti-validated).**
 The user explicitly requested the fix in Kuno, preserving Vashti behavior. The

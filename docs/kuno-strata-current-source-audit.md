@@ -1,5 +1,13 @@
 # Current Strata source audit
 
+**Current deployed engine checkpoint (2026-10-19):** prompt-optimized worker
+60c20e36 / SHA1db4664d is installed through the unchanged image-enabled gateway.
+See [current coordination](kuno-vashti-coordination.md),
+[service acceptance](kuno-native-text-service.md#native-prompt-processing-optimization-2026-10-19)
+and [matched public measurements](kuno-prompt-processing-profile.md).
+The following older checkpoints are historical and do not override those records.
+
+
 **Installed Kuno-only full-toolbox repair (2026-10-19 UTC).**
 Worker sourcea6b21a38 / SHA7bc1633b, unchanged image-enabled gateway36626d30 /
 SHAd3ed07f4. The stale2048-token PLE history guard now shares the real4096-token

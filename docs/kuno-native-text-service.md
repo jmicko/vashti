@@ -3,8 +3,11 @@
 ## Active extension contract (2026-10-19, installed backend acceptance)
 
 The user requested thinking, tool use, faster cold load and configurable context.
-Image-enabled gateway `36626d30` and repaired worker `a6b21a38` are installed.
-Protected staged, actual-service and live Vashti all-tools checks pass; see the
+Image-enabled gateway `36626d30` and prompt-optimized worker `60c20e36` are installed.
+The prior toolbox repair `a6b21a38` remains included. Protected staged checks, the installation transaction and final installed
+public-request/metadata checks pass in the
+[prompt-processing receipt](#native-prompt-processing-optimization-2026-10-19).
+The earlier actual-service/live Vashti all-tools checks are recorded in the
 [toolbox repair receipt](#kuno-toolbox-prefill-repair-2026-10-19). Earlier preview
 receipts below are historical. Ollama chat behavior follows
 the actual embedded Qwen template:
@@ -592,3 +595,59 @@ dropped, no request is retried through Ollama, and no content is truncated.
 The supported context remains512..32768; above32K, broader soak, individual image
 fidelity and later performance/loader improvements remain separate work. No new
 comparable throughput benchmark is claimed.
+
+
+## Native prompt-processing optimization (2026-10-19)
+
+This is internal Kuno work; the Ollama-compatible public contract, KNT2/KNR2,
+thinking/tool support, context512..32768, model naming and privacy policy above
+are unchanged. Vashti needs no source/API change. Full tools remain available;
+there is no cross-request content cache. This pass does not repeat browser QA or
+claim every individual image/note operation works.
+
+Exact code, rejected candidates, timing definitions, frozen hashes, tests and
+protected recovery receipts are in
+[kuno-prompt-processing-profile.md](kuno-prompt-processing-profile.md).
+Changes:342970e2 public-only profiling,4a33422e bounded expert member grids,
+f9471ce8 attention subdivisions,ef886df5 same-stream DMA/kernel graph scheduling,
+23454d39/60c20e36 direct original-buffer matrix tiles. The scheduling change keeps
+original access intervals/dependencies and actual final completion/fault checks;
+there is no early erasure or completion credit. The K64 part ofef886df5 was
+replaced, and the final blocked experimental variantd06c03d4 failed its small
+numeric test; selectiona37db7da restores the matrix source exactly to60c20e36.
+Do not install the experimental K64/blocked artifacts or weaken their oracles.
+
+Matched uninstrumented public4,245-token warm prompt55.821 ->43.205s (22.6% shorter),
+not a universal chat speedup. Source60c20e36 / worker SHA256
+`1db4664d9530df7b079aea0c23c6e26a74fc450598784e6ab68388e62032cc8a` passes eight
+actual original-weight FP16/BF16 matrix cases, unchanged IEEE tolerance and all
+owner/tail/erasure checks. 27 prompt tests,4 tests of the original vendored
+scheduler (including cross-stream submission), strict worker Clippy,401 ordinary
+shader variants and32 matrix configurations pass. The pinned matrix-capable
+validator is required because the distribution tool cannot parse BF16 capability5116.
+
+`native-prefill-stage-check-20261019` passes preload, ten public tool schemas,
+streamed thinking/weather call, tool-result final answer, identical repeated362-token
+code replies on the same worker, write_bytes0, inspection denied, graceful unload,
+ordinary Ollama afterward and physical recovery. Toolbox prompts4,207/4,293 take
+46.991/49.630s: no matched old-toolbox timing in this pass. The shorter code warm
+decode is33.70 tokens/s; do not mix it with long-prefix timings.
+
+The official transaction preserves the unchanged image-enabled gateway SHA256
+`d3ed07f473b28bbb46596a619349d933edd6c166b7af10dd42f9821e4ba3048c`, ports, complete
+configuration and root-enrolled original model identities. Root-only backup and
+receipt: `/var/lib/kuno-prompt-processing-20261019`. `native-prefill-installed-public-check-20261019/receipt.json` passes identical
+362-token code replies twice through the installed listener. Cold load102.475s;
+warm prefix4.639s, decode10.899s (33.21 output tokens/s), full request18.758s.
+`native-prefill-installed-final-check-20261019/{receipt,host-final}.json` confirms
+nonroot worker/model mount, swap/core0, write_bytes0, inspection denied, zero OOM
+and driver faults, all services200 and normal admission. Intel native weights
+intentionally remain warm (33,314,902,016B total device usage); NVIDIA compute0.
+No test client, staged service or sudo refresh loop remains active. This is
+backend API acceptance; no new live Vashti browser test is claimed. No
+version/package, frontend or release change.
+
+The proposed Vashti-owned prefix snapshot extension is **not implemented**.
+Its approximate raw sizes, remaining format/privacy/validation requirements and
+network tradeoffs are in the profile document. A later shared contract and
+separate Kuno/Vashti acceptance are required before adding that optional request.

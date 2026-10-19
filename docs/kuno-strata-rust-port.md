@@ -1,5 +1,13 @@
 # Strata Rust whole-model port experiment
 
+**Current deployed engine checkpoint (2026-10-19):** prompt-optimized worker
+60c20e36 / SHA1db4664d is installed through the unchanged image-enabled gateway.
+See [current coordination](kuno-vashti-coordination.md),
+[service acceptance](kuno-native-text-service.md#native-prompt-processing-optimization-2026-10-19)
+and [matched public measurements](kuno-prompt-processing-profile.md).
+The following older checkpoints are historical and do not override those records.
+
+
 **Current CPU-only source:** `fad14f5dba7395a66cc2c06aea649fe1feeb1ca6`, branch
 `codex/strata-rust-port`. Read the [public retained-session receipt](kuno-strata-rewrite-completion.md#protected-public-loaded-session-repeat-harness-2026-10-17)
 and [source-wiring decision](kuno-strata-current-source-audit.md#selected-engine-source-wiring-completeness-decision-2026-10-17).
