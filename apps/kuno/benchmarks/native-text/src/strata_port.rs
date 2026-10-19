@@ -102,23 +102,55 @@ pub(crate) fn expert_lanes() -> usize {
 pub(crate) fn profile_target() -> bool {
     enabled() && std::env::var("KUNO_STRATA_PROFILE_TARGET").as_deref() == Ok("round-8")
 }
-pub(crate) fn profile_native_target() -> bool {
-    crate::strata_intel_core::enabled()
-        && std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("round-8")
+/// A single public target window; warm sampling excludes the first request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeProfileSample {
+    First,
+    Warm,
 }
-/// Only the protected compiled-public caller can select operator timing. The
-/// ordinary engine path remains uninstrumented, including private callers.
+impl NativeProfileSample {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "round-8" => Some(Self::First),
+            "warm-round-64" => Some(Self::Warm),
+            _ => None,
+        }
+    }
+    fn selects(self, request: u64, round: u64) -> bool {
+        match self {
+            Self::First => request == 1 && round == 8,
+            Self::Warm => request == 2 && round == 64,
+        }
+    }
+}
+fn native_profile_sample() -> Option<NativeProfileSample> {
+    crate::strata_intel_core::enabled()
+        .then(|| std::env::var("KUNO_STRATA_NATIVE_PROFILE").ok())
+        .flatten()
+        .and_then(|raw| NativeProfileSample::parse(&raw))
+}
+pub(crate) fn profile_native_target() -> bool {
+    native_profile_sample().is_some()
+}
+/// Only the protected compiled-public caller can select operator timing.
 pub(crate) fn native_profile_authorized() -> bool {
     !profile_native_target() || std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
 }
-
-/// One actual global-controller verification window. Pending commit/draft work
-/// retains its original fences and recordings; no extra host drain is added.
-/// Each profiling flight owns its query pool independently of this selector.
+static PROFILE_REQUEST: AtomicU64 = AtomicU64::new(0);
+pub(crate) fn native_profile_request() -> u64 {
+    if profile_native_target() && native_profile_authorized() {
+        PROFILE_REQUEST.fetch_add(1, Ordering::Relaxed) + 1
+    } else {
+        0
+    }
+}
+/// Actual target verification only. Pending commit/draft work stays unprofiled;
+/// each flight owns its query pool through its original completion fence.
 pub(crate) struct NativeProfileRound(bool);
 impl NativeProfileRound {
-    pub(crate) fn new(round: u64) -> Self {
-        let active = profile_native_target() && native_profile_authorized() && round == 8;
+    pub(crate) fn new(request: u64, round: u64) -> Self {
+        let active = native_profile_authorized()
+            && native_profile_sample().is_some_and(|sample| sample.selects(request, round));
         if active {
             cubecl::wgpu::set_native_strata_profile_active(true);
         }
@@ -130,6 +162,34 @@ impl Drop for NativeProfileRound {
         if self.0 {
             cubecl::wgpu::set_native_strata_profile_active(false);
         }
+    }
+}
+#[cfg(test)]
+mod profile_selection_tests {
+    use super::NativeProfileSample;
+    #[test]
+    fn warm_profile_is_one_window_on_second_request_only() {
+        for request in 0..4 {
+            for round in 0..110 {
+                assert_eq!(
+                    NativeProfileSample::Warm.selects(request, round),
+                    request == 2 && round == 64
+                );
+                assert_eq!(
+                    NativeProfileSample::First.selects(request, round),
+                    request == 1 && round == 8
+                );
+            }
+        }
+        assert_eq!(
+            NativeProfileSample::parse("warm-round-64"),
+            Some(NativeProfileSample::Warm)
+        );
+        assert_eq!(
+            NativeProfileSample::parse("round-8"),
+            Some(NativeProfileSample::First)
+        );
+        assert_eq!(NativeProfileSample::parse("all"), None);
     }
 }
 pub(crate) fn specialized_members() -> bool {

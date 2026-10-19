@@ -19,7 +19,7 @@ def run():
  # Only the exact artifact accepted by the committed audit may be measured.
  measure='--throughput-check' in options
  operator_check='--native-profile' in options
- if operator_check and (options!={'--execution-check','--intel-core','--native-profile'} or fixture!='code' or profile!='q2'):
+ if operator_check and (options not in ({'--execution-check','--intel-core','--native-profile'}, {'--execution-check','--intel-core','--native-profile','--retained-check'}) or fixture!='code' or profile!='q2'):
   raise ValueError('operator sample requires unchanged core/Q2 public code request')
  if measure and (options!={'--execution-check','--retained-check','--intel-core','--throughput-check'} or fixture!='code' or profile!='q2'):
   raise ValueError('throughput requires unchanged accepted core/Q2 public repeat')
@@ -65,7 +65,7 @@ def run():
   env['KUNO_STRATA_MEMBER_WIDTHS']='classified-public'
  if '--native-profile' in options:
   if '--intel-core' not in options or target_profile:raise ValueError('native profile requires core and excludes ordinary profile')
-  env['KUNO_STRATA_NATIVE_PROFILE']='round-8'
+  env['KUNO_STRATA_NATIVE_PROFILE']='warm-round-64' if '--retained-check' in options else 'round-8'
  if target_profile:env['KUNO_STRATA_PROFILE_TARGET']='round-8'
  if '--integer-head' in options:env['KUNO_LAB_TARGET_HEAD']='integer-public'
  if '--fused-experts' in options:env['KUNO_STRATA_FUSED_EXPERTS']='five-tier-public'

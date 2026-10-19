@@ -313,6 +313,7 @@ pub(super) fn run<'m, 'f>(
     {
         return Err("global request controller scope rejected".into());
     }
+    let profile_request = crate::strata_port::native_profile_request();
     let plan = PromptPlan::new(request.prompt.len())?;
     if plan.prefix() != 0 {
         phase("prompt_prefix");
@@ -600,7 +601,10 @@ pub(super) fn run<'m, 'f>(
         let previous_total = history.len();
         let mut delivered = None;
         let mut delivery_error = None;
-        let mut native_profile = Some(crate::strata_port::NativeProfileRound::new(rounds));
+        let mut native_profile = Some(crate::strata_port::NativeProfileRound::new(
+            profile_request,
+            rounds,
+        ));
         let verification = target.verify_native_prefix(executor, &inputs, cancel, &mut |phase| {
             use crate::resident_model::batch::PrefixPhase;
             match phase {

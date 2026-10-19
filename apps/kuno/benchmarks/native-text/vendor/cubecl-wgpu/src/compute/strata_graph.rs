@@ -20,7 +20,7 @@ pub fn set_native_strata_profile_active(active: bool) {
 fn profile_active() -> bool {
     enabled()
         && PROFILE_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
-        && std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("round-8")
+        && matches!(std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref(), Ok("round-8" | "warm-round-64"))
         && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
 }
 type OperatorTotals = std::collections::BTreeMap<&'static str, (u64, u64)>;
