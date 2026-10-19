@@ -57,8 +57,8 @@ mod native {
         count: usize,
         weight_first: usize,
     ) -> SharedMemory<f32> {
-        let mut a = SharedMemory::<F>::new(512usize);
-        let mut b = SharedMemory::<F>::new(1024usize);
+        let mut a = SharedMemory::<F>::new(128usize);
+        let mut b = SharedMemory::<F>::new(256usize);
         let mut out = SharedMemory::<f32>::new(128usize);
         // SAFETY: every loop initializes both operands with load before use;
         // host validation guarantees a nonempty reduction dimension.
@@ -90,43 +90,56 @@ mod native {
         );
         let token = usize::cast_from(CUBE_POS_Y) * 8;
         let row = usize::cast_from(CUBE_POS_X) * 16;
-        let mut k = 0usize;
-        while k < columns {
-            let mut i = usize::cast_from(UNIT_POS);
-            while i < 512 {
-                let t = token + i / 64;
-                let col = k + i % 64;
-                let mut v = F::new(0.0);
-                if t < count && col < columns {
-                    v = input[t * columns + col];
-                }
-                a[i] = v;
-                i += 16;
-            }
-            i = usize::cast_from(UNIT_POS);
-            while i < 1024 {
-                let r = row + i / 64;
-                let col = k + i % 64;
-                let mut v = F::new(0.0);
-                if r < rows && col < columns {
-                    v = weight[weight_first + r * columns + col];
-                }
-                b[i] = v;
-                i += 16;
-            }
-            sync_cube();
-            // Four original K16 products in exactly the same accumulation
-            // order, sharing one staged K64 operand tile and two barriers.
-            // No reader writes shared operands between these subgroup loads.
-            let mut part = 0usize;
-            while part < 64 {
-                cmma::load(&am, &a.to_slice().slice(part, 512usize), 64);
-                cmma::load(&bm, &b.to_slice().slice(part, 1024usize), 64);
+        // Complete tiles are already contiguous, aligned FP16/BF16 images.
+        // Cooperative loads can consume these original global owners directly;
+        // bouncing them through SLM adds loads, stores and barriers at every K16.
+        // Keep the original masked staging path for any partial tile/reduction.
+        if token + 8 <= count && row + 16 <= rows && columns % 16 == 0 {
+            let mut k = 0usize;
+            while k < columns {
+                let first_a = token * columns + k;
+                let first_b = weight_first + row * columns + k;
+                cmma::load(&am, &input.to_slice().slice(first_a, input.len()), columns);
+                cmma::load(
+                    &bm,
+                    &weight.to_slice().slice(first_b, weight.len()),
+                    columns,
+                );
                 cmma::execute::<F, F, f32, f32>(&am, &bm, &acc, &acc);
-                part += 16;
+                k += 16;
             }
-            sync_cube();
-            k += 64;
+        } else {
+            let mut k = 0usize;
+            while k < columns {
+                let mut i = usize::cast_from(UNIT_POS);
+                while i < 128 {
+                    let t = token + i / 16;
+                    let col = k + i % 16;
+                    let mut v = F::new(0.0);
+                    if t < count && col < columns {
+                        v = input[t * columns + col];
+                    }
+                    a[i] = v;
+                    i += 16;
+                }
+                i = usize::cast_from(UNIT_POS);
+                while i < 256 {
+                    let r = row + i / 16;
+                    let col = k + i % 16;
+                    let mut v = F::new(0.0);
+                    if r < rows && col < columns {
+                        v = weight[weight_first + r * columns + col];
+                    }
+                    b[i] = v;
+                    i += 16;
+                }
+                sync_cube();
+                cmma::load(&am, &a.to_slice(), 16);
+                cmma::load(&bm, &b.to_slice(), 16);
+                cmma::execute::<F, F, f32, f32>(&am, &bm, &acc, &acc);
+                sync_cube();
+                k += 16;
+            }
         }
         cmma::store(
             &mut out.to_slice_mut(),
