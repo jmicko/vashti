@@ -25,6 +25,18 @@ pub(crate) fn report() {
         });
     }
 }
+/// Aggregate public-fixture resource counts only. Private inference never
+/// enables this collector; source identities, offsets and route values are
+/// deliberately absent. Counts use tuple slot0, with both time slots zero.
+pub(crate) fn count(name: &'static str, amount: u64) {
+    if ENABLED.load(Ordering::Acquire) {
+        TOTALS.with(|totals| {
+            let mut totals = totals.borrow_mut();
+            let total = totals.entry(name).or_default();
+            total.0 = total.0.saturating_add(amount);
+        });
+    }
+}
 pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant)>);
 impl Timer {
     pub(crate) fn new(client: &ComputeClient<WgpuRuntime>) -> kuno_text::Result<Self> {

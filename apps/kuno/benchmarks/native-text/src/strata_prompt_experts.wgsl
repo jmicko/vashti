@@ -49,17 +49,28 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     if arrayLength(&addresses)!=2048u||arrayLength(&strata_grid)!=8192u
         || arrayLength(&raw)!=p.r5||p.r5>2097152u||p.r0!=0u||p.r1==0u||p.r1>p.r5
         || p.r2!=2u*p.r1||p.r2>=p.r5||p.role!=select(0u,2u,DOWN_IMAGE)
-        || arrayLength(&packed)!=PROMPT_WORKING_WORDS {atomicOr(&fault[0],128u);return;}
+        || p.columns%8u!=0u||p.r3%4u!=0u||p.r4%4u!=0u
+        || arrayLength(&packed)!=PROMPT_WORKING_WORDS/4u {atomicOr(&fault[0],128u);return;}
     let src=addresses[p.role*512u+map[4u+p.group]];
     let original_rows=select(p.rows/2u,p.rows,p.role==2u);let bytes=original_rows*p.row_bytes;
     let expected=select(p.r1,p.r5-p.r2,DOWN_IMAGE);
     if src.z!=bytes/4u||src.z!=expected||src.w>1u {atomicOr(&fault[0],128u);return;}
     strata_gate_address=src.xy;host_gate=src.w==1u;
     CHOOSE_UP
-    let i=id.x;if i>=p.rows*p.columns/2u {return;}let row=i/(p.columns/2u);let col=(i%(p.columns/2u))*2u;
-    let a=value(row,col);let b=value(row,col+1u);let bits=pack2x16float(vec2<f32>(a,b));let v=unpack2x16float(bits);
-    let good=finite(a)&&finite(b)&&finite(v.x)&&finite(v.y);let first=select(p.r3,p.r4,p.role==2u);
-    packed[first+i]=select(0u,bits,good);if !good {atomicOr(&fault[0],128u);}
+    let i=id.x;if i>=p.rows*p.columns/8u {return;}let row=i/(p.columns/8u);let col=(i%(p.columns/8u))*8u;
+    // One original32-value metadata record feeds two quartets. Eight adjacent
+    // decoded values share the same16-value subscale even for IQ2_S.
+    let values=value8(row,col);
+    let bits=vec4<u32>(pack2x16float(values.a.xy),pack2x16float(values.a.zw),
+        pack2x16float(values.b.xy),pack2x16float(values.b.zw));
+    let lo=vec4<f32>(unpack2x16float(bits.x),unpack2x16float(bits.y));
+    let hi=vec4<f32>(unpack2x16float(bits.z),unpack2x16float(bits.w));
+    let maximum=vec4<f32>(3.4028234663852886e38);
+    let good=all(abs(values.a)<=maximum)&&all(abs(values.b)<=maximum)
+        &&all(abs(lo)<=maximum)&&all(abs(hi)<=maximum);
+    let first=select(p.r3,p.r4,p.role==2u)/4u;
+    if first+i>=arrayLength(&packed) {atomicOr(&fault[0],128u);return;}
+    packed[first+i]=select(vec4<u32>(0u),bits,good);if !good {atomicOr(&fault[0],128u);}
 }
 // DEQUANT_END
 // GEMM_BEGIN

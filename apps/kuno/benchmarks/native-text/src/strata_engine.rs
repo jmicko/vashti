@@ -538,6 +538,7 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
         }
         self.state.start(self.request_erasure.is_some())?;
         let attempted = checked(|| {
+            phase("request_rebind_begin");
             let t = self.target.as_mut().ok_or(Failure::Inference)?;
             let e = self.executor.as_mut().ok_or(Failure::Inference)?;
             if let Some((erased, draft_erased)) = self.request_erasure.take() {
@@ -551,6 +552,7 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
                 t.bind_completed_native_request(e, erased, prompt_count, output_count, cancel)
                     .map_err(|_| Failure::RecoveryRequired)?;
             }
+            phase("request_rebind_complete");
             let Request {
                 prompt,
                 outputs,

@@ -38,14 +38,14 @@ impl Op {
                 .0;
             s.push_str(&format!("fn iq4_byte{helpers}"));
             let (decode, value) = if down {
-                (q::frozen_down_integer::decode(dtype).replace("down","gate"),"let e=gate_prepare(row*p.row_bytes,col/32u);let codes=gate_packed(e,(col%32u)/4u);return e.d*signed_byte((codes>>((col%4u)*8u))&255u);".to_owned())
+                (q::frozen_down_integer::decode(dtype).replace("down","gate"),"let e=gate_prepare(row*p.row_bytes,col/32u);let first=(col%32u)/4u;return decoded8(e.d,gate_packed(e,first),gate_packed(e,first+1u));".to_owned())
             } else {
                 let decode = format!(
                     "{}\n{}",
                     q::frozen_gu_integer::decode("gate", dtype),
                     q::frozen_gu_integer::decode("up", dtype)
                 );
-                let value = "if (row%2u)==0u {let e=gate_prepare((row/2u)*p.row_bytes,col/32u);let codes=gate_packed(e,(col%32u)/4u);return gate_factor(e,(col%32u)/16u)*signed_byte((codes>>((col%4u)*8u))&255u);}let e=up_prepare((row/2u)*p.row_bytes,col/32u);let codes=up_packed(e,(col%32u)/4u);return up_factor(e,(col%32u)/16u)*signed_byte((codes>>((col%4u)*8u))&255u);";
+                let value = "let first=(col%32u)/4u;if (row%2u)==0u {let e=gate_prepare((row/2u)*p.row_bytes,col/32u);return decoded8(gate_factor(e,(col%32u)/16u),gate_packed(e,first),gate_packed(e,first+1u));}let e=up_prepare((row/2u)*p.row_bytes,col/32u);return decoded8(up_factor(e,(col%32u)/16u),up_packed(e,first),up_packed(e,first+1u));";
                 (decode, value.into())
             };
             let offset = match dtype {
@@ -57,7 +57,10 @@ impl Op {
             let decode = decode.replace("iq3_grid[", &format!("strata_grid[{offset}u+"));
             let decode = crate::strata_expert_fused::replace_reads(decode, "gate");
             s.push_str(&crate::strata_expert_fused::replace_reads(decode, "up"));
-            s.push_str(&format!("fn value(row:u32,col:u32)->f32 {{{value}}}\n"));
+            s.push_str("struct Decoded8 {a:vec4<f32>,b:vec4<f32>}\nfn codes4(c:u32)->vec4<f32> {return vec4<f32>(signed_byte(c&255u),signed_byte((c>>8u)&255u),signed_byte((c>>16u)&255u),signed_byte(c>>24u));}\nfn decoded8(d:f32,a:u32,b:u32)->Decoded8 {return Decoded8(vec4<f32>(d)*codes4(a),vec4<f32>(d)*codes4(b));}\n");
+            s.push_str(&format!(
+                "fn value8(row:u32,col:u32)->Decoded8 {{{value}}}\n"
+            ));
             let mut bindings = String::from(
                 "// STRATA_PHYSICAL_EXPERTS\n@group(0) @binding(0) var<storage,read> gate0:array<vec4<u32>>;\n",
             );
@@ -70,7 +73,7 @@ impl Op {
             for (name, access, ty) in [
                 ("map", "read", "u32"),
                 ("raw", "read", "u32"),
-                ("packed", "read_write", "u32"),
+                ("packed", "read_write", "vec4<u32>"),
                 ("fault", "read_write", "atomic<u32>"),
                 ("strata_grid", "read", "u32"),
                 ("addresses", "read", "vec4<u32>"),
@@ -118,7 +121,7 @@ impl KernelMetadata for Op {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info((*self, "prompt-owned-routes-v3"))
+            .info((*self, "prompt-owned-routes-v4-vector8"))
             .cube_dim(CubeDim::new_1d(self.lanes()))
     }
     fn address_type(&self) -> StorageType {
@@ -272,6 +275,8 @@ pub(crate) fn enqueue(
     // Native Intel prefill groups on the host once per layer. This is a bounded
     // routing-only readback, not decode's CPU expert/input contribution.
     let groups = super::groups::validate(map, count)?;
+    crate::strata_prefill_profile::count("expert_group_count", groups as u64);
+    crate::strata_prefill_profile::count("expert_fp16_image_bytes", (groups * DQ_WORDS * 4) as u64);
     let mut issued = 0;
     for group in 0..groups {
         let mut timing = crate::strata_prefill_profile::CpuTimer::new();
@@ -352,7 +357,7 @@ pub(crate) fn enqueue(
                     down,
                 },
                 [
-                    (words[1] as usize * words[2] as usize / 2).div_ceil(256),
+                    (words[1] as usize * words[2] as usize / 8).div_ceil(256),
                     1,
                     1,
                 ],
@@ -450,6 +455,116 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         .unwrap()
     })
     .collect()
+}
+
+#[cfg(test)]
+mod vector_dequant_tests {
+    use super::*;
+    use kuno_text::quant::TensorType;
+
+    #[test]
+    fn eight_value_images_preserve_original_half_bits_and_subscale_boundaries() {
+        for (kind, columns) in [
+            (TensorType::Iq3Xxs, 2560usize),
+            (TensorType::Iq3S, 2560),
+            (TensorType::Iq2S, 2560),
+            (TensorType::Iq4Xs, 2560),
+            (TensorType::Iq4Nl, 640),
+            (TensorType::Q2_0, 640),
+        ] {
+            for salt in [0u8, 37, 113, 255] {
+                let mut wire: Vec<u8> = (0..kind.row_bytes(columns as u64).unwrap() as usize)
+                    .map(|i| (i as u8).wrapping_mul(73).wrapping_add(salt))
+                    .collect();
+                for block in wire.chunks_exact_mut(kind.block_bytes() as usize) {
+                    block[..2].copy_from_slice(&half::f16::from_f32(0.015625).to_le_bytes());
+                }
+                let mut reference = vec![0.; columns];
+                kind.decode(&wire, &mut reference).unwrap();
+                let mut packed = vec![0u32; columns / 2];
+                for column in (0..columns).step_by(8) {
+                    // An eight-value run must never cross the original32-code
+                    // record or either IQ2_S16-value scale. The shader shares
+                    // one prepared record and two adjacent packed quartets.
+                    assert_eq!(column / 32, (column + 7) / 32);
+                    assert_eq!(column / 16, (column + 7) / 16);
+                    let (codes, d): (Vec<i8>, f32) = if kind == TensorType::Iq2S {
+                        let (codes, d) =
+                            q::iq_moe_integer::oracle::unpack_iq2_s16(&wire, columns, column / 16)
+                                .unwrap();
+                        (codes.to_vec(), d)
+                    } else {
+                        let (codes, d) =
+                            q::iq_moe_integer::oracle::unpack32(kind, &wire, columns, column / 32)
+                                .unwrap();
+                        (codes.to_vec(), d)
+                    };
+                    let local = column % codes.len();
+                    for pair in 0..4 {
+                        let first = half::f16::from_f32(d * f32::from(codes[local + pair * 2]));
+                        let second =
+                            half::f16::from_f32(d * f32::from(codes[local + pair * 2 + 1]));
+                        packed[column / 2 + pair] =
+                            u32::from(first.to_bits()) | u32::from(second.to_bits()) << 16;
+                    }
+                }
+                for (column, expected) in reference.into_iter().enumerate() {
+                    assert_eq!(
+                        (packed[column / 2] >> (16 * (column % 2))) as u16,
+                        half::f16::from_f32(expected).to_bits(),
+                        "kind={kind:?} salt={salt} column={column}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn actual_dequant_sources_store_original_aligned_vectors_with_full_fault_checks() {
+        for (down, types) in [
+            (false, &[q::IQ2_S, q::IQ3_S, q::IQ3_XXS, q::IQ4_XS][..]),
+            (true, &[q::IQ4_NL, q::Q2_0][..]),
+        ] {
+            for &dtype in types {
+                let source = Op::Dequant { dtype, down }.source();
+                let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::all(),
+                )
+                .validate(&module)
+                .unwrap();
+                let variable = module
+                    .global_variables
+                    .iter()
+                    .find(|(_, variable)| variable.name.as_deref() == Some("packed"))
+                    .unwrap()
+                    .1;
+                assert!(matches!(
+                    module.types[variable.ty].inner,
+                    wgpu::naga::TypeInner::Array { stride: 16, .. }
+                ));
+                assert!(source.contains("fn value8("));
+                assert!(!source.contains("fn value("));
+                assert!(source.contains("packed[first+i]=select(vec4<u32>(0u),bits,good)"));
+                assert!(source.contains("all(abs(values.a)<=maximum)"));
+                assert!(source.contains("all(abs(hi)<=maximum)"));
+                assert!(source.contains("atomicOr(&fault[0],128u)"));
+            }
+        }
+        assert!(GU_WORDS.is_multiple_of(4));
+        assert!(DOWN_WORDS.is_multiple_of(4));
+        assert!(DQ_WORDS.is_multiple_of(4));
+        for slot in 0..DEQUANT_SLOTS {
+            for (first, words) in [
+                (slot * DQ_WORDS, GU_WORDS),
+                (slot * DQ_WORDS + GU_WORDS, DOWN_WORDS),
+            ] {
+                assert!(first.is_multiple_of(4) && words.is_multiple_of(4));
+                assert!(first + words <= DEQUANT_SLOTS * DQ_WORDS);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

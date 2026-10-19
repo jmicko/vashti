@@ -443,9 +443,15 @@ impl Sources {
                 .ok_or(Error::ArithmeticOverflow)?;
         }
         if !copies.is_empty() {
+            let bytes = copies.iter().try_fold(0u64, |sum, copy| {
+                sum.checked_add(copy.bytes).ok_or(Error::ArithmeticOverflow)
+            })?;
+            let segments = copies.len() as u64;
             self.client
                 .stage_public_host_copies(copies)
                 .map_err(crate::resident_util::fault)?;
+            crate::strata_prefill_profile::count("expert_host_stage_bytes", bytes);
+            crate::strata_prefill_profile::count("expert_host_copy_segments", segments);
         }
         Ok(())
     }
