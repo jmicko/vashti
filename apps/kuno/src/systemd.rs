@@ -444,6 +444,9 @@ pub(crate) fn ollama_drop_in(upstream: SocketAddr) -> String {
 fn artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Vec<Artifact>> {
     let mut artifacts = base_artifacts(installation, executable)?;
     artifacts.extend(crate::image_engine::installed_artifacts()?);
+    artifacts.extend(native_text_artifacts(
+        installation.config.native_text.as_ref(),
+    )?);
     Ok(artifacts)
 }
 
@@ -777,11 +780,13 @@ fn validate_installed_config(original: &Config, current: &Config) -> Result<()> 
     let mut expected = original.clone();
     expected.managed = None;
     expected.image = None;
+    expected.native_text = None;
     expected.response_header_timeout_seconds = current.response_header_timeout_seconds;
     expected.stream_idle_timeout_seconds = current.stream_idle_timeout_seconds;
     let mut actual = current.clone();
     actual.managed = None;
     actual.image = None;
+    actual.native_text = None;
     if serde_json::to_value(expected).map_err(|_| "config_encoding_failed")?
         != serde_json::to_value(actual).map_err(|_| "config_encoding_failed")?
     {
@@ -855,6 +860,92 @@ pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Resu
     )
 }
 
+const NATIVE_TEXT_WORKER: &str = "/usr/local/lib/kuno/native-text-worker";
+const NATIVE_TEXT_SETTINGS: &str = "/etc/kuno/native-text-settings.json";
+fn native_text_artifacts(config: Option<&crate::native_text::Config>) -> Result<Vec<Artifact>> {
+    let Some(config) = config else {
+        return Ok(Vec::new());
+    };
+    trusted_file(&config.executable)?;
+    trusted_file(&config.settings)?;
+    let worker = fs::read(&config.executable).map_err(|_| "native_runtime_read_failed")?;
+    let settings = fs::read(&config.settings).map_err(|_| "native_settings_read_failed")?;
+    if worker.is_empty() || worker.len() > 256 * 1024 * 1024 || settings.len() > 64 * 1024 {
+        return Err("native_runtime_invalid");
+    }
+    let _: serde_json::Value =
+        serde_json::from_slice(&settings).map_err(|_| "native_settings_invalid")?;
+    Ok(vec![
+        Artifact {
+            path: NATIVE_TEXT_WORKER.trim_start_matches('/').into(),
+            bytes: worker,
+            mode: 0o755,
+        },
+        Artifact {
+            path: NATIVE_TEXT_SETTINGS.trim_start_matches('/').into(),
+            bytes: settings,
+            mode: 0o644,
+        },
+    ])
+}
+/// Enroll optional source assets as OWNED files in the same reversible deployment
+/// as the gateway/configuration. Ordinary upgrades retain these exact assets.
+pub fn configure_native_text(native: Option<crate::native_text::Config>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let mut installation = current_installation()?;
+    let native_assets = native_text_artifacts(native.as_ref())?;
+    if let Some(config) = &native {
+        config.validate()?;
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|_| "native_catalog_unavailable")?;
+        let response = client
+            .get(format!("http://{}/api/tags", installation.config.upstream))
+            .send()
+            .map_err(|_| "native_catalog_unavailable")?;
+        let value: serde_json::Value = response
+            .error_for_status()
+            .map_err(|_| "native_catalog_unavailable")?
+            .json()
+            .map_err(|_| "native_catalog_invalid")?;
+        if value["models"]
+            .as_array()
+            .ok_or("native_catalog_invalid")?
+            .iter()
+            .any(|m| m["name"] == config.model || m["model"] == config.model)
+        {
+            return Err("native_model_name_conflict");
+        }
+    }
+    installation.config.native_text = native.map(|mut config| {
+        config.executable = NATIVE_TEXT_WORKER.into();
+        config.settings = NATIVE_TEXT_SETTINGS.into();
+        config
+    });
+    installation.config.validate()?;
+    if installation.config.image.as_ref().is_some_and(|image| {
+        image
+            .collections
+            .iter()
+            .any(|id| id == "qwen-image-2512-fp8")
+            || image.engine == crate::image_engine::ImageEngine::Native
+    }) && !cfg!(feature = "native-image")
+    {
+        return Err("image_engine_not_in_this_build");
+    }
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    let mut artifacts = base_artifacts(&installation, executable)?;
+    artifacts.extend(crate::image_engine::installed_artifacts()?);
+    artifacts.extend(native_assets);
+    transaction.replace(&artifacts, &mut SystemdHost { installation })
+}
+
 /// Install a verified optional runtime through the existing reversible setup
 /// transaction. This does not enable it or change image collections/GPU choice.
 pub fn install_image_runtime(directory: &Path, manifest_sha256: &str) -> Result<()> {
@@ -876,6 +967,9 @@ pub fn install_image_runtime(directory: &Path, manifest_sha256: &str) -> Result<
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
     let mut artifacts = base_artifacts(&installation, executable)?;
+    artifacts.extend(native_text_artifacts(
+        installation.config.native_text.as_ref(),
+    )?);
     artifacts.extend(runtime);
     transaction.replace(&artifacts, &mut SystemdHost { installation })
 }
@@ -1563,6 +1657,22 @@ mod tests {
             timeout_config(&invalid_queue, Some(0), Some(0)).unwrap_err(),
             "invalid_admission_bounds"
         );
+    }
+
+    #[test]
+    fn native_enrollment_is_mutable_without_relaxing_listener_identity() {
+        let original = configured_installation();
+        let mut current = original.clone();
+        current.native_text = Some(crate::native_text::Config {
+            model: "kuno-test:iq3_s".into(),
+            executable: NATIVE_TEXT_WORKER.into(),
+            settings: NATIVE_TEXT_SETTINGS.into(),
+            pci_address: "0000:2d:00.0".into(),
+        });
+        current.validate().unwrap();
+        validate_installed_config(&original, &current).unwrap();
+        current.upstream = "127.0.0.1:11999".parse().unwrap();
+        assert!(validate_installed_config(&original, &current).is_err());
     }
 
     #[test]
