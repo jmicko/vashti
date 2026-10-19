@@ -102,3 +102,50 @@ Before replacing live services, verify the frozen native worker with a protected
 framed caller, then verify the staged gateway's catalog, real streamed/nonstreamed
 mixed prompts, preload, unload, subsequent ordinary Ollama inference, recovery
 and absence of content files. Keep an exact binary/config rollback.
+
+## Integration checkpoint (2026-10-19 UTC, before installation)
+
+- Worktree `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+  `codex/strata-rust-port`. Do not edit the canonical Vashti checkout.
+- Initial adapter7f54777a, protected Vulkan/pipe correction39c3e8e1,
+  transactional enrollment1c4cf520. Additional actual-Ollama-CLI defaults handling
+  is being tested; it accepts empty serialized suffix/template/options defaults
+  while continuing to reject real unsupported features.
+- Frozen selected worker `strata-native-worker-scope-20261019`, runtime39c3e8e1,
+  SHA25680890bcebd620244b12b80c5b31f3a34460075f061c0fbc10b33f653b7d6354f.
+  Its wire/math are unchanged by gateway-only enrollment and parser changes.
+- `native-worker-framed-scope-check-20261019` completed real preload,362-output
+  public code,64-output capped prose and two identical23-output sampled repeats.
+  All five requests returned only after the real engine request-erasure path.
+  The harness then FAILED attempting to read the non-dumpable child's `/proc/io`
+  as the unprivileged caller. This is not an engine numerical failure, but it is
+  NOT final-close/complete-private-caller acceptance: its exception path killed
+  the idle child. Root observer confirmed normal admission,50,688,000B Intel,
+  NVIDIA compute0 and no driver faults. Do the privileged IO inspection and
+  graceful close in the staged gateway test; do not relabel this failed receipt.
+- First candidate5d1c238c failed before inference because the private mode had
+  not enabled all original HAL gates. Its physical recovery also passed.
+- Initial Kuno CPU run:222 passed across15 suites,7 hardware tests ignored.
+  Latest targeted lib/native/installer tests and strict Clippy pass; run the final
+  broad Kuno suite again after the final parser/installer edits are frozen.
+- Image-enabled replacement build preserves CUDA/Vulkan and the existing
+  managed SYCL bundle. Fresh pinned source/build under this worktree's
+  `target/kuno-sd-{source,build}-88411ef-b51e05e8aaf4e67e[-cuda]`.
+  Use default `GGML_CUDA_NO_VMM=OFF`, matching the installed binary. An accidental
+  ON preparation failed its CUDA-driver link and was not installed; restored OFF
+  rebuild succeeds, including embedding, attention and36 loader CPU cases.
+  Gateway Cargo target: `/media/jmicko/faststore/kuno-development/native-install-target-20261019`.
+  Rebuild the final gateway after the last commit before freezing/copying it.
+- Nothing is installed yet. Next: protected staged HTTP gateway with disjoint
+  listener/control/worker ports, mixed real requests, installed Ollama CLI shape,
+  root-only worker IO check, graceful unload and ordinary Ollama routing. Then
+  use official `upgrade --yes` and `configure-native-text --settings FILE --yes`.
+  Do not manually edit installed config/binary and invalidate deployment hashes.
+  Enrollment copies root-controlled source worker/settings into the existing
+  reversible deployment and preserves them across later gateway/image upgrades.
+- Model settings for installation must reference the existing read-only model
+  mount `/var/lib/kuno/models/.kuno-import/...`. Hardlink the existing889MB MTP
+  into that store on the same filesystem, not a second83GB target download.
+  Test scripts/settings/frozen artifacts and classified receipts live under
+  `/media/jmicko/faststore/kuno-development`; they contain fixed public fixtures
+  only. Do not save generated text or private caller bodies in the next tests.

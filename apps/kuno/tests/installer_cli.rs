@@ -338,3 +338,22 @@ fn timeout_configuration_validates_arguments_before_confirmation_or_privileged_w
         .unwrap();
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown_argument"));
 }
+
+#[test]
+fn native_configuration_requires_confirmation_before_privileged_work() {
+    let binary = env!("CARGO_BIN_EXE_kuno");
+    let output = Command::new(binary)
+        .args(["configure-native-text", "--disable"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("confirmation_required"));
+    if unsafe { libc::geteuid() } != 0 {
+        let output = Command::new(binary)
+            .args(["configure-native-text", "--disable", "--yes"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("root_required"));
+    }
+}

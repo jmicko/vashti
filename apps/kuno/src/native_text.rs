@@ -88,6 +88,8 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
         "/api/generate" => false,
         _ => return Err("native_endpoint_unsupported"),
     };
+    // Empty/null fields are the installed Ollama CLI's serialized defaults,
+    // not requests for suffix/template/tools/structured-output features.
     let allowed = if chat {
         &[
             "model",
@@ -96,6 +98,8 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
             "options",
             "keep_alive",
             "think",
+            "tools",
+            "format",
         ][..]
     } else {
         &[
@@ -107,25 +111,48 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
             "options",
             "keep_alive",
             "think",
+            "suffix",
+            "template",
+            "context",
+            "format",
         ][..]
     };
     if object.keys().any(|k| !allowed.contains(&k.as_str())) {
         return Err("native_request_feature_unsupported");
     }
-    if value.get("think").is_some_and(|v| v != false) {
+    for key in ["suffix", "template", "format"] {
+        if value
+            .get(key)
+            .is_some_and(|v| !v.is_null() && v.as_str() != Some(""))
+        {
+            return Err("native_request_feature_unsupported");
+        }
+    }
+    for key in ["tools", "context"] {
+        if value
+            .get(key)
+            .is_some_and(|v| !v.is_null() && !v.as_array().is_some_and(Vec::is_empty))
+        {
+            return Err("native_request_feature_unsupported");
+        }
+    }
+    if value
+        .get("think")
+        .is_some_and(|v| !v.is_null() && v != false)
+    {
         return Err("native_thinking_unsupported");
     }
-    let stream = match value.get("stream") {
+    let stream = match value.get("stream").filter(|v| !v.is_null()) {
         None => true,
         Some(v) => v.as_bool().ok_or("native_request_invalid")?,
     };
-    let keep_alive = match value.get("keep_alive") {
+    let keep_alive = match value.get("keep_alive").filter(|v| !v.is_null()) {
         None => true,
         Some(v) if v == 0 || v == "0" || v == "0s" => false,
         Some(v) if v == -1 || v == "-1" => true,
         _ => return Err("native_keep_alive_unsupported"),
     };
-    let options = match value.get("options") {
+    let options = match value.get("options").filter(|v| !v.is_null()) {
         None => None,
         Some(v) => Some(v.as_object().ok_or("native_options_invalid")?),
     };
@@ -206,8 +233,15 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
             append(&mut prompt, "<|im_end|>\n")?;
         }
     } else {
-        let input = value.get("prompt").and_then(Value::as_str).unwrap_or("");
-        if input.is_empty() && value.get("system").is_none() {
+        let text_field = |key| -> Result<&str> {
+            match value.get(key).filter(|v| !v.is_null()) {
+                None => Ok(""),
+                Some(v) => v.as_str().ok_or("native_request_invalid"),
+            }
+        };
+        let input = text_field("prompt")?;
+        let system = text_field("system")?;
+        if input.is_empty() && system.is_empty() {
             return Ok(Prepared {
                 request: if keep_alive { Some(preload()) } else { None },
                 chat,
@@ -220,13 +254,12 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
             Some(v) => v.as_bool().ok_or("native_request_invalid")?,
         };
         if raw {
-            if value.get("system").is_some() {
+            if !system.is_empty() {
                 return Err("native_raw_system_unsupported");
             }
             append(&mut prompt, input)?;
         } else {
-            if let Some(system) = value.get("system") {
-                let system = system.as_str().ok_or("native_request_invalid")?;
+            if !system.is_empty() {
                 append(&mut prompt, "<|im_start|>system\n")?;
                 append(&mut prompt, system)?;
                 append(&mut prompt, "<|im_end|>\n")?;
@@ -551,6 +584,30 @@ mod tests {
             .is_err()
         );
         assert!(prepare("/v1/chat/completions", &json!({})).is_err());
+    }
+    #[test]
+    fn installed_ollama_cli_defaults_do_not_request_template_or_suffix_features() {
+        let mut body = json!({"model":"kuno-test:iq3_s","prompt":"hello","suffix":"","system":"","template":"","options":{}});
+        let prepared = prepare("/api/generate", &body).unwrap();
+        assert!(
+            prepared
+                .request
+                .unwrap()
+                .prompt
+                .starts_with(b"<|im_start|>user\nhello")
+        );
+        body["prompt"] = "".into();
+        body["options"] = Value::Null;
+        assert_eq!(
+            prepare("/api/generate", &body)
+                .unwrap()
+                .request
+                .unwrap()
+                .outputs,
+            0
+        );
+        body["template"] = "a real template override".into();
+        assert!(prepare("/api/generate", &body).is_err());
     }
     #[test]
     fn raw_and_unload_preserve_explicit_behavior() {
