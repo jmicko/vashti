@@ -10,7 +10,7 @@ if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise Val
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 features=['strata-rust-port']+(['strata-eight-window'] if '--eight' in options else [])+(['strata-resident-224'] if '--resident-224' in options else [])+(['strata-resident-240'] if '--resident-240' in options else [])+(['strata-intel-core'] if '--intel-core' in options else [])+(['strata-gpu-adaptive-usage'] if '--gpu-adaptive-usage' in options else [])
 features += ['strata-public-cap-check'] if '--capped-check' in options else []
-source_paths=['apps/kuno/benchmarks/native-text','crates/kuno-text','apps/kuno/src/native_protocol.rs','apps/kuno/src/image_privacy.rs','apps/kuno/benchmarks/text/build-strata-port.py','apps/kuno/benchmarks/text/run-strata-port.py']
+source_paths=['apps/kuno/benchmarks/native-text','crates/kuno-text','apps/kuno/src/native_protocol.rs','apps/kuno/src/native_artifact.rs','apps/kuno/src/image_privacy.rs','apps/kuno/benchmarks/text/build-strata-port.py','apps/kuno/benchmarks/text/run-strata-port.py']
 subprocess.run(['git','diff','--quiet','HEAD','--',*source_paths],cwd=root,check=True)
 commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
 (out/'source-commit.txt').write_text(commit+'\n')

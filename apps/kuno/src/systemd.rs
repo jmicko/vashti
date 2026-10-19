@@ -888,6 +888,50 @@ fn native_text_artifacts(config: Option<&crate::native_text::Config>) -> Result<
         },
     ])
 }
+fn attest_native_models(
+    native: &crate::native_text::Config,
+    installation: &crate::config::Config,
+    assets: &mut [Artifact],
+) -> Result<()> {
+    let settings = assets
+        .iter_mut()
+        .find(|a| a.path == Path::new(NATIVE_TEXT_SETTINGS.trim_start_matches('/')))
+        .ok_or("native_settings_invalid")?;
+    let mut model: crate::native_artifact::Settings =
+        serde_json::from_slice(&settings.bytes).map_err(|_| "native_settings_invalid")?;
+    if model.shards.len() != 2 || model.device_id != 0xe223 {
+        return Err("native_settings_unsupported");
+    }
+    let source = fs::File::open(&native.settings).map_err(|_| "native_settings_unavailable")?;
+    let trusted = native.settings == Path::new(NATIVE_TEXT_SETTINGS)
+        && crate::native_artifact::trusted_settings(&source);
+    for item in model
+        .shards
+        .iter_mut()
+        .chain(std::iter::once(&mut model.mtp))
+    {
+        let namespace_path = item.path.clone();
+        if let Ok(tail) = item.path.strip_prefix("/var/lib/kuno/models") {
+            let store = installation
+                .managed
+                .as_ref()
+                .and_then(|m| m.workers.first())
+                .ok_or("native_model_store_unavailable")?;
+            if tail
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            {
+                return Err("native_artifact_invalid");
+            }
+            item.path = Path::new(&store.models).join(tail);
+        }
+        let identity = crate::native_artifact::verify(item, trusted)?.0;
+        item.path = namespace_path;
+        item.identity = Some(identity);
+    }
+    settings.bytes = serde_json::to_vec_pretty(&model).map_err(|_| "native_settings_invalid")?;
+    Ok(())
+}
 /// Enroll optional source assets as OWNED files in the same reversible deployment
 /// as the gateway/configuration. Ordinary upgrades retain these exact assets.
 pub fn configure_native_text(native: Option<crate::native_text::Config>) -> Result<()> {
@@ -895,7 +939,10 @@ pub fn configure_native_text(native: Option<crate::native_text::Config>) -> Resu
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_installed()?;
     let mut installation = current_installation()?;
-    let native_assets = native_text_artifacts(native.as_ref())?;
+    let mut native_assets = native_text_artifacts(native.as_ref())?;
+    if let Some(config) = &native {
+        attest_native_models(config, &installation.config, &mut native_assets)?;
+    }
     if let Some(config) = &native {
         config.validate()?;
         let client = reqwest::blocking::Client::builder()

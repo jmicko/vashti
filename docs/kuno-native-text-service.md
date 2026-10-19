@@ -1,5 +1,31 @@
 # Native Intel text service preview
 
+## Active extension contract (2026-10-19, implementation in progress)
+
+The user requested thinking, tool use, faster cold load and configurable context.
+The installed checkpoint below remains the narrow preview until replaced and
+validated. New Ollama chat behavior will follow the actual embedded Qwen template:
+`think` accepts booleans or low/medium/high/xhigh (absent remains false), reasoning streams separately
+from content, and XML-style function calls translate to structured Ollama
+`message.tool_calls` with typed argument objects. Assistant thinking/tool-call
+history and role=tool results round-trip; Kuno never executes those tools.
+Capabilities are advertised only when this adapter is connected and tested.
+Unsupported modalities/formats continue to fail explicitly.
+
+Cold-load integrity work moves full SHA verification to administrator enrollment.
+Root-controlled model identities (device/inode/size/mtime/ctime) can authenticate
+unchanged artifacts on later starts. A changed identity must undergo full
+verification; old settings without an identity continue using full verification.
+This cache contains model metadata only, never prompts, outputs or content hashes.
+
+`num_ctx` should select the request budget, bounded by the engine's allocated
+capacity and the artifact's advertised262144-token limit. The present compiled
+32K target/MTP geometry and16-bit graph keys must be extended together before
+accepting larger values. Do not merely remove the API check, truncate tokens or
+advertise262144 as live-supported before the real target/draft bounds work.
+No Vashti consumer/UI changes are authorized in this backend task.
+
+
 This is the backend integration of the selected Rust engine, following the
 selected-engine audit in `kuno-strata-current-source-audit.md`. The 33.3707 warm
 rate is one fixed public engine workload, not a promise for every API request.
@@ -265,3 +291,71 @@ not general throughput, a new Ollama comparison or a long-context soak. Final
 `host-final.json`/`final-ready.json` independently confirm normal admission,
 healthy services, no active test units, zero worker write_bytes and driver faults,
 NVIDIA compute0 and intentionally retained native weights.
+
+## Extension CPU checkpoint (2026-10-19, not installed)
+
+The installed binary/worker remain the previous accepted preview. This source
+extension is not live acceptance or a new performance result. No GPU inference,
+service restart, driver operation or installation was done for this extension.
+The shared shell is waiting at sudo-v; the requested root credential is pending.
+
+Implemented source changes:
+
+- `native_chat.rs`: rendering based on the actual enrolled shard's
+  `tokenizer.chat_template` (including original XML tool instructions), separate
+  streaming thinking/content, typed function argument objects and complete
+  assistant/tool-result history. Boolean/low/medium/high/xhigh reasoning modes;
+  absent thinking remains disabled so the established fast non-thinking path
+  stays explicit and unchanged. Raw generation with explicit thinking is rejected
+  rather than ignoring the requested feature. Kuno returns calls; it does not
+  execute them. Tools are limited to128 definitions/calls and safe XML names.
+  This does not implement JSON-schema output constraints or OpenAI inference.
+- `/api/show` in the candidate advertises completion/thinking/tools; do not
+  install this advertisement without actual model round-trip validation.
+  Existing clients should use the standard Ollama `message.thinking` and
+  `message.tool_calls[].function.{name,arguments,index}` fields. A successful
+  CPU parser test is not evidence that the model will choose the right tool.
+- `native_artifact.rs`: full enrollment hashes with descriptor/path identity
+  checks before/after reading. Root-owned installed settings retain only model
+  dev/inode/length/mtime/ctime; unchanged files skip repeated full startup hashes.
+  New source settings must undergo full verification even if they supply their
+  own identity. Only the existing transaction-verified installed settings can
+  reuse enrollment identities. Untrusted development settings use full hashes.
+  No prompt/response hash or request-derived cache is added. Re-enrollment updates
+  changed-but-still-correct artifacts; failed hashes never refresh the cache.
+- Private ABI is now KNT2/KNR2,36 control bytes including u32 context budget.
+  Gateway and worker MUST be deployed together in one configure-native-text
+  transaction using the NEW gateway executable and NEW worker/settings source.
+  Do not run an intermediate gateway-only upgrade against the old KNT1 worker.
+  Nonfatal REJECTED frame6 acknowledges pre-execution tokenizer/context rejection;
+  it preserves the clean loaded worker, preventing a user context error from
+  forcing another cold load. Fatal/backend errors still close/reap normally.
+- `num_ctx` now accepts512..32768 as an enforced prompt+output+eight-headroom
+  request budget, with no prompt truncation. Smaller budgets do not shrink the
+  still-fixed32K model allocation. Prompt overflow returns400 without discarding
+  loaded weights. Larger contexts are NOT implemented yet: engine32K constants,
+  target/MTP graph u16 capacity fields, QSA/draft cache and RoPE sizes, suffix/HOST
+  bounds, prompt overlay ownership and cache/VRAM pricing must change together.
+  The actual artifact metadata advertises262144; do not report that as the live
+  runtime capacity. This is the remaining substantial part of the user's request.
+
+CPU cases cover split-at-every-character thinking/tool delimiters, typed XML
+arguments, malformed/incomplete calls and unknown-name rejection, history/tool-result rendering,
+stream versus collected response shape, context frame round trips/version
+mismatch, artifact modification/replacement and rejection of untrusted cache
+identities. Relevant root/worker strict Clippy and selected worker compile checks
+pass. Final root suite:234 passed,7 hardware tests ignored (including the
+updated capability fixture); logs are `native-chat-final-all-tests-20261019.log`,
+`native-chat-clippy-20261019.log` and `native-chat-worker-clippy-20261019.log`
+under the development artifact directory. Build artifacts are recorded after
+freezing the source.
+Existing inherited untracked benchmarks/text/__pycache__ is preserved.
+
+Next protected validation before installing: thinking true/false/effort on real
+mixed prompts; actual tool request -> structured call -> synthetic tool result ->
+final answer; stream/nonstream parity;512/4096/32768 budget rejection followed by
+successful reuse of the same worker; two cold worker starts through root-attested
+settings to measure load savings; zero worker writes, swap/core protection,
+graceful close and physical recovery; ordinary Ollama/image coexistence. Then
+finish larger runtime capacities with u32 graph keys and real allocation/VRAM
+checks. Keep the old accepted install if any of these gates fails. No release.

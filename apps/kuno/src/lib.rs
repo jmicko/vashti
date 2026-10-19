@@ -32,4 +32,6 @@ pub mod worker;
 
 pub mod native_protocol;
 
+mod native_artifact;
+mod native_chat;
 pub mod native_text;

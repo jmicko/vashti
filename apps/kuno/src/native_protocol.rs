@@ -2,8 +2,8 @@
 //! A generate frame has fixed controls followed by bounded rendered UTF-8.
 use std::io::{self, Read, Write};
 use zeroize::{Zeroize, Zeroizing};
-pub const REQUEST_MAGIC: &[u8; 4] = b"KNT1";
-pub const RESPONSE_MAGIC: &[u8; 4] = b"KNR1";
+pub const REQUEST_MAGIC: &[u8; 4] = b"KNT2";
+pub const RESPONSE_MAGIC: &[u8; 4] = b"KNR2";
 pub const MAX_PROMPT_BYTES: usize = 1024 * 1024;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 pub const TEXT: u8 = 1;
@@ -11,11 +11,16 @@ pub const DONE: u8 = 2;
 pub const ERROR: u8 = 3;
 pub const CLOSED: u8 = 4;
 pub const READY: u8 = 5;
-pub const CONTROL_BYTES: usize = 32;
+/// Rejected before model execution; the retained worker remains clean and usable.
+pub const REJECTED: u8 = 6;
+pub const CONTROL_BYTES: usize = 36;
+pub const DEFAULT_CONTEXT: u32 = 32768;
+pub const MAX_CONTEXT: u32 = 32768;
 
 pub struct Generate {
     pub prompt: Zeroizing<Vec<u8>>,
     pub outputs: u32,
+    pub context: u32,
     pub seed: u64,
     pub temperature: f32,
     pub top_p: f32,
@@ -25,6 +30,7 @@ pub struct Generate {
 impl Drop for Generate {
     fn drop(&mut self) {
         self.outputs.zeroize();
+        self.context.zeroize();
         self.seed.zeroize();
         self.temperature.zeroize();
         self.top_p.zeroize();
@@ -37,6 +43,9 @@ fn bad() -> io::Error {
 }
 impl Generate {
     pub fn validate(&self) -> io::Result<()> {
+        if !(512..=MAX_CONTEXT).contains(&self.context) {
+            return Err(bad());
+        }
         if self.prompt.is_empty()
             && self.outputs == 0
             && self.seed == 0
@@ -51,7 +60,7 @@ impl Generate {
             || self.prompt.len() > MAX_PROMPT_BYTES
             || std::str::from_utf8(&self.prompt).is_err()
             || self.outputs == 0
-            || self.outputs > 32759
+            || self.outputs > self.context.saturating_sub(9)
             || !self.temperature.is_finite()
             || !(0.0..=10.0).contains(&self.temperature)
             || !self.top_p.is_finite()
@@ -75,6 +84,7 @@ impl Generate {
         raw[20..24].copy_from_slice(&self.top_p.to_le_bytes());
         raw[24..28].copy_from_slice(&self.min_p.to_le_bytes());
         raw[28..32].copy_from_slice(&self.top_k.to_le_bytes());
+        raw[32..36].copy_from_slice(&self.context.to_le_bytes());
         Ok(raw)
     }
 }
@@ -103,6 +113,7 @@ pub fn read_request(reader: &mut impl Read) -> io::Result<Option<Generate>> {
     let mut request = Generate {
         prompt: Zeroizing::new(vec![0; length]),
         outputs: word(4),
+        context: word(32),
         seed: u64::from_le_bytes(raw[8..16].try_into().unwrap()),
         temperature: f32::from_bits(word(16)),
         top_p: f32::from_bits(word(20)),
@@ -121,7 +132,9 @@ pub fn write_request(writer: &mut impl Write, request: &Generate) -> io::Result<
     writer.flush()
 }
 pub fn write_response(writer: &mut impl Write, kind: u8, bytes: &[u8]) -> io::Result<()> {
-    if !matches!(kind, TEXT | DONE | ERROR | CLOSED | READY) || bytes.len() > MAX_FRAME_BYTES {
+    if !matches!(kind, TEXT | DONE | ERROR | CLOSED | READY | REJECTED)
+        || bytes.len() > MAX_FRAME_BYTES
+    {
         return Err(bad());
     }
     writer.write_all(RESPONSE_MAGIC)?;
@@ -137,6 +150,7 @@ mod tests {
         Generate {
             prompt: Zeroizing::new("hello 🦦\n".as_bytes().to_vec()),
             outputs: 64,
+            context: DEFAULT_CONTEXT,
             seed: 123,
             temperature: 0.,
             top_p: 0.95,
@@ -191,5 +205,26 @@ mod tests {
         raw.extend_from_slice(&[0; CONTROL_BYTES - 4]);
         assert!(read_request(&mut raw.as_slice()).is_err());
         assert!(write_response(&mut Vec::new(), 9, b"x").is_err());
+    }
+    #[test]
+    fn context_budget_roundtrips_and_protocol_versions_do_not_mix() {
+        let mut r = request();
+        r.context = 4096;
+        let mut bytes = Vec::new();
+        write_request(&mut bytes, &r).unwrap();
+        assert_eq!(
+            read_request(&mut bytes.as_slice())
+                .unwrap()
+                .unwrap()
+                .context,
+            4096
+        );
+        bytes[..4].copy_from_slice(b"KNT1");
+        assert!(read_request(&mut bytes.as_slice()).is_err());
+        r.context = 511;
+        assert!(r.validate().is_err());
+        r.context = 32769;
+        assert!(r.validate().is_err());
+        assert!(write_response(&mut Vec::new(), REJECTED, b"native_context_exceeded").is_ok());
     }
 }

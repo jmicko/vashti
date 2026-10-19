@@ -47,7 +47,7 @@ impl Config {
     }
     pub fn show(&self) -> Value {
         json!({"license":"See model artifact license","parameters":"temperature 0\nnum_ctx 32768\nnum_predict 1024",
-            "template":"{{ .Prompt }}", "capabilities":["completion"],
+            "template":"{{ .Prompt }}", "capabilities":["completion","thinking","tools"],
             "details":self.metadata()["details"],"model_info":{"general.architecture":"qwen4exp","qwen4exp.context_length":32768},"kuno_backend":"rust-intel"})
     }
 }
@@ -56,11 +56,13 @@ pub struct Prepared {
     pub chat: bool,
     pub stream: bool,
     pub keep_alive: bool,
+    pub(crate) output: crate::native_chat::Output,
 }
 fn preload() -> wire::Generate {
     wire::Generate {
         prompt: Zeroizing::new(Vec::new()),
         outputs: 0,
+        context: wire::DEFAULT_CONTEXT,
         seed: 0,
         temperature: 0.,
         top_p: 1.,
@@ -128,7 +130,7 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
             return Err("native_request_feature_unsupported");
         }
     }
-    for key in ["tools", "context"] {
+    for key in ["context"] {
         if value
             .get(key)
             .is_some_and(|v| !v.is_null() && !v.as_array().is_some_and(Vec::is_empty))
@@ -136,12 +138,16 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
             return Err("native_request_feature_unsupported");
         }
     }
-    if value
-        .get("think")
-        .is_some_and(|v| !v.is_null() && v != false)
-    {
-        return Err("native_thinking_unsupported");
+    let thinking = crate::native_chat::Thinking::parse(value.get("think"))?;
+    let raw = value.get("raw").and_then(Value::as_bool) == Some(true);
+    if raw && thinking.enabled() {
+        return Err("native_raw_thinking_unsupported");
     }
+    let output = crate::native_chat::Output::new(
+        thinking.enabled() && !raw,
+        crate::native_chat::tools(value.get("tools"))?,
+        raw,
+    );
     let stream = match value.get("stream").filter(|v| !v.is_null()) {
         None => true,
         Some(v) => v.as_bool().ok_or("native_request_invalid")?,
@@ -173,9 +179,15 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
         return Err("native_option_unsupported");
     }
     let get = |name: &str| options.and_then(|o| o.get(name));
-    if get("num_ctx").is_some_and(|v| v.as_u64() != Some(32768)) {
+    let context = match get("num_ctx") {
+        None => wire::DEFAULT_CONTEXT,
+        Some(v) => u32::try_from(v.as_u64().ok_or("native_context_option_unsupported")?)
+            .map_err(|_| "native_context_option_unsupported")?,
+    };
+    if !(512..=wire::MAX_CONTEXT).contains(&context) {
         return Err("native_context_option_unsupported");
     }
+
     let float = |name, default| -> Result<f32> {
         match get(name) {
             None => Ok(default),
@@ -208,30 +220,10 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
                 chat,
                 stream,
                 keep_alive,
+                output,
             });
         }
-        for message in messages {
-            let m = message.as_object().ok_or("native_messages_invalid")?;
-            if m.keys().any(|k| !["role", "content"].contains(&k.as_str())) {
-                return Err("native_message_feature_unsupported");
-            }
-            let role = m
-                .get("role")
-                .and_then(Value::as_str)
-                .ok_or("native_messages_invalid")?;
-            if !["user", "system", "assistant"].contains(&role) {
-                return Err("native_message_role_unsupported");
-            }
-            let content = m
-                .get("content")
-                .and_then(Value::as_str)
-                .ok_or("native_messages_invalid")?;
-            append(&mut prompt, "<|im_start|>")?;
-            append(&mut prompt, role)?;
-            append(&mut prompt, "\n")?;
-            append(&mut prompt, content)?;
-            append(&mut prompt, "<|im_end|>\n")?;
-        }
+        prompt = crate::native_chat::render(messages, output.definitions(), thinking)?;
     } else {
         let text_field = |key| -> Result<&str> {
             match value.get(key).filter(|v| !v.is_null()) {
@@ -247,6 +239,7 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
                 chat,
                 stream,
                 keep_alive,
+                output,
             });
         }
         let raw = match value.get("raw") {
@@ -259,25 +252,20 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
             }
             append(&mut prompt, input)?;
         } else {
+            let mut messages = Vec::new();
             if !system.is_empty() {
-                append(&mut prompt, "<|im_start|>system\n")?;
-                append(&mut prompt, system)?;
-                append(&mut prompt, "<|im_end|>\n")?;
+                messages.push(json!({"role":"system","content":system}));
             }
-            append(&mut prompt, "<|im_start|>user\n")?;
-            append(&mut prompt, input)?;
-            append(&mut prompt, "<|im_end|>\n")?;
+            messages.push(json!({"role":"user","content":input}));
+            let rendered = crate::native_chat::render(&messages, output.definitions(), thinking);
+            messages.iter_mut().for_each(scrub_json);
+            prompt = rendered?;
         }
-    }
-    if chat || value.get("raw").and_then(Value::as_bool) != Some(true) {
-        append(
-            &mut prompt,
-            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
-        )?;
     }
     let request = wire::Generate {
         prompt,
         outputs,
+        context,
         seed,
         temperature: float("temperature", 0.)?,
         top_p: float("top_p", 0.95)?,
@@ -290,6 +278,7 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
         chat,
         stream,
         keep_alive,
+        output,
     })
 }
 pub fn scrub_json(value: &mut Value) {
@@ -404,6 +393,14 @@ impl Runtime {
                             .await;
                         return Ok(());
                     }
+                    wire::REJECTED => {
+                        let code = worker_error(&bytes);
+                        if !matches!(code, "native_request_invalid" | "native_context_exceeded") {
+                            return Err("native_worker_protocol_failed");
+                        }
+                        let _ = events.send(Event::Failed(code)).await;
+                        return Ok(());
+                    }
                     wire::ERROR => return Err(worker_error(&bytes)),
                     _ => return Err("native_worker_protocol_failed"),
                 }
@@ -481,6 +478,7 @@ async fn start(config: &Config) -> Result<Worker> {
 fn worker_error(bytes: &[u8]) -> &'static str {
     match bytes {
         b"native_request_invalid" => "native_request_invalid",
+        b"native_context_exceeded" => "native_context_exceeded",
         b"native_load_failed" => "native_load_failed",
         b"native_gpu_memory_busy" => "native_gpu_memory_busy",
         b"native_artifact_changed" => "native_artifact_changed",
@@ -489,7 +487,7 @@ fn worker_error(bytes: &[u8]) -> &'static str {
     }
 }
 pub fn error_status(code: &str) -> axum::http::StatusCode {
-    if code == "native_request_invalid" {
+    if matches!(code, "native_request_invalid" | "native_context_exceeded") {
         axum::http::StatusCode::BAD_REQUEST
     } else {
         axum::http::StatusCode::SERVICE_UNAVAILABLE
@@ -569,8 +567,8 @@ mod tests {
         );
         for v in [
             json!({"prompt":"hi","format":"json"}),
-            json!({"prompt":"hi","think":true}),
-            json!({"prompt":"hi","options":{"num_ctx":4096}}),
+            json!({"prompt":"hi","think":"invalid"}),
+            json!({"prompt":"hi","options":{"num_ctx":32769}}),
             json!({"prompt":"hi","options":{"temperature":"x"}}),
             json!({"prompt":"hi","options":{"repeat_penalty":1.1}}),
         ] {
@@ -629,6 +627,31 @@ mod tests {
                 .unwrap()
                 .request
                 .is_none()
+        );
+    }
+    #[test]
+    fn explicit_thinking_tools_and_smaller_context_are_transported() {
+        let p=prepare("/api/chat",&json!({"think":"low","messages":[{"role":"user","content":"Weather?"}],"tools":[{"type":"function","function":{"name":"weather","parameters":{"type":"object"}}}],"options":{"num_ctx":4096}})).unwrap();
+        let request = p.request.unwrap();
+        assert_eq!(request.context, 4096);
+        let text = std::str::from_utf8(&request.prompt).unwrap();
+        assert!(text.contains("Reasoning effort is set to low."));
+        assert!(text.contains("<tools>"));
+        assert!(text.ends_with("assistant\n<think>\n"));
+        assert!(prepare("/api/chat",&json!({"messages":[{"role":"user","content":"Hi"}],"options":{"num_ctx":4096,"num_predict":4090}})).is_err());
+        assert!(
+            prepare(
+                "/api/chat",
+                &json!({"messages":[{"role":"system","content":"Hi","images":["not-supported"]}]})
+            )
+            .is_err()
+        );
+        assert!(
+            prepare(
+                "/api/generate",
+                &json!({"prompt":"raw","raw":true,"think":true})
+            )
+            .is_err()
         );
     }
 }

@@ -6,61 +6,13 @@ use cubecl::{
     wgpu::{RuntimeOptions, WgpuRuntime, WgpuSetup, init_device},
 };
 use kuno_text::{GgufFile, GgufLimits, Qwen35Tokenizer, model::Qwen4Exp};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use std::{
-    io::Read,
-    path::{Path, PathBuf},
-    sync::atomic::AtomicBool,
-    time::Instant,
-};
+use std::{io::Read, path::Path, sync::atomic::AtomicBool, time::Instant};
 use zeroize::Zeroizing;
 #[path = "../../../src/image_privacy.rs"]
 #[allow(dead_code)]
 mod protection;
 type Result<T> = std::result::Result<T, &'static str>;
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Artifact {
-    path: PathBuf,
-    sha256: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Settings {
-    shards: Vec<Artifact>,
-    mtp: Artifact,
-    device_id: u32,
-}
-fn verify(artifact: &Artifact) -> Result<()> {
-    if !artifact.path.is_absolute() || artifact.sha256.len() != 64 {
-        return Err("native_artifact_invalid");
-    }
-    let mut file =
-        std::fs::File::open(&artifact.path).map_err(|_| "native_artifact_unavailable")?;
-    if !file
-        .metadata()
-        .map_err(|_| "native_artifact_unavailable")?
-        .is_file()
-    {
-        return Err("native_artifact_invalid");
-    }
-    let mut hash = Sha256::new();
-    let mut window = vec![0; 1024 * 1024];
-    loop {
-        let n = file
-            .read(&mut window)
-            .map_err(|_| "native_artifact_unavailable")?;
-        if n == 0 {
-            break;
-        }
-        hash.update(&window[..n]);
-    }
-    if format!("{:x}", hash.finalize()) != artifact.sha256 {
-        return Err("native_artifact_changed");
-    }
-    Ok(())
-}
+use crate::native_artifact::{Settings, verify};
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
@@ -91,7 +43,14 @@ pub(crate) fn run(path: &Path) -> Result<()> {
             (5u64 * 1024 * 1024 * 1024).to_string(),
         );
     }
-    let raw = std::fs::read(path).map_err(|_| "native_settings_unavailable")?;
+    let mut settings_file = std::fs::File::open(path).map_err(|_| "native_settings_unavailable")?;
+    let trust_identity = crate::native_artifact::trusted_settings(&settings_file);
+    let mut raw = Vec::new();
+    settings_file
+        .by_ref()
+        .take(64 * 1024 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|_| "native_settings_unavailable")?;
     if raw.len() > 64 * 1024 {
         return Err("native_settings_invalid");
     }
@@ -105,9 +64,9 @@ pub(crate) fn run(path: &Path) -> Result<()> {
     }
     protection::restrict_filesystem().map_err(|_| "native_worker_filesystem_protection_failed")?;
     for artifact in &settings.shards {
-        verify(artifact)?;
+        verify(artifact, trust_identity)?;
     }
-    verify(&settings.mtp)?;
+    verify(&settings.mtp, trust_identity)?;
     cubecl::future::block_on(serve(settings, worker_started))
 }
 async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
@@ -230,17 +189,17 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
             .map_err(|_| "native_artifact_invalid")?;
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
+    let setup_ns = worker_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
     wire::write_response(&mut output, wire::READY, &[]).map_err(|_| "native_worker_pipe_failed")?;
-    let Some(first) = wire::read_request(&mut input).map_err(|_| "native_request_invalid")? else {
+    let Some((request, first_preload)) = next_request(&mut input, &mut output, &tokenizer)? else {
         return Ok(());
     };
-    let first_preload = first.outputs == 0;
-    let request = prepare(first, &tokenizer)?;
     let cancel = AtomicBool::new(false);
 
     // SAFETY: the private worker has exclusive parent admission, protected
     // process memory and model backing, one physical runtime and original MAIN/
     // HOST bounds. No diagnostics/public receipt path is entered for this caller.
+    let model_started = Instant::now();
     let mut session = unsafe {
         engine::Session::load(
             &file,
@@ -257,7 +216,8 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
         )
     }
     .map_err(|_| "native_load_failed")?;
-    let mut load_ns = worker_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+    let mut load_ns =
+        setup_ns.saturating_add(model_started.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     let mut current = Some(request);
     let mut preload = first_preload;
     let attempted: Result<()> = (|| {
@@ -311,9 +271,11 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
             wire::write_response(&mut output, wire::DONE, &receipt)
                 .map_err(|_| "native_worker_pipe_failed")?;
             load_ns = 0;
-            let next = wire::read_request(&mut input).map_err(|_| "native_request_invalid")?;
-            preload = next.as_ref().is_some_and(|r| r.outputs == 0);
-            current = next.map(|r| prepare(r, &tokenizer)).transpose()?;
+            if let Some((request, is_preload)) = next_request(&mut input, &mut output, &tokenizer)?
+            {
+                preload = is_preload;
+                current = Some(request);
+            }
         }
         Ok(())
     })();
@@ -321,6 +283,23 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
     session.close().map_err(|_| "native_recovery_required")?;
     attempted?;
     wire::write_response(&mut output, wire::CLOSED, &[]).map_err(|_| "native_worker_pipe_failed")
+}
+fn next_request(
+    input: &mut impl std::io::Read,
+    output: &mut impl std::io::Write,
+    tokenizer: &Qwen35Tokenizer,
+) -> Result<Option<(engine::Request, bool)>> {
+    loop {
+        let Some(request) = wire::read_request(input).map_err(|_| "native_request_invalid")? else {
+            return Ok(None);
+        };
+        let preload = request.outputs == 0;
+        match prepare(request, tokenizer) {
+            Ok(request) => return Ok(Some((request, preload))),
+            Err(code) => wire::write_response(output, wire::REJECTED, code.as_bytes())
+                .map_err(|_| "native_worker_pipe_failed")?,
+        }
+    }
 }
 fn prepare(mut request: wire::Generate, tokenizer: &Qwen35Tokenizer) -> Result<engine::Request> {
     if request.outputs == 0 {
@@ -332,7 +311,7 @@ fn prepare(mut request: wire::Generate, tokenizer: &Qwen35Tokenizer) -> Result<e
         );
         request.outputs = 1;
     }
-    engine::input::request(
+    let prepared = engine::input::request(
         &mut std::io::Cursor::new(request.prompt.as_slice()),
         tokenizer,
         engine::input::Controls {
@@ -351,5 +330,14 @@ fn prepare(mut request: wire::Generate, tokenizer: &Qwen35Tokenizer) -> Result<e
             minimum: 0.5,
         },
     )
-    .map_err(|_| "native_request_invalid")
+    .map_err(|_| "native_request_invalid")?;
+    let (prompt, outputs, _) = prepared.geometry().map_err(|_| "native_request_invalid")?;
+    if prompt
+        .checked_add(outputs)
+        .and_then(|n| n.checked_add(engine::CONTEXT_HEADROOM))
+        .is_none_or(|n| n > request.context as usize)
+    {
+        return Err("native_context_exceeded");
+    }
+    Ok(prepared)
 }

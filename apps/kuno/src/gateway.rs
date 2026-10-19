@@ -1168,6 +1168,7 @@ async fn native_inference(
         };
     };
     let preload = request.outputs == 0;
+    let mut output = prepared.output;
     let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
     let task_gateway = gateway.clone();
     let model = config.model.clone();
@@ -1189,7 +1190,7 @@ async fn native_inference(
         }
     });
     if !stream {
-        let mut text = zeroize::Zeroizing::new(String::with_capacity(8 * 1024 * 1024));
+        let mut collected = crate::native_chat::Collected::default();
         while let Some(event) = receiver.recv().await {
             match event {
                 crate::native_text::Event::Text(bytes) => {
@@ -1199,13 +1200,19 @@ async fn native_inference(
                             return error(StatusCode::BAD_GATEWAY, "native_worker_utf8_invalid");
                         }
                     };
-                    if text.len() + part.len() > 8 * 1024 * 1024 {
-                        return error(StatusCode::BAD_GATEWAY, "native_response_too_large");
+                    match output.feed(part, false) {
+                        Ok(delta) => collected.push(delta),
+                        Err(code) => return error(StatusCode::BAD_GATEWAY, code),
                     }
-                    text.push_str(part);
                 }
                 crate::native_text::Event::Done(metrics) => {
-                    let mut v = crate::native_text::chunk(&model, chat, &text, Some(&metrics));
+                    match output.feed("", true) {
+                        Ok(delta) => collected.push(delta),
+                        Err(code) => return error(StatusCode::BAD_GATEWAY, code),
+                    }
+                    let mut v =
+                        crate::native_text::chunk(&model, chat, &collected.content, Some(&metrics));
+                    collected.annotate(&mut v, chat);
                     if preload {
                         v["done_reason"] = "load".into();
                     }
@@ -1228,32 +1235,64 @@ async fn native_inference(
         None => return error(StatusCode::BAD_GATEWAY, "native_worker_response_incomplete"),
     };
     let events = futures_util::stream::unfold(
-        (receiver, model, Some(first)),
-        move |(mut receiver, model, mut first)| async move {
+        (receiver, model, Some(first), output, false),
+        move |(mut receiver, model, mut first, mut output, mut terminal)| async move {
+            if terminal {
+                return None;
+            }
             let event = match first.take() {
                 Some(event) => event,
                 None => receiver.recv().await?,
             };
             let mut value = match event {
                 crate::native_text::Event::Text(bytes) => match std::str::from_utf8(&bytes) {
-                    Ok(text) => crate::native_text::chunk(&model, chat, text, None),
-                    Err(_) => serde_json::json!({"error":"native_worker_utf8_invalid"}),
+                    Ok(text) => match output.feed(text, false) {
+                        Ok(mut delta) => {
+                            let mut v =
+                                crate::native_text::chunk(&model, chat, &delta.content, None);
+                            delta.annotate(&mut v, chat);
+                            v
+                        }
+                        Err(code) => {
+                            terminal = true;
+                            serde_json::json!({"error":code})
+                        }
+                    },
+                    Err(_) => {
+                        terminal = true;
+                        serde_json::json!({"error":"native_worker_utf8_invalid"})
+                    }
                 },
                 crate::native_text::Event::Done(metrics) => {
-                    let mut v = crate::native_text::chunk(&model, chat, "", Some(&metrics));
-                    if preload {
-                        v["done_reason"] = "load".into();
+                    terminal = true;
+                    match output.feed("", true) {
+                        Ok(mut delta) => {
+                            let mut v = crate::native_text::chunk(
+                                &model,
+                                chat,
+                                &delta.content,
+                                Some(&metrics),
+                            );
+                            delta.annotate(&mut v, chat);
+                            if preload {
+                                v["done_reason"] = "load".into();
+                            }
+                            v
+                        }
+                        Err(code) => serde_json::json!({"error":code}),
                     }
-                    v
                 }
-                crate::native_text::Event::Failed(code) => serde_json::json!({"error":code}),
+                crate::native_text::Event::Failed(code) => {
+                    terminal = true;
+                    serde_json::json!({"error":code})
+                }
             };
             let mut encoded = serde_json::to_vec(&value).unwrap();
             crate::native_text::scrub_json(&mut value);
             encoded.push(b'\n');
             Some((
                 Ok::<_, std::convert::Infallible>(encoded),
-                (receiver, model, first),
+                (receiver, model, first, output, terminal),
             ))
         },
     );

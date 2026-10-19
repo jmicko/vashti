@@ -138,7 +138,10 @@ async fn native_metadata_extends_catalog_without_discarding_upstream_fields() {
         .json()
         .await
         .unwrap();
-    assert_eq!(show["capabilities"], json!(["completion"]));
+    assert_eq!(
+        show["capabilities"],
+        json!(["completion", "thinking", "tools"])
+    );
     assert_eq!(f.forwards.load(Ordering::SeqCst), 0);
 }
 #[tokio::test]

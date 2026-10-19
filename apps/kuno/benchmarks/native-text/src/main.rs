@@ -5,6 +5,9 @@ mod bank96_probe;
 mod bank_slots;
 pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
+#[path = "../../../src/native_artifact.rs"]
+#[allow(dead_code)]
+mod native_artifact;
 #[path = "../../../src/native_protocol.rs"]
 #[allow(dead_code)]
 mod native_protocol;
