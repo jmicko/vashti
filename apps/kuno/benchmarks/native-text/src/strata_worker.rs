@@ -16,6 +16,24 @@ use crate::native_artifact::{Settings, verify};
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
+    run_mode(path, false)
+}
+/// Dedicated laboratory entry: its only request is compiled public text, never
+/// stdin. Only this entry reports static engine phase labels for diagnosis.
+pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
+    run_mode(path, true)
+}
+fn public_prompt() -> Vec<u8> {
+    let mut text = String::from(
+        "<|im_start|>system\nYou are a helpful assistant. Reference material follows.\n",
+    );
+    for _ in 0..600 {
+        text.push_str("A calculator evaluates arithmetic. Notes organize information. Images illustrate ideas.\n");
+    }
+    text.push_str("<|im_end|>\n<|im_start|>user\nWhat is 17 times 19? Reply with the numerical answer.\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
+    text.into_bytes()
+}
+fn run_mode(path: &Path, public_check: bool) -> Result<()> {
     let worker_started = Instant::now();
     use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
     CubeClRuntimeConfig::set(Default::default());
@@ -67,9 +85,9 @@ pub(crate) fn run(path: &Path) -> Result<()> {
         verify(artifact, trust_identity)?;
     }
     verify(&settings.mtp, trust_identity)?;
-    cubecl::future::block_on(serve(settings, worker_started))
+    cubecl::future::block_on(serve(settings, worker_started, public_check))
 }
-async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
+async fn serve(settings: Settings, worker_started: Instant, public_check: bool) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -191,7 +209,22 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
     let mut output = std::io::stdout().lock();
     let setup_ns = worker_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
     wire::write_response(&mut output, wire::READY, &[]).map_err(|_| "native_worker_pipe_failed")?;
-    let Some((request, first_preload)) = next_request(&mut input, &mut output, &tokenizer)? else {
+    let first = if public_check {
+        let request = wire::Generate {
+            prompt: Zeroizing::new(public_prompt()),
+            outputs: 32,
+            context: 32768,
+            temperature: 0.,
+            seed: 0,
+            top_k: 20,
+            top_p: 0.95,
+            min_p: 0.,
+        };
+        Some((prepare(request, &tokenizer)?, false))
+    } else {
+        next_request(&mut input, &mut output, &tokenizer)?
+    };
+    let Some((request, first_preload)) = first else {
         return Ok(());
     };
     let cancel = AtomicBool::new(false);
@@ -212,7 +245,11 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
             cubecl_runtime::server::PublicTargetSubmissionBacklog::default(),
             &request,
             &cancel,
-            &mut |_| {},
+            &mut |phase| {
+                if public_check {
+                    eprintln!("public_prefill_phase {phase}");
+                }
+            },
         )
     }
     .map_err(|_| "native_load_failed")?;
@@ -242,6 +279,9 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
                     Ok(())
                 },
                 &mut |phase| {
+                    if public_check {
+                        eprintln!("public_prefill_phase {phase}");
+                    }
                     if phase == "request_private_erasure" {
                         generation_ns =
                             Some(start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
@@ -271,7 +311,9 @@ async fn serve(settings: Settings, worker_started: Instant) -> Result<()> {
             wire::write_response(&mut output, wire::DONE, &receipt)
                 .map_err(|_| "native_worker_pipe_failed")?;
             load_ns = 0;
-            if let Some((request, is_preload)) = next_request(&mut input, &mut output, &tokenizer)?
+            if !public_check
+                && let Some((request, is_preload)) =
+                    next_request(&mut input, &mut output, &tokenizer)?
             {
                 preload = is_preload;
                 current = Some(request);

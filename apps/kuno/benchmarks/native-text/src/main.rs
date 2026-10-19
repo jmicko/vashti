@@ -1179,6 +1179,14 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--public-long-prompt-check") {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.len() != 3 {
+            return Err("native_settings_required".into());
+        }
+        return strata_worker::public_long_prompt_check(std::path::Path::new(&args[2]))
+            .map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--native-worker") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {
