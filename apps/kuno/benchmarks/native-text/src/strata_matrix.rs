@@ -154,183 +154,6 @@ mod native {
         sync_cube();
         out
     }
-    #[cube]
-    fn block_product<F: Float>(
-        input: &Array<F>,
-        weight: &Array<F>,
-        columns: usize,
-        rows: usize,
-        count: usize,
-        weight_first: usize,
-    ) -> SharedMemory<f32> {
-        let mut a = SharedMemory::<F>::new(256usize);
-        let mut b = SharedMemory::<F>::new(1024usize);
-        let mut out = SharedMemory::<f32>::new(1024usize);
-        // SAFETY: every loop initializes both operands with load before use;
-        // host validation guarantees a nonempty reduction dimension.
-        let am = unsafe {
-            cmma::Matrix::<F>::uninitialized(
-                cmma::MatrixIdent::A,
-                8usize,
-                16usize,
-                16usize,
-                cmma::MatrixLayout::RowMajor,
-            )
-        };
-        let bm = unsafe {
-            cmma::Matrix::<F>::uninitialized(
-                cmma::MatrixIdent::B,
-                8usize,
-                16usize,
-                16usize,
-                cmma::MatrixLayout::ColMajor,
-            )
-        };
-        let acc = cmma::Matrix::<f32>::from_value(
-            cmma::MatrixIdent::Accumulator,
-            8usize,
-            16usize,
-            16usize,
-            cmma::MatrixLayout::Undefined,
-            0.0,
-        );
-        let subgroup = usize::cast_from(UNIT_POS) / 16;
-        let token = usize::cast_from(CUBE_POS_Y) * 16;
-        let row = usize::cast_from(CUBE_POS_X) * 64;
-        let mut k = 0usize;
-        while k < columns {
-            let mut i = usize::cast_from(UNIT_POS);
-            while i < 256 {
-                let t = token + i / 16;
-                let col = k + i % 16;
-                let mut v = F::new(0.0);
-                if t < count && col < columns {
-                    v = input[t * columns + col];
-                }
-                a[i] = v;
-                i += 128;
-            }
-            i = usize::cast_from(UNIT_POS);
-            while i < 1024 {
-                let r = row + i / 16;
-                let col = k + i % 16;
-                let mut v = F::new(0.0);
-                if r < rows && col < columns {
-                    v = weight[weight_first + r * columns + col];
-                }
-                b[i] = v;
-                i += 128;
-            }
-            sync_cube();
-            cmma::load(
-                &am,
-                &a.to_slice()
-                    .slice((subgroup / 4) * 128, (subgroup / 4 + 1) * 128),
-                16,
-            );
-            cmma::load(
-                &bm,
-                &b.to_slice()
-                    .slice((subgroup % 4) * 256, (subgroup % 4 + 1) * 256),
-                16,
-            );
-            cmma::execute::<F, F, f32, f32>(&am, &bm, &acc, &acc);
-            sync_cube();
-            k += 16;
-        }
-        cmma::store(
-            &mut out.slice_mut(subgroup * 128, (subgroup + 1) * 128),
-            &acc,
-            16,
-            cmma::MatrixLayout::RowMajor,
-        );
-        sync_cube();
-        out
-    }
-    #[cube(launch_unchecked)]
-    pub fn dense_block<F: Float>(
-        input: &Array<F>,
-        weight: &Array<F>,
-        output: &mut Array<f32>,
-        fault: &mut Array<Atomic<u32>>,
-        columns: usize,
-        rows: usize,
-        count: usize,
-        weight_first: usize,
-        out_first: usize,
-        out_stride: usize,
-    ) {
-        let values = block_product::<F>(input, weight, columns, rows, count, weight_first);
-        let subgroup = usize::cast_from(UNIT_POS) / 16;
-        let mut i = usize::cast_from(UNIT_POS) % 16;
-        while i < 128 {
-            let t = usize::cast_from(CUBE_POS_Y) * 16 + (subgroup / 4) * 8 + i / 16;
-            let row = usize::cast_from(CUBE_POS_X) * 64 + (subgroup % 4) * 16 + i % 16;
-            if t < count && row < rows {
-                let v = values[subgroup * 128 + i];
-                if v.abs() <= f32::MAX {
-                    output[out_first + t * out_stride + row] = v;
-                } else {
-                    output[out_first + t * out_stride + row] = 0.0;
-                    fault[0].fetch_or(1);
-                }
-            }
-            i += 16;
-        }
-    }
-    #[cube(launch_unchecked)]
-    pub fn expert_block(
-        input: &Array<f16>,
-        weight: &Array<f16>,
-        output: &mut Array<f32>,
-        map: &Array<u32>,
-        status: &mut Array<u32>,
-        fault: &mut Array<Atomic<u32>>,
-        columns: usize,
-        rows: usize,
-        count: usize,
-        weight_first: usize,
-        group: usize,
-        #[comptime] down: bool,
-    ) {
-        let values = block_product::<f16>(input, weight, columns, rows, count, weight_first);
-        let subgroup = usize::cast_from(UNIT_POS) / 16;
-        let mut i = usize::cast_from(UNIT_POS) % 16;
-        while i < 128 {
-            let member = usize::cast_from(CUBE_POS_Y) * 16 + (subgroup / 4) * 8 + i / 16;
-            let row = usize::cast_from(CUBE_POS_X) * 64 + (subgroup % 4) * 16 + i % 16;
-            if member < count && row < rows {
-                let route =
-                    usize::cast_from(map[1540 + usize::cast_from(map[1028 + group]) + member]);
-                if route < usize::cast_from(map[0]) * 10 {
-                    let mut base = member * 1280;
-                    if down {
-                        base = route * 2560;
-                    }
-                    let v = values[subgroup * 128 + i];
-                    let valid = v.abs() <= f32::MAX;
-                    if valid {
-                        output[base + row] = v;
-                    } else {
-                        output[base + row] = 0.0;
-                        fault[0].fetch_or(128);
-                    }
-                    if down && row == 0 {
-                        let mut good = 0u32;
-                        if valid && status[route] == 1 {
-                            good = 1;
-                        }
-                        // Same full-capacity plane as prompt activation and
-                        // the rank-ordered reducer, including routes >20479.
-                        status[comptime!(crate::strata_prompt::groups::ROUTES) + route] = good;
-                    }
-                } else {
-                    fault[0].fetch_or(128);
-                }
-            }
-            i += 16;
-        }
-    }
     #[cube(launch_unchecked)]
     pub fn dense<F: Float>(
         input: &Array<F>,
@@ -419,10 +242,6 @@ mod native {
             ("dense_bf16", definition_dense::<bf16>()),
             ("expert_gu", definition_expert(false)),
             ("expert_down", definition_expert(true)),
-            ("dense_block_fp16", definition_dense_block::<f16>()),
-            ("dense_block_bf16", definition_dense_block::<bf16>()),
-            ("expert_block_gu", definition_expert_block(false)),
-            ("expert_block_down", definition_expert_block(true)),
         ]
     }
     fn settings() -> KernelSettings {
@@ -486,64 +305,6 @@ mod native {
         );
         b.build(settings())
     }
-    fn definition_dense_block<F: Float>() -> KernelDefinition {
-        let mut b = KernelBuilder::default();
-        AddressType::U32.register(&mut b.scope);
-        let t = F::as_type(&b.scope);
-        let input = b.input_array(t);
-        let weight = b.input_array(t);
-        let output = b.output_array(f32::as_type(&b.scope));
-        let fault = b.output_array(
-            cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
-        );
-        let args: [cubecl::ir::ManagedVariable; 6] =
-            std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
-        dense_block::expand::<F>(
-            &mut b.scope,
-            input.into(),
-            weight.into(),
-            output.into(),
-            fault.into(),
-            args[0].clone().into(),
-            args[1].clone().into(),
-            args[2].clone().into(),
-            args[3].clone().into(),
-            args[4].clone().into(),
-            args[5].clone().into(),
-        );
-        b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(128)))
-    }
-    fn definition_expert_block(down: bool) -> KernelDefinition {
-        let mut b = KernelBuilder::default();
-        AddressType::U32.register(&mut b.scope);
-        let t = f16::as_type(&b.scope);
-        let input = b.input_array(t);
-        let weight = b.input_array(t);
-        let output = b.output_array(f32::as_type(&b.scope));
-        let map = b.input_array(u32::as_type(&b.scope));
-        let status = b.output_array(u32::as_type(&b.scope));
-        let fault = b.output_array(
-            cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
-        );
-        let args: [cubecl::ir::ManagedVariable; 5] =
-            std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
-        expert_block::expand(
-            &mut b.scope,
-            input.into(),
-            weight.into(),
-            output.into(),
-            map.into(),
-            status.into(),
-            fault.into(),
-            args[0].clone().into(),
-            args[1].clone().into(),
-            args[2].clone().into(),
-            args[3].clone().into(),
-            args[4].clone().into(),
-            down,
-        );
-        b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(128)))
-    }
     fn half_arg(handle: Handle) -> Result<ArrayArg<WgpuRuntime>> {
         if handle.size_in_used() == 0 || !handle.size_in_used().is_multiple_of(2) {
             return Err(Error::InvalidBufferLength);
@@ -600,73 +361,37 @@ mod native {
         // are synthesized in workgroup memory and stores mask inactive rows.
         unsafe {
             if bfloat {
-                if count >= 16 && rows >= 32 {
-                    dense_block::launch_unchecked::<bf16, WgpuRuntime>(
-                        client,
-                        CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(16) as u32, 1),
-                        CubeDim::new_1d(128),
-                        ia,
-                        wa,
-                        oa,
-                        fa,
-                        columns,
-                        rows,
-                        count,
-                        weight_first,
-                        out_first,
-                        out_stride,
-                    );
-                } else {
-                    dense::launch_unchecked::<bf16, WgpuRuntime>(
-                        client,
-                        CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
-                        CubeDim::new_1d(16),
-                        ia,
-                        wa,
-                        oa,
-                        fa,
-                        columns,
-                        rows,
-                        count,
-                        weight_first,
-                        out_first,
-                        out_stride,
-                    );
-                }
+                dense::launch_unchecked::<bf16, WgpuRuntime>(
+                    client,
+                    CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
+                    CubeDim::new_1d(16),
+                    ia,
+                    wa,
+                    oa,
+                    fa,
+                    columns,
+                    rows,
+                    count,
+                    weight_first,
+                    out_first,
+                    out_stride,
+                );
             } else {
-                if count >= 16 && rows >= 32 {
-                    dense_block::launch_unchecked::<f16, WgpuRuntime>(
-                        client,
-                        CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(16) as u32, 1),
-                        CubeDim::new_1d(128),
-                        ia,
-                        wa,
-                        oa,
-                        fa,
-                        columns,
-                        rows,
-                        count,
-                        weight_first,
-                        out_first,
-                        out_stride,
-                    );
-                } else {
-                    dense::launch_unchecked::<f16, WgpuRuntime>(
-                        client,
-                        CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
-                        CubeDim::new_1d(16),
-                        ia,
-                        wa,
-                        oa,
-                        fa,
-                        columns,
-                        rows,
-                        count,
-                        weight_first,
-                        out_first,
-                        out_stride,
-                    );
-                }
+                dense::launch_unchecked::<f16, WgpuRuntime>(
+                    client,
+                    CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
+                    CubeDim::new_1d(16),
+                    ia,
+                    wa,
+                    oa,
+                    fa,
+                    columns,
+                    rows,
+                    count,
+                    weight_first,
+                    out_first,
+                    out_stride,
+                );
             }
         }
         Ok(())
@@ -693,43 +418,23 @@ mod native {
         // SAFETY: the actual prompt grouping/row map and all physical packed
         // images were checked by the original-source expert caller.
         unsafe {
-            if count >= 16 && rows >= 32 {
-                expert_block::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(16) as u32, 1),
-                    CubeDim::new_1d(128),
-                    ia,
-                    wa,
-                    oa,
-                    ma,
-                    sa,
-                    fa,
-                    columns,
-                    rows,
-                    count,
-                    weight_first,
-                    group,
-                    down,
-                );
-            } else {
-                expert::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
-                    CubeDim::new_1d(16),
-                    ia,
-                    wa,
-                    oa,
-                    ma,
-                    sa,
-                    fa,
-                    columns,
-                    rows,
-                    count,
-                    weight_first,
-                    group,
-                    down,
-                );
-            }
+            expert::launch_unchecked::<WgpuRuntime>(
+                client,
+                CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
+                CubeDim::new_1d(16),
+                ia,
+                wa,
+                oa,
+                ma,
+                sa,
+                fa,
+                columns,
+                rows,
+                count,
+                weight_first,
+                group,
+                down,
+            );
         }
         Ok(())
     }
@@ -1017,87 +722,85 @@ mod tests {
             include_str!("strata_prompt_reduce.wgsl").contains("status[PROMPT_ROUTES+route]==1u")
         );
 
-        for kernel_name in ["expert_down", "expert_block_down"] {
-            for mask in 0..8u8 {
-                let mut options = WgpuCompilationOptions {
-                    supports_vulkan: true,
-                    ..Default::default()
-                };
-                options.vulkan.max_spirv_version = (1, 6);
-                options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
-                options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
-                options.vulkan.supports_explicit_smem = mask & 4 != 0;
-                let definition = super::native::definitions()
-                    .into_iter()
-                    .find(|(name, _)| *name == kernel_name)
-                    .unwrap()
-                    .1;
-                let compiled = Compiler::compile(
-                    &mut AutoCompiler::SpirV(Default::default()),
-                    definition,
-                    &options,
-                    ExecutionMode::Unchecked,
-                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
-                )
-                .unwrap();
-                let AutoRepresentation::SpirV(kernel) = compiled else {
-                    panic!("actual native matrix compiler required");
-                };
-                let words = layout(&kernel.assembled_module).unwrap();
-                let mut at = 5;
-                let mut bindings = BTreeMap::new();
-                let mut constants = BTreeMap::new();
-                let mut adds = BTreeMap::new();
-                let mut pointers = BTreeMap::new();
-                let mut loads = Vec::new();
-                let mut stores = Vec::new();
-                while at < words.len() {
-                    let n = (words[at] >> 16) as usize;
-                    assert!(n > 0 && at + n <= words.len());
-                    let operands = &words[at + 1..at + n];
-                    match words[at] & 65535 {
-                        71 if operands.len() == 3 && operands[1] == 33 => {
-                            bindings.insert(operands[0], operands[2]); // Binding.
-                        }
-                        43 if operands.len() == 3 => {
-                            constants.insert(operands[1], operands[2]); // OpConstant.
-                        }
-                        128 if operands.len() == 4 => {
-                            adds.insert(operands[1], [operands[2], operands[3]]); // IAdd.
-                        }
-                        65 if operands.len() == 5 => {
-                            pointers.insert(operands[1], (operands[2], operands[4]));
-                        }
-                        61 if operands.len() >= 3 => loads.push(operands[2]),
-                        62 if operands.len() >= 2 => stores.push(operands[0]),
-                        _ => {}
+        for mask in 0..8u8 {
+            let mut options = WgpuCompilationOptions {
+                supports_vulkan: true,
+                ..Default::default()
+            };
+            options.vulkan.max_spirv_version = (1, 6);
+            options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+            options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+            options.vulkan.supports_explicit_smem = mask & 4 != 0;
+            let definition = super::native::definitions()
+                .into_iter()
+                .find(|(name, _)| *name == "expert_down")
+                .unwrap()
+                .1;
+            let compiled = Compiler::compile(
+                &mut AutoCompiler::SpirV(Default::default()),
+                definition,
+                &options,
+                ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap();
+            let AutoRepresentation::SpirV(kernel) = compiled else {
+                panic!("actual native matrix compiler required");
+            };
+            let words = layout(&kernel.assembled_module).unwrap();
+            let mut at = 5;
+            let mut bindings = BTreeMap::new();
+            let mut constants = BTreeMap::new();
+            let mut adds = BTreeMap::new();
+            let mut pointers = BTreeMap::new();
+            let mut loads = Vec::new();
+            let mut stores = Vec::new();
+            while at < words.len() {
+                let n = (words[at] >> 16) as usize;
+                assert!(n > 0 && at + n <= words.len());
+                let operands = &words[at + 1..at + n];
+                match words[at] & 65535 {
+                    71 if operands.len() == 3 && operands[1] == 33 => {
+                        bindings.insert(operands[0], operands[2]); // Binding.
                     }
-                    at += n;
+                    43 if operands.len() == 3 => {
+                        constants.insert(operands[1], operands[2]); // OpConstant.
+                    }
+                    128 if operands.len() == 4 => {
+                        adds.insert(operands[1], [operands[2], operands[3]]); // IAdd.
+                    }
+                    65 if operands.len() == 5 => {
+                        pointers.insert(operands[1], (operands[2], operands[4]));
+                    }
+                    61 if operands.len() >= 3 => loads.push(operands[2]),
+                    62 if operands.len() >= 2 => stores.push(operands[0]),
+                    _ => {}
                 }
-                let status = *bindings.iter().find(|(_, b)| **b == 4).unwrap().0;
-                let indices = |accesses: &[u32]| {
-                    accesses
-                        .iter()
-                        .filter_map(|p| pointers.get(p))
-                        .filter_map(|&(base, index)| (base == status).then_some(index))
-                        .collect::<Vec<_>>()
-                };
-                let reads = indices(&loads);
-                let writes = indices(&stores);
-                assert_eq!(reads.len(), 1, "mask={mask}");
-                assert_eq!(writes.len(), 1, "mask={mask}");
-                let operands = adds[&writes[0]];
-                let offset = if operands[0] == reads[0] {
-                    constants[&operands[1]]
-                } else {
-                    assert_eq!(operands[1], reads[0]);
-                    constants[&operands[0]]
-                } as usize;
-                assert_eq!(offset, crate::strata_prompt::groups::ROUTES, "mask={mask}");
-                for route in [0, 9, 20479, 20480, crate::strata_prompt::groups::ROUTES - 1] {
-                    assert!(offset + route >= crate::strata_prompt::groups::ROUTES);
-                    assert!(offset + route < crate::strata_prompt::groups::STATUS_WORDS);
-                }
+                at += n;
+            }
+            let status = *bindings.iter().find(|(_, b)| **b == 4).unwrap().0;
+            let indices = |accesses: &[u32]| {
+                accesses
+                    .iter()
+                    .filter_map(|p| pointers.get(p))
+                    .filter_map(|&(base, index)| (base == status).then_some(index))
+                    .collect::<Vec<_>>()
+            };
+            let reads = indices(&loads);
+            let writes = indices(&stores);
+            assert_eq!(reads.len(), 1, "mask={mask}");
+            assert_eq!(writes.len(), 1, "mask={mask}");
+            let operands = adds[&writes[0]];
+            let offset = if operands[0] == reads[0] {
+                constants[&operands[1]]
+            } else {
+                assert_eq!(operands[1], reads[0]);
+                constants[&operands[0]]
+            } as usize;
+            assert_eq!(offset, crate::strata_prompt::groups::ROUTES, "mask={mask}");
+            for route in [0, 9, 20479, 20480, crate::strata_prompt::groups::ROUTES - 1] {
+                assert!(offset + route >= crate::strata_prompt::groups::ROUTES);
+                assert!(offset + route < crate::strata_prompt::groups::STATUS_WORDS);
             }
         }
     }
