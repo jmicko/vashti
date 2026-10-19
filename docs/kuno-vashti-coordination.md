@@ -1,6 +1,41 @@
 # Kuno and Vashti Coordination
 
-**Active installed backend handoff (2026-10-19 UTC): thinking/tools and faster cold load.**
+**Active Kuno-only toolbox repair (2026-10-19, installed and Vashti-validated).**
+The user explicitly requested the fix in Kuno, preserving Vashti behavior. The
+failure is reproduced by compiled public text without tools: native prompt chunks
+support4096 tokens, but `ops_ple_transition::token_pair` still rejected more than
+2048 after GPU work. Public-only diagnosis `e8dbea20`/`a3894733` identifies that
+exact checked-PLE error. Fix `a6b21a38` shares one4096-token constant between core
+history validation and GPU prompt allocation; MAX8 decode, state/fence/erasure
+checks and32K context capacity are unchanged. No consumer/API change.
+
+146 library tests pass,2 ignored;10 checked-PLE tests pass; strict library/tests
+and selected worker Clippy pass. The unchanged compiled-public8,445-token fixture
+now completes across three chunks, returns the correct arithmetic answer, erases
+request state, closes, and restores physical memory/admission with zero driver
+faults. Frozen worker sourcea6b21a38 / SHA7bc1633b. Protected staged10-tool
+API acceptance passes preload ->4,207-token streamed tool call -> tool result ->
+final answer on the same worker, write_bytes0, graceful unload, subsequent Ollama
+and full physical recovery. The official transaction installs this worker with
+the unchanged image-enabled gateway36626d30 / SHAd3ed07f4 and preserves the
+complete previous configuration. Root backup: `/var/lib/kuno-tool-prefill-fix-20261019`.
+
+Actual live Vashti now passes the SAME previously failing prompt with Notes,
+Calculator and Images ALL enabled, low thinking, actual calculator call/result
+and final answer (test response version5/5). No Vashti source or global user
+setting was changed; no existing conversation was opened. Screenshot:
+`/tmp/kuno-vashti-all-tools-fixed-20261019.png`. Installed nonroot/model-mount
+checks pass, swap/core0, worker write_bytes0, denied unprivileged inspection,
+no OOM or driver faults; all services200 and admission normal. Native weights
+intentionally remain warm on Intel (33,348,456,448 bytes); NVIDIA compute0.
+
+Contract/consumer requirements: **no API, private-wire or Vashti changes needed**.
+Tool definitions are not removed or shortened. Context remains512..32768; above32K
+and further loader/speed work remain separate. No release/version bump, new
+throughput benchmark or fresh image/individual-tool suite is claimed. Tested
+backend and application receipts are in the [service specification](kuno-native-text-service.md#kuno-toolbox-prefill-repair-2026-10-19).
+
+**Historical installed feature handoff before the toolbox repair (2026-10-19 UTC).**
 The local LAN listener exposes `kuno-qwen3.8-flash-next:iq3_s` with completion,
 thinking and tools. Source `36626d30`; image-enabled gateway SHA `d3ed07f4`, native
 worker SHA `f871238b`. Protected staged and actual DynamicUser/mount acceptance

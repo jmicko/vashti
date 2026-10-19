@@ -62,8 +62,10 @@ unchanged cold starts reuse root-controlled integrity metadata. Actual local col
 setup measured about102 seconds versus223 seconds previously. Subsequent requests
 reuse weights; request state is erased before completion. Competing Ollama/image
 inference releases the worker through common admission. Backend fixtures pass;
-Vashti thinking/calculator round trips pass, but the full default tool set
-reproducibly returns503 and is not yet accepted; see the service handoff.
+Live Vashti thinking/calculator round trips pass with all default tool groups
+enabled. The previous large-toolbox503 was a stale PLE chunk limit in Kuno;
+core history checks and GPU chunk allocation now share the same4096-token bound.
+No frontend/API change is required; see the service handoff.
 
 Enrollment is an administrator operation using root-controlled assets, not a
 manual edit to installed configuration:

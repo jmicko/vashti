@@ -3,8 +3,10 @@
 ## Active extension contract (2026-10-19, installed backend acceptance)
 
 The user requested thinking, tool use, faster cold load and configurable context.
-Source `36626d30` is installed and passes protected staged and actual-service
-checks. Earlier preview receipts below are historical. Ollama chat behavior follows
+Image-enabled gateway `36626d30` and repaired worker `a6b21a38` are installed.
+Protected staged, actual-service and live Vashti all-tools checks pass; see the
+[toolbox repair receipt](#kuno-toolbox-prefill-repair-2026-10-19). Earlier preview
+receipts below are historical. Ollama chat behavior follows
 the actual embedded Qwen template:
 `think` accepts booleans or low/medium/high/xhigh (absent remains false), reasoning streams separately
 from content, and XML-style function calls translate to structured Ollama
@@ -370,7 +372,7 @@ receipt below. Larger runtime capacity remains the next substantial implementati
 item. No release or frontend changes. Vashti default-tool UI failure is under
 investigation; fixture acceptance does not establish full application acceptance.
 
-### Installed extension artifacts
+### Previous extension artifacts (before the toolbox repair)
 
 Runtime source `36626d306d5e47ff0270fce3917bca456edab1a2`:
 
@@ -427,7 +429,7 @@ trusted enrollment (and after identity changes); it is not omitted. About102
 seconds of actual loader/engine setup remains. These are load-time results, not
 new generation-throughput measurements or broad soak acceptance.
 
-### Live Vashti browser check: partial acceptance, default tools blocked
+### Historical Vashti browser check: default tools blocked before the repair
 
 The user explicitly requested this application check. A fresh private chat in live
 `https://vashti.crabhonk.com/` discovers the native thinking/tools capabilities
@@ -441,7 +443,7 @@ two-round workload; the historical short-code33..36 eval rate is NOT universal.
 A screenshot of only this public test result is saved by the browser test client
 at `/tmp/kuno-vashti-thinking-calculator-20261019.png`, not by Kuno.
 
-**Default configuration is NOT accepted:** with Notes/Calculator/Images all
+**At this historical checkpoint, default configuration was NOT accepted:** with Notes/Calculator/Images all
 available, the same public prompt returns503 before visible output. Reproduced
 twice on retained workers and once after a fresh worker start. The generic
 Vashti error does not expose the upstream static error body. This rules out a
@@ -500,3 +502,93 @@ source cache, shared weights and draft) to find the remaining cold-load cost.
 Do not enable disk shader/graph dumps or persist request-dependent programs just
 because a development run uses public fixtures. Startup gains are not measured
 until the protected candidate actually runs.
+
+## Kuno toolbox prefill repair (2026-10-19)
+
+The observed default-tool failure is a Kuno engine bug, not a Vashti tool-format
+problem. Native prompt allocation/controller uses4096-token chunks, but the
+checked PLE history helper still limited its token slice to2048. The mismatch
+rejects publication after real GPU prompt execution, retires the worker and
+returns503; it is not OOM or a wedged GPU. Compiled-public diagnosticse8dbea20
+and a3894733 reproduce it without any tool and expose the exact fixed label:
+`checked PLE chunk transition: invalid parameter`. These diagnostics accept only
+compiled public text, never stdin; the private worker cannot enable diagnostics
+through environment or request flags. No private content logging is added.
+
+Fixa6b21a387eb181db24a304f8ff469cb6ba75ee11 introduces one core
+`MAX_PROMPT_BATCH=4096` used by both PLE checks and GPU prompt-owner allocation.
+Prompt arithmetic, MAX8 speculative bounds, owner identity, cancellation, real
+whole-model fences, finite-value checks, erasure and32K context are preserved.
+Regression tests compare history against the independent scalar token reference
+across2048/2049/4095/4096, repeated chunks and short continuations, and verify
+4097-token rejection and abandoned proposals leave original owners unchanged.
+Tail-history tests retain signed-zero bits and avoid a chunk-sized host mirror.
+
+Validation/artifacts under `/media/jmicko/faststore/kuno-development`:
+
+- `native-ple-boundary-tests-20261019.log`:10 checked-PLE cases pass.
+- `native-ple-full-library-tests-20261019.log`:146 pass,2 ignored.
+- `native-ple-library-clippy-20261019.log` and
+  `native-tools-worker-clippy-20261019.log`: relevant strict library/tests and
+  selected worker Clippy pass. The broader all-targets attempt failed in
+  unmodified reference examples with missing `crate::strata_port` and lab
+  feature cfgs; preserve `native-ple-boundary-clippy-20261019.log`, do not claim
+  every workspace example passes.
+- `native-public-long-prompt-{check,device-check}-20261019` preserve the two
+  FAILED original-bound controls and physical recovery; do not relabel them.
+- `native-public-long-prompt-fixed-check-20261019/receipt.json`: SAME public
+  fixture now passes,8,445 prompt tokens/4 delivered outputs/correct answer,
+  three actual prompt chunks and checked request erasure/final close. Replies
+  remain in protected client RAM. Its host-after confirms Intel50,688,000B,
+  NVIDIA compute0, all three services200, unpaused/inactive/no recovery and
+  unchanged zero classified Xe/NVIDIA faults. This is correctness, not a speed
+  benchmark or blanket long-context acceptance.
+- `strata-tool-prefill-fix-20261019`: frozen sourcea6b21a38, worker SHA256
+  `7bc1633bc2bc80d2a3ef27ddbc3366f93af5a6d90c13da03a19cf07d313ef30c`,
+  unchanged strata-rust-port,strata-intel-core,strata-gpu-adaptive-usage features.
+
+### Staged API, installation and actual Vashti acceptance
+
+`native-toolbox-stage-check-20261019/receipt.json` passes the real private worker
+through staged Kuno with10 available function schemas: preload,4,207-token
+streamed thinking/tool call, synthetic weather result and final answer on the
+same PID, zero worker write_bytes, denied unprivileged inspection, graceful
+unload and subsequent real ordinary Ollama inference. Its host-after confirms
+Intel50,688,000B, NVIDIA compute0, all services200, normal admission and zero
+classified driver-fault changes. The public fixture exposes a mixed notes/image/
+calculator/weather toolbox; only the weather function is executed by the test
+client. No real notes or images are accessed, generated or persisted.
+
+The official `configure-native-text` transaction installs worker7bc1633b using
+the existing image-enabled gatewayd3ed07f4. Private KNT2/KNR2, model identity,
+all existing configuration/ports/image/managed settings remain unchanged. Both
+installed artifact hashes match the frozen files. Root-only before-state backup
+and installation receipt: `/var/lib/kuno-tool-prefill-fix-20261019`. No release
+version, distributed package or frontend code changed.
+
+Live browser acceptance uses the SAME public arithmetic request in the existing
+test private chat, with Notes, Calculator and Images all enabled and low thinking.
+Response version5/5 completes thinking -> actual calculator call -> tool result
+-> final correct answer. All three groups remain enabled afterward. This is
+actual application acceptance of the formerly failing full toolbox, not just a
+mock/parser fixture. It does not execute every individual note/image operation.
+No existing user conversation or global setting was changed. Browser proof of
+only the public test result: `/tmp/kuno-vashti-all-tools-fixed-20261019.png`; no
+private inference content is added to repository notes or Kuno persistence.
+
+`native-toolbox-installed-final-check-20261019/{receipt,host-final}.json` confirms
+the actual installed service identity/model mount, nonroot worker, swap/core0,
+write_bytes0, denied unprivileged inspection, no OOM, all three service probes200,
+admission active=false/paused=false/waiting0/recovery_required=false and zero
+classified Xe/NVIDIA faults. The native model is intentionally retained on
+Intel33,348,456,448B; NVIDIA compute0. Do not label this a fully idle GPU receipt;
+full physical recovery was separately accepted in the staged and public tests.
+The bounded sudo refresh loop is stopped at the checkpoint, and no test client
+or staged service is left active.
+
+**Vashti needs no code/API changes for this repair.** Keep sending the full tool
+definitions and normal assistant/tool result history. No function is silently
+dropped, no request is retried through Ollama, and no content is truncated.
+The supported context remains512..32768; above32K, broader soak, individual image
+fidelity and later performance/loader improvements remain separate work. No new
+comparable throughput benchmark is claimed.

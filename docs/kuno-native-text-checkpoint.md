@@ -1,21 +1,27 @@
 # Native DASLab/Strata checkpoint — 2026-10-17
 
-**Installed native feature extension (2026-10-19 UTC).**
-Source36626d30, gateway SHA d3ed07f4 and worker SHA f871238b are installed together.
-Thinking/tool-call/result and actual CLI fixtures pass, worker disk writes0,
-swap/core0, service identity/mount checked; root-attested cold load is about102s
-versus historical223s. Context request budgets512..32768 work; allocated capacity
-remains32K. Larger capacity is the remaining requested engine change. Live Vashti
-calculator-only thinking/tool round trip passes; default-tool503 repeats both
-warm and cold, cause unproven. Next diagnose the longer/tool prompt with bounded
-static stages; do not claim full application acceptance. Final services/admission
-healthy, no driver faults/OOM, Intel50,688,000 bytes and NVIDIA compute0; worker
-unloaded. No new comparable throughput benchmark, release or frontend code edits.
+**Installed Kuno-only full-toolbox repair (2026-10-19 UTC).**
+Worker sourcea6b21a38 / SHA7bc1633b, unchanged image-enabled gateway36626d30 /
+SHAd3ed07f4. The stale2048-token PLE history guard now shares the real4096-token
+GPU chunk bound; MAX8 decode and all fence/erasure checks remain unchanged.
+146 library tests pass,2 ignored;10 PLE regressions and strict relevant Clippy
+pass. The previously failing compiled-public8,445-token request now completes
+across three chunks; staged10-tool4,207-token streamed call/result, zero writes,
+unload, Ollama coexistence and physical recovery pass. The official transaction
+installs the exact frozen worker with the complete prior configuration preserved.
+
+Actual live Vashti passes its previously failing prompt with Notes, Calculator
+and Images ALL enabled: thinking -> calculator -> result -> final answer. No
+frontend/API change. Installed identity/mount, swap/core0, worker write_bytes0,
+inspection denied, no OOM/driver faults, services/admission healthy all pass.
+Native weights intentionally retained on Intel33,348,456,448B; NVIDIA compute0.
+No fresh image/individual-tool suite, new comparable throughput test or release.
+Context remains512..32768; above32K and loader/kernel work remain separate.
 
 Read the [active coordination handoff](kuno-vashti-coordination.md) and
-[exact service contract, tests, artifacts, limits and receipts](kuno-native-text-service.md)
+[exact service contract and receipts](kuno-native-text-service.md#kuno-toolbox-prefill-repair-2026-10-19)
 before continuing. Earlier entries below are historical and superseded only
-within this installed extension's explicitly accepted scope.
+within the explicitly accepted scope.
 
 **Selected Intel engine checkpoint: 33.4 tokens/s warm (2026-10-18).**
 The connected Rust rewrite has passed the documented selected-engine audit.
