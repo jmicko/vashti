@@ -1121,6 +1121,14 @@ pub(crate) fn run(
         // Rust tokenizer intended for a separately protected arbitrary caller.
         // It still accepts NO private stdin or public-receipt content override.
         drop(prompt);
+        // The selected engine already owns/validates MAX8 state and parameters.
+        // Compile an explicit eight-window caller for configuration experiments;
+        // the ordinary selected fixture retains the original four-input request.
+        let public_speculation_window = if cfg!(feature = "strata-eight-window") {
+            8
+        } else {
+            4
+        };
         let public_request = || {
             let rendered = input.fixture.rendered();
             crate::strata_engine::input::request(
@@ -1138,7 +1146,9 @@ pub(crate) fn run(
                         temperature: 0.,
                         ..Default::default()
                     },
-                    speculation: crate::strata_speculation::Config::native(4),
+                    speculation: crate::strata_speculation::Config::native(
+                        public_speculation_window,
+                    ),
                     minimum: 0.5,
                 },
             )
@@ -1287,6 +1297,7 @@ pub(crate) fn run(
             })
             .transpose()?;
         let record = serde_json::json!({"controller":"global-original-sources",
+            "speculation_window":public_speculation_window,
             "requested_output_limit":if cfg!(feature = "strata-public-cap-check"){16}else{MAX_OUTPUTS},
             "fixed_public_cap_checked":cfg!(feature = "strata-public-cap-check"),
             "greedy_target_verification":done.generation.greedy,"outputs":done.generation.outputs,
