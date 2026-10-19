@@ -1494,11 +1494,16 @@ fn validate_q6_verify_counters(
     prepares: u64,
     tiles: u64,
     members: u64,
+    member_capacity: u64,
 ) -> Result<()> {
-    if !selected && (prepares != 0 || tiles != 0 || members != 0)
+    if !matches!(member_capacity, 3 | 4 | 8)
+        || !selected && (prepares != 0 || tiles != 0 || members != 0)
         || tiles != prepares.checked_mul(16).ok_or(Error::ArithmeticOverflow)?
         || members < prepares
-        || members > prepares.checked_mul(4).ok_or(Error::ArithmeticOverflow)?
+        || members
+            > prepares
+                .checked_mul(member_capacity)
+                .ok_or(Error::ArithmeticOverflow)?
     {
         return Err(Error::InvalidFormat(
             "Q6 verifier head actual completed counters",
@@ -2595,6 +2600,11 @@ impl<'a> GpuExecutor<'a> {
             self.q6_integer_verify_head_prepares,
             self.q6_integer_verify_head_tiles,
             self.q6_integer_verify_head_members,
+            if self.target_four_rows_active {
+                crate::strata_port::verify_capacity() as u64
+            } else {
+                3
+            },
         )?;
         self.q6_integer_verify_head = activate_q6_verify_head(
             self.q6_integer_verify_head,
@@ -2624,6 +2634,11 @@ impl<'a> GpuExecutor<'a> {
             self.q6_integer_verify_head_prepares,
             self.q6_integer_verify_head_tiles,
             self.q6_integer_verify_head_members,
+            if self.target_four_rows_active {
+                crate::strata_port::verify_capacity() as u64
+            } else {
+                3
+            },
         )?;
         self.q6_integer_verify_head = activate_q6_verify_head(self.q6_integer_verify_head, true)?;
         Ok(())
@@ -2639,6 +2654,11 @@ impl<'a> GpuExecutor<'a> {
             self.q6_integer_verify_head_prepares,
             self.q6_integer_verify_head_tiles,
             self.q6_integer_verify_head_members,
+            if self.target_four_rows_active {
+                crate::strata_port::verify_capacity() as u64
+            } else {
+                3
+            },
         )?;
         Ok((
             self.q6_integer_verify_head,
@@ -6703,21 +6723,31 @@ mod q6_verify_head_tests {
         for args in [(false, false), (true, false), (true, true)] {
             assert!(activate_q6_verify_head(args.0, args.1).is_err());
         }
-        validate_q6_verify_counters(false, 0, 0, 0).unwrap();
-        validate_q6_verify_counters(true, 0, 0, 0).unwrap();
-        for members in 3..=12 {
-            validate_q6_verify_counters(true, 3, 48, members).unwrap();
+        // Accounting follows the same admitted member bound as the real head,
+        // including eight-row native requests; tile/count/overflow checks stay strict.
+        for capacity in [3, 4, 8] {
+            validate_q6_verify_counters(false, 0, 0, 0, capacity).unwrap();
+            validate_q6_verify_counters(true, 0, 0, 0, capacity).unwrap();
+            for members in 3..=3 * capacity {
+                validate_q6_verify_counters(true, 3, 48, members, capacity).unwrap();
+            }
+            for (selected, prepares, tiles, members) in [
+                (false, 1, 16, 1),
+                (true, 1, 0, 0),
+                (true, 1, 15, 1),
+                (true, 1, 17, 1),
+                (true, 3, 48, 2),
+                (true, 3, 48, 3 * capacity + 1),
+                (true, u64::MAX, 0, 0),
+            ] {
+                assert!(
+                    validate_q6_verify_counters(selected, prepares, tiles, members, capacity)
+                        .is_err()
+                );
+            }
         }
-        for (selected, prepares, tiles, members) in [
-            (false, 1, 16, 1),
-            (true, 1, 0, 0),
-            (true, 1, 15, 1),
-            (true, 1, 17, 1),
-            (true, 3, 48, 2),
-            (true, 3, 48, 13),
-            (true, u64::MAX, 0, 0),
-        ] {
-            assert!(validate_q6_verify_counters(selected, prepares, tiles, members).is_err());
+        for capacity in [0, 1, 2, 5, 7, 9, u64::MAX] {
+            assert!(validate_q6_verify_counters(true, 0, 0, 0, capacity).is_err());
         }
     }
     #[test]
