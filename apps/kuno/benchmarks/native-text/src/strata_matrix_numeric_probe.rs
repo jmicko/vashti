@@ -21,16 +21,16 @@ pub(crate) fn cases(
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
 ) -> ProbeResult<Vec<serde_json::Value>> {
-    let (rows, columns) = (33usize, 10240usize);
+    let (max_rows, columns) = (65usize, 10240usize);
     let tensor = file
         .tensor("blk.0.hc_attn_down.weight")
         .ok_or("public matrix original weight")?;
     if tensor.info().dimensions() != [10240, 320] || tensor.info().dtype().gguf_id() != 30 {
         return Err("public matrix original geometry".into());
     }
-    let mut original = Zeroizing::new(vec![0u8; rows * columns * 2]);
+    let mut original = Zeroizing::new(vec![0u8; max_rows * columns * 2]);
     tensor.read_range(0, &mut original)?;
-    let mut decoded = Zeroizing::new(vec![0.; rows * columns]);
+    let mut decoded = Zeroizing::new(vec![0.; max_rows * columns]);
     tensor.info().dtype().decode(&original, &mut decoded)?;
     let mut reports = Vec::new();
     for bfloat in [true, false] {
@@ -42,7 +42,17 @@ pub(crate) fn cases(
             packed[i / 2] |= u32::from(bits) << (16 * (i % 2));
         }
         let public = client.create_from_slice(u32::as_bytes(&packed));
-        for count in [1, 8, 35, 257] {
+        // Existing independent IEEE cases plus exact/full macro tiles and
+        // both token/feature tails. The same checked primitive is selected.
+        for (count, rows) in [
+            (1, 33),
+            (8, 33),
+            (35, 33),
+            (257, 33),
+            (16, 64),
+            (64, 64),
+            (65, 65),
+        ] {
             let mut inputs = Zeroizing::new(vec![0.; count * columns]);
             let mut image = Zeroizing::new(vec![0u32; inputs.len() / 2]);
             for (i, v) in inputs.iter_mut().enumerate() {

@@ -154,6 +154,293 @@ mod native {
         sync_cube();
         out
     }
+    /// Four subgroups, each owning four8x16 results. Two A and two B
+    /// fragments feed four accumulators, doubling operand reuse without
+    /// changing the ordered K16 reduction of any output. The complete
+    /// workgroup covers32 input rows by64 output features.
+    #[cube]
+    fn macro_product<F: Float>(
+        input: &Array<F>,
+        weight: &Array<F>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+    ) -> SharedMemory<f32> {
+        let mut a = SharedMemory::<F>::new(512usize);
+        let mut b = SharedMemory::<F>::new(1024usize);
+        let mut out = SharedMemory::<f32>::new(2048usize);
+        // SAFETY: both operands are loaded before the corresponding products.
+        let a0 = unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::A,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::RowMajor,
+            )
+        };
+        // SAFETY: both operands are loaded before the corresponding products.
+        let a1 = unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::A,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::RowMajor,
+            )
+        };
+        // SAFETY: both operands are loaded before the corresponding products.
+        let b0 = unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::B,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::ColMajor,
+            )
+        };
+        // SAFETY: both operands are loaded before the corresponding products.
+        let b1 = unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::B,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::ColMajor,
+            )
+        };
+        let c0 = cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        );
+        let c1 = cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        );
+        let c2 = cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        );
+        let c3 = cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        );
+        let subgroup = usize::cast_from(UNIT_POS) / 16;
+        let token_base = usize::cast_from(CUBE_POS_Y) * 32;
+        let row_base = usize::cast_from(CUBE_POS_X) * 64;
+        let token = token_base + (subgroup / 2) * 16;
+        let row = row_base + (subgroup % 2) * 32;
+        let mut k = 0usize;
+        while k < columns {
+            // This branch is uniform across the whole workgroup. Complete
+            // macro tiles retain direct original-global-buffer loads. Tails
+            // stage only valid rows and initialize every inactive operand.
+            if token_base + 32 <= count && row_base + 64 <= rows {
+                cmma::load(
+                    &a0,
+                    &input.to_slice().slice(token * columns + k, input.len()),
+                    u32::cast_from(columns),
+                );
+                cmma::load(
+                    &a1,
+                    &input
+                        .to_slice()
+                        .slice((token + 8) * columns + k, input.len()),
+                    u32::cast_from(columns),
+                );
+                cmma::load(
+                    &b0,
+                    &weight
+                        .to_slice()
+                        .slice(weight_first + row * columns + k, weight.len()),
+                    u32::cast_from(columns),
+                );
+                cmma::load(
+                    &b1,
+                    &weight
+                        .to_slice()
+                        .slice(weight_first + (row + 16) * columns + k, weight.len()),
+                    u32::cast_from(columns),
+                );
+            } else {
+                let mut i = usize::cast_from(UNIT_POS);
+                while i < 1024 {
+                    let col = k + i % 16;
+                    if i < 512 {
+                        let t = token_base + i / 16;
+                        let mut av = F::new(0.0);
+                        if t < count && col < columns {
+                            av = input[t * columns + col];
+                        }
+                        a[i] = av;
+                    }
+                    let r = row_base + i / 16;
+                    let mut bv = F::new(0.0);
+                    if r < rows && col < columns {
+                        bv = weight[weight_first + r * columns + col];
+                    }
+                    b[i] = bv;
+                    i += 64;
+                }
+                sync_cube();
+                let af = (subgroup / 2) * 256;
+                let bf = (subgroup % 2) * 512;
+                cmma::load(&a0, &a.to_slice().slice(af, af + 128), 16);
+                cmma::load(&a1, &a.to_slice().slice(af + 128, af + 256), 16);
+                cmma::load(&b0, &b.to_slice().slice(bf, bf + 256), 16);
+                cmma::load(&b1, &b.to_slice().slice(bf + 256, bf + 512), 16);
+            }
+            cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
+            cmma::execute::<F, F, f32, f32>(&a0, &b1, &c1, &c1);
+            cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);
+            cmma::execute::<F, F, f32, f32>(&a1, &b1, &c3, &c3);
+            // No subgroup may overwrite a tail operand before its neighbors
+            // finish all four products. Complete global tiles need no barrier.
+            if !(token_base + 32 <= count && row_base + 64 <= rows) {
+                sync_cube();
+            }
+            k += 16;
+        }
+        cmma::store(
+            &mut out.slice_mut(subgroup * 512, subgroup * 512 + 128),
+            &c0,
+            16,
+            cmma::MatrixLayout::RowMajor,
+        );
+        cmma::store(
+            &mut out.slice_mut(subgroup * 512 + 128, subgroup * 512 + 256),
+            &c1,
+            16,
+            cmma::MatrixLayout::RowMajor,
+        );
+        cmma::store(
+            &mut out.slice_mut(subgroup * 512 + 256, subgroup * 512 + 384),
+            &c2,
+            16,
+            cmma::MatrixLayout::RowMajor,
+        );
+        cmma::store(
+            &mut out.slice_mut(subgroup * 512 + 384, subgroup * 512 + 512),
+            &c3,
+            16,
+            cmma::MatrixLayout::RowMajor,
+        );
+        sync_cube();
+        out
+    }
+    #[cube(launch_unchecked)]
+    pub fn dense_macro<F: Float>(
+        input: &Array<F>,
+        weight: &Array<F>,
+        output: &mut Array<f32>,
+        fault: &mut Array<Atomic<u32>>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+        out_first: usize,
+        out_stride: usize,
+    ) {
+        let values = macro_product::<F>(input, weight, columns, rows, count, weight_first);
+        let subgroup = usize::cast_from(UNIT_POS) / 16;
+        let mut i = usize::cast_from(UNIT_POS) % 16;
+        while i < 512 {
+            let t = usize::cast_from(CUBE_POS_Y) * 32
+                + (subgroup / 2) * 16
+                + (i / 256) * 8
+                + (i % 128) / 16;
+            let row = usize::cast_from(CUBE_POS_X) * 64
+                + (subgroup % 2) * 32
+                + ((i / 128) % 2) * 16
+                + i % 16;
+            if t < count && row < rows {
+                let v = values[subgroup * 512 + i];
+                if v.abs() <= f32::MAX {
+                    output[out_first + t * out_stride + row] = v;
+                } else {
+                    output[out_first + t * out_stride + row] = 0.0;
+                    fault[0].fetch_or(1);
+                }
+            }
+            i += 16;
+        }
+    }
+    #[cube(launch_unchecked)]
+    pub fn expert_macro(
+        input: &Array<f16>,
+        weight: &Array<f16>,
+        output: &mut Array<f32>,
+        map: &Array<u32>,
+        status: &mut Array<u32>,
+        fault: &mut Array<Atomic<u32>>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+        group: usize,
+        #[comptime] down: bool,
+    ) {
+        let values = macro_product::<f16>(input, weight, columns, rows, count, weight_first);
+        let subgroup = usize::cast_from(UNIT_POS) / 16;
+        let mut i = usize::cast_from(UNIT_POS) % 16;
+        while i < 512 {
+            let member = usize::cast_from(CUBE_POS_Y) * 32
+                + (subgroup / 2) * 16
+                + (i / 256) * 8
+                + (i % 128) / 16;
+            let row = usize::cast_from(CUBE_POS_X) * 64
+                + (subgroup % 2) * 32
+                + ((i / 128) % 2) * 16
+                + i % 16;
+            if member < count && row < rows {
+                let route =
+                    usize::cast_from(map[1540 + usize::cast_from(map[1028 + group]) + member]);
+                if route < usize::cast_from(map[0]) * 10 {
+                    let mut base = member * 1280;
+                    if down {
+                        base = route * 2560;
+                    }
+                    let v = values[subgroup * 512 + i];
+                    let valid = v.abs() <= f32::MAX;
+                    if valid {
+                        output[base + row] = v;
+                    } else {
+                        output[base + row] = 0.0;
+                        fault[0].fetch_or(128);
+                    }
+                    if down && row == 0 {
+                        let mut good = 0u32;
+                        if valid && status[route] == 1 {
+                            good = 1;
+                        }
+                        // Same full-capacity plane as prompt activation and
+                        // the rank-ordered reducer, including routes >20479.
+                        status[comptime!(crate::strata_prompt::groups::ROUTES) + route] = good;
+                    }
+                } else {
+                    fault[0].fetch_or(128);
+                }
+            }
+            i += 16;
+        }
+    }
     #[cube(launch_unchecked)]
     pub fn dense<F: Float>(
         input: &Array<F>,
@@ -242,6 +529,10 @@ mod native {
             ("dense_bf16", definition_dense::<bf16>()),
             ("expert_gu", definition_expert(false)),
             ("expert_down", definition_expert(true)),
+            ("dense_macro_fp16", definition_dense_macro::<f16>()),
+            ("dense_macro_bf16", definition_dense_macro::<bf16>()),
+            ("expert_macro_gu", definition_expert_macro(false)),
+            ("expert_macro_down", definition_expert_macro(true)),
         ]
     }
     fn settings() -> KernelSettings {
@@ -305,6 +596,64 @@ mod native {
         );
         b.build(settings())
     }
+    fn definition_dense_macro<F: Float>() -> KernelDefinition {
+        let mut b = KernelBuilder::default();
+        AddressType::U32.register(&mut b.scope);
+        let t = F::as_type(&b.scope);
+        let input = b.input_array(t);
+        let weight = b.input_array(t);
+        let output = b.output_array(f32::as_type(&b.scope));
+        let fault = b.output_array(
+            cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
+        );
+        let args: [cubecl::ir::ManagedVariable; 6] =
+            std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
+        dense_macro::expand::<F>(
+            &mut b.scope,
+            input.into(),
+            weight.into(),
+            output.into(),
+            fault.into(),
+            args[0].clone().into(),
+            args[1].clone().into(),
+            args[2].clone().into(),
+            args[3].clone().into(),
+            args[4].clone().into(),
+            args[5].clone().into(),
+        );
+        b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
+    }
+    fn definition_expert_macro(down: bool) -> KernelDefinition {
+        let mut b = KernelBuilder::default();
+        AddressType::U32.register(&mut b.scope);
+        let t = f16::as_type(&b.scope);
+        let input = b.input_array(t);
+        let weight = b.input_array(t);
+        let output = b.output_array(f32::as_type(&b.scope));
+        let map = b.input_array(u32::as_type(&b.scope));
+        let status = b.output_array(u32::as_type(&b.scope));
+        let fault = b.output_array(
+            cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
+        );
+        let args: [cubecl::ir::ManagedVariable; 5] =
+            std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
+        expert_macro::expand(
+            &mut b.scope,
+            input.into(),
+            weight.into(),
+            output.into(),
+            map.into(),
+            status.into(),
+            fault.into(),
+            args[0].clone().into(),
+            args[1].clone().into(),
+            args[2].clone().into(),
+            args[3].clone().into(),
+            args[4].clone().into(),
+            down,
+        );
+        b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
+    }
     fn half_arg(handle: Handle) -> Result<ArrayArg<WgpuRuntime>> {
         if handle.size_in_used() == 0 || !handle.size_in_used().is_multiple_of(2) {
             return Err(Error::InvalidBufferLength);
@@ -361,37 +710,73 @@ mod native {
         // are synthesized in workgroup memory and stores mask inactive rows.
         unsafe {
             if bfloat {
-                dense::launch_unchecked::<bf16, WgpuRuntime>(
-                    client,
-                    CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
-                    CubeDim::new_1d(16),
-                    ia,
-                    wa,
-                    oa,
-                    fa,
-                    columns,
-                    rows,
-                    count,
-                    weight_first,
-                    out_first,
-                    out_stride,
-                );
+                if count >= 32 && rows >= 32 {
+                    dense_macro::launch_unchecked::<bf16, WgpuRuntime>(
+                        client,
+                        CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(32) as u32, 1),
+                        CubeDim::new_1d(64),
+                        ia,
+                        wa,
+                        oa,
+                        fa,
+                        columns,
+                        rows,
+                        count,
+                        weight_first,
+                        out_first,
+                        out_stride,
+                    );
+                } else {
+                    dense::launch_unchecked::<bf16, WgpuRuntime>(
+                        client,
+                        CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
+                        CubeDim::new_1d(16),
+                        ia,
+                        wa,
+                        oa,
+                        fa,
+                        columns,
+                        rows,
+                        count,
+                        weight_first,
+                        out_first,
+                        out_stride,
+                    );
+                }
             } else {
-                dense::launch_unchecked::<f16, WgpuRuntime>(
-                    client,
-                    CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
-                    CubeDim::new_1d(16),
-                    ia,
-                    wa,
-                    oa,
-                    fa,
-                    columns,
-                    rows,
-                    count,
-                    weight_first,
-                    out_first,
-                    out_stride,
-                );
+                if count >= 32 && rows >= 32 {
+                    dense_macro::launch_unchecked::<f16, WgpuRuntime>(
+                        client,
+                        CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(32) as u32, 1),
+                        CubeDim::new_1d(64),
+                        ia,
+                        wa,
+                        oa,
+                        fa,
+                        columns,
+                        rows,
+                        count,
+                        weight_first,
+                        out_first,
+                        out_stride,
+                    );
+                } else {
+                    dense::launch_unchecked::<f16, WgpuRuntime>(
+                        client,
+                        CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
+                        CubeDim::new_1d(16),
+                        ia,
+                        wa,
+                        oa,
+                        fa,
+                        columns,
+                        rows,
+                        count,
+                        weight_first,
+                        out_first,
+                        out_stride,
+                    );
+                }
             }
         }
         Ok(())
@@ -418,23 +803,43 @@ mod native {
         // SAFETY: the actual prompt grouping/row map and all physical packed
         // images were checked by the original-source expert caller.
         unsafe {
-            expert::launch_unchecked::<WgpuRuntime>(
-                client,
-                CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
-                CubeDim::new_1d(16),
-                ia,
-                wa,
-                oa,
-                ma,
-                sa,
-                fa,
-                columns,
-                rows,
-                count,
-                weight_first,
-                group,
-                down,
-            );
+            if count >= 32 && rows >= 32 {
+                expert_macro::launch_unchecked::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(32) as u32, 1),
+                    CubeDim::new_1d(64),
+                    ia,
+                    wa,
+                    oa,
+                    ma,
+                    sa,
+                    fa,
+                    columns,
+                    rows,
+                    count,
+                    weight_first,
+                    group,
+                    down,
+                );
+            } else {
+                expert::launch_unchecked::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(rows.div_ceil(16) as u32, count.div_ceil(8) as u32, 1),
+                    CubeDim::new_1d(16),
+                    ia,
+                    wa,
+                    oa,
+                    ma,
+                    sa,
+                    fa,
+                    columns,
+                    rows,
+                    count,
+                    weight_first,
+                    group,
+                    down,
+                );
+            }
         }
         Ok(())
     }
@@ -731,76 +1136,77 @@ mod tests {
             options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
             options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
             options.vulkan.supports_explicit_smem = mask & 4 != 0;
-            let definition = super::native::definitions()
+            for definition in super::native::definitions()
                 .into_iter()
-                .find(|(name, _)| *name == "expert_down")
-                .unwrap()
-                .1;
-            let compiled = Compiler::compile(
-                &mut AutoCompiler::SpirV(Default::default()),
-                definition,
-                &options,
-                ExecutionMode::Unchecked,
-                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
-            )
-            .unwrap();
-            let AutoRepresentation::SpirV(kernel) = compiled else {
-                panic!("actual native matrix compiler required");
-            };
-            let words = layout(&kernel.assembled_module).unwrap();
-            let mut at = 5;
-            let mut bindings = BTreeMap::new();
-            let mut constants = BTreeMap::new();
-            let mut adds = BTreeMap::new();
-            let mut pointers = BTreeMap::new();
-            let mut loads = Vec::new();
-            let mut stores = Vec::new();
-            while at < words.len() {
-                let n = (words[at] >> 16) as usize;
-                assert!(n > 0 && at + n <= words.len());
-                let operands = &words[at + 1..at + n];
-                match words[at] & 65535 {
-                    71 if operands.len() == 3 && operands[1] == 33 => {
-                        bindings.insert(operands[0], operands[2]); // Binding.
+                .filter(|(name, _)| matches!(*name, "expert_down" | "expert_macro_down"))
+                .map(|(_, definition)| definition)
+            {
+                let compiled = Compiler::compile(
+                    &mut AutoCompiler::SpirV(Default::default()),
+                    definition,
+                    &options,
+                    ExecutionMode::Unchecked,
+                    StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                )
+                .unwrap();
+                let AutoRepresentation::SpirV(kernel) = compiled else {
+                    panic!("actual native matrix compiler required");
+                };
+                let words = layout(&kernel.assembled_module).unwrap();
+                let mut at = 5;
+                let mut bindings = BTreeMap::new();
+                let mut constants = BTreeMap::new();
+                let mut adds = BTreeMap::new();
+                let mut pointers = BTreeMap::new();
+                let mut loads = Vec::new();
+                let mut stores = Vec::new();
+                while at < words.len() {
+                    let n = (words[at] >> 16) as usize;
+                    assert!(n > 0 && at + n <= words.len());
+                    let operands = &words[at + 1..at + n];
+                    match words[at] & 65535 {
+                        71 if operands.len() == 3 && operands[1] == 33 => {
+                            bindings.insert(operands[0], operands[2]); // Binding.
+                        }
+                        43 if operands.len() == 3 => {
+                            constants.insert(operands[1], operands[2]); // OpConstant.
+                        }
+                        128 if operands.len() == 4 => {
+                            adds.insert(operands[1], [operands[2], operands[3]]); // IAdd.
+                        }
+                        65 if operands.len() == 5 => {
+                            pointers.insert(operands[1], (operands[2], operands[4]));
+                        }
+                        61 if operands.len() >= 3 => loads.push(operands[2]),
+                        62 if operands.len() >= 2 => stores.push(operands[0]),
+                        _ => {}
                     }
-                    43 if operands.len() == 3 => {
-                        constants.insert(operands[1], operands[2]); // OpConstant.
-                    }
-                    128 if operands.len() == 4 => {
-                        adds.insert(operands[1], [operands[2], operands[3]]); // IAdd.
-                    }
-                    65 if operands.len() == 5 => {
-                        pointers.insert(operands[1], (operands[2], operands[4]));
-                    }
-                    61 if operands.len() >= 3 => loads.push(operands[2]),
-                    62 if operands.len() >= 2 => stores.push(operands[0]),
-                    _ => {}
+                    at += n;
                 }
-                at += n;
-            }
-            let status = *bindings.iter().find(|(_, b)| **b == 4).unwrap().0;
-            let indices = |accesses: &[u32]| {
-                accesses
-                    .iter()
-                    .filter_map(|p| pointers.get(p))
-                    .filter_map(|&(base, index)| (base == status).then_some(index))
-                    .collect::<Vec<_>>()
-            };
-            let reads = indices(&loads);
-            let writes = indices(&stores);
-            assert_eq!(reads.len(), 1, "mask={mask}");
-            assert_eq!(writes.len(), 1, "mask={mask}");
-            let operands = adds[&writes[0]];
-            let offset = if operands[0] == reads[0] {
-                constants[&operands[1]]
-            } else {
-                assert_eq!(operands[1], reads[0]);
-                constants[&operands[0]]
-            } as usize;
-            assert_eq!(offset, crate::strata_prompt::groups::ROUTES, "mask={mask}");
-            for route in [0, 9, 20479, 20480, crate::strata_prompt::groups::ROUTES - 1] {
-                assert!(offset + route >= crate::strata_prompt::groups::ROUTES);
-                assert!(offset + route < crate::strata_prompt::groups::STATUS_WORDS);
+                let status = *bindings.iter().find(|(_, b)| **b == 4).unwrap().0;
+                let indices = |accesses: &[u32]| {
+                    accesses
+                        .iter()
+                        .filter_map(|p| pointers.get(p))
+                        .filter_map(|&(base, index)| (base == status).then_some(index))
+                        .collect::<Vec<_>>()
+                };
+                let reads = indices(&loads);
+                let writes = indices(&stores);
+                assert_eq!(reads.len(), 1, "mask={mask}");
+                assert_eq!(writes.len(), 1, "mask={mask}");
+                let operands = adds[&writes[0]];
+                let offset = if operands[0] == reads[0] {
+                    constants[&operands[1]]
+                } else {
+                    assert_eq!(operands[1], reads[0]);
+                    constants[&operands[0]]
+                } as usize;
+                assert_eq!(offset, crate::strata_prompt::groups::ROUTES, "mask={mask}");
+                for route in [0, 9, 20479, 20480, crate::strata_prompt::groups::ROUTES - 1] {
+                    assert!(offset + route >= crate::strata_prompt::groups::ROUTES);
+                    assert!(offset + route < crate::strata_prompt::groups::STATUS_WORDS);
+                }
             }
         }
     }
@@ -874,16 +1280,71 @@ mod tests {
     }
 
     #[test]
-    fn cooperative_subgroup_override_requires_the_whole_declared_geometry() {
+    fn macro_tile_covers_each_output_once_and_masks_all_partial_rows() {
+        for count in [16usize, 17, 35, 63, 64, 65, 129, 257] {
+            for rows in [32usize, 33, 63, 64, 65, 1280, 2560] {
+                let mut visits = vec![0u8; count * rows];
+                for gy in 0..count.div_ceil(32) {
+                    for gx in 0..rows.div_ceil(64) {
+                        for subgroup in 0..4 {
+                            for i in 0..512 {
+                                let token =
+                                    gy * 64 + (subgroup / 2) * 16 + (i / 256) * 8 + (i % 128) / 16;
+                                let row =
+                                    gx * 64 + (subgroup % 2) * 32 + ((i / 128) % 2) * 16 + i % 16;
+                                if token < count && row < rows {
+                                    visits[token * rows + row] += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                assert!(visits.iter().all(|&v| v == 1), "count={count} rows={rows}");
+            }
+        }
+    }
+
+    #[test]
+    fn incomplete_cooperative_type_fixture_does_not_authorize_an_override() {
         use wgpu::hal::vulkan::kuno_cooperative_subgroup as subgroup;
         let matrix = [7 << 16 | 4456, 1, 2, 3, 4, 5, 6];
         let size16 = [6 << 16 | 16, 7, 17, 16, 1, 1];
-        let size32 = [6 << 16 | 16, 7, 17, 32, 1, 1];
-        assert_eq!(subgroup(&module(&[&matrix, &size16])), Some(16));
-        assert_eq!(subgroup(&module(&[&matrix, &size32])), None);
+        let size128 = [6 << 16 | 16, 7, 17, 128, 1, 1];
+        assert_eq!(subgroup(&module(&[&matrix, &size16])), None);
+        assert_eq!(subgroup(&module(&[&matrix, &size128])), None);
         assert_eq!(subgroup(&module(&[&matrix])), None);
         assert_eq!(subgroup(&module(&[&size16])), None);
         assert_eq!(subgroup(&module(&[&matrix, &size16, &[0]])), None);
+    }
+
+    #[cfg(feature = "strata-intel-core")]
+    #[test]
+    fn every_actual_small_and_macro_kernel_requires_sixteen_lane_subgroups() {
+        use cubecl::ir::{ElemType, StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, ExecutionMode, WgpuCompilationOptions};
+        for (name, definition) in super::native::definitions() {
+            let mut options = WgpuCompilationOptions {
+                supports_vulkan: true,
+                ..Default::default()
+            };
+            options.vulkan.max_spirv_version = (1, 6);
+            let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+                &mut AutoCompiler::SpirV(Default::default()),
+                definition,
+                &options,
+                ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap() else {
+                panic!("actual native matrix SPIRV required");
+            };
+            assert_eq!(
+                wgpu::hal::vulkan::kuno_cooperative_subgroup(&kernel.assembled_module),
+                Some(16),
+                "name={name}",
+            );
+        }
     }
 
     #[test]
