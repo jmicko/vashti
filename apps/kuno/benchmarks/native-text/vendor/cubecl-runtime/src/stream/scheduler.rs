@@ -393,6 +393,23 @@ mod tests {
     }
 
     #[test]
+    fn cross_stream_binding_still_submits_a_materialized_producer() {
+        for strategy in [SchedulerStrategy::Interleave, SchedulerStrategy::Sequential] {
+            let (mut scheduler, events) = scheduler(strategy);
+            let a=StreamId { value:0 }; let b=StreamId { value:1 };
+            scheduler.register(a,10,&[a]);
+            scheduler.enqueue_stream_tasks(a);
+            scheduler.register(b,20,&[a,b]);
+            assert_eq!(events.lock().unwrap().last(),Some(&(0,2,0)));
+            scheduler.execute_streams(vec![b]);
+            let observed=events.lock().unwrap();
+            let producer_submit=observed.iter().position(|e|*e==(0,2,0)).unwrap();
+            let consumer=observed.iter().position(|e|*e==(1,0,20)).unwrap();
+            assert!(producer_submit<consumer);
+        }
+    }
+
+    #[test]
     fn multiple_interleaved_streams_keep_original_single_task_ordering() {
         let (mut scheduler, events) = scheduler(SchedulerStrategy::Interleave);
         let a = StreamId { value: 0 };

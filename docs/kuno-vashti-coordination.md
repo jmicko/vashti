@@ -1,5 +1,13 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno-only prompt-processing optimization (2026-10-19, in development).**
+The user reports repeated44s prompt eval and has authorized protected GPU
+profiling/fixes. See [measured phases, candidates and acceptance scope](kuno-prompt-processing-profile.md).
+The dominant measured paths are expert staging/scheduling and dense prompt
+projections. No prompt-cache retention, API or Vashti consumer change is planned.
+The installed toolbox repair below remains the live baseline until the new
+acceptance/install receipt is recorded. No release is authorized by this handoff.
+
 **Active Kuno-only toolbox repair (2026-10-19, installed and Vashti-validated).**
 The user explicitly requested the fix in Kuno, preserving Vashti behavior. The
 failure is reproduced by compiled public text without tools: native prompt chunks
