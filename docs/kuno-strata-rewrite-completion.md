@@ -45,6 +45,19 @@ The original execution-check receipts retain their static `benchmark=false` and
 receipt provide the later decision without rewriting historical evidence.
 No Vashti consumer/API change, installation, reset, reboot or release occurred.
 
+Actual selected-path operator profiling now passes on source`f38629a9` after a
+strict rejected first attempt. `strata-selected-operator-coupled-check-20261018`
+completes362 outputs/EOS,110 windows/31 repairs, full target/draft erase/close and
+normal physical recovery. One serialized target suffix sample totals126.456ms:
+Down32.163ms, Gate26.715ms, Up26.589ms (67.59% combined). BF16 matrix work is only
+2.996ms. This is operator diagnosis, not a new throughput rate. Baseline stays
+19.7811/20.6089 tokens/s on frozen299579b5;30 remains unmet. Next substantive GPU
+candidate: remove the selected expert kernels' extra full-window activation SLM
+staging and read the original already-quantized input planes directly, as upstream
+row-entry dot products do. Preserve 4/2/1 chunks, real source pointers, exact
+integer finishing/rounding, reduction order, target verification and all scopes.
+See the current source audit's latest operator receipt before changing kernels.
+
 The follow-up counter-only candidate `b7cb8e85`/SHA256
 `aa12c4732d21b269beac5745ba876a6df6ca0034607daa9e6a8f93299e00bb9e`
 also passes the two-request362-token repeat/erasure/physical recovery check.

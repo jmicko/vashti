@@ -45,6 +45,19 @@ The original execution-check receipts retain their static `benchmark=false` and
 receipt provide the later decision without rewriting historical evidence.
 No Vashti consumer/API change, installation, reset, reboot or release occurred.
 
+Actual selected-path operator profiling now passes on source`f38629a9` after a
+strict rejected first attempt. `strata-selected-operator-coupled-check-20261018`
+completes362 outputs/EOS,110 windows/31 repairs, full target/draft erase/close and
+normal physical recovery. One serialized target suffix sample totals126.456ms:
+Down32.163ms, Gate26.715ms, Up26.589ms (67.59% combined). BF16 matrix work is only
+2.996ms. This is operator diagnosis, not a new throughput rate. Baseline stays
+19.7811/20.6089 tokens/s on frozen299579b5;30 remains unmet. Next substantive GPU
+candidate: remove the selected expert kernels' extra full-window activation SLM
+staging and read the original already-quantized input planes directly, as upstream
+row-entry dot products do. Preserve 4/2/1 chunks, real source pointers, exact
+integer finishing/rounding, reduction order, target verification and all scopes.
+See the current source audit's latest operator receipt before changing kernels.
+
 The follow-up counter-only candidate `b7cb8e85`/SHA256
 `aa12c4732d21b269beac5745ba876a6df6ca0034607daa9e6a8f93299e00bb9e`
 also passes the two-request362-token repeat/erasure/physical recovery check.
@@ -1087,3 +1100,95 @@ All GPU runs in this checkpoint are terminal and recovered. No source install,
 private caller, frontend, public API, GPU reset/reboot or release changes. The goal
 remains active;30 tokens/s remains unmet. If protected sudo expires, stop cleanly
 and document rather than trying privilege workarounds.
+
+
+### Actual selected-window operator profile and next GPU change (2026-10-18)
+
+The first profiler source`a545c0ca6875d09ba0e7bf6990ed1683b1f4f109` fails strict
+`native branch incomplete parameter layout` during a mid-walk shared boundary.
+Output`strata-selected-operator-sample-check-20261018` exits1/RecoveryRequired,
+NO success receipt and NO operator/performance acceptance. Checked private close
+also reports failure after I/O retirement; do not call it successful erasure. The
+outer protected process exits and physically recovers both GPUs/services with
+unchanged zero faults. This was a fixed-public fixture, not private inference.
+The accepted normal frozen299579b5 is unaffected; no installed service changed.
+
+Coupled source`f38629a9861026b388728aca377d554254a11281` corrects the actual issues:
+
+- Shared begin/end needs admitted branch identity, not a claim that the entire
+  sealed INFO inventory is already rebuilt. `Parameters::active_identity` and
+  its I/O wrapper carry original nonce/family only. Submission still calls the
+  original strict `recording()`/`submitted()` checks. A real vendor test rebuilds
+  a sealed branch and rejects submission until all records AND pages are present.
+- Scope GPU profiling only until actual `PrefixPhase::Verified`, after the
+  original target read has completed. Pending commit export and next drafting
+  keep their normal protocol; the existing profiling exclusion there stays.
+  An owning guard also restores the selector on return/error/unwind.
+- Both normal direct replay and ordinary rebuilt-node replay exclude timestamped
+  recordings. A sampled query recording cannot silently remain instrumented in
+  later normal windows. The original recording/fence/query-pool owners stay real.
+
+This is diagnostic wiring, not a numerical/model/placement change. Builder freezes
+`strata-selected-operator-coupled-20261018`, mode0500, SHA256
+`a7f1b417d97b1170a12554336ca4de79784f5a011007a4a9699d048a6c50df3c`.
+All28 actual vendor parameter tests pass using the existing error-only test
+wrapper and the current cargo-resolved runtime rlib. Core strict Clippy and
+changed-file Rust formatting pass. The runner rejects profiling combined with
+retained/throughput or alternative fixture/options before artifact/service work.
+No whole633-case rerun is claimed for this diagnostic-only patch.
+
+Protected`strata-selected-operator-coupled-check-20261018` exits0 with362 outputs,
+EOS,110 windows/31 repairs, actual target/draft request erasure and final close.
+It displays the coherent fixed-public response without saving it. Root after-state
+is independently accepted: Intel50,688,000B, NVIDIA compute0, all HTTP200, normal
+admission/no recovery latch and unchanged zero classified driver faults. Active
+properties confirm swap0/core0 and the original48.2GiB cap. All GPU runs are terminal.
+
+One actual target verification suffix is sampled (round8); it contains the47
+post-PLE target layers. Static operator aggregates are collected after real
+fences; no prompt/token/activation/route trace is stored. Total126.45584ms across
+all sampled operators; `operator-summary.json` is derived from the unchanged
+`intel.json` counters:
+
+| Operator | Calls | Serialized GPU time | Fraction |
+| --- | ---: | ---: | ---: |
+| StrataGlobalNativeDown |47 |32.1633ms |25.43% |
+| StrataGlobalNativeGate |47 |26.7151ms |21.13% |
+| StrataGlobalNativeUp |47 |26.5893ms |21.03% |
+| StrataPackedDenseQ8 |294 |10.2411ms |8.10% |
+| StrataGrUpMixCommit |95 |4.6247ms |3.66% |
+| StrataNativeBf16Multi |96 |2.9961ms |2.37% |
+
+The three expert roles total67.59% of this sampled target suffix. Timestamping
+serializes nodes, excludes unsampled prefix/MTP work and is not an uninstrumented
+whole-generation decomposition. It nevertheless supports prioritizing packed
+expert projection/memory access over CPU graph recording or BF16 GEMM changes.
+The accepted throughput artifact/manifest stays299579b5/SHA852a0dbd; no new tokens/s
+result is claimed for this profile build.
+
+**Next substantive candidate:** inspect and remove the selected expert roles'
+extra activation workgroup staging. `strata_global_expert_kernels.rs::role_source`
+builds actual 4/2/1 entry loops through `strata_expert_roles.rs::source`. Current
+GU stages all8*720 u32 input-cache cells (23,040B/WG), even for short groups.
+DOWN reserves8*180 cells, while a chunk uses at most4. In upstream
+`sycl/src/kernels/cuda/iq_kernels.dp.cpp::row_dot_multi/row_entries`, `Multi::acts`
+reads the already-quantized activation directly for that entry. This SLM staging
+is a recorded Rust/Vulkan layout substitute, not a required original dependency.
+
+A coherent no-SLM candidate must change ALL paired consumers: remove the selected
+activation shared declarations/copy loops, make each member's frame the actual
+original plane base, read both packed codes AND scales from their original plane
+locations, and remove chunk barriers that protected only that now-absent shared
+tile. Keep original route IDs, original GPU/HOST weight pointers, 4/2/1 grouping,
+integer dot products/finishing, same per-lane F32 order and XOR reductions, status
+publication and full runtime/privacy ownership. Preserve shared codebook handling.
+Restrict this change to the selected global path; legacy source builders stay
+explicit. Prefer a small helper taking `(frame,relative_word)` over logical-index
+division/remainder for every input read. Gu packed0..639 maps to original frame
+`64+token*1440`; Gu scale640..719 maps to that frame+1280+(word-640). Down packed
+0..159 maps to frame`128+route*360`; Down scales160..179 map to that frame+320+
+(word-160). All original full-owner/route guards remain. Validate the actual
+compiled source and whole selected engine before adopting a new throughput hash.
+This may improve occupancy/input traffic; no gain is assumed before measurement.
+No more old Ollama baselines, API/cancellation work, foreign engine, easier model
+or removal of coupled port components is needed. The30 tokens/s goal stays active.
