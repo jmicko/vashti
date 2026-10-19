@@ -1,21 +1,21 @@
 # Current Strata source audit
 
-**Installed native text preview (2026-10-19 UTC).**
-The selected engine is now enrolled on this host as
-`kuno-qwen3.8-flash-next:iq3_s`. Gateway source `d4bb87fb`, worker `39c3e8e1`;
-protected staged CLI/HTTP, actual installed identity/mount, mixed prompts,
-request erasure, zero worker disk writes and ordinary Ollama coexistence pass.
-Two identical warm installed API responses deliver **33.6602 / 36.1275 eval
-tokens/s**; full requests including prefix/erasure deliver **17.4990 / 19.7720**.
-Weights are intentionally warm on B70; NVIDIA compute is idle. Services/admission
-are normal, no driver faults or active test units remain. Local development
-installation only; no release or frontend changes. Next measured kernel target:
-quantized expert gate/up plus down, together 51.95% of sampled target GPU time.
+**Installed native feature extension (2026-10-19 UTC).**
+Source36626d30, gateway SHA d3ed07f4 and worker SHA f871238b are installed together.
+Thinking/tool-call/result and actual CLI fixtures pass, worker disk writes0,
+swap/core0, service identity/mount checked; root-attested cold load is about102s
+versus historical223s. Context request budgets512..32768 work; allocated capacity
+remains32K. Larger capacity is the remaining requested engine change. Live Vashti
+calculator-only thinking/tool round trip passes; default-tool503 repeats both
+warm and cold, cause unproven. Next diagnose the longer/tool prompt with bounded
+static stages; do not claim full application acceptance. Final services/admission
+healthy, no driver faults/OOM, Intel50,688,000 bytes and NVIDIA compute0; worker
+unloaded. No new comparable throughput benchmark, release or frontend code edits.
 
 Read the [active coordination handoff](kuno-vashti-coordination.md) and
 [exact service contract, tests, artifacts, limits and receipts](kuno-native-text-service.md)
 before continuing. Earlier entries below are historical and superseded only
-within this installed preview's explicitly accepted scope.
+within this installed extension's explicitly accepted scope.
 
 **Selected Intel rewrite accepted for fixed-public engine measurements (2026-10-18).**
 The connected Rust port is now past the source-wiring, representative numerical,

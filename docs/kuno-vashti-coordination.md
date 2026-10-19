@@ -1,65 +1,59 @@
 # Kuno and Vashti Coordination
 
-**Active work (2026-10-19):** user requested thinking/tool round trips, faster cold
-loads and configurable context. Rendering/parsing, root-enrolled identity cache
-and smaller request budgets are implemented in source and CPU-tested; not installed.
-Above32K engine capacity remains open. Sudo is pending for protected validation.
-Source `36626d30`; gateway SHA `d3ed07f4`, worker SHA `f871238b`. Both frozen
-release builds and strict Clippy pass;234 CPU tests pass,7 hardware tests skipped.
-No live acceptance, installation or new speed/load-time result is claimed. See the [extension contract](kuno-native-text-service.md#active-extension-contract-2026-10-19-implementation-in-progress).
-The installed checkpoint below remains unchanged until the new adapter/worker is
-validated. Work remains isolated on `codex/strata-rust-port`; no Vashti edits.
+**Active installed backend handoff (2026-10-19 UTC): thinking/tools and faster cold load.**
+The local LAN listener exposes `kuno-qwen3.8-flash-next:iq3_s` with completion,
+thinking and tools. Source `36626d30`; image-enabled gateway SHA `d3ed07f4`, native
+worker SHA `f871238b`. Protected staged and actual DynamicUser/mount acceptance
+pass real thinking, tool-call/result round trips, streamed output, CLI thinking,
+context-overflow400 followed by same-worker reuse, zero worker disk writes,
+graceful native unload/reload, ordinary Ollama inference and physical recovery.
+234 CPU cases pass;7 hardware cases ignored; strict gateway/worker Clippy passes.
+Exact hashes, contracts and receipts are in the
+[native service specification](kuno-native-text-service.md#protected-extension-acceptance-and-installation-2026-10-19-utc).
 
-**Installed native text preview and profile handoff (2026-10-19 UTC).**
-The real installed Ollama-compatible listener now exposes
-`kuno-qwen3.8-flash-next:iq3_s` (original DASLab IQ3_S + Q2 MTP on Intel B70).
-Use `kuno run kuno-qwen3.8-flash-next:iq3_s`, or select that model for text chat
-with tools/thinking disabled and no unsupported option overrides. Existing
-Ollama names/ports, managed workers and image runtime/config are preserved.
-The native model is intentionally warm; ordinary competing inference evicts it.
-`kuno stop kuno-qwen3.8-flash-next:iq3_s` explicitly releases it.
+Cold load is102.813/102.315s staged and101.981s installed, versus historical223.333s
+(about54% shorter). Full hashing moves to trusted administrator enrollment and
+is repeated when artifact identities change; no request-content cache is added.
+This is startup improvement, not a new throughput claim. Historical warm API
+fixture rates remain33.6602/36.1275 eval tokens/s (17.4990/19.7720 full request).
 
-Source commits: `4771bd05` warm profile; `7f54777a` native adapter; `39c3e8e1` protected
-Vulkan/pipe correction; `1c4cf520` transactional enrollment; `d4bb87fb` real CLI defaults.
-Gateway `d4bb87fb` / SHA `81370d88` (native-image enabled); worker `39c3e8e1` / SHA `80890bce`.
-Full hashes, exact contract, rollback and limits are in the
-[native service specification](kuno-native-text-service.md).
+Usage: `kuno run kuno-qwen3.8-flash-next:iq3_s --think=low`. Thinking defaults off;
+API `think` accepts false/true or low/medium/high/xhigh. Standard Ollama
+`message.thinking` and `message.tool_calls[].function.{name,arguments,index}`
+carry results; the caller executes tools and sends role=tool history.
+`num_ctx` accepts512..32768 as an enforced request budget, without truncation.
+The allocation is STILL32K; above32K remains a substantial open engine change,
+with the [connected capacity plan](kuno-native-text-service.md#larger-context-implementation-dependencies).
+Unsupported options/formats/images/OpenAI inference still fail explicitly.
 
-Validation: 226 Kuno CPU tests passed across 15 suites; 7 hardware tests ignored;
-strict gateway/worker Clippy passed. One initial parallel privacy-fixture failure
-passed isolated and full serial repeats; suspected port race is not proven.
-Protected staged real CLI, mixed streamed/nonstreamed requests, zero disk writes,
-preload, graceful unload, later ordinary Ollama inference and physical recovery
-pass. Actual installed DynamicUser/mount validation also passes on the LAN-address
-listener: 362-output code + multi-turn mixed prompt, swap/core 0, nonroot worker,
-unprivileged inspection denied, write_bytes 0. Both source and installed artifact
-hashes agree. Fixed-public warm API responses repeat identically at 33.6602 and
-36.1275 eval tokens/s; full requests including prefix/erasure are 17.4990 and
-19.7720 tokens/s. Cold artifact verification/setup took 223.333s. These are scoped
-results, not universal speeds. Final services/admission healthy, no driver faults,
-no active test units, NVIDIA compute 0; Intel native weights intentionally retained.
-Receipts under `/media/jmicko/faststore/kuno-development/native-installed-check-20261019`;
-staged evidence under `native-gateway-stage-check-v3-20261019`.
+Gateway and worker use private KNT2/KNR2 together. Do not install a gateway-only
+upgrade against an old KNT1 worker; enroll the new pair in one new-gateway
+`configure-native-text` transaction. This installation did so; exact existing
+config/ports/image/managed settings are preserved. Root-only backup:
+`/var/lib/kuno-native-features-20261019`. Disable via normal confirmed
+`sudo kuno configure-native-text --disable` if needed. The native worker retains weights on successful calls; competing inference
+evicts them and `kuno stop MODEL` explicitly unloads. After the application
+checks below it is unloaded, with both GPUs free for compute.
 
-Next measured speed target: quantized expert gate/up + down together (51.95% of
-sampled warm target GPU time); investigate access/dot scheduling, register pressure
-and subgroup occupancy. Packed dense 12% is next; BF16 matrix 3.5% is not leading.
-Profile is one target window, not end-to-end throughput or a promised speedup.
-No further kernel changes are bundled into this installed service checkpoint.
+Vashti handoff: existing capability discovery sees thinking/tools without a code
+change. Live browser test in a fresh private chat completed reasoning -> calculator
+call -> tool result -> final answer with only calculator enabled. The initial
+request with all default tools returned503; two retained attempts and one clean
+start reproduce it. Do NOT claim full default-configuration application acceptance.
+The cause is unproven; next use a compiled public longer/tool prompt and bounded
+static error stages, preserving fault/erasure checks. UI calculator stats show
+2,006 context tokens and5.1 eval tokens/s on its cold two-round workload, not the
+historical short-code rate. Final services/admission are healthy, both GPUs free
+for compute, zero driver faults and no OOM events; native worker is unloaded.
+No existing chat was opened. Other connector/UI changes remain in the Vashti task;
+clear unsupported penalties/num_gpu/num_thread explicitly and refresh capabilities.
+No protocol crate edit, fresh image generation, release/version bump or upload.
+Work stays in `codex/strata-rust-port`; canonical frontend checkout is untouched.
 
-Vashti handoff: no consumer files or protocol crate changed. Existing text
-chat/generate and tags/show discovery suffice for this narrow preview. Preserve
-completion-only capability; disable tools/thinking; omit context or use 32768;
-clear unsupported repetition penalties, num_gpu/num_thread overrides rather than
-silently discarding them. Any capability-aware options UI/connector work belongs
-to the Vashti task. No physical/private-chat UI run is claimed. OpenAI inference,
-tools, thinking, other models/GPUs, name aliases, broader soak and general native
-runtime packaging remain future work. No release/version change or upload.
-Existing image build/runtime was preserved; no fresh image visual run was done.
-Root backups: `/var/lib/kuno-native-preview-20261019`. Disable enrollment with
-`sudo kuno configure-native-text --disable` through the normal confirmed transaction.
-Earlier checkpoint entries below remain historical and are superseded only within
-this installed preview's explicitly accepted scope.
+Earlier checkpoints below are historical and superseded only within this
+installed extension's explicitly accepted scope. The remaining measured kernel
+target is coupled quantized expert gate/up+down (51.95% of sampled target GPU time),
+after the requested larger-context and loader work; no kernel changes this block.
 
 **Selected Intel engine checkpoint: 33.4 tokens/s warm (2026-10-18).**
 The connected Rust rewrite has passed the documented selected-engine audit.

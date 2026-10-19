@@ -1,15 +1,17 @@
 # Native Intel text service preview
 
-## Active extension contract (2026-10-19, implementation in progress)
+## Active extension contract (2026-10-19, installed backend acceptance)
 
 The user requested thinking, tool use, faster cold load and configurable context.
-The installed checkpoint below remains the narrow preview until replaced and
-validated. New Ollama chat behavior will follow the actual embedded Qwen template:
+Source `36626d30` is installed and passes protected staged and actual-service
+checks. Earlier preview receipts below are historical. Ollama chat behavior follows
+the actual embedded Qwen template:
 `think` accepts booleans or low/medium/high/xhigh (absent remains false), reasoning streams separately
 from content, and XML-style function calls translate to structured Ollama
 `message.tool_calls` with typed argument objects. Assistant thinking/tool-call
 history and role=tool results round-trip; Kuno never executes those tools.
-Capabilities are advertised only when this adapter is connected and tested.
+The installed `/api/show` advertises completion, thinking and tools after actual
+model round-trip validation. Vashti UI acceptance is recorded separately below.
 Unsupported modalities/formats continue to fail explicitly.
 
 Cold-load integrity work moves full SHA verification to administrator enrollment.
@@ -47,28 +49,36 @@ The administrator installs and verifies these assets before enrollment. The
 worker settings contain `shards: [{path, sha256}, ...]`, `mtp: {path, sha256}` and
 `device_id: 57891` (0xe223). Paths refer to existing read-only model artifacts;
 there is no second 83GB model copy. A same-filesystem hardlink may put the MTP
-sidecar under the existing read-only model-store mount. The worker hashes the
-complete files at process startup and validates the original inventory and graph.
-It keeps their backing alive until the Session closes. Startup hashing is included
-in the service's first reported load duration and can be substantial.
+sidecar under the existing read-only model-store mount. Enrollment hashes complete files and records their verified filesystem identity
+in root-controlled settings. Unchanged enrolled files skip subsequent complete
+hashes; missing/untrusted/changed identities require full verification. The worker
+validates original inventory and graph and keeps backing alive until Session close.
+Reported cold load includes all actual verification and engine setup.
 
 Discovery extends `/api/tags` and `/v1/models`, preserving original entries and
-extra JSON fields. `/api/show` describes the owned entry, advertising completion
-only. `/api/ps` includes the native entry once resident; unknown actual VRAM size
+extra JSON fields. `/api/show` describes the owned entry, advertising completion,
+thinking and tools. `/api/ps` includes the native entry once resident; unknown actual VRAM size
 is omitted rather than reported as CPU residency. The digest identifies the
 original first shard, not a hash of user content. No Vashti protocol types change.
 
-## Initial request support
+## Current request support
 
-- `/api/chat`: text `system`, `user`, `assistant` messages only.
+- `/api/chat`: text `system`, `developer`, `user`, `assistant` and `tool` messages;
+  assistant thinking/tool-call history and tool results round-trip.
 - `/api/generate`: ordinary prompt/system rendering or explicit `raw: true`.
 - Streaming NDJSON and `stream: false`, UTF-8 across token boundaries, actual
   output limits, EOS/length reasons and token/timing fields.
 - Non-thinking rendering matches the accepted Qwen public fixture template.
-  `think: false` is allowed; `think: true` is explicitly unsupported.
+  Thinking is off by default. `think: false` disables it; true enables high effort;
+  strings low/medium/high/xhigh select the embedded template instructions. Reasoning
+  is returned separately in `message.thinking`; function calls are structured
+  `message.tool_calls[].function.{name,arguments,index}`. At most128 tools/calls;
+  Kuno never executes the functions. Raw generation with explicit thinking fails.
 - Options: `temperature` (default0), `top_k` (20), `top_p` (.95), `min_p` (0),
-  unsigned `seed` (0), `num_predict` (1024), and `num_ctx` only when32768.
+  unsigned `seed` (0), `num_predict` (1024), and `num_ctx`512..32768 (default32768).
   Input tokens plus output budget must leave the original eight-token headroom.
+  Smaller budgets enforce a request limit without shrinking the loaded32K buffers.
+  No prompt truncation; overflow is400 and retains the clean loaded worker.
 - `keep_alive` absent or -1 retains the model until competing work or shutdown.
   `keep_alive: 0` unloads after completion; an empty request with0 explicitly
   unloads. Other durations are not implemented in this initial contract.
@@ -77,8 +87,8 @@ original first shard, not a hash of user content. No Vashti protocol types chang
   returning `done_reason: load` with zero delivered tokens. It grants no shortcut
   around subsequent request rebind/erasure checks.
 
-Unknown options, tools, tool messages, images, format constraints, thinking,
-embeddings, OpenAI inference routes and model-management operations for this
+Unknown options, images, format constraints, embeddings, OpenAI inference routes
+and model-management operations for this
 owned name fail before inference. They are never silently dropped or forwarded
 to Ollama. `/v1/models` discovery does not imply OpenAI inference acceptance.
 Ordinary other model names and opaque endpoints continue through Ollama.
@@ -94,7 +104,7 @@ adaptive usage, but clears prompt, KV/recurrent state, suffix state, sampling an
 other request owners before acknowledging DONE. Mixed prompts must be validated
 on this caller independently of the identical fixed-public benchmark.
 
-The worker uses inherited pipes, with a bounded private binary ABI (`KNT1`/`KNR1`),
+The worker uses inherited pipes, with a bounded private binary ABI (`KNT2`/`KNR2`),
 not command-line content, temp files or a separately exposed HTTP listener. Its
 parent clears the environment, disables disk shader caches and discards stderr.
 The child enforces no swap, no core dumps, non-dumpability and the existing
@@ -114,13 +124,19 @@ No automatic GPU reset, driver reload, reboot or request replay is performed.
 
 ## Vashti handoff and remaining limits
 
-No connector/UI implementation belongs to this task. A compatible consumer can
-use the owned name through its existing Ollama text API with tools and thinking
-disabled and omit `num_ctx` or set32768. Do not advertise unsupported capabilities.
-The normal Ollama name remains available for richer features. Default-native
-bindings of existing names, transparent pre-execution capability fallback,
-OpenAI/tool/thinking adapters, configurable contexts and broader soak acceptance
-remain later work; this preview does not claim them complete.
+No connector/UI implementation belongs to this task. Consumers use the existing
+Ollama fields for thinking, tools and request options; refresh `/api/show` to learn
+capabilities. Unsupported penalties/num_gpu/num_thread must be cleared explicitly,
+not silently stripped. Context is a512..32768 request budget, not yet a configurable
+larger allocation. Default-native bindings of existing names, OpenAI adapters,
+contexts above32K, broader soak and general runtime packaging remain open.
+
+Gateway and worker MUST be deployed together: KNT2/KNR2 changes the private frame
+from32 to36 control bytes to carry context. A new gateway with the old KNT1 worker
+is incompatible. Use the new gateway's `configure-native-text` transaction with
+the new frozen worker and trusted settings; do not first install a gateway-only
+upgrade. REJECTED frame6 covers safe pre-execution tokenizer/context rejection,
+which leaves the loaded worker usable. Fatal/backend errors still close and reap.
 
 Installation must preserve the existing CUDA/Vulkan image-enabled Kuno binary
 features and managed SYCL runtime. A gateway-only replacement is not acceptable.
@@ -129,7 +145,7 @@ framed caller, then verify the staged gateway's catalog, real streamed/nonstream
 mixed prompts, preload, unload, subsequent ordinary Ollama inference, recovery
 and absence of content files. Keep an exact binary/config rollback.
 
-## Integration checkpoint (2026-10-19 UTC)
+## Historical initial integration checkpoint (2026-10-19 UTC)
 
 - Worktree `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
   `codex/strata-rust-port`. Do not edit the canonical Vashti checkout.
@@ -225,7 +241,7 @@ this sample, so a standalone BF16 rewrite is not the leading measured target.
 Do not replace retained-cache placement or draft speculation merely because
 this target-only profile does not include their CPU/transfer costs.
 
-## Installed acceptance and usage (2026-10-19 UTC)
+## Historical initial installed acceptance (2026-10-19 UTC)
 
 `native-installed-check-20261019` passes through the actual192.168.1.164:11434
 listener: ordinary Ollama generation/unload, native362-output code response/EOS,
@@ -292,12 +308,10 @@ not general throughput, a new Ollama comparison or a long-context soak. Final
 healthy services, no active test units, zero worker write_bytes and driver faults,
 NVIDIA compute0 and intentionally retained native weights.
 
-## Extension CPU checkpoint (2026-10-19, not installed)
+## Extension source and CPU acceptance (2026-10-19)
 
-The installed binary/worker remain the previous accepted preview. This source
-extension is not live acceptance or a new performance result. No GPU inference,
-service restart, driver operation or installation was done for this extension.
-The shared shell is waiting at sudo-v; the requested root credential is pending.
+The following changes from `36626d30` are now installed. The original CPU-only
+checkpoint preceded the protected validation and installation recorded below.
 
 Implemented source changes:
 
@@ -310,8 +324,8 @@ Implemented source changes:
   rather than ignoring the requested feature. Kuno returns calls; it does not
   execute them. Tools are limited to128 definitions/calls and safe XML names.
   This does not implement JSON-schema output constraints or OpenAI inference.
-- `/api/show` in the candidate advertises completion/thinking/tools; do not
-  install this advertisement without actual model round-trip validation.
+- `/api/show` advertises completion/thinking/tools after actual round-trip
+  validation in the protected staged and installed checks.
   Existing clients should use the standard Ollama `message.thinking` and
   `message.tool_calls[].function.{name,arguments,index}` fields. A successful
   CPU parser test is not evidence that the model will choose the right tool.
@@ -351,16 +365,12 @@ under the development artifact directory. Build artifacts are recorded after
 freezing the source.
 Existing inherited untracked benchmarks/text/__pycache__ is preserved.
 
-Next protected validation before installing: thinking true/false/effort on real
-mixed prompts; actual tool request -> structured call -> synthetic tool result ->
-final answer; stream/nonstream parity;512/4096/32768 budget rejection followed by
-successful reuse of the same worker; two cold worker starts through root-attested
-settings to measure load savings; zero worker writes, swap/core protection,
-graceful close and physical recovery; ordinary Ollama/image coexistence. Then
-finish larger runtime capacities with u32 graph keys and real allocation/VRAM
-checks. Keep the old accepted install if any of these gates fails. No release.
+Protected staged and installed fixture acceptance is complete; see the exact
+receipt below. Larger runtime capacity remains the next substantial implementation
+item. No release or frontend changes. Vashti default-tool UI failure is under
+investigation; fixture acceptance does not establish full application acceptance.
 
-### Frozen extension candidates
+### Installed extension artifacts
 
 Runtime source `36626d306d5e47ff0270fce3917bca456edab1a2`:
 
@@ -371,9 +381,92 @@ Runtime source `36626d306d5e47ff0270fce3917bca456edab1a2`:
 - Worker: `strata-native-chat-20261019/kuno-strata-rust-f871238b732d344ca28ebf4adac33a42dbc7d2e2a713675e049dd3466dcce499`,
   SHA256 `f871238b732d344ca28ebf4adac33a42dbc7d2e2a713675e049dd3466dcce499`,
   features strata-rust-port,strata-intel-core,strata-gpu-adaptive-usage.
-- These compile successfully but are NOT installed or GPU-validated. Source and
+- These exact artifacts are installed and protected GPU-validated. Source and
   build logs live under `/media/jmicko/faststore/kuno-development`. Do not reuse
   the previous install script's old hashes/worker or KNT1 staged acceptance.
+
+## Protected extension acceptance and installation (2026-10-19 UTC)
+
+Source `36626d306d5e47ff0270fce3917bca456edab1a2`; documentation dependency
+checkpoint `a35cb880`. The gateway and worker hashes in the artifact section
+match the installed `/usr/local/lib/kuno/{kuno,native-text-worker}` exactly.
+The new gateway's official `configure-native-text` transaction installed both
+without an intermediate incompatible wire version. Existing complete configuration
+is unchanged, including listen[::]:11434, upstream127.0.0.1:11435, managed workers
+and CUDA/Vulkan/SYCL image settings. All three model identities are root-enrolled.
+Root-only backup and installation receipt: `/var/lib/kuno-native-features-20261019`.
+No release/version change, published package or frontend implementation change.
+
+All following development receipts are under
+`/media/jmicko/faststore/kuno-development`:
+
+- `native-features-stage-check-20261019/receipt.json`: fixed public code362-output
+  completion, low reasoning, streamed true reasoning, reasoning disabled,
+  actual structured weather call -> synthetic tool result -> final answer,
+  streamed tool call, context-overflow400 then successful smaller-context reuse
+  on the same worker PID, checked graceful unload/reload and subsequent ordinary
+  Ollama inference all pass. Worker write_bytes0; unprivileged inspection denied.
+  Two root-attested cold starts measure102.813357 and102.314585 seconds.
+- Staged `host-after.json`: Intel50,688,000 bytes after unload, NVIDIA compute0,
+  all three service probes200, admission unpaused/inactive/waiting0/no recovery,
+  no change to the zero classified Xe/NVIDIA fault counters. No active staged
+  worker/test service remains.
+- `native-features-installed-check-20261019/receipt.json`: actual LAN listener,
+  DynamicUser identity and installed model mount pass low reasoning, actual
+  tool-call/result exchange and real `/usr/local/bin/kuno run --think=low`.
+  Cold reported load101.981292 seconds. Root observes write_bytes0, nonroot worker,
+  swap/core0 and denied unprivileged inspection. Prompts/replies remain transient;
+  receipts contain only booleans, numeric timings and public model/build metadata.
+- Installed `host-after.json`: services200, normal admission and no driver faults;
+  native model intentionally retained, Intel33,340,067,840 bytes, NVIDIA compute0.
+  This is retained residency, not a fully idle-GPU recovery claim.
+
+The three unchanged-artifact cold loads are about54% shorter than the historical
+223.333-second installed cold request. Full hashing is still performed at first
+trusted enrollment (and after identity changes); it is not omitted. About102
+seconds of actual loader/engine setup remains. These are load-time results, not
+new generation-throughput measurements or broad soak acceptance.
+
+### Live Vashti browser check: partial acceptance, default tools blocked
+
+The user explicitly requested this application check. A fresh private chat in live
+`https://vashti.crabhonk.com/` discovers the native thinking/tools capabilities
+without frontend changes. Fixed public arithmetic only; no existing conversation
+is opened. Low thinking with Calculator enabled and Notes/Images disabled completes
+reasoning -> actual `calculate` call -> tool result -> final answer. Vashti renders
+two reasoning sections, the calculator result and the final numerical answer.
+Observed UI stats:73 output tokens,2,006 context tokens,5.1 eval tokens/s, about3m
+cold total including1m43s load and53.3s prompt evaluation. This is a different,
+two-round workload; the historical short-code33..36 eval rate is NOT universal.
+A screenshot of only this public test result is saved by the browser test client
+at `/tmp/kuno-vashti-thinking-calculator-20261019.png`, not by Kuno.
+
+**Default configuration is NOT accepted:** with Notes/Calculator/Images all
+available, the same public prompt returns503 before visible output. Reproduced
+twice on retained workers and once after a fresh worker start. The generic
+Vashti error does not expose the upstream static error body. This rules out a
+retained-only failure, but does not yet identify the cause. A larger prompt/
+prefill or tool-set difference is a hypothesis, not a proven diagnosis. Do not
+silently drop tools, route to Ollama, relax fault/erasure checks or claim a fix.
+Next reproduce with a compiled public long/tool fixture and inspect bounded
+content-free error stages; compare actual prefix geometry with the passing
+2,006-token calculator case. Add regression acceptance before claiming the full
+application works. Contexts above32K remain separately unimplemented.
+
+The browser leaves the successful response selected (version2/4) in this one
+private test chat, with Calculator on and Notes/Images off for that chat only.
+The failed variants remain as diagnostic history in Vashti's device storage.
+No global setting, consumer source or existing conversation was changed.
+
+After the failed requests, Kuno reaps the worker and recovers automatically:
+`native-features-vashti-ui-host-final-20261019.json` confirms active=false,
+paused=false, waiting0, recovery_required=false, all three services200,
+Intel50,688,000 bytes and NVIDIA compute0. Classified Xe/NVIDIA faults remain0;
+the live cgroup records no OOM, OOM kill or memory-limit event. No native worker
+or active test client remains. The installed extension remains available for
+supported calls; model weights are now unloaded after this application check.
+These limits supersede any earlier claim that the weights remain warm at finish.
+
 
 ### Larger-context implementation dependencies
 

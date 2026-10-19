@@ -52,13 +52,18 @@ kuno run kuno-qwen3.8-flash-next:iq3_s
 kuno stop kuno-qwen3.8-flash-next:iq3_s
 ```
 
-Text chat/generate, streaming, sampling and retained weights are supported.
-Thinking, tools, images, structured formats and OpenAI inference are not yet
-supported for this entry. Omit context overrides or use 32768; unsupported options
-return an explicit error. A full file-integrity check and model setup occur on
-cold load, which can take several minutes. Subsequent requests reuse weights;
-request state is erased before completion. Competing Ollama/image inference
-releases the native worker through the common admission mechanism.
+Text chat/generate, streaming, thinking, tool-call/result history, sampling and
+retained weights are supported. Enable thinking with `--think=low` (or true,
+medium/high); it is off by default. The caller executes tools. Images, structured
+formats and OpenAI inference remain unsupported for this entry. `num_ctx` accepts
+512..32768 as a request budget; the engine still allocates32K. Unsupported options
+return explicit errors. Administrator enrollment fully hashes model files; later
+unchanged cold starts reuse root-controlled integrity metadata. Actual local cold
+setup measured about102 seconds versus223 seconds previously. Subsequent requests
+reuse weights; request state is erased before completion. Competing Ollama/image
+inference releases the worker through common admission. Backend fixtures pass;
+Vashti thinking/calculator round trips pass, but the full default tool set
+reproducibly returns503 and is not yet accepted; see the service handoff.
 
 Enrollment is an administrator operation using root-controlled assets, not a
 manual edit to installed configuration:
