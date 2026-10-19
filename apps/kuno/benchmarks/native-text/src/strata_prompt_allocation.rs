@@ -5,7 +5,7 @@ use crate::{
     resident_util as u,
 };
 use kuno_text::Result;
-pub(crate) const DEFAULT_ROWS: usize = 4096;
+pub(crate) const DEFAULT_ROWS: usize = kuno_text::ops::ple_transition::MAX_PROMPT_BATCH;
 pub(crate) const ROOT_BYTES: u64 = 1024 * 1024 * 1024;
 /// The asynchronous raw transfer ring is not part of the phase overlay.
 pub(crate) const RAW_RING_BYTES: u64 = 32 * 1024 * 1024;

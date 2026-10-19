@@ -25,7 +25,7 @@ pub fn prepare_prompt<'a>(
     cancelled(cancel)?;
     let owned = owner_capacity_bytes(conv, history)?;
     let rows = tokens.len().min(HISTORY);
-    if !(1..=2048).contains(&tokens.len())
+    if !(1..=MAX_PROMPT_BATCH).contains(&tokens.len())
         || config.history_len() != 2
         || config.heads_per_ngram != 8
         || config.boundary_token != 248044
@@ -77,6 +77,9 @@ use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
 pub const MAX_BATCH: usize = 8;
+/// Whole-prompt chunk geometry. Shared with the GPU prompt-owner allocation;
+/// speculative decode remains independently bounded by MAX_BATCH.
+pub const MAX_PROMPT_BATCH: usize = 4096;
 pub const CHANNELS: usize = 10240;
 pub const HISTORY: usize = 9;
 pub const HISTORY_WORDS: usize = CHANNELS * HISTORY;
@@ -173,7 +176,7 @@ fn token_pair(config: &PleHashConfig, old: [i32; 2], tokens: &[u32]) -> Result<[
         || config.boundary_token != 248044
         || config.token_vocab_size != 248320
         || old.iter().any(|&t| !(-1..248320).contains(&t))
-        || tokens.len() > 2048
+        || tokens.len() > MAX_PROMPT_BATCH
         || tokens.iter().any(|&t| t >= 248320)
     {
         return Err(OpsError::InvalidParameter(CONTEXT));
@@ -412,7 +415,16 @@ mod tests {
         let cancel = AtomicBool::new(false);
         // Compare real token-history evolution across both caller geometries,
         // including boundary tokens and a prompt shorter than the GPU tail.
-        for count in [2048, MAX_BATCH, 2, 1, 2048] {
+        for count in [
+            2048,
+            2049,
+            MAX_PROMPT_BATCH - 1,
+            MAX_PROMPT_BATCH,
+            MAX_BATCH,
+            2,
+            1,
+            MAX_PROMPT_BATCH,
+        ] {
             let mut tokens: Vec<_> = (0..count).map(|i| (i % 31) as u32).collect();
             tokens[count / 2] = config.boundary_token as u32;
             let old = [history.tokens[0], history.tokens[1]];
@@ -430,7 +442,14 @@ mod tests {
         }
         let old = [history.tokens[0], history.tokens[1]];
         assert!(
-            prepare_device_history_tokens(&mut history, &config, old, &[1; 2049], &cancel).is_err()
+            prepare_device_history_tokens(
+                &mut history,
+                &config,
+                old,
+                &[1; MAX_PROMPT_BATCH + 1],
+                &cancel
+            )
+            .is_err()
         );
         assert_eq!(history.tokens(), old);
     }
@@ -510,6 +529,84 @@ mod tests {
             }
         }
         next
+    }
+    #[test]
+    fn full_prompt_chunks_commit_exact_tail_and_reject_overflow_without_mutation() {
+        let cancel = AtomicBool::new(false);
+        for count in [2049, MAX_PROMPT_BATCH] {
+            let (mut conv, mut history, config) = state();
+            let old = Zeroizing::new(conv.history().to_vec());
+            let before = Zeroizing::new([history.tokens[0], history.tokens[1]]);
+            let ids = Zeroizing::new((0..count as u32).collect::<Vec<_>>());
+            // Once a full chunk exceeds nine rows, its final nine rows alone
+            // determine history. Avoid allocating a chunk-sized activation mirror.
+            let tail = Zeroizing::new(
+                (0..HISTORY_WORDS)
+                    .map(|i| {
+                        if i % 19 == 0 {
+                            -0.0
+                        } else {
+                            (i % 79) as f32 / -83.0
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let expected = next(&old, &tail, HISTORY);
+            drop(
+                prepare_prompt(
+                    &mut conv,
+                    &mut history,
+                    &config,
+                    &before,
+                    &ids,
+                    &old,
+                    &tail,
+                    &expected,
+                    1024 * 1024,
+                    &cancel,
+                )
+                .unwrap(),
+            );
+            assert!(bits_equal(conv.history(), &old));
+            assert_eq!(history.tokens(), &*before);
+            prepare_prompt(
+                &mut conv,
+                &mut history,
+                &config,
+                &before,
+                &ids,
+                &old,
+                &tail,
+                &expected,
+                1024 * 1024,
+                &cancel,
+            )
+            .unwrap()
+            .commit();
+            assert!(bits_equal(conv.history(), &expected));
+            assert_eq!(history.tokens(), [count as i32 - 2, count as i32 - 1]);
+
+            let committed = Zeroizing::new(conv.history().to_vec());
+            let committed_tokens = [history.tokens[0], history.tokens[1]];
+            let oversized = Zeroizing::new(vec![1u32; MAX_PROMPT_BATCH + 1]);
+            assert!(
+                prepare_prompt(
+                    &mut conv,
+                    &mut history,
+                    &config,
+                    &committed_tokens,
+                    &oversized,
+                    &committed,
+                    &tail,
+                    &expected,
+                    1024 * 1024,
+                    &cancel
+                )
+                .is_err()
+            );
+            assert!(bits_equal(conv.history(), &committed));
+            assert_eq!(history.tokens(), committed_tokens);
+        }
     }
     #[test]
     fn large_prompt_tail_matches_scalar_history_across_the_max8_boundary() {
