@@ -57,8 +57,8 @@ mod native {
         count: usize,
         weight_first: usize,
     ) -> SharedMemory<f32> {
-        let mut a = SharedMemory::<F>::new(128usize);
-        let mut b = SharedMemory::<F>::new(256usize);
+        let mut a = SharedMemory::<F>::new(512usize);
+        let mut b = SharedMemory::<F>::new(1024usize);
         let mut out = SharedMemory::<f32>::new(128usize);
         // SAFETY: every loop initializes both operands with load before use;
         // host validation guarantees a nonempty reduction dimension.
@@ -93,9 +93,9 @@ mod native {
         let mut k = 0usize;
         while k < columns {
             let mut i = usize::cast_from(UNIT_POS);
-            while i < 128 {
-                let t = token + i / 16;
-                let col = k + i % 16;
+            while i < 512 {
+                let t = token + i / 64;
+                let col = k + i % 64;
                 let mut v = F::new(0.0);
                 if t < count && col < columns {
                     v = input[t * columns + col];
@@ -104,9 +104,9 @@ mod native {
                 i += 16;
             }
             i = usize::cast_from(UNIT_POS);
-            while i < 256 {
-                let r = row + i / 16;
-                let col = k + i % 16;
+            while i < 1024 {
+                let r = row + i / 64;
+                let col = k + i % 64;
                 let mut v = F::new(0.0);
                 if r < rows && col < columns {
                     v = weight[weight_first + r * columns + col];
@@ -115,11 +115,18 @@ mod native {
                 i += 16;
             }
             sync_cube();
-            cmma::load(&am, &a.to_slice(), 16);
-            cmma::load(&bm, &b.to_slice(), 16);
-            cmma::execute::<F, F, f32, f32>(&am, &bm, &acc, &acc);
+            // Four original K16 products in exactly the same accumulation
+            // order, sharing one staged K64 operand tile and two barriers.
+            // No reader writes shared operands between these subgroup loads.
+            let mut part = 0usize;
+            while part < 64 {
+                cmma::load(&am, &a.to_slice().slice(part, 512usize), 64);
+                cmma::load(&bm, &b.to_slice().slice(part, 1024usize), 64);
+                cmma::execute::<F, F, f32, f32>(&am, &bm, &acc, &acc);
+                part += 16;
+            }
             sync_cube();
-            k += 16;
+            k += 64;
         }
         cmma::store(
             &mut out.to_slice_mut(),

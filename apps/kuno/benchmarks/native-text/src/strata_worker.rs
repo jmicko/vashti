@@ -16,18 +16,21 @@ use crate::native_artifact::{Settings, verify};
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false, None)
+    run_mode(path, false, None, false)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None)
+    run_mode(path, true, None, false)
 }
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
     if profile {
         crate::strata_prefill_profile::enable_compiled_public();
     }
-    run_mode(path, true, Some(profile))
+    run_mode(path, true, Some(profile), false)
+}
+pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
+    run_mode(path, true, None, true)
 }
 fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
@@ -39,7 +42,12 @@ fn public_prompt(repeats: usize) -> Vec<u8> {
     text.push_str("<|im_end|>\n<|im_start|>user\nWhat is 17 times 19? Reply with the numerical answer.\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
     text.into_bytes()
 }
-fn run_mode(path: &Path, public_check: bool, prefill_check: Option<bool>) -> Result<()> {
+fn run_mode(
+    path: &Path,
+    public_check: bool,
+    prefill_check: Option<bool>,
+    matrix_check: bool,
+) -> Result<()> {
     if public_check {
         crate::resident_util::enable_compiled_public_diagnostics();
     }
@@ -94,13 +102,20 @@ fn run_mode(path: &Path, public_check: bool, prefill_check: Option<bool>) -> Res
         verify(artifact, trust_identity)?;
     }
     verify(&settings.mtp, trust_identity)?;
-    cubecl::future::block_on(serve(settings, worker_started, public_check, prefill_check))
+    cubecl::future::block_on(serve(
+        settings,
+        worker_started,
+        public_check,
+        prefill_check,
+        matrix_check,
+    ))
 }
 async fn serve(
     settings: Settings,
     worker_started: Instant,
     public_check: bool,
     prefill_check: Option<bool>,
+    matrix_check: bool,
 ) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
@@ -216,6 +231,31 @@ async fn serve(
     let draft = crate::mtp_lab_profile::Profile::StrataQ2
         .bind(&sidecar, graph.bound_graph())
         .map_err(|_| "native_artifact_invalid")?;
+    if matrix_check {
+        client
+            .configure_public_target_request_io_with_backlog(Default::default())
+            .map_err(|_| "public_matrix_io_failed")?;
+        let mut arena = crate::private_arena::PrivateArena::new_transient_on_configured(
+            client.clone(),
+            512 * 1024 * 1024,
+            std::sync::Arc::new(AtomicBool::new(false)),
+        )
+        .map_err(|_| "public_matrix_arena_failed")?;
+        arena
+            .enable_public_owned_zero_audit()
+            .map_err(|_| "public_matrix_audit_failed")?;
+        let cases = crate::strata_matrix::public_numeric(&client, &mut arena, &file)
+            .map_err(|_| "public_matrix_numeric_failed")?;
+        arena.close().map_err(|_| "public_matrix_close_failed")?;
+        if arena.owned_zero_audit_receipt().is_none() {
+            return Err("public_matrix_erasure_unconfirmed");
+        }
+        eprintln!(
+            "public_prefill_matrix {}",
+            serde_json::json!({"cases":cases,"closed":true,"content_saved":false})
+        );
+        return Ok(());
+    }
     let tokenizer =
         Qwen35Tokenizer::from_gguf(&file, engine::input::tokenizer_limits(192 * 1024 * 1024))
             .map_err(|_| "native_artifact_invalid")?;

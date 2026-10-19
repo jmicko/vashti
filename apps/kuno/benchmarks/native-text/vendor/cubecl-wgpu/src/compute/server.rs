@@ -1070,7 +1070,17 @@ impl ComputeServer for WgpuServer {
         }
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         self.scheduler.stream(&stream_id).private_io_active()?;
-        self.scheduler.execute_streams(vec![stream_id]);
+        if self.scheduler.stream(&stream_id).supports_physical_reads() {
+            // Same original stream and physical copy owners were validated
+            // above. Keep kernels plus ring DMA in one dependency-complete
+            // native graph; execute_streams would submit before EVERY expert
+            // copy, then the next admission would synchronously join it.
+            // The graph still enforces real raw-slot/read/write dependencies,
+            // limits, error scopes and the caller's completed fault boundary.
+            self.scheduler.enqueue_stream_tasks(stream_id);
+        } else {
+            self.scheduler.execute_streams(vec![stream_id]);
+        }
         let stream = self.scheduler.stream(&stream_id);
         let mut resources = Vec::with_capacity(copies.len());
         for c in copies {

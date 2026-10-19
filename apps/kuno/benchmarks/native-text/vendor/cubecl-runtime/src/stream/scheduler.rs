@@ -172,7 +172,17 @@ impl<B: SchedulerStreamBackend> SchedulerMultiStream<B> {
         self.execute_streams(to_flush);
     }
 
-    /// Executes tasks from the specified streams based on the scheduling strategy.
+    /// Materialize one already aligned stream's tasks in their original order,
+    /// without asking the backend to submit its command graph. This grants no
+    /// completion. Only a backend that tracks subsequent same-stream commands
+    /// and owns their dependency/final submission may use this queue boundary.
+    pub fn enqueue_stream_tasks(&mut self, stream_id: StreamId) {
+        let stream = self.pool.get_mut(&stream_id);
+        let tasks = stream.flush();
+        B::enqueue_many(tasks.into_iter(), &mut stream.stream);
+    }
+
+    /// Execute and submit the selected streams, preserving cross-stream ordering.
     pub fn execute_streams(&mut self, stream_ids: Vec<StreamId>) {
         let mut indices = Vec::with_capacity(stream_ids.len());
 
@@ -365,6 +375,23 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn same_stream_materialization_keeps_order_without_submission_credit() {
+        for strategy in [SchedulerStrategy::Interleave, SchedulerStrategy::Sequential] {
+            let (mut scheduler, events) = scheduler(strategy);
+            let id = StreamId { value: 0 };
+            for task in 10..13 { scheduler.register(id,task,&[id]); }
+            scheduler.enqueue_stream_tasks(id);
+            for task in 13..15 { scheduler.register(id,task,&[id]); }
+            scheduler.enqueue_stream_tasks(id);
+            let observed=events.lock().unwrap().clone();
+            assert_eq!(observed.iter().filter(|e|e.1==0).map(|e|e.2).collect::<Vec<_>>(), vec![10,11,12,13,14]);
+            assert!(!observed.iter().any(|e|e.1==2));
+            scheduler.execute_streams(vec![id]);
+            assert_eq!(events.lock().unwrap().last(),Some(&(0,2,0)));
+        }
+    }
+
     #[test]
     fn multiple_interleaved_streams_keep_original_single_task_ordering() {
         let (mut scheduler, events) = scheduler(SchedulerStrategy::Interleave);

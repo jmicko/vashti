@@ -274,6 +274,7 @@ pub(crate) fn enqueue(
     let groups = super::groups::validate(map, count)?;
     let mut issued = 0;
     for group in 0..groups {
+        let mut timing = crate::strata_prefill_profile::CpuTimer::new();
         while issued < groups && issued < group + RAW_SLOTS {
             sources.stage_prompt_group(
                 graph,
@@ -285,6 +286,7 @@ pub(crate) fn enqueue(
             )?;
             issued += 1;
         }
+        timing.mark("expert_cpu_stage_sources");
         // The route map was fully validated above. Each expert consumes only
         // its routed members, not every token in the prompt. Keep p.count as
         // the full prompt geometry for all shader ownership/route checks.
@@ -316,6 +318,7 @@ pub(crate) fn enqueue(
             fault.clone().binding(),
         ]);
         dispatch(client, Op::Gather, [gather_groups, 1, 1], args, base)?;
+        timing.mark("expert_cpu_gather");
         // Both FP16 images are queued before their coupled expert products.
         for down in [false, true] {
             let mut words = base;
@@ -357,6 +360,7 @@ pub(crate) fn enqueue(
                 words,
             )?;
         }
+        timing.mark("expert_cpu_dequant");
         crate::strata_matrix::expert(
             client,
             [
@@ -374,6 +378,7 @@ pub(crate) fn enqueue(
             group,
             false,
         )?;
+        timing.mark("expert_cpu_gu_product");
         let args = KernelArguments::new().with_buffers(vec![
             owners[0].clone().binding(),
             owners[2].clone().binding(),
@@ -382,6 +387,7 @@ pub(crate) fn enqueue(
             fault.clone().binding(),
         ]);
         dispatch(client, Op::Activate, [activate_groups, 1, 1], args, base)?;
+        timing.mark("expert_cpu_activate");
         crate::strata_matrix::expert(
             client,
             [
@@ -399,6 +405,7 @@ pub(crate) fn enqueue(
             group,
             true,
         )?;
+        timing.mark("expert_cpu_down_product");
     }
     Ok(())
 }

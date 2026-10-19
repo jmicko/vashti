@@ -42,7 +42,7 @@ pub(crate) fn cases(
             packed[i / 2] |= u32::from(bits) << (16 * (i % 2));
         }
         let public = client.create_from_slice(u32::as_bytes(&packed));
-        for count in [1, 8, 35] {
+        for count in [1, 8, 35, 257] {
             let mut inputs = Zeroizing::new(vec![0.; count * columns]);
             let mut image = Zeroizing::new(vec![0u32; inputs.len() / 2]);
             for (i, v) in inputs.iter_mut().enumerate() {

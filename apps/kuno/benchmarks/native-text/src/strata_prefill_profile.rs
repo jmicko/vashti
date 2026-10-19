@@ -51,3 +51,24 @@ impl Timer {
         Ok(())
     }
 }
+
+/// CPU-side scheduling slices; no additional device fence or changed overlap.
+pub(crate) struct CpuTimer(Option<Instant>);
+impl CpuTimer {
+    pub(crate) fn new() -> Self {
+        Self(ENABLED.load(Ordering::Acquire).then(Instant::now))
+    }
+    pub(crate) fn mark(&mut self, name: &'static str) {
+        if let Some(start) = &mut self.0 {
+            let ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            TOTALS.with(|v| {
+                let mut v = v.borrow_mut();
+                let t = v.entry(name).or_default();
+                t.0 += 1;
+                t.1 = t.1.saturating_add(ns);
+                t.2 = t.2.saturating_add(ns);
+            });
+            *start = Instant::now();
+        }
+    }
+}
