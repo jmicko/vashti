@@ -1350,3 +1350,37 @@ consumer, which waits on both results. Actual numeric cases compare the joint
 dispatch against BOTH separate direct roles using DIFFERENT authentic original
 gate/up weights; no same-weight shortcut can conceal swapped role pointers.
 No throughput acceptance is granted for this new candidate before validation.
+
+
+## Joint GU candidate acceptance (2026-10-18 local)
+
+PASS for the selected fixed-public retained measurement, frozen source
+`0b76f8bb47328fc249ed1af5eea7cb119f6ed0ab`, artifact
+`strata-joint-gu-entry-20261019`, SHA256
+`91a23e785fb43c3a3ae42fa5e1aaea549d0be84b515c8b345f97a16b7176f523`.
+Sourceb91bcb33 implements the coupled row-domain/coordinator change and16
+additional actual physical joint-versus-separate original-weight cases. Its
+first offline validation rejected entry-only builtin attributes on helper
+arguments before ANY GPU execution.0b76f8bb passes those builtins as ordinary
+arguments to regular helpers; the final entry remains the sole compute entry.
+The initial source test also failed as expected; its replacement passes both
+targeted tests over17 schemas/14 expert roles. Do not reuse the rejected build.
+
+`strata-joint-gu-entry-numerics-20261019/numerics.json` passes130 cases:74
+original numerical cases,40 bit-exact staged/direct controls,16 bit-exact joint
+GU controls with distinct original gate and up weights. All bit/status
+differences are0 and complete owning tails are compared.401 offline shaders/32
+cooperative matrix configurations and strict core Clippy pass.
+`strata-joint-gu-entry-retained-20261019/intel.json` passes two same-session
+identical362-output/EOS requests,108 windows/32 repairs, target/draft erasure,
+final close and root physical recovery: Intel50,688,000B,NVIDIA compute0,
+allHTTP200, normal admission, all classified driver faults0. Active swap/core0
+and the same48.2GiB cap observed. Selected full loading, actual source residency,
+real expert routing/math, all graph/queue/state/target-verification dependencies
+remain connected. Original arithmetic is retained; GU simply occupies one
+40-row-workgroup dispatch instead of two20-row-workgroup dispatches.
+
+The exact-artifact manifest advances only after these gates. Prior883d584b
+acceptance and its21.3057 warm rate remain nested in previous_acceptance and
+unchanged historical evidence. No private-caller, production/API, maximum-context
+or soak acceptance is added. New timing remains pending at this decision.

@@ -2,34 +2,52 @@
   "format": 1,
   "scope": "selected-intel-core-fixed-public-engine",
   "completeness_accepted": true,
-  "runtime_source_commit": "883d584b98fc30922f2272e8eb4e1228e4be8f46",
-  "artifact_sha256": "32bd4bb33333f6e56d79a4d26d13de139144c1a8e839c05f1b6d9388f4fe6c1c",
+  "runtime_source_commit": "0b76f8bb47328fc249ed1af5eea7cb119f6ed0ab",
+  "artifact_sha256": "91a23e785fb43c3a3ae42fa5e1aaea549d0be84b515c8b345f97a16b7176f523",
   "build_features": [
     "strata-rust-port",
     "strata-intel-core"
   ],
-  "audit_reference": "docs/kuno-strata-current-source-audit.md#rounded-direct-input-candidate-acceptance-2026-10-18-local",
+  "audit_reference": "docs/kuno-strata-current-source-audit.md#joint-gu-candidate-acceptance-2026-10-18-local",
   "private_caller_or_production_api_accepted": false,
   "timing_scope": "unchanged-code-fixture-q2-two-identical-public-requests",
-  "numerical_receipt": "strata-direct-expert-rounded-numerics-20261019/numerics.json",
-  "retained_completion_receipt": "strata-direct-expert-rounded-retained-20261019/intel.json",
+  "numerical_receipt": "strata-joint-gu-entry-numerics-20261019/numerics.json",
+  "retained_completion_receipt": "strata-joint-gu-entry-retained-20261019/intel.json",
   "capped_completion_receipt": "strata-fp16-preserve-prose-20261018/intel.json",
   "capped_completion_receipt_is_historical_control": true,
   "previous_acceptance": {
     "format": 1,
     "scope": "selected-intel-core-fixed-public-engine",
     "completeness_accepted": true,
-    "runtime_source_commit": "299579b52f9e4b9d8feaaaedb41eec4c193fcb83",
-    "artifact_sha256": "852a0dbd7dbdd11a3a1eb8e3447a9006dbe7fae2b56d8d3ecd1fb3ccd7c473e1",
+    "runtime_source_commit": "883d584b98fc30922f2272e8eb4e1228e4be8f46",
+    "artifact_sha256": "32bd4bb33333f6e56d79a4d26d13de139144c1a8e839c05f1b6d9388f4fe6c1c",
     "build_features": [
       "strata-rust-port",
       "strata-intel-core"
     ],
-    "audit_reference": "docs/kuno-strata-current-source-audit.md#selected-engine-completeness-and-correctness-decision-2026-10-18",
+    "audit_reference": "docs/kuno-strata-current-source-audit.md#rounded-direct-input-candidate-acceptance-2026-10-18-local",
     "private_caller_or_production_api_accepted": false,
     "timing_scope": "unchanged-code-fixture-q2-two-identical-public-requests",
-    "numerical_receipt": "strata-fp16-preserve-coupled-check-20261018/numerics.json",
-    "retained_completion_receipt": "strata-fp16-preserve-retained-20261018/intel.json",
-    "capped_completion_receipt": "strata-fp16-preserve-prose-20261018/intel.json"
+    "numerical_receipt": "strata-direct-expert-rounded-numerics-20261019/numerics.json",
+    "retained_completion_receipt": "strata-direct-expert-rounded-retained-20261019/intel.json",
+    "capped_completion_receipt": "strata-fp16-preserve-prose-20261018/intel.json",
+    "capped_completion_receipt_is_historical_control": true,
+    "previous_acceptance": {
+      "format": 1,
+      "scope": "selected-intel-core-fixed-public-engine",
+      "completeness_accepted": true,
+      "runtime_source_commit": "299579b52f9e4b9d8feaaaedb41eec4c193fcb83",
+      "artifact_sha256": "852a0dbd7dbdd11a3a1eb8e3447a9006dbe7fae2b56d8d3ecd1fb3ccd7c473e1",
+      "build_features": [
+        "strata-rust-port",
+        "strata-intel-core"
+      ],
+      "audit_reference": "docs/kuno-strata-current-source-audit.md#selected-engine-completeness-and-correctness-decision-2026-10-18",
+      "private_caller_or_production_api_accepted": false,
+      "timing_scope": "unchanged-code-fixture-q2-two-identical-public-requests",
+      "numerical_receipt": "strata-fp16-preserve-coupled-check-20261018/numerics.json",
+      "retained_completion_receipt": "strata-fp16-preserve-retained-20261018/intel.json",
+      "capped_completion_receipt": "strata-fp16-preserve-prose-20261018/intel.json"
+    }
   }
 }
