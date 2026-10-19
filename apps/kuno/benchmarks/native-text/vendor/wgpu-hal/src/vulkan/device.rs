@@ -479,31 +479,6 @@ pub fn kuno_native_workgroup_layout(words: &[u32]) -> Result<Vec<u32>, &'static 
     Ok(out)
 }
 
-/// Required subgroup for this port's cooperative SPIR-V. Only modules with
-/// OpTypeCooperativeMatrixKHR and exactly LocalSize16x1x1 select this override.
-pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
-    if words.len() < 5 || words[0] != 0x07230203 {
-        return None;
-    }
-    let mut at = 5;
-    let mut cooperative = false;
-    let mut local = false;
-    while at < words.len() {
-        let count = (words[at] >> 16) as usize;
-        let opcode = words[at] & 65535;
-        if count == 0 || at.checked_add(count).is_none_or(|end| end > words.len()) {
-            return None;
-        }
-        cooperative |= opcode == 4456;
-        if opcode == 16 && count == 6 && words[at + 2] == 17 && words[at + 3..at + 6] == [16, 1, 1]
-        {
-            local = true;
-        }
-        at += count;
-    }
-    (cooperative && local).then_some(16)
-}
-
 struct CompiledStage {
     create_info: vk::PipelineShaderStageCreateInfo<'static>,
     _entry_point: CString,
@@ -2048,7 +2023,7 @@ impl crate::Device for super::Device {
             }
             crate::ShaderInput::SpirV(data) => {
                 let raw = self.create_shader_module_impl(data, &desc.label)?;
-                if kuno_cooperative_subgroup(data) == Some(16) {
+                if super::kuno_cooperative_subgroup(data) == Some(16) {
                     super::ShaderModule::RawSubgroup16(raw)
                 } else {
                     super::ShaderModule::Raw(raw, None)

@@ -320,8 +320,9 @@ pub(crate) fn register_spirv_module(
             vk::AccessFlags::SHADER_READ
         });
     }
-    // The Intel DPAS tile registered by this port uses one16-lane subgroup.
-    // Raw instruction validation also rejects malformed/truncated modules.
+    // Every Intel DPAS tile uses one16-lane subgroup; a tiled workgroup may
+    // contain several such subgroups. The shared selector checks the literal
+    // block shape and known subgroup-scoped matrix types before selecting16.
     let words = super::strata_physical::canonical_workgroup_layout(&kernel.assembled_module)?;
     // create_module first creates the HAL ShaderModule, which verifies the
     // device's FloatControls properties. Native replay creates its own Vulkan

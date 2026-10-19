@@ -28,7 +28,9 @@ mod adapter;
 mod command;
 pub mod conv;
 mod device;
-pub use device::{kuno_cooperative_subgroup, kuno_native_workgroup_layout};
+pub use device::kuno_native_workgroup_layout;
+mod kuno_cooperative;
+pub use kuno_cooperative::kuno_cooperative_subgroup;
 mod kuno_fp16;
 pub use kuno_fp16::kuno_cooperative_fp16_preserve;
 mod drm;
@@ -1154,7 +1156,7 @@ impl KunoSubgroupRequirement {
 #[derive(Debug)]
 pub enum ShaderModule {
     Raw(vk::ShaderModule, Option<u32>),
-    /// A cooperative shader whose whole workgroup is one16-lane subgroup.
+    /// A cooperative shader whose workgroup contains complete16-lane subgroups.
     RawSubgroup16(vk::ShaderModule),
     Intermediate {
         naga_shader: crate::NagaShader,
