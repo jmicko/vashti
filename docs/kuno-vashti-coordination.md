@@ -3,7 +3,10 @@
 **Active work (2026-10-19):** user requested thinking/tool round trips, faster cold
 loads and configurable context. Rendering/parsing, root-enrolled identity cache
 and smaller request budgets are implemented in source and CPU-tested; not installed.
-Above32K engine capacity remains open. Sudo is pending for protected validation. See the [extension contract](kuno-native-text-service.md#active-extension-contract-2026-10-19-implementation-in-progress).
+Above32K engine capacity remains open. Sudo is pending for protected validation.
+Source `36626d30`; gateway SHA `d3ed07f4`, worker SHA `f871238b`. Both frozen
+release builds and strict Clippy pass;234 CPU tests pass,7 hardware tests skipped.
+No live acceptance, installation or new speed/load-time result is claimed. See the [extension contract](kuno-native-text-service.md#active-extension-contract-2026-10-19-implementation-in-progress).
 The installed checkpoint below remains unchanged until the new adapter/worker is
 validated. Work remains isolated on `codex/strata-rust-port`; no Vashti edits.
 

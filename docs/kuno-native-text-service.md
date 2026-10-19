@@ -340,7 +340,7 @@ Implemented source changes:
   runtime capacity. This is the remaining substantial part of the user's request.
 
 CPU cases cover split-at-every-character thinking/tool delimiters, typed XML
-arguments, malformed/incomplete calls and unknown-name rejection, history/tool-result rendering,
+arguments, malformed/incomplete calls, history/tool-result rendering,
 stream versus collected response shape, context frame round trips/version
 mismatch, artifact modification/replacement and rejection of untrusted cache
 identities. Relevant root/worker strict Clippy and selected worker compile checks
@@ -359,3 +359,51 @@ settings to measure load savings; zero worker writes, swap/core protection,
 graceful close and physical recovery; ordinary Ollama/image coexistence. Then
 finish larger runtime capacities with u32 graph keys and real allocation/VRAM
 checks. Keep the old accepted install if any of these gates fails. No release.
+
+### Frozen extension candidates
+
+Runtime source `36626d306d5e47ff0270fce3917bca456edab1a2`:
+
+- Image-enabled gateway: `native-chat-gateway-frozen-20261019/kuno`, SHA256
+  `d3ed07f473b28bbb46596a619349d933edd6c166b7af10dd42f9821e4ba3048c`.
+  Native-image features and the same CUDA/Vulkan dependencies are retained;
+  readelf shows no new SYCL dependency or RPATH.
+- Worker: `strata-native-chat-20261019/kuno-strata-rust-f871238b732d344ca28ebf4adac33a42dbc7d2e2a713675e049dd3466dcce499`,
+  SHA256 `f871238b732d344ca28ebf4adac33a42dbc7d2e2a713675e049dd3466dcce499`,
+  features strata-rust-port,strata-intel-core,strata-gpu-adaptive-usage.
+- These compile successfully but are NOT installed or GPU-validated. Source and
+  build logs live under `/media/jmicko/faststore/kuno-development`. Do not reuse
+  the previous install script's old hashes/worker or KNT1 staged acceptance.
+
+### Larger-context implementation dependencies
+
+The next capacity change must preserve the exact default32K path while adding
+immutable per-worker capacity selected before constructing target/draft owners:
+
+1. Widen `NativeStrataBranch.context_capacity` and all target/commit/MTP constructor
+   and geometry signatures from u16 to u32, including checked caller conversions
+   in resident_model_batch, resident_native_commit and resident_mtp_window/replay.
+   Keep positions/boundaries checked against the actual branch capacity, not only
+   the model's262144 ceiling.
+2. Replace selected fixed constants across strata_intel_core, qsa_gpu,
+   mtp_resident_kernels, strata_sampler and strata_speculation with one consistent
+   immutable loaded capacity. Suffix hash slots require power-of-two geometry;
+   the request budget may be smaller than the allocated capacity. Growing past
+   an existing capacity must close/reprice/reload; smaller requests can retain it.
+3. Price and allocate QSA/KV/indexer caches, RoPE tables, draft attention scratch,
+   suffix HOST buffers and prompt score/root layouts using that same capacity.
+   `strata_prompt_allocation::Plan` currently switches to CacheLoan above32768,
+   while `strata_engine::Session` deliberately passes a zero source loan. That
+   path cannot simply be enabled: implement the real overlay ownership or use
+   correctly priced owned roots and reduce expert residency to make room.
+4. Prove32K byte/geometry regression equivalence, bounds near65536 and higher,
+   target/draft position correctness and real physical memory recovery before
+   advertising a larger tested runtime limit. Model metadata alone is not enough.
+   No silent prompt truncation or pretend support by dropping num_ctx.
+
+After removing repeated hashes, instrument only allowlisted content-free startup
+phase durations (artifact verification, graph/tokenizer preparation, target,
+source cache, shared weights and draft) to find the remaining cold-load cost.
+Do not enable disk shader/graph dumps or persist request-dependent programs just
+because a development run uses public fixtures. Startup gains are not measured
+until the protected candidate actually runs.
