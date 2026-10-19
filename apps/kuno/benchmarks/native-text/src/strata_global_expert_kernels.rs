@@ -43,6 +43,7 @@ impl KernelMetadata for Op {
             Self::Fetch => "StrataGlobalFetchAndRebase",
             Self::Role { role: 1, .. } => "StrataGlobalNativeGate",
             Self::Role { role: 2, .. } => "StrataGlobalNativeUp",
+            Self::Role { role: 4, .. } => "StrataGlobalNativeGateUp",
             Self::Role { .. } => "StrataGlobalNativeDown",
             Self::PrepareGu => "StrataGlobalPrepareGu",
             Self::PrepareDown => "StrataGlobalSwiGluQ8Down",
@@ -96,6 +97,9 @@ fn full(handles: impl Iterator<Item = Handle>) -> Result<()> {
     Ok(())
 }
 fn role_source(role: u8, dtype: u32, row_bytes: usize, direct_planes: bool) -> String {
+    if role == 4 {
+        return joint_gu_source(dtype, row_bytes, direct_planes);
+    }
     let down = role == 3;
     let mut base = if down {
         crate::quant_matvec::frozen_down_integer::strata_fused_source(dtype, row_bytes, 8)
@@ -111,7 +115,7 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize, direct_planes: bool) -> S
         + base[first..].find("var<uniform> p:Params;").unwrap()
         + "var<uniform> p:Params;".len();
     let mut descriptors = String::from(
-        "// STRATA_PHYSICAL_EXPERTS\n// STRATA_ROUND_PRODUCTS: original expert contract(off) multiply/add.\n",
+        "// STRATA_PHYSICAL_EXPERTS\n// STRATA_ROUND_PRODUCTS: stable separate expert products across storage modes.\n",
     );
     let mut index = 0;
     for name in names {
@@ -221,6 +225,30 @@ fn role_source(role: u8, dtype: u32, row_bytes: usize, direct_planes: bool) -> S
     )
 }
 
+// Same original native_gu_kernel row-domain split: the lower half of grid.x
+// writes gate and the upper half writes up. No lane computes both projections;
+// the one dispatch owns both disjoint output planes before SwiGLU consumes them.
+fn joint_gu_source(dtype: u32, row_bytes: usize, direct_planes: bool) -> String {
+    let gate = role_source(1, dtype, row_bytes, direct_planes);
+    let up = role_source(2, dtype, row_bytes, direct_planes);
+    let split = |s: &str| s.find("fn strata_chunk4(").expect("actual GU chunk body");
+    let (g, u) = (split(&gate), split(&up));
+    assert_eq!(&gate[..g], &up[..u]);
+    let entry = |s: &str, name: &str| {
+        s.replace("@compute @workgroup_size(256)\n", "")
+            .replace("fn main(", &format!("fn strata_{name}_entry("))
+            .replace("strata_chunk", &format!("strata_{name}_chunk"))
+    };
+    let half = 640 / (256 / crate::strata_port::expert_lanes());
+    format!(
+        "{}\n{}\n{}\n@compute @workgroup_size(256)\nfn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,@builtin(subgroup_id) sg:u32,@builtin(subgroup_invocation_id) sub_lane:u32,@builtin(subgroup_size) subgroup_width:u32,@builtin(num_subgroups) subgroups:u32) {{\nif group.x<{half}u {{strata_gate_entry(group,local,sg,sub_lane,subgroup_width,subgroups);}} else if group.x<{}u {{strata_up_entry(vec3<u32>(group.x-{half}u,group.yz),local,sg,sub_lane,subgroup_width,subgroups);}}\n}}",
+        &gate[..g],
+        entry(&gate[g..], "gate"),
+        entry(&up[u..], "up"),
+        half * 2
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fetch(
     client: &ComputeClient<WgpuRuntime>,
@@ -306,7 +334,7 @@ pub(crate) fn role(
     count: usize,
     role: u8,
 ) -> Result<()> {
-    if !(1..=8).contains(&count) || !(1..=3).contains(&role) {
+    if !(1..=8).contains(&count) || !(1..=4).contains(&role) {
         return Err(Error::InvalidBufferLength);
     }
     let down = role == 3;
@@ -343,7 +371,8 @@ pub(crate) fn role(
                 direct_planes: true,
             }),
             CubeCount::Static(
-                (projection.rows() / (256 / crate::strata_port::expert_lanes())) as u32,
+                (projection.rows() * if role == 4 { 2 } else { 1 }
+                    / (256 / crate::strata_port::expert_lanes())) as u32,
                 80,
                 1,
             ),
@@ -428,7 +457,7 @@ pub(crate) fn prepare_down(
 }
 pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
     let mut ops = vec![Op::Fetch, Op::PrepareGu, Op::PrepareDown];
-    for role in [1, 2, 3] {
+    for role in [1, 2, 3, 4] {
         for dtype in if role == 3 {
             vec![crate::quant_matvec::IQ4_NL, crate::quant_matvec::Q2_0]
         } else {
@@ -473,7 +502,8 @@ mod direct_source_tests {
         use wgpu::naga::{AddressSpace, valid};
         let mut roles = 0;
         for compiled in compiled_sources() {
-            if !compiled.source.contains("fn strata_chunk4(") {
+            let joint = compiled.source.contains("fn strata_gate_chunk4(");
+            if !joint && !compiled.source.contains("fn strata_chunk4(") {
                 continue;
             }
             roles += 1;
@@ -490,12 +520,27 @@ mod direct_source_tests {
             );
             assert!(!compiled.source.contains("workgroupBarrier()"));
             assert!(!compiled.source.contains("strata_input["));
-            for name in [
-                "strata_input_word",
-                "strata_chunk4",
-                "strata_chunk2",
-                "strata_chunk1",
-            ] {
+            let names: &[&str] = if joint {
+                &[
+                    "strata_input_word",
+                    "strata_gate_chunk4",
+                    "strata_gate_chunk2",
+                    "strata_gate_chunk1",
+                    "strata_up_chunk4",
+                    "strata_up_chunk2",
+                    "strata_up_chunk1",
+                    "strata_gate_entry",
+                    "strata_up_entry",
+                ]
+            } else {
+                &[
+                    "strata_input_word",
+                    "strata_chunk4",
+                    "strata_chunk2",
+                    "strata_chunk1",
+                ]
+            };
+            for &name in names {
                 assert_eq!(
                     module
                         .functions
@@ -506,13 +551,13 @@ mod direct_source_tests {
                 );
             }
         }
-        assert_eq!(roles, 10); // Both GU roles/four formats and both DOWN formats.
+        assert_eq!(roles, 14); // Separate and joint GU/four formats, two DOWN formats.
     }
     #[test]
     fn actual_role_and_explicit_fetch_schemas_bind_original_addresses_without_a_dummy_stage_table()
     {
         let sources = compiled_sources();
-        assert_eq!(sources.len(), 13);
+        assert_eq!(sources.len(), 17);
         for compiled in sources {
             assert!(!compiled.source.contains("stage_addresses"));
             let module = wgpu::naga::front::wgsl::parse_str(&compiled.source).unwrap();

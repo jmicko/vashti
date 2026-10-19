@@ -563,11 +563,9 @@ impl Workspace {
         let gu = full(self.ids[5])?;
         let down = full(self.ids[6])?;
         crate::strata_global_experts::prepare_gu(client, &spans, &owners, &gu, count)?;
-        for role in [1, 2] {
-            crate::strata_global_experts::role(
-                client, graph, sources, layer, geometry, &spans, &owners, &gu, count, role,
-            )?;
-        }
+        crate::strata_global_experts::role(
+            client, graph, sources, layer, geometry, &spans, &owners, &gu, count, 4,
+        )?;
         crate::strata_global_experts::prepare_down(client, &spans, &owners, &down, count)?;
         crate::strata_global_experts::role(
             client, graph, sources, layer, geometry, &spans, &owners, &down, count, 3,

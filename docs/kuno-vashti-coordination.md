@@ -1,14 +1,16 @@
 # Kuno and Vashti Coordination
 
-**GPU handback checkpoint (2026-10-18 local).** Human needs both GPUs; no further
-GPU test is authorized for this block. Both are idle for compute, Kuno admission
-is normal, and Kuno/Ollama/Vashti return HTTP200. Candidate `dcd7326e` removes
-selected expert activation SLM staging and reads original packed planes/scales
-directly. Its immutable build and offline397-shader/32-matrix validation pass;
-whole-model correctness and performance are still pending. Accepted baseline
-remains20.6089 warm tokens/s on299579b5. See the latest
-[checkpoint](kuno-strata-current-source-audit.md#direct-expert-activation-candidate-and-gpu-handback-2026-10-18-local)
-for hashes, receipts and exact resume steps. Goal remains paused.
+**Direct expert input validated (2026-10-18 local).** Both GPUs are authorized
+for this resumed block. Accepted883d584b/SHA32bd4bb3 passes114 numerical cases
+(including40 bit-exact actual staged/direct expert comparisons), two identical
+362-token requests, erasure/close and clean physical recovery. Warm throughput
+is21.3057 tokens/s (first20.4639), up modestly from the prior20.6089 trial;
+30 remains unmet. An explicit separate-product control fixes a diagnosed
+last-bit difference; no tolerance was relaxed. Next candidate combines gate/up
+into Strata's one row-split dispatch. See the latest
+[audit](kuno-strata-current-source-audit.md#rounded-direct-input-throughput-and-joint-gu-follow-up-2026-10-18-local)
+for exact receipts, scope and pending validation. No installed binary/API/UI
+change; the existing goal remains paused, work is directly human-authorized.
 
 **Selected Intel rewrite accepted for fixed-public engine measurements (2026-10-18).**
 The connected Rust port is now past the source-wiring, representative numerical,

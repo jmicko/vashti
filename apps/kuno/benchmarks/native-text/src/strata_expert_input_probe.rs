@@ -40,7 +40,7 @@ pub(crate) fn cases(
         table.into_iter().flat_map(u32::to_le_bytes).collect(),
     )?;
     let mut reports = Vec::new();
-    for role in [1u8, 2, 3] {
+    for role in [1u8, 2, 3, 4] {
         let down = role == 3;
         for dtype in if down {
             vec![20u32, 42]
@@ -49,7 +49,7 @@ pub(crate) fn cases(
         } {
             let (rows, columns) = if down { (2560, 640) } else { (640, 2560) };
             let suffix = match role {
-                1 => "ffn_gate_exps.weight",
+                1 | 4 => "ffn_gate_exps.weight",
                 2 => "ffn_up_exps.weight",
                 _ => "ffn_down_exps.weight",
             };
@@ -68,16 +68,33 @@ pub(crate) fn cases(
                 .ok_or("public original expert missing")?
                 .read_range(0, &mut packed[..logical])?;
             let weights = public(client, packed)?;
+            let up_weights = if role == 4 {
+                let up_name = name.replace("ffn_gate_exps.weight", "ffn_up_exps.weight");
+                let tensor = file
+                    .tensor(&up_name)
+                    .ok_or("public joint GU original UP missing")?;
+                if tensor.info().dimensions() != info.dimensions()
+                    || tensor.info().dtype() != info.dtype()
+                {
+                    return Err("public joint GU original UP geometry".into());
+                }
+                let mut packed = vec![0u8; logical.next_multiple_of(16)];
+                tensor.read_range(0, &mut packed[..logical])?;
+                public(client, packed)?
+            } else {
+                weights.clone()
+            };
             let address = client
-                .native_strata_source_addresses(vec![weights.clone()])
+                .native_strata_source_addresses(vec![weights.clone(), up_weights.clone()])
                 .map_err(u::fault)?;
             let mut addresses = vec![0u32; 8192];
             // Both GU descriptors are authentic owning references to the same
             // original selected projection; only the tested role consumes it.
             for source_role in 0..3 {
                 let at = source_role * 512 * 4;
-                addresses[at] = address[0][0] as u32;
-                addresses[at + 1] = (address[0][0] >> 32) as u32;
+                let source = usize::from(source_role == 1);
+                addresses[at] = address[source][0] as u32;
+                addresses[at + 1] = (address[source][0] >> 32) as u32;
                 addresses[at + 2] = (logical / 4) as u32;
             }
             let addresses = public(
@@ -96,7 +113,9 @@ pub(crate) fn cases(
                     let route = token * 10 + token % 10;
                     map[164 + token] = route as u32;
                     planes[if down { route } else { token }] = 1;
-                    status[route] = 1;
+                    if down {
+                        status[route] = 1;
+                    }
                     let (base, words, blocks) = if down {
                         (128 + route * 360, 160, 20)
                     } else {
@@ -124,42 +143,57 @@ pub(crate) fn cases(
                 for direct_planes in [false, true] {
                     let output = arena.allocate_zeroed(80 * 2560)?;
                     let stamps = arena.upload_u32(&status)?;
-                    let mut args = KernelArguments::new().with_buffer(weights.clone().binding());
-                    if !down {
-                        args = args.with_buffer(weights.clone().binding());
-                    }
-                    for id in [map, output, stamps, planes] {
-                        args = args.with_buffer(u::handle(arena, id)?.binding());
-                    }
-                    if !down {
-                        args = args.with_buffer(table.clone().binding());
-                    }
-                    args = args
-                        .with_buffer(addresses.clone().binding())
-                        .with_read_dependencies(vec![weights.clone().binding()])
-                        .with_info(params([
-                            0,
-                            0,
-                            512,
-                            0,
-                            2560,
-                            0,
-                            if down { 80 } else { 0 },
-                            count,
-                        ]));
-                    // Actual selected production source and physical address
-                    // lowering. Only activation staging differs in the control.
-                    unsafe {
-                        client.launch_unchecked(
-                            Box::new(Op::Role {
-                                role,
-                                dtype,
-                                row_bytes,
-                                direct_planes,
-                            }),
-                            CubeCount::Static((rows / 32) as u32, 80, 1),
-                            args,
-                        );
+                    let roles: &[u8] = if role == 4 && !direct_planes {
+                        &[1, 2]
+                    } else {
+                        std::slice::from_ref(&role)
+                    };
+                    for &actual_role in roles {
+                        let mut args =
+                            KernelArguments::new().with_buffer(weights.clone().binding());
+                        if !down {
+                            args = args.with_buffer(up_weights.clone().binding());
+                        }
+                        for id in [map, output, stamps, planes] {
+                            args = args.with_buffer(u::handle(arena, id)?.binding());
+                        }
+                        if !down {
+                            args = args.with_buffer(table.clone().binding());
+                        }
+                        args = args
+                            .with_buffer(addresses.clone().binding())
+                            .with_read_dependencies(vec![
+                                weights.clone().binding(),
+                                up_weights.clone().binding(),
+                            ])
+                            .with_info(params([
+                                0,
+                                0,
+                                512,
+                                0,
+                                2560,
+                                0,
+                                if down { 80 } else { 0 },
+                                count,
+                            ]));
+                        // Actual selected production source and physical reads.
+                        // Joint GU compares against BOTH separate direct roles.
+                        unsafe {
+                            client.launch_unchecked(
+                                Box::new(Op::Role {
+                                    role: actual_role,
+                                    dtype,
+                                    row_bytes,
+                                    direct_planes: role == 4 || direct_planes,
+                                }),
+                                CubeCount::Static(
+                                    (rows * if actual_role == 4 { 2 } else { 1 } / 32) as u32,
+                                    80,
+                                    1,
+                                ),
+                                args,
+                            );
+                        }
                     }
                     outputs.push(crate::gr_batch_probe::read_native_public(arena, output)?);
                     statuses.push(crate::gr_batch_probe::read_native_public(arena, stamps)?);
@@ -183,7 +217,9 @@ pub(crate) fn cases(
                     let route = token * 10 + token % 10;
                     let stamp = if role == 1 { route } else { 80 + route };
                     if statuses[1][stamp] != 1
-                        || outputs[1][route * 2560 + offset..][..rows]
+                        || (role == 4 && statuses[1][route] != 1)
+                        || outputs[1][route * 2560 + offset..]
+                            [..if role == 4 { 1280 } else { rows }]
                             .iter()
                             .all(|&v| v == 0)
                     {
@@ -194,7 +230,7 @@ pub(crate) fn cases(
                     "public_expert_input_numeric role={role} dtype={dtype} count={count} bit_mismatches={mismatches} status_mismatches={status_mismatches} max_abs={max_abs}"
                 );
                 reports.push(
-                    serde_json::json!({"family":"physical-expert-input-staging-parity",
+                    serde_json::json!({"family":if role==4 {"physical-expert-joint-gu-parity"} else {"physical-expert-input-staging-parity"},
                     "role":role,"dtype":dtype,"count":count,"bit_mismatches":mismatches,
                     "status_mismatches":status_mismatches,"max_abs":max_abs,
                     "actual_native_kernels":true,"full_owner_and_tail_compared":true}),

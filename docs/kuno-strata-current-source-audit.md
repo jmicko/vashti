@@ -1272,8 +1272,10 @@ NoContraction postpass was not being invoked for them. The result is consistent 
 storage changed; a changed response alone did
 not identify wrong plane addresses.
 
-Source883d584b applies the original contract(off) separately rounded product
-control to BOTH actual global expert input modes. The shared existing postpass
+Source883d584b explicitly selects separately rounded products for BOTH actual
+global expert input modes as a Rust/Vulkan precision control. The pinned file
+has explicit contract(off) pragmas on the Q8/SwiGLU producers; this change must
+not be described as proof of a role-local pragma on every upstream dot product. The shared existing postpass
 marks real FMul results NoContraction and leaves explicit FMAs unchanged. No
 reference, tolerance, packing, source address, row-entry grouping or verification
 rule was weakened. This corrects a previously untested expert precision gap in
@@ -1319,3 +1321,32 @@ The timing manifest advances only to this frozen artifact, original code/Q2
 fixture and two identical requests; prior299579b5 acceptance is retained as
 `previous_acceptance` and its20.6089 warm result remains historical baseline.
 Timing has not yet been collected for the new artifact at this decision.
+
+
+## Rounded direct-input throughput and joint GU follow-up (2026-10-18 local)
+
+`strata-direct-expert-rounded-throughput-20261019/throughput.json` passes on
+accepted883d584b/SHA32bd4bb3,2 same-session identical362-output/EOS requests,
+108 windows/32 repairs in the reported second request. First generation
+17.689718604s=20.463864243 tokens/s; warm generation16.990734607s=21.305729762
+tokens/s. Warm prefix/preflight5.265295616s; full request before erasure
+22.256030223s=16.265254692 tokens/s. Target-phase setup138.278999025s excludes
+earlier process/file/device setup. All timing scopes/exclusions stay unchanged.
+The observed warm rate exceeds the prior20.6089 trial modestly; no repeated
+statistical confidence or apples-to-apples new Ollama comparison is claimed.
+Recovery: Intel50,688,000B, NVIDIA compute0, normal admission, allHTTP200,
+all classified driver fault counters0.30 tokens/s is still not met.
+
+Next coupled candidate follows original `native_gu_kernel`/`launch_gu_port` in
+`iq_kernels.dp.cpp`: ONE dispatch covers the gate/up row domain (2*n_ff),
+with each workgroup executing just one projection. Current Rust previously
+issued the same role work in two sequential dispatches. This is an explicit
+launch-layout improvement, not removal of a mathematical dependency. The
+combined shader shares original guards/descriptors/address/table helpers and
+selects gate or up uniformly by row-grid half; each half retains original
+4/2/1 chunks, input planes, complete owners, separate PART offsets/stamps and
+product rounding. The coordinator issues it once before the original SwiGLU/Q8
+consumer, which waits on both results. Actual numeric cases compare the joint
+dispatch against BOTH separate direct roles using DIFFERENT authentic original
+gate/up weights; no same-weight shortcut can conceal swapped role pointers.
+No throughput acceptance is granted for this new candidate before validation.
