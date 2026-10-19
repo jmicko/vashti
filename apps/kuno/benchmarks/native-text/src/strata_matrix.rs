@@ -1289,7 +1289,7 @@ mod tests {
                         for subgroup in 0..4 {
                             for i in 0..512 {
                                 let token =
-                                    gy * 64 + (subgroup / 2) * 16 + (i / 256) * 8 + (i % 128) / 16;
+                                    gy * 32 + (subgroup / 2) * 16 + (i / 256) * 8 + (i % 128) / 16;
                                 let row =
                                     gx * 64 + (subgroup % 2) * 32 + ((i / 128) % 2) * 16 + i % 16;
                                 if token < count && row < rows {
