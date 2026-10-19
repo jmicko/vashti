@@ -116,7 +116,18 @@ impl Drop for ScrubBytes {
 }
 use crate::private_arena::{BufferId, PrivateArena};
 
-pub fn fault(_: impl std::fmt::Display) -> Error {
+// This flag has no environment or private-protocol control. Its only caller is
+// the dedicated compiled-public, single-request diagnostic entry point.
+static COMPILED_PUBLIC_DIAGNOSTICS: AtomicBool = AtomicBool::new(false);
+pub(crate) fn enable_compiled_public_diagnostics() {
+    COMPILED_PUBLIC_DIAGNOSTICS.store(true, Ordering::Release);
+}
+#[track_caller]
+pub fn fault(cause: impl std::fmt::Display) -> Error {
+    if COMPILED_PUBLIC_DIAGNOSTICS.load(Ordering::Acquire) {
+        let at = std::panic::Location::caller();
+        eprintln!("public_device_error {}:{} {cause}", at.file(), at.line());
+    }
     Error::InvalidFormat("resident graph device operation")
 }
 pub fn cancel(cancel: &AtomicBool) -> Result<()> {

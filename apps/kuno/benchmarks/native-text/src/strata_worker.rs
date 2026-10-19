@@ -34,6 +34,9 @@ fn public_prompt() -> Vec<u8> {
     text.into_bytes()
 }
 fn run_mode(path: &Path, public_check: bool) -> Result<()> {
+    if public_check {
+        crate::resident_util::enable_compiled_public_diagnostics();
+    }
     let worker_started = Instant::now();
     use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
     CubeClRuntimeConfig::set(Default::default());
