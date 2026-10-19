@@ -92,6 +92,7 @@ pub struct Gateway {
     image_requests: Arc<tokio::sync::Semaphore>,
     image_readiness: Arc<crate::image_access::ImageReadiness>,
     image_fast_attention: bool,
+    native_runtime: crate::native_text::Runtime,
     image_runtime: crate::image_residency::ImageRuntime,
 }
 
@@ -178,6 +179,7 @@ impl Gateway {
             image_requests: Arc::new(tokio::sync::Semaphore::new(2)),
             image_readiness,
             image_fast_attention,
+            native_runtime: Default::default(),
             image_runtime: Default::default(),
         }))
     }
@@ -195,6 +197,9 @@ impl Gateway {
     }
     pub fn stop_images(&self) {
         self.image_shutdown.send_replace(true);
+    }
+    pub async fn evict_native_text(&self) -> Result<(), &'static str> {
+        self.native_runtime.evict().await
     }
     pub async fn evict_images(&self) -> Result<(), &'static str> {
         self.image_runtime.evict().await
@@ -462,6 +467,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
                 .managed
                 .as_ref()
                 .ok_or("image_requires_managed_pool")?;
+            gateway.native_runtime.evict().await?;
             pool.prepare_image(&config.pci_address).await?;
             let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
             let finished = gateway
@@ -560,13 +566,27 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
     if request.method() == Method::CONNECT || request.headers().contains_key(header::UPGRADE) {
         return error(StatusCode::NOT_IMPLEMENTED, "protocol_upgrade_unsupported");
     }
+    if gateway.config.native_text.is_some()
+        && request.method() == Method::GET
+        && matches!(request.uri().path(), "/api/tags" | "/v1/models")
+    {
+        return native_catalog(gateway, request).await;
+    }
     let class = classify(request.method(), request.uri().path());
     if request.method() == Method::GET
         && request.uri().path() == "/api/ps"
         && let Some(pool) = &gateway.managed
     {
         return match pool.running().await {
-            Ok(report) => Json(report).into_response(),
+            Ok(mut report) => {
+                if gateway.native_runtime.resident()
+                    && let Some(config) = &gateway.config.native_text
+                    && let Some(models) = report["models"].as_array_mut()
+                {
+                    models.push(config.metadata());
+                }
+                Json(report).into_response()
+            }
             Err(code) => error(StatusCode::SERVICE_UNAVAILABLE, code),
         };
     }
@@ -594,6 +614,56 @@ async fn forward(
     mut lease: Option<Lease>,
 ) -> Response {
     let (mut parts, mut body) = request.into_parts();
+    if let Some(config) = &gateway.config.native_text {
+        if matches!(
+            parts.uri.path(),
+            "/api/chat"
+                | "/api/generate"
+                | "/api/embed"
+                | "/api/embeddings"
+                | "/api/show"
+                | "/api/create"
+                | "/api/delete"
+                | "/api/pull"
+                | "/api/push"
+                | "/api/copy"
+                | "/v1/chat/completions"
+                | "/v1/completions"
+                | "/v1/embeddings"
+                | "/v1/responses"
+                | "/v1/messages"
+        ) {
+            let bytes = match tokio::time::timeout(
+                Duration::from_secs(300),
+                axum::body::to_bytes(body, 64 * 1024 * 1024),
+            )
+            .await
+            {
+                Ok(Ok(b)) => b,
+                _ => return error(StatusCode::BAD_REQUEST, "native_request_body_unavailable"),
+            };
+            if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if value
+                    .get("model")
+                    .or_else(|| value.get("name"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(config.model.as_str())
+                {
+                    if parts.uri.path() == "/api/show" {
+                        return Json(config.show()).into_response();
+                    }
+                    return native_inference(gateway, value, parts.uri.path(), lease).await;
+                }
+                crate::native_text::scrub_json(&mut value);
+            }
+            body = Body::from(bytes);
+        }
+        if class != RequestClass::Metadata
+            && let Err(code) = gateway.native_runtime.evict().await
+        {
+            return error(StatusCode::SERVICE_UNAVAILABLE, code);
+        }
+    }
     let mut managed_job = None;
     let mut address = gateway.config.upstream;
     if let Some(pool) = &gateway.managed {
@@ -992,6 +1062,199 @@ impl Drop for LeasedBody {
             }
         });
     }
+}
+
+async fn native_catalog(gateway: Arc<Gateway>, request: Request) -> Response {
+    let path = request.uri().path().to_owned();
+    let (mut parts, body) = request.into_parts();
+    parts.uri = match format!("http://{}{}", gateway.config.upstream, path).parse() {
+        Ok(uri) => uri,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "upstream_uri_invalid"),
+    };
+    strip_hop_headers(&mut parts.headers);
+    let response = match gateway
+        .client
+        .request(Request::from_parts(parts, body))
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "upstream_connection_failed"),
+    };
+    if !response.status().is_success() {
+        return response.map(Body::new);
+    }
+    let bytes = match axum::body::to_bytes(Body::new(response.into_body()), 2 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "native_catalog_unavailable"),
+    };
+    let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "native_catalog_invalid"),
+    };
+    let config = gateway.config.native_text.as_ref().unwrap();
+    let key = if path == "/api/tags" {
+        "models"
+    } else {
+        "data"
+    };
+    let Some(models) = value.get_mut(key).and_then(serde_json::Value::as_array_mut) else {
+        return error(StatusCode::BAD_GATEWAY, "native_catalog_invalid");
+    };
+    if !models
+        .iter()
+        .any(|m| m["name"] == config.model || m["id"] == config.model)
+    {
+        models.push(if key=="models" {config.metadata()} else {serde_json::json!({"id":config.model,"object":"model","owned_by":"kuno","created":1792368000})});
+    }
+    Json(value).into_response()
+}
+
+async fn native_inference(
+    gateway: Arc<Gateway>,
+    value: serde_json::Value,
+    path: &str,
+    mut lease: Option<Lease>,
+) -> Response {
+    let mut value = value;
+    let prepared = crate::native_text::prepare(path, &value);
+    crate::native_text::scrub_json(&mut value);
+    drop(value);
+    let prepared = match prepared {
+        Ok(p) => p,
+        Err(code) => return error(StatusCode::BAD_REQUEST, code),
+    };
+    let config = gateway.config.native_text.clone().unwrap();
+    let chat = prepared.chat;
+    let stream = prepared.stream;
+    if let Err(code) = gateway.evict_images().await {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    if let Some(pool) = &gateway.managed
+        && let Err(code) = pool.stop_all().await
+    {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    if let Some(lease) = &mut lease
+        && let Err(code) = lease.dispatched()
+    {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    let Some(request) = prepared.request else {
+        let result = gateway.native_runtime.evict().await;
+        // evict only returns after wait/reap; a live process retains uncertainty.
+        if result != Err("native_worker_reap_failed")
+            && let Some(lease) = &mut lease
+        {
+            lease.complete();
+        }
+        return match result {
+            Ok(()) => {
+                let mut v = crate::native_text::chunk(&config.model, chat, "", None);
+                v["done"] = true.into();
+                v["done_reason"] = "unload".into();
+                Json(v).into_response()
+            }
+            Err(code) => error(StatusCode::SERVICE_UNAVAILABLE, code),
+        };
+    };
+    let preload = request.outputs == 0;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+    let task_gateway = gateway.clone();
+    let model = config.model.clone();
+    tokio::spawn(async move {
+        let settled = task_gateway
+            .native_runtime
+            .run(&config, request, sender)
+            .await;
+        let closed = if !prepared.keep_alive {
+            task_gateway.native_runtime.evict().await
+        } else {
+            Ok(())
+        };
+        if settled
+            && closed != Err("native_worker_reap_failed")
+            && let Some(lease) = &mut lease
+        {
+            lease.complete();
+        }
+    });
+    if !stream {
+        let mut text = zeroize::Zeroizing::new(String::with_capacity(8 * 1024 * 1024));
+        while let Some(event) = receiver.recv().await {
+            match event {
+                crate::native_text::Event::Text(bytes) => {
+                    let part = match std::str::from_utf8(&bytes) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return error(StatusCode::BAD_GATEWAY, "native_worker_utf8_invalid");
+                        }
+                    };
+                    if text.len() + part.len() > 8 * 1024 * 1024 {
+                        return error(StatusCode::BAD_GATEWAY, "native_response_too_large");
+                    }
+                    text.push_str(part);
+                }
+                crate::native_text::Event::Done(metrics) => {
+                    let mut v = crate::native_text::chunk(&model, chat, &text, Some(&metrics));
+                    if preload {
+                        v["done_reason"] = "load".into();
+                    }
+                    return Json(v).into_response();
+                }
+                crate::native_text::Event::Failed(code) => {
+                    return error(crate::native_text::error_status(code), code);
+                }
+            }
+        }
+        return error(StatusCode::BAD_GATEWAY, "native_worker_response_incomplete");
+    }
+    // Hold headers through startup/load: an OOM before the first token is a
+    // real HTTP503. Later stream failures use the ordinary NDJSON error form.
+    let first = match receiver.recv().await {
+        Some(crate::native_text::Event::Failed(code)) => {
+            return error(crate::native_text::error_status(code), code);
+        }
+        Some(event) => event,
+        None => return error(StatusCode::BAD_GATEWAY, "native_worker_response_incomplete"),
+    };
+    let events = futures_util::stream::unfold(
+        (receiver, model, Some(first)),
+        move |(mut receiver, model, mut first)| async move {
+            let event = match first.take() {
+                Some(event) => event,
+                None => receiver.recv().await?,
+            };
+            let mut value = match event {
+                crate::native_text::Event::Text(bytes) => match std::str::from_utf8(&bytes) {
+                    Ok(text) => crate::native_text::chunk(&model, chat, text, None),
+                    Err(_) => serde_json::json!({"error":"native_worker_utf8_invalid"}),
+                },
+                crate::native_text::Event::Done(metrics) => {
+                    let mut v = crate::native_text::chunk(&model, chat, "", Some(&metrics));
+                    if preload {
+                        v["done_reason"] = "load".into();
+                    }
+                    v
+                }
+                crate::native_text::Event::Failed(code) => serde_json::json!({"error":code}),
+            };
+            let mut encoded = serde_json::to_vec(&value).unwrap();
+            crate::native_text::scrub_json(&mut value);
+            encoded.push(b'\n');
+            Some((
+                Ok::<_, std::convert::Infallible>(encoded),
+                (receiver, model, first),
+            ))
+        },
+    );
+    (
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Body::from_stream(events),
+    )
+        .into_response()
 }
 
 #[cfg(test)]

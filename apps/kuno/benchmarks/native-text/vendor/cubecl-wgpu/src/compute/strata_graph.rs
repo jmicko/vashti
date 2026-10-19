@@ -141,7 +141,7 @@ fn credit(nodes: usize, replay: bool) {
 
 pub(crate) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("KUNO_STRATA_INTEL_CORE").as_deref() == Ok("public"))
+    *ON.get_or_init(|| matches!(std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(), Ok("public" | "protected-worker")))
 }
 #[derive(Debug)]
 pub(crate) struct Program {

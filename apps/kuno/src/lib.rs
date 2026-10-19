@@ -29,3 +29,7 @@ pub mod recovery;
 pub mod reservations;
 pub mod resources;
 pub mod worker;
+
+pub mod native_protocol;
+
+pub mod native_text;

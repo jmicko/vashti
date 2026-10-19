@@ -5,12 +5,16 @@ mod bank96_probe;
 mod bank_slots;
 pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
+#[path = "../../../src/native_protocol.rs"]
+#[allow(dead_code)]
+mod native_protocol;
 mod strata_cache;
 mod strata_dense;
 mod strata_engine;
 mod strata_expert_fused;
 mod strata_shared_native;
 mod strata_weight_q8;
+mod strata_worker;
 pub(crate) use strata_expert_fused::global as strata_global_experts;
 mod strata_external_flight;
 mod strata_gdn;
@@ -1172,6 +1176,21 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--native-worker") {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.len() != 3 {
+            return Err("native_settings_required".into());
+        }
+        let result = strata_worker::run(std::path::Path::new(&args[2]));
+        if let Err(code) = result {
+            let _ = native_protocol::write_response(
+                &mut std::io::stdout(),
+                native_protocol::ERROR,
+                code.as_bytes(),
+            );
+        }
+        return result.map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--validate-port-registration") {
         return daslab_language_probe::strata_registration_probe();
     }

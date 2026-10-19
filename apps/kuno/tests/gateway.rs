@@ -95,6 +95,7 @@ impl Fixture {
             queue_timeout_seconds: 1,
             managed,
             image,
+            native_text: None,
         };
         let base = format!("http://{}", config.listen);
         let control = format!("http://{}", config.control_listen);

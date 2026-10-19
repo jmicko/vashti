@@ -23,7 +23,7 @@ case ${KUNO_IMAGE_CUDA:-0} in
             exit 1
         fi
         build_dir="$root/target/kuno-sd-build-88411ef-$patch_bundle-cuda"
-        cuda_options=(-DSD_CUDA=ON -DGGML_STATIC=ON
+        cuda_options=(-DSD_CUDA=ON -DGGML_STATIC=ON -DGGML_CUDA_NO_VMM=ON
             "-DCUDAToolkit_ROOT=$KUNO_CUDA_ROOT"
             "-DCMAKE_CUDA_COMPILER=$KUNO_CUDA_ROOT/bin/nvcc"
             "-DCMAKE_CUDA_ARCHITECTURES=${KUNO_CUDA_ARCHITECTURES:-native}")

@@ -1,5 +1,20 @@
 # Kuno and Vashti Coordination
 
+**Active backend work: native service preview (2026-10-19 UTC).**
+The new warm-cache operator profile passes on4771bd05/SHA1ab7c964:
+`strata-adapted-profile-check-20261019`, second request/window64,362 outputs,
+4887 exchanges and full erasure/physical recovery. Sampled target GPU time85.754ms:
+GU29.72%, DOWN22.23%, packed dense11.88%. Diagnostic only, not a new throughput.
+Expert dot/access scheduling is the next measured candidate; installability is
+currently prioritized over additional kernel changes.
+
+The [native service preview contract](kuno-native-text-service.md) governs the
+opt-in owned model entry and private worker. Existing Ollama names stay intact.
+Consumer implementation remains in the Vashti task. The following service work
+is under construction and is NOT installed/live-accepted yet. Do not mistake
+CPU coverage or the earlier public harness for arbitrary-caller acceptance.
+
+
 **Selected Intel engine checkpoint: 33.4 tokens/s warm (2026-10-18).**
 The connected Rust rewrite has passed the documented selected-engine audit.
 Frozen runtime dfe2e6f7 / SHA4cd6d4f7 (strata-adaptive-four-20261019), built with

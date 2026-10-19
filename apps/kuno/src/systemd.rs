@@ -1498,6 +1498,7 @@ mod tests {
             upstream: "127.0.0.1:11435".parse().unwrap(),
             state_dir: "/var/lib/kuno".into(),
             activation_file: Some(READY.into()),
+            native_text: None,
             max_waiting: 17,
             queue_timeout_seconds: 57,
             response_header_timeout_seconds: 300,

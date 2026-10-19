@@ -558,6 +558,7 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
                 gateway.evict_images().await?;
+                gateway.evict_native_text().await?;
                 Ok(())
             };
             match tokio::time::timeout(Duration::from_secs(grace), cleanup).await {

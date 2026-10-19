@@ -26,6 +26,9 @@ cubecl-common = "=0.10.0"
 cubecl-wgpu = { version = "=0.10.0", default-features = false, features = ["std"] }
 cubecl-runtime = "=0.10.0"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+libc = "0.2"
 zeroize = "1.9"
 half = "=2.7.1"
 kuno-text = { path = "../../../../crates/kuno-text" }
@@ -58,6 +61,9 @@ cpu-fma = []
 cpu-buffered-weights = []
 cpu-work-stealing = ["kuno-text/cpu-work-stealing-lab"]
 cpu-q8-two-pass = ["kuno-text/cpu-q8-two-pass"]
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 debug = 0
