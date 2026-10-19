@@ -1,5 +1,32 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno-only Strata prefill gap pass (2026-10-19, CPU candidate; NOT installed).**
+The user authorized investigation and implementation preparation while away and
+without sudo. See [full source comparison, candidate and protected next steps](kuno-prefill-strata-gap-investigation.md).
+Source5fbc3ca5 combines genuine missing token-level prompt router parallelism,
+eight-value IQ weight decoding/vector stores, four-accumulator macro matrix tiles,
+and the required bounded SIMD16 multi-subgroup contract repair. The earlierd06c03d4
+failure is not established numerical divergence: native subgroup selection rejected
+its128-thread cooperative geometry. New actual-module CPU coverage catches this.
+
+65 selected CPU cases pass (10 matrix,29 prompt,5 router,13 engine,8 HAL selector);
+strict selected production worker Clippy passes. Broader all-test Clippy still has
+unrelated existing fixture/style warnings and is not claimed passing. Frozen release source5fbc3ca5 / SHA b45446bc builds; full402 ordinary/64 matrix
+offline validation passes. Artifact: `strata-prefill-coupled-investigation-20261019`.
+Exact hashes, failed broader-lint scope and receipt paths are in the investigation. **No new GPU
+numerical or speed result, installation, service interruption or Vashti/API change.**
+Installed worker remains60c20e36 / SHA1db4664d with gateway36626d30 / SHAd3ed07f4.
+Actual hashes are unchanged; Kuno/Ollama/Vashti read-only probes return200.
+The temporary isolated review worktrees have been queued for archive; selected
+commits are integrated into this backend checkout.
+
+Next needs available GPUs and refreshed sudo for protected numerical, complete
+request/erasure/recovery and matched short/long prompt tests. Do not install merely
+because the CPU/offline gates pass. Generic decode uses the existing small path;
+these prompt changes do not yet claim faster token generation. CubeKv0.2 is a
+researched Rust GEMM alternative, not an added dependency or selected backend.
+
+
 **Active Kuno-only prompt-processing optimization (2026-10-19, installed and backend-validated).**
 Worker source60c20e36 / SHA1db4664d is installed with unchanged image-enabled
 gateway36626d30 / SHAd3ed07f4. Forward source selectiona37db7da restores the exact

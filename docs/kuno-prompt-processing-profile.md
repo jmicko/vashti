@@ -1,5 +1,11 @@
 # Native prompt processing investigation — 2026-10-19
 
+**Next CPU-only candidate:** [Strata gap investigation](kuno-prefill-strata-gap-investigation.md)
+records the parallel router, vector dequantization, macro matrix and subgroup
+contract repairs at5fbc3ca5. It is NOT installed or hardware-validated. The accepted
+installed results below remain the live baseline.
+
+
 This is Kuno backend work in `codex/strata-rust-port`. No Vashti source or API
 change is involved. The accepted direct-buffer worker below is installed through the unchanged
 image-enabled gateway. Final installed request/metadata acceptance passes.
@@ -17,7 +23,11 @@ Actual request erasure and Session close are required before a passed receipt.
 `--public-prefill-profile` adds completed GPU fences at coarse operator boundaries.
 Its times are diagnostic, NOT ordinary throughput. The static per-category tuple
 is `(calls, elapsed_ns, enqueue_elapsed_ns)`; the first baseline predates the
-third field. Enqueue time includes any blocking inside the called backend, not
+third field. In the uninstalled5fbc3ca5 candidate, labels `expert_group_count`,
+`expert_fp16_image_bytes`, `expert_host_stage_bytes` and
+`expert_host_copy_segments` instead put aggregate counts/bytes in slot0 and zero
+in both time slots. These counters are compiled-public-only and contain no route
+values, source IDs or contents. Enqueue time includes any blocking inside the called backend, not
 just CPU arithmetic. Nested attention categories overlap their outer category
 and must not be summed twice. `expert_cpu_*` slices do not add device fences.
 The private worker cannot activate any profiling through input or environment.
