@@ -37,6 +37,8 @@ impl ResidentGdn<'_> {
         poison: Arc<AtomicBool>,
         cancel: &AtomicBool,
     ) -> Result<Pending> {
+        let mut timing =
+            crate::strata_prefill_profile::Timer::new(arena.client().map_err(u::fault)?)?;
         cancelled(cancel)?;
         graph.verify_unchanged()?;
         if !crate::strata_prompt::active()
@@ -122,6 +124,7 @@ impl ResidentGdn<'_> {
                 cancel,
             )?;
         }
+        timing.mark("gdn_projections")?;
         let [_, controls, status] = crate::strata_prompt::gdn_controls()?;
         let ab = executor
             .strata_gdn_ab_weights([self.projections.alpha.tensor, self.projections.beta.tensor])?;
@@ -150,6 +153,7 @@ impl ResidentGdn<'_> {
             self.layout.epsilon.to_bits(),
             0,
         ];
+        timing.mark("gdn_controls")?;
         crate::strata_gdn::prompt::convolution_full(
             arena,
             p,
@@ -162,6 +166,7 @@ impl ResidentGdn<'_> {
                 h(fault_id)?,
             ],
         )?;
+        timing.mark("gdn_convolution")?;
         crate::strata_gdn::prompt::recurrence_full(
             arena,
             p,
@@ -176,6 +181,7 @@ impl ResidentGdn<'_> {
                 h(fault_id)?,
             ],
         )?;
+        timing.mark("gdn_recurrence_norm")?;
         executor.enqueue_strata_prompt_prepacked_projection(
             self.projections.output.tensor,
             &crate::strata_prompt::activation_stage()?,
@@ -184,6 +190,7 @@ impl ResidentGdn<'_> {
             &BatchSpans::new(count, 0, 0, shape.value_heads * 128, 0, 2560),
             cancel,
         )?;
+        timing.mark("gdn_output_projection")?;
         cancelled(cancel)?;
         Ok(pending)
     }

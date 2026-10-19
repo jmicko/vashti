@@ -36,6 +36,8 @@ impl ResidentQsa<'_> {
         poison: Arc<AtomicBool>,
         cancel: &AtomicBool,
     ) -> Result<Pending> {
+        let mut timing =
+            crate::strata_prefill_profile::Timer::new(arena.client().map_err(u::fault)?)?;
         cancelled(cancel)?;
         graph.verify_unchanged()?;
         if !crate::strata_prompt::active()
@@ -102,6 +104,7 @@ impl ResidentQsa<'_> {
                 cancel,
             )?;
         }
+        timing.mark("qsa_projections")?;
         let p = [
             count as u32,
             start as u32,
@@ -130,6 +133,7 @@ impl ResidentQsa<'_> {
                 h(roots[6])?,
             ],
         )?;
+        timing.mark("qsa_attention")?;
         executor.enqueue_strata_prompt_prepacked_projection(
             self.projections.output.tensor,
             &crate::strata_prompt::activation_stage()?,
@@ -138,6 +142,7 @@ impl ResidentQsa<'_> {
             &BatchSpans::new(count, 0, 0, 6144, 0, 2560),
             cancel,
         )?;
+        timing.mark("qsa_output_projection")?;
         cancelled(cancel)?;
         Ok(pending)
     }
