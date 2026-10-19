@@ -1,5 +1,30 @@
 # Complete Strata Intel inference rewrite: completion gate
 
+**Selected Intel engine checkpoint: 33.4 tokens/s warm (2026-10-18).**
+The connected Rust rewrite has passed the documented selected-engine audit.
+Frozen runtime dfe2e6f7 / SHA4cd6d4f7 (strata-adaptive-four-20261019), built with
+--intel-core --gpu-adaptive-usage, measures23.9617 tokens/s first request and
+33.3707 on the warm repeat:362 identical outputs each,4-input speculation,
+4887 fully published expert swaps. Warm generation10.8478s; full request with
+prefix16.0885s (22.5005 tokens/s), before erasure/close. One fixed-public code
+benchmark, not universal throughput or a new Ollama comparison.
+
+Validation:130 numerical cases including56 bit-exact expert controls on the
+unchanged math;37 global/cache/ownership tests with adaptation enabled; actual
+head-accounting boundary test;401 shaders/32 matrices; strict relevant Clippy;
+retained code repeat, and a separate512-output/no-EOS prose/cap run with3247
+published swaps. Both actual target/draft erasure and physical recovery pass.
+Four remains default; eight-input trial passes but is slower (18.9600 warm).
+Both GPUs are idle for compute; all services/admission normal; no driver faults.
+
+See [final audit and exact receipts](kuno-strata-current-source-audit.md#final-selected-engine-checkpoint-2026-10-18-local).
+Selected rewrite/measurement milestone complete; native service/private-caller,
+mixed-context/soak and release acceptance remain separate work. The fast build
+is a development harness, NOT the installed backend. No API/frontend/install
+change. Current worktree is codex/strata-rust-port; canonical frontend checkout
+is untouched. Earlier entries below are historical controls and pending gates
+superseded only within the explicitly accepted scope.
+
 **Selected Intel rewrite accepted for fixed-public engine measurements (2026-10-18).**
 The connected Rust port is now past the source-wiring, representative numerical,
 whole-model completion and physical recovery gates for the selected B70 / original

@@ -1502,3 +1502,79 @@ PASS for exact fixed-public retained performance measurement of this candidate.
 The manifest records window4 and requires enabled adaptive mode with nonzero
 published swaps before a timing receipt may be written. Older frozen acceptances
 remain nested historical controls. No adaptive speed result yet at this decision.
+
+
+## Adaptive cache crosses thirty tokens per second (2026-10-18 local)
+
+strata-adaptive-four-throughput-20261019/throughput.json passes exact accepted
+dfe2e6f7/SHA4cd6d4f7, four-input native requests with adaptive usage enabled.
+Two same-session identical362-output/EOS requests,108 windows/32 repairs in
+second report;4887 fully published expert swaps over the Session.
+
+| Interval | First request | Warm second request |
+| --- | --- | --- |
+| Prefix/preflight |5.460215250s |5.240704524s |
+| Last-prompt-inclusive generation |15.107438066s |10.847832113s |
+| Generation tokens/s |23.961706705 |33.370722946 |
+| Full request before erasure |20.567653316s |16.088536637s |
+| Full request tokens/s |17.600452246 |22.500492628 |
+
+Target-phase runtime setup98.395355839s excludes earlier process/device/file
+setup. These are delivered-token engine rates, not pure GPU decode or a new
+Ollama comparison. Generation includes final prompt input and first prediction,
+all target/MTP/controller/cache work, but excludes prefix/preflight, request
+erasure and model close. This is one fixed-public code benchmark and one warm
+sample, not a universal rate or statistical distribution. Different topics,
+contexts and cache heat may differ. Prior controls remain21.3057 separate-GU,
+20.9871 joint-GU,18.9600 eight-input; no partial coupled component was removed
+because of those timing results. The normal four-input configuration remains.
+
+Both actual request owners erase and final close completes. Root after-state:
+Intel50,688,000B,NVIDIA compute0,normal admission/allHTTP200,all classified faults0.
+Swap/core0 and original48.2GiB cap were observed active. The thirty-token warm
+measurement milestone is met on the selected B70/original DASLab/Q2 configuration.
+A final alternate public prose/cap check is in progress; no further optimization
+is started in this block. No installed native backend/API/frontend/release change.
+
+
+## Final selected-engine checkpoint (2026-10-18 local)
+
+The selected connected Intel rewrite and >=30 warm delivered-token milestone
+are complete for the documented fixed-public scope. No GPU test remains running.
+The final additional correctness check strata-adaptive-four-prose-20261019
+passes actual512 outputs/no EOS at its requested512 cap,185 windows/72 repairs,
+window4,adaptive=true,3247 fully published swaps. The unsaved public tail is a
+coherent hash-table explanation cut off by the requested cap. Target/draft
+request erasure and final all-peer close pass. Root final after-state remains
+Intel50,688,000B,NVIDIA compute0 (538MiB desktop), allHTTP200, admission active/
+waiting/paused/recovery_required=false/0, all classified driver faults0. Active
+swap/core0 was observed. No code-generation execution-quality claim is made.
+
+Canonical performance build remains frozen dfe2e6f7/SHA4cd6d4f7, explicit
+--intel-core --gpu-adaptive-usage; ordinary --intel-core alone does NOT enable
+this experimental cache extension. --eight is optional and measured slower on
+the same fixture; four remains default. Exact existing frozen artifact must be
+used for reproducing the accepted timing manifest. A fresh runtime/source build
+requires its own frozen identity and documented acceptance before advancing the
+allowlist. Metadata-only docs/runner commits do not replace frozen runtime IDs.
+
+Worktree /home/jmicko/.codex/worktrees/kuno-image-speed/vashti, branch
+codex/strata-rust-port. Source commits this block: dcd7326e direct planes;
+55294dda original-weight actual input parity;883d584b explicit product precision;
+b91bcb33/0b76f8bb joint GU/coordinator and regular helper parameters;45a8eb6a
+explicit eight-input request;90968c5a strict admitted head-counter capacity;
+dfe2e6f7 credit only fully published exchanges in fixed-public metadata.
+The two failed intermediate source/numerical trials and the eight-head accounting
+failure remain failed; later receipts supersede them without rewriting evidence.
+
+Next work is separately scoped production/native-service integration and an
+independently protected arbitrary/private caller, plus mixed requests on one
+retained Session, context extremes, broader stochastic behavior and soak.
+The selected engine milestone is not proof of those exclusions or a generally
+stable33-token service. Native runtime is still a development harness, not the
+installed inference backend. No Vashti consumer/API/UI change is required for
+these internal engine changes; agree shared contracts before integrating them.
+No native install/release, model replacement, GPU reset/reboot or driver change.
+One graceful installed Kuno restart early in the block only evicted its idle
+image model, with services subsequently verified healthy. Original inherited
+untracked benchmarks/text/__pycache__ remains preserved.

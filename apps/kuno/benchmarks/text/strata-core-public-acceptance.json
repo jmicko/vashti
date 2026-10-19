@@ -14,8 +14,8 @@
   "timing_scope": "unchanged-code-fixture-q2-two-identical-public-requests",
   "numerical_receipt": "strata-joint-gu-entry-numerics-20261019/numerics.json",
   "retained_completion_receipt": "strata-adaptive-four-retained-20261019/intel.json",
-  "capped_completion_receipt": "strata-fp16-preserve-prose-20261018/intel.json",
-  "capped_completion_receipt_is_historical_control": true,
+  "capped_completion_receipt": "strata-adaptive-four-prose-20261019/intel.json",
+  "capped_completion_receipt_is_historical_control": false,
   "previous_acceptance": {
     "format": 1,
     "scope": "selected-intel-core-fixed-public-engine",
