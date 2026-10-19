@@ -236,6 +236,12 @@ fn joint_gu_source(dtype: u32, row_bytes: usize, direct_planes: bool) -> String 
     assert_eq!(&gate[..g], &up[..u]);
     let entry = |s: &str, name: &str| {
         s.replace("@compute @workgroup_size(256)\n", "")
+            .replace("@builtin(workgroup_id) ", "")
+            .replace("@builtin(local_invocation_index) ", "")
+            .replace("@builtin(subgroup_id) ", "")
+            .replace("@builtin(subgroup_invocation_id) ", "")
+            .replace("@builtin(subgroup_size) ", "")
+            .replace("@builtin(num_subgroups) ", "")
             .replace("fn main(", &format!("fn strata_{name}_entry("))
             .replace("strata_chunk", &format!("strata_{name}_chunk"))
     };
