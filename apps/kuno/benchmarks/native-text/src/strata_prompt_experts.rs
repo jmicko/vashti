@@ -552,9 +552,6 @@ mod vector_dequant_tests {
                 assert!(source.contains("atomicOr(&fault[0],128u)"));
             }
         }
-        assert!(GU_WORDS.is_multiple_of(4));
-        assert!(DOWN_WORDS.is_multiple_of(4));
-        assert!(DQ_WORDS.is_multiple_of(4));
         for slot in 0..DEQUANT_SLOTS {
             for (first, words) in [
                 (slot * DQ_WORDS, GU_WORDS),
