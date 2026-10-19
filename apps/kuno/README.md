@@ -38,6 +38,44 @@ confirmation before invoking an unattended command.
 Installation includes health checks. For a separate diagnostic report later, run
 `sudo /usr/local/lib/kuno/kuno doctor`.
 
+## Opt-in native Intel text preview
+
+The selected Rust engine is available through the ordinary Ollama-compatible
+listener under `kuno-qwen3.8-flash-next:iq3_s` once enrolled. It uses the original
+DASLab IQ3_S shards and Q2 MTP sidecar on a dedicated Intel B70. Existing Ollama
+model names retain their behavior; this is not a replacement for every model.
+See the [exact native service contract](../../docs/kuno-native-text-service.md)
+for verified installation evidence, model identity and API limits.
+
+```sh
+kuno run kuno-qwen3.8-flash-next:iq3_s
+kuno stop kuno-qwen3.8-flash-next:iq3_s
+```
+
+Text chat/generate, streaming, sampling and retained weights are supported.
+Thinking, tools, images, structured formats and OpenAI inference are not yet
+supported for this entry. Omit context overrides or use 32768; unsupported options
+return an explicit error. A full file-integrity check and model setup occur on
+cold load, which can take several minutes. Subsequent requests reuse weights;
+request state is erased before completion. Competing Ollama/image inference
+releases the native worker through the common admission mechanism.
+
+Enrollment is an administrator operation using root-controlled assets, not a
+manual edit to installed configuration:
+
+```sh
+sudo kuno configure-native-text --settings /absolute/enrollment.json
+sudo kuno configure-native-text --disable
+```
+
+The enrollment JSON supplies `model`, absolute source `executable` and `settings`
+paths, and `pci_address`. The transaction copies worker/settings into managed
+installation paths and preserves them across upgrades; model artifacts remain
+read-only in the existing model store. These commands warn and require
+confirmation because they briefly restart inference. They do not download or
+build the specialized worker. This development preview is not yet a generally
+packaged runtime or a release.
+
 ## Separate Kuno and Ollama commands
 
 Installation adds `kuno` to `/usr/local/bin` and configures the invoking non-root
@@ -70,8 +108,9 @@ kuno --host http://192.168.1.164:11434 run MODEL
 The inference/model commands invoke the unchanged Ollama client on `PATH`, with
 a command-scoped Kuno endpoint. They preserve streaming, arguments, terminal
 signals and exit status without adding inference deadlines. This compatibility
-client does not enable the paused native text prototype. It disables Ollama
-history by default; Ollama's explicit `/set history`, `/save` and external-editor
+client uses an enrolled native text model when explicitly selected, and otherwise
+retains normal Ollama routing. It disables Ollama history by default; Ollama's
+explicit `/set history`, `/save` and external-editor
 features remain user-controlled local storage, separate from Kuno's content-free
 server persistence.
 

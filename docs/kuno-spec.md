@@ -1,5 +1,12 @@
 # Kuno inference host specification
 
+**Native text preview update (2026-10-19 UTC):** the selected Rust Intel engine
+now has an opt-in owned model entry, protected private worker and reversible
+administrator enrollment. The [native service contract](kuno-native-text-service.md)
+specifies its exact supported routes/options, model artifacts and live acceptance
+scope. It uses a unique native name; ordinary Ollama names remain unchanged.
+The original milestones below remain broader than this narrow preview.
+
 Status: M1 gateway development release installed on the target Linux Mint host
 (2026-09-22). Privileged installation, post-install diagnostics, IPv4/IPv6
 forwarding, and startup enablement passed. Recovery and restore/reinstall passed on 2026-09-23, followed by remote streamed

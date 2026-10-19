@@ -1,5 +1,22 @@
 # Native DASLab/Strata checkpoint — 2026-10-17
 
+**Installed native text preview (2026-10-19 UTC).**
+The selected engine is now enrolled on this host as
+`kuno-qwen3.8-flash-next:iq3_s`. Gateway source `d4bb87fb`, worker `39c3e8e1`;
+protected staged CLI/HTTP, actual installed identity/mount, mixed prompts,
+request erasure, zero worker disk writes and ordinary Ollama coexistence pass.
+Two identical warm installed API responses deliver **33.6602 / 36.1275 eval
+tokens/s**; full requests including prefix/erasure deliver **17.4990 / 19.7720**.
+Weights are intentionally warm on B70; NVIDIA compute is idle. Services/admission
+are normal, no driver faults or active test units remain. Local development
+installation only; no release or frontend changes. Next measured kernel target:
+quantized expert gate/up plus down, together 51.95% of sampled target GPU time.
+
+Read the [active coordination handoff](kuno-vashti-coordination.md) and
+[exact service contract, tests, artifacts, limits and receipts](kuno-native-text-service.md)
+before continuing. Earlier entries below are historical and superseded only
+within this installed preview's explicitly accepted scope.
+
 **Selected Intel engine checkpoint: 33.4 tokens/s warm (2026-10-18).**
 The connected Rust rewrite has passed the documented selected-engine audit.
 Frozen runtime dfe2e6f7 / SHA4cd6d4f7 (strata-adaptive-four-20261019), built with

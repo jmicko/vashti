@@ -103,14 +103,14 @@ framed caller, then verify the staged gateway's catalog, real streamed/nonstream
 mixed prompts, preload, unload, subsequent ordinary Ollama inference, recovery
 and absence of content files. Keep an exact binary/config rollback.
 
-## Integration checkpoint (2026-10-19 UTC, before installation)
+## Integration checkpoint (2026-10-19 UTC)
 
 - Worktree `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
   `codex/strata-rust-port`. Do not edit the canonical Vashti checkout.
 - Initial adapter7f54777a, protected Vulkan/pipe correction39c3e8e1,
-  transactional enrollment1c4cf520. Additional actual-Ollama-CLI defaults handling
-  is being tested; it accepts empty serialized suffix/template/options defaults
-  while continuing to reject real unsupported features.
+  transactional enrollment1c4cf520, actual-Ollama-CLI defaults handlingd4bb87fb.
+  Empty serialized suffix/template/options defaults are accepted while real
+  unsupported features continue to fail explicitly.
 - Frozen selected worker `strata-native-worker-scope-20261019`, runtime39c3e8e1,
   SHA25680890bcebd620244b12b80c5b31f3a34460075f061c0fbc10b33f653b7d6354f.
   Its wire/math are unchanged by gateway-only enrollment and parser changes.
@@ -125,9 +125,13 @@ and absence of content files. Keep an exact binary/config rollback.
   graceful close in the staged gateway test; do not relabel this failed receipt.
 - First candidate5d1c238c failed before inference because the private mode had
   not enabled all original HAL gates. Its physical recovery also passed.
-- Initial Kuno CPU run:222 passed across15 suites,7 hardware tests ignored.
-  Latest targeted lib/native/installer tests and strict Clippy pass; run the final
-  broad Kuno suite again after the final parser/installer edits are frozen.
+- Final Kuno CPU run:226 passed across15 suites,7 hardware tests ignored.
+  Root all-target and selected worker strict Clippy pass. The first final parallel
+  run failed the existing privacy fixture
+  `binary_writes_only_content_free_state_and_diagnostics` (initial pause expected
+  503, observed200). Its isolated repeat and the full serial rerun passed. A
+  parallel ephemeral-port race is suspected but not established; preserve the
+  failed log rather than claiming that cause proven.
 - Image-enabled replacement build preserves CUDA/Vulkan and the existing
   managed SYCL bundle. Fresh pinned source/build under this worktree's
   `target/kuno-sd-{source,build}-88411ef-b51e05e8aaf4e67e[-cuda]`.
@@ -135,17 +139,129 @@ and absence of content files. Keep an exact binary/config rollback.
   ON preparation failed its CUDA-driver link and was not installed; restored OFF
   rebuild succeeds, including embedding, attention and36 loader CPU cases.
   Gateway Cargo target: `/media/jmicko/faststore/kuno-development/native-install-target-20261019`.
-  Rebuild the final gateway after the last commit before freezing/copying it.
-- Nothing is installed yet. Next: protected staged HTTP gateway with disjoint
-  listener/control/worker ports, mixed real requests, installed Ollama CLI shape,
-  root-only worker IO check, graceful unload and ordinary Ollama routing. Then
-  use official `upgrade --yes` and `configure-native-text --settings FILE --yes`.
-  Do not manually edit installed config/binary and invalidate deployment hashes.
+  Final frozen gateway is runtime d4bb87fb65d3386a8a8b8314d924c4d428c6684f,
+  SHA25681370d88a4572aadee65f2cb621f12c5ff99bbe63b9552c688846e868314be92
+  (`native-gateway-frozen-20261019`). No SYCL link dependency was added to it.
+- `native-gateway-stage-check-v3-20261019` passes actual Kuno/installed-Ollama
+  CLI generation,64-output capped nonstreamed prose, three-frame multi-turn
+  streaming, resident metadata, unsupported-format400, empty Go-style preload,
+  graceful native unload and subsequent real ordinary Ollama inference. Root
+  inspection measured worker `write_bytes=0`; unprivileged inspection was denied.
+  Final Intel50,688,000B, NVIDIA compute0, admission normal, all services HTTP200,
+  no classified driver-fault delta. v1/v2 failed before inference because the
+  systemd test client lacked HOME; v3 supplies an isolated client home. They are
+  failed harness attempts, not successful backend acceptance receipts.
+- Official `upgrade --yes` and `configure-native-text --settings FILE --yes`
+  completed on this machine. The gateway and worker match the frozen hashes;
+  existing image, managed-worker and listener settings are unchanged. Exact old
+  binary/config backups and the installation receipt are root-only under
+  `/var/lib/kuno-native-preview-20261019`. Deployment ownership/hashes remain
+  managed by the normal reversible transaction; do not manually replace files.
   Enrollment copies root-controlled source worker/settings into the existing
   reversible deployment and preserves them across later gateway/image upgrades.
+  `native-installed-check-20261019` now passes real inference through this
+  installed identity and model mount. See the installed acceptance below.
 - Model settings for installation must reference the existing read-only model
   mount `/var/lib/kuno/models/.kuno-import/...`. Hardlink the existing889MB MTP
   into that store on the same filesystem, not a second83GB target download.
   Test scripts/settings/frozen artifacts and classified receipts live under
   `/media/jmicko/faststore/kuno-development`; they contain fixed public fixtures
   only. Do not save generated text or private caller bodies in the next tests.
+
+## Profile and next optimization
+
+The protected warm target-window profile `strata-adapted-profile-check-20261019`
+uses runtime4771bd05 and frozen SHA256
+1ab7c9646ba7595d8d51d340ef9b5490457f51bc28286a9b2f931b0cfdedff0f.
+It profiles only window64 of the retained second request, after real adaptation:
+362 outputs/EOS,4887 published exchanges, repeat equality, real request erasure,
+checked close and physical recovery all pass. Its serialized target sample is
+85.754117ms across47 expert layers:
+
+| Target operator | GPU milliseconds | Share |
+| --- | ---: | ---: |
+| Joint quantized expert gate/up | 25.484 | 29.72% |
+| Quantized expert down | 19.064 | 22.23% |
+| Packed dense Q8 | 10.189 | 11.88% |
+| All other sampled target work | 31.018 | 36.17% |
+
+This diagnostic does not measure overall throughput, draft execution, cold load
+or request cleanup. The selected fixed-public warm engine rate remains33.3707
+tokens/s from the separate accepted measurement. Do not present target-window
+percentages as an end-to-end speedup prediction or universal workload result.
+
+The next candidate is the coupled quantized expert path: inspect memory stalls,
+register pressure and subgroup occupancy in joint gate/up and down, then change
+their access/dot scheduling together while preserving the original packing,
+real adaptive-source addresses, target verification and numerical contract.
+Packed dense work is the second candidate. BF16 matrix work is only3.50% of
+this sample, so a standalone BF16 rewrite is not the leading measured target.
+Do not replace retained-cache placement or draft speculation merely because
+this target-only profile does not include their CPU/transfer costs.
+
+## Installed acceptance and usage (2026-10-19 UTC)
+
+`native-installed-check-20261019` passes through the actual192.168.1.164:11434
+listener: ordinary Ollama generation/unload, native362-output code response/EOS,
+and a different three-frame multi-turn streamed reply on the same native PID.
+All caller prompts are fixed public fixtures; replies and their hashes are not
+saved. The live worker is nonroot under the actual DynamicUser service, can read
+the actual read-only model mount, has swap/core disabled and denies unprivileged
+process inspection. Root inspection measures `write_bytes=0`. Cold reported load
+is223.333s including full artifact verification; total first request260.914s.
+This cold request is not the warm33.3707-token/s public benchmark.
+
+Both the gateway and worker hashes match the frozen artifacts above. Existing
+image settings, managed settings, upstream127.0.0.1:11435 and listen[::]:11434 are
+preserved. The MTP sidecar is hardlinked into the existing model store. No target
+weights are duplicated. Existing managed SYCL assets are preserved; no new image
+visual/fidelity run was performed, so CPU/image-build coverage does not establish
+new live image acceptance. No frontend files, release version or published
+package changed.
+
+After acceptance, all three service HTTP probes are200; admission is unpaused,
+inactive, waiting0 and recovery_required=false. Classified Xe timeout/wedge/
+reset/memory-fault and NVIDIA Xid counters remain0. The native weights are
+intentionally retained (Intel33,312,804,864 bytes at this check); NVIDIA compute0.
+Do not call this an idle-GPU recovery receipt. Graceful native unload and physical
+recovery were separately accepted in the staged test above.
+
+Use `kuno run kuno-qwen3.8-flash-next:iq3_s`, or select this entry through the
+existing Ollama connector. For Vashti, use a fresh text conversation with tools
+and thinking disabled, supported sampling options only, and no context override
+(or32768). The connector serializes optional penalties/num_gpu/num_thread when
+set, and those are unsupported400 for this entry; clear them rather than silently
+stripping a user's request. This task does not change Vashti code or claim an
+end-to-end private-chat UI run. Any capability-aware setting controls and native
+model presentation belong to the Vashti task. No protocol crate migration is
+required for basic text discovery/chat.
+
+`kuno stop kuno-qwen3.8-flash-next:iq3_s` explicitly frees it. Ordinary subsequent
+inference automatically closes it first. To remove enrollment while preserving
+Ollama/image configuration, use `sudo kuno configure-native-text --disable` and
+confirm the restart. Normal setup transactions retain rollback ownership; keep
+the root backup under `/var/lib/kuno-native-preview-20261019` until accepted by
+the user. This is a local development preview, not a released/downloadable native
+runtime. Broader long-context/soak, tool/thinking/OpenAI support, other GPUs/models
+and automatic name bindings remain open.
+
+### Retained installed API timing
+
+`native-installed-check-20261019/warm-repeat-receipt.json` passes two identical
+362-output/EOS code responses through the installed LAN-address API on the same
+retained worker. Temperature0, seed0,35 rendered prompt tokens,384 output cap;
+original public merge-sorted-lists fixture as in the selected benchmark. Neither
+response nor its hash is persisted. Both report zero load duration.
+
+| Request | Delivered eval tokens/s | Eval seconds | Full request seconds | Full request tokens/s |
+| --- | ---: | ---: | ---: | ---: |
+| Warm code after mixed prompt | 33.6602 | 10.7546 | 20.6869 | 17.4990 |
+| Identical warm repeat | 36.1275 | 10.0201 | 18.3087 | 19.7720 |
+
+The API eval timer excludes prompt/prefix processing and checked private erasure;
+total_duration includes them. The second prompt processing duration is5.2690s.
+Do not call36.1275 the whole-request rate. This is one fixed public workload,
+not general throughput, a new Ollama comparison or a long-context soak. Final
+`host-final.json`/`final-ready.json` independently confirm normal admission,
+healthy services, no active test units, zero worker write_bytes and driver faults,
+NVIDIA compute0 and intentionally retained native weights.

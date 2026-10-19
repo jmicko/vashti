@@ -1,5 +1,10 @@
 # Bonsai 2 and a native Rust inference engine
 
+**Native service update (2026-10-19 UTC):** the selected Qwen Rust adapter now
+implements the narrow [native text preview contract](kuno-native-text-service.md)
+under a unique `kuno-` name. The richer routing/OpenAI/tool contract below remains
+future work. This does not establish Bonsai implementation or acceptance.
+
 Accepted direction, 2026-09-23. This work follows the GPU scheduler and managed
 worker boundary. It must not delay the initial Qwen image path. No Bonsai model
 is currently advertised or served by Kuno.
