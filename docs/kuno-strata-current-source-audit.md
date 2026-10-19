@@ -1192,3 +1192,46 @@ compiled source and whole selected engine before adopting a new throughput hash.
 This may improve occupancy/input traffic; no gain is assumed before measurement.
 No more old Ollama baselines, API/cancellation work, foreign engine, easier model
 or removal of coupled port components is needed. The30 tokens/s goal stays active.
+
+
+## Direct expert activation candidate and GPU handback (2026-10-18 local)
+
+Human requested the GPUs back at this checkpoint. No further whole-model or
+speed run was started. The goal remains paused. The accepted runtime and its
+19.7811/20.6089 tokens/s results remain unchanged.
+
+Candidate source `dcd7326e2eaefcd7b21c69e6f9243967069c7e1b` implements the
+paired direct-plane changes described above: selected global GU/DOWN roles omit
+the activation SLM declaration/copy/barrier and consume original packed words
+AND scales directly through per-member original plane frames. All real expert
+addresses, 4/2/1 groups, integer finish/reduction, route/status guards and owners
+remain. Legacy non-global builders explicitly keep their previous staging path.
+The candidate is not yet accepted for whole-model correctness or performance.
+
+Immutable build `strata-direct-expert-input-20261019` completed with SHA256
+`6a73f7bd8e698bb91f06823a34d26377893b06e46764992f4544e0e2f9558f9d`.
+Pinned matrix-capable offline validation exits0:397 shader variants and32
+cooperative matrix configurations. Log:
+`strata-direct-expert-input-shader-validation-20261019.log`.
+Both actual global source tests pass (2 tests,0 failures): the ten compiled
+expert-role modules validate with no activation workgroup storage/barriers;
+all13 role/fetch schemas preserve their original address bindings. Log:
+`strata-direct-expert-input-source-tests-20261019.log`.
+All CPU build/validation/test processes are terminal at handback.
+
+Read-only root inspection
+`strata-direct-expert-input-checkpoint-host-20261019.json` at00:11:21UTC
+(2026-10-19) confirms Intel50,688,000B used; NVIDIA compute processes0,
+desktop memory520MiB; Kuno/Ollama/Vashti HTTP200; admission active=false,
+waiting=0, paused=false, recovery_required=false. All classified Xe faults,
+timeouts, wedge/reset failures and NVIDIA Xid counters are0. No GPU reset,
+service restart, driver change, installation, or frontend/API change occurred.
+
+Resume only when GPUs are available again: finish strict core Clippy as needed,
+then run the frozen candidate through protected retained code execution, exact
+repeat, request erasure, close and physical recovery. Only after correctness
+and the source audit pass may the exact-artifact throughput allowlist advance;
+preserve the accepted299579b5 baseline and measure the same retained workload.
+Neither offline validation nor the address equivalence argument proves a speed
+gain. Do not time this candidate before that acceptance, and do not roll back
+coupled port dependencies merely because an isolated timer regresses.

@@ -1,5 +1,15 @@
 # Kuno and Vashti Coordination
 
+**GPU handback checkpoint (2026-10-18 local).** Human needs both GPUs; no further
+GPU test is authorized for this block. Both are idle for compute, Kuno admission
+is normal, and Kuno/Ollama/Vashti return HTTP200. Candidate `dcd7326e` removes
+selected expert activation SLM staging and reads original packed planes/scales
+directly. Its immutable build and offline397-shader/32-matrix validation pass;
+whole-model correctness and performance are still pending. Accepted baseline
+remains20.6089 warm tokens/s on299579b5. See the latest
+[checkpoint](kuno-strata-current-source-audit.md#direct-expert-activation-candidate-and-gpu-handback-2026-10-18-local)
+for hashes, receipts and exact resume steps. Goal remains paused.
+
 **Selected Intel rewrite accepted for fixed-public engine measurements (2026-10-18).**
 The connected Rust port is now past the source-wiring, representative numerical,
 whole-model completion and physical recovery gates for the selected B70 / original
