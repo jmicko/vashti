@@ -332,11 +332,7 @@ impl CubeTask<AutoCompiler> for ScalarAttention {
     }
 }
 
-fn scalar_launch(
-    arena: &PrivateArena,
-    owners: [Handle; 7],
-    p: [u32; 12],
-) -> ProbeResult<()> {
+fn scalar_launch(arena: &PrivateArena, owners: [Handle; 7], p: [u32; 12]) -> ProbeResult<()> {
     let mut args = KernelArguments::new();
     if owners.iter().any(|h| h.stream != owners[0].stream) {
         return Err("public QSA original scalar client identity".into());
@@ -592,9 +588,15 @@ fn check_impl(
     // Actual production kernel selection and original launch validation.
     if large {
         #[cfg(feature = "strata-qsa-xmx")]
-        if !super::prompt_xmx::try_launch(arena, &owners(actual)?, p, [ATTENTION_CHUNKS, 2, count])?
         {
-            return Err("public large QSA did not exercise actual XMX kernel".into());
+            let mut current = owners(actual)?;
+            // Use the authentic original BufferId's logical fault view, exactly
+            // as production does. Keep/read the entire parent allocation below
+            // to check every padding word; never relax the exact4-byte guard.
+            current[6] = crate::resident_util::handle(arena, actual[2])?;
+            if !super::prompt_xmx::try_launch(arena, &current, p, [ATTENTION_CHUNKS, 2, count])? {
+                return Err("public large QSA did not exercise actual XMX kernel".into());
+            }
         }
         #[cfg(not(feature = "strata-qsa-xmx"))]
         return Err("public large QSA XMX feature absent".into());

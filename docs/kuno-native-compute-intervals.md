@@ -1742,3 +1742,14 @@ remain; no precision/source/fault/causal/oracle/acceptance guard is relaxed.
 CPU tile coverage is updated to the real coupled layout; original144 controls,
 all offline variants and original171+7 actual GPU controls must pass again on
 this exact correction before any whole-model speed/selection claim.
+
+
+48KiB source3ac1f893/SHAdcc438de again passes144 CPU and all420/216 offline
+variants. Actual hardware admission now succeeds, but the new public fixture's
+FULL padded fault allocation violates production's strict exact4-byte fault
+view, so the operator run stops with InvalidBufferLength BEFORE XMX execution.
+No math/performance acceptance. Physical recovery passes. The correction derives
+the genuine logical fault handle from its original arena BufferId, as production
+already does. The entire authentic parent is retained and read afterward for
+padding-zero checks; the production exact4-byte check remains UNCHANGED. No fake
+length/view, source/owner/epoch waiver or test threshold change is introduced.
