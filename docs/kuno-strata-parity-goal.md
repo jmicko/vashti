@@ -9,6 +9,27 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
+## Latest tested checkpoint (2026-10-20 21:52UTC): pool reuse is real; FIRST gate still fails
+
+Complete source865a9c16/SHA36197839 passes136 selected CPU,420/208 offline,
+original171 GPU/full original proof chain, both public profile modes, ACTUAL pool
+retirement/adoption, terminal-negative2-queue recovery and fresh clean requests.
+Original pools now really serve long and small captures; no old private plan,
+source or resource owner survives erasure. All previous components remain.
+
+Clean firstlong12.962279132->13.247788385s (2.20% slower), repeat
+11.147390805->9.680801649s (13.16% shorter). The unchanged5%-faster-at-EACH-position
+gate FAILS. No staged API/semantic/sustained acceptance or installation was run.
+Installed3fffc266/gateway36626d30 are unchanged. Strata5.3515s still leads; goal
+ACTIVE/UNMET. No GPU job remains, actual21:47UTC memory/services/driver recovery
+passes. See [authoritative handoff](kuno-vashti-coordination.md) and
+[full exact-source outcome](kuno-native-compute-intervals.md#completed-pool-reuse-runtime-and-clean-selection-outcome).
+
+Next target: coherent QK/PV matrix attention plus its necessary staging/scales,
+with new actual large-path F64/owner/fault/causal validation and all original
+short/scalar references preserved. NOT implemented yet; do not mistake old
+small-only fallback controls for validation of a new large kernel.
+
 ## Active coupled resource reuse checkpoint (2026-10-20 21:34UTC)
 
 Final source865a9c16 passes136 selected actual CPU controls. Release freeze and

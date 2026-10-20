@@ -1628,3 +1628,59 @@ since I/O cleanup can retire pools between expert timer intervals. Private calls
 never enable that report. Per-expert counters retain their original delta scope.
 The same136 controls and full exact-source GPU/retirement/adoption proofs are
 required on the final combined source before clean performance acceptance.
+
+
+### Completed-pool reuse runtime and clean selection outcome
+
+Exact final source865a9c166acc83203fd82c4052a2f6ee2e2240fd,
+workerSHA361978398e3c798a6c59eb09dc091719d0d6862787b5ea72a5ab95175c9c3a28,
+build`strata-parity-idle-pools-coupled-20261020`:136 selected actual CPU controls,
+420 total offline shaders/208 matrix layouts, original129 GPU+42 exact-role image
+controls, all original source/owner/producer/compiler/count/budget guards and BOTH
+whole-model public profiles PASS. Actual cache reuse is now exercised: normal
+expert intervals27/89/96 re-encoded records,3912/36183/40107 original commands,
+1062/33777/41109 spare command observations. Process-total retired/adopted pools
+61/60,179/178,297/296 across requests; every long request increases actual
+adoptions. Counts are accumulated observations, not distinct backend allocations.
+Small captures now qualify, so recording/command totals must not be incorrectly
+bounded by large-only rolling counters. The original large rolling counters and
+all producer/numerical assertions remain unchanged. New exercise proof is true.
+
+Normal sampled layer24 total threadCPU(ns): retained_prepare117090,
+command_encoding6072022, queue_plan1950090, compute_dependencies1513390,
+inventory_signature666700, snapshot_prepare318230, copy_dependencies119791,
+finalize25310. Earlier retained/encoding8.36/9.18ms become0.117/6.072ms; this
+proves lower actual targeted CPU overhead, not clean whole-request acceptance.
+Normal long prompts11.608595581/10.128802681s; expert phase7.224606472/5.904627620s.
+Third normal attention2.949376696s; QSA attention/merge1.505852085s and expert
+postcapture wait3.538181488s remain substantial. GPU-sampled class sums serialize
+one layer; do not interpret their shares as normal overlapped critical-path time.
+
+Original terminal-negative test PASS:2 real recovery queues waited,0 failed,
+protected worker exit required; no reusable-session/zero-owned claim. The fresh
+clean45/4245/4245 requests PASS with correct fixed-public arithmetic, full output
+frames and actual physical recovery. However unchanged speed SELECTION FAILS:
+firstlong13.247788385s versus installed12.962279132s; repeat9.680801649s versus
+11.147390805s. First is2.20% slower; repeat13.16% shorter. Never hide first-use
+compilation, change the short warmup, select just repeat or relax5%-at-EACH gate.
+No staged API/tool/semantic/sustained acceptance or installation was started.
+Prepared installation and post-install helpers are explicitly UNEXECUTED.
+Installed worker3fffc266/gateway36626d30 remain; Strata repeat5.3515s still leads.
+
+Owned fixed-public summaries under`/media/jmicko/faststore/kuno-development`:
+`strata-parity-idle-pools-coupled-20261020-reencode-public-summary.json`,
+`idle-pools-coupled-full-public-counters-20261020.json`,
+`strata-parity-idle-pools-coupled-acceptance-20261020-clean-selection-public-summary.json`.
+Actual21:47:13UTC: Intel50,688,000B,NVIDIA compute0,all driver faults0,allHTTP200,
+normal admission. No GPU job remains; no GPU/device reset/reboot. Goal ACTIVE/UNMET.
+
+Next coherent candidate should address matrix QSA math/staging together, using
+pinned MIT upstream`qsa_prompt_attn_xmx.dp.cpp` v2 for design comparison. Its hi/lo
+Q/P, exact INT8 codes plus per64 FP16 scales, packing, softmax and PV interact.
+The existing short/scalar references and original bitwise/F64 bounds must remain;
+any large-only selection needs ADDITIONAL actual large-path independent F64,
+full-owner/tail, nonfinite, causal/offset and fault validation. Old <=8-row tests
+using fallback cannot prove a new >=16-row kernel. Validate real shared storage,
+actual CMMA subgroup support and full original source/owner/epoch/erasure guards.
+No XMX code is implemented at this checkpoint. No API/protocol/configuration,
+model identity/frontend/version/release change.

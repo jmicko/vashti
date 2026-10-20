@@ -22,7 +22,57 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 21:34UTC): coupled completed-pool reuse.**
+**Authoritative active handoff (2026-10-20 21:52UTC): actual reuse passes; clean FIRST gate fails.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`; preserve canonical Vashti notes. Complete worker source
+`865a9c166acc83203fd82c4052a2f6ee2e2240fd`, frozenSHA
+`361978398e3c798a6c59eb09dc091719d0d6862787b5ea72a5ab95175c9c3a28`, build
+`strata-parity-idle-pools-coupled-20261020`, retains ALL prior components.
+Installed3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 remain unchanged.
+
+Final-source136 selected CPU controls,420/208 offline, original129+42 GPU,
+full compiler/producer/count/source/owner/budget proofs, BOTH full public
+73/4245/4245 profiles and physical recovery PASS. Unlike earlier unused paths,
+actual original pools ARE retired/adopted. Normal long expert intervals reuse
+89/96 recordings and36183/40107 commands; process-total adoptions60/178/296
+increase across requests. Reuse can also serve small captures, so its recording
+count may legitimately exceed LARGE rolling-recording count. Every original
+rolling/producer/count assertion remains; no source or numerical gate was removed.
+Normal sampled layer24 retained_prepare8.36->0.117ms threadCPU and encoding
+9.18->6.072ms; these are diagnostic intervals, not whole-request speed acceptance.
+Normal long prompt11.6086/10.1288s is instrumented diagnostic only.
+
+Terminal-negative actual2-queue recovery and subsequent FRESH clean45/4245/4245
+requests/physical recovery PASS. Original at-EACH-position5% speed SELECTION FAILS:
+FIRST12.962279132->13.247788385s (2.20% slower); repeat11.147390805->9.680801649s
+(13.16% shorter). Do NOT hide FIRST, change warmup, move compilation outside the
+clock or relax the gate. Staged API/semantic/sustained acceptance and installation
+were NOT run. Prepared installation/post-install helpers are UNEXECUTED, not proof.
+Same-host Strata repeat5.3515s still leads; goal ACTIVE/UNMET.
+
+No GPU job remains after `kuno-native-idle-pools-coupled-acceptance-20261020`
+exits at its intended failed selection assertion AFTER recovery. Independent
+21:47:13UTC: Intel50,688,000B, NVIDIA compute0, all driver faults0, allHTTP200,
+admission inactive/unpaused/recoveryfalse/waiting0. No reset/reboot. Bounded owned
+sudo refresh220143 (parent sharedshell3556; never kill shared shell) ends22:38:06UTC.
+Artifacts under `/media/jmicko/faststore/kuno-development`: owned
+`strata-parity-idle-pools-coupled-20261020-reencode-public-summary.json`,
+`idle-pools-coupled-full-public-counters-20261020.json`,
+`strata-parity-idle-pools-coupled-acceptance-20261020-clean-selection-public-summary.json`.
+
+Next high-potential target is complete QSA matrix attention: normal attention
+2.9494s, of which QSA family attention/merge1.5059s; expert wait3.5382s also remains.
+Pinned MIT Strata's experimental XMX v2 couples QK, hi/lo half staging/scales,
+64-cell packing, softmax and PV. Port the connected math/layout, not isolated
+halves; retain old short/scalar references and add ACTUAL large-path independent
+F64/full-owner/fault/causal validation (old <=8-row fallback tests cannot prove a
+new >=16-row kernel). No XMX implementation or performance claim yet. Preserve
+all existing components, erasure and gates. Exact contract/evidence:
+[pool reuse outcome](kuno-native-compute-intervals.md#completed-pool-reuse-runtime-and-clean-selection-outcome).
+No API/KNT2/KNR2/config/model identity/frontend/release change.
+
+**Previous handoff (2026-10-20 21:34UTC): coupled completed-pool reuse.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; preserve canonical Vashti notes. Installed worker
