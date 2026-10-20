@@ -7,9 +7,17 @@ use kuno_text::{Error, Result};
 #[path = "strata_cubek_gemm.rs"]
 mod cubek;
 
+#[cfg(feature = "strata-native-expert-wide")]
+#[path = "strata_native_expert_probe.rs"]
+mod native_expert_probe;
+#[cfg(feature = "strata-native-expert-wide")]
+#[path = "strata_matrix_native_expert_wide.rs"]
+mod native_expert_wide;
 #[cfg(feature = "strata-native-wide")]
 #[path = "strata_matrix_native_wide.rs"]
 mod native_wide;
+#[cfg(feature = "strata-native-expert-wide")]
+pub(crate) use native_expert_probe::cases as public_native_expert_numeric;
 
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_numeric_probe.rs"]
@@ -273,7 +281,7 @@ mod native {
     /// changing the ordered K16 reduction of any output. The complete
     /// workgroup covers32 input rows by64 output features.
     #[cube]
-    fn macro_product<F: Float>(
+    pub(super) fn macro_product<F: Float>(
         input: &Array<Vector<F, Const<4>>>,
         weight: &Array<Vector<F, Const<4>>>,
         columns: usize,
@@ -645,7 +653,7 @@ mod native {
     /// A across four feature subgroups. They never execute
     /// the four-accumulator M32 product for a one-row group.
     #[cube]
-    fn narrow_product<F: Float>(
+    pub(super) fn narrow_product<F: Float>(
         input: &Array<Vector<F, Const<4>>>,
         weight: &Array<Vector<F, Const<4>>>,
         columns: usize,
@@ -1492,6 +1500,20 @@ mod native {
         down: bool,
     ) -> Result<()> {
         compatible(client, false)?;
+        #[cfg(feature = "strata-native-expert-wide")]
+        if super::native_expert_wide::try_expert(
+            client,
+            h.clone(),
+            count,
+            columns,
+            rows,
+            weight_first,
+            group,
+            down,
+        )? {
+            return Ok(());
+        }
+
         #[cfg(feature = "strata-cubek-gemm")]
         if super::cubek::try_expert(
             client,
@@ -2363,6 +2385,10 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             let definitions = native::definitions();
             #[cfg(feature = "strata-native-wide")]
             let definitions = definitions.into_iter().chain(native_wide::definitions());
+            #[cfg(feature = "strata-native-expert-wide")]
+            let definitions = definitions
+                .into_iter()
+                .chain(native_expert_wide::definitions());
             for (name, definition) in definitions {
                 let mut compiler = AutoCompiler::SpirV(Default::default());
                 let mut options = WgpuCompilationOptions {
@@ -2387,6 +2413,18 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 #[cfg(feature = "strata-native-wide")]
                 let expected_shared = if name.starts_with("dense_wide_native_") {
                     Some(native_wide::SHARED_BYTES)
+                } else {
+                    expected_shared
+                };
+                #[cfg(feature = "strata-native-expert-wide")]
+                let expected_shared = if name.starts_with("expert_wide32_") {
+                    Some(native_expert_wide::SHARED_BYTES)
+                } else if name.starts_with("expert_tail32_") {
+                    native::compiled_shared_bytes("expert_macro", layout_mask & 4 != 0)
+                } else if name.starts_with("expert_tail8_") {
+                    native::compiled_shared_bytes("expert_narrow8", layout_mask & 4 != 0)
+                } else if name.starts_with("expert_tail16_") {
+                    native::compiled_shared_bytes("expert_narrow16", layout_mask & 4 != 0)
                 } else {
                     expected_shared
                 };
