@@ -22,7 +22,36 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 21:51UTC): actual reuse passes; clean FIRST gate fails.**
+**Authoritative active handoff (2026-10-20 22:02UTC): complete QSA matrix candidate.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. New sourcee2935521 implements the connected Rust
+QK/softmax/PV matrix kernel, using original full owners and58660B device-local
+scratch. New explicit`strata-qsa-xmx`/builder`--qsa-xmx` retains ALL previous
+components, including real completed-pool reuse. Original short/scalar/decode/MTP
+paths and all original numerical/owner/capacity/erasure controls remain.
+All144 selected CPU controls PASS. Frozen release`strata-parity-qsa-xmx-20261020`,
+sourcee2935521db44eae698bb3214e252920ebb4dd732 /
+SHAa38e2801b440a5eeec4ae787e8a4cc871b0a661dab736f4b1e3735eb354164c5,
+is built; offline420 WGSL/216 matrix variants, original171 GPU+7 additional
+ACTUAL full-batch XMX controls, both public profiles/actual launch-count and
+physical recovery follow. No GPU/speed/install acceptance yet. Never accept only
+old <=8-row fallback tests as validation of the new16..32-row kernel.
+New large F64 oracle entry shares the SAME independent math/derived bounds;
+old8-row entry keeps its domain. Future/nonfinite negatives require real sticky
+fault and untouched inactive/tail owners, not a failed-input payload math claim.
+Exact implementation/test contract:
+[matrix-attention successor](kuno-native-compute-intervals.md#complete-matrix-attention-successor-under-implementation).
+
+Installed worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 unchanged.
+Prior complete pool bundle's clean repeat9.6808s improves13.16%, but FIRST13.2478s
+fails original at-EACH5% selection; retain whole bundle and do not weaken gates.
+Strata repeat5.3515s still leads. Goal ACTIVE/UNMET. No API/protocol/configuration,
+model identity/frontend/release change. Last physical21:50:53UTC clear/healthy;
+no GPU job launched for the new candidate yet. Cached sudo refresh220143 ends
+22:38:06UTC, parent sharedshell3556 must never be killed. No reset/reboot.
+
+**Previous handoff (2026-10-20 21:51UTC): actual reuse passes; clean FIRST gate fails.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; preserve canonical Vashti notes. Complete worker source
