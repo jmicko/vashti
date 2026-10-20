@@ -144,9 +144,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 23] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 23];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 23] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 28] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 28];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 28] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -720,6 +720,7 @@ struct Recording {
     family: u32,
     key: Option<super::strata_parameters::RecordingKey>,
     ready: bool,
+    push_only: bool,
     compute_count: usize,
     work: strata_schedule::Commands,
     profile: Option<OperatorProfile>,
@@ -735,6 +736,7 @@ impl Recording {
     fn metadata_bytes(&self) -> Option<usize> {
         self.work
             .metadata_bytes()
+            .checked_add(size_of::<u64>())? // Conservative new push-only flag/padding.
             .checked_add(self.signature.metadata_bytes().ok()?)?
             .checked_add(
                 self._resources
@@ -3255,6 +3257,7 @@ impl Graph {
                 )
             })
             .and_then(|n| n.checked_add(owners.metadata_bytes()))
+            .and_then(|n| n.checked_add(size_of::<u64>())) // New push-only flag/padding.
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         let retained_metadata = self
             .recordings
@@ -3267,11 +3270,12 @@ impl Graph {
         let command_budget = descriptors::METADATA_CAP
             .checked_sub(capture_metadata)
             .ok_or_else(|| fault("native queue retained metadata capacity"))?;
-        let reusable_class = fresh_recording_pool
-            && self
-                .push_descriptors
+        let push_only = self.nodes.iter().all(|n| {
+            n.pipeline
                 .as_ref()
-                .is_some_and(|(_, max)| *max >= 32)
+                .is_none_or(|p| self.pipelines[p].push_descriptors)
+        });
+        let reusable_workload = push_only
             && rolling_prefill_selected(
                 self.compute_lane,
                 key.is_some(),
@@ -3289,16 +3293,33 @@ impl Graph {
                     })
                 }),
             );
+        COMPUTE_BARRIERS[25].fetch_add(
+            u64::from(reusable_workload),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let reusable_class = fresh_recording_pool && reusable_workload;
+        COMPUTE_BARRIERS[26].fetch_add(
+            u64::from(reusable_class),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let reuse = reusable_class
             .then(|| {
-                self.recordings.iter().position(|r| {
-                    r.key.is_none()
+                self.recordings.iter().enumerate().find_map(|(index, r)| {
+                    if r.key.is_none()
                         && r.family == self.family
                         && r.ready
+                        && r.push_only
                         && r.profile.is_none()
                         && !self.flights.live(r.id)
                         && r.work.commands.first().copied() == Some(r.command)
-                        && r.work.can_reencode(&plan, command_budget)
+                    {
+                        COMPUTE_BARRIERS[27].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        r.work
+                            .prepare_reencoding(&plan, command_budget)
+                            .map(|p| (index, p))
+                    } else {
+                        None
+                    }
                 })
             })
             .flatten();
@@ -3306,28 +3327,33 @@ impl Graph {
             .next_recording
             .checked_add(1)
             .ok_or_else(|| fault("native recording identity exhausted"))?;
-        let (recording, metadata) = if let Some(index) = reuse {
+        let (recording, metadata) = if let Some((index, prepared)) = reuse {
             // This is the SAME original completed-flight test used by idle
             // eviction. A merely ready/submitted recording cannot authorize it.
             let metadata = capture_metadata
                 .checked_add(
                     self.recordings[index]
                         .work
-                        .reencoded_metadata_bytes(&plan)
+                        .prepared_metadata_bytes(&plan, &prepared)
                         .ok_or_else(|| fault("native queue metadata overflow"))?,
                 )
                 .ok_or_else(|| fault("native queue metadata overflow"))?;
             if metadata > descriptors::METADATA_CAP {
                 return Err(fault("native queue retained metadata capacity"));
             }
+            let capacity_reuse = prepared.uses_capacity();
             let old = &mut self.recordings[index];
             old.ready = false;
-            unsafe { old.work.reencode_completed(old.pool, plan, command_budget) }
-                .map_err(fault)?;
+            unsafe {
+                old.work
+                    .reencode_completed(old.pool, plan, command_budget, prepared)
+            }
+            .map_err(fault)?;
             let mut old = self.recordings.remove(index);
             old.id = next_recording;
             old.key = key;
             old.compute_count = compute_count;
+            old.push_only = push_only;
             old.signature = signature;
             old._resources = resources;
             old._owners = owners;
@@ -3342,6 +3368,13 @@ impl Graph {
             COMPUTE_BARRIERS[21].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             COMPUTE_BARRIERS[22].fetch_add(
                 old.work.commands.len() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            if capacity_reuse {
+                COMPUTE_BARRIERS[23].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            COMPUTE_BARRIERS[24].fetch_add(
+                old.work.spare_commands_count() as u64,
                 std::sync::atomic::Ordering::Relaxed,
             );
             (old, metadata)
@@ -3370,6 +3403,7 @@ impl Graph {
                     family: self.family,
                     key,
                     ready: false,
+                    push_only,
                     compute_count,
                     work,
                     profile,

@@ -686,6 +686,16 @@ pub(crate) fn plan_metadata_bytes(plan: &Plan) -> Option<usize> {
 
 /// Recording owns all copy pools and timeline semaphores through the joined
 /// fence. Main command buffers belong to its existing compute pool.
+pub(crate) struct Reencoding {
+    header: vk::CommandBuffer,
+    capacity: Option<command_reencode::Prepared>,
+}
+impl Reencoding {
+    pub fn uses_capacity(&self) -> bool {
+        self.capacity.is_some()
+    }
+}
+
 pub(crate) struct Commands {
     device: ash::Device,
     copy_pool: vk::CommandPool,
@@ -694,6 +704,7 @@ pub(crate) struct Commands {
     next_base: u64,
     pub plan: Plan,
     pub commands: Vec<vk::CommandBuffer>,
+    spares: [Vec<vk::CommandBuffer>; 3],
 }
 impl Commands {
     pub fn new(
@@ -712,6 +723,7 @@ impl Commands {
             timelines: [vk::Semaphore::null(); 3],
             next_base: 0,
             commands: Vec::new(),
+            spares: std::array::from_fn(|_| Vec::new()),
             plan,
         };
         result.copy_pool = unsafe {
@@ -780,23 +792,93 @@ impl Commands {
         )?;
         Ok(result)
     }
-    pub fn reencoded_metadata_bytes(&self, plan: &Plan) -> Option<usize> {
+    pub fn spare_commands_count(&self) -> usize {
+        self.spares.iter().map(Vec::len).sum()
+    }
+    fn reencoded_metadata_bytes(&self, plan: &Plan) -> Option<usize> {
+        let capacity = self
+            .spares
+            .iter()
+            .try_fold(self.commands.capacity(), |n, v| n.checked_add(v.capacity()))?;
         plan_metadata_bytes(plan)?
             .checked_add(size_of::<Self>())?
-            .checked_add(
-                self.commands
-                    .capacity()
-                    .checked_mul(size_of::<vk::CommandBuffer>())?,
-            )
+            .checked_add(capacity.checked_mul(size_of::<vk::CommandBuffer>())?)
+    }
+    pub fn prepare_reencoding(&self, plan: &Plan, budget: usize) -> Option<Reencoding> {
+        if self.copy_pool == vk::CommandPool::null()
+            || (plan.last_shared != 0 && self.shared_pool == vk::CommandPool::null())
+            || self
+                .plan
+                .segments
+                .iter()
+                .chain(&plan.segments)
+                .any(|s| s.copy && s.shared)
+        {
+            return None;
+        }
+        let exact = self.can_reencode(plan, budget)
+            && self
+                .reencoded_metadata_bytes(plan)?
+                .checked_add(size_of::<Reencoding>())?
+                <= budget;
+        let capacity = if exact {
+            None
+        } else {
+            Some(command_reencode::prepare_capacity(
+                &self.plan.segments,
+                Segment::queue,
+                &self.commands,
+                &self.spares,
+                plan.segments.iter().map(Segment::queue),
+                plan_metadata_bytes(plan)?,
+                size_of::<Self>().checked_add(size_of::<Reencoding>())?,
+                budget,
+            )?)
+        };
+        Some(Reencoding {
+            header: *self.commands.first()?,
+            capacity,
+        })
+    }
+    pub fn prepared_metadata_bytes(&self, plan: &Plan, prepared: &Reencoding) -> Option<usize> {
+        if self.commands.first().copied() != Some(prepared.header) {
+            return None;
+        }
+        match &prepared.capacity {
+            None => self
+                .reencoded_metadata_bytes(plan)?
+                .checked_add(size_of::<Reencoding>()),
+            Some(p) => {
+                if p.header != prepared.header
+                    || p.commands.first().copied() != Some(prepared.header)
+                    || p.commands.len() != plan.segments.len()
+                {
+                    return None;
+                }
+                p.metadata_bytes(
+                    plan_metadata_bytes(plan)?,
+                    size_of::<Self>().checked_add(size_of::<Reencoding>())?,
+                )
+            }
+        }
     }
     /// Same original command inventory; this grants no completion authority.
     pub fn can_reencode(&self, plan: &Plan, metadata_budget: usize) -> bool {
-        command_reencode::fits_budget(
-            plan_metadata_bytes(plan),
-            self.commands.capacity(),
-            size_of::<Self>(),
-            metadata_budget,
-        ) && self.copy_pool != vk::CommandPool::null()
+        self.spares.iter().all(Vec::is_empty)
+            && command_reencode::fits_budget(
+                plan_metadata_bytes(plan).and_then(|n| {
+                    n.checked_add(
+                        self.spares
+                            .iter()
+                            .try_fold(0usize, |n, v| n.checked_add(v.capacity()))?
+                            .checked_mul(size_of::<vk::CommandBuffer>())?,
+                    )
+                }),
+                self.commands.capacity(),
+                size_of::<Self>(),
+                metadata_budget,
+            )
+            && self.copy_pool != vk::CommandPool::null()
             && (plan.last_shared == 0 || self.shared_pool != vk::CommandPool::null())
             && self
                 .plan
@@ -820,8 +902,18 @@ impl Commands {
         main_pool: vk::CommandPool,
         plan: Plan,
         metadata_budget: usize,
+        prepared: Reencoding,
     ) -> Result<(), &'static str> {
-        if !self.can_reencode(&plan, metadata_budget)
+        if self
+            .prepared_metadata_bytes(&plan, &prepared)
+            .is_none_or(|n| n > metadata_budget)
+            || (prepared.capacity.is_none() && !self.can_reencode(&plan, metadata_budget))
+            || self
+                .plan
+                .segments
+                .iter()
+                .chain(&plan.segments)
+                .any(|s| s.copy && s.shared)
             || main_pool == vk::CommandPool::null()
             || main_pool == self.copy_pool
             || main_pool == self.shared_pool
@@ -838,13 +930,19 @@ impl Commands {
                 .map_err(|_| "native completed command pool reset")?;
             }
         }
-        command_reencode::reorder(
-            &mut self.plan.segments,
-            Segment::queue,
-            plan.segments.iter().map(Segment::queue),
-            &mut self.commands,
-            &mut self.plan.node_segments,
-        )?;
+        match prepared.capacity {
+            None => command_reencode::reorder(
+                &mut self.plan.segments,
+                Segment::queue,
+                plan.segments.iter().map(Segment::queue),
+                &mut self.commands,
+                &mut self.plan.node_segments,
+            )?,
+            Some(p) => {
+                self.commands = p.commands;
+                self.spares = p.spares;
+            }
+        }
         self.plan = plan;
         // Preserve all actual timeline semaphore values and next_base. The
         // original prepare_submission must reserve a fresh monotonic epoch.
@@ -855,6 +953,11 @@ impl Commands {
             + self.plan.node_segments.capacity() * std::mem::size_of::<usize>()
             + self.commands.capacity() * std::mem::size_of::<vk::CommandBuffer>()
             + self.plan.accesses.capacity() * std::mem::size_of::<Access>()
+            + self
+                .spares
+                .iter()
+                .map(|v| v.capacity() * size_of::<vk::CommandBuffer>())
+                .sum::<usize>()
             + std::mem::size_of::<Self>()
     }
     fn prepare_submission(

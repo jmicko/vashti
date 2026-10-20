@@ -102,6 +102,110 @@ pub(super) fn reorder<S>(
     Ok(())
 }
 
+/// Complete existing pool inventory, including inactive ORIGINAL command
+/// handles. Preparation is CPU-only and cannot reset or submit any pool.
+pub(super) struct Prepared {
+    pub(super) commands: Vec<vk::CommandBuffer>,
+    pub(super) spares: [Vec<vk::CommandBuffer>; 3],
+    pub(super) header: vk::CommandBuffer,
+}
+impl Prepared {
+    pub(super) fn metadata_bytes(&self, plan_bytes: usize, object_bytes: usize) -> Option<usize> {
+        let capacity = self
+            .spares
+            .iter()
+            .try_fold(self.commands.capacity(), |n, v| n.checked_add(v.capacity()))?;
+        plan_bytes
+            .checked_add(object_bytes)?
+            .checked_add(size_of::<Self>())?
+            .checked_add(capacity.checked_mul(size_of::<vk::CommandBuffer>())?)
+    }
+}
+
+pub(super) fn prepare_capacity<S>(
+    old: &[S],
+    queue: fn(&S) -> usize,
+    commands: &[vk::CommandBuffer],
+    spares: &[Vec<vk::CommandBuffer>; 3],
+    new: impl Iterator<Item = usize> + Clone + ExactSizeIterator,
+    plan_bytes: usize,
+    object_bytes: usize,
+    budget: usize,
+) -> Option<Prepared> {
+    let count = new.len();
+    if !(1..=MAX_COMMANDS).contains(&count)
+        || old.is_empty()
+        || commands.len() != old.len()
+        || old.len() > MAX_COMMANDS
+        || queue(&old[0]) != 0
+        || new.clone().next() != Some(0)
+        || commands.contains(&vk::CommandBuffer::null())
+        || spares
+            .iter()
+            .any(|v| v.contains(&vk::CommandBuffer::null()))
+    {
+        return None;
+    }
+    let mut available = std::array::from_fn::<_, 3, _>(|i| spares[i].len());
+    for own in old.iter().skip(1).map(queue) {
+        if own >= 3 {
+            return None;
+        }
+        available[own] = available[own].checked_add(1)?;
+    }
+    let total = available
+        .iter()
+        .try_fold(1usize, |n, x| n.checked_add(*x))?;
+    if total > MAX_COMMANDS {
+        return None;
+    }
+    let mut needed = [0usize; 3];
+    for own in new.clone().skip(1) {
+        if own >= 3 {
+            return None;
+        }
+        needed[own] += 1;
+    }
+    if needed
+        .iter()
+        .zip(available)
+        .any(|(need, have)| *need > have)
+    {
+        return None;
+    }
+    let requested = available.iter().try_fold(count, |n, x| n.checked_add(*x))?;
+    let fixed = plan_bytes
+        .checked_add(object_bytes)?
+        .checked_add(size_of::<Prepared>())?;
+    if !fits_budget(Some(0), requested, fixed, budget) {
+        return None;
+    }
+    let mut result = Prepared {
+        commands: Vec::new(),
+        spares: std::array::from_fn(|_| Vec::new()),
+        header: commands[0],
+    };
+    result.commands.try_reserve_exact(count).ok()?;
+    if result.metadata_bytes(plan_bytes, object_bytes)? > budget {
+        return None;
+    }
+    for own in 0..3 {
+        result.spares[own].try_reserve_exact(available[own]).ok()?;
+        if result.metadata_bytes(plan_bytes, object_bytes)? > budget {
+            return None;
+        }
+        result.spares[own].extend_from_slice(&spares[own]);
+    }
+    for (segment, &handle) in old.iter().zip(commands).skip(1) {
+        result.spares[queue(segment)].push(handle);
+    }
+    result.commands.push(commands[0]);
+    for own in new.skip(1) {
+        result.commands.push(result.spares[own].pop()?);
+    }
+    Some(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +232,117 @@ mod tests {
         inventory.sort_unstable();
         assert_eq!(inventory, (1..=before.len() as u64).collect::<Vec<_>>());
         assert!(scratch[before.len() - 1..].iter().all(|x| *x == usize::MAX));
+    }
+    #[test]
+    fn capacity_reuse_keeps_unused_commands_in_their_original_pools_and_can_grow_again() {
+        let original: Vec<_> = (0..4096).map(|i| if i == 0 { 0 } else { i % 3 }).collect();
+        let mut queues = original.clone();
+        let mut commands: Vec<_> = (1..=queues.len())
+            .map(|n| vk::CommandBuffer::from_raw(n as u64))
+            .collect();
+        let mut spares = std::array::from_fn(|_| Vec::new());
+        for size in [2048, 16, 3000, 512, 4096] {
+            let mut next = original[..size].to_vec();
+            next[1..].reverse();
+            let p = prepare_capacity(
+                &queues,
+                |q| *q,
+                &commands,
+                &spares,
+                next.iter().copied(),
+                4096,
+                256,
+                4 * 1024 * 1024,
+            )
+            .unwrap();
+            assert_eq!(p.commands[0].as_raw(), 1);
+            assert!(p.metadata_bytes(4096, 256).unwrap() <= 4 * 1024 * 1024);
+            let mut all = Vec::new();
+            for (i, h) in p.commands.iter().enumerate() {
+                assert_eq!(original[h.as_raw() as usize - 1], next[i]);
+                all.push(h.as_raw());
+            }
+            for (own, list) in p.spares.iter().enumerate() {
+                for h in list {
+                    assert_eq!(original[h.as_raw() as usize - 1], own);
+                    all.push(h.as_raw());
+                }
+            }
+            all.sort_unstable();
+            assert_eq!(all, (1..=4096).collect::<Vec<u64>>());
+            commands = p.commands;
+            spares = p.spares;
+            queues = next;
+        }
+        assert!(spares.iter().all(Vec::is_empty));
+    }
+    #[test]
+    fn capacity_preparation_rejects_insufficient_queues_budget_and_unknown_handles_without_mutation()
+     {
+        let old = [0, 1, 2, 0];
+        let handles: Vec<_> = (1..=4).map(vk::CommandBuffer::from_raw).collect();
+        let spares = std::array::from_fn(|_| Vec::new());
+        for new in [vec![0, 1, 1], vec![0, 3], vec![1, 0], vec![], vec![0, 2, 2]] {
+            assert!(
+                prepare_capacity(
+                    &old,
+                    |q| *q,
+                    &handles,
+                    &spares,
+                    new.iter().copied(),
+                    0,
+                    0,
+                    4096
+                )
+                .is_none()
+            );
+        }
+        assert!(
+            prepare_capacity(
+                &old,
+                |q| *q,
+                &handles,
+                &spares,
+                old.iter().copied(),
+                0,
+                0,
+                1
+            )
+            .is_none()
+        );
+        assert!(
+            prepare_capacity(
+                &old,
+                |q| *q,
+                &handles,
+                &spares,
+                old.iter().copied(),
+                usize::MAX,
+                0,
+                usize::MAX
+            )
+            .is_none()
+        );
+        let mut bad = spares.clone();
+        bad[0].push(vk::CommandBuffer::null());
+        assert!(
+            prepare_capacity(
+                &old,
+                |q| *q,
+                &handles,
+                &bad,
+                old.iter().copied(),
+                0,
+                0,
+                4096
+            )
+            .is_none()
+        );
+        assert_eq!(
+            handles.iter().map(|h| h.as_raw()).collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
+        assert!(spares.iter().all(Vec::is_empty));
     }
     #[test]
     fn actual_old_command_capacity_and_new_plan_are_charged_without_overflow() {

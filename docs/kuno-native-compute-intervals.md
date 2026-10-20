@@ -1516,3 +1516,51 @@ plus exhaustive small queue permutations, large32769-command mixed layouts,
 pre-mutation malformed inventory rejection, and checked actual-capacity budget
 boundaries/overflow. Exact-source original171 GPU/full proof/normal-host profile,
 physical recovery and subsequent clean/terminal/staged/install gates remain next.
+
+
+Exact-count source cdbb041b / SHA82e95810 completes all132 CPU,420/208 offline,
+original129+42 GPU, original producer/compiler/count proofs, BOTH whole-model
+profile modes, correct323 and physical recovery, but FAILS the new actual-path
+exercise gate: ZERO recordings reused in every request. These completed timings
+are FALLBACK behavior, not proof of re-encoding correctness or a gain. Preserve
+`strata-parity-command-reencode-20261020-reencode-public-summary.json` with
+passed=false. No clean/staged/install acceptance was run. Normal first11.9949s,
+repeat10.6238s remain diagnostic only. Actual20:55:58UTC clear/healthy, allfaults0.
+Live read-only vulkaninfo identifies B70 vendor8086/devicee223 with actual
+maxPushDescriptors32; both hardware GPUs report32. A supposed device16 limit is
+NOT the observed reason. This read-only capability query saved no configuration and requested no reset.
+
+The complete extension retains exact no-allocation permutation when applicable,
+and admits a completed recording with SUFFICIENT original per-queue capacity.
+Unused original command handles stay in explicitly charged per-queue spare Vecs;
+no GPU buffer/command/pool/handle is added, borrowed or fabricated. New CPU handle
+vectors are prepared before marking not-ready/resetting anything, with original
+old+new simultaneous capacity, headers and temporary preparation storage charged
+against the original budget. Allocation/capacity mismatch keeps original fresh
+construction. Real model data/resources never enter this metadata cache.
+Private reset/erasure still clears the original recordings, with no side cache.
+Each queue retains its actual original handles across shrinking/growing plans,
+all original descriptor writes/barriers are re-encoded, next_base is unchanged.
+The original exact path remains for matching inventories with no inactive handles.
+
+Eligibility now records actual push-only status per recording and verifies the
+ACTUAL new node layouts, rather than assuming all potential32-binding layouts
+are used. One conservative word covers the new flag/padding. Anonymous workload,
+fresh-pool and idle-candidate counters distinguish an unused selector from
+capacity misses. Actual capacity-reuse and retained-spare counts must be nonzero
+in long requests before this extension can claim runtime validation. Two new
+CPU controls exercise repeated shrink/grow/permutation with full handle/physical
+queue conservation and non-mutating rejection of insufficient capacity, unknown
+handles and budget/overflow. No numerical reference, threshold, private ownership,
+header/family/epoch/budget/erasure or timing gate is weakened.
+
+
+All134 selected CPU controls pass before the final conservative push-only flag
+word was also charged for the incoming recording (old recordings already charge
+it). Final-source recompilation/control run follows; this adds capacity accounting,
+not a guard exemption. The prepared inactive-handle route includes both actual
+Vec capacities and preparation-stack metadata; no allocated backend handle can
+vaporize when fewer commands are active. Repeated CPU shrink/grow reaches the
+full original4096-handle inventory again, checking every handle exactly once and
+its original pool family at every stage. The two original exact permutation
+routes and all previous numerical checks remain intact.
