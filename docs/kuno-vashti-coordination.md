@@ -22,7 +22,46 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 22:26UTC): XMX executes; precision failure diagnosed to next probe.**
+**Authoritative active handoff (2026-10-20 22:42UTC): GPU stage failure localized; explicit rounding candidate.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Fixed-public dynamic stage source20630c01/SHA83bdd697
+passes145 CPU,420 WGSL/224 matrix layouts and completes its GPU check and physically recovers.
+Actual high halves all1024 match host; low1023 and identity1023 mismatch, max_abs
+[0,3.96484375,3.96484375], fault/padding0. This directly locates bad low parts
+in the shared production stage. Preserve FAILED stage summary
+`strata-parity-qsa-xmx-stage-control-20261020-public-summary.json`. No speed run.
+
+New complete source78d948aa uses exact IEEE half RTE in shared CPU/GPU integer
+bit code to materialize the rounded F32 high value BEFORE residual subtraction.
+High/low stores then receive exact intended halves. No extra barrier, scratch,
+buffer, copy, source restriction or lowered bound. All146 selected CPU checks
+pass, including independent half-crate boundary/tie/neighbor tests across both
+signs. The old cast-based stage remains ONLY a fixed-public RAW comparison; the
+CPU cast-chain test now checks that original raw probe (one call/chain), while
+all original12 numeric references and7 new large-case F64 bounds remain intact.
+
+Frozen release`strata-parity-qsa-xmx-rte-20261020` is built, source
+78d948aa99d9aced6a0e47d8679720fa01ed7a9a / SHA
+7047b38173ed00e18c98372b00412a589297b409a6d9eadfbe47ad427a67bfbf. Next
+420 WGSL/232 matrix layouts, protected SAME-input raw+fixed stage comparison,
+then original171+7/full profiles/actual counts/physical recovery. Only after
+all pass may original terminal/clean-at-EACH5%/staged-quality/install gates run.
+No performance/install acceptance yet. Entire earlier pool/transfer/matrix/
+QK/softmax/PV bundle stays; do not roll back components on isolated timings.
+Exact contract/evidence:
+[explicit rounding](kuno-native-compute-intervals.md#observed-dynamic-residual-failure-and-explicit-rounding-correction).
+
+Installed3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 unchanged. Stage-only
+unit is terminal/recovered. Goal ACTIVE/UNMET; Strata5.3515s still leads correct
+pool repeat9.6808s. Bounded sudo297061/parent sharedshell3556 ends00:17:49UTC
+Oct21 (never kill sharedshell). No reset/reboot, API/config/model/frontend/release
+change. The new laboratory selector is captured before original env scrub only
+when public_check AND matrix_check; private worker cannot activate it.
+
+**Previous active handoff:**
+
+**Previous handoff (2026-10-20 22:26UTC): XMX executes; precision failure diagnosed to next probe.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. Complete matrix candidate source
