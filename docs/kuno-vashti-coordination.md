@@ -1,27 +1,37 @@
 # Kuno and Vashti Coordination
 
 **Active Kuno-only goal: match Strata (2026-10-20; candidate work in progress).**
-The user explicitly requested a new parity goal. See
-[reference scope, source decisions and protected receipts](kuno-strata-parity-goal.md).
+See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).
 The accepted installation remains workerc8db19de / SHAfb31e124 and unchanged
-gateway36626d30 / SHAd3ed07f4 below. Earlier candidates pass65 GPU matrix/router/dequant controls and complete cold45 plus
-warm4245/4245 requests; the MAX8 projection authority gap is fixed with genuine
-nonce-bound request scope, preserving generation policy. Unprofiled warm4245
-prefix15.136s versus installed24.966s. A fresh pinned upstream Strata run uses the
-same long prompt and takes5.352s, so parity is not achieved. Candidatef4ee071e /
-SHA62f088fc is not installed; final thinking/tools/semantic and new71-control
-acceptance remain. A later QSA specialization completes the public profiled
-4245-token request in14.460s, with QSA1.811s versus the prior2.973s. Stronger
-rounding-sensitive original-shader controls then expose small finite differences;
-the original nine dyadic controls alone are insufficient acceptance. The next
-frozen source6256ebea / SHA4b4e5b0b includes the actual native NoContraction
-product-rounding connection, complete GDN scalar-state specialization and an
-opt-in CubeK dense pipeline. Its97-control GPU gate and subsequent complete
-requests are pending; do not install based on source/offline checks or isolated
-matrix success. CubeK expert integration remains a separate source candidate.
-GPU recovery and zero new driver faults are confirmed. No API, KNT2/KNR2, configuration, model name or Vashti consumer change. Do not
-release or consume this checkpoint as an accepted worker. Preserve full original
-numerical, ownership, privacy, thinking/tool and physical recovery gates.
+image-enabled gateway36626d30 / SHAd3ed07f4 below; no successor is installed.
+
+Sourcec6808efc / SHAd1100418 passes all97 actual GPU controls, complete public
+requests and protected staged thinking/ten-tool call/result,64/65/66 boundaries,
+MAX8 terminal counts1..8 in both directions, two identical complete code answers
+with155 semantic cases each, privacy/unload/Ollama and physical recovery. The
+original nine QSA bitwise gates remain strict; the three added non-dyadic cases
+now independently validate both GPU paths against operation-bounded F64 math,
+retaining bit-difference diagnostics and all owner/tail/fault gates. This explicit
+new-case criterion replaces the unsupported stronger bit-identity requirement,
+not the original numerical controls. Warm4245 profiled prefixes are14.1363/14.1994s.
+Matched seed424242/cap200 decode repeats are38.3116 code and31.5556 prose tokens/s;
+they reach the cap and do not claim EOS completion. Fresh unchanged MIT Strata
+reference measures5.3515s clean long prefix; explicit verifier4/MTP4/suffix3 decode
+repeats27.2472 code and36.1017 prose tokens/s. Long-prefix parity is not achieved.
+
+Complete opt-in CubeK Tilewise/rolling source881d5af3 / SHA528bc066 passes111
+actual controls, including actual dense/expert launches, but its profiled warm
+long prefix20.4503s regresses versus native14.1994s. It is retained as a separate
+candidate, not selected. Latest default-native plus rolling and checked borrowed
+layer bindings source0771a726 / SHAccdaf886 passes97 controls and complete public
+profiling, warm4245 prefixes13.2547/13.2952s. A two-thread CPU shader job overlapped
+that profile, so these are diagnostic times. Separate clean long, negative and
+staged API acceptance are pending; do not install from the profile alone.
+
+All retained receipts are metadata-only under the development artifact base.
+No API, KNT2/KNR2, configuration, model name, Vashti consumer or release change.
+Preserve original numerical/ownership/privacy gates and actual physical recovery.
+No new frontend handoff is required for this internal candidate checkpoint.
 
 **Prior accepted Kuno-only Strata prompt optimization (2026-10-20; installed and backend-validated).**
 Selected worker sourcec8db19de / SHAfb31e124 is installed through the unchanged

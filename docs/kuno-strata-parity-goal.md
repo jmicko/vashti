@@ -36,38 +36,80 @@ load/first-use compilation, final erasure and whole-response time.
 
 ## Latest combined operator checkpoint
 
-The accepted installation above is unchanged. Sourcee9b6bd4c /
-SHAcf867264 completes cold73 and warm4245/4245 public requests with correct
-arithmetic and actual erasure/close/recovery. Its last **profiled** prefix is
-14.4597s, expert interval8.3447s and QSA1.8111s; prior comparable QSA was2.9727s.
-Clean upstream5.3515s remains a distinct unprofiled reference; parity is not met.
+The accepted installation remains workerc8db19de / SHAfb31e124 and unchanged
+image-enabled gateway36626d30 / SHAd3ed07f4. None of the candidates below is
+installed. All receipt paths are relative to
+`/media/jmicko/faststore/kuno-development`; they contain public numeric metadata,
+not request/response text or private expert routes.
 
-Source7ada5edd / SHAbba3d0f3 builds the complete GDN scalar-state path and
-opt-in CubeK cyclic-double-buffer dense family. All30 full original-weight
-FP16/BF16 matrix cases report zero numerical mismatches, but the overall public
-gate rejects before its final receipt: three newly added non-dyadic QSA controls
-differ from the unchanged scalar shader by up to5.72e-6 in partials and7.63e-6
-in statistics. The original nine dyadic cases remain bit-exact; these do not
-justify accepting the stronger cases. No numerical threshold is weakened.
-Receipt `strata-parity-coupled-complete-operators-20261020` records failure and
-actual physical recovery, all services normal and zero added driver faults.
+Sourcec6808efc / SHAd1100418 passes all97 actual GPU controls:30 original-weight
+matrix,39 router/dequant,6 causal-selector,12 QSA attention and10 GDN recurrence.
+Its `strata-parity-vector-gdn-20261020-operators` receipt confirms actual close,
+physical recovery and zero accepted numerical mismatches. The original nine QSA
+fixtures retain their strict complete-owner bitwise comparison. The three added
+non-dyadic fixtures independently check **both** unchanged-scalar and optimized
+outputs against F64 mathematical references with operation-derived F32 rounding
+bounds; they retain bit-difference diagnostics, full-owner/tail/fault checks and
+negative controls. This explicitly corrects the newly introduced bit-identity
+criterion for those three fixtures; it does not loosen the original nine or use
+one GPU path as the mathematical oracle. See
+[the complete numerical contract](kuno-qsa-attention-parity-fixture.md).
 
-The missing compiler connection is concrete: expanded prompt-only QSA lacked
-`STRATA_ROUND_PRODUCTS`, so the native graph did not apply its existing
-NoContraction product-rounding pass. Source6256ebea / SHA4b4e5b0b adds that
-marker only to the optimized prompt shader, leaves the scalar golden reference
-unchanged, and retains explicit chronological PV FMAs. CPU actual-postpass
-controls and SPIR-V validation pass. GPU97-control and complete-request
-acceptance remain pending. The full inventory is30 matrix (including six
-actual CubeK launches),39 original router/dequant,6 causal-selector,
-12 unchanged-scalar QSA and10 unchanged-scalar GDN controls. The public helper
-requires every invariant and actual recovery before writing `passed:true`.
+The c680 profiled warm4245-token prefixes are14.1363/14.1994s. The second request's
+expert interval is8.4810s:1.8790s host enqueue,1.9503s native capture and4.4448s
+native wait. QSA attention is1.8424s and GDN recurrence/norm0.4307s. These are
+instrumented complete-request intervals, not isolated GPU throughput.
+`strata-parity-vector-gdn-20261020-profile` completes cold73 plus both long
+requests with correct arithmetic, original request erasure and close/recovery.
 
-All artifacts are under the development base. Staged API acceptance additionally
-covers actual MAX8 terminal counts1..8 ascending and descending on the same PID,
-existing64/65/66 thresholds, thinking/tool/result, repeated semantic code and
-privacy/physical recovery. These are prepared gates, not live passes yet.
-No API, protocol, model identity, consumer or installation change is claimed.
+`native-parity-vector-gdn-stage-quality-20261020` passes the protected staged
+API: ten-tool thinking/call/result,64/65/66 thresholds, MAX8 terminal counts1..8
+ascending and descending on the same worker, two identical complete501-token
+code answers with155 semantic cases each, write_bytes0, inspection denial,
+graceful unload, subsequent ordinary Ollama and physical recovery. Warm code
+prefixes are1.0432/0.9266s. Its separate seed424242/temperature0/cap200/context32768
+code/prose repeats measure38.3116/31.5556 output tokens/s. These cap-limited
+requests do not claim EOS completion or equal output sequences across engines.
+
+The fresh pinned MIT Strata reference remains the unchanged sourcefb58e0db /
+SHA16a6ed70. `strata-matched-reference-20261020` measures5.3515s for the same clean
+4245-token prefix, with all prompt/conversation caches disabled; its suffix
+policy promotes the requested verifier4 to effective6. The separate sustained
+`strata-matched-decode-reference-readyfix-20261020` explicitly fixes verifier4,
+MTP4 and suffix3 to match Kuno's native policy, verifies the same35/30-token
+rendering/tokenizer hashes, seed424242, temperature0, cap200, context32768,
+int8 KV and direct PLE. Repeat code/prose rates are27.2472/36.1017 output tokens/s,
+without prompt reuse or an EOS claim. Decode is workload-dependent: Kuno leads
+this code fixture and trails prose; long-prefix parity is still not met.
+
+The full opt-in CubeK Tilewise plus rolling candidate source881d5af3 /
+SHA528bc066 passes all111 actual controls, including six actual CubeK dense and
+14 actual expert launches (`strata-parity-tilewise-rolling-20261020-operators`).
+Its complete profiled warm prefixes regress to21.0933/20.4503s versus c680's
+14.1363/14.1994s (`strata-parity-tilewise-rolling-20261020-profile`). Preserve the
+coherent candidate and evidence; it is not selected as the default on this basis.
+
+The latest default-native plus rolling-submission and borrowed-layer-binding
+candidate source0771a726 / SHAccdaf886 passes all97 actual controls and complete
+public profiling (`strata-parity-native-rolling-bundle-20261020-operators` and
+`strata-parity-native-rolling-bundle-20261020-profile`). Warm4245 prefixes are
+13.2547/13.2952s. Its second expert interval is7.5203s:1.6801s enqueue,2.0152s
+capture and3.6075s wait, with81 actual rolling recordings,1346 windows and24773
+segments. QSA1.8426s and GDN recurrence/norm0.4312s are essentially unchanged.
+A two-thread CPU shader-validation job overlapped this profile, so it is diagnostic
+evidence, not a clean A/B benchmark. Clean long requests, cancellation/terminal
+negative controls and the complete staged API gates are running separately;
+their final acceptance is pending. No API, protocol, model identity, consumer,
+installation or release change is claimed.
+
+Earlier evidence is retained: sourcee9b6bd4c / SHAcf867264 completed a14.4597s
+profiled long prefix, then7ada5edd / SHAbba3d0f3 failed the newly added three
+non-dyadic bit-identity checks despite30 passing matrix controls. Source6256ebea /
+SHA4b4e5b0b connected the native NoContraction product-rounding pass, but legal
+finite compiler-rounding differences remained. Those original failure receipts
+are not rewritten as passes; the independent F64 contract above supplies the
+explicit stronger mathematical acceptance for the new cases. Physical recovery
+was confirmed after the failed trials as well.
 
 ## Connected high-potential work
 
