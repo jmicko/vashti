@@ -126,9 +126,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 18] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 18];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 18] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 20] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 20];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 20] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -1406,7 +1406,14 @@ impl Graph {
         if read_dependencies.len() > 4096 {
             return Err(fault("native physical dependency capacity"));
         }
-        for r in resources.iter().chain(read_dependencies.iter()) {
+        for r in resources
+            .iter()
+            .chain(read_dependencies.iter())
+            .chain(match &dispatch {
+                Dispatch::Indirect(r) => Some(r),
+                _ => None,
+            })
+        {
             if r.size == 0
                 || r.offset
                     .checked_add(r.size)
@@ -1424,18 +1431,7 @@ impl Graph {
             dispatch,
             owners,
         };
-        let accesses = self.node_ranges(&node)?;
-        self.draft_scope.check_accesses(&accesses).map_err(fault)?;
-        self.admit_accesses(
-            &accesses,
-            if node.shared {
-                self.compute_queues
-                    [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
-                .queue
-            } else {
-                self.queue
-            },
-        )?;
+        self.admit_node(&node)?;
         self.nodes.push(node);
         Ok(())
     }
@@ -1488,18 +1484,7 @@ impl Graph {
             dispatch,
             owners,
         };
-        let accesses = self.node_ranges(&node)?;
-        self.draft_scope.check_accesses(&accesses).map_err(fault)?;
-        self.admit_accesses(
-            &accesses,
-            if node.shared {
-                self.compute_queues
-                    [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
-                .queue
-            } else {
-                self.queue
-            },
-        )?;
+        self.admit_node(&node)?;
         self.nodes.push(node);
         Ok(())
     }
@@ -1715,6 +1700,33 @@ impl Graph {
         let mut accesses = Vec::new();
         self.fill_node_ranges(n, &mut accesses, None)?;
         Ok(accesses)
+    }
+    fn admit_node(&mut self, node: &Node) -> Result<(), ServerError> {
+        let destination = if node.shared {
+            self.compute_queues[strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                .queue
+        } else {
+            self.queue
+        };
+        if !self.draft_scope.needs_access_inventory() {
+            // With no prepared/active protected source, admit_accesses ignores
+            // ranges and joins ALL original submissions unconditionally. Do
+            // exactly that, without allocating/resolving millions of otherwise
+            // unused per-node raw-handle ranges. Full owning view/indirect
+            // extents were checked above. execute() still resolves EVERY real
+            // original root under Keys::acquire before signature/replay/Plan,
+            // encoding or submission; no raw-handle/lifetime check is omitted.
+            self.complete_submission()?;
+            COMPUTE_BARRIERS[18].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(());
+        }
+        // Prepared-but-inactive scopes also protect R. Keep the complete
+        // original ranges, write checks and selective actual-flight joins.
+        let accesses = self.node_ranges(node)?;
+        self.draft_scope.check_accesses(&accesses).map_err(fault)?;
+        self.admit_accesses(&accesses, destination)?;
+        COMPUTE_BARRIERS[19].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
     /// Tag genuinely enqueued target/draft nodes; no submission/completion grant.
     pub(crate) fn shared_boundary(

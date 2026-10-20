@@ -649,3 +649,47 @@ signals, releases, node mapping and full external footprints/conflicts. Original
 independent byte/alias oracles and all mathematical references remain unchanged.
 Release/offline/original129 numerical GPU/full request/producer/recovery and
 performance gates remain next. No installation, speed or sustained decode claim.
+
+
+## Enqueue admission without an unused range image
+
+Canonical-source candidate5b173ad8/SHA
+cc0aa6aa6b2694c3474138090c2437692213658a482e9c77eabb9b418f00b47a
+passes86 App CPU,408/208 offline layouts, all129 original numerical GPU controls,
+three complete public requests/all producer proofs and actual physical recovery.
+Repeated4245 profile11.1239s improves prior11.7815s; clean repeat10.7871s
+versus installed11.1474s is a modest3.2% difference, not parity or installation
+acceptance. Actual capture CPU2.0168 ->1.3818s; enqueue remains1.5056s.
+Actual96 canonical full lists,4,860 certified-root instances and2,675,866
+factored declarations retain all full original external footprints. Actual
+cached-view work8,968,280 ->3,616,548; nodes204,463/guarded-root checks21,782
+unchanged. All previous components remain; no sustained/staged/terminal
+acceptance or install claim. Clean recovery marker is present; verify the
+independent clean host-after receipt before selecting anything.
+
+The next connected internal change removes only an UNUSED enqueue range image:
+outside the ENTIRE prepared/active draft-source lifetime, original admission
+unconditionally joins all native submissions and does not consume incoming
+ranges. Continue that SAME join at EACH node. Full original owning extents,
+including indirect dispatch, are checked at enqueue. Actual original raw roots
+are resolved under the SAME real capture guard before signature/replay/Plan,
+encoding or submission, including destroyed/foreign-device rejection. No
+GPU command can bypass that gate. All per-node source/descriptor declarations,
+owning Arcs, budget/IO/epoch checks and external footprints remain unchanged.
+An invalid raw resource may be rejected at capture rather than enqueue, always
+before GPU publication. No raw handle is cached across phases.
+
+From source PREPARATION through real joined retirement or terminal drain, retain
+EVERY original enqueue range, write-protection test, full actual-flight conflict
+check and selective join. Active-request absence is insufficient: prepared but
+inactive owners are protected too. Unknown/partial scopes never take the fast
+path. No-scope nodes retain the original unconditional join, including INFO
+visibility debt and readiness completion; this does not skip synchronization.
+Actual public-only post-sync counters distinguish both admission paths. No
+network/API/configuration/model/frontend change.
+
+Required validation: original86 CPU plus protected-owner lifecycle controls,
+actual guarded-buffer destruction/foreign-device/budget GPU test, all129 original
+numerical gates, full real requests and actual producer/admission counts, then
+physical recovery. A meaningful clean gain must still earn original terminal/
+full thinking/tools/MAX8/semantic/privacy acceptance and official installation.

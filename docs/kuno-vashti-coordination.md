@@ -43,17 +43,29 @@ infer immutability from a weight label. No omission of external footprints or
 arbitrary removal of read_dependencies. This next representation is a proposal,
 NOT implemented. Build capture indexes after replay misses, not on decode hits.
 
-The complete canonical-declaration successor is now implemented. It interns
-full original lists by genuine source owner, preserves exact expanded signature/
-replay semantics, and factors only internally redundant full-root reads after a
-sealed ANY-queue no-writer proof. All complete external footprints, real guards,
-owners, IO/INFO/epochs, queues/waits/releases/fences,24/64MiB caps and erasure stay.
-Capture indexes are built only after replay misses. Original86 App CPU controls
-pass, including six new expansion/ownership/future-write/alias/queue/compute
-and exact original-plan equivalence controls. Release/offline/original129 GPU/
-full request/actual counters/recovery/performance remain pending. Not installed.
-Exact implementation contract: [canonical full-source representation](kuno-native-compute-intervals.md#connected-canonical-full-source-representation).
-No network or Vashti consumer change.
+The complete canonical-declaration successor5b173ad8 / SHA
+cc0aa6aa6b2694c3474138090c2437692213658a482e9c77eabb9b418f00b47a
+passes86 App CPU,408/208 layouts, all129 original GPU controls, full real
+requests/all actual producer proofs, graceful exit and physical recovery.
+Repeated profile11.1239s (capture1.3818s versus prior2.0168s); clean
+repeat10.7871s versus installed11.1474s is a modest3.2% difference. Actual
+96 full canonical lists,4,860 certified-root instances and2,675,866 factored
+source declarations preserve complete external footprints. Cached view work
+8,968,280 ->3,616,548 with unchanged204,463 nodes/21,782 root revalidations.
+No full staged/terminal/sustained acceptance or installation claim.
+Receipts `strata-parity-canonical-source-20261020-{operators,profile,clean}`
+and owned summary `strata-parity-canonical-source-public-summary-20261020.json`.
+Profile physical recovery17:35:39UTC; clean recovery marker is present.
+
+The next Kuno-only change removes an unused per-node enqueue range image ONLY
+when no prepared/active protected draft owner exists. It retains each original
+unconditional submission join and all original capture guards/full declarations;
+prepared-but-inactive scopes still use every original range/write/flight check.
+Raw resource validity is checked by the real capture guard before GPU publication,
+not repeatedly at unscoped enqueue. No cross-call handle cache or omitted
+dependency. CPU/build/GPU/whole request/performance gates remain pending.
+Exact contract: [enqueue admission](kuno-native-compute-intervals.md#enqueue-admission-without-an-unused-range-image).
+No API, KNT2/KNR2, configuration, model identity or Vashti change.
 
 This candidate retains ALL preceding wide/bulk/miss-ring/loading/attention/
 scoped-buffer/interval/OR/sealed-mask/global-barrier/push-descriptor components.

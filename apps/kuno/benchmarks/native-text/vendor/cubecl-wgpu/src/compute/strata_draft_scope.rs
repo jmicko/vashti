@@ -95,6 +95,13 @@ impl Book {
             .filter(|s| s.active)
             .map(|s| s.identity.request)
     }
+    /// Full native ranges influence enqueue admission from PREPARATION, not
+    /// just active draft execution. Outside this lifetime Graph still performs
+    /// its original unconditional submission join and validates every actual
+    /// resource under the real capture guard before any command can execute.
+    pub fn needs_access_inventory(&self) -> bool {
+        self.live.is_some()
+    }
     /// Exact original owner interval, not an assumed whole VkBuffer. Shared
     /// readers and disjoint writes are legal; source writes/reset are forbidden
     /// from preparation through actual scope completion/terminal drain.
@@ -202,8 +209,10 @@ mod tests {
     #[test]
     fn source_is_read_only_from_prepare_through_drain_including_partial_signal() {
         let mut b = Book::default();
+        assert!(!b.needs_access_inventory());
         let id = b.prepare(9, source()).unwrap();
         for phase in 0..3 {
+            assert!(b.needs_access_inventory());
             let a = |first, bytes, write| Access {
                 buffer: 71,
                 first,
@@ -232,6 +241,7 @@ mod tests {
             }
         }
         b.finish_joined(id).unwrap();
+        assert!(!b.needs_access_inventory());
         b.check_accesses(&[Access {
             write: true,
             ..source()
@@ -245,5 +255,45 @@ mod tests {
             .is_err()
         );
         assert!(std::mem::size_of::<Book>() < 256);
+    }
+
+    #[test]
+    fn enqueue_inventory_is_required_until_the_actual_protected_owner_is_retired() {
+        let mut book = Book::default();
+        for request in 1..=16 {
+            assert!(!book.needs_access_inventory());
+            let original = book.prepare(request, source()).unwrap();
+            assert!(book.needs_access_inventory());
+            // Prepared but not active is deliberately NOT the fast path.
+            assert!(book.active_request().is_none());
+            assert!(
+                book.check_accesses(&[Access {
+                    write: true,
+                    ..source()
+                }])
+                .is_err()
+            );
+            if request % 2 == 0 {
+                book.dependency_submitted(original).unwrap();
+                assert!(book.needs_access_inventory());
+                book.enter(original).unwrap();
+                assert!(book.needs_access_inventory());
+                assert!(
+                    book.finish_joined(Identity {
+                        request: request + 1,
+                        ..original
+                    })
+                    .is_err()
+                );
+                assert!(book.needs_access_inventory());
+                book.finish_joined(original).unwrap();
+            } else {
+                // Only the existing terminal drain retires partial scopes.
+                assert!(book.enter(original).is_err());
+                assert!(book.needs_access_inventory());
+                book.discard_after_drain();
+            }
+            assert!(!book.needs_access_inventory());
+        }
     }
 }
