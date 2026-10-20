@@ -155,3 +155,38 @@ GPU memory recovery, then run a fresh ordinary successful request/service check.
 Those physical and application checks remain pending parent acceptance. The CPU
 suite tests the real one-shot state machine and actual production call-site
 ordering without constructing a GPU or authorizing a private path.
+
+## Protected native-matrix acceptance — 2026-10-20
+
+Frozen source0771a726 / worker SHA256
+`ccdaf8861819ec3dfb6e92208904dba5f989d79f49d176289f69e265be2e8057`
+combines this complete rolling path with the original faster native matrix
+family, scalar-state GDN, checked QSA specialization, genuine MAX8 known-prefix
+scope and borrowed immutable layer bindings. This is distinct from the slower
+optional Tilewise library artifact. All97 original/new operator controls pass,
+and the full public profiled4245-token request completes twice in13.2547 and
+13.2952s. The latter records81 accepted rolling recordings,1346 actual windows
+and24773 segments; enqueue1.6801s, native capture2.0152s and final wait3.6075s.
+Capture now overlaps work, so these are CPU intervals, not independent GPU costs.
+An unrelated two-thread CPU shader-validation job overlaps this diagnostic.
+
+The separate clean45/4245/4245 check passes with correct complete arithmetic,
+load102.3943s, cold short prefix10.4072s (including first-use compilation), first
+long14.1743s and repeated long12.4373s. The existing accepted installation's
+comparable repeated long takes24.9658s; fresh upstream Strata takes5.3515s.
+These measurements establish improvement, not Strata parity.
+
+The explicit negative entry genuinely submits a nonempty prefix, fires once,
+successfully waits two actual recovery queues and records zero failed queues.
+It exits1 with the expected terminal error, without TEXT/DONE/CLOSED frames,
+owned-zero or reusable-session claims. Protected process exit then restores
+physical GPU memory and normal service admission with no new driver faults.
+A fresh separate clean worker succeeds afterward. No GPU reset/reboot.
+
+Receipts under `/media/jmicko/faststore/kuno-development`:
+`strata-parity-native-rolling-bundle-20261020-operators`,
+`strata-parity-native-rolling-bundle-20261020-profile`,
+`strata-parity-native-rolling-20261020-terminal-negative` and
+`strata-parity-native-rolling-20261020-clean-long`.
+Full staged application/privacy/semantic acceptance and installation are still
+separate gates; the accepted system worker remainsfb31e124 at this checkpoint.
