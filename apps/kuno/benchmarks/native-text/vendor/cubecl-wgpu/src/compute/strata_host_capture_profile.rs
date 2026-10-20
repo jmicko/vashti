@@ -15,6 +15,15 @@ pub const LABELS: [&str; 8] = [
     "finalize",
 ];
 static TOTALS: [[AtomicU64; 4]; 8] = [const { [const { AtomicU64::new(0) }; 4] }; 8];
+pub(super) fn selected(
+    gpu_active: bool,
+    enabled: bool,
+    active: bool,
+    public: bool,
+    host_mode: bool,
+) -> bool {
+    gpu_active || (enabled && active && public && host_mode)
+}
 pub fn totals() -> [[u64; 4]; 8] {
     std::array::from_fn(|i| std::array::from_fn(|j| TOTALS[i][j].load(Relaxed)))
 }
@@ -75,6 +84,31 @@ impl Timer {
 mod tests {
     use super::*;
     #[test]
+    fn host_only_selection_requires_every_original_public_guard() {
+        for bits in 0..16 {
+            let args = std::array::from_fn::<_, 4, _>(|i| bits & (1 << i) != 0);
+            assert_eq!(
+                selected(false, args[0], args[1], args[2], args[3]),
+                bits == 15
+            );
+            assert!(selected(true, args[0], args[1], args[2], args[3]));
+        }
+    }
+    #[test]
+    fn host_mode_cannot_enable_gpu_timestamps_or_disable_original_rolling_path() {
+        let s = include_str!("strata_graph.rs");
+        let gpu =
+            &s[s.find("fn profile_active()").unwrap()..s.find("fn host_profile_active()").unwrap()];
+        assert!(!gpu.contains("prefill-host-layer"));
+        let host =
+            &s[s.find("fn host_profile_active()").unwrap()..s.find("type OperatorTotals").unwrap()];
+        assert!(
+            host.contains("prefill-host-layer") && host.contains("host_capture_profile::selected")
+        );
+        assert!(s.contains("let profiling = profile_active() && compute_count >= 2048;"));
+        assert!(s.contains("!profile_active()"));
+    }
+    #[test]
     fn disabled_capture_samples_nothing_and_publishes_no_duration() {
         let before = totals()[7];
         let mut t = Timer::new(false);
@@ -110,7 +144,7 @@ mod tests {
     fn actual_graph_gates_all_eight_marks_with_existing_public_only_admission() {
         let s = include_str!("strata_graph.rs");
         assert_eq!(
-            s.matches("host_capture_profile::Timer::new(profile_active())")
+            s.matches("host_capture_profile::Timer::new(host_profile_active())")
                 .count(),
             1
         );

@@ -54,6 +54,16 @@ fn profile_active() -> bool {
         )
         && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
 }
+#[cfg(feature = "kuno-public-host-clock")]
+fn host_profile_active() -> bool {
+    host_capture_profile::selected(
+        profile_active(),
+        enabled(),
+        PROFILE_ACTIVE.load(std::sync::atomic::Ordering::Acquire),
+        std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1"),
+        std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("prefill-host-layer"),
+    )
+}
 type OperatorTotals = std::collections::BTreeMap<&'static str, (u64, u64)>;
 fn profile_totals() -> &'static Mutex<OperatorTotals> {
     static TOTALS: OnceLock<Mutex<OperatorTotals>> = OnceLock::new();
@@ -2606,7 +2616,7 @@ impl Graph {
         }
         let capture_start = std::time::Instant::now();
         #[cfg(feature = "kuno-public-host-clock")]
-        let mut host_clock = host_capture_profile::Timer::new(profile_active());
+        let mut host_clock = host_capture_profile::Timer::new(host_profile_active());
         // The caller joins real primary-queue initialization/readback work.
         // INFO copies carry their own actual native transfer dependency. Every
         // original owner stays retained through the real completion fence.

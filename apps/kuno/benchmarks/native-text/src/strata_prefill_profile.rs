@@ -174,7 +174,10 @@ impl NativeExpertLayer {
         }
         let selected = NativeSelection {
             authorized: std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
-                && std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("prefill-layer"),
+                && (std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("prefill-layer")
+                    || (cfg!(feature = "strata-public-host-clock")
+                        && std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref()
+                            == Ok("prefill-host-layer"))),
             request: REQUEST.load(Ordering::Relaxed),
             start,
             count,
@@ -241,6 +244,10 @@ impl NativeExpertLayer {
                     "cpu_clock_unavailable"
                 ]);
                 record["host_capture"] = serde_json::json!(host);
+                record["host_only_normal_schedule"] = serde_json::json!(
+                    std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref()
+                        == Ok("prefill-host-layer")
+                );
             }
             eprintln!("public_prefill_native_gpu_profile {}", record);
         }

@@ -21,33 +21,38 @@ fn compiled_public_capacity_entry(public_check: bool, prefill_check: Option<bool
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false, None, false, false, false, false)
+    run_mode(path, false, None, false, false, false, false, false)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, false, false, false, false)
+    run_mode(path, true, None, false, false, false, false, false)
 }
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
-    run_mode(path, true, Some(profile), false, false, false, false)
+    run_mode(path, true, Some(profile), false, false, false, false, false)
 }
+#[cfg(feature = "strata-public-host-clock")]
+pub(crate) fn public_prefill_host_check(path: &Path) -> Result<()> {
+    run_mode(path, true, Some(true), false, false, false, false, true)
+}
+
 /// Three identical compiled-public short requests exercise cold and two warm
 /// prefix paths. Ordinary request erasure and final session close are unchanged.
 pub(crate) fn public_prefill_short_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, true, false, false)
+    run_mode(path, true, Some(false), false, true, false, false, false)
 }
 pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, false, false)
+    run_mode(path, true, None, true, false, false, false, false)
 }
 /// Fixed-public original expert matrices only; no Session or private input.
 pub(crate) fn public_matrix_timing_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, true, false)
+    run_mode(path, true, None, true, false, true, false, false)
 }
 /// Explicit compiled-public terminal negative check. It never reads stdin and
 /// cannot be selected through KNT2 or the inference API. An actual submitted
 /// prefix is interrupted; owning process exit is part of this check's recovery.
 pub(crate) fn public_rolling_failure_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, false, false, true)
+    run_mode(path, true, Some(false), false, false, false, true, false)
 }
 fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
@@ -67,6 +72,7 @@ fn run_mode(
     short_check: bool,
     matrix_timing: bool,
     rolling_failure: bool,
+    host_clock_only: bool,
 ) -> Result<()> {
     if rolling_failure
         && (!public_check
@@ -82,6 +88,17 @@ fn run_mode(
     }
     if matrix_timing && (!public_check || !matrix_check || prefill_check.is_some() || short_check) {
         return Err("public_matrix_timing_configuration");
+    }
+    if host_clock_only
+        && (!cfg!(feature = "strata-public-host-clock")
+            || !public_check
+            || prefill_check != Some(true)
+            || matrix_check
+            || matrix_timing
+            || short_check
+            || rolling_failure)
+    {
+        return Err("public_host_clock_configuration");
     }
     if public_check {
         crate::resident_util::enable_compiled_public_diagnostics();
@@ -122,7 +139,14 @@ fn run_mode(
         // has already scrubbed inherited profile/authorization variables above.
         unsafe {
             if !rolling_failure {
-                std::env::set_var("KUNO_STRATA_NATIVE_PROFILE", "prefill-layer");
+                std::env::set_var(
+                    "KUNO_STRATA_NATIVE_PROFILE",
+                    if host_clock_only {
+                        "prefill-host-layer"
+                    } else {
+                        "prefill-layer"
+                    },
+                );
             }
             std::env::set_var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY", "1");
         }

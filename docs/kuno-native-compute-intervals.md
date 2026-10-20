@@ -1261,3 +1261,35 @@ encoding boundary. Only our incidental main/mod formatting was restored before
 applying the intended edits. No failed or partial edit was frozen/run on GPU.
 No shader/numerical/header/reference/selection gate was relaxed.
 Freeze/offline/original129+42/full request/host-clock/recovery remain next.
+
+
+### Normal-schedule host-clock follow-up
+
+Frozen44f8d68f/SHA41d0e593 completes123 selected CPU,420/208 offline,
+original129+42 GPU, complete73/4245/4245 public requests, original compiler/
+producer/count/erasure/recovery gates and all eight distinct wall/thread-CPU
+rows with zero unavailable clocks. Repeat10.6932s is a diagnostic, not a clean
+selection result. Sampled layer24 reports encoding8.2430ms, retained preparation
+7.7313ms, queue planning1.9695ms, compute dependencies1.5124ms, and smaller
+remaining stages. These are actual CPU intervals for the INSTRUMENTED layer:
+the existing GPU timestamp sampler serializes queue planning and disables its
+rolling path. They cannot establish the ranking on the normal execution path.
+Actual19:58:17UTC recovery is clear/healthy; installed identities unchanged.
+Owned summary`strata-parity-host-clock-public-summary-20261020.json`.
+
+The complete follow-up retains that diagnostic and adds the explicit compiled
+lab-only`--public-prefill-host-profile SETTINGS` entry under the same optional
+`strata-public-host-clock` feature. It selects`prefill-host-layer` only after
+scrubbing all inherited experiment environment variables before threads.
+Private/KNT2/API entries always pass false. The original GPU timestamp selector
+is unchanged and does not recognize this value: no GPU timestamp commands,
+serialized queue override, or rolling-disable override is added. The same fixed
+public third request/layer24 activates just eight wall/thread-CPU marks. Its
+public diagnostic identifies`host_only_normal_schedule=true`; actual timestamp
+calls and GPU class samples must be zero. Numerical math, full memory ownership,
+barriers/timelines, schedule, budgets and erasure are unchanged. All125 selected
+CPU controls pass including the original123 plus all host admission combinations
+and a witness of the unchanged original GPU/rolling selector. Exact-source
+420/208 offline,171 GPU, full public requests and physical recovery follow.
+Normal-path results, not the serialized sampler alone, will choose the next
+connected optimization. No API/frontend/install/release change.
