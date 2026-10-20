@@ -79,6 +79,16 @@ inventory/source-bundle reuse across original capture passes, with exact real
 root revalidation, original full views/queues/owners/epochs/erasure and64MiB
 budget. It is not implemented. No new install, release or consumer/API change.
 
+The connected original-signature inventory/full-source-bundle successor is now
+implemented. It reuses the SAME full signature allocation, revalidates every
+actual raw root under EACH real guard, retains original views/flags/queues/
+owners/INFO/fences and64MiB, and shares only exact ordered full original source
+lists within one batch. Source-cache overflow materializes the original full
+views. Original24MiB host cap and8MiB tape remain; actual fixture18.92MiB and
+worst-cap budget pass. Actual App80 CPU controls pass. Release/offline/original129
+GPU/full request/counter/recovery/performance gates remain pending. No install,
+consumer/API change or performance claim. Exact contract is in the guide.
+
 Exact code/artifact/receipt identities, tests, limitations and next gates are in
 [the synchronization guide](kuno-native-compute-intervals.md). Physical snapshot:
 Intel50,688,000B, NVIDIA compute0, faults0, all services200 and normal admission.

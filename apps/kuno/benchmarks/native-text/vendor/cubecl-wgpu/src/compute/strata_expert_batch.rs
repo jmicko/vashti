@@ -1,13 +1,15 @@
 //! Native-WGPU-only bulk admission of the original six expert operators.
 use super::*;
 use cubecl_runtime::memory_management::ManagedMemoryId;
+use cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar;
 use cubecl_runtime::server::{
     MetadataBindingInfo, NativeStrataExpertBatch, NativeStrataExpertBatchReceipt,
     NativeStrataExpertCommand,
 };
 use hashbrown::HashMap as ExactMap;
-use cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar;
 
+#[path = "strata_read_bundles.rs"]
+mod read_bundles;
 const MAX_BINDINGS: usize = 4096;
 const MAX_PIPELINES: usize = 32;
 type Key = (ManagedMemoryId, Option<u64>, Option<u64>, StreamId, u64);
@@ -42,23 +44,14 @@ impl WgpuServer {
         // Conservatively admit all simultaneously live original command,
         // binding/resource/hash tables, pipeline/INFO views and one packing page
         // before allocating any backend scratch. Actual capacities rechecked.
-        let tables = MAX_BINDINGS
-            * 2
-            * (size_of::<Binding>()
-                + size_of::<WgpuResource>()
-                + size_of::<Key>()
-                + size_of::<usize>()
-                + 32);
-        let per_command = 2
-            * (size_of::<Option<Arc<ComputePipeline>>>()
-                + size_of::<MetadataBindingInfo>()
-                + size_of::<WgpuResource>());
-        let metadata = batch
-            .metadata_bytes()?
-            .checked_add(tables)
-            .and_then(|n| n.checked_add(batch.commands.len() * per_command))
-            .and_then(|n| n.checked_add(MAX_PIPELINES * 512 + 32768))
-            .ok_or_else(|| fault("native expert batch metadata overflow"))?;
+        let metadata = read_bundles::host_bytes::<
+            Binding,
+            WgpuResource,
+            Key,
+            MetadataBindingInfo,
+            Arc<ComputePipeline>,
+        >(batch.metadata_bytes()?, batch.commands.len())
+        .ok_or_else(|| fault("native expert batch metadata overflow"))?;
         let scope = self
             .scheduler
             .stream(&stream_id)
@@ -159,12 +152,20 @@ impl WgpuServer {
             for command in &mut batch.commands {
                 match command {
                     NativeStrataExpertCommand::Launch {
-                        kernel, args, mode, count,
+                        kernel,
+                        args,
+                        mode,
+                        count,
                     } => {
                         let kernel = kernel
                             .take()
                             .ok_or_else(|| fault("native expert original kernel missing"))?;
-                        grammar.launch(kernel.name(), kernel.native_release_after(), count, args)?;
+                        grammar.launch(
+                            kernel.name(),
+                            kernel.native_release_after(),
+                            count,
+                            args,
+                        )?;
                         let mut id = kernel
                             .id()
                             .native_release_boundary(kernel.native_release_after());
@@ -198,6 +199,14 @@ impl WgpuServer {
                 .scheduler
                 .stream(&stream_id)
                 .native_expert_uniforms(&records, &scope)?;
+            let mut read_cache = read_bundles::Cache::new().map_err(fault)?;
+            let mut read_indices = read_bundles::Indices::default();
+            read_indices
+                .try_reserve_exact(MAX_BINDINGS)
+                .map_err(|_| fault("native source index scratch allocation"))?;
+            if read_indices.capacity() > MAX_BINDINGS {
+                return Err(fault("native source index actual scratch capacity"));
+            }
             let mut next_info = 0;
             let mut receipt = NativeStrataExpertBatchReceipt::default();
             for (index, command) in batch.commands.iter_mut().enumerate() {
@@ -209,11 +218,20 @@ impl WgpuServer {
                         }
                         bound.push(info[next_info].clone());
                         next_info += 1;
-                        let reads = args
-                            .read_dependencies
-                            .iter()
-                            .map(|binding| resources[indices[&key(binding)]].clone())
-                            .collect();
+                        read_indices.clear();
+                        read_indices.extend(
+                            args.read_dependencies
+                                .iter()
+                                .map(|binding| indices[&key(binding)]),
+                        );
+                        let reads = read_cache
+                            .resolve(&read_indices, |index| {
+                                resources
+                                    .get(index)
+                                    .cloned()
+                                    .ok_or("native source original resource missing")
+                            })
+                            .map_err(fault)?;
                         self.scheduler
                             .stream(&stream_id)
                             .enqueue_native_expert_owned(

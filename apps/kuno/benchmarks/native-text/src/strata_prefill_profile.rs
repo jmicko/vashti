@@ -293,18 +293,37 @@ pub(crate) fn expert_member_geometry(map: &[u32], groups: usize) {
         padded_members * 9_830_400,
     );
 }
-fn native_backend_counts() -> [u64; 17] {
+fn native_backend_counts() -> [u64; 22] {
     let (_, _, capture, wait) = cubecl::wgpu::native_strata_graph_execution_stats();
     let rolling = cubecl::wgpu::native_strata_graph_rolling_stats();
     let copies = cubecl::wgpu::native_strata_graph_copy_barrier_stats();
     let compute = cubecl::wgpu::native_strata_graph_compute_barrier_stats();
     [
-        capture, wait, rolling[0], rolling[1], rolling[2], copies[0], copies[1], compute[0],
-        compute[1], compute[2], compute[3], compute[4], compute[5], compute[6], compute[7],
-        compute[8], compute[9],
+        capture,
+        wait,
+        rolling[0],
+        rolling[1],
+        rolling[2],
+        copies[0],
+        copies[1],
+        compute[0],
+        compute[1],
+        compute[2],
+        compute[3],
+        compute[4],
+        compute[5],
+        compute[6],
+        compute[7],
+        compute[8],
+        compute[9],
+        compute[10],
+        compute[11],
+        compute[12],
+        compute[13],
+        compute[14],
     ]
 }
-pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 17])>);
+pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 22])>);
 impl Timer {
     // PUBLIC_QSA_TIMER_ADMISSION_BEGIN
     /// No private client lookup, enqueue, flush or synchronization is added.
@@ -375,6 +394,11 @@ impl Timer {
                         "expert_native_compute_execution_only_entries",
                         "expert_native_push_descriptor_dispatches",
                         "expert_native_fresh_descriptor_dispatches",
+                        "expert_native_capture_cached_nodes",
+                        "expert_native_capture_cached_views",
+                        "expert_native_capture_root_revalidations",
+                        "expert_native_shared_read_nodes",
+                        "expert_native_shared_read_bundles",
                     ]
                     .into_iter()
                     .enumerate()

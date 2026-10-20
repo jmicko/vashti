@@ -92,3 +92,90 @@ impl Guarded<'_> {
         Ok(unsafe { raw.raw_buffer_handle() })
     }
 }
+
+/// Bound to the SAME real key owner, never an equal-byte/root surrogate.
+pub(super) struct ScopedSnapshot<'k> {
+    keys: &'k Keys,
+    inventory: super::capture_inventory::Snapshot,
+}
+pub(super) struct Captured<'a, 'k> {
+    snapshot: &'a super::capture_inventory::Snapshot,
+    signature: &'a [u64],
+    _guard: &'a Guarded<'k>,
+}
+impl<'k> Guarded<'k> {
+    fn inventory_root(&self, i: usize) -> Result<super::capture_inventory::Root, ServerError> {
+        let raw = self
+            .batch
+            .get(i)
+            .ok_or_else(|| fault("native capture actual guarded root missing"))?;
+        let buffer = self
+            .keys
+            .buffers
+            .get(i)
+            .ok_or_else(|| fault("native capture actual key missing"))?;
+        use ash::vk::Handle;
+        Ok(super::capture_inventory::Root {
+            raw: unsafe { raw.raw_buffer_handle() }.as_raw(),
+            bytes: buffer.size(),
+        })
+    }
+    pub fn snapshot(
+        &self,
+        signature: &[u64],
+        nodes: usize,
+        budget: usize,
+    ) -> Result<ScopedSnapshot<'k>, ServerError> {
+        let inventory = super::capture_inventory::Snapshot::build(
+            signature,
+            nodes,
+            self.keys.buffers.len(),
+            |i| {
+                self.inventory_root(i)
+                    .map_err(|_| "native capture actual root unavailable")
+            },
+            budget,
+        )
+        .map_err(fault)?;
+        Ok(ScopedSnapshot {
+            keys: self.keys,
+            inventory,
+        })
+    }
+}
+impl<'k> ScopedSnapshot<'k> {
+    pub fn metadata_bytes(&self) -> usize {
+        self.inventory.metadata_bytes()
+    }
+    pub fn stats(&self) -> [u64; 3] {
+        self.inventory.stats()
+    }
+    pub fn bind<'a>(
+        &'a self,
+        native: &'a Guarded<'k>,
+        signature: &'a [u64],
+    ) -> Result<Captured<'a, 'k>, ServerError> {
+        if !std::ptr::eq(self.keys, native.keys)
+            || native.keys.buffers.len() != self.inventory.roots()
+        {
+            return Err(fault("native capture actual root key owner changed"));
+        }
+        self.inventory.check_signature(signature).map_err(fault)?;
+        for i in 0..self.inventory.roots() {
+            self.inventory
+                .check_root(i, native.inventory_root(i)?)
+                .map_err(fault)?;
+        }
+        self.inventory.note_revalidated();
+        Ok(Captured {
+            snapshot: &self.inventory,
+            signature,
+            _guard: native,
+        })
+    }
+}
+impl Captured<'_, '_> {
+    pub fn node(&self, index: usize) -> Result<super::capture_inventory::Node<'_>, ServerError> {
+        self.snapshot.node(self.signature, index).map_err(fault)
+    }
+}

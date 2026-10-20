@@ -413,3 +413,75 @@ counts plus physical recovery. Only a meaningful matched CLEAN gain justifies
 terminal recovery/full staged thinking/tools/MAX8/semantic/privacy acceptance
 and the official installation transaction. Installed clean11.14739s versus
 Strata5.3515s remains authoritative. The parity goal is active and unmet.
+
+
+## Connected original-signature inventory and full source bundles
+
+The complete next host candidate is implemented. It indexes the SAME original
+replay signature allocation: that already contains every original descriptor,
+full physical read and indirect buffer handle/offset/size. It does not make a
+second full access image or change any signature field. A capture-only index
+validates exact original node count, complete schema, full root membership and
+bounds and all used capacity before any prefix. It is bound to the actual
+signature allocation identity/length, not an equal-byte clone. Optional evidence
+or allocation unavailable means the unchanged original view-lookup path.
+
+The snapshot additionally borrows the SAME actual Keys owner. Every later
+capture guard revalidates that exact owner, every actual live VkBuffer and its
+physical size under the real Wgpu destruction lock. Only a reader borrowing
+that guard can access the cached original view facts. Original signature/node
+inventory is immutable through these passes and moves intact into Recording.
+Planner, class collection, compute intervals, COPY visibility and native
+push/fresh descriptors/copies/indirect encoding reuse the same complete views.
+Access flags and OR proof still come from the original actual Program; original
+queue selection, all full source declarations, bounds, owners and waits stay.
+Each encoder node is decoded once, after closing/issuing a prior prefix and
+preparing the fresh window. Readers drop before ready mutation, original guard
+release, node drops, Wgpu polling, cleanup or erasure. The capture-only index
+and root metadata are wiped before Keys drop; no handle cache crosses a request.
+
+Index/root/sort peak is capped1MiB, charged inside the original64MiB alongside
+the unchanged signature, original owners, retained Recordings, Plan, compute/
+transfer state, descriptors and all scratch. Actual allocation capacities are
+checked. Full-capacity volatile word/byte erasure covers unused metadata too.
+Current hard admission/preflight limits still apply; this is not a claim that
+all metadata-pressure configurations have been live exercised.
+
+Coupled full-read sharing remains confined to ONE real original expert batch.
+The existing binding table first validates/resolves every original binding and
+retains its genuine allocator owner. Identical ORDERED exact table-index lists
+can share an immutable Arc<Vec<WgpuResource>>; order, duplicates, every original
+view and per-node admission checks remain. Distinct binding indices, even with
+equal bytes, never match. No source cache crosses a batch/publication lifetime.
+At most16 cached lists and4096 total cached views; overflow uses independently
+materialized full original views, without narrowing or skipping checks. New
+indices/scratch are wiped on all exits. Original non-bulk nodes remain Vec-owned.
+Each actual capture separately deduplicates/charges these source bundles while
+retaining original allocator Binding bundles and unique full resource owners
+through every real flight, split, quarantine and recovery path.
+
+The actual host-reservation formula is shared by producer and actual-INFO budget
+control. It charges original argument plus worst resolved-view images, all
+cache/scratch/Arc/table headers and real pipeline/INFO containers. The fixture
+charges18,915,776B of the unchanged25,165,824B host reservation; the worst full
+8MiB tape/5632-node case plus miss-ring metadata also fits. No private/device/
+parent/capture cap is enlarged. Original release points/closed logical grammar,
+real INFO producer and all shader arithmetic remain unchanged.
+
+Compiled-public counters distinguish actually cached nodes/views, actual full
+root revalidations and actual shared-source nodes/unique bundles, after the
+original real sync. No network, KNT2/KNR2, model, configuration or Vashti field
+changes. No private metadata is published or persisted.
+
+All80 distinct actual App CPU controls pass (original73 plus four capture-index
+and three source-bundle controls), log `native-capture-inventory-combined-cpu-20261020.log`.
+They retain original alias/queue/rolling/terminal/owner/budget/math producer
+checks, and cover complete full views, BDA/indirect, equal-byte foreign signature,
+changed/missing roots, count/overflow/truncation/capacity negatives, actual unused
+capacity erasure, exact ordered/duplicated/distinct source keys, fallback after
+cache bounds, error rollback and independent batch lifetimes. Initial integration
+compile caught Option/Result budget propagation and a live immutable signature
+borrow spanning ready mutation; both were repaired before final CPU acceptance.
+No numerical reference/tolerance or recovery criterion was relaxed. Release,
+offline layouts, original129 numerical GPU/full requests/actual counters/
+physical recovery and performance are next. Not installed or selected.

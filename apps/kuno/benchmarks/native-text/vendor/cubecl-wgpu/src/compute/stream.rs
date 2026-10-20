@@ -932,7 +932,7 @@ impl WgpuStream {
         &mut self,
         pipeline: Arc<ComputePipeline>,
         resources: Vec<WgpuResource>,
-        reads: Vec<WgpuResource>,
+        reads: Arc<Vec<WgpuResource>>,
         count: &CubeCount,
         owners: Arc<Vec<cubecl_runtime::server::Binding>>,
         scope: &super::transient_io::NativeExpertBatchScope,
@@ -951,7 +951,7 @@ impl WgpuStream {
                 ));
             }
         };
-        self.strata_graph.as_mut().unwrap().push_owned(
+        self.strata_graph.as_mut().unwrap().push_shared_owned(
             &pipeline,
             resources,
             reads,

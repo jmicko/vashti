@@ -118,6 +118,9 @@ impl<T> Owners<T> {
         })
     }
 
+    pub(super) fn bundle_count(&self) -> usize {
+        self.bundles.len()
+    }
     pub(super) fn metadata_bytes(&self) -> usize {
         self.bytes
     }

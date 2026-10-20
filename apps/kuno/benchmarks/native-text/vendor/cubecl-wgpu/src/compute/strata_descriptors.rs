@@ -314,6 +314,7 @@ mod tests {
             "begin_native_command",
             "drop(fresh_descriptors.take())",
             "self.fresh_descriptors(",
+            "let encoded_node =",
         ] {
             let next = capture.find(marker).expect(marker);
             assert!(next >= previous, "capture ordering: {marker}");

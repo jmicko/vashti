@@ -335,18 +335,23 @@ fn maximum_route_conserving_shadow_inventory_fits_the_original_byte_reservations
     let bytes = batch.metadata_bytes().unwrap();
     assert!(bytes <= NATIVE_EXPERT_BATCH_BYTES);
     type Key = (ManagedMemoryId, Option<u64>, Option<u64>, StreamId, u64);
-    let tables = 4096
-        * 2
-        * (size_of::<Binding>()
-            + size_of::<cubecl::wgpu::WgpuResource>()
-            + size_of::<Key>()
-            + size_of::<usize>()
-            + 32);
-    let per_command = 2
-        * (size_of::<Option<std::sync::Arc<wgpu::ComputePipeline>>>()
-            + size_of::<MetadataBindingInfo>()
-            + size_of::<cubecl::wgpu::WgpuResource>());
-    let backend = bytes + tables + batch.commands.len() * per_command + 32 * 512 + 32768;
+    let backend = crate::strata_read_bundle_controls::host_bytes::<
+        Binding,
+        cubecl::wgpu::WgpuResource,
+        Key,
+        MetadataBindingInfo,
+        std::sync::Arc<wgpu::ComputePipeline>,
+    >(bytes, batch.commands.len())
+    .unwrap();
+    let worst = crate::strata_read_bundle_controls::host_bytes::<
+        Binding,
+        cubecl::wgpu::WgpuResource,
+        Key,
+        MetadataBindingInfo,
+        std::sync::Arc<wgpu::ComputePipeline>,
+    >(NATIVE_EXPERT_BATCH_BYTES, NATIVE_EXPERT_BATCH_COMMANDS)
+    .unwrap();
+    assert!(worst + super::miss_ring::HOST_BYTES <= NATIVE_EXPERT_BATCH_HOST_BYTES);
     assert!(backend <= NATIVE_EXPERT_BATCH_HOST_BYTES);
     assert!(backend + super::miss_ring::HOST_BYTES <= NATIVE_EXPERT_BATCH_HOST_BYTES);
     eprintln!(
