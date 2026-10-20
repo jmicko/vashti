@@ -22,7 +22,38 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 22:11UTC): corrected48KiB matrix attention.**
+**Authoritative active handoff (2026-10-20 22:19UTC): complete48KiB kernel plus authentic fault-view fixture.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Final candidate source585dc471c56879466a9bcbe40f6a8229ff06e6a9,
+SHAfd43c5cb4cece90f4987f50a71d482072a3d2ca21fae6ea80eaff9b762ca03fb,
+build`strata-parity-qsa-xmx-logical-20261020`. Entire connected QK/softmax/PV
+kernel and all previous pool/matrix/transfer components are retained. Actual
+scratch48420B fits B70 Vulkan49152B. All144 selected CPU controls pass again;
+release is frozen. Exact-source offline420/216 and protected original171+7 new
+ACTUAL large-XMX GPU/full-profile/recovery proofs follow; no speed/install claim.
+
+Earlier3ac1f893/SHAdcc438de passes CPU/offline and hardware admission, then stops
+BEFORE XMX execution because the new fixture supplies its full padded fault
+allocation instead of production's genuine logical4-byte fault view. Corrected
+fixture derives that view from its original real BufferId; full parent/tail
+still read/audited. The strict production4-byte check is UNCHANGED. Do not weaken
+it or treat either unexercised run as accepted numerical/performance evidence.
+Failed static/recovered receipt:
+`strata-parity-qsa-xmx-slm48-20261020-failure-public.json` under the artifact base.
+Earlier58660B admission failure remains preserved separately.
+
+Installed worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 unchanged.
+Original at-EACH5% clean gate and first-use compilation timing remain; no API,
+config, model identity, frontend or release change. Goal ACTIVE/UNMET.
+New bounded sudo refresh297061/parent sharedshell3556 ends2026-10-21 00:17:49UTC;
+old220143 ends22:38:06UTC naturally. Never kill the shared shell. No reset/reboot.
+Exact contract/evidence:
+[matrix attention](kuno-native-compute-intervals.md#complete-matrix-attention-successor-under-implementation).
+
+**Previous active handoff:**
+
+**Previous handoff (2026-10-20 22:11UTC): corrected48KiB matrix attention.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. First XMX sourcee2935521/SHAa38e2801 passes144 CPU and
