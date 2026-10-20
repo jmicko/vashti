@@ -170,6 +170,117 @@ pub(crate) fn enabled() -> bool {
         )
     })
 }
+// NATIVE_PROGRAM_DEVICE_LIMITS_BEGIN
+/// Actual physical-device limits for one original native Graph. This is not a
+/// software preference or the HAL selector's bounded supported-shape inventory.
+#[derive(Clone, Copy, Debug)]
+struct ProgramDeviceLimits {
+    min_subgroup: u32,
+    max_subgroup: u32,
+    max_subgroups: u32,
+    max_invocations: u32,
+    max_size: [u32; 3],
+    max_shared_bytes: u64,
+}
+impl ProgramDeviceLimits {
+    fn validate(
+        self,
+        words: &[u32],
+        entry: &[u8],
+        required_subgroup: Option<u32>,
+        shared_bytes: Option<u64>,
+    ) -> Result<(), &'static str> {
+        let size = literal_program_workgroup(words, entry)?;
+        if size
+            .iter()
+            .zip(self.max_size)
+            .any(|(&n, max)| n == 0 || n > max)
+        {
+            return Err("native program workgroup dimension limit");
+        }
+        let invocations = size
+            .into_iter()
+            .try_fold(1_u32, u32::checked_mul)
+            .ok_or("native program workgroup invocation overflow")?;
+        if invocations > self.max_invocations {
+            return Err("native program workgroup invocation limit");
+        }
+        if let Some(width) = required_subgroup {
+            if !width.is_power_of_two() || width < self.min_subgroup || width > self.max_subgroup {
+                return Err("native program required subgroup size limit");
+            }
+            // Ceiling matters for legal partial subgroups, including the
+            // existing workgroup-of-one fixed32 operators. Never use a floor.
+            if invocations.div_ceil(width) > self.max_subgroups {
+                return Err("native program compute subgroup count limit");
+            }
+        }
+        // With no required width the Vulkan implementation chooses the width;
+        // do not invent a minimum-width choice and reject legal automatic32.
+        // Rust/SPIR-V supplies its actual compiler-owned shared footprint.
+        // WGSL retains the original Wgpu/Naga workgroup-memory admission.
+        if shared_bytes.is_some_and(|bytes| bytes > self.max_shared_bytes) {
+            return Err("native program shared memory limit");
+        }
+        Ok(())
+    }
+}
+
+/// Read only the selected compute entry's original literal LocalSize. The
+/// bounded native path has no specialization-size contract: reject LocalSizeId
+/// or a WorkgroupSize builtin which could override these literal dimensions.
+/// The original module validators still own full SPIR-V semantic validation.
+fn literal_program_workgroup(words: &[u32], name: &[u8]) -> Result<[u32; 3], &'static str> {
+    if words.len() < 5 || words[0] != 0x07230203 || words[3] == 0 || name.is_empty() {
+        return Err("native program workgroup SPIRV header");
+    }
+    let mut entry = None;
+    let mut at = 5;
+    while at < words.len() {
+        let count = (words[at] >> 16) as usize;
+        let end = at
+            .checked_add(count)
+            .filter(|&end| count != 0 && end <= words.len())
+            .ok_or("native program workgroup SPIRV extent")?;
+        let i = &words[at..end];
+        if i[0] & 65535 == 15 && count >= 4 && i[1] == 5 {
+            let mut bytes = i[3..].iter().flat_map(|word| word.to_le_bytes());
+            let matches =
+                name.iter().all(|&byte| bytes.next() == Some(byte)) && bytes.next() == Some(0);
+            if matches {
+                if i[2] == 0 || i[2] >= words[3] || entry.replace(i[2]).is_some() {
+                    return Err("native program workgroup compute entry");
+                }
+            }
+        }
+        at = end;
+    }
+    let entry = entry.ok_or("native program workgroup compute entry")?;
+    let mut size = None;
+    at = 5;
+    while at < words.len() {
+        let count = (words[at] >> 16) as usize;
+        // Every instruction extent was checked in the first pass.
+        let i = &words[at..at + count];
+        let op = i[0] & 65535;
+        if (op == 16 || op == 331) && count >= 3 && i[1] == entry {
+            if i[2] == 38 {
+                return Err("native program specialized workgroup unsupported");
+            }
+            if i[2] == 17 {
+                if op != 16 || count != 6 || size.replace([i[3], i[4], i[5]]).is_some() {
+                    return Err("native program literal workgroup mode");
+                }
+            }
+        }
+        if op == 71 && count >= 4 && i[2] == 11 && i[3] == 25 {
+            return Err("native program overriding workgroup builtin unsupported");
+        }
+        at += count;
+    }
+    size.ok_or("native program literal workgroup missing")
+}
+// NATIVE_PROGRAM_DEVICE_LIMITS_END
 #[derive(Debug)]
 pub(crate) struct Program {
     name: &'static str,
@@ -178,6 +289,7 @@ pub(crate) struct Program {
     accesses: Vec<vk::AccessFlags>,
     entry: CString,
     required_subgroup: Option<u32>,
+    shared_bytes: Option<u64>,
     physical_reads: bool,
     release_after: bool,
 }
@@ -291,6 +403,7 @@ pub(crate) fn register_module(
         name: "UnlabelledNativeOperator",
         words,
         required_subgroup,
+        shared_bytes: None,
         physical_reads: source.contains("STRATA_PHYSICAL_EXPERTS"),
         release_after: false,
         accesses: bindings.iter().map(|b| b.2).collect(),
@@ -381,6 +494,10 @@ pub(crate) fn register_spirv_module(
         accesses,
         entry: CString::new(entry).map_err(|_| fault("native SPIRV entrypoint"))?,
         required_subgroup,
+        shared_bytes: Some(
+            u64::try_from(kernel.shared_size)
+                .map_err(|_| fault("native SPIRV shared memory extent"))?,
+        ),
         physical_reads: false,
         release_after: false,
     });
@@ -452,6 +569,7 @@ struct ComputeQueue {
 }
 pub(crate) struct Graph {
     identity: u64,
+    program_limits: ProgramDeviceLimits,
     timestamp_period: f64,
     timestamp_bits: u32,
     compute_queues: [ComputeQueue; 2],
@@ -779,6 +897,7 @@ impl Graph {
                 .get_physical_device_properties2(h.raw_physical_device(), &mut props);
         }
         let timestamp_period = props.properties.limits.timestamp_period as f64;
+        let physical_limits = props.properties.limits;
         let timestamp_bits = unsafe {
             h.shared_instance()
                 .raw_instance()
@@ -796,6 +915,14 @@ impl Graph {
                 "native Strata requires Intel matrix16 and expert32 subgroups",
             ));
         }
+        let program_limits = ProgramDeviceLimits {
+            min_subgroup: subgroup.min_subgroup_size,
+            max_subgroup: subgroup.max_subgroup_size,
+            max_subgroups: subgroup.max_compute_workgroup_subgroups,
+            max_invocations: physical_limits.max_compute_work_group_invocations,
+            max_size: physical_limits.max_compute_work_group_size,
+            max_shared_bytes: u64::from(physical_limits.max_compute_shared_memory_size),
+        };
         let copy_queue = h
             .kuno_transfer_queue_authority()
             .ok_or_else(|| fault("native actual transfer queue missing"))?;
@@ -932,6 +1059,7 @@ impl Graph {
         };
         Ok(Self {
             identity,
+            program_limits,
             timestamp_period,
             timestamp_bits,
             compute_queues: [
@@ -999,6 +1127,14 @@ impl Graph {
                 .get(pipeline)
                 .cloned()
                 .ok_or_else(|| fault("native graph program missing"))?;
+            self.program_limits
+                .validate(
+                    &p.words,
+                    p.entry.as_bytes(),
+                    p.required_subgroup,
+                    p.shared_bytes,
+                )
+                .map_err(fault)?;
             let shader = unsafe {
                 self.device.create_shader_module(
                     &vk::ShaderModuleCreateInfo::default().code(&p.words),
