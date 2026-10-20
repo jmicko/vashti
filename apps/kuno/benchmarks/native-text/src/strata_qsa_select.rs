@@ -3,6 +3,12 @@
 //! chronological output stay on the actual GPU. No score readback/upload.
 use super::*;
 
+#[cfg(feature = "strata-intel-core")]
+#[path = "strata_qsa_select_numeric_probe.rs"]
+mod numeric;
+#[cfg(feature = "strata-intel-core")]
+pub(crate) use numeric::cases as public_numeric;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Op {
     Dead,
