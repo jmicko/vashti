@@ -5568,6 +5568,45 @@ impl Workspace {
         select: PrefixSelection<'_>,
         cancel: &AtomicBool,
     ) -> Result<ChunkOutput> {
+        if purpose == Purpose::KnownPrefix {
+            self.validate_global_scope(e, &m.admission)?;
+            let rows = self.target_rows.as_ref().ok_or(chunk_error!())?;
+            if select.is_some()
+                || !self.public_four_rows_reserved
+                || !e.target_four_rows_reserved
+                || !rows.four_rows_reserved()
+            {
+                return Err(chunk_error!());
+            }
+            let window = self
+                .public_language_request_io
+                .as_ref()
+                .ok_or(chunk_error!())?
+                .projection_window(
+                    m.graph.binding_id(),
+                    m.context,
+                    m.position,
+                    tokens.len(),
+                    m.admission.request_io_reuse_active(),
+                )?;
+            let admission = m.admission.clone();
+            return e.with_known_prefix_projection(window, &admission, |e| {
+                self.run_global_inner(m, e, tokens, purpose, select, cancel)
+            });
+        }
+        self.run_global_inner(m, e, tokens, purpose, select, cancel)
+    }
+
+    #[allow(clippy::too_many_arguments)] // Original execution owners plus scoped prefix selection.
+    fn run_global_inner(
+        &mut self,
+        m: &mut ResidentModel<'_, '_>,
+        e: &mut GpuExecutor<'_>,
+        tokens: &[u32],
+        purpose: Purpose,
+        select: PrefixSelection<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<ChunkOutput> {
         if select.is_some() && purpose != Purpose::AllRowsWithCarry {
             return Err(chunk_error!());
         }

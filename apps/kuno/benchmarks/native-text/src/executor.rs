@@ -638,6 +638,49 @@ pub(crate) struct NativeDraftScope {
     scope: cubecl_runtime::server::NativeStrataDraftScope,
     _not_send: std::marker::PhantomData<Rc<()>>,
 }
+
+struct KnownPrefixProjection {
+    window: crate::resident_model::batch::public_language_request_io::ProjectionWindow,
+    admission: ResidentAdmission,
+    nonce: u64,
+}
+fn validate_known_projection_nonce(original: u64, actual: u64) -> Result<()> {
+    if original == 0 || original != actual {
+        return Err(Error::InvalidFormat(
+            "known-prefix projection original nonce",
+        ));
+    }
+    Ok(())
+}
+impl KnownPrefixProjection {
+    fn validate(&self, count: usize) -> Result<()> {
+        self.admission.active()?;
+        validate_known_projection_nonce(
+            self.nonce,
+            self.admission.request_io_nonce.load(Ordering::Acquire),
+        )?;
+        self.window.validate(self.admission.binding, count)
+    }
+}
+impl Drop for KnownPrefixProjection {
+    fn drop(&mut self) {
+        self.nonce.zeroize();
+    }
+}
+#[cfg(test)]
+mod known_projection_nonce_tests {
+    use super::validate_known_projection_nonce;
+    #[test]
+    fn known_projection_never_accepts_missing_or_replaced_original_request_nonce() {
+        for original in [1, 7, u64::MAX] {
+            validate_known_projection_nonce(original, original).unwrap();
+            assert!(validate_known_projection_nonce(original, 0).is_err());
+            assert!(validate_known_projection_nonce(original, original.wrapping_add(1)).is_err());
+        }
+        assert!(validate_known_projection_nonce(0, 0).is_err());
+        assert!(validate_known_projection_nonce(0, 1).is_err());
+    }
+}
 impl NativeDraftScope {
     pub(crate) fn enter(&self) -> Result<()> {
         self.admission.active()?;
@@ -1375,6 +1418,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) strata_global_sources: Option<std::sync::Arc<crate::strata_global_sources::Sources>>,
     batch_moe: Option<batch_moe::Registry>,
     native_projection_tile: NativeProjectionTile,
+    known_prefix_projection: Option<KnownPrefixProjection>,
     native_projection_members: usize,
     bank_reserved: usize,
     bank_slots: usize,
@@ -1721,6 +1765,7 @@ impl<'a> GpuExecutor<'a> {
             shared_dense_calls: 0,
             shared_gdn: false,
             native_projection_tile: NativeProjectionTile::default(),
+            known_prefix_projection: None,
             native_projection_members: quant_matvec::matmul::MAX_BATCH,
             bank_reserved: 0,
             bank_slots,
@@ -2692,6 +2737,22 @@ impl<'a> GpuExecutor<'a> {
     }
     pub(crate) fn check_target_rows_policy(&self) -> Result<()> {
         let global = self.global_target_scope()?;
+        if let Some(scope) = &self.known_prefix_projection {
+            if !global
+                || !self.target_four_rows_reserved
+                || !scope.admission.target_four_rows_reserved
+                || !self.target_verify3_dense
+                || !self.target_verify3_fused
+                || self.native_projection_member_capacity() != 8
+                || self.native_projection_tile() != 8
+            {
+                return Err(Error::InvalidFormat(
+                    "known-prefix projection original policy",
+                ));
+            }
+            self.check_resident_admission(&scope.admission)?;
+            scope.validate(scope.window.count())?;
+        }
         if self.q6_integer_verify_head && !self.q6_verify_head_scope()
             || !self.q6_integer_verify_head
                 && (self.q6_integer_verify_head_prepares != 0
@@ -2820,6 +2881,63 @@ impl<'a> GpuExecutor<'a> {
             ));
         }
         Ok(())
+    }
+    /// Temporarily authorize original MAX8 dense kernels for one actual
+    /// ShortPrefix window. This does not enable generation's four-row policy,
+    /// change its GDN/PLE selection, or credit its completion counters. The
+    /// original admission nonce must remain identical through every projection.
+    pub(crate) fn with_known_prefix_projection<T>(
+        &mut self,
+        window: crate::resident_model::batch::public_language_request_io::ProjectionWindow,
+        admission: &ResidentAdmission,
+        run: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        self.check_target_rows_policy()?;
+        self.check_resident_admission(admission)?;
+        window.validate(admission.binding, window.count())?;
+        if self.known_prefix_projection.is_some()
+            || !self.global_target_scope()?
+            || !self.target_four_rows_reserved
+            || !admission.target_four_rows_reserved
+            || !self.target_verify3_dense
+            || !self.target_verify3_fused
+            || self.native_projection_member_capacity() != 8
+            || self.native_projection_tile() != 8
+            || crate::strata_prompt::active()
+        {
+            return Err(Error::InvalidFormat("known-prefix projection entry"));
+        }
+        let scope = KnownPrefixProjection {
+            window,
+            admission: admission.clone(),
+            nonce: admission.request_io_nonce.load(Ordering::Acquire),
+        };
+        scope.validate(scope.window.count())?;
+        self.known_prefix_projection = Some(scope);
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self)));
+        // Restore on both normal errors and unwinding. No request nonce is
+        // ended/refunded here; the original model closing audit still owns it.
+        let scope = self.known_prefix_projection.take().ok_or_else(|| {
+            self.poison_resident();
+            Error::InvalidFormat("known-prefix projection scope lost")
+        })?;
+        let closed = scope
+            .validate(scope.window.count())
+            .and_then(|_| self.check_target_rows_policy());
+        if closed.is_err() || !matches!(&attempt, Ok(Ok(_))) {
+            scope
+                .admission
+                .sequence_poison
+                .store(true, Ordering::Release);
+            scope.admission.retired.store(true, Ordering::Release);
+        }
+        match attempt {
+            Ok(result) => {
+                closed?;
+                result
+            }
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
     /// Before ANY owner allocation, admit all static full pages and every
     /// simultaneously queued source page. Capacity plan is distinct from the
@@ -4263,8 +4381,14 @@ impl<'a> GpuExecutor<'a> {
         // Reject before weights/cache mutation or any launch. The public model
         // policy is fixed between completed chunks, never chosen from count.
         self.check_target_rows_policy()?;
+        let known_prefix = if let Some(scope) = &self.known_prefix_projection {
+            scope.validate(spans.count())?;
+            true
+        } else {
+            false
+        };
         if self.target_verify3_dense
-            && (!(1..=if self.target_four_rows_active {
+            && (!(1..=if self.target_four_rows_active || known_prefix {
                 crate::strata_port::verify_capacity()
             } else {
                 3
@@ -4360,7 +4484,7 @@ impl<'a> GpuExecutor<'a> {
                 output_words,
             )
             .map_err(|_| Error::InvalidBufferLength)?;
-            let verify4 = if self.target_four_rows_active && spans.count() >= 4 {
+            let verify4 = if (self.target_four_rows_active || known_prefix) && spans.count() >= 4 {
                 let spec = crate::next_shared::MatrixSpec::new(g.rows(), g.columns(), g.dtype())?;
                 crate::next_shared::validate_verify4_spans(
                     spec,
@@ -4403,14 +4527,18 @@ impl<'a> GpuExecutor<'a> {
             // owns disjoint x/y, and the exact runtime spans passed validation.
             unsafe {
                 if let Some(spec) = verify4 {
-                    let dense = self
-                        .target_verify4_dense_calls
-                        .checked_add(1)
-                        .ok_or(Error::ArithmeticOverflow)?;
-                    let fused = self
-                        .target_verify4_fused_calls
-                        .checked_add(1)
-                        .ok_or(Error::ArithmeticOverflow)?;
+                    let generation_calls = if known_prefix {
+                        None
+                    } else {
+                        Some((
+                            self.target_verify4_dense_calls
+                                .checked_add(1)
+                                .ok_or(Error::ArithmeticOverflow)?,
+                            self.target_verify4_fused_calls
+                                .checked_add(1)
+                                .ok_or(Error::ArithmeticOverflow)?,
+                        ))
+                    };
                     crate::next_shared::matrix_verify4_finite(
                         &self.client,
                         spec,
@@ -4425,8 +4553,10 @@ impl<'a> GpuExecutor<'a> {
                         spans.output_first(),
                         first + rows == m.outputs(),
                     )?;
-                    self.target_verify4_dense_calls = dense;
-                    self.target_verify4_fused_calls = fused;
+                    if let Some((dense, fused)) = generation_calls {
+                        self.target_verify4_dense_calls = dense;
+                        self.target_verify4_fused_calls = fused;
+                    }
                 } else if let Some(spec) = verify3 {
                     let iq4_calls = next_target_iq4_dispatch_count(
                         self.target_iq4_decoder_calls,

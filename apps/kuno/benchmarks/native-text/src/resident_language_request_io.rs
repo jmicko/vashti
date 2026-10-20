@@ -402,7 +402,75 @@ pub(super) struct Permit {
     binding: Option<GraphBindingId>,
     authority: Authority,
 }
+
+/// A single genuine known-input window, not generation/four-row authority.
+/// Only the original live ShortPrefix permit can mint it. The executor couples
+/// it to the actual admission's still-live request nonce for its lexical scope.
+pub(crate) struct ProjectionWindow {
+    binding: GraphBindingId,
+    capacity: usize,
+    prompt: usize,
+    start: usize,
+    count: usize,
+}
+fn validate_projection_geometry(
+    capacity: usize,
+    prompt: usize,
+    start: usize,
+    count: usize,
+) -> Result<()> {
+    if !crate::strata_intel_core::enabled()
+        || !(1..=crate::strata_port::verify_capacity()).contains(&count)
+        || prompt > capacity
+        || prompt.checked_sub(1).is_none_or(|prefix| {
+            !(1..=crate::strata_engine::controller::SHORT_PROMPT_PREFIX_LIMIT).contains(&prefix)
+                || start.checked_add(count).is_none_or(|end| end > prefix)
+        })
+    {
+        return Err(rejected());
+    }
+    Ok(())
+}
+impl ProjectionWindow {
+    pub(crate) fn count(&self) -> usize {
+        self.count
+    }
+    pub(crate) fn validate(&self, binding: GraphBindingId, count: usize) -> Result<()> {
+        if self.binding != binding || self.count != count {
+            return Err(rejected());
+        }
+        validate_projection_geometry(self.capacity, self.prompt, self.start, count)
+    }
+}
+impl Drop for ProjectionWindow {
+    fn drop(&mut self) {
+        self.capacity.zeroize();
+        self.prompt.zeroize();
+        self.start.zeroize();
+        self.count.zeroize();
+    }
+}
 impl Permit {
+    pub(super) fn projection_window(
+        &self,
+        binding: GraphBindingId,
+        capacity: usize,
+        start: usize,
+        count: usize,
+        actual: bool,
+    ) -> Result<ProjectionWindow> {
+        self.identity(binding, capacity)?;
+        self.validate_short_run(start, count, actual)?;
+        let window = ProjectionWindow {
+            binding,
+            capacity,
+            prompt: self.authority.geometry.prompt,
+            start,
+            count,
+        };
+        window.validate(binding, count)?;
+        Ok(window)
+    }
     pub(super) fn validate_completed_native_request(
         &self,
         binding: GraphBindingId,
@@ -1028,6 +1096,43 @@ mod initial_window_tests {
 #[cfg(test)]
 mod short_prefix_scope_tests {
     use super::*;
+    #[test]
+    fn projection_scope_requires_genuine_short_phase_and_exact_reserved_window() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let capacity = crate::qsa_gpu::MAX_CONTEXT;
+        let mut a = Authority::new(Geometry::new(65, 2).unwrap(), capacity, false).unwrap();
+        for count in 1..=crate::strata_port::verify_capacity() {
+            assert!(a.validate_short_run(0, count, false).is_err());
+        }
+        a.begin_short(0, true).unwrap();
+        for count in 1..=crate::strata_port::verify_capacity() {
+            a.validate_short_run(0, count, true).unwrap();
+            validate_projection_geometry(capacity, 65, 0, count).unwrap();
+            validate_projection_geometry(capacity, 65, 64 - count, count).unwrap();
+            assert!(a.validate_short_run(0, count, false).is_err());
+            assert!(validate_projection_geometry(capacity, 65, 65 - count, count).is_err());
+        }
+        for (prompt, start, count) in [
+            (0, 0, 1),
+            (1, 0, 1),
+            (66, 0, 1),
+            (65, 0, 0),
+            (65, 0, 9),
+            (65, usize::MAX, 8),
+        ] {
+            assert!(validate_projection_geometry(capacity, prompt, start, count).is_err());
+        }
+        assert!(validate_projection_geometry(64, 65, 0, 8).is_err());
+        a.end_short(64, false).unwrap();
+        a.begin_initial(64, true).unwrap();
+        assert!(a.validate_short_run(64, 1, true).is_err());
+        a.end_initial(65, false).unwrap();
+        a.begin(65, true).unwrap();
+        assert!(a.validate_short_run(65, 8, true).is_err());
+        assert_eq!(a.scopes, 1);
+    }
     #[test]
     fn short_prefix_uses_real_nonce_max_eight_and_no_generation_credit() {
         if !crate::strata_intel_core::enabled() {

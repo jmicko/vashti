@@ -1,5 +1,43 @@
 # Strata short prompt path and bounded Rust implementation — 2026-10-19
 
+## MAX8 projection-authority repair — 2026-10-20
+
+The first protected MAX8/no-head/device-carry request correctly rejected an
+uncoupled projection policy before publication. A compiled-public-only static
+diagnostic identified `native Verify3 projection count`: the known-prefix
+controller reserved MAX8 and held its real ShortPrefix nonce, but its executor
+still authorized only3-row projections until generation enabled a distinct
+four/eight-row policy. Toggling generation early would also change GDN/PLE
+selection and credit the wrong scope; that is not the repair.
+
+The connected repair mints an opaque, single-window `ProjectionWindow` only
+through the original ShortPrefix permit after exact graph/context/cursor/count
+and live runtime-scope validation. The executor ties this window to the original
+admission ledger, graph binding, and actual nonzero request nonce. Each dense
+projection checks the same nonce and exact window count before any weight/cache
+mutation. Counts4..8 select the existing native Verify8 shader through its
+original Verify4 wrapper, preserving its original packed-weight decoding,
+full owning input/output spans, finite/fault checks, and capture identity.
+Counts1..3 retain the original Verify3 path. No shader arithmetic changes.
+
+The projection permission exists only during that complete target invocation.
+It restores on normal return, error, and unwind; failed or replaced-nonce
+completion retires the original admission without clearing/refunding the actual
+nonce. The model's real closing audit still owns nonce erasure. Generation's
+four-row flag, GDN/PLE selection and Verify4 completion counters are unchanged;
+known-prefix launches cannot credit those counters. The existing headless
+recording key, genuine final residual receipt, exact teacher tokens and original
+draft visibility/fence remain in force.
+
+Six pure CPU checks pass using original lifecycle/geometry/nonce helper bodies,
+including all counts1..8, final-input exclusion, prefix64/65, wrong phase,
+missing/replaced nonce and original generation-scope accounting. These tests do
+not fabricate a graph binding, GPU owner, admission, or backend nonce proof.
+Evidence: `prefill-known-projection-scope-pure-tests-20261020.log` under the
+development artifact base. Full worker type checking and actual cold/warm,
+count/tail/capture, requesterasure and physical-recovery acceptance remain
+parent-owned gates; this source checkpoint is not an installed speed result.
+
 ## Source finding
 
 Pinned upstream is MIT Strata `v0.1.41`,
