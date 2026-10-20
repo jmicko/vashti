@@ -16,27 +16,33 @@ use crate::native_artifact::{Settings, verify};
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false, None, false, false, false)
+    run_mode(path, false, None, false, false, false, false)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, false, false, false)
+    run_mode(path, true, None, false, false, false, false)
 }
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
-    run_mode(path, true, Some(profile), false, false, false)
+    run_mode(path, true, Some(profile), false, false, false, false)
 }
 /// Three identical compiled-public short requests exercise cold and two warm
 /// prefix paths. Ordinary request erasure and final session close are unchanged.
 pub(crate) fn public_prefill_short_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, true, false)
+    run_mode(path, true, Some(false), false, true, false, false)
 }
 pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, false)
+    run_mode(path, true, None, true, false, false, false)
 }
 /// Fixed-public original expert matrices only; no Session or private input.
 pub(crate) fn public_matrix_timing_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, true)
+    run_mode(path, true, None, true, false, true, false)
+}
+/// Explicit compiled-public terminal negative check. It never reads stdin and
+/// cannot be selected through KNT2 or the inference API. An actual submitted
+/// prefix is interrupted; owning process exit is part of this check's recovery.
+pub(crate) fn public_rolling_failure_check(path: &Path) -> Result<()> {
+    run_mode(path, true, Some(false), false, false, false, true)
 }
 fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
@@ -55,7 +61,17 @@ fn run_mode(
     matrix_check: bool,
     short_check: bool,
     matrix_timing: bool,
+    rolling_failure: bool,
 ) -> Result<()> {
+    if rolling_failure
+        && (!public_check
+            || prefill_check != Some(false)
+            || matrix_check
+            || short_check
+            || matrix_timing)
+    {
+        return Err("public_rolling_failure_configuration");
+    }
     if short_check && (!public_check || prefill_check != Some(false) || matrix_check) {
         return Err("public_short_check_configuration");
     }
@@ -92,15 +108,19 @@ fn run_mode(
             (5u64 * 1024 * 1024 * 1024).to_string(),
         );
     }
-    if public_check && prefill_check == Some(true) {
+    if public_check && (prefill_check == Some(true) || rolling_failure) {
         // SAFETY: still before any runtime thread; only the compiled public
         // diagnostic can select this fixed one-layer query scope. Private entry
         // has already scrubbed inherited profile/authorization variables above.
         unsafe {
-            std::env::set_var("KUNO_STRATA_NATIVE_PROFILE", "prefill-layer");
+            if !rolling_failure {
+                std::env::set_var("KUNO_STRATA_NATIVE_PROFILE", "prefill-layer");
+            }
             std::env::set_var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY", "1");
         }
-        crate::strata_prefill_profile::enable_compiled_public();
+        if !rolling_failure {
+            crate::strata_prefill_profile::enable_compiled_public();
+        }
     }
     let mut settings_file = std::fs::File::open(path).map_err(|_| "native_settings_unavailable")?;
     let trust_identity = crate::native_artifact::trusted_settings(&settings_file);
@@ -134,6 +154,7 @@ fn run_mode(
         matrix_check,
         short_check,
         matrix_timing,
+        rolling_failure,
     ))
 }
 async fn serve(
@@ -144,6 +165,7 @@ async fn serve(
     matrix_check: bool,
     short_check: bool,
     matrix_timing: bool,
+    rolling_failure: bool,
 ) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
@@ -344,10 +366,14 @@ async fn serve(
             // The long-prefix operator profile warms the ordinary prompt path
             // with73 tokens. Its two measured4245-token inputs remain exact.
             // The independent short check keeps its original45-token inputs.
-            prompt: Zeroizing::new(public_prompt(match prefill_check {
-                Some(true) => 2,
-                Some(false) => 0,
-                None => 600,
+            prompt: Zeroizing::new(public_prompt(if rolling_failure {
+                300
+            } else {
+                match prefill_check {
+                    Some(true) => 2,
+                    Some(false) => 0,
+                    None => 600,
+                }
             })),
             outputs: 32,
             context: 32768,
@@ -390,6 +416,10 @@ async fn serve(
         )
     }
     .map_err(|_| "native_load_failed")?;
+    if rolling_failure {
+        cubecl::wgpu::arm_native_strata_public_rolling_failure()
+            .map_err(|_| "public_rolling_failure_arm_rejected")?;
+    }
     let mut load_ns =
         setup_ns.saturating_add(model_started.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     let mut current = Some(request);
@@ -436,6 +466,26 @@ async fn serve(
                     }
                 },
             );
+            if rolling_failure {
+                let [fired, waited, failed] =
+                    cubecl::wgpu::native_strata_public_rolling_failure_stats();
+                let expected = result.is_err() && fired == 1 && waited > 0 && failed == 0;
+                eprintln!(
+                    "public_rolling_terminal_failure {}",
+                    serde_json::json!({
+                        "compiled_public_fixture_only":true,"content_saved":false,
+                        "expected_terminal_error":expected,"fired":fired,
+                        "actual_waited_recovery_queues":waited,"failed_recovery_queues":failed,
+                        "ordinary_reusable_session_claimed":false,"owned_zero_claimed":false,
+                        "protected_process_exit_required":true
+                    })
+                );
+                return Err(if expected {
+                    "public_rolling_failure_expected_terminal_exit"
+                } else {
+                    "public_rolling_failure_not_exercised"
+                });
+            }
             let done = result.map_err(|_| "native_generation_failed")?;
             crate::strata_prefill_profile::report();
             let total_ns = generation_ns.ok_or("native_generation_failed")?;
@@ -483,6 +533,13 @@ async fn serve(
         }
         Ok(())
     })();
+    if rolling_failure {
+        // A partial submitted=false flight is intentionally quarantined. The
+        // real recovery fences above have joined attempted queues; do not claim
+        // reusable-session close/owned-zero. The parent MUST verify process exit
+        // and actual physical recovery before accepting this terminal fixture.
+        return attempted.and(Err("public_rolling_failure_not_exercised"));
+    }
     // Checked close even after rejected input or a disconnected output pipe.
     session.close().map_err(|_| "native_recovery_required")?;
     attempted?;
