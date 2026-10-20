@@ -9,9 +9,17 @@ use cubecl::{
 use half::{bf16, f16};
 use kuno_text::{Error, Result};
 
-pub(super) const SHARED_BYTES: usize = 40960;
 const BLOCK: usize = 128;
+#[cfg(not(feature = "strata-native-wide32"))]
 const THREADS: u32 = 256;
+#[cfg(feature = "strata-native-wide32")]
+const THREADS: u32 = 512;
+const SUBGROUPS: usize = THREADS as usize / 16;
+const SUBGROUP_ROWS: usize = BLOCK / (SUBGROUPS / 4);
+const M_FRAGMENTS: usize = SUBGROUP_ROWS / 8;
+const STAGE_ROUNDS: usize = 512 / THREADS as usize;
+const STAGE_THREADS: usize = THREADS as usize;
+pub(super) const SHARED_BYTES: usize = 32768 + SUBGROUPS * 128 * 4;
 
 #[cube]
 #[allow(clippy::too_many_arguments)]
@@ -30,8 +38,8 @@ fn stage<F: Float>(
     // Full128x128x32 stages only. Two genuine vec4s per job preserve original
     // FP16/BF16 bits; every one of the1024 vectors per operand is written once.
     #[unroll]
-    for round in 0..2usize {
-        let job = usize::cast_from(UNIT_POS) + round * 256;
+    for round in 0..comptime!(STAGE_ROUNDS) {
+        let job = usize::cast_from(UNIT_POS) + round * comptime!(STAGE_THREADS);
         let offset = k + (job % 4) * 8;
         let row = job / 4;
         let source_a = ((token_base + row) * columns + offset) / 4;
@@ -69,7 +77,8 @@ fn publish(
     #[unroll]
     for round in 0..8usize {
         let i = usize::cast_from(UNIT_POS_PLANE) + round * 16;
-        let token = token_base + (subgroup / 4) * 32 + comptime!(tile_m * 8) + i / 16;
+        let token =
+            token_base + (subgroup / 4) * comptime!(SUBGROUP_ROWS) + comptime!(tile_m * 8) + i / 16;
         let row = row_base + (subgroup % 4) * 32 + comptime!(tile_n * 16) + i % 16;
         let value = scratch[subgroup * 128 + i];
         if value.abs() <= f32::MAX {
@@ -96,10 +105,10 @@ fn dense_wide<F: Float>(
     out_stride: usize,
 ) {
     // Two typed stages per operand:2*128*32*2 bytes each. Scratch remains a
-    // separate real8KiB allocation; admission never assumes lifetime aliasing.
+    // separate real8/16KiB allocation; admission never assumes lifetime aliasing.
     let mut a = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
     let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
-    let mut scratch = SharedMemory::<f32>::new(2048usize);
+    let mut scratch = SharedMemory::<f32>::new(comptime!(SUBGROUPS * 128));
     // SAFETY: every full current stage is initialized and synchronized before use.
     let a0 = unsafe {
         cmma::Matrix::<F>::uninitialized(
@@ -121,24 +130,32 @@ fn dense_wide<F: Float>(
         )
     };
     // SAFETY: every full current stage is initialized and synchronized before use.
-    let a2 = unsafe {
-        cmma::Matrix::<F>::uninitialized(
-            cmma::MatrixIdent::A,
-            8usize,
-            16usize,
-            16usize,
-            cmma::MatrixLayout::RowMajor,
-        )
+    let a2 = if comptime!(M_FRAGMENTS == 4) {
+        unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::A,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::RowMajor,
+            )
+        }
+    } else {
+        a0
     };
     // SAFETY: every full current stage is initialized and synchronized before use.
-    let a3 = unsafe {
-        cmma::Matrix::<F>::uninitialized(
-            cmma::MatrixIdent::A,
-            8usize,
-            16usize,
-            16usize,
-            cmma::MatrixLayout::RowMajor,
-        )
+    let a3 = if comptime!(M_FRAGMENTS == 4) {
+        unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::A,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::RowMajor,
+            )
+        }
+    } else {
+        a1
     };
     // SAFETY: every full current stage is initialized and synchronized before use.
     let b0 = unsafe {
@@ -192,38 +209,54 @@ fn dense_wide<F: Float>(
         cmma::MatrixLayout::Undefined,
         0.0,
     );
-    let c4 = cmma::Matrix::<f32>::from_value(
-        cmma::MatrixIdent::Accumulator,
-        8usize,
-        16usize,
-        16usize,
-        cmma::MatrixLayout::Undefined,
-        0.0,
-    );
-    let c5 = cmma::Matrix::<f32>::from_value(
-        cmma::MatrixIdent::Accumulator,
-        8usize,
-        16usize,
-        16usize,
-        cmma::MatrixLayout::Undefined,
-        0.0,
-    );
-    let c6 = cmma::Matrix::<f32>::from_value(
-        cmma::MatrixIdent::Accumulator,
-        8usize,
-        16usize,
-        16usize,
-        cmma::MatrixLayout::Undefined,
-        0.0,
-    );
-    let c7 = cmma::Matrix::<f32>::from_value(
-        cmma::MatrixIdent::Accumulator,
-        8usize,
-        16usize,
-        16usize,
-        cmma::MatrixLayout::Undefined,
-        0.0,
-    );
+    let c4 = if comptime!(M_FRAGMENTS == 4) {
+        cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        )
+    } else {
+        c0
+    };
+    let c5 = if comptime!(M_FRAGMENTS == 4) {
+        cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        )
+    } else {
+        c1
+    };
+    let c6 = if comptime!(M_FRAGMENTS == 4) {
+        cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        )
+    } else {
+        c2
+    };
+    let c7 = if comptime!(M_FRAGMENTS == 4) {
+        cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        )
+    } else {
+        c3
+    };
     let subgroup = usize::cast_from(PLANE_POS);
     let token_base = usize::cast_from(CUBE_POS_Y) * 128;
     let row_base = usize::cast_from(CUBE_POS_X) * 128;
@@ -262,22 +295,26 @@ fn dense_wide<F: Float>(
         }
         #[unroll]
         for step in 0..2usize {
-            let af = current * 1024 + (subgroup / 4) * 256 + step * 4;
+            let af = current * 1024 + (subgroup / 4) * comptime!(SUBGROUP_ROWS * 8) + step * 4;
             let bf = current * 1024 + (subgroup % 4) * 256 + step * 4;
             cmma::load(&a0, &a.to_slice().slice(af + 0, a.len()), 32);
             cmma::load(&a1, &a.to_slice().slice(af + 64, a.len()), 32);
-            cmma::load(&a2, &a.to_slice().slice(af + 128, a.len()), 32);
-            cmma::load(&a3, &a.to_slice().slice(af + 192, a.len()), 32);
+            if comptime!(M_FRAGMENTS == 4) {
+                cmma::load(&a2, &a.to_slice().slice(af + 128, a.len()), 32);
+                cmma::load(&a3, &a.to_slice().slice(af + 192, a.len()), 32);
+            }
             cmma::load(&b0, &b.to_slice().slice(bf + 0, b.len()), 32);
             cmma::load(&b1, &b.to_slice().slice(bf + 128, b.len()), 32);
             cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
             cmma::execute::<F, F, f32, f32>(&a0, &b1, &c1, &c1);
             cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);
             cmma::execute::<F, F, f32, f32>(&a1, &b1, &c3, &c3);
-            cmma::execute::<F, F, f32, f32>(&a2, &b0, &c4, &c4);
-            cmma::execute::<F, F, f32, f32>(&a2, &b1, &c5, &c5);
-            cmma::execute::<F, F, f32, f32>(&a3, &b0, &c6, &c6);
-            cmma::execute::<F, F, f32, f32>(&a3, &b1, &c7, &c7);
+            if comptime!(M_FRAGMENTS == 4) {
+                cmma::execute::<F, F, f32, f32>(&a2, &b0, &c4, &c4);
+                cmma::execute::<F, F, f32, f32>(&a2, &b1, &c5, &c5);
+                cmma::execute::<F, F, f32, f32>(&a3, &b0, &c6, &c6);
+                cmma::execute::<F, F, f32, f32>(&a3, &b1, &c7, &c7);
+            }
         }
         // Current reads end and all next-stage writes become visible before switch.
         sync_cube();
@@ -332,54 +369,56 @@ fn dense_wide<F: Float>(
         1usize,
         1usize,
     );
-    publish(
-        &c4,
-        &mut scratch,
-        output,
-        fault,
-        token_base,
-        row_base,
-        out_first,
-        out_stride,
-        2usize,
-        0usize,
-    );
-    publish(
-        &c5,
-        &mut scratch,
-        output,
-        fault,
-        token_base,
-        row_base,
-        out_first,
-        out_stride,
-        2usize,
-        1usize,
-    );
-    publish(
-        &c6,
-        &mut scratch,
-        output,
-        fault,
-        token_base,
-        row_base,
-        out_first,
-        out_stride,
-        3usize,
-        0usize,
-    );
-    publish(
-        &c7,
-        &mut scratch,
-        output,
-        fault,
-        token_base,
-        row_base,
-        out_first,
-        out_stride,
-        3usize,
-        1usize,
-    );
+    if comptime!(M_FRAGMENTS == 4) {
+        publish(
+            &c4,
+            &mut scratch,
+            output,
+            fault,
+            token_base,
+            row_base,
+            out_first,
+            out_stride,
+            2usize,
+            0usize,
+        );
+        publish(
+            &c5,
+            &mut scratch,
+            output,
+            fault,
+            token_base,
+            row_base,
+            out_first,
+            out_stride,
+            2usize,
+            1usize,
+        );
+        publish(
+            &c6,
+            &mut scratch,
+            output,
+            fault,
+            token_base,
+            row_base,
+            out_first,
+            out_stride,
+            3usize,
+            0usize,
+        );
+        publish(
+            &c7,
+            &mut scratch,
+            output,
+            fault,
+            token_base,
+            row_base,
+            out_first,
+            out_stride,
+            3usize,
+            1usize,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -551,7 +590,7 @@ pub(super) fn try_dense(
     let oa = crate::resident_util::raw_arg(output.clone(), output.size_in_used() as usize / 4)?;
     let fa = crate::resident_util::raw_arg(fault, 1)?;
     // SAFETY: complete original logical owners, all grid/offset/index limits,
-    // actual sixteen-subgroup capabilities and full-tile geometry checked above.
+    // actual sixteen/thirty-two-subgroup geometry and full tiles checked above.
     unsafe {
         if bfloat {
             dense_wide::launch_unchecked::<bf16, WgpuRuntime>(
@@ -625,30 +664,163 @@ mod tests {
     #[test]
     fn full_tile_selection_requires_real_caps_and_preserves_tails() {
         let yes = |c, k, n, w, s, u, d, pmin, pmax| selected(c, k, n, w, s, u, d, pmin, pmax);
-        assert!(yes(512, 32, 128, 0, 40960, 256, (256, 1, 1), 16, 32));
-        for (c, k, n, w, s, u, d, pmin, pmax) in [
-            (511, 32, 128, 0, 40960, 256, (256, 1, 1), 16, 32),
-            (513, 32, 128, 0, 40960, 256, (256, 1, 1), 16, 32),
-            (512, 16, 128, 0, 40960, 256, (256, 1, 1), 16, 32),
-            (512, 32, 320, 0, 40960, 256, (256, 1, 1), 16, 32),
-            (512, 32, 128, 1, 40960, 256, (256, 1, 1), 16, 32),
-            (512, 32, 128, 0, 40959, 256, (256, 1, 1), 16, 32),
-            (512, 32, 128, 0, 40960, 255, (256, 1, 1), 16, 32),
-            (512, 32, 128, 0, 40960, 256, (255, 1, 1), 16, 32),
-            (512, 32, 128, 0, 40960, 256, (256, 0, 1), 16, 32),
-            (512, 32, 128, 0, 40960, 256, (256, 1, 0), 16, 32),
-            (512, 32, 128, 0, 40960, 256, (256, 1, 1), 32, 32),
-            (512, 32, 128, 0, 40960, 256, (256, 1, 1), 8, 8),
+        assert!(yes(
+            512,
+            32,
+            128,
+            0,
+            SHARED_BYTES,
+            THREADS,
+            (THREADS, 1, 1),
+            16,
+            32
+        ));
+        for (c, k, n, w, shared, units, dim, pmin, pmax) in [
+            (
+                511,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32,
+            ),
+            (
+                513,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                16,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                320,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                1,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                0,
+                SHARED_BYTES - 1,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS - 1,
+                (THREADS, 1, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS - 1, 1, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 0, 1),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 0),
+                16,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                32,
+                32,
+            ),
+            (
+                512,
+                32,
+                128,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                8,
+                8,
+            ),
         ] {
-            assert!(!yes(c, k, n, w, s, u, d, pmin, pmax));
+            assert!(!yes(c, k, n, w, shared, units, dim, pmin, pmax));
         }
+        assert_eq!(SUBGROUPS * M_FRAGMENTS * 8 * 32, BLOCK * BLOCK);
+        assert_eq!(SHARED_BYTES, 32768 + SUBGROUPS * 128 * 4);
+        assert_eq!(THREADS as usize * STAGE_ROUNDS, 512);
     }
     #[test]
     fn full_vec4_stages_and_scratch_publications_cover_each_original_cell_once() {
         let mut a = vec![0; 1024];
-        for lane in 0..256 {
-            for round in 0..2 {
-                let job = lane + round * 256;
+        for lane in 0..THREADS as usize {
+            for round in 0..STAGE_ROUNDS {
+                let job = lane + round * THREADS as usize;
                 let row = job / 4;
                 let col = job % 4 * 8;
                 assert!(row < 128 && col + 8 <= 32);
@@ -660,15 +832,15 @@ mod tests {
         }
         assert!(a.iter().all(|&n| n == 1));
         let mut out = vec![0; 128 * 128];
-        for subgroup in 0..16 {
-            for m in 0..4 {
+        for subgroup in 0..SUBGROUPS {
+            for m in 0..M_FRAGMENTS {
                 for n in 0..2 {
                     let mut scratch = vec![0; 128];
                     for lane in 0..16 {
                         for round in 0..8 {
                             let i = lane + round * 16;
                             scratch[i] += 1;
-                            let token = subgroup / 4 * 32 + m * 8 + i / 16;
+                            let token = subgroup / 4 * SUBGROUP_ROWS + m * 8 + i / 16;
                             let row = subgroup % 4 * 32 + n * 16 + i % 16;
                             assert!(token < 128 && row < 128);
                             out[token * 128 + row] += 1;
@@ -733,7 +905,7 @@ mod tests {
         assert!(check_bounds(&padded, 512, 32, 128, 4, 5, 131).is_ok());
     }
     #[test]
-    fn actual_full_tile_module_keeps_16_subgroups_ieee_stages_publication_and_faults() {
+    fn actual_full_tile_module_keeps_real_subgroups_ieee_stages_publication_and_faults() {
         use cubecl::ir::{StorageType, UIntKind};
         use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
         use cubecl::{Compiler, WgpuCompilationOptions};
@@ -801,12 +973,12 @@ mod tests {
                     );
                     at += n;
                 }
-                assert_eq!(local, Some(vec![256, 1, 1]));
+                assert_eq!(local, Some(vec![THREADS, 1, 1]));
                 assert!(builtins.contains(&40) && builtins.contains(&41));
-                assert_eq!(products, 16);
-                assert_eq!(loads, 12);
-                assert_eq!(stores, 8);
-                assert_eq!(barriers, 18);
+                assert_eq!(products, M_FRAGMENTS * 4);
+                assert_eq!(loads, (M_FRAGMENTS + 2) * 2);
+                assert_eq!(stores, M_FRAGMENTS * 2);
+                assert_eq!(barriers, M_FRAGMENTS * 4 + 2);
                 assert!(fault);
                 let mut command = std::process::Command::new("spirv-val");
                 command.args(["--target-env", "vulkan1.3"]);
@@ -831,7 +1003,7 @@ mod tests {
                     .unwrap();
                 assert!(child.wait().unwrap().success(), "{name}/{mask}");
                 println!(
-                    "compiled_public_native_wide name={name} mask={mask} shared_bytes={} products={products} loads={loads} stores={stores} barriers={barriers}",
+                    "compiled_public_native_wide threads={THREADS} name={name} mask={mask} shared_bytes={} products={products} loads={loads} stores={stores} barriers={barriers}",
                     kernel.shared_size
                 );
             }

@@ -715,3 +715,72 @@ stream-mismatch and scalar-view-alignment cases. Valid scalar-only operand
 views return to the original fallback; no invalid vector pointer is fabricated.
 No GPU correctness or speed result is claimed here. Root owns the minimal
 feature-gated module/actual launch wiring and protected numerical acceptance.
+
+### Separate native32-subgroup resource-balance candidate
+
+`strata-native-wide32` depends on `strata-native-wide` and selects a complete
+compile-time alternative. The original16-subgroup pipeline remains available
+without this further feature. Both compute exactly M128xN128xK32 from the same
+original packed FP16/BF16 operands into the same F32 output/fault owners, with
+unchanged complete-tile requirements, ascending K16 reductions and scalar/tail
+fallback. The source is based on the integrated native pipeline/definition
+hooks at9cf2236b; no experimental CubeK path is combined with this feature.
+
+The alternative uses a real512x1x1 workgroup: thirty-two SIMD16 subgroups in
+an8M by4N grid, each computing16x32 outputs from two A and two B fragments
+into four accumulators. Accumulator storage is32 F32 lane-equivalent values
+instead of the16-subgroup candidate's64. These are semantic live-state counts,
+not a claim about actual Intel GRF allocation or absence of spilling. The
+compile-time false branches eliminate A2/A3, accumulatorsC4 throughC7 and
+their arithmetic/publication; no runtime half-pipeline is measured.
+
+The same paired A/B allocations consume32768B. One real32-subgroup fragment
+scratch uses16384B and is reused over four complete publication phases. The
+actual expected shared allocation is49152B, exactly the queried B70
+per-workgroup cap. One paired-vec4 copy job per thread covers each complete
+operand stage. Uniform barriers retain initial publication, the K32 stage
+switch and each cooperative-store/output-consumption scratch lifetime. No
+operand-free alias metadata, fabricated limits, new buffer or result copy is
+introduced. The source's real admission requires at least512 invocations and
+a dimension-X cap of512, the actual49152B shared limit, original CMMA dtype
+capability and genuine SIMD16 support.
+
+The selector retains its original<=256-lane and bounded CubeK2D contracts.
+Its sole new larger geometry is literal512x1x1 in SPIR-V1.6 with the existing
+known subgroup-scoped matrix types and both actual SubgroupId and subgroup
+lane builtins. Other larger shapes, partial512 geometry, missing subgroup
+builtins and older SPIR-V do not receive a fixed16 override. This remains
+compiler metadata, not physical device authority. Root's actual B70 query
+reports1024 workgroup invocations and64 maximum required-size workgroup
+subgroups;512/16=32 is within both. Generic per-program physical subgroup
+limits remain a separate runtime admission responsibility.
+
+The isolated selector controls directly compile the original selector source
+with rustc and pass all ten tests, retaining the original negative controls.
+The dedicated module controls compile both original dtypes in all eight
+physical storage-layout modes, check the actual shared/subgroup/IEEE/fault
+contract and verify that only8 cooperative products,8 loads,4 stores and10
+barrier statements remain. Pure controls use the same selected resource
+constants for full-tile/capability rejection, complete source/output bounds,
+stage/publication address bijections and ordered K16 coverage. Actual driver
+ISA, protected numerical/lifecycle acceptance and whole-workload profiling
+remain root-owned gates; no speed or spill-free result is inferred from source.
+
+The32-subgroup variant passes all sixteen actual compiled FP16/BF16 layout
+modules plus three focused source/owner controls (four tests,2.52s CPU test
+wall time). Every module measures exactly49152B, LocalSize512x1x1 with genuine
+required16 subgroup mapping,8 cooperative products,8 loads,4 stores and10
+barrier statements. The retained default16-subgroup alternative independently
+passes the same sixteen-module/three-control inventory (four tests,7.37s),
+retaining40960B,256x1x1 and16/12/8/18 statements respectively. These are two
+real compile-time alternatives, not repeated runtime shapes counted as extra
+shader modules. The final artifacts are `native-wide32-whole-controls.log`
+and `native-wide16-preserved-controls.log` in the isolated CPU directory.
+
+The integrated root source initially had an unrelated cfg(test) sibling-graph
+namespace error in original queue/rolling fixtures. An isolated test-only
+reexport09d46bae fixed it without skipping any fixture or changing production
+activation; root's equivalent c32a24d6 was subsequently aligned. The only
+production candidate changes are the native module and bounded metadata
+selector. Actual root GPU numerical, physical-capacity and ISA/spill/performance
+validation remain required before selection or installation.

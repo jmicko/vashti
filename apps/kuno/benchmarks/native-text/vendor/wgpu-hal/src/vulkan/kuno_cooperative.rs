@@ -3,7 +3,8 @@
 
 const SUBGROUP: u32 = 16;
 // Original blocks and the opt-in CubeK16×N block have at most sixteen tiles.
-// Actual device workgroup and matrix capability checks still precede launch.
+// A separately recognized native512×1 block must prove genuine subgroup
+// topology below. Physical workgroup/subgroup caps still precede execution.
 const MAX_BLOCK_LANES: u32 = 256;
 
 /// Select SIMD16 for the port's subgroup-scoped8x16x16 matrix instructions.
@@ -19,6 +20,8 @@ pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
     let mut explicit_subgroup = None;
     let mut capability = false;
     let mut matrices = 0usize;
+    let mut subgroup_id = false;
+    let mut subgroup_lane = false;
     let mut at = 5;
     while at < words.len() {
         let count = (words[at] >> 16) as usize;
@@ -81,6 +84,12 @@ pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
                 }
                 matrices += 1;
             }
+            // The bounded512-lane native entry uses subgroup builtins for
+            // actual32-subgroup identity/lane mapping, not local-ID division.
+            71 if count == 4 && instruction[2] == 11 => {
+                subgroup_id |= instruction[3] == 40;
+                subgroup_lane |= instruction[3] == 41;
+            }
             _ => {}
         }
         at += count;
@@ -92,7 +101,12 @@ pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
         || owner != entry
         || z != 1
         || x == 0
-        || x > MAX_BLOCK_LANES
+        || (x > MAX_BLOCK_LANES
+            && !(x == 512
+                && y == 1
+                && words[1] == 0x00010600
+                && subgroup_id
+                && subgroup_lane))
         || !x.is_multiple_of(SUBGROUP)
         // CubeK keeps its genuine2D geometry. Its selected compiler entry
         // maps logical planes/lanes to subgroup builtins, never assumes that
@@ -244,6 +258,36 @@ mod tests {
             let mut words = module(x);
             words[1] = version;
             instruction(&mut words, 16, 0)[4] = y;
+            assert_eq!(subgroup(&words), None);
+        }
+    }
+
+    #[test]
+    fn native_512_block_requires_literal_spirv16_and_both_real_subgroup_builtins() {
+        let both = |words: &mut Vec<u32>| {
+            words.extend([4 << 16 | 71, 40, 11, 40]);
+            words.extend([4 << 16 | 71, 41, 11, 41]);
+        };
+        let mut words = module(512);
+        assert_eq!(subgroup(&words), None);
+        words.extend([4 << 16 | 71, 40, 11, 40]);
+        assert_eq!(subgroup(&words), None);
+        words.extend([4 << 16 | 71, 41, 11, 41]);
+        assert_eq!(subgroup(&words), Some(16));
+        for (x, y, z, version) in [
+            (272, 1, 1, 0x00010600),
+            (496, 1, 1, 0x00010600),
+            (528, 1, 1, 0x00010600),
+            (512, 2, 1, 0x00010600),
+            (512, 1, 2, 0x00010600),
+            (512, 1, 1, 0x00010500),
+        ] {
+            let mut words = module(x);
+            both(&mut words);
+            words[1] = version;
+            let local = instruction(&mut words, 16, 0);
+            local[4] = y;
+            local[5] = z;
             assert_eq!(subgroup(&words), None);
         }
     }
