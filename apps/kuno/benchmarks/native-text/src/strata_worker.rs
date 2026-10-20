@@ -13,6 +13,11 @@ use zeroize::Zeroizing;
 mod protection;
 type Result<T> = std::result::Result<T, &'static str>;
 use crate::native_artifact::{Settings, verify};
+// PUBLIC_CAPACITY_ENTRY_BEGIN
+fn compiled_public_capacity_entry(public_check: bool, prefill_check: Option<bool>) -> bool {
+    public_check && prefill_check == Some(true)
+}
+// PUBLIC_CAPACITY_ENTRY_END
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
@@ -427,6 +432,12 @@ async fn serve(
     let mut preload = first_preload;
     let mut public_index = 0;
     let attempted: Result<()> = (|| {
+        if compiled_public_capacity_entry(public_check, prefill_check) {
+            let capacity = session
+                .compiled_public_capacity()
+                .map_err(|_| "public_prefill_capacity_unavailable")?;
+            eprintln!("public_prefill_capacity {capacity}");
+        }
         while let Some(request) = current.take() {
             let prompt_count = request.geometry().map_err(|_| "native_request_invalid")?.0;
             crate::strata_prefill_profile::begin();

@@ -74,6 +74,38 @@ impl Sources {
             || self.retired.load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Read the actual loaded model's original plan and owning counters. This
+    /// does not reconstruct a plan from a nominal cap or collect request routes.
+    pub(crate) fn compiled_public_capacity(
+        &self,
+        graph: BoundGraph<'_, '_>,
+    ) -> Result<serde_json::Value> {
+        self.validate_graph_ready(graph)?;
+        let gpu = self.gpu.as_ref().ok_or_else(reject)?;
+        let host = self.host.as_ref().ok_or_else(reject)?;
+        let source_table_bytes = self.tables.iter().try_fold(0u64, |sum, table| {
+            sum.checked_add(table.size_in_used())
+                .ok_or(Error::ArithmeticOverflow)
+        })?;
+        Ok(serde_json::json!({
+            "compiled_public_fixture_only":true,
+            "content_saved":false,
+            "expert_ranked_pairs":self.plan.slots.len(),
+            "expert_budget_bytes":self.plan.budget,
+            "expert_arena_aligned_bytes":self.plan.arena_bytes,
+            "expert_resident_logical_bytes":self.plan.resident_logical_bytes,
+            "expert_resident_backing_bytes":gpu.bytes(),
+            "expert_gpu_roots":gpu.roots().len(),
+            "expert_host_logical_bytes":self.plan.host_logical_bytes,
+            "expert_host_plan_piece_bytes":self.plan.host_piece_bytes,
+            "source_table_buffers":self.tables.len(),
+            "source_table_bytes":source_table_bytes,
+            "raw_ring_attached":self.prompt_stage.is_some(),
+            "prompt_loan_active":self.loan_pending,
+            "host":host.compiled_public_capacity()?
+        }))
+    }
+
     pub(crate) fn gpu_requests(plan: &Plan) -> Vec<u64> {
         let mut requests = Cache::requests(plan);
         requests.extend([TABLE_BYTES; LAYERS]);

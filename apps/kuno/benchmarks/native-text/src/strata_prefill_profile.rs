@@ -13,6 +13,9 @@ thread_local! { static TOTALS: RefCell<BTreeMap<&'static str, (u64,u64,u64)>> = 
 pub(crate) fn enable_compiled_public() {
     ENABLED.store(true, Ordering::Release);
 }
+pub(crate) fn compiled_public_enabled() -> bool {
+    ENABLED.load(Ordering::Acquire)
+}
 pub(crate) fn begin() {
     if ENABLED.load(Ordering::Acquire) {
         REQUEST.fetch_add(1, Ordering::Relaxed);

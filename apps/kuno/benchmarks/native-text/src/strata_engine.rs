@@ -525,6 +525,23 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
         }
         Ok(())
     }
+    /// Compiled-public startup diagnostic only. The original loaded owner is
+    /// still cold; no prompt, router, usage or speculative state is inspected.
+    pub(crate) fn compiled_public_capacity(&self) -> Result<serde_json::Value, Failure> {
+        if !crate::strata_prefill_profile::compiled_public_enabled()
+            || self.state != State::Cold
+            || !self.runtime_owned
+            || self.close_attempted
+        {
+            return Err(Failure::Rejected);
+        }
+        self.executor
+            .as_ref()
+            .and_then(|executor| executor.strata_global_sources.as_ref())
+            .ok_or(Failure::Inference)?
+            .compiled_public_capacity(self.graph)
+            .map_err(|_| Failure::Inference)
+    }
     pub(crate) fn run(
         &mut self,
         request: Request,

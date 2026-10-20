@@ -62,6 +62,26 @@ pub(crate) struct Host {
     cpu_borrow: std::sync::atomic::AtomicBool,
 }
 impl Host {
+    /// Static original-weight ownership only. No mapping, device query, source
+    /// reconstruction or private route/usage state enters this diagnostic.
+    pub(crate) fn compiled_public_capacity(&self) -> KResult<serde_json::Value> {
+        if self.closed
+            || self.registry_budget.is_none()
+            || self.cpu_borrow.load(std::sync::atomic::Ordering::Acquire)
+            || self
+                .pages
+                .iter()
+                .any(|page| page.owner.phase != Phase::Registered || page.authority.is_none())
+        {
+            return Err(fail());
+        }
+        Ok(serde_json::json!({
+            "registered_buffers":self.pages.len(),
+            "registered_logical_bytes":self.logical,
+            "allocated_backing_bytes":self.physical,
+            "prompt_loan_shadow_prepared":self.shadow.is_some()
+        }))
+    }
     pub(crate) fn borrow_cpu<'a>(
         &'a self,
         graph: BoundGraph<'_, '_>,
