@@ -144,9 +144,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 28] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 28];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 28] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 31] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 31];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 31] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -710,6 +710,7 @@ pub(crate) struct Graph {
     pub submissions: u64,
     pub dispatches: u64,
     recordings: Vec<Recording>,
+    idle_pools: Option<strata_schedule::IdlePools>,
     pub replays: u64,
     initialized: HashSet<wgpu::Buffer>,
 }
@@ -750,7 +751,9 @@ impl Drop for Recording {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_descriptor_pool(self.descriptors, None);
-            self.device.destroy_command_pool(self.pool, None);
+            if self.pool != vk::CommandPool::null() {
+                self.device.destroy_command_pool(self.pool, None);
+            }
         }
     }
 }
@@ -1262,6 +1265,7 @@ impl Graph {
             submissions: 0,
             dispatches: 0,
             recordings: Vec::new(),
+            idle_pools: None,
             replays: 0,
             initialized: HashSet::new(),
         })
@@ -2182,6 +2186,61 @@ impl Graph {
         }
         Ok(cohort)
     }
+    fn idle_pool_metadata_bytes(&self) -> Option<usize> {
+        size_of::<Option<strata_schedule::IdlePools>>().checked_add(
+            self.idle_pools
+                .as_ref()
+                .map_or(Some(0), |p| p.metadata_bytes())?,
+        )
+    }
+    /// Called only where original idle eviction already permits destruction.
+    /// Keep only reset driver objects; every old private owner/plan is dropped.
+    fn retire_recording(&mut self, index: usize, extra_metadata: usize) -> Result<(), ServerError> {
+        if self.flights.live(self.recordings[index].id) {
+            return Err(fault("native recording retirement while in flight"));
+        }
+        COMPUTE_BARRIERS[30].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let r = &self.recordings[index];
+        let count = r.work.commands.len() + r.work.spare_commands_count();
+        let eligible = r.key.is_none()
+            && r.ready
+            && r.profile.is_none()
+            && r.push_only
+            && r.family == self.compute_queues[0].family
+            && r.compute_count >= 1024
+            && r.work.commands.first().copied() == Some(r.command)
+            && self
+                .idle_pools
+                .as_ref()
+                .is_none_or(|p| count > p.command_count());
+        if eligible {
+            let used = self
+                .idle_pool_metadata_bytes()
+                .and_then(|n| n.checked_add(extra_metadata))
+                .and_then(|n| {
+                    self.recordings
+                        .iter()
+                        .try_fold(n, |n, r| n.checked_add(r.metadata_bytes()?))
+                });
+            let budget = used
+                .and_then(|n| descriptors::METADATA_CAP.checked_sub(n))
+                .unwrap_or(0);
+            let r = &mut self.recordings[index];
+            r.ready = false;
+            if let Some(pools) = unsafe {
+                r.work
+                    .retire_completed_pools(r.pool, self.identity, r.family, budget)
+            }
+            .map_err(fault)?
+            {
+                r.pool = vk::CommandPool::null(); // MAIN ownership transferred exactly once.
+                self.idle_pools = Some(pools);
+                COMPUTE_BARRIERS[28].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        self.recordings.remove(index); // Original signature, plan and ALL owners.
+        Ok(())
+    }
     pub(crate) fn clear_completed_recordings(&mut self) -> Result<(), ServerError> {
         if self.flights.any() || self.pending() || self.info_uploads.iter().any(|u| u.pending()) {
             return Err(fault("native graph cleanup while pending"));
@@ -2196,7 +2255,9 @@ impl Graph {
         self.draft_source = None;
         self.shared_request = None; // Only after the original all-queue drain.
         self.flights.clear_joined_exports().map_err(fault)?;
-        self.recordings.clear();
+        while !self.recordings.is_empty() {
+            self.retire_recording(0, 0)?;
+        }
         self.initialized.clear();
         Ok(())
     }
@@ -2689,9 +2750,16 @@ impl Graph {
         let old_metadata = self
             .recordings
             .iter()
-            .try_fold(owners.metadata_bytes(), |n, r| {
-                n.checked_add(r.metadata_bytes()?)
-            })
+            .try_fold(
+                owners
+                    .metadata_bytes()
+                    .checked_add(
+                        self.idle_pool_metadata_bytes()
+                            .ok_or_else(|| fault("native idle pool metadata overflow"))?,
+                    )
+                    .ok_or_else(|| fault("native idle pool metadata overflow"))?,
+                |n, r| n.checked_add(r.metadata_bytes()?),
+            )
             .ok_or_else(|| fault("native capture previous metadata overflow"))?;
         let signature_words = self
             .nodes
@@ -2884,12 +2952,20 @@ impl Graph {
         // Named branches pin their original owners until request erasure; only
         // unnamed opportunistic recordings participate in the sixteen-plan LRU.
         // Profiling may re-record an identical named shape after its real fence.
+        let retirement_extra = signature
+            .metadata_bytes()
+            .ok()
+            .and_then(|n| n.checked_add(resource_bytes))
+            .and_then(|n| n.checked_add(owners.metadata_bytes()))
+            .and_then(|n| n.checked_add(source_bytes))
+            .and_then(|n| n.checked_add(keys.metadata_bytes()))
+            .unwrap_or(descriptors::METADATA_CAP);
         if let Some(key) = key {
             if let Some(i) = self.recordings.iter().position(|r| r.key == Some(key)) {
                 if self.flights.live(self.recordings[i].id) {
                     return Err(fault("native named recording still in flight"));
                 }
-                self.recordings.remove(i);
+                self.retire_recording(i, retirement_extra)?;
             }
         } else if self.recordings.iter().filter(|r| r.key.is_none()).count() >= 16 {
             if let Some(i) = self
@@ -2897,7 +2973,7 @@ impl Graph {
                 .iter()
                 .position(|r| r.key.is_none() && !self.flights.live(r.id))
             {
-                self.recordings.remove(i);
+                self.retire_recording(i, retirement_extra)?;
             }
         }
         let fresh_recording_pool = self.pool == vk::CommandPool::null();
@@ -3071,6 +3147,7 @@ impl Graph {
                     .and_then(|n| n.checked_add(scratch_bytes))
                     .and_then(|n| n.checked_add(resource_bytes))
                     .and_then(|n| n.checked_add(owners.metadata_bytes()))
+                    .and_then(|n| n.checked_add(self.idle_pool_metadata_bytes()?))
                     .ok_or_else(|| fault("native transfer preparation metadata overflow"))?,
                 |n, r| n.checked_add(r.metadata_bytes()?),
             )
@@ -3262,7 +3339,15 @@ impl Graph {
         let retained_metadata = self
             .recordings
             .iter()
-            .try_fold(other_metadata, |n, r| n.checked_add(r.metadata_bytes()?))
+            .try_fold(
+                other_metadata
+                    .checked_add(
+                        self.idle_pool_metadata_bytes()
+                            .ok_or_else(|| fault("native idle pool metadata overflow"))?,
+                    )
+                    .ok_or_else(|| fault("native idle pool metadata overflow"))?,
+                |n, r| n.checked_add(r.metadata_bytes()?),
+            )
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         let capture_metadata = retained_metadata
             .checked_add(scratch_bytes)
@@ -3297,6 +3382,19 @@ impl Graph {
             u64::from(reusable_workload),
             std::sync::atomic::Ordering::Relaxed,
         );
+        if reusable_workload {
+            if let Some(source) = self.draft_scope.protected()
+                && plan
+                    .conflicts(std::slice::from_ref(source))
+                    .map_err(fault)?
+            {
+                return Err(fault(
+                    "native recorded writer aliases verified draft source",
+                ));
+            }
+            let joins = self.access_joins(plan.accesses())?;
+            self.join_accesses(joins, self.queue)?;
+        }
         let reusable_class = fresh_recording_pool && reusable_workload;
         COMPUTE_BARRIERS[26].fetch_add(
             u64::from(reusable_class),
@@ -3323,6 +3421,19 @@ impl Graph {
                 })
             })
             .flatten();
+        let idle_reuse = if reusable_class && reuse.is_none() {
+            self.idle_pools.as_ref().and_then(|p| {
+                p.prepare(
+                    &self.device,
+                    self.identity,
+                    self.family,
+                    &plan,
+                    command_budget,
+                )
+            })
+        } else {
+            None
+        };
         let next_recording = self
             .next_recording
             .checked_add(1)
@@ -3378,6 +3489,57 @@ impl Graph {
                 std::sync::atomic::Ordering::Relaxed,
             );
             (old, metadata)
+        } else if let Some(prepared) = idle_reuse {
+            let metadata = capture_metadata
+                .checked_add(
+                    self.idle_pools
+                        .as_ref()
+                        .and_then(|p| p.prepared_metadata_bytes(&plan, &prepared))
+                        .ok_or_else(|| fault("native idle pool metadata overflow"))?,
+                )
+                .filter(|n| *n <= descriptors::METADATA_CAP)
+                .ok_or_else(|| fault("native idle pool retained metadata capacity"))?;
+            let pools = self
+                .idle_pools
+                .take()
+                .ok_or_else(|| fault("native idle pool owner missing"))?;
+            let (work, pool, command) = pools
+                .into_commands(plan, prepared, command_budget)
+                .map_err(fault)?;
+            let recording = Recording {
+                id: next_recording,
+                family: self.family,
+                key,
+                ready: false,
+                push_only,
+                compute_count,
+                work,
+                profile,
+                device: self.device.clone(),
+                pool,
+                descriptors: self.descriptors,
+                command,
+                signature,
+                _resources: resources,
+                _owners: owners,
+            };
+            // The unused fresh MAIN scratch pool was never encoded/submitted.
+            // The current fresh descriptor pool transfers to the new Recording.
+            unsafe {
+                self.device.destroy_command_pool(self.pool, None);
+            }
+            COMPUTE_BARRIERS[29].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            COMPUTE_BARRIERS[21].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            COMPUTE_BARRIERS[22].fetch_add(
+                recording.work.commands.len() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            COMPUTE_BARRIERS[23].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            COMPUTE_BARRIERS[24].fetch_add(
+                recording.work.spare_commands_count() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            (recording, metadata)
         } else {
             let work = strata_schedule::Commands::new(
                 &self.device,
@@ -3859,10 +4021,12 @@ impl Drop for Graph {
                 std::mem::forget(std::mem::take(&mut self.initialized));
                 std::mem::forget(self.draft_source.take());
                 std::mem::forget(self.draft_readiness.take());
+                std::mem::forget(self.idle_pools.take());
                 return;
             }
             self.nodes.clear();
             self.recordings.clear();
+            self.idle_pools = None;
             for (_, p) in self.pipelines.drain() {
                 if let Some(template) = p.push_template {
                     self.device

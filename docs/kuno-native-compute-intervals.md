@@ -1564,3 +1564,54 @@ vaporize when fewer commands are active. Repeated CPU shrink/grow reaches the
 full original4096-handle inventory again, checking every handle exactly once and
 its original pool family at every stage. The two original exact permutation
 routes and all previous numerical checks remain intact.
+
+
+### Coupled completed-resource retirement and adoption
+
+Capacity source2137a0f1/SHA7ee191f9 passes134 CPU,420/208 offline,171 original
+GPU controls and both full original request/proof chains, but again FAILS actual
+path exercise. Counters establish eligible/fresh captures18/84/83, idle candidates0,
+reuse0. The issue is absence of an idle eligible recording at selection, not just
+queue capacity. No speed acceptance or installation. Earlier exact-count-cause
+inference was insufficient; retain these failed exercise receipts honestly.
+
+The coupled successor preserves all components and connects resource reuse to
+ORIGINAL idle retirement points (unnamed LRU eviction and completed I/O cleanup),
+plus performs the original new-plan access joins before attempting reuse. It
+retains at most ONE typed IdlePools object: device/Graph/family identity, original
+MAIN/COPY/SHARED pools, original timeline semaphores/next_base, header and per-queue
+command HANDLE inventories only. It contains NO Plan, signature, resource owner,
+model/input/route/expert value or prompt state. Before transfer it uses original
+completed-flight/all-queue evidence and resets those original nonpending command
+pools. The same old recording resources/signature/plan are then destroyed, before
+original I/O sanitization/zeroization proceeds. No erasure or owner check is skipped.
+Normal Graph destruction drops this content-free device allocation; unknown
+completion retains it conservatively until protected-process teardown.
+
+Cache adoption requires exact original Graph/device/family/header ownership and
+sufficient per-queue capacity, performs the same checked old+new metadata/temporary
+reservation, and builds a NEW Commands with the COMPLETE original fresh Plan and
+all fresh current owners/bindings/barriers. All original epochs remain monotonic.
+Only already-reset driver objects are reused. No new backend buffer/command/handle
+is allocated by adoption, no fake executable plan or completion token is created.
+The original prepare_last_recording still enforces its actual plan access/fence/
+INFO epoch checks after adoption. Earlier joins use that SAME new-plan access
+inventory, after source leases are released; no weaker proxy or host flag grants
+completion. No API/config/model identity/frontend/release change.
+
+
+The coupled implementation also preserves the original protected-draft-source
+alias rejection BEFORE earlier access joins; prepare_last_recording repeats its
+original admission/fence/INFO checks. Original private cleanup still clears the
+entire recording/signature/plan/resource inventory. The only survivor is a typed
+IdlePools value with raw device/Graph/family IDs, reset pools, semaphores and
+command-handle inventories. All136 selected actual CPU controls pass, including
+exhaustive field destructuring/type checks that reject adding private buffers,
+values or plans to that cache, and source-bound witnesses of real flight/exports/
+handoff joins and source-lease release ahead of retirement. Actual old+new cache
+and preparation capacities remain charged inside the original64MiB checks.
+No device reset/reboot, numerical-reference, threshold or privacy-guard change.
+A source-edit helper initially missed a formatted marker and a closing helper
+brace; corrected before the successful build. No partial/failed build ran on GPU.
+Freeze,420/208 offline,171 actual GPU/full request and actual retirement/adoption
+proofs follow. Numerical fallback success never substitutes for cache execution.

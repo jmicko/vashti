@@ -3,6 +3,9 @@ use ash::vk;
 use std::collections::HashMap;
 #[path = "strata_command_reencode.rs"]
 mod command_reencode;
+#[path = "strata_idle_pools.rs"]
+mod idle_pools;
+pub(crate) use idle_pools::IdlePools;
 #[path = "strata_rolling.rs"]
 mod rolling;
 #[path = "strata_submit.rs"]
