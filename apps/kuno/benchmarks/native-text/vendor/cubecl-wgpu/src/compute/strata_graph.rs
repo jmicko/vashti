@@ -12,6 +12,8 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 use wgpu::naga;
+#[path = "strata_binding_owners.rs"]
+mod binding_owners;
 #[path = "strata_descriptors.rs"]
 mod descriptors;
 
@@ -555,6 +557,7 @@ struct Node {
     resources: Vec<WgpuResource>,
     read_dependencies: Vec<WgpuResource>,
     dispatch: Dispatch,
+    owners: Option<binding_owners::Bundle>,
 }
 #[derive(Debug)]
 pub(crate) enum Dispatch {
@@ -620,6 +623,7 @@ struct Recording {
     command: vk::CommandBuffer,
     signature: Vec<u64>,
     _resources: Vec<WgpuResource>,
+    _owners: binding_owners::Owners,
 }
 impl Recording {
     fn metadata_bytes(&self) -> Option<usize> {
@@ -630,7 +634,8 @@ impl Recording {
                 self._resources
                     .capacity()
                     .checked_mul(size_of::<WgpuResource>())?,
-            )
+            )?
+            .checked_add(self._owners.metadata_bytes())
     }
 }
 impl Drop for Recording {
@@ -1118,6 +1123,16 @@ impl Graph {
         read_dependencies: Vec<WgpuResource>,
         dispatch: Dispatch,
     ) -> Result<(), ServerError> {
+        self.push_owned(pipeline, resources, read_dependencies, dispatch, None)
+    }
+    pub(crate) fn push_owned(
+        &mut self,
+        pipeline: &wgpu::ComputePipeline,
+        resources: Vec<WgpuResource>,
+        read_dependencies: Vec<WgpuResource>,
+        dispatch: Dispatch,
+        owners: Option<Arc<Vec<cubecl_runtime::server::Binding>>>,
+    ) -> Result<(), ServerError> {
         if self.nodes.len() >= 32768 {
             return Err(fault("native graph node capacity"));
         }
@@ -1254,6 +1269,7 @@ impl Graph {
             resources,
             read_dependencies,
             dispatch,
+            owners,
         };
         let accesses = self.node_ranges(&node)?;
         self.draft_scope.check_accesses(&accesses).map_err(fault)?;
@@ -1276,6 +1292,14 @@ impl Graph {
         &mut self,
         source: Option<WgpuResource>,
         target: WgpuResource,
+    ) -> Result<(), ServerError> {
+        self.push_transfer_owned(source, target, None)
+    }
+    pub(crate) fn push_transfer_owned(
+        &mut self,
+        source: Option<WgpuResource>,
+        target: WgpuResource,
+        owners: Option<Arc<Vec<cubecl_runtime::server::Binding>>>,
     ) -> Result<(), ServerError> {
         if self.nodes.len() >= 32768
             || target.size == 0
@@ -1309,6 +1333,7 @@ impl Graph {
             resources,
             read_dependencies: Vec::new(),
             dispatch,
+            owners,
         };
         let accesses = self.node_ranges(&node)?;
         self.draft_scope.check_accesses(&accesses).map_err(fault)?;
@@ -2467,6 +2492,11 @@ impl Graph {
                     })
             })
             .collect();
+        let owners = binding_owners::Owners::collect(
+            self.nodes.iter().filter_map(|node| node.owners.as_ref()),
+            descriptors::METADATA_CAP,
+        )
+        .map_err(fault)?;
         let own_metadata = work
             .metadata_bytes()
             .checked_add(
@@ -2482,6 +2512,7 @@ impl Graph {
                         .checked_mul(size_of::<WgpuResource>())?,
                 )
             })
+            .and_then(|n| n.checked_add(owners.metadata_bytes()))
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         let metadata = self
             .recordings
@@ -2511,6 +2542,7 @@ impl Graph {
             command: self.command,
             signature,
             _resources: resources,
+            _owners: owners,
         };
         // Ownership transfers before any fallible recording/submission step.
         self.pool = vk::CommandPool::null();

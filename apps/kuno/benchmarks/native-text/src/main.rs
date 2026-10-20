@@ -81,6 +81,10 @@ mod strata_qsa;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_schedule.rs"]
 mod strata_queue_tests;
 #[cfg(test)]
+#[allow(dead_code)] // Exercise original recording owner policy without a GPU.
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_binding_owners.rs"]
+mod strata_binding_owner_controls;
+#[cfg(test)]
 #[allow(dead_code)] // Validate original native readback bounds without creating a device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_readback.rs"]
 mod strata_readback_tests;
