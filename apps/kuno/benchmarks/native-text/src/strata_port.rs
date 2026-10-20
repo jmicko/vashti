@@ -1146,11 +1146,14 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
             if physical {
                 words = cubecl::wgpu::native_expert_shader_words(&compiled.source)?;
             }
-            if rounded {
-                // Match actual native registration before the rounding pass,
-                // including the HAL's checked Workgroup layout normalization.
+            if rounded || independent16 {
+                // Match BOTH actual native/Wgpu shader factories. Naga's
+                // shared-array layout decorations require this existing
+                // checked canonicalization before Vulkan standalone validation.
                 words = wgpu::hal::vulkan::kuno_native_workgroup_layout(&words)
-                    .map_err(|e| format!("rounded product workgroup layout: {e}"))?;
+                    .map_err(|e| format!("native workgroup layout: {e}"))?;
+            }
+            if rounded {
                 words = cubecl::wgpu::preserve_native_product_rounding(&words)?;
             }
             let mut validate = std::process::Command::new("spirv-val")

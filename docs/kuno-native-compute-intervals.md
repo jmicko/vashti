@@ -752,3 +752,11 @@ reference/selected recurrence ISA; private inference never executes that entry.
 Actual ten complete-output/next-state bitwise GDN cases, nine original QSA
 bitwise and independent F64 cases, all remaining129 numerical controls and full
 request/recovery proof remain the next gates. No network or Vashti change.
+
+All94 actual App CPU controls pass. First frozen215a11da/SHAf9028910
+failed OFFLINE standalone validation because the new validator branch omitted
+the existing HAL Workgroup-layout canonicalization (raw Naga adds ArrayStride
+on Workgroup arrays). No GPU test was started for that artifact. Correct the
+offline producer to apply the SAME checked normalization already used by both
+actual shader factories before spirv-val; no validator/numerical rule is relaxed.
+The corrected successor retains the exact same kernel and pipeline behavior.
