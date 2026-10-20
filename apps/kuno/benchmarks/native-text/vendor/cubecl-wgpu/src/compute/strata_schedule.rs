@@ -490,6 +490,142 @@ fn incoming_dependency(
     .next()
 }
 
+// Only construction failures free MAIN buffers individually: the Graph still
+// owns that pool. Once construction succeeds, the original Recording owns and
+// destroys the whole pool; its field Drop ordering must not free them again.
+struct ConstructingCommands<'a, F: FnMut(vk::CommandBuffer)> {
+    plan: &'a Plan,
+    commands: &'a mut Vec<vk::CommandBuffer>,
+    scratch: &'a mut Vec<vk::CommandBuffer>,
+    pending_queue: Option<usize>,
+    release_main: F,
+    armed: bool,
+}
+impl<F: FnMut(vk::CommandBuffer)> Drop for ConstructingCommands<'_, F> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // A callback panic after writing actual handles but before adoption is
+        // covered too. COPY/SHARED buffers remain owned by their original pools.
+        if self.pending_queue == Some(0) {
+            for &handle in self
+                .scratch
+                .iter()
+                .filter(|h| **h != vk::CommandBuffer::null())
+            {
+                (self.release_main)(handle);
+            }
+        }
+        for (segment, &handle) in self.plan.segments.iter().zip(self.commands.iter()).skip(1) {
+            if segment.queue() == 0 && handle != vk::CommandBuffer::null() {
+                (self.release_main)(handle);
+            }
+        }
+    }
+}
+// Original commands are allocated once per ORIGINAL queue-family pool. Both
+// actual Vec capacities are charged before Vulkan runs. Successful handles are
+// immediately adopted into the real Commands vector before the next fallible
+// operation; the construction guard handles failure/unwind before that point.
+fn allocate_commands(
+    plan: &Plan,
+    header: vk::CommandBuffer,
+    budget: usize,
+    commands: &mut Vec<vk::CommandBuffer>,
+    mut allocate: impl FnMut(usize, &mut [vk::CommandBuffer]) -> Result<(), &'static str>,
+    release_main: impl FnMut(vk::CommandBuffer),
+) -> Result<(), &'static str> {
+    let count = plan.segments.len();
+    if !(1..=32769).contains(&count)
+        || header == vk::CommandBuffer::null()
+        || !commands.is_empty()
+        || plan.segments[0].queue() != 0
+        || plan.segments.iter().any(|s| s.copy && s.shared)
+    {
+        return Err("native command allocation original inventory");
+    }
+    let mut counts = [0usize; 3];
+    for segment in &plan.segments[1..] {
+        counts[segment.queue()] += 1;
+    }
+    let scratch_count = *counts.iter().max().unwrap();
+    let fixed = plan_metadata_bytes(plan)
+        .and_then(|n| n.checked_add(size_of::<Commands>()))
+        .ok_or("native command allocation metadata overflow")?;
+    let peak = |commands: usize, scratch: usize| {
+        commands
+            .checked_add(scratch)
+            .and_then(|n| n.checked_mul(size_of::<vk::CommandBuffer>()))
+            .and_then(|n| n.checked_add(fixed))
+            .filter(|&n| n <= budget)
+            .ok_or("native command allocation metadata capacity")
+    };
+    peak(count, scratch_count)?;
+    commands
+        .try_reserve_exact(count)
+        .map_err(|_| "native command handles allocation")?;
+    peak(commands.capacity(), scratch_count)?;
+    let mut scratch = Vec::new();
+    scratch
+        .try_reserve_exact(scratch_count)
+        .map_err(|_| "native command temporary allocation")?;
+    peak(commands.capacity(), scratch.capacity())?;
+    commands.resize(count, vk::CommandBuffer::null());
+    commands[0] = header;
+    scratch.resize(scratch_count, vk::CommandBuffer::null());
+    let mut guard = ConstructingCommands {
+        plan,
+        commands,
+        scratch: &mut scratch,
+        pending_queue: None,
+        release_main,
+        armed: true,
+    };
+    for (queue, &own_count) in counts.iter().enumerate() {
+        if own_count == 0 {
+            continue;
+        }
+        guard.pending_queue = Some(queue);
+        let status = allocate(queue, &mut guard.scratch[..own_count]);
+        // Adoption is unconditional, including a partial/failed allocation. No
+        // allocation, validation or fallible driver call occurs in this loop.
+        let mut own = 0;
+        for (index, segment) in plan.segments.iter().enumerate().skip(1) {
+            if segment.queue() == queue {
+                guard.commands[index] =
+                    std::mem::replace(&mut guard.scratch[own], vk::CommandBuffer::null());
+                own += 1;
+            }
+        }
+        guard.scratch[..own_count].fill(vk::CommandBuffer::null());
+        guard.pending_queue = None;
+        status?;
+        if guard
+            .commands
+            .iter()
+            .zip(&plan.segments)
+            .skip(1)
+            .any(|(h, s)| s.queue() == queue && *h == vk::CommandBuffer::null())
+        {
+            return Err("native command allocated null handle");
+        }
+    }
+    guard.armed = false;
+    Ok(())
+}
+fn plan_metadata_bytes(plan: &Plan) -> Option<usize> {
+    plan.segments
+        .capacity()
+        .checked_mul(size_of::<Segment>())?
+        .checked_add(
+            plan.node_segments
+                .capacity()
+                .checked_mul(size_of::<usize>())?,
+        )?
+        .checked_add(plan.accesses.capacity().checked_mul(size_of::<Access>())?)
+}
+
 /// Recording owns all copy pools and timeline semaphores through the joined
 /// fence. Main command buffers belong to its existing compute pool.
 pub(crate) struct Commands {
@@ -509,6 +645,7 @@ impl Commands {
         copy_family: u32,
         shared_family: u32,
         plan: Plan,
+        metadata_budget: usize,
     ) -> Result<Self, &'static str> {
         let mut result = Self {
             device: device.clone(),
@@ -516,10 +653,9 @@ impl Commands {
             shared_pool: vk::CommandPool::null(),
             timelines: [vk::Semaphore::null(); 3],
             next_base: 0,
-            commands: Vec::with_capacity(plan.segments.len()),
+            commands: Vec::new(),
             plan,
         };
-        result.commands.push(header);
         result.copy_pool = unsafe {
             device.create_command_pool(
                 &vk::CommandPoolCreateInfo::default()
@@ -552,24 +688,38 @@ impl Commands {
             }
             .map_err(|_| "native queue timeline")?;
         }
-        for segment in &result.plan.segments[1..] {
-            let command = unsafe {
-                device.allocate_command_buffers(
-                    &vk::CommandBufferAllocateInfo::default()
-                        .command_pool(if segment.shared {
-                            result.shared_pool
-                        } else if segment.copy {
-                            result.copy_pool
-                        } else {
-                            main_pool
-                        })
-                        .level(vk::CommandBufferLevel::PRIMARY)
-                        .command_buffer_count(1),
-                )
-            }
-            .map_err(|_| "native queue command allocation")?[0];
-            result.commands.push(command);
-        }
+        allocate_commands(
+            &result.plan,
+            header,
+            metadata_budget,
+            &mut result.commands,
+            |queue, handles| {
+                let info = vk::CommandBufferAllocateInfo::default()
+                    .command_pool(match queue {
+                        0 => main_pool,
+                        1 => result.copy_pool,
+                        2 => result.shared_pool,
+                        _ => return Err("native command original pool"),
+                    })
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(handles.len() as u32);
+                // The output slice was allocated, initialized and charged above;
+                // unlike ash's allocating convenience wrapper, no hidden Vec exists.
+                let status = unsafe {
+                    (device.fp_v1_0().allocate_command_buffers)(
+                        device.handle(),
+                        &info,
+                        handles.as_mut_ptr(),
+                    )
+                };
+                if status == vk::Result::SUCCESS {
+                    Ok(())
+                } else {
+                    Err("native queue command allocation")
+                }
+            },
+            |handle| unsafe { device.free_command_buffers(main_pool, &[handle]) },
+        )?;
         Ok(result)
     }
     pub fn metadata_bytes(&self) -> usize {
@@ -610,8 +760,14 @@ impl Commands {
         {
             return Err("native upload dependency requires original compute header");
         }
-        let batches =
-            submit::Batches::new(&self.plan, &self.commands, self.timelines, base, uploads)?;
+        let batches = submit::Batches::new_with_budget(
+            &self.plan,
+            &self.commands,
+            self.timelines,
+            base,
+            uploads,
+            submit::HOST_BYTES,
+        )?;
         Ok((base, batches))
     }
     pub fn begin_rolling(
@@ -1575,5 +1731,158 @@ mod shared_lane_tests {
         assert!(regions + segments < 16 * 1024 * 1024);
         assert_eq!(std::mem::size_of::<Region>(), 64);
         assert!(std::mem::size_of::<Segment>() <= 48);
+    }
+    fn range_node(copy: bool, buffer: u64, first: u64, bytes: u64, write: bool) -> NodeAccess {
+        NodeAccess {
+            copy,
+            shared: false,
+            release_after: false,
+            accesses: vec![Access {
+                buffer,
+                first,
+                bytes,
+                write,
+            }],
+        }
+    }
+    fn test_allocate_commands(
+        p: &Plan,
+        h: vk::CommandBuffer,
+        budget: usize,
+        allocate: impl FnMut(usize, &mut [vk::CommandBuffer]) -> Result<(), &'static str>,
+    ) -> Result<Vec<vk::CommandBuffer>, &'static str> {
+        let mut commands = Vec::new();
+        allocate_commands(p, h, budget, &mut commands, allocate, |_| ())?;
+        Ok(commands)
+    }
+    #[test]
+    fn pooled_command_allocation_preserves_original_global_handles_and_preflights_budget() {
+        use ash::vk::Handle;
+        let mut dq = range_node(false, 1, 0, 64, false);
+        dq.release_after = true;
+        let mut shared = range_node(false, 3, 0, 64, true);
+        shared.shared = true;
+        let p = plan(
+            &[
+                range_node(true, 1, 0, 64, true),
+                dq,
+                range_node(false, 2, 0, 64, true),
+                shared,
+                range_node(true, 1, 0, 64, true),
+            ],
+            false,
+        )
+        .unwrap();
+        let header = vk::CommandBuffer::from_raw(9);
+        let mut calls = Vec::new();
+        let commands = test_allocate_commands(&p, header, 64 * 1024 * 1024, |queue, out| {
+            calls.push((queue, out.len()));
+            for (i, h) in out.iter_mut().enumerate() {
+                *h = vk::CommandBuffer::from_raw(100 + queue as u64 * 100 + i as u64);
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(commands.len(), p.segments.len());
+        assert_eq!(commands[0], header);
+        let mut seen = [0; 3];
+        for (index, segment) in p.segments.iter().enumerate().skip(1) {
+            let q = segment.queue();
+            assert_eq!(commands[index].as_raw(), 100 + q as u64 * 100 + seen[q]);
+            seen[q] += 1;
+        }
+        assert_eq!(
+            calls.iter().map(|(q, _)| *q).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        let mut attempted = false;
+        assert!(
+            test_allocate_commands(&p, header, 1, |_, _| {
+                attempted = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!attempted);
+        for failed in 0..3 {
+            let mut attempts = Vec::new();
+            assert!(
+                test_allocate_commands(&p, header, 64 * 1024 * 1024, |queue, out| {
+                    attempts.push(queue);
+                    if queue == failed {
+                        return Err("injected pool allocation");
+                    }
+                    out.fill(vk::CommandBuffer::from_raw(100 + queue as u64));
+                    Ok(())
+                })
+                .is_err()
+            );
+            assert_eq!(attempts, (0..=failed).collect::<Vec<_>>());
+        }
+        assert!(test_allocate_commands(&p, header, 64 * 1024 * 1024, |_, _| Ok(())).is_err());
+    }
+    #[test]
+    fn main_construction_owner_recovers_partial_pool_errors_and_panics_without_header_free() {
+        use ash::vk::Handle;
+        use std::{cell::RefCell, rc::Rc};
+        let mut shared = range_node(false, 3, 0, 64, true);
+        shared.shared = true;
+        let p = plan(
+            &[
+                range_node(false, 1, 0, 64, true),
+                range_node(true, 2, 0, 64, true),
+                shared,
+            ],
+            false,
+        )
+        .unwrap();
+        let header = vk::CommandBuffer::from_raw(9);
+        for panic in [false, true] {
+            for failed in 0..3 {
+                let freed = Rc::new(RefCell::new(Vec::new()));
+                let observed = freed.clone();
+                let mut commands = Vec::new();
+                let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    allocate_commands(
+                        &p,
+                        header,
+                        64 * 1024 * 1024,
+                        &mut commands,
+                        |queue, out| {
+                            for (i, h) in out.iter_mut().enumerate() {
+                                *h = vk::CommandBuffer::from_raw(
+                                    100 + queue as u64 * 100 + i as u64,
+                                );
+                            }
+                            if queue == failed {
+                                if panic {
+                                    panic!("after actual allocation before adoption");
+                                }
+                                return Err("after partial allocation");
+                            }
+                            Ok(())
+                        },
+                        |h| observed.borrow_mut().push(h.as_raw()),
+                    )
+                }));
+                assert!(attempt.is_err() || attempt.unwrap().is_err());
+                assert_eq!(*freed.borrow(), vec![100]); // Each new MAIN once; header/COPY/SHARED never.
+            }
+        }
+        let mut commands = Vec::new();
+        let mut freed = Vec::new();
+        allocate_commands(
+            &p,
+            header,
+            64 * 1024 * 1024,
+            &mut commands,
+            |queue, out| {
+                out.fill(vk::CommandBuffer::from_raw(100 + queue as u64));
+                Ok(())
+            },
+            |h| freed.push(h),
+        )
+        .unwrap();
+        assert!(freed.is_empty()); // Successful Recording retains the whole original MAIN pool.
     }
 }

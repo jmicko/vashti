@@ -85,7 +85,7 @@ const MAX_COMMANDS: usize = 32769;
 
 trait Backend {
     fn queue(&self, index: usize) -> Result<usize, &'static str>;
-    fn submit(&mut self, index: usize) -> Result<(), &'static str>;
+    fn submit(&mut self, start: usize, end: usize) -> Result<(), &'static str>;
     fn join(&mut self) -> Result<(), &'static str>;
     fn recover(&mut self, touched: [bool; 3]) -> bool;
 }
@@ -144,11 +144,19 @@ impl<B: Backend> Rolling<B> {
             if own >= self.touched.len() {
                 return Err("native rolling original queue index");
             }
-            // Even an unsuccessful Vulkan call may have submitted some work.
-            // Recovery fences cover every ATTEMPTED queue, not just successes.
+            let mut end = self.next + 1;
+            while end < self.closed && self.backend.queue(end)? == own {
+                end += 1;
+            }
+            // Pack only an adjacent run already closed in THIS window. Each
+            // original command/signal/wait remains a separate ordered submit.
+            // Every peer wait precedes this entire same-queue run (the complete
+            // plan forbids own-queue/future waits). No cross-queue reorder.
+            // An unsuccessful call may have submitted ANY part of the run;
+            // recovery fences cover its whole ATTEMPTED queue before return.
             self.touched[own] = true;
-            self.backend.submit(self.next)?;
-            self.next += 1;
+            self.backend.submit(self.next, end)?;
+            self.next = end;
         }
         if self.next != before {
             self.submitted_windows += 1;
@@ -204,10 +212,10 @@ impl Backend for Vulkan {
     fn queue(&self, index: usize) -> Result<usize, &'static str> {
         self.batches.record_queue(index)
     }
-    fn submit(&mut self, index: usize) -> Result<(), &'static str> {
-        let own = self.queue(index)?;
+    fn submit(&mut self, start: usize, end: usize) -> Result<(), &'static str> {
+        let own = self.queue(start)?;
         self.batches
-            .with_record(index, |submits| unsafe {
+            .with_run(start, end, |submits| unsafe {
                 if own == 1 {
                     self.copy.submit(submits, vk::Fence::null())
                 } else {
@@ -350,14 +358,23 @@ mod tests {
         events: Rc<RefCell<Vec<Event>>>,
         fail: Option<usize>,
         join_fail: bool,
+        queue_run: usize,
+        calls: usize,
+        panic_on_submit: bool,
     }
     impl Backend for Fake {
         fn queue(&self, index: usize) -> Result<usize, &'static str> {
-            Ok(index % 3)
+            Ok((index / self.queue_run) % 3)
         }
-        fn submit(&mut self, index: usize) -> Result<(), &'static str> {
-            self.events.borrow_mut().push(Event::Submit(index));
-            if self.fail == Some(index) {
+        fn submit(&mut self, start: usize, end: usize) -> Result<(), &'static str> {
+            self.calls += 1;
+            self.events
+                .borrow_mut()
+                .extend((start..end).map(Event::Submit));
+            if self.panic_on_submit {
+                panic!("inside possibly partial packed submission");
+            }
+            if self.fail.is_some_and(|i| (start..end).contains(&i)) {
                 Err("injected submission")
             } else {
                 Ok(())
@@ -386,6 +403,9 @@ mod tests {
             events: events.clone(),
             fail,
             join_fail,
+            queue_run: 1,
+            calls: 0,
+            panic_on_submit: false,
         };
         (Rolling::new(backend, total).unwrap(), events)
     }
@@ -484,7 +504,10 @@ mod tests {
                     Fake {
                         events: events.clone(),
                         fail: None,
-                        join_fail: false
+                        join_fail: false,
+                        queue_run: 1,
+                        calls: 0,
+                        panic_on_submit: false
                     },
                     total
                 )
@@ -497,6 +520,69 @@ mod tests {
         assert!(rolling.closed(1, 32769, true).is_err());
         assert!(rolling.finish().is_err());
         assert!(rolling.accept().is_err());
+        assert!(events.borrow().is_empty());
+    }
+    #[test]
+    fn same_queue_runs_pack_only_closed_windows_and_keep_whole_attempt_recovery() {
+        let (mut rolling, events) = make(12, None, false);
+        rolling.backend.queue_run = 4;
+        rolling.closed(2, 128, false).unwrap();
+        assert_eq!(rolling.next, 2);
+        assert_eq!(rolling.backend.calls, 1);
+        rolling.closed(9, 256, false).unwrap();
+        assert_eq!(rolling.next, 9);
+        assert_eq!(rolling.backend.calls, 4);
+        rolling.closed(12, 257, true).unwrap();
+        assert_eq!(rolling.backend.calls, 5); // Never join a run across closed windows.
+        rolling.finish().unwrap();
+        rolling.accept().unwrap();
+        let mut expected: Vec<_> = (0..12).map(Event::Submit).collect();
+        expected.push(Event::Join);
+        assert_eq!(*events.borrow(), expected);
+        for failed in 0..12 {
+            let (mut rolling, events) = make(12, Some(failed), false);
+            rolling.backend.queue_run = 4;
+            assert!(rolling.closed(12, 128, true).is_err());
+            let attempted_end = failed / 4 * 4 + 4;
+            assert_eq!(rolling.next, failed / 4 * 4); // Failed run grants no submission credit.
+            drop(rolling);
+            let mut expected: Vec<_> = (0..attempted_end).map(Event::Submit).collect();
+            expected.push(Event::Recover(std::array::from_fn(|q| q <= failed / 4)));
+            assert_eq!(*events.borrow(), expected);
+        }
+        let (mut rolling, events) = make(12, None, false);
+        rolling.backend.queue_run = 4;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            rolling.closed(7, 128, false).unwrap();
+            panic!("after packed prefix");
+        }));
+        assert!(result.is_err());
+        assert_eq!(
+            events.borrow().last(),
+            Some(&Event::Recover([true, true, false]))
+        );
+        let (mut rolling, events) = make(12, None, false);
+        rolling.backend.queue_run = 4;
+        rolling.backend.panic_on_submit = true;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let _ = rolling.closed(12, 128, true);
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            events.borrow().last(),
+            Some(&Event::Recover([true, false, false]))
+        );
+        assert!(!events.borrow().contains(&Event::Join));
+        let (rolling, events) = make(12, None, false);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let _original_owner = rolling;
+                panic!("before any packed submission");
+            }))
+            .is_err()
+        );
         assert!(events.borrow().is_empty());
     }
 }

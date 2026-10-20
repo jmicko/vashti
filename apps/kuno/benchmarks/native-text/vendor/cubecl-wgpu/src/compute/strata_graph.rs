@@ -2468,16 +2468,6 @@ impl Graph {
                 .map_err(fault)?;
         }
         let plan = planner.finish().map_err(fault)?;
-        let work = strata_schedule::Commands::new(
-            &self.device,
-            self.pool,
-            self.command,
-            self.copy_family,
-            self.compute_queues[strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
-                .family,
-            plan,
-        )
-        .map_err(fault)?;
         let resources: Vec<_> = self
             .nodes
             .iter()
@@ -2497,14 +2487,9 @@ impl Graph {
             descriptors::METADATA_CAP,
         )
         .map_err(fault)?;
-        let own_metadata = work
-            .metadata_bytes()
-            .checked_add(
-                signature
-                    .capacity()
-                    .checked_mul(size_of::<u64>())
-                    .ok_or_else(|| fault("native queue metadata overflow"))?,
-            )
+        let other_metadata = signature
+            .capacity()
+            .checked_mul(size_of::<u64>())
             .and_then(|n| {
                 n.checked_add(
                     resources
@@ -2514,12 +2499,27 @@ impl Graph {
             })
             .and_then(|n| n.checked_add(owners.metadata_bytes()))
             .ok_or_else(|| fault("native queue metadata overflow"))?;
-        let metadata = self
+        let retained_metadata = self
             .recordings
             .iter()
-            .try_fold(own_metadata, |total, r| {
-                total.checked_add(r.metadata_bytes()?)
-            })
+            .try_fold(other_metadata, |n, r| n.checked_add(r.metadata_bytes()?))
+            .ok_or_else(|| fault("native queue metadata overflow"))?;
+        let command_budget = descriptors::METADATA_CAP
+            .checked_sub(retained_metadata)
+            .ok_or_else(|| fault("native queue retained metadata capacity"))?;
+        let work = strata_schedule::Commands::new(
+            &self.device,
+            self.pool,
+            self.command,
+            self.copy_family,
+            self.compute_queues[strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                .family,
+            plan,
+            command_budget,
+        )
+        .map_err(fault)?;
+        let metadata = retained_metadata
+            .checked_add(work.metadata_bytes())
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         if metadata > descriptors::METADATA_CAP {
             return Err(fault("native queue retained metadata capacity"));

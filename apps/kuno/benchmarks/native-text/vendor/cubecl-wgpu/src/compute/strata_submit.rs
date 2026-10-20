@@ -21,9 +21,14 @@ pub(super) struct Record {
 pub(super) struct Batches {
     records: Vec<Record>,
     queues: [Vec<usize>; 3],
+    // Stable heap-backed C views, completed once before any rolling prefix.
+    // Their raw pointers refer only to these immutable original records.
+    timelines: Vec<vk::TimelineSemaphoreSubmitInfo<'static>>,
+    views: Vec<vk::SubmitInfo<'static>>,
 }
 
 impl Batches {
+    #[cfg(test)]
     pub(super) fn new(
         plan: &Plan,
         commands: &[vk::CommandBuffer],
@@ -31,6 +36,17 @@ impl Batches {
         base: u64,
         uploads: Option<Wait>,
     ) -> Result<Self, &'static str> {
+        Self::new_with_budget(plan, commands, timelines, base, uploads, HOST_BYTES)
+    }
+    pub(super) fn new_with_budget(
+        plan: &Plan,
+        commands: &[vk::CommandBuffer],
+        timelines: [vk::Semaphore; 3],
+        base: u64,
+        uploads: Option<Wait>,
+        metadata_budget: usize,
+    ) -> Result<Self, &'static str> {
+        let metadata_budget = metadata_budget.min(HOST_BYTES);
         let count = plan.segments.len();
         if !(1..=MAX_SEGMENTS).contains(&count)
             || commands.len() != count
@@ -69,9 +85,26 @@ impl Batches {
         if last[1] != plan.last_copy || last[2] != plan.last_shared {
             return Err("native batched submission final dependency");
         }
+        // Preflight requested peak before allocations, then charge actual
+        // capacities. The temporary queue-indexed SubmitInfo array used only by
+        // full replay is included; rolling runs allocate nothing after entry.
+        let requested = count
+            .checked_mul(
+                size_of::<Record>()
+                    + size_of::<usize>()
+                    + size_of::<vk::TimelineSemaphoreSubmitInfo<'_>>()
+                    + 2 * size_of::<vk::SubmitInfo<'_>>(),
+            )
+            .and_then(|n| n.checked_add(size_of::<Self>()))
+            .ok_or("native submission host capacity overflow")?;
+        if requested > metadata_budget {
+            return Err("native submission host capacity");
+        }
         let mut result = Self {
             records: Vec::new(),
             queues: Default::default(),
+            timelines: Vec::new(),
+            views: Vec::new(),
         };
         result
             .records
@@ -82,22 +115,20 @@ impl Batches {
                 .try_reserve_exact(count)
                 .map_err(|_| "native submission indices allocation")?;
         }
-        // Charge even excess allocator capacity before populating the records.
-        let view_bytes = count
-            .checked_mul(
-                size_of::<vk::TimelineSemaphoreSubmitInfo<'_>>() + size_of::<vk::SubmitInfo<'_>>(),
-            )
-            .ok_or("native submission view capacity overflow")?;
-        let bytes = result.records.capacity() * size_of::<Record>()
-            + result
-                .queues
-                .iter()
-                .map(|v| v.capacity() * size_of::<usize>())
-                .sum::<usize>()
-            + view_bytes
-            + size_of::<Self>();
-        if bytes > HOST_BYTES {
-            return Err("native submission host capacity");
+        result
+            .timelines
+            .try_reserve_exact(count)
+            .map_err(|_| "native timeline records allocation")?;
+        result
+            .views
+            .try_reserve_exact(count)
+            .map_err(|_| "native submit records allocation")?;
+        if result
+            .metadata_bytes()
+            .checked_add(count * size_of::<vk::SubmitInfo<'_>>())
+            .is_none_or(|n| n > metadata_budget)
+        {
+            return Err("native submission actual host capacity");
         }
         for (index, (segment, command)) in plan.segments.iter().zip(commands).enumerate() {
             let own = segment.queue();
@@ -122,6 +153,30 @@ impl Batches {
             result.records.push(record);
             result.queues[own].push(index);
         }
+        // All three backing arrays now have their final capacity. Moving the
+        // Batches value moves Vec headers only; none of their pointees move.
+        for r in &result.records {
+            result.timelines.push(vk::TimelineSemaphoreSubmitInfo {
+                signal_semaphore_value_count: 1,
+                p_signal_semaphore_values: r.signal_value.as_ptr(),
+                wait_semaphore_value_count: r.wait_count as u32,
+                p_wait_semaphore_values: r.wait_values.as_ptr(),
+                ..Default::default()
+            });
+        }
+        for (r, timeline) in result.records.iter().zip(&result.timelines) {
+            result.views.push(vk::SubmitInfo {
+                p_next: (timeline as *const vk::TimelineSemaphoreSubmitInfo<'_>).cast(),
+                command_buffer_count: 1,
+                p_command_buffers: &r.command,
+                signal_semaphore_count: 1,
+                p_signal_semaphores: r.signal.as_ptr(),
+                wait_semaphore_count: r.wait_count as u32,
+                p_wait_semaphores: r.waits.as_ptr(),
+                p_wait_dst_stage_mask: r.stages.as_ptr(),
+                ..Default::default()
+            });
+        }
         Ok(result)
     }
 
@@ -137,74 +192,65 @@ impl Batches {
             .queues
             .get(queue)
             .ok_or("native submission queue index")?;
-        let mut timelines = Vec::new();
         let mut views = Vec::new();
-        timelines
-            .try_reserve_exact(indices.len())
-            .map_err(|_| "native timeline views allocation")?;
         views
             .try_reserve_exact(indices.len())
             .map_err(|_| "native submit views allocation")?;
-        // All records plus these two arrays must remain in the precharged cap.
-        let bytes = self.records.capacity() * size_of::<Record>()
-            + self
-                .queues
-                .iter()
-                .map(|v| v.capacity() * size_of::<usize>())
-                .sum::<usize>()
-            + timelines.capacity() * size_of::<vk::TimelineSemaphoreSubmitInfo<'_>>()
-            + views.capacity() * size_of::<vk::SubmitInfo<'_>>()
-            + size_of::<Self>();
-        if bytes > HOST_BYTES {
+        if self
+            .metadata_bytes()
+            .checked_add(views.capacity() * size_of::<vk::SubmitInfo<'_>>())
+            .is_none_or(|n| n > HOST_BYTES)
+        {
             return Err("native submission live host capacity");
         }
         for &index in indices {
-            let r = &self.records[index];
-            timelines.push(
-                vk::TimelineSemaphoreSubmitInfo::default()
-                    .signal_semaphore_values(&r.signal_value)
-                    .wait_semaphore_values(&r.wait_values[..r.wait_count]),
-            );
-        }
-        for (&index, timeline) in indices.iter().zip(timelines.iter_mut()) {
-            let r = &self.records[index];
-            views.push(
-                vk::SubmitInfo::default()
-                    .command_buffers(std::slice::from_ref(&r.command))
-                    .signal_semaphores(&r.signal)
-                    .wait_semaphores(&r.waits[..r.wait_count])
-                    .wait_dst_stage_mask(&r.stages[..r.wait_count])
-                    .push_next(timeline),
-            );
+            views.push(self.views[index]);
         }
         Ok(submit(&views))
     }
 
-    /// One original CLOSED segment in global plan order. Unlike queue-wide
-    /// batching, its wait targets are all earlier already-submitted segments,
-    /// so an error/unwind cannot strand a queue behind an unsubmitted future
-    /// signal. Metadata validation/allocation still covers the complete plan.
+    /// A contiguous same-queue run of CLOSED original segments. Every original
+    /// SubmitInfo, command, signal and wait remains separate and in global order;
+    /// only the synchronous host Vulkan entry is shared. No allocation occurs.
+    pub(super) fn with_run<R>(
+        &self,
+        start: usize,
+        end: usize,
+        submit: impl FnOnce(&[vk::SubmitInfo<'_>]) -> R,
+    ) -> Result<R, &'static str> {
+        let records = self
+            .records
+            .get(start..end)
+            .filter(|r| !r.is_empty())
+            .ok_or("native rolling submit run extent")?;
+        if records.iter().any(|r| r.queue != records[0].queue) {
+            return Err("native rolling submit run queue");
+        }
+        Ok(submit(&self.views[start..end]))
+    }
+    #[cfg(test)]
     pub(super) fn with_record<R>(
         &self,
         index: usize,
         submit: impl FnOnce(&[vk::SubmitInfo<'_>]) -> R,
     ) -> Result<R, &'static str> {
-        let record = self
-            .records
-            .get(index)
-            .ok_or("native rolling record index")?;
-        let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
-            .signal_semaphore_values(&record.signal_value)
-            .wait_semaphore_values(&record.wait_values[..record.wait_count]);
-        let view = vk::SubmitInfo::default()
-            .command_buffers(std::slice::from_ref(&record.command))
-            .signal_semaphores(&record.signal)
-            .wait_semaphores(&record.waits[..record.wait_count])
-            .wait_dst_stage_mask(&record.stages[..record.wait_count])
-            .push_next(&mut timeline);
-        Ok(submit(std::slice::from_ref(&view)))
+        self.with_run(
+            index,
+            index.checked_add(1).ok_or("native rolling record index")?,
+            submit,
+        )
     }
-
+    pub(super) fn metadata_bytes(&self) -> usize {
+        self.records.capacity() * size_of::<Record>()
+            + self
+                .queues
+                .iter()
+                .map(|v| v.capacity() * size_of::<usize>())
+                .sum::<usize>()
+            + self.timelines.capacity() * size_of::<vk::TimelineSemaphoreSubmitInfo<'_>>()
+            + self.views.capacity() * size_of::<vk::SubmitInfo<'_>>()
+            + size_of::<Self>()
+    }
     pub(super) fn record_queue(&self, index: usize) -> Result<usize, &'static str> {
         self.records
             .get(index)
@@ -533,5 +579,64 @@ mod tests {
                 .unwrap();
         }
         assert!(batches.with_queue(3, |_| ()).is_err());
+    }
+    #[test]
+    fn contiguous_same_queue_runs_preserve_every_original_signal_and_moved_owner_pointer() {
+        let nodes = [
+            node(0, 1, 0, true),
+            node(0, 2, 0, true),
+            node(1, 1, 0, false),
+            node(0, 2, 0, false),
+            node(0, 3, 0, true),
+        ];
+        let plan = original(&nodes, 0, false);
+        let commands = handles(&plan);
+        let batches = Batches::new(&plan, &commands, semaphores(), 123, None).unwrap();
+        // Vec-backed C pointees survive an ordinary move; no pointer names a
+        // temporary vk struct or a stack-owned original command handle.
+        let moved = Box::new(batches);
+        for start in 0..plan.segments.len() {
+            let own = plan.segments[start].queue();
+            let mut end = start + 1;
+            while end < plan.segments.len() && plan.segments[end].queue() == own {
+                end += 1;
+            }
+            moved
+                .with_run(start, end, |views| {
+                    assert_eq!(views.len(), end - start);
+                    for (index, view) in (start..end).zip(views) {
+                        unsafe {
+                            assert_eq!(*view.p_command_buffers, commands[index]);
+                            assert_eq!(*view.p_signal_semaphores, semaphores()[own]);
+                            let timeline =
+                                &*view.p_next.cast::<vk::TimelineSemaphoreSubmitInfo<'_>>();
+                            assert_eq!(*timeline.p_signal_semaphore_values, 124 + index as u64);
+                            let expected = incoming_dependencies(
+                                index,
+                                &plan.segments[index],
+                                semaphores(),
+                                123,
+                                None,
+                            );
+                            let expected: Vec<_> = expected.into_iter().flatten().collect();
+                            assert_eq!(
+                                timeline.wait_semaphore_value_count as usize,
+                                expected.len()
+                            );
+                            for (n, wait) in expected.iter().enumerate() {
+                                assert_eq!(*view.p_wait_semaphores.add(n), wait.semaphore);
+                                assert_eq!(*timeline.p_wait_semaphore_values.add(n), wait.value);
+                            }
+                        }
+                    }
+                })
+                .unwrap();
+        }
+        for (start, end) in [(0, 0), (2, 1), (0, plan.segments.len() + 1)] {
+            assert!(moved.with_run(start, end, |_| ()).is_err());
+        }
+        assert!(moved.with_run(1, 4, |_| ()).is_err()); // Cross-queue packing forbidden.
+        assert!(Batches::new_with_budget(&plan, &commands, semaphores(), 123, None, 1).is_err());
+        assert!(moved.metadata_bytes() < HOST_BYTES);
     }
 }
