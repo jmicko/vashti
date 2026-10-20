@@ -75,7 +75,20 @@ is a small diagnostic change, not a demonstrated1s gain. This pipeline is kept;
 sourceefaaea7e submits closed prefixes before future descriptor preparation and
 8c91e6ab hoists the common full-pair validity branch. Their complete frozen
 successor `strata-parity-native-paired-fast-bulk-20261020` / SHA52717687 passes
-402/144 offline layouts; actual GPU/correctness and CPU profiling are next.
+402/144 offline layouts and all103 original GPU controls with physical recovery.
+Actual CPU profiling is next; no fast-path timing is accepted yet.
+
+`strata-native-paired-fast-cpu-profile-20261020` completes its fixed-public
+worker requests but fails the external perf aggregate parser: this perf version
+appends a fourth empty IPC column despite three requested fields. It resumes
+admission, physically recovers and deletes temporary data; no accepted timing
+or CPU diagnostic receipt exists. A read-only FD salvage also fails the same
+parser and closes without retaining samples. The parser now admits only the
+three original fields or that exact empty `- -` fourth field. A real0.5s public
+CPU probe passes94 samples after the correction. The protected corrected retry
+`strata-native-fast-cpu-readyfix-20261020` is running; no result is assumed.
+Profiling retains only aggregate symbols, never stacks/registers/memory/raw
+samples or request/response text, and accepts results only after actual cleanup.
 
 The new fixed-public parent-only startup markers locate98.1591 of103.4862s
 inside `global_sources` before `shared_target_weights`. Target model1.6663s,
