@@ -270,6 +270,7 @@ pub(crate) fn cases(
             }
             cubecl::future::block_on(client.sync()).map_err(u::fault)?;
             let mut warm_dispatch_ns = Vec::new();
+            let mut batched_public_diagnostic = None;
             if control == "valid" {
                 // First completed original dispatch above warms compilation.
                 // Fixed-public fenced wall times are diagnostic, not pure GPU
@@ -291,6 +292,39 @@ pub(crate) fn cases(
                     warm_dispatch_ns
                         .push(started.elapsed().as_nanos().min(u64::MAX as u128) as u64);
                 }
+                // One bounded compiled-public diagnostic removes per-dispatch
+                // fences. Reusing this same original expert/output favors
+                // cache reuse; this is an upper-bound throughput microprobe,
+                // not a whole-prompt estimate or representative expert stream.
+                const BATCH: usize = 64;
+                let started = std::time::Instant::now();
+                for _ in 0..BATCH {
+                    unsafe {
+                        client.launch_unchecked(
+                            Box::new(Op::Dequant { dtype, down }),
+                            CubeCount::Static(
+                                (output_rows * columns / 8).div_ceil(256) as u32,
+                                1,
+                                1,
+                            ),
+                            args()?,
+                        );
+                    }
+                }
+                let enqueue_ns = started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+                let sync_started = std::time::Instant::now();
+                cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+                let sync_ns = sync_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+                let wall_ns = started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+                println!(
+                    "public_prompt_dequant_batch dtype={dtype} down={down} host={host} count={BATCH} wall_ns={wall_ns} enqueue_ns={enqueue_ns} sync_ns={sync_ns}"
+                );
+                batched_public_diagnostic = Some(serde_json::json!({
+                    "dispatch_count":BATCH,"completed_wall_ns":wall_ns,
+                    "enqueue_wall_ns":enqueue_ns,"sync_wall_ns":sync_ns,
+                    "one_completion_fence":true,"same_original_weights_reused":true,
+                    "cache_favored_microprobe_not_whole_prompt":true,
+                }));
             }
             let fault = probe::read_native_public(arena, fault_id)?;
             let expected_fault = if control == "valid" { 0 } else { 128 };
@@ -311,6 +345,7 @@ pub(crate) fn cases(
                 serde_json::json!({"family":"prompt-vector8-dequant", "dtype":dtype,
                 "down":down,"host_staged":host,"control":control,"bit_mismatches":mismatches,
                 "warm_fenced_wall_ns":warm_dispatch_ns,"image_bytes":output_words*4,
+                "batched_public_diagnostic":batched_public_diagnostic,
                 "actual_native_kernels":true,"original_weights":control!="nonfinite",
                 "original_weight_acceptance":control=="valid",
                 "full_owner_and_tail_checked":true,"authentic_physical_sources":true}),
