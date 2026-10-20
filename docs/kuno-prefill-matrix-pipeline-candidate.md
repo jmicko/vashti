@@ -543,3 +543,50 @@ every actual module. Seven focused original/selector/fixture/window controls
 also pass. This is CPU compiler/source acceptance; no M64 GPU numeric or speed
 result is claimed. The source keeps the already tested M32 behavior unless the
 additional feature, count boundary and actual device capability all permit it.
+
+### Complete balanced Tilewise partition pipeline
+
+`strata-cubek-balanced` is a further explicit Tilewise opt-in. It changes both
+the subgroup partition geometry and the library partition buffering together,
+for dense projections and genuine routed GU/DOWN. M32 uses partition2x2x4 and
+stage2x2x1; M64 uses partition4x2x4 and stage2x2x1. Both still launch the genuine
+16x4x1 geometry, four subgroups, and the original M32/M64 by N64 by K64 problem
+blocks. The balanced partition keeps two N fragments live with the library's
+`PartitionBuffering::Double`; the existing unbalanced alternative retains its
+valid single-N-fragment `Single` pipeline. No hand-written partial substitute
+for the global/stage/output library pipeline is introduced.
+
+For M32 this matches the accepted native subgroup geometry: two M partitions
+by two N partitions, each with two A fragments, two B fragments and four F32
+accumulators per K16. The previous 1M by4N library geometry held four A and one
+B fragment for those four accumulators. M64 keeps the same balanced N geometry
+and doubles its M fragments/accumulators. This changes fragment reuse and
+register blocking; it does not claim measured native GRF allocation, occupancy
+or a guaranteed speed gain. The selected library already has one workgroup
+synchronization per completed K64 stage, not an extra barrier per K16: its
+`must_sync_plane_after_execution` setting is false.
+
+One shared production plan/scheme/buffering helper now supplies both actual
+launches and their compiled controls. M64 still requires count>=256 and the
+actual client shared limit>=34816B; otherwise M32 remains selected. Original
+physical layouts, vec4 alignment, scoped owners, finite/fault/status behavior,
+FP16/BF16 to F32 arithmetic, ascending K16 reductions, subgroup builtin mapping,
+private-request silence and erasure checks are retained. There is no split-K,
+new scratch result owner, model/context change, API setting or tolerance change.
+
+The final CPU-only acceptance batch is
+`prefill-cubek-cpu-20261020/balanced-double-whole-controls.log`. It compiles the
+actual selected dense and expert modules, including full and tail M32/M64
+cases across all eight storage-layout modes, with original native IEEE and
+Vulkan1.3 validation. It also runs the existing focused source/fixture/window
+controls and actual resource-planner checks. Protected GPU numerical, lifecycle
+and complete-workload acceptance remains the root task's next gate.
+
+The final coherent balanced+Double batch passes all **128 actual modules and
+seven focused controls** (11 tests, 322.93s CPU-only wall time). Every compiled
+M32 module measures **26624B** shared; every M64 module measures **34816B**,
+with the original64/128 static cooperative-product counts and four genuine
+resource-planner planes. The preliminary balanced Single-buffer log was
+intentionally stopped when Double buffering was approved; it is incomplete
+and is not the acceptance artifact. No GPU numeric or speed result is claimed
+by the final CPU acceptance.

@@ -496,7 +496,7 @@ pub(crate) fn try_expert(
     }
     let scheme = matrix_scheme(plan)?;
     let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
-        .partition_buffering(PartitionBuffering::Single)
+        .partition_buffering(matrix_partition_buffering())
         .build();
     let expanded = <Algorithm as Routine<()>>::expand_blueprint(
         &problem,
@@ -553,7 +553,7 @@ mod tests {
     fn definition(count: usize, down: bool) -> KernelDefinition {
         definition_partition(count, down, 4)
     }
-    fn definition_partition(count: usize, down: bool, partition_m: u32) -> KernelDefinition {
+    fn definition_partition(count: usize, down: bool, m_tiles: u32) -> KernelDefinition {
         let props = super::super::tests::properties();
         let (columns, rows) = if down { (640, 2560) } else { (2560, 1280) };
         let elem = ElemType::Float(FloatKind::F16).into();
@@ -576,14 +576,13 @@ mod tests {
             dtypes.as_global_elems(),
             AddressType::U32,
         );
-        let scheme = TilingScheme::builder()
-            .with_tile_size(TileSize::new(8, 16, 16))
-            .with_partition_size(PartitionSize::new(partition_m, 1, 4))
-            .with_stage_size(StageSize::new(1, 4, 1))
-            .build()
-            .unwrap();
+        let scheme = matrix_scheme(MatrixPlan {
+            m_tiles,
+            required_shared: if m_tiles == 8 { 34816 } else { SHARED_CAP },
+        })
+        .unwrap();
         let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
-            .partition_buffering(PartitionBuffering::Single)
+            .partition_buffering(matrix_partition_buffering())
             .build();
         let vectors = MatmulVectorSizes {
             lhs: 4,
@@ -653,7 +652,7 @@ mod tests {
         let group = <usize as LaunchArg>::register(0usize, &mut launcher);
         let plan = cubek_std::cube_count::CubeCountPlan::new_from_problem(
             cubek_std::cube_count::Count3d {
-                x: count.div_ceil(partition_m as usize * 8) as u32,
+                x: count.div_ceil(m_tiles as usize * 8) as u32,
                 y: rows.div_ceil(64) as u32,
                 z: 1,
             },
@@ -828,23 +827,20 @@ mod tests {
         for mask in masks {
             for count in [256, 257] {
                 let plan = matrix_plan(count, 49152);
-                assert_eq!(plan.partition_m, 8);
+                assert_eq!(plan.m_tiles, 8);
                 assert_eq!(plan.required_shared, M64_SHARED_CAP);
-                let partition_m = plan.partition_m;
+                let m_tiles = plan.m_tiles;
                 for (name, definition) in [
                     (
                         "dense-fp16",
-                        super::super::tests::definition_partition::<f16>(count, partition_m),
+                        super::super::tests::definition_partition::<f16>(count, m_tiles),
                     ),
                     (
                         "dense-bf16",
-                        super::super::tests::definition_partition::<bf16>(count, partition_m),
+                        super::super::tests::definition_partition::<bf16>(count, m_tiles),
                     ),
-                    ("expert-gu", definition_partition(count, false, partition_m)),
-                    (
-                        "expert-down",
-                        definition_partition(count, true, partition_m),
-                    ),
+                    ("expert-gu", definition_partition(count, false, m_tiles)),
+                    ("expert-down", definition_partition(count, true, m_tiles)),
                 ] {
                     let mut options = WgpuCompilationOptions {
                         supports_vulkan: true,
@@ -910,7 +906,8 @@ mod tests {
                     assert!(builtin.contains(&40) && builtin.contains(&41));
                     assert!(!builtin.iter().any(|b| matches!(b, 27 | 28 | 29)));
                     println!(
-                        "compiled_public_cubek_blueprint name={name} partition_m={partition_m} count={count} mask={mask} shared_bytes={} products={products}",
+                        "compiled_public_cubek_blueprint name={name} m_tiles={m_tiles} balanced={} count={count} mask={mask} shared_bytes={} products={products}",
+                        cfg!(feature = "strata-cubek-balanced"),
                         kernel.shared_size
                     );
                     let mut cmd = std::process::Command::new("spirv-val");

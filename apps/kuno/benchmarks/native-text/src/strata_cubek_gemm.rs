@@ -51,28 +51,47 @@ const SHARED_CAP: usize = 32768;
 const M64_SHARED_CAP: usize = 34816;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MatrixPlan {
-    partition_m: u32,
+    m_tiles: u32,
     required_shared: usize,
 }
 fn matrix_plan(count: usize, available_shared: usize) -> MatrixPlan {
     #[cfg(all(feature = "strata-cubek-m64", feature = "strata-cubek-tilewise"))]
     if count >= 256 && available_shared >= M64_SHARED_CAP {
         return MatrixPlan {
-            partition_m: 8,
+            m_tiles: 8,
             required_shared: M64_SHARED_CAP,
         };
     }
     let _ = (count, available_shared);
     MatrixPlan {
-        partition_m: 4,
+        m_tiles: 4,
         required_shared: SHARED_CAP,
     }
 }
+fn matrix_partition_buffering() -> PartitionBuffering {
+    if cfg!(all(
+        feature = "strata-cubek-balanced",
+        feature = "strata-cubek-tilewise"
+    )) {
+        PartitionBuffering::Double
+    } else {
+        PartitionBuffering::Single
+    }
+}
 fn matrix_scheme(plan: MatrixPlan) -> Result<TilingScheme> {
+    let balanced = cfg!(all(
+        feature = "strata-cubek-balanced",
+        feature = "strata-cubek-tilewise"
+    ));
+    let (partition_m, partition_n, stage_m, stage_n) = if balanced {
+        (plan.m_tiles / 2, 2, 2, 2)
+    } else {
+        (plan.m_tiles, 1, 1, 4)
+    };
     TilingScheme::builder()
         .with_tile_size(TileSize::new(8, 16, 16))
-        .with_partition_size(PartitionSize::new(plan.partition_m, 1, 4))
-        .with_stage_size(StageSize::new(1, 4, 1))
+        .with_partition_size(PartitionSize::new(partition_m, partition_n, 4))
+        .with_stage_size(StageSize::new(stage_m, stage_n, 1))
         .build()
         .map_err(|_| Error::InvalidFormat("CubeK fixed matrix tiling"))
 }
@@ -512,7 +531,7 @@ fn launch<F: Float>(
     }
     let scheme = matrix_scheme(plan)?;
     let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
-        .partition_buffering(PartitionBuffering::Single)
+        .partition_buffering(matrix_partition_buffering())
         .build();
     let expanded = <Algorithm as Routine<()>>::expand_blueprint(
         &problem,
@@ -637,10 +656,7 @@ mod tests {
     fn definition<F: Float>(count: usize) -> KernelDefinition {
         definition_partition::<F>(count, 4)
     }
-    pub(super) fn definition_partition<F: Float>(
-        count: usize,
-        partition_m: u32,
-    ) -> KernelDefinition {
+    pub(super) fn definition_partition<F: Float>(count: usize, m_tiles: u32) -> KernelDefinition {
         let props = properties();
         let elem = F::as_type_native_unchecked().storage_type();
         let f32_ty = ElemType::Float(FloatKind::F32).into();
@@ -672,14 +688,13 @@ mod tests {
             None,
         )
         .unwrap();
-        let scheme = TilingScheme::builder()
-            .with_tile_size(TileSize::new(8, 16, 16))
-            .with_partition_size(PartitionSize::new(partition_m, 1, 4))
-            .with_stage_size(StageSize::new(1, 4, 1))
-            .build()
-            .unwrap();
+        let scheme = matrix_scheme(MatrixPlan {
+            m_tiles,
+            required_shared: if m_tiles == 8 { 34816 } else { SHARED_CAP },
+        })
+        .unwrap();
         let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
-            .partition_buffering(PartitionBuffering::Single)
+            .partition_buffering(matrix_partition_buffering())
             .build();
         let vectors = MatmulVectorSizes {
             lhs: 4,
@@ -709,7 +724,7 @@ mod tests {
         let output = <Output as LaunchArg>::register(output, &mut launcher);
         let plan = cubek_std::cube_count::CubeCountPlan::new_from_problem(
             cubek_std::cube_count::Count3d {
-                x: count.div_ceil(partition_m as usize * 8) as u32,
+                x: count.div_ceil(m_tiles as usize * 8) as u32,
                 y: 20,
                 z: 1,
             },
@@ -744,12 +759,31 @@ mod tests {
                     feature = "strata-cubek-tilewise"
                 )) && count >= 256
                     && shared >= M64_SHARED_CAP;
-                assert_eq!(actual.partition_m, if selected { 8 } else { 4 });
+                assert_eq!(actual.m_tiles, if selected { 8 } else { 4 });
                 assert_eq!(
                     actual.required_shared,
                     if selected { M64_SHARED_CAP } else { SHARED_CAP }
                 );
                 assert!(actual.required_shared <= shared);
+                let scheme = matrix_scheme(actual).unwrap();
+                assert_eq!(
+                    matrix_partition_buffering(),
+                    if cfg!(all(
+                        feature = "strata-cubek-balanced",
+                        feature = "strata-cubek-tilewise"
+                    )) {
+                        PartitionBuffering::Double
+                    } else {
+                        PartitionBuffering::Single
+                    }
+                );
+                assert_eq!(
+                    scheme.partitions_per_stage_along_m() * scheme.partitions_per_stage_along_n(),
+                    4
+                );
+                assert_eq!(scheme.elements_per_stage_along_m(), actual.m_tiles * 8);
+                assert_eq!(scheme.elements_per_stage_along_n(), 64);
+                assert_eq!(scheme.elements_per_stage_along_k(), 64);
             }
         }
     }
