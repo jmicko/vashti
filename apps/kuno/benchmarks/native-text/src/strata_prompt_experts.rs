@@ -234,6 +234,55 @@ pub(crate) fn enqueue(
     count: usize,
     map: &[u32],
 ) -> Result<()> {
+    #[cfg(feature = "strata-native-expert-bulk")]
+    {
+        // SAFETY: the unchanged inner path performs only the original six
+        // expert operators and checked Sources HOST copies using this client.
+        // Original parent owners/Scope enclose capture, enqueue and completion.
+        let outcome = unsafe {
+            client.with_native_strata_expert_batch(|batch| {
+                enqueue_original(
+                    batch, graph, sources, layer, geometry, owners, fault, count, map,
+                )
+            })
+        }
+        .map_err(crate::resident_util::fault)?;
+        match outcome {
+            Ok(((), receipt)) => {
+                // Existing public-only profile sink; ordinary private workers
+                // retain no request usage counters or extra diagnostics.
+                crate::strata_prefill_profile::count("expert_native_bulk_batches", 1);
+                crate::strata_prefill_profile::count(
+                    "expert_native_bulk_launches",
+                    receipt.launches as u64,
+                );
+                crate::strata_prefill_profile::count(
+                    "expert_native_bulk_copy_segments",
+                    receipt.copy_segments as u64,
+                );
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+    #[cfg(not(feature = "strata-native-expert-bulk"))]
+    enqueue_original(
+        client, graph, sources, layer, geometry, owners, fault, count, map,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enqueue_original(
+    client: &ComputeClient<WgpuRuntime>,
+    graph: BoundGraph<'_, '_>,
+    sources: &Sources,
+    layer: usize,
+    geometry: q::grouped_moe::Geometry,
+    owners: &[Handle; 7],
+    fault: &Handle,
+    count: usize,
+    map: &[u32],
+) -> Result<()> {
     sources.validate_prompt_ready(graph)?;
     let stage = stages()?;
     if !(1..=super::groups::ROUTE_CAPACITY).contains(&count)
@@ -293,7 +342,8 @@ pub(crate) fn enqueue(
     for group in 0..groups {
         let mut timing = crate::strata_prefill_profile::CpuTimer::new();
         while issued < groups && issued < group + RAW_SLOTS {
-            layer_sources.stage_group(
+            layer_sources.stage_group_on(
+                client,
                 map[4 + issued] as usize,
                 role_bytes,
                 &stage[2],

@@ -1,0 +1,283 @@
+//! Native-WGPU-only bulk admission of the original six expert operators.
+use super::*;
+use cubecl_runtime::memory_management::ManagedMemoryId;
+use cubecl_runtime::server::{
+    MetadataBindingInfo, NativeStrataExpertBatch, NativeStrataExpertBatchReceipt,
+    NativeStrataExpertCommand,
+};
+use hashbrown::HashMap as ExactMap;
+
+const MAX_BINDINGS: usize = 4096;
+const MAX_PIPELINES: usize = 32;
+type Key = (ManagedMemoryId, Option<u64>, Option<u64>, StreamId, u64);
+fn key(binding: &Binding) -> Key {
+    (
+        binding.memory.allocation_id(),
+        binding.offset_start,
+        binding.offset_end,
+        binding.stream,
+        binding.size,
+    )
+}
+fn fault(reason: &'static str) -> ServerError {
+    super::super::transient_io::fault(reason)
+}
+fn operator(name: &str, release: bool, index: usize) -> bool {
+    match index % 6 {
+        0 => name == "StrataPromptExpertGather" && !release,
+        1 => name == "StrataPromptExpertF16Image" && !release,
+        2 => name == "StrataPromptExpertF16Image" && release,
+        4 => name == "StrataPromptExpertF16Swiglu" && !release,
+        _ => {
+            (name.contains("::expert::Expert")
+                || name.contains("::expert_macro::ExpertMacro")
+                || name.contains("::expert_narrow::ExpertNarrow"))
+                && !release
+        }
+    }
+}
+
+impl WgpuServer {
+    pub(super) fn native_expert_batch(
+        &mut self,
+        mut batch: NativeStrataExpertBatch<<Self as ComputeServer>::Kernel>,
+        stream_id: StreamId,
+    ) -> Result<NativeStrataExpertBatchReceipt, ServerError> {
+        if self.backend != wgpu::Backend::Vulkan
+            || !super::super::strata_graph::enabled()
+            || self.public_external_stream != Some(stream_id)
+            || batch.commands.is_empty()
+        {
+            return Err(fault("native expert batch selected backend required"));
+        }
+        // Original scheduling work must precede this exact ordered batch. This
+        // drains tasks into the same graph, not a submission/completion fence.
+        self.scheduler.enqueue_stream_tasks(stream_id);
+        // Conservatively admit all simultaneously live original command,
+        // binding/resource/hash tables, pipeline/INFO views and one packing page
+        // before allocating any backend scratch. Actual capacities rechecked.
+        let tables = MAX_BINDINGS
+            * 2
+            * (size_of::<Binding>()
+                + size_of::<WgpuResource>()
+                + size_of::<Key>()
+                + size_of::<usize>()
+                + 32);
+        let per_command = 2
+            * (size_of::<Option<Arc<ComputePipeline>>>()
+                + size_of::<MetadataBindingInfo>()
+                + size_of::<WgpuResource>());
+        let metadata = batch
+            .metadata_bytes()?
+            .checked_add(tables)
+            .and_then(|n| n.checked_add(batch.commands.len() * per_command))
+            .and_then(|n| n.checked_add(MAX_PIPELINES * 512 + 32768))
+            .ok_or_else(|| fault("native expert batch metadata overflow"))?;
+        let nonce = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_native_expert_batch(metadata)?;
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        let scopes = super::super::transient_io::IoScopes::new(&self.device);
+        let result = (|| {
+            // Memory bindings AND resources coexist. No raw VkBuffer/resource
+            // clone substitutes allocator ownership during deferred execution.
+            let mut indices = ExactMap::<Key, usize>::new();
+            let mut bindings = Vec::new();
+            let mut resources = Vec::new();
+            indices
+                .try_reserve(MAX_BINDINGS)
+                .map_err(|_| fault("native expert original binding index allocation"))?;
+            bindings
+                .try_reserve_exact(MAX_BINDINGS)
+                .map_err(|_| fault("native expert original owner allocation"))?;
+            resources
+                .try_reserve_exact(MAX_BINDINGS)
+                .map_err(|_| fault("native expert resource allocation"))?;
+            if indices.capacity() > MAX_BINDINGS * 2
+                || bindings.capacity() > MAX_BINDINGS * 2
+                || resources.capacity() > MAX_BINDINGS * 2
+            {
+                return Err(fault("native expert binding table actual capacity"));
+            }
+            for command in &batch.commands {
+                let mut admit = |binding: &Binding| -> Result<(), ServerError> {
+                    if binding.stream != stream_id
+                        || binding
+                            .offset_start
+                            .unwrap_or(0)
+                            .checked_add(binding.offset_end.unwrap_or(0))
+                            .is_none_or(|n| n >= binding.size)
+                    {
+                        return Err(fault("native expert original binding extent/stream"));
+                    }
+                    let key = key(binding);
+                    if !indices.contains_key(&key) {
+                        if bindings.len() >= MAX_BINDINGS {
+                            return Err(fault("native expert original binding capacity"));
+                        }
+                        let resource = self
+                            .scheduler
+                            .stream(&stream_id)
+                            .mem_manage
+                            .get_resource(binding.clone())?;
+                        if resource.size != binding.size_in_used() || resource.size == 0 {
+                            return Err(fault("native expert original resolved extent"));
+                        }
+                        indices.insert(key, bindings.len());
+                        bindings.push(binding.clone());
+                        resources.push(resource);
+                    }
+                    Ok(())
+                };
+                match command {
+                    NativeStrataExpertCommand::Launch { args, .. } => {
+                        super::super::public_external::validate_stream(args, stream_id)
+                            .map_err(fault)?;
+                        for binding in args.buffers.iter().chain(&args.read_dependencies) {
+                            admit(binding)?;
+                        }
+                    }
+                    NativeStrataExpertCommand::HostCopies(copies) => {
+                        cubecl_runtime::public_external::validate_host_copies(&copies.0, stream_id)
+                            .map_err(fault)?;
+                        for copy in &copies.0 {
+                            admit(&copy.source)?;
+                            admit(&copy.destination)?;
+                        }
+                    }
+                }
+            }
+            // This same immutable bundle enters EACH original recording that
+            // references it, including split/rolling and quarantine paths.
+            let owners = Arc::new(bindings);
+            let mut pipelines = Vec::new();
+            pipelines
+                .try_reserve_exact(batch.commands.len())
+                .map_err(|_| fault("native expert pipeline table allocation"))?;
+            let mut known = HashMap::new();
+            known
+                .try_reserve(MAX_PIPELINES)
+                .map_err(|_| fault("native expert pipeline index allocation"))?;
+            let mut records = Vec::<MetadataBindingInfo>::new();
+            records
+                .try_reserve_exact(batch.commands.len())
+                .map_err(|_| fault("native expert INFO record allocation"))?;
+            if pipelines.capacity() > batch.commands.len() * 2
+                || records.capacity() > batch.commands.len() * 2
+                || known.capacity() > MAX_PIPELINES * 2
+            {
+                return Err(fault("native expert actual pipeline/INFO capacity"));
+            }
+            let mut launches = 0;
+            for command in &mut batch.commands {
+                match command {
+                    NativeStrataExpertCommand::Launch {
+                        kernel, args, mode, ..
+                    } => {
+                        let kernel = kernel
+                            .take()
+                            .ok_or_else(|| fault("native expert original kernel missing"))?;
+                        if !operator(kernel.name(), kernel.native_release_after(), launches) {
+                            return Err(fault("native expert original six-operator order"));
+                        }
+                        let mut id = kernel
+                            .id()
+                            .native_release_boundary(kernel.native_release_after());
+                        id.mode(*mode);
+                        id = id.public_external_read_mask(
+                            super::super::public_external::external_mask(args).map_err(fault)?,
+                        );
+                        let pipeline = if let Some(p) = known.get(&id) {
+                            Arc::clone(p)
+                        } else {
+                            if known.len() >= MAX_PIPELINES {
+                                return Err(fault("native expert pipeline capacity"));
+                            }
+                            let p = self
+                                .pipeline(kernel, args, *mode)
+                                .map_err(ServerError::Launch)?;
+                            known.insert(id, p.clone());
+                            p
+                        };
+                        pipelines.push(Some(pipeline));
+                        records.push(core::mem::take(&mut args.info));
+                        launches += 1;
+                    }
+                    NativeStrataExpertCommand::HostCopies(_) => pipelines.push(None),
+                }
+            }
+            if launches == 0 || launches % 6 != 0 {
+                return Err(fault("native expert incomplete six-operator pipeline"));
+            }
+            let info = self
+                .scheduler
+                .stream(&stream_id)
+                .native_expert_uniforms(&records, nonce)?;
+            let mut next_info = 0;
+            let mut receipt = NativeStrataExpertBatchReceipt::default();
+            for (index, command) in batch.commands.iter_mut().enumerate() {
+                match command {
+                    NativeStrataExpertCommand::Launch { count, args, .. } => {
+                        let mut bound = Vec::with_capacity(args.buffers.len() + 1);
+                        for binding in &args.buffers {
+                            bound.push(resources[indices[&key(binding)]].clone());
+                        }
+                        bound.push(info[next_info].clone());
+                        next_info += 1;
+                        let reads = args
+                            .read_dependencies
+                            .iter()
+                            .map(|binding| resources[indices[&key(binding)]].clone())
+                            .collect();
+                        self.scheduler
+                            .stream(&stream_id)
+                            .enqueue_native_expert_owned(
+                                pipelines[index].as_ref().unwrap().clone(),
+                                bound,
+                                reads,
+                                count,
+                                owners.clone(),
+                                nonce,
+                            )?;
+                        receipt.launches += 1;
+                    }
+                    NativeStrataExpertCommand::HostCopies(copies) => {
+                        let mut actual = Vec::with_capacity(copies.0.len());
+                        for copy in &copies.0 {
+                            let source = resources[indices[&key(&copy.source)]].clone();
+                            let target = resources[indices[&key(&copy.destination)]].clone();
+                            actual.push((
+                                ManagedResource::new(copy.source.memory.clone(), source),
+                                copy.source_first,
+                                ManagedResource::new(copy.destination.memory.clone(), target),
+                                copy.destination_first,
+                                copy.bytes,
+                            ));
+                        }
+                        self.scheduler
+                            .stream(&stream_id)
+                            .stage_public_host_copies_owned(&actual, Some(owners.clone()))?;
+                        receipt.copy_segments += actual.len();
+                    }
+                }
+            }
+            if next_info != info.len() {
+                return Err(fault("native expert original INFO inventory"));
+            }
+            Ok(receipt)
+        })();
+        let finished = self.scheduler.stream(&stream_id).end_native_expert_batch(
+            nonce,
+            scopes,
+            result.is_ok(),
+        );
+        if result.is_ok() && finished.is_ok() {
+            if let Some(mutation) = mutation {
+                mutation.accept();
+            }
+        }
+        finished?;
+        result
+    }
+}

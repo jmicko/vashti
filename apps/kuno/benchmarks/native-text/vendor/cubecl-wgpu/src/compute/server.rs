@@ -38,6 +38,8 @@ use cubecl_runtime::{
 };
 use hashbrown::HashMap;
 use wgpu::ComputePipeline;
+#[path = "strata_expert_batch.rs"]
+mod expert_batch;
 
 /// Wgpu compute server.
 #[derive(Debug)]
@@ -1175,6 +1177,14 @@ impl ComputeServer for WgpuServer {
         if let Some(mutation) = mutation {
             mutation.accept();
         }
+    }
+
+    fn launch_native_strata_expert_batch(
+        &mut self,
+        batch: cubecl_runtime::server::NativeStrataExpertBatch<Self::Kernel>,
+        stream_id: StreamId,
+    ) -> Result<cubecl_runtime::server::NativeStrataExpertBatchReceipt, ServerError> {
+        self.native_expert_batch(batch, stream_id)
     }
 
     fn flush(&mut self, stream_id: StreamId) -> Result<(), ServerError> {

@@ -287,6 +287,123 @@ struct InfoPlan {
     existing: bool,
     slab: bool,
 }
+
+struct ExpertInfoPage {
+    data: cubecl_runtime::server::MetadataBindingInfo,
+    // Packed original (offset,length) pairs get the same full-capacity wipe as
+    // their payload. No private metadata Vec is freed unwiped on reallocation.
+    layouts: cubecl_runtime::server::MetadataBindingInfo,
+}
+fn expert_info_bytes(words: &[u64]) -> &[u8] {
+    // Same native-endian wire representation as CubeCL's original uniform
+    // cast. Every initialized u64 permits all byte values; the borrow is shared.
+    unsafe { std::slice::from_raw_parts(words.as_ptr().cast(), std::mem::size_of_val(words)) }
+}
+fn expert_info_bytes_mut(words: &mut [u64]) -> &mut [u8] {
+    // Exclusive initialized u64 storage, with exactly its actual byte extent.
+    unsafe {
+        std::slice::from_raw_parts_mut(words.as_mut_ptr().cast(), std::mem::size_of_val(words))
+    }
+}
+fn native_expert_info_page(
+    records: &[cubecl_runtime::server::MetadataBindingInfo],
+    policy: InfoPolicy,
+) -> Result<ExpertInfoPage, ServerError> {
+    use cubecl_runtime::server::MetadataBindingInfo;
+    let bytes = policy.slab_bytes as usize;
+    let alignment = policy.alignment as usize;
+    let mut page = ExpertInfoPage {
+        data: MetadataBindingInfo::custom(vec![0; bytes / 8]),
+        layouts: MetadataBindingInfo::custom(Vec::with_capacity(bytes / alignment)),
+    };
+    let mut cursor = 0usize;
+    for record in records {
+        let data = expert_info_bytes(&record.data);
+        if data.is_empty()
+            || !record.native_parameters.is_empty()
+            || data.len() > alignment
+            || data.len() as u64 > policy.binding_limit
+        {
+            return Err(fault("native expert INFO original record schema"));
+        }
+        let offset = cursor.div_ceil(alignment) * alignment;
+        if offset + data.len() > bytes {
+            break;
+        }
+        expert_info_bytes_mut(&mut page.data.data)[offset..offset + data.len()]
+            .copy_from_slice(data);
+        page.layouts
+            .data
+            .push(((offset as u64) << 32) | data.len() as u64);
+        cursor = offset + data.len();
+    }
+    if page.layouts.data.is_empty() {
+        return Err(fault("native expert INFO page progress"));
+    }
+    Ok(page)
+}
+
+#[cfg(test)]
+mod native_expert_page_tests {
+    use super::*;
+    use cubecl_runtime::server::MetadataBindingInfo;
+    #[test]
+    fn original_record_bytes_logical_lengths_and_full_padding_survive_page_boundaries() {
+        for bytes in [4096, 8192] {
+            for alignment in [256, 512] {
+                let policy =
+                    InfoPolicy::new(bytes, alignment, alignment, 1 << 20, 1 << 20).unwrap();
+                let records = (0..37)
+                    .map(|i| {
+                        MetadataBindingInfo::custom(
+                            (0..6 + i % 5).map(|j| 0x1000 + i * 100 + j).collect(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let mut first = 0;
+                while first < records.len() {
+                    let page = native_expert_info_page(&records[first..], policy).unwrap();
+                    let full = expert_info_bytes(&page.data.data);
+                    assert_eq!(full.len(), bytes as usize);
+                    let mut touched = vec![false; full.len()];
+                    let mut current = None;
+                    for (i, &layout) in page.layouts.data.iter().enumerate() {
+                        let (offset, length) = ((layout >> 32) as usize, (layout as u32) as usize);
+                        let source = expert_info_bytes(&records[first + i].data);
+                        let original = policy.plan(source.len() as u64, current).unwrap();
+                        assert_eq!(
+                            (offset, length),
+                            (original.offset as usize, original.logical as usize)
+                        );
+                        assert_eq!(&full[offset..offset + length], source);
+                        touched[offset..offset + length].fill(true);
+                        current = Some((bytes, original.next_cursor));
+                    }
+                    assert!(
+                        full.iter()
+                            .zip(touched)
+                            .all(|(&byte, used)| used || byte == 0)
+                    );
+                    first += page.layouts.data.len();
+                }
+                assert!(
+                    native_expert_info_page(&[MetadataBindingInfo::custom(vec![])], policy)
+                        .is_err()
+                );
+                assert!(
+                    native_expert_info_page(
+                        &[MetadataBindingInfo::custom(vec![
+                            0;
+                            alignment as usize / 8 + 1
+                        ])],
+                        policy
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+}
 struct InfoSlab {
     buffer: wgpu::Buffer,
     source: Option<wgpu::Buffer>,
@@ -1765,6 +1882,7 @@ pub(crate) struct TransientIo {
     audit_retained_capacity: usize,
     info_cache: Option<InfoCache>,
     binding_cache: Option<NativeBindingCache>,
+    native_expert_extra_metadata: usize,
     leases: Arc<LeaseTracker>,
     errors: Vec<ErrorFuture>,
     info_policy: Option<InfoPolicy>,
@@ -2673,6 +2791,7 @@ impl TransientIo {
                 audit_retained_capacity: 0,
                 info_cache: None,
                 binding_cache: None,
+                native_expert_extra_metadata: 0,
                 leases: Arc::default(),
                 errors: Vec::new(),
                 info_policy,
@@ -2719,6 +2838,7 @@ impl TransientIo {
                 audit_retained_capacity: 0,
                 info_cache: None,
                 binding_cache: None,
+                native_expert_extra_metadata: 0,
                 leases: Arc::default(),
                 errors: Vec::new(),
                 info_policy: Some(info_policy),
@@ -3303,6 +3423,7 @@ impl TransientIo {
         self.info_cache.as_ref().map_or(0, InfoCache::host_bytes)
             + self.core_info_pages.capacity() * std::mem::size_of::<usize>()
             + self.branch_parameters.metadata_bytes()
+            + self.native_expert_extra_metadata
     }
     fn check_reuse_metadata(
         &mut self,
@@ -3496,6 +3617,101 @@ impl TransientIo {
         self.pending_info.clear();
         self.core_info_cursor = 0;
         Ok(Some(encoder.finish()))
+    }
+
+    pub(crate) fn begin_native_expert_batch(
+        &mut self,
+        metadata: usize,
+    ) -> Result<u64, ServerError> {
+        self.active()?;
+        if self.native_expert_extra_metadata != 0
+            || !self.info_batch
+            || !super::strata_graph::enabled()
+            || self.branch_parameters.active()
+            || metadata == 0
+            || metadata > cubecl_runtime::server::native_expert_batch::NATIVE_EXPERT_BATCH_BYTES * 3
+        {
+            return Err(fault("native expert batch original I/O scope"));
+        }
+        let nonce = self
+            .reuse_scope
+            .nonce
+            .ok_or_else(|| fault("native expert batch requires actual reuse"))?;
+        self.check_reuse(nonce)?;
+        self.native_expert_extra_metadata = metadata;
+        if let Err(error) = self.check_branch_metadata() {
+            self.native_expert_extra_metadata = 0;
+            return Err(error);
+        }
+        Ok(nonce)
+    }
+    pub(crate) fn end_native_expert_batch(
+        &mut self,
+        nonce: u64,
+        success: bool,
+    ) -> Result<(), ServerError> {
+        let valid = self.check_reuse(nonce);
+        if self.native_expert_extra_metadata == 0 || valid.is_err() {
+            self.retire();
+            return Err(fault("native expert batch original scope changed"));
+        }
+        self.native_expert_extra_metadata = 0;
+        if !success {
+            self.retire();
+        }
+        valid
+    }
+
+    /// Closed expert INFO contains no symbolic replay parameters. Pack its
+    /// unchanged original byte records into genuine full ledger-owned pages,
+    /// writing each page once rather than remapping for each small record.
+    /// Every returned descriptor preserves the ORIGINAL logical INFO length.
+    pub(crate) fn native_expert_uniforms(
+        &mut self,
+        records: &[cubecl_runtime::server::MetadataBindingInfo],
+        nonce: u64,
+    ) -> Result<Vec<WgpuResource>, ServerError> {
+        self.active()?;
+        self.check_reuse(nonce)?;
+        if self.native_expert_extra_metadata == 0
+            || self.branch_parameters.active()
+            || records.is_empty()
+            || records.len()
+                > cubecl_runtime::server::native_expert_batch::NATIVE_EXPERT_BATCH_COMMANDS
+        {
+            return Err(fault("native expert batch INFO original scope"));
+        }
+        let policy = self
+            .info_policy
+            .ok_or_else(|| fault("native expert batch INFO policy"))?;
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(records.len())
+            .map_err(|_| fault("native expert INFO view allocation"))?;
+        if result.capacity() > records.len() * 2 {
+            return Err(fault("native expert INFO actual view capacity"));
+        }
+        let mut first = 0;
+        while first < records.len() {
+            let page = native_expert_info_page(&records[first..], policy)?;
+            let whole = self.batched_uniform(expert_info_bytes(&page.data.data), &[])?;
+            if whole.offset != 0
+                || whole.size != policy.slab_bytes
+                || whole.buffer.size() != policy.slab_bytes
+            {
+                return Err(fault("native expert INFO genuine full page"));
+            }
+            for &layout in &page.layouts.data {
+                result.push(WgpuResource {
+                    buffer: whole.buffer.clone(),
+                    offset: layout >> 32,
+                    size: layout & u64::from(u32::MAX),
+                });
+            }
+            first += page.layouts.data.len();
+        }
+        self.check_reuse(nonce)?;
+        Ok(result)
     }
 
     pub(crate) fn batched_uniform(

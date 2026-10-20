@@ -432,6 +432,29 @@ impl Sources {
         destination: &Handle,
         first: usize,
     ) -> Result<()> {
+        self.stage_prompt_group_on(
+            &self.client,
+            graph,
+            layer,
+            cell,
+            role_bytes,
+            destination,
+            first,
+        )
+    }
+    pub(crate) fn stage_prompt_group_on(
+        &self,
+        client: &ComputeClient<WgpuRuntime>,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        cell: usize,
+        role_bytes: [usize; 3],
+        destination: &Handle,
+        first: usize,
+    ) -> Result<()> {
+        if !std::ptr::eq(client.info(), self.client.info()) {
+            return Err(reject());
+        }
         self.validate_prompt_ready(graph)?;
         let original_stage = self.prompt_stage.as_ref().ok_or_else(reject)?;
         if destination.clone().binding().memory.allocation_id()
@@ -481,7 +504,7 @@ impl Sources {
                 sum.checked_add(copy.bytes).ok_or(Error::ArithmeticOverflow)
             })?;
             let segments = copies.len() as u64;
-            self.client
+            client
                 .stage_public_host_copies(copies)
                 .map_err(crate::resident_util::fault)?;
             crate::strata_prefill_profile::count("expert_host_stage_bytes", bytes);

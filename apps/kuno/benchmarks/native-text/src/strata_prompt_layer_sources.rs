@@ -81,4 +81,22 @@ impl PromptLayer<'_, '_, '_> {
             first,
         )
     }
+    pub(crate) fn stage_group_on(
+        &self,
+        client: &ComputeClient<WgpuRuntime>,
+        cell: usize,
+        role_bytes: [usize; 3],
+        destination: &Handle,
+        first: usize,
+    ) -> Result<()> {
+        self.sources.stage_prompt_group_on(
+            client,
+            self.graph,
+            self.layer,
+            cell,
+            role_bytes,
+            destination,
+            first,
+        )
+    }
 }

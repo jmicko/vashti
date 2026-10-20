@@ -813,6 +813,20 @@ impl WgpuStream {
             u64,
         )],
     ) -> Result<(), ServerError> {
+        self.stage_public_host_copies_owned(copies, None)
+    }
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn stage_public_host_copies_owned(
+        &mut self,
+        copies: &[(
+            cubecl_runtime::storage::ManagedResource<crate::WgpuResource>,
+            u64,
+            cubecl_runtime::storage::ManagedResource<crate::WgpuResource>,
+            u64,
+            u64,
+        )],
+        owners: Option<Arc<Vec<cubecl_runtime::server::Binding>>>,
+    ) -> Result<(), ServerError> {
         self.private_io_active()?;
         // Validate every physical range before changing the encoder or graph.
         for (i, (source, sfirst, target, tfirst, bytes)) in copies.iter().enumerate() {
@@ -861,7 +875,7 @@ impl WgpuStream {
                     offset: *tfirst,
                     size: *bytes,
                 };
-                graph.push_transfer(Some(source), target)?;
+                graph.push_transfer_owned(Some(source), target, owners.clone())?;
             } else {
                 self.encoder_dirty = true;
                 self.encoder
@@ -870,6 +884,75 @@ impl WgpuStream {
             self.tasks_count += 1;
         }
         scopes.finish(self.transient_io.as_mut().unwrap());
+        self.flush_if_needed();
+        Ok(())
+    }
+
+    pub(crate) fn begin_native_expert_batch(
+        &mut self,
+        metadata: usize,
+    ) -> Result<u64, ServerError> {
+        self.private_io_active()?;
+        if self.strata_graph.is_none() {
+            return Err(super::transient_io::fault("native expert graph required"));
+        }
+        self.transient_io
+            .as_mut()
+            .unwrap()
+            .begin_native_expert_batch(metadata)
+    }
+    pub(crate) fn end_native_expert_batch(
+        &mut self,
+        nonce: u64,
+        scopes: super::transient_io::IoScopes,
+        success: bool,
+    ) -> Result<(), ServerError> {
+        let io = self.transient_io.as_mut().unwrap();
+        scopes.finish(io);
+        io.end_native_expert_batch(nonce, success)
+    }
+    pub(crate) fn native_expert_uniforms(
+        &mut self,
+        records: &[cubecl_runtime::server::MetadataBindingInfo],
+        nonce: u64,
+    ) -> Result<Vec<WgpuResource>, ServerError> {
+        self.transient_io
+            .as_mut()
+            .unwrap()
+            .native_expert_uniforms(records, nonce)
+    }
+    pub(crate) fn enqueue_native_expert_owned(
+        &mut self,
+        pipeline: Arc<ComputePipeline>,
+        resources: Vec<WgpuResource>,
+        reads: Vec<WgpuResource>,
+        count: &CubeCount,
+        owners: Arc<Vec<cubecl_runtime::server::Binding>>,
+        nonce: u64,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        self.transient_io.as_ref().unwrap().check_reuse(nonce)?;
+        // Keep ordinary root initialization (and its WGPU identity checks),
+        // before any original native command may consume these real buffers.
+        for resource in &resources {
+            self.initialize_native_storage_root(resource)?;
+        }
+        let actual = match count {
+            CubeCount::Static(x, y, z) => super::strata_graph::Dispatch::Direct(*x, *y, *z),
+            _ => {
+                return Err(super::transient_io::fault(
+                    "native expert direct original dispatch required",
+                ));
+            }
+        };
+        self.strata_graph.as_mut().unwrap().push_owned(
+            &pipeline,
+            resources,
+            reads,
+            actual,
+            Some(owners),
+        )?;
+        self.tasks_count += 1;
         self.flush_if_needed();
         Ok(())
     }

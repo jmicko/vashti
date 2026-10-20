@@ -35,6 +35,14 @@ pub struct ComputeClient<R: Runtime> {
     device: DeviceHandle<R::Server>,
     utilities: Arc<ServerUtilities<R::Server>>,
     stream_id: Option<StreamId>,
+    #[cfg(feature = "std")]
+    native_expert_capture: Option<
+        Arc<
+            std::sync::Mutex<
+                crate::server::native_expert_batch::Capture<<R::Server as ComputeServer>::Kernel>,
+            >,
+        >,
+    >,
 }
 
 impl<R: Runtime> Clone for ComputeClient<R> {
@@ -43,6 +51,8 @@ impl<R: Runtime> Clone for ComputeClient<R> {
             device: self.device.clone(),
             utilities: self.utilities.clone(),
             stream_id: self.stream_id,
+            #[cfg(feature = "std")]
+            native_expert_capture: self.native_expert_capture.clone(),
         }
     }
 }
@@ -63,6 +73,8 @@ impl<R: Runtime> ComputeClient<R> {
             device: context,
             utilities,
             stream_id: None,
+            #[cfg(feature = "std")]
+            native_expert_capture: None,
         }
     }
 
@@ -80,6 +92,8 @@ impl<R: Runtime> ComputeClient<R> {
             device: context,
             utilities,
             stream_id: None,
+            #[cfg(feature = "std")]
+            native_expert_capture: None,
         }
     }
 
@@ -389,6 +403,15 @@ impl<R: Runtime> ComputeClient<R> {
                 backtrace: BackTrace::capture(),
             }
         })?;
+        #[cfg(feature = "std")]
+        if let Some(capture) = &self.native_expert_capture {
+            return capture.lock().unwrap_or_else(|p| p.into_inner()).push(
+                crate::server::NativeStrataExpertCommand::HostCopies(
+                    crate::server::native_expert_batch::NativeStrataExpertCopies(copies),
+                ),
+                stream,
+            );
+        }
         self.device
             .submit_blocking(move |server| server.stage_public_host_copies(copies, stream))
             .map_err(|_| ServerError::Generic {
@@ -1242,6 +1265,21 @@ impl<R: Runtime> ComputeClient<R> {
         mode: ExecutionMode,
         stream_id: StreamId,
     ) {
+        #[cfg(feature = "std")]
+        if let Some(capture) = &self.native_expert_capture {
+            // Generated CubeCL argument packing and all original app checks
+            // precede this sink. No native resource/nonce is invented here.
+            let _ = capture.lock().unwrap_or_else(|p| p.into_inner()).push(
+                crate::server::NativeStrataExpertCommand::Launch {
+                    kernel: Some(kernel),
+                    count,
+                    args: bindings,
+                    mode,
+                },
+                stream_id,
+            );
+            return;
+        }
         let level = self.utilities.logger.profile_level();
 
         match level {
@@ -1283,6 +1321,43 @@ impl<R: Runtime> ComputeClient<R> {
                 self.utilities.logger.register_profiled(info, profile);
                 result
             }
+        }
+    }
+
+    /// Launches the `kernel` with the given `bindings`.
+    /// Collect the unchanged six native expert operators through an explicit
+    /// scoped client. Escaped clones are sealed on every return/panic; ordinary
+    /// clients are never intercepted and there is no thread-local/global sink.
+    #[cfg(feature = "std")]
+    /// # Safety
+    /// Body may call only the original six expert launches and registered HOST
+    /// copies on its provided client. No reads, flushes, owner mutation or other
+    /// client operation may interleave with these deferred original commands.
+    pub unsafe fn with_native_strata_expert_batch<T, E>(
+        &self,
+        body: impl FnOnce(&Self) -> Result<T, E>,
+    ) -> Result<Result<(T, crate::server::NativeStrataExpertBatchReceipt), E>, ServerError> {
+        use crate::server::native_expert_batch::{CaptureScope, batch_fault};
+        if self.native_expert_capture.is_some() {
+            return Err(batch_fault("nested native expert batch"));
+        }
+        let seal = CaptureScope::new(self.stream_id());
+        let mut scoped = self.clone();
+        scoped.native_expert_capture = Some(seal.capture.clone());
+        let result = body(&scoped);
+        let batch = seal.take()?;
+        drop(seal);
+        if let Ok(value) = result {
+            let stream = self.stream_id();
+            let receipt = self
+                .device
+                .submit_blocking(move |server| {
+                    server.launch_native_strata_expert_batch(batch, stream)
+                })
+                .map_err(|_| batch_fault("native expert batch channel unavailable"))??;
+            Ok(Ok((value, receipt)))
+        } else {
+            Ok(result.map(|_| unreachable!()))
         }
     }
 

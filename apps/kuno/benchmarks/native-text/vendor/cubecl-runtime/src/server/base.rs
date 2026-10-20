@@ -1204,6 +1204,19 @@ where
         stream_id: StreamId,
     );
 
+    /// Internal native-WGPU expert collector. No backend may silently fall back
+    /// to a less strictly owned path or treat this enqueue as completion.
+    fn launch_native_strata_expert_batch(
+        &mut self,
+        _batch: super::NativeStrataExpertBatch<Self::Kernel>,
+        _stream_id: StreamId,
+    ) -> Result<super::NativeStrataExpertBatchReceipt, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// Flush all outstanding tasks in the server.
     fn flush(&mut self, stream_id: StreamId) -> Result<(), ServerError>;
 
