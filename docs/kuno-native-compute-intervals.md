@@ -327,3 +327,36 @@ from the older whole-buffer encoder; it now ends at the real post-window Copy
 selection and keeps all original ordering assertions. No numerical reference,
 threshold or recovery condition was relaxed. Release/offline/original129 GPU/
 full request/count/recovery and measured results remain pending. Not installed.
+
+
+## Complete push-descriptor result (9dc5786a)
+
+Source9dc5786abed869cc1201ece297b6c3fe9cf03b9f, worker SHA256
+85b9461bd87283bbc8f580cb2671cc22b047afd9b06fa084b9a43eac29766ed6,
+`strata-parity-push-descriptors-20261020`, passes73 actual App CPU controls,
+408/208 offline layouts, all129 original numerical GPU controls, complete
+original-weight requests, all original bulk/wide/tail/miss-ring/OR/manifest
+proofs and actual new push counters, graceful exit and physical recovery.
+Actual164,182 long expert compute dispatches ALL use command-owned push
+bindings; fresh-set dispatches0. This is a real selected path, not an environment
+variable or preflight-only result. Fallback selector/fresh-window paths have CPU
+coverage; no unsupported physical GPU's fallback has been newly exercised.
+
+Load118.87836s (regressed/no startup gain), first/repeat4245 prefix13.17020 /
+11.83052s. Repeated expert CPU enqueue1.53346s, capture2.06352s, wait3.87759s;
+experts7.65247s, attention2.93633s. Versus connected sealed/global11.90766s,
+this is unchanged within ordinary variation; no speed win or installed clean
+comparison is claimed. All preceding connected pieces remain retained, not
+partially reverted. Installed clean11.14739s and Strata5.3515s still lead.
+No new clean/staged/terminal acceptance or sustained decode claim; NOT installed.
+
+Receipts `strata-parity-push-descriptors-20261020-{operators,profile}`, profile
+`push-descriptor-validation.json` and owned
+`strata-parity-push-descriptors-public-summary-20261020.json`.
+Physical16:19:39UTC: Intel50,688,000B, NVIDIA compute0, all faults0, endpoints200,
+admission inactive/unpaused/no recovery/waiting0. Installed worker/gateway
+SHAeac78ce0/d3ed07f4 reverified unchanged. No API or Vashti changes.
+Next is a protected fixed-public leaf-CPU diagnostic on THIS complete bundle,
+using original DSO-aware helper and raw-data deletion; no additional performance
+claim from instrumented sampling. Use actual symbols to distinguish the remaining
+allocation, immutable binding/dependency packing, planner and driver costs.

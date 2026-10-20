@@ -22,7 +22,7 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Latest Kuno-only development validation (2026-10-20 15:25UTC).**
+**Kuno-only development checkpoints (2026-10-20; latest16:19UTC below).**
 The complete pipeline remains intact. Scoped actual-buffer guard source45795611 /
 SHA8944b257 passes101 CPU,408/208 offline layouts, all129 numerical GPU controls,
 complete requests/counts and recovery, but profiled repeat11.5435s is unchanged.
@@ -61,6 +61,14 @@ Actual calls162,838 versus163,798 original remain near one per kernel.
 The next explicit connected candidate is command-buffer-owned push descriptors,
 with genuine extension/limit checks, full original binding writes and unchanged
 fallback, owner/fence/metadata/recovery/math rules; exact contract is in the guide.
+
+Complete push source9dc5786a/SHA85b9461b passes73 CPU,408/208 offline,
+all129 original GPU controls, complete requests and actual164,182 pushed /
+zero fresh expert dispatches, graceful exit and physical recovery16:19:39UTC.
+Repeated profile11.8305s is unchanged from11.9077s; cold load118.88s regresses.
+No clean/staged/terminal, sustained gain or install claim. The complete bundle
+stays intact. Protected fixed-public DSO-aware CPU profiling is next; raw samples
+are removed, and actual physical recovery is required. No consumer/API change.
 
 Exact code/artifact/receipt identities, tests, limitations and next gates are in
 [the synchronization guide](kuno-native-compute-intervals.md). Physical snapshot:
