@@ -163,6 +163,32 @@ bounded scratch reservation must precede allocation. The correction remains
 in isolated implementation/review; full requests, recovery, clean timing and
 staged quality remain required before selection.
 
+The fresh/reused owner correction is now integrated as99905e82 (isolated
+cebc548e). It binds the actual owner identity, ledger epoch, checked batch
+generation and exact optional reuse nonce, with an explicit24MiB parent host
+reservation.191 CPU controls pass. Frozen worker SHA
+`42b111f79c50fcfb1d40c69c4d2eb2f2ac85d770ba84fabe2208e2508586b235`
+in `strata-parity-native-bulk-pv-loading-fresh-20261020` passes402/144 offline
+layouts and all103 actual GPU controls. Its complete profile still fails before
+the first prompt: `native expert original six-operator order`.
+
+The exact producer already issues the correct six operations. Source inspection
+finds that `KernelMetadata for Box<dyn CubeTask<C>>` drops the original DOWN
+dequantization operator's `native_release_after` metadata and reports the default
+false value. The strict batch validator correctly rejects this lost boundary;
+the fix must forward the genuine metadata through wrappers, not loosen the
+accepted operator grammar. Ordinary pipeline construction queries the boxed
+metadata too, so full connected acceptance remains necessary after repair.
+
+`strata-parity-native-bulk-pv-loading-fresh-20261020-profile/receipt.json` records
+passed=false, worker_exit1, zero completed prompt profiles and physical recovery.
+The original model reaches its first request boundary in81.8866s, versus roughly
+101s previously, but this remains a loading diagnostic from a failed request,
+not accepted performance. Intel50,688,000B, NVIDIA compute0, zero driver faults,
+HTTP200 and normal admission are confirmed after exit. Installed3fffc266 and
+its accepted performance remain unchanged. All receipts preserve numeric/static
+metadata only; no prompt, output, route trace or raw stderr is retained.
+
 The subsequent source-only
 [native wide expert proposal](kuno-native-wide-expert-proposal.md) is not part
 of this binary. It explicitly preserves six logical phases while accounting

@@ -37,8 +37,14 @@ controls pass, but its first whole-model request rejects a valid fresh prompt
 scope because it incorrectly requires a reusable-buffer lease. See
 [the exact failed acceptance and correction boundary](kuno-strata-parity-goal.md#complete-bulk-pv-and-loading-candidate).
 Both attempts physically recover with zero driver faults and healthy services.
-The fresh/reuse authentication correction is in isolated implementation; no
-new candidate speed or installation is claimed. Installed3fffc266 is unchanged.
+The fresh/reuse authentication correction is integrated as99905e82, with191 CPU
+controls,402/144 offline layouts and all103 actual GPU controls passing. The
+whole-model run catches a second integration bug: the boxed kernel wrapper
+drops the DOWN dequantization operator's original release flag. The six-operation
+validator correctly rejects the lost boundary; proper metadata forwarding is
+being implemented without weakening the grammar. Its failed profile receipt
+confirms physical recovery and healthy services. No completed prompt or new
+candidate speed/installation is claimed. Installed3fffc266 is unchanged.
 
 **Prior Kuno-only checkpoint (2026-10-20; superseded by native32 above).**
 See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).
