@@ -2,7 +2,7 @@
 
 The existing `--public-prefill-profile` worker diagnostic now requests one
 bounded native timestamp sample: request3, first4096-token chunk, expert layer24.
-The first request remains the short warmup; request2 loads/executes the long
+The first request is a73-token ordinary-prompt warmup; request2 loads/executes the long
 fixture; request3 is its warm repeat. Input is compiled public text. There is no
 private-wire option, API, configuration field or Vashti change.
 

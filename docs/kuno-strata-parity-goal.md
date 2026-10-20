@@ -100,3 +100,40 @@ of `--public-prefill-profile`; it is not available through private inference.
 Its existing query threshold/caps, actual-fence ownership, no-replay policy and
 serial diagnostic execution remain unchanged. Await a real sample before
 claiming an operator breakdown. See `kuno-prefill-native-gpu-profile.md`.
+
+## Narrow pipeline and attention continuation
+
+Source6b9811ee / SHA46c27c54 (`strata-parity-narrow-guard-checked-20261020`)
+adds the complete M8/M16 staged family without changing accepted M32 arithmetic.
+All original14 full IEEE matrix cases remain;12 additional narrow-boundary cases
+bring the matrix total to26, plus the unchanged39 router/dequant controls. All65
+pass on the B70 with unchanged IEEE thresholds, full output/fault/tail ownership,
+actual close and physical recovery (`strata-parity-narrow-operators-20261020`).
+The full offline set passes402 ordinary/128 matrix layouts.
+
+All22 original expert-shaped timing cases pass and recover too. The diagnostic
+`strata-parity-narrow-matrix-timing-20261020` observes GU count3/7/31 at
+61.1/65.4/85.2us versus371.5/415.4/410.7us in the earlier microcheck; DOWN at
+25.3/25.0/30.4us versus104.3/115.2/100.8us. This is not whole-request speed or a
+controlled Strata comparison; a CPU-only upstream build may overlap. Count16 GU
+is82.3us versus69.0us, so there is no claim every shape improves. First-shape
+frequency/compilation transients are not a steady count1 result.
+
+The cold45-token MAX8 trial still fails safely. The source-only public diagnostic
+now identifies `native Verify3 projection count`, from executor.rs. KnownPrefix
+has reserved MAX8 owners, but its projection authority still admits only3 before
+ordinary generation selects its independent four-row policies. Do not globally
+set that generation flag or weaken the guard: a genuine, bounded known-prefix
+projection scope must select the existing Verify4/MAX8 kernel within its own
+original request authority. Failure recovery is confirmed and normal admission
+restored (`strata-parity-narrow-max8-short-20261020`).
+
+Attention candidatef161190a bounds scoring to the actual causal prefix while
+keeping full capacity owners/strides and unread future scores out of selection.
+See `kuno-strata-attention-active-prefix.md`. Source0a6c58d2 / SHA7398ba91 builds
+this plus the narrow pipeline and native GPU sampler. Its dedicated long-profile
+warmup is73 public tokens (two reference lines); the following two measured
+4245-token inputs are unchanged. This isolates ordinary large-prefix diagnosis
+from the separate failing cold45 short-path test. The short correctness check
+keeps all three original45-token inputs and must pass before installation.
+No production fallback, request truncation or admission relaxation is introduced.
