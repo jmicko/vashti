@@ -57,7 +57,9 @@ fn native_class(name: &str) -> usize {
         "OrderedFill" => 5,
         _ if name.contains("::expert::Expert")
             || name.contains("::expert_macro::ExpertMacro")
-            || name.contains("::expert_narrow::ExpertNarrow") =>
+            || name.contains("::expert_narrow::ExpertNarrow")
+            || name.contains("::library_dense::LibraryDense")
+            || name.contains("::library_expert::LibraryExpert") =>
         {
             1
         }
@@ -107,6 +109,14 @@ mod native_sample_tests {
             ),
             (
                 "kuno_native_text::strata_matrix::native::expert_narrow::ExpertNarrow",
+                1,
+            ),
+            (
+                "kuno_native_text::strata_matrix::cubek::library_dense::LibraryDense",
+                1,
+            ),
+            (
+                "kuno_native_text::strata_matrix::cubek::routed_expert::library_expert::LibraryExpert",
                 1,
             ),
             ("StrataPromptExpertGather", 2),
