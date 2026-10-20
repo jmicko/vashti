@@ -1340,3 +1340,27 @@ GPU/full-request/normal-path host clock and clean selection gates remain next.
 Primary references:
 [push command](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdPushDescriptorSetWithTemplate.html),
 [template creation](https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorUpdateTemplateCreateInfo.html).
+
+
+Normal-clock source`d88c904f6d38f2c208060b0f7a6fe836b03d9714`, frozen SHA
+`84373929977b9ceb6b0d8954f4be6991ed3593c1e6f5d518db888c72fde98fd9`, passes
+125 CPU,420/208 offline,129+42 original/role-image GPU controls, the complete
+original public proof chain, then the new normal-schedule fixed-public run.
+Same73/4245/4245 inputs, seed0/temp0, correct323, exact7663/26673/26673 groups.
+Host-only mode actually emits ZERO GPU timestamps and zero class GPU samples,
+keeps84 real rolling recordings/1491 windows/37959 segments. It samples the SAME
+third-request/layer24/count4096 window: actual CPU encoding9.183503ms, retained
+preparation8.361003ms, queue planning2.012011ms, compute dependencies1.532520ms,
+inventory0.671660ms, snapshot0.325420ms, copies0.118290ms, finalization0.026190ms.
+All eight real thread clocks available. Encoding+retained are79% of sampled
+thread CPU; this is sampled CPU attribution, NOT whole-request GPU time.
+Normal diagnostic firstlong12.2337s/repeat10.7068s; not clean selection evidence.
+Actual independent20:15:45UTC: Intel50,688,000B,NVIDIA compute0,all faults0,
+allHTTP200, admission inactive/unpaused/recoveryfalse/waiting0. Source/installed
+identities unchanged. Owned summary`strata-parity-host-clock-normal-20261020-public-summary.json`.
+
+Complete template source`03815d0b` is frozen in
+`strata-parity-push-template-20261020`;128 selected CPU and420/208 offline pass.
+The protected exact-source171-GPU/full-proof and both original-GPU-sampler /
+normal-host-only full request runs are active. All original guards, references,
+source IDs and thresholds are retained. No clean/staged/install result yet.

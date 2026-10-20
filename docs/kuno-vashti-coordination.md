@@ -22,7 +22,38 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 19:48UTC): host capture diagnosis.**
+**Authoritative active handoff (2026-10-20 20:17UTC): normal-path CPU diagnosis / complete push template.**
+
+Use ONLY`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`; preserve canonical Vashti checkout/notes. Installed
+worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 remain unchanged.
+No API/KNT2/KNR2/configuration/model identity/frontend/release change.
+
+Normal-clock`d88c904f`/SHA84373929 passes125 CPU,420/208 offline, original129+42
+GPU, complete original public proofs and normal-path host-only73/4245/4245 run.
+It proves ZERO GPU timestamp commands/class samples, original rolling execution,
+exact routed counts, correct323 and physical recovery. At the sampled third
+request/layer24, command encoding9.184ms and retained preparation8.361ms are79%
+of actual thread CPU. The old GPU sampler serializes its layer; don't use that
+sampler alone to infer normal-path CPU distribution. Normal repeat10.7068s is
+DIAGNOSTIC, not clean selection or matched Strata parity (5.3515s).
+Actual20:15:45UTC recovery: Intel50,688,000B,NVIDIA compute0,all faults0,
+allHTTP200, admission inactive/unpaused/recoveryfalse/waiting0.
+
+Complete candidate`03815d0b` reuses immutable Vulkan push-binding templates,
+retaining every old descriptor live-view/type/range check, full writes, shader,
+queue/epoch/barrier/owner/budget/erasure component and unsupported/failure fallback.
+All128 selected CPU and420/208 offline pass. Exact-source protected171-GPU,
+full producer/compiler/count and BOTH GPU-sampler / normal-host-only whole-model
+runs are ACTIVE in`kuno-native-push-template-connected-20261020`; do not overlap
+GPU/service work. No clean/staged/install acceptance yet. Retain the complete
+coupled bundle, do not partially revert components or weaken selection gates.
+Owned sudo refresh128882/128884 lasts until20:39:26UTC; never kill sharedshell3556
+or reset/reboot either GPU. Exact contracts, helper/artifact identities and limits:
+[normal-path diagnosis and template candidate](kuno-native-compute-intervals.md#normal-schedule-host-clock-follow-up).
+Goal remains active/unmet. No Vashti consumer change is required.
+
+**Previous handoff (2026-10-20 19:48UTC): host capture diagnosis.**
 
 Use ONLY`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; preserve canonical Vashti checkout/notes. No API,
