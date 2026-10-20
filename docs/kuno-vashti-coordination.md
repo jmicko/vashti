@@ -22,6 +22,26 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Active complete compact-QK successor (2026-10-20).**
+
+Corrected scratchb1fb992b/SHA37cf3a1e completes118 CPU,420/208 offline,
+original129+42 new GPU controls, full requests/all producer/compiler/routed
+counts and physical recovery. Repeated profile11.1290 ->10.6244s; expert portion
+6.9208 ->6.4216s with actual barrier calls164876 ->85049. Real queue segments
+stay37359. These are profiles; no clean/staged/terminal/sustained/install acceptance.
+Actual19:24:36UTC is clear/healthy. Installed identities unchanged.
+
+The next complete`strata-qsa-compact` retains paired/uniform/FMA/PV/local-fault
+and every earlier component, but eliminates duplicate QK code by emitting the
+EXACT original guarded body once. Producer verifies that its uniformly true
+form is byte-identical to the old full-pair body. All120 actual CPU controls
+pass, including complete-source reconstruction and actual selected compiled
+status/fault SPIR-V, unchanged barriers/geometry and only removed duplicated
+math. Original129+42 GPU/full request/compiler/group/recovery/timing gates follow.
+Exact contract/results:
+[compact attention](kuno-native-compute-intervals.md#next-complete-attention-code-size-candidate).
+No API/KNT2/KNR2/configuration/model identity or Vashti changes. No release.
+
 **Active disjoint expert scratch candidate (2026-10-20).**
 
 Uniform84316ccb/SHA7e6b0991 completes all114 CPU,408/208 offline,129 GPU,

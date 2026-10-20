@@ -5,7 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
 options=set(sys.argv[2:])
-if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring'}:raise ValueError('build feature selector')
+if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact'}:raise ValueError('build feature selector')
 if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise ValueError('GPU route usage requires explicit Intel core selection')
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 if '--cubek-gemm' in options and '--intel-core' not in options:raise ValueError('CubeK candidate requires explicit Intel core')
@@ -18,7 +18,7 @@ if '--native-wide32' in options and '--native-wide' not in options:raise ValueEr
 if '--native-expert-wide' in options and not {'--native-wide32','--native-expert-bulk'} <= options:raise ValueError('routed native wide candidate requires explicit native32 and complete expert bulk selection')
 if '--qsa-paired' in options and '--intel-core' not in options:raise ValueError('paired prompt attention requires explicit Intel core')
 if '--miss-ring' in options and not {'--intel-core','--native-expert-bulk'} <= options:raise ValueError('miss-only prefill ring requires explicit Intel core and complete expert batch')
-if options & {'--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring'} and '--intel-core' not in options:raise ValueError('coherent native candidates require explicit Intel core')
+if options & {'--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact'} and '--intel-core' not in options:raise ValueError('coherent native candidates require explicit Intel core')
 features=['strata-rust-port']+(['strata-eight-window'] if '--eight' in options else [])+(['strata-resident-224'] if '--resident-224' in options else [])+(['strata-resident-240'] if '--resident-240' in options else [])+(['strata-intel-core'] if '--intel-core' in options else [])+(['strata-gpu-adaptive-usage'] if '--gpu-adaptive-usage' in options else [])
 features += ['strata-public-cap-check'] if '--capped-check' in options else []
 features += ['strata-cubek-gemm'] if '--cubek-gemm' in options else []
@@ -39,6 +39,8 @@ features += ['strata-native-push-descriptors'] if '--push-descriptors' in option
 features += ['strata-gdn-subgroup16'] if '--gdn-subgroup16' in options else []
 features += ['strata-qsa-fma'] if '--qsa-fma' in options else []
 features += ['strata-qsa-uniform'] if '--qsa-uniform' in options else []
+if '--qsa-compact' in options and '--qsa-uniform' not in options:raise ValueError('compact QK requires explicit complete uniform/FMA/paired/gather/fault bundle')
+features += ['strata-qsa-compact'] if '--qsa-compact' in options else []
 if '--expert-scratch-ring' in options and not {'--intel-core','--native-expert-bulk','--miss-ring'} <= options:raise ValueError('scratch ring requires explicit complete native bulk and miss ring')
 features += ['strata-expert-scratch-ring'] if '--expert-scratch-ring' in options else []
 source_paths=['apps/kuno/benchmarks/native-text','crates/kuno-text','apps/kuno/src/native_protocol.rs','apps/kuno/src/native_artifact.rs','apps/kuno/src/image_privacy.rs','apps/kuno/benchmarks/text/build-strata-port.py','apps/kuno/benchmarks/text/run-strata-port.py']

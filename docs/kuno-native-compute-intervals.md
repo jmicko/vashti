@@ -1085,3 +1085,73 @@ no private entry point, tensor/request trace or extra private observation.
 The new public report key is laboratory-only, not a Kuno client API change.
 Next: freeze/offline420 layouts, original129 plus42 new GPU cases, complete
 requests/producer/group-count/recovery and timings. No acceptance assumed.
+
+
+## Next complete attention code-size candidate
+
+Corrected scratch sourceb1fb992b / SHA37cf3a1e, build
+`strata-parity-expert-scratch-v2-20261020`, passes118 App CPU and420/208
+offline layouts. Protected unit`kuno-native-expert-scratch-v2-connected-20261020`
+is running original129 and new42 GPU controls, then full requests/producer/
+routed-count/recovery/performance gates. No accepted result assumed.
+
+Independent source/actual-ISA review finds a second concrete difference:
+paired QK emits BOTH a full-pair specialization and its complete guarded tail.
+The previous optimized native shader contains4320 instructions/348 MADs versus
+the smaller default Strata image. Static count is not dynamic performance proof.
+The new opt-in`strata-qsa-compact` / builder`--qsa-compact` retains the COMPLETE
+paired/uniform/FMA/padded-PV/local-fault bundle but emits the original guarded
+body once for every pair. It does not revert pairing, contraction or fault policy.
+
+The source producer FIRST verifies byte-for-byte that erasing ONLY each of the
+12 `valid0` and12 `valid1` per-head guards makes the guarded body identical to
+its previous full-pair specialization. When both are true the arithmetic and
+stores are identical; when either is false the same original guarded path was
+already selected. Both are subgroup-uniform, with all32 original lanes active
+inside a selected body. Every token/causal/dequant failure before the branch,
+shared query/score/probability barrier, original XOR tree and score sample,
+chronological FMA/softmax/PV, output/status and closing fault remains. Whole
+source outside this replaced branch stays byte-identical, including all real
+owners/footprints/headers/INFO/budgets/queues/fences/erasure. No scalar reference
+or numerical threshold changes. This requires the full existing uniform bundle.
+
+New controls compare the ENTIRE source after restoring only the duplicate
+branch, reject drift between its two arithmetic bodies, and inspect ACTUAL
+compiled status/fault SPIR-V plus the selected production hook. Expected static
+lane-zero samples50->26, indexed shuffles262->142 and FMAs348->180 remove ONLY
+those duplicated QK bodies; the original geometry, shared globals and barriers
+stay. These expectations are pending validation, not claimed results.
+Original129 plus42 scratch GPU controls, complete requests/identical routed
+counts and physical recovery precede speed claims. CPU-heavy compilation waits
+until the running scratch timing test finishes. No API/KNT2/KNR2/configuration/
+model identity or Vashti change; installed services remain unchanged.
+
+
+Corrected scratchb1fb992b/SHA37cf3a1e now passes all118 selected CPU,
+420/208 offline layouts, the original129 PLUS42 new actual GPU controls,
+complete real requests, ALL inherited producer/compiler/slot/group proofs and
+physical recovery. Actual scratch slots96/192/192 across48/96/96 batches;
+groups[7663,26673,26673] remain exactly the original FMA/uniform counts.
+Repeated profile11.128987 ->10.624366s (4.53% shorter); first long
+12.449061 ->12.021062s. Experts6.920840 ->6.421638s. Actual compute barrier
+calls164,876 ->85,049, while37,359 real rolling segments stay. Expert capture
+1.403028s is essentially unchanged; the real wait interval3.927201 ->3.462373s
+is shorter but is NOT a pure kernel-time attribution. QSA attention/merge
+1.494770s remains. No clean/full staged/terminal/sustained/install acceptance.
+Reference Strata5.3515s still leads. All components are retained.
+
+Root receipts`strata-parity-expert-scratch-v2-20261020-{operators,profile}`,
+`expert-scratch-validation.json` and the owned
+`strata-parity-expert-scratch-v2-public-summary-20261020.json` preserve exact
+source/artifact, all old/new proofs and actual swap/core0 attestation. Actual
+19:24:36UTC recovery: Intel50,688,000B, NVIDIA compute0, all faults0, services200,
+normal inactive/unpaused/no recovery/waiting0. Installed binaries unchanged.
+
+The complete compact-QK successor now passes120 actual App CPU controls
+(`native-qsa-compact-complete-cpu-20261020.log`). Those include all preceding118,
+whole-source reconstruction and actual selected status/fault pipeline/SPIR-V.
+Actual static broadcasts50->26, shuffles262->142 and FMAs348->180 are confirmed,
+with identical256-invocation geometry, shared globals and original barriers.
+No numerical reference/guard changes, shader drift exception or partial rollback.
+Freeze/offline, original129+42 GPU/full request/compiler/group/recovery/timing
+are next; no speed or installation claim for compact-QK yet.
