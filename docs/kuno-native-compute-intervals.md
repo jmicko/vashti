@@ -1364,3 +1364,41 @@ Complete template source`03815d0b` is frozen in
 The protected exact-source171-GPU/full-proof and both original-GPU-sampler /
 normal-host-only full request runs are active. All original guards, references,
 source IDs and thresholds are retained. No clean/staged/install result yet.
+
+
+Template source03815d0b8f47c547bf4729927dd2f98f9dd8a974 / frozenSHA
+f0c926f285eea8f8f7c225ff580564da10a83699a5e353077cc9db5b1663eb82 passes
+128 CPU,420/208 offline, original129+42 GPU, full original proof chain and both
+three-request GPU-sampler / normal-host-only runs. Actual template dispatches
+46746/166220/166220 equal EVERY original push dispatch in both modes; fresh
+sets0. All original full source/math/threshold/count/ownership checks remain.
+Normal diagnostic firstlong11.9980s/repeat10.6374s vs prior12.2337/10.7068s.
+These are diagnostics, not clean speed acceptance or a Strata parity claim.
+Sampled encoding CPU9.184->8.501ms, retained8.361->7.540ms; the latter preparation
+code is unchanged, so do not attribute all timing variation to templates.
+Actual independent20:23:40UTC recovery is clear/healthy: Intel50,688,000B,
+NVIDIA compute0, all faults0, HTTP200, normal admission. Installed identities
+unchanged. Owned`strata-parity-push-template-20261020-public-summary.json`.
+Protected terminal-negative/fresh clean45/4245/4245 acceptance is next, retaining
+original5%-faster at EACH first/repeat threshold. Staged API/semantic acceptance
+runs only after that unchanged clean gate passes. No installation yet.
+
+
+Next candidate direction after the template clean gate: completed recording
+resource reuse. The original command allocation is ALREADY bulk per actual pool;
+never propose another bulk-allocation fix. Retained-preparation CPU includes
+original Commands::new (copy/shared pools, three timeline semaphores and bulk
+command-buffer allocation), actual owner/recording transfer, boundaries and
+rolling preflight. Attribute any proposed improvement to work actually removed.
+A reusable resource must be extracted only at the SAME original idle eviction
+point that already permits destruction, after the original flight book proves
+not live; named live/private ownership and unknown-completion quarantine stay.
+No reset on a merely submitted/ready flag. Actual queue families/header/pools,
+all command handles, monotonic timeline next_base, actual allocated capacities
+(including old+new simultaneous scratch), source/header/buffer identity,64MiB
+caps, complete re-encoding of every descriptor, all original barriers and final
+join fences must remain authoritative. Current source DOES NOT implement reuse.
+If full pool recycling proves too intrusive, peer-pool/peer-command reuse with
+identical actual per-queue capacity is a smaller coherent step; MAIN stays owned
+by the new original recording pool/header. Any compatibility miss keeps original
+construction. No unchecked cache of private content or skipped erasure.
