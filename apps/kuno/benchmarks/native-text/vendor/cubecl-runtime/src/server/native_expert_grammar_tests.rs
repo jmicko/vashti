@@ -102,6 +102,9 @@ fn matrix_args(
         .with_info(info)
 }
 fn begin(h: &[Handle; 7], members: u32) -> NativeStrataExpertGrammar {
+    begin_images(h, members, false)
+}
+fn begin_gather(h: &[Handle; 7], members: u32) -> NativeStrataExpertGrammar {
     let mut grammar = NativeStrataExpertGrammar::default();
     let mut words = [0; 16];
     words[..3].copy_from_slice(&[members, 2560, 1280]);
@@ -121,11 +124,23 @@ fn begin(h: &[Handle; 7], members: u32) -> NativeStrataExpertGrammar {
             &gather,
         )
         .unwrap();
-    for release in [false, true] {
+    grammar
+}
+fn begin_images(h: &[Handle; 7], members: u32, resident: bool) -> NativeStrataExpertGrammar {
+    let mut grammar = begin_gather(h, members);
+    for down in [false, true] {
         grammar
             .launch(
-                "StrataPromptExpertF16Image",
-                release,
+                if resident {
+                    if down {
+                        "StrataPromptExpertResidentDownImage"
+                    } else {
+                        "StrataPromptExpertResidentGuImage"
+                    }
+                } else {
+                    "StrataPromptExpertF16Image"
+                },
+                down && !resident,
                 &CubeCount::Static(1, 1, 1),
                 &KernelArguments::new(),
             )
@@ -187,6 +202,57 @@ fn activate(grammar: &mut NativeStrataExpertGrammar) {
             &KernelArguments::new(),
         )
         .unwrap();
+}
+
+#[test]
+fn resident_pairs_keep_all_original_phases_and_reject_mixed_or_reversed_roles() {
+    let h = owners();
+    for members in [1, 32, 257, 384, 4096] {
+        let mut grammar = begin_images(&h, members, true);
+        product(&mut grammar, &h, members, false, members >= 256);
+        activate(&mut grammar);
+        product(&mut grammar, &h, members, true, members >= 256);
+        let report = grammar.finish().unwrap();
+        assert_eq!(report.logical_phases, 6);
+    }
+    for (first, second) in [
+        (
+            "StrataPromptExpertResidentGuImage",
+            "StrataPromptExpertF16Image",
+        ),
+        (
+            "StrataPromptExpertF16Image",
+            "StrataPromptExpertResidentDownImage",
+        ),
+    ] {
+        let mut grammar = begin_gather(&h, 257);
+        grammar
+            .launch(
+                first,
+                false,
+                &CubeCount::Static(1, 1, 1),
+                &KernelArguments::new(),
+            )
+            .unwrap();
+        assert!(
+            grammar
+                .launch(
+                    second,
+                    second == "StrataPromptExpertF16Image",
+                    &CubeCount::Static(1, 1, 1),
+                    &KernelArguments::new()
+                )
+                .is_err()
+        );
+    }
+    for (name, phase, release) in [
+        ("StrataPromptExpertResidentGuImage", 2, false),
+        ("StrataPromptExpertResidentDownImage", 1, false),
+        ("StrataPromptExpertResidentDownImage", 2, true),
+        ("StrataPromptExpertF16Image", 2, false),
+    ] {
+        assert!(!native_strata_expert_operator(name, release, phase));
+    }
 }
 
 #[test]

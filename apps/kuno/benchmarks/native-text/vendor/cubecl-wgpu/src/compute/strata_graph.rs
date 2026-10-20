@@ -2695,7 +2695,12 @@ impl Graph {
             compute_count,
             self.nodes.iter().any(|node| {
                 node.pipeline.as_ref().is_some_and(|pipeline| {
-                    self.pipelines[pipeline].program.name == "StrataPromptExpertF16Image"
+                    matches!(
+                        self.pipelines[pipeline].program.name,
+                        "StrataPromptExpertF16Image"
+                            | "StrataPromptExpertResidentGuImage"
+                            | "StrataPromptExpertResidentDownImage"
+                    )
                 })
             }),
         ) {

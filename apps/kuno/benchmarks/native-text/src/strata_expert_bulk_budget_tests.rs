@@ -83,7 +83,9 @@ fn real_array_and_scalar_registration_matches_the_complete_logical_grammar() {
             .offset_start(256)
             .offset_end(256)
     });
-    for mode in 0..4 {
+    for mode_and_class in 0..8 {
+        let mode = mode_and_class % 4;
+        let resident = mode_and_class >= 4;
         let wide = mode == 3;
         let vector = mode != 0;
         let members = if mode == 2 { 17 } else { 257 };
@@ -112,9 +114,11 @@ fn real_array_and_scalar_registration_matches_the_complete_logical_grammar() {
             )
             .unwrap();
         for down in [false, true] {
-            let op = Op::Dequant {
-                dtype: if down { q::IQ4_NL } else { q::IQ3_S },
-                down,
+            let dtype = if down { q::IQ4_NL } else { q::IQ3_S };
+            let op = if resident {
+                Op::ResidentDequant { dtype, down }
+            } else {
+                Op::Dequant { dtype, down }
             };
             grammar
                 .launch(
@@ -344,6 +348,7 @@ fn maximum_route_conserving_shadow_inventory_fits_the_original_byte_reservations
             + size_of::<cubecl::wgpu::WgpuResource>());
     let backend = bytes + tables + batch.commands.len() * per_command + 32 * 512 + 32768;
     assert!(backend <= NATIVE_EXPERT_BATCH_HOST_BYTES);
+    assert!(backend + super::miss_ring::HOST_BYTES <= NATIVE_EXPERT_BATCH_HOST_BYTES);
     eprintln!(
         "native_expert_public_inventory binding_bytes={} command_bytes={} tape_nodes={} source_views={} actual_commands={} actual_nodes={} inventory_bytes={} inventory_headroom={} backend_charge={} parent_host_bytes={}",
         size_of::<Binding>(),

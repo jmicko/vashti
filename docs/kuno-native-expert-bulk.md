@@ -95,7 +95,11 @@ presented as a reduction in complete expert work.
 
 The original path still has six logical phases and six real compute launches.
 The wide wave keeps Gather, GU-dequant, DOWN-dequant (original release point),
-GU product, activation and DOWN product. Each product is one original full-range
+GU product, activation and DOWN product. The connected miss-only ring adds
+separately named, literal-role resident GU/DOWN image producers with identical
+math and no raw-slot release. Their pair must match; normal streamed DOWN
+still requires the original release. See [the complete conditional producer
+and genuine-view contract](kuno-native-miss-ring.md). Each product is one original full-range
 dispatch or one exact full 128-member prefix followed by its required authentic
 tail. A role-bearing wide/tail entry cannot enter another phase, and no copy or
 other kernel can split an incomplete pair. All phases must close before INFO

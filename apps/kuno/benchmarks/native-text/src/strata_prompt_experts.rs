@@ -5,6 +5,9 @@
 use super::*;
 use crate::{quant_matvec as q, strata_global_sources::Sources};
 use kuno_text::model::BoundGraph;
+#[cfg(any(test, feature = "strata-prefill-miss-ring"))]
+#[path = "strata_prompt_miss_ring.rs"]
+mod miss_ring;
 #[path = "strata_prompt_expert_numeric_probe.rs"]
 mod public_numeric;
 pub(crate) use public_numeric::cases as public_dequant_numeric;
@@ -17,6 +20,7 @@ mod bulk_budget_tests;
 enum Op {
     Gather,
     Dequant { dtype: u32, down: bool },
+    ResidentDequant { dtype: u32, down: bool },
     Gemm,
     Activate,
 }
@@ -35,7 +39,7 @@ impl Op {
                 .0
         };
         let mut s = groups::shader_prefix() + section("COMMON");
-        if let Self::Dequant { dtype, down } = self {
+        if let Self::Dequant { dtype, down } | Self::ResidentDequant { dtype, down } = self {
             let helpers = include_str!("iq_moe_integer.wgsl")
                 .split_once("fn iq4_byte")
                 .unwrap()
@@ -107,7 +111,7 @@ impl Op {
         }
         s.push_str(section(match self {
             Self::Gather => "GATHER",
-            Self::Dequant { .. } => "DEQUANT",
+            Self::Dequant { .. } | Self::ResidentDequant { .. } => "DEQUANT",
             Self::Gemm => "GEMM",
             Self::Activate => "ACTIVATE",
         }));
@@ -122,6 +126,8 @@ impl KernelMetadata for Op {
         match self {
             Self::Gather => "StrataPromptExpertGather",
             Self::Dequant { .. } => "StrataPromptExpertF16Image",
+            Self::ResidentDequant { down: false, .. } => "StrataPromptExpertResidentGuImage",
+            Self::ResidentDequant { down: true, .. } => "StrataPromptExpertResidentDownImage",
             Self::Gemm => "StrataPromptExpertGemm",
             Self::Activate => "StrataPromptExpertF16Swiglu",
         }
@@ -216,6 +222,31 @@ fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
 
 /// Bound only the execution grid. The descriptors and shader Params retain
 /// the complete private prompt/map extents; no ownership check is narrowed.
+#[cfg(any(test, feature = "strata-prefill-miss-ring"))]
+fn resident_raw_slot(root: &Handle, roles: [usize; 3]) -> Result<Handle> {
+    let root_bytes = allocation::whole_root_bytes(root)?;
+    let bytes = roles
+        .iter()
+        .try_fold(0usize, |sum, &n| sum.checked_add(n))
+        .ok_or(Error::ArithmeticOverflow)?;
+    if roles[0] != roles[1]
+        || roles.iter().any(|&n| n == 0 || !n.is_multiple_of(256))
+        || root.offset_start.unwrap_or(0) != 0
+        || root.offset_end.unwrap_or(0) != 0
+    {
+        return Err(crate::strata_prompt::invalid_buffer_length());
+    }
+    let end = bytes
+        .checked_mul(RAW_SLOTS + 1)
+        .ok_or(Error::ArithmeticOverflow)? as u64;
+    if end > allocation::RAW_RING_BYTES || end > root_bytes {
+        return Err(crate::strata_prompt::invalid_buffer_length());
+    }
+    Ok(root
+        .clone()
+        .offset_start((bytes * RAW_SLOTS) as u64)
+        .offset_end(root_bytes - end))
+}
 fn member_dispatches(members: usize, count: usize) -> Result<[usize; 2]> {
     if !(1..=groups::ROUTE_CAPACITY).contains(&count) || !(1..=count).contains(&members) {
         return Err(crate::strata_prompt::invalid_buffer_length());
@@ -351,9 +382,35 @@ fn enqueue_original(
     crate::strata_prefill_profile::expert_member_geometry(map, groups);
     crate::strata_prefill_profile::count("expert_group_count", groups as u64);
     crate::strata_prefill_profile::count("expert_fp16_image_bytes", (groups * DQ_WORDS * 4) as u64);
+    #[cfg(feature = "strata-prefill-miss-ring")]
+    let (resident_raw, mut miss_ring) = {
+        let raw = resident_raw_slot(&stage[2], role_bytes)?;
+        let mut modes = Vec::with_capacity(groups);
+        for group in 0..groups {
+            modes.push(layer_sources.group_streamed(map[4 + group] as usize, role_bytes)?);
+        }
+        if modes.capacity() > 512 {
+            return Err(crate::strata_prompt::invalid_buffer_length());
+        }
+        (raw, miss_ring::Ring::new(&modes)?)
+    };
+    #[cfg(not(feature = "strata-prefill-miss-ring"))]
     let mut issued = 0;
     for group in 0..groups {
         let mut timing = crate::strata_prefill_profile::CpuTimer::new();
+        #[cfg(feature = "strata-prefill-miss-ring")]
+        while let Some((next, slot)) = miss_ring.issue_next()? {
+            layer_sources.stage_group_on(
+                client,
+                map[4 + next] as usize,
+                role_bytes,
+                &stage[2],
+                slot.map_or(RAW_SLOTS, |s| s) * raw_stride,
+            )?;
+        }
+        #[cfg(feature = "strata-prefill-miss-ring")]
+        let current_raw = miss_ring.ready_slot(group)?;
+        #[cfg(not(feature = "strata-prefill-miss-ring"))]
         while issued < groups && issued < group + RAW_SLOTS {
             layer_sources.stage_group_on(
                 client,
@@ -414,7 +471,18 @@ fn enqueue_original(
             }
             args = args.with_buffers(vec![
                 owners[0].clone().binding(),
-                raw_slots[group % RAW_SLOTS].clone().binding(),
+                {
+                    #[cfg(feature = "strata-prefill-miss-ring")]
+                    {
+                        current_raw
+                            .map_or_else(|| resident_raw.clone(), |slot| raw_slots[slot].clone())
+                            .binding()
+                    }
+                    #[cfg(not(feature = "strata-prefill-miss-ring"))]
+                    {
+                        raw_slots[group % RAW_SLOTS].clone().binding()
+                    }
+                },
                 stage[1].clone().binding(),
                 fault.clone().binding(),
             ]);
@@ -422,9 +490,26 @@ fn enqueue_original(
             args = layer_sources.bind_image(args)?;
             dispatch(
                 client,
-                Op::Dequant {
-                    dtype: p.dtype(),
-                    down,
+                {
+                    #[cfg(feature = "strata-prefill-miss-ring")]
+                    if current_raw.is_none() {
+                        Op::ResidentDequant {
+                            dtype: p.dtype(),
+                            down,
+                        }
+                    } else {
+                        Op::Dequant {
+                            dtype: p.dtype(),
+                            down,
+                        }
+                    }
+                    #[cfg(not(feature = "strata-prefill-miss-ring"))]
+                    {
+                        Op::Dequant {
+                            dtype: p.dtype(),
+                            down,
+                        }
+                    }
                 },
                 [
                     (words[1] as usize * words[2] as usize / 8).div_ceil(256),
@@ -481,7 +566,11 @@ fn enqueue_original(
             true,
         )?;
         timing.mark("expert_cpu_down_product");
+        #[cfg(feature = "strata-prefill-miss-ring")]
+        miss_ring.consumed(group)?;
     }
+    #[cfg(feature = "strata-prefill-miss-ring")]
+    miss_ring.finish()?;
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
@@ -513,6 +602,30 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         },
         Op::Gemm,
         Op::Activate,
+        Op::ResidentDequant {
+            dtype: q::IQ3_S,
+            down: false,
+        },
+        Op::ResidentDequant {
+            dtype: q::IQ3_XXS,
+            down: false,
+        },
+        Op::ResidentDequant {
+            dtype: q::IQ2_S,
+            down: false,
+        },
+        Op::ResidentDequant {
+            dtype: q::IQ4_XS,
+            down: false,
+        },
+        Op::ResidentDequant {
+            dtype: q::IQ4_NL,
+            down: true,
+        },
+        Op::ResidentDequant {
+            dtype: q::Q2_0,
+            down: true,
+        },
     ]
     .into_iter()
     .map(|op| {
@@ -547,8 +660,14 @@ mod bulk_metadata_tests {
                     // These are the actual custom producers, behind the same
                     // Box<dyn CubeTask> boundary consumed by WgpuServer.
                     let gather = boxed(Op::Gather);
-                    let gu = boxed(Op::Dequant { dtype: gu, down: false });
-                    let down = boxed(Op::Dequant { dtype: down, down: true });
+                    let gu = boxed(Op::Dequant {
+                        dtype: gu,
+                        down: false,
+                    });
+                    let down = boxed(Op::Dequant {
+                        dtype: down,
+                        down: true,
+                    });
                     let activate = boxed(Op::Activate);
                     let sequence = [
                         (gather.name(), gather.native_release_after()),
@@ -558,16 +677,25 @@ mod bulk_metadata_tests {
                         (activate.name(), activate.native_release_after()),
                         (matrix, false),
                     ];
-                    assert_eq!(sequence.map(|(_, release)| release), [false, false, true, false, false, false]);
+                    assert_eq!(
+                        sequence.map(|(_, release)| release),
+                        [false, false, true, false, false, false]
+                    );
                     for (index, (name, release)) in sequence.into_iter().enumerate() {
                         assert!(native_strata_expert_operator(name, release, index));
                         assert!(native_strata_expert_operator(name, release, index + 6));
                         assert!(!native_strata_expert_operator(name, !release, index));
-                        assert!(!native_strata_expert_operator("StrataPromptExpertGemm", release, index));
+                        assert!(!native_strata_expert_operator(
+                            "StrataPromptExpertGemm",
+                            release,
+                            index
+                        ));
                         let wrong = sequence[(index + 1) % 6];
                         assert!(!native_strata_expert_operator(wrong.0, wrong.1, index));
                     }
-                    let id = down.id().native_release_boundary(down.native_release_after());
+                    let id = down
+                        .id()
+                        .native_release_boundary(down.native_release_after());
                     assert_eq!(id, down.as_ref().id().native_release_boundary(true));
                     assert_ne!(id, down.id().native_release_boundary(false));
                 }
@@ -579,10 +707,18 @@ mod bulk_metadata_tests {
     /// Defining/compiling a GPU kernel is intentionally outside this CPU test.
     struct SourceMetadata(Op);
     impl KernelMetadata for SourceMetadata {
-        fn name(&self) -> &'static str { self.0.name() }
-        fn native_release_after(&self) -> bool { self.0.native_release_after() }
-        fn id(&self) -> KernelId { self.0.id() }
-        fn address_type(&self) -> StorageType { self.0.address_type() }
+        fn name(&self) -> &'static str {
+            self.0.name()
+        }
+        fn native_release_after(&self) -> bool {
+            self.0.native_release_after()
+        }
+        fn id(&self) -> KernelId {
+            self.0.id()
+        }
+        fn address_type(&self) -> StorageType {
+            self.0.address_type()
+        }
     }
     impl CubeKernel for SourceMetadata {
         fn define(&self) -> KernelDefinition {
@@ -593,9 +729,23 @@ mod bulk_metadata_tests {
     fn real_kernel_task_and_box_preserve_original_release_identity() {
         for op in [
             Op::Gather,
-            Op::Dequant { dtype: q::IQ3_S, down: false },
-            Op::Dequant { dtype: q::IQ4_NL, down: true },
+            Op::Dequant {
+                dtype: q::IQ3_S,
+                down: false,
+            },
+            Op::Dequant {
+                dtype: q::IQ4_NL,
+                down: true,
+            },
             Op::Activate,
+            Op::ResidentDequant {
+                dtype: q::IQ3_S,
+                down: false,
+            },
+            Op::ResidentDequant {
+                dtype: q::IQ4_NL,
+                down: true,
+            },
         ] {
             let task = KernelTask::<AutoCompiler, _>::new(SourceMetadata(op));
             assert_eq!(task.name(), op.name());
@@ -603,8 +753,12 @@ mod bulk_metadata_tests {
             let boxed: Box<dyn CubeTask<AutoCompiler>> = Box::new(task);
             assert_eq!(boxed.name(), op.name());
             assert_eq!(boxed.native_release_after(), op.native_release_after());
-            assert_eq!(boxed.id().native_release_boundary(boxed.native_release_after()),
-                op.id().native_release_boundary(op.native_release_after()));
+            assert_eq!(
+                boxed
+                    .id()
+                    .native_release_boundary(boxed.native_release_after()),
+                op.id().native_release_boundary(op.native_release_after())
+            );
         }
     }
 }
@@ -773,6 +927,92 @@ mod copy_contract_tests {
         let mut outside = make();
         outside.destination_first = 32768;
         assert!(validate_host_copies(&[outside], stream).is_err());
+    }
+}
+
+#[cfg(test)]
+mod miss_ring_producer_tests {
+    use super::*;
+    use cubecl_runtime::server::native_expert_batch::native_strata_expert_operator;
+
+    #[test]
+    fn resident_variants_keep_all_shader_bytes_and_real_boxed_role_identities() {
+        for (dtype, down) in [
+            (q::IQ2_S, false),
+            (q::IQ3_S, false),
+            (q::IQ3_XXS, false),
+            (q::IQ4_XS, false),
+            (q::IQ4_NL, true),
+            (q::Q2_0, true),
+        ] {
+            let original = Op::Dequant { dtype, down };
+            let resident = Op::ResidentDequant { dtype, down };
+            assert_eq!(resident.source(), original.source());
+            assert_eq!(resident.lanes(), original.lanes());
+            assert_eq!(original.native_release_after(), down);
+            let actual: Box<dyn CubeTask<AutoCompiler>> = Box::new(resident);
+            assert!(!actual.native_release_after());
+            assert_eq!(
+                actual.name(),
+                if down {
+                    "StrataPromptExpertResidentDownImage"
+                } else {
+                    "StrataPromptExpertResidentGuImage"
+                }
+            );
+            assert_ne!(actual.id(), original.id());
+            let phase = if down { 2 } else { 1 };
+            assert!(native_strata_expert_operator(actual.name(), false, phase));
+            assert!(!native_strata_expert_operator(actual.name(), true, phase));
+            assert!(!native_strata_expert_operator(
+                actual.name(),
+                false,
+                if down { 1 } else { 2 }
+            ));
+        }
+    }
+
+    #[test]
+    fn genuine_resident_raw_view_is_disjoint_from_all_eight_transfer_slots() {
+        use cubecl_common::stream_id::StreamId;
+        use kuno_text::quant::TensorType;
+        let root = Handle::new(StreamId { value: 91 }, allocation::RAW_RING_BYTES);
+        for gu in [
+            TensorType::Iq2S,
+            TensorType::Iq3S,
+            TensorType::Iq3Xxs,
+            TensorType::Iq4Xs,
+        ] {
+            for down in [TensorType::Iq4Nl, TensorType::Q2_0] {
+                let g = gu.row_bytes(2560).unwrap() as usize * 640;
+                let d = down.row_bytes(640).unwrap() as usize * 2560;
+                let roles = [g, g, d];
+                let bytes = roles.iter().sum::<usize>();
+                let resident = resident_raw_slot(&root, roles).unwrap();
+                assert_eq!(resident.stream, root.stream);
+                assert_eq!(resident.size(), root.size());
+                assert_eq!(
+                    resident.clone().binding().memory.allocation_id(),
+                    root.clone().binding().memory.allocation_id()
+                );
+                assert_eq!(resident.offset_start, Some((8 * bytes) as u64));
+                assert_eq!(resident.size_in_used(), bytes as u64);
+                for slot in 0..8 {
+                    let actual = raw_slot(&root, slot, roles).unwrap();
+                    assert!(
+                        actual.offset_start.unwrap() + actual.size_in_used()
+                            <= resident.offset_start.unwrap()
+                    );
+                }
+                assert!(
+                    resident.offset_start.unwrap() + resident.size_in_used()
+                        <= allocation::RAW_RING_BYTES
+                );
+            }
+        }
+        assert!(resident_raw_slot(&root.clone().offset_start(256), [256; 3]).is_err());
+        assert!(resident_raw_slot(&root, [256, 512, 256]).is_err());
+        assert!(resident_raw_slot(&root, [allocation::RAW_RING_BYTES as usize / 3; 3]).is_err());
     }
 }
 

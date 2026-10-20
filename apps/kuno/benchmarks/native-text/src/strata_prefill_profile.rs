@@ -52,7 +52,9 @@ impl NativeSelection {
 }
 fn native_class(name: &str) -> usize {
     match name {
-        "StrataPromptExpertF16Image" => 0,
+        "StrataPromptExpertF16Image"
+        | "StrataPromptExpertResidentGuImage"
+        | "StrataPromptExpertResidentDownImage" => 0,
         "StrataPromptExpertGemm" => 1,
         "StrataPromptExpertGather" => 2,
         "StrataPromptExpertF16Swiglu" => 3,
@@ -104,6 +106,8 @@ mod native_sample_tests {
     fn reports_have_static_classes_including_real_generated_matrix_names() {
         for (name, class) in [
             ("StrataPromptExpertF16Image", 0),
+            ("StrataPromptExpertResidentGuImage", 0),
+            ("StrataPromptExpertResidentDownImage", 0),
             ("StrataPromptExpertGemm", 1),
             ("kuno_native_text::strata_matrix::native::expert::Expert", 1),
             (

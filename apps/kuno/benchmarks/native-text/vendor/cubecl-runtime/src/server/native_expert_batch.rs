@@ -17,13 +17,23 @@ pub const NATIVE_EXPERT_BATCH_HOST_BYTES: usize = 3 * NATIVE_EXPERT_BATCH_BYTES;
 
 /// The closed original six-operator family admitted by the native backend.
 /// HOST copies do not advance this compute-only index. Keep the actual final
-/// dequant release boundary; neither a missing release nor another kernel may
-/// stand in for the original producer's pipeline.
+/// streamed dequant release boundary; neither a missing release nor another
+/// kernel may stand in for that producer. The separately named resident GU and
+/// DOWN producers have identical math but no raw-slot release, like Strata's
+/// original `slot >= 0` condition. Their names also bind the actual role.
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     match index % 6 {
         0 => name == "StrataPromptExpertGather" && !release,
-        1 => name == "StrataPromptExpertF16Image" && !release,
-        2 => name == "StrataPromptExpertF16Image" && release,
+        1 => {
+            matches!(
+                name,
+                "StrataPromptExpertF16Image" | "StrataPromptExpertResidentGuImage"
+            ) && !release
+        }
+        2 => {
+            (name == "StrataPromptExpertF16Image" && release)
+                || (name == "StrataPromptExpertResidentDownImage" && !release)
+        }
         4 => name == "StrataPromptExpertF16Swiglu" && !release,
         _ => {
             (name.contains("::expert::Expert")

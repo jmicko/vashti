@@ -80,6 +80,7 @@ pub struct NativeStrataExpertGrammar {
     groups: usize,
     group: Option<Group>,
     pending: Option<Pending>,
+    resident_images: Option<bool>,
     counts: NativeStrataExpertGrammarCounts,
 }
 fn word(info: &MetadataBindingInfo, index: usize) -> Result<u32, ServerError> {
@@ -222,6 +223,7 @@ impl NativeStrataExpertGrammar {
             self.phase = 0;
             self.groups += 1;
             self.group = None;
+            self.resident_images = None;
         }
     }
     /// HOST copies never count as logical compute phases and may not split the
@@ -340,6 +342,16 @@ impl NativeStrataExpertGrammar {
             if !native_strata_expert_operator(name, release, self.phase) {
                 return Err(batch_fault(
                     "native expert original six-logical-phase order",
+                ));
+            }
+            if self.phase == 1 {
+                self.resident_images = Some(name == "StrataPromptExpertResidentGuImage");
+            }
+            if self.phase == 2
+                && self.resident_images != Some(name == "StrataPromptExpertResidentDownImage")
+            {
+                return Err(batch_fault(
+                    "native expert matched streamed/resident dequant pair",
                 ));
             }
             if self.phase == 0 {

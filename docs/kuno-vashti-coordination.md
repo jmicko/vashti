@@ -63,6 +63,12 @@ acceptance is claimed for either candidate. The next coherent source lead is
 Strata's miss-only eight-slot staging ring and conditional streamed-slot release;
 Kuno currently advances its slots for resident groups too. The exact proposal
 preserves full BDA/source/loan guards and couples all required pieces.
+The complete opt-in miss-ring source is now implemented: actual effective-role
+classification, eight misses ahead, genuine disjoint resident raw view and
+role-bound resident GU/DOWN metadata plus matched closed grammar.100 App CPU
+and seven actual-runtime-source controls pass. Release/offline/GPU/full-request
+acceptance is pending; no speed or installation claim. See
+[the exact implementation and gates](kuno-native-miss-ring.md).
 All actual views/owner bindings, original raw-buffer checks and signatures stay.
 See [the exact contract and current gates](kuno-native-capture-attention.md).
 No API, protocol, model identity, configuration or Vashti consumer change.

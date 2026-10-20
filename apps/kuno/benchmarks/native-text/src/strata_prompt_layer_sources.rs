@@ -62,6 +62,25 @@ impl PromptLayer<'_, '_, '_> {
         self.sources.bind_prompt_image(self.layer, args)
     }
 
+    #[cfg(feature = "strata-prefill-miss-ring")]
+    pub(crate) fn group_streamed(&self, cell: usize, role_bytes: [usize; 3]) -> Result<bool> {
+        // Classify the CURRENT effective sources, including prompt-loan
+        // shadows, not merely the dormant base-plan resident bit. This borrow
+        // prevents mutation; retirement and original graph binding still check.
+        self.sources.validate_prompt_ready(self.graph)?;
+        let mut streamed = false;
+        for (role, &expected) in role_bytes.iter().enumerate() {
+            let (_, _, bytes, tier) = self
+                .sources
+                .effective_role(self.graph, self.layer, cell, role)?;
+            if bytes != expected as u64 || tier > 1 {
+                return Err(reject());
+            }
+            streamed |= tier == 1;
+        }
+        Ok(streamed)
+    }
+
     pub(crate) fn stage_group(
         &self,
         cell: usize,
