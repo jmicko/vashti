@@ -20,7 +20,10 @@ pub fn set_native_strata_profile_active(active: bool) {
 fn profile_active() -> bool {
     enabled()
         && PROFILE_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
-        && matches!(std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref(), Ok("round-8" | "warm-round-64"))
+        && matches!(
+            std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref(),
+            Ok("round-8" | "warm-round-64")
+        )
         && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
 }
 type OperatorTotals = std::collections::BTreeMap<&'static str, (u64, u64)>;
@@ -141,7 +144,12 @@ fn credit(nodes: usize, replay: bool) {
 
 pub(crate) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(), Ok("public" | "protected-worker")))
+    *ON.get_or_init(|| {
+        matches!(
+            std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(),
+            Ok("public" | "protected-worker")
+        )
+    })
 }
 #[derive(Debug)]
 pub(crate) struct Program {
@@ -499,13 +507,132 @@ fn raw_buffer(r: &WgpuResource) -> Result<vk::Buffer, ServerError> {
         .ok_or_else(|| fault("native graph non-Vulkan buffer"))?;
     Ok(unsafe { h.raw_buffer_handle() })
 }
+// NATIVE_COMMAND_BOUNDARIES_BEGIN
+/// Fixed stack metadata for the actual recording's command-buffer segments.
+/// Retain external availability/visibility at both ends of EACH physical queue;
+/// only interior segment boundaries rely on the unchanged actual-buffer hazard
+/// barriers and original inter-queue timeline memory dependencies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CommandBoundaries {
+    first: [usize; 3],
+    last: [usize; 3],
+    segments: usize,
+}
+impl CommandBoundaries {
+    fn from_queues(queues: impl Iterator<Item = usize>) -> Result<Self, &'static str> {
+        let mut result = Self {
+            first: [usize::MAX; 3],
+            last: [usize::MAX; 3],
+            segments: 0,
+        };
+        for (segment, queue) in queues.enumerate() {
+            if segment >= 32769 || queue >= 3 || segment == 0 && queue != 0 {
+                return Err("native command boundary segment inventory");
+            }
+            if result.first[queue] == usize::MAX {
+                result.first[queue] = segment;
+            }
+            result.last[queue] = segment;
+            result.segments += 1;
+        }
+        if result.segments == 0 {
+            return Err("native command boundary empty inventory");
+        }
+        Ok(result)
+    }
+    fn before(&self, segment: usize) -> bool {
+        segment < self.segments && self.first.contains(&segment)
+    }
+    fn after(&self, segment: usize) -> bool {
+        segment < self.segments && self.last.contains(&segment)
+    }
+}
+
+#[cfg(test)]
+mod command_boundary_tests {
+    use super::CommandBoundaries;
+
+    #[test]
+    fn single_and_empty_queue_cases_keep_external_boundaries() {
+        let only = CommandBoundaries::from_queues([0].into_iter()).unwrap();
+        assert!(only.before(0) && only.after(0));
+        let main = CommandBoundaries::from_queues([0, 0, 0].into_iter()).unwrap();
+        assert_eq!(
+            (0..3).map(|i| main.before(i)).collect::<Vec<_>>(),
+            [true, false, false]
+        );
+        assert_eq!(
+            (0..3).map(|i| main.after(i)).collect::<Vec<_>>(),
+            [false, false, true]
+        );
+        assert!(!main.before(usize::MAX) && !main.after(usize::MAX));
+        assert!(!main.before(3) && !main.after(3));
+    }
+
+    #[test]
+    fn alternating_release_segments_keep_both_ends_of_each_original_queue() {
+        let queues = [0, 1, 0, 1, 0, 2, 0, 2, 1, 0];
+        let p = CommandBoundaries::from_queues(queues.into_iter()).unwrap();
+        assert_eq!(p.first, [0, 1, 5]);
+        assert_eq!(p.last, [9, 8, 7]);
+        for segment in 0..queues.len() {
+            assert_eq!(p.before(segment), [0, 1, 5].contains(&segment));
+            assert_eq!(p.after(segment), [9, 8, 7].contains(&segment));
+        }
+        // A retained command buffer replays the same already-encoded policy;
+        // deriving it again from its immutable plan cannot change its boundaries.
+        assert_eq!(
+            p,
+            CommandBoundaries::from_queues(queues.into_iter()).unwrap()
+        );
+    }
+
+    #[test]
+    fn full_capacity_inventory_has_exactly_two_boundaries_per_used_queue() {
+        let mut state = 23u32;
+        let queues = (0..32769)
+            .map(|i| {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                if i == 0 { 0 } else { (state % 3) as usize }
+            })
+            .collect::<Vec<_>>();
+        let p = CommandBoundaries::from_queues(queues.iter().copied()).unwrap();
+        for queue in 0..3 {
+            let segments = queues
+                .iter()
+                .enumerate()
+                .filter(|(_, q)| **q == queue)
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>();
+            assert_eq!(segments.iter().filter(|&&i| p.before(i)).count(), 1);
+            assert_eq!(segments.iter().filter(|&&i| p.after(i)).count(), 1);
+            assert!(p.before(segments[0]));
+            assert!(p.after(*segments.last().unwrap()));
+        }
+        assert_eq!((0..queues.len()).filter(|&i| p.before(i)).count(), 3);
+        assert_eq!((0..queues.len()).filter(|&i| p.after(i)).count(), 3);
+    }
+
+    #[test]
+    fn invalid_or_unbounded_segment_inventory_is_rejected() {
+        assert!(CommandBoundaries::from_queues(std::iter::empty()).is_err());
+        assert!(CommandBoundaries::from_queues([1].into_iter()).is_err());
+        assert!(CommandBoundaries::from_queues([0, 3].into_iter()).is_err());
+        assert!(CommandBoundaries::from_queues([0, usize::MAX].into_iter()).is_err());
+        assert!(CommandBoundaries::from_queues(std::iter::repeat_n(0, 32770)).is_err());
+    }
+}
+// NATIVE_COMMAND_BOUNDARIES_END
 fn begin_native_command(
     device: &ash::Device,
     command: vk::CommandBuffer,
+    external: bool,
 ) -> Result<(), ServerError> {
     unsafe { device.begin_command_buffer(command, &vk::CommandBufferBeginInfo::default()) }
         .map_err(|_| fault("native queue begin command"))?;
-    native_memory_boundary(device, command);
+    if external {
+        native_memory_boundary(device, command);
+    }
     Ok(())
 }
 fn native_memory_boundary(device: &ash::Device, command: vk::CommandBuffer) {
@@ -555,8 +682,14 @@ fn native_host_read_boundary(
     }
     Ok(())
 }
-fn end_native_command(device: &ash::Device, command: vk::CommandBuffer) -> Result<(), ServerError> {
-    native_memory_boundary(device, command);
+fn end_native_command(
+    device: &ash::Device,
+    command: vk::CommandBuffer,
+    external: bool,
+) -> Result<(), ServerError> {
+    if external {
+        native_memory_boundary(device, command);
+    }
     unsafe { device.end_command_buffer(command) }.map_err(|_| fault("native queue end command"))
 }
 impl Graph {
@@ -2068,7 +2201,18 @@ impl Graph {
         self.descriptors = vk::DescriptorPool::null();
         self.command = recording.command;
         self.recordings.push(recording);
-        begin_native_command(&self.device, self.command)?;
+        let boundaries = CommandBoundaries::from_queues(
+            self.recordings
+                .last()
+                .unwrap()
+                .work
+                .plan
+                .segments
+                .iter()
+                .map(|s| s.queue()),
+        )
+        .map_err(fault)?;
+        begin_native_command(&self.device, self.command, boundaries.before(0))?;
         if let Some(profile) = &self.recordings.last().unwrap().profile {
             unsafe {
                 self.device.cmd_reset_query_pool(
@@ -2085,10 +2229,10 @@ impl Graph {
             let work = &self.recordings.last().unwrap().work;
             let next = work.plan.node_segments[index];
             if next != segment {
-                end_native_command(&self.device, self.command)?;
+                end_native_command(&self.device, self.command, boundaries.after(segment))?;
                 segment = next;
                 self.command = work.commands[segment];
-                begin_native_command(&self.device, self.command)?;
+                begin_native_command(&self.device, self.command, boundaries.before(segment))?;
             }
             let copy = work.plan.segments[segment].copy;
             let previous = &mut previous[work.plan.segments[segment].queue()];
@@ -2263,7 +2407,7 @@ impl Graph {
                 profile.stamp(self.command, index, true);
             }
         }
-        end_native_command(&self.device, self.command)?;
+        end_native_command(&self.device, self.command, boundaries.after(segment))?;
         self.recordings.last_mut().unwrap().ready = true;
         CAPTURE_NS.fetch_add(
             capture_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
