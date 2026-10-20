@@ -70,10 +70,60 @@ layouts pass. Exact logs are `native-qsa-host-scratch-final-cpu-20261020.log`,
 `strata-parity-capture-attention-build-20261020.log` and
 `strata-parity-capture-attention-offline-20261020.log` under the artifact base.
 
-All129 original GPU controls, complete real requests/counts and physical
-recovery remain required before performance selection. A meaningful clean gain is needed
-before full staged tools/MAX8/semantic/privacy and injected terminal recovery,
-then official installation and actual installed service acceptance. Do not call
-CPU compilation proof of runtime recovery or compare diagnostic sampled-layer
-timestamps as full-request throughput. The goal remains matching actual same-host
-Strata repeated4245 prefix5.3515s and matched sustained inference.
+All129 actual original GPU controls and the complete three-request profile now
+pass, including real six-logical expert/wide-tail counts and physical recovery.
+Receipts are `strata-parity-capture-attention-20261020-{operators,profile}`.
+Load78.7574s; first/repeated4245 prefixes12.8209/12.0604s. Repeated expert wall
+7.7714s, capture2.5667s, enqueue1.5450s, wait3.4883s; QSA attention/merge1.46846s.
+The modest improvement over the complete predecessor12.3522s is NOT a clean A/B
+and remains behind installed11.1474s and same-host Strata5.3515s. All48,851
+original segments/1,474 rolling windows/39,225 HOST copies remain. The host-after
+receipt confirms Intel50,688,000B, NVIDIA compute0, no new driver faults,
+Kuno/Ollama/Vashti200 and no active/waiting/paused/recovery admission.
+This artifact is unselected and uninstalled; full staged/terminal acceptance
+and a new sustained comparison are not claimed.
+
+## Connected original-view transfer dependency candidate
+
+The next candidate retains the whole fa2138fc pipeline and changes ONLY
+same-COPY-queue memory barriers. Cross-queue timeline dependencies, original
+command segments/order, full source/destination views, actual INFO/binding
+owners, fault/numerical checks and all release points remain unchanged.
+
+Previously one whole-buffer access flag per queue inserts a barrier between
+adjacent disjoint role copies. Merely using exact intervals is insufficient:
+raw-ring slot reuse would still encounter earlier writes. The coherent candidate
+therefore connects BOTH exact original-view intervals AND actual existing
+ALL_COMMANDS peer-wait ancestry from the completed original queue Plan.
+
+A pure bounded visibility builder validates every original segment signal,
+queue, backward peer wait and header; its three-queue frontier derives which
+COPY epochs were already acquired by a genuine incoming peer semaphore wait.
+Same-queue order alone grants no memory synchronization. An old interval may
+omit a redundant barrier only when disjoint or when its COPY epoch is covered
+by that actual acquire. A later write in the same segment is never covered.
+For every remaining overlap, the original TRANSFER stage and whole-buffer
+barrier/access masks remain. Original full descriptor views are never narrowed
+to the smaller physical copy byte count. Within-node aliases are canonicalized
+before update so no fake intra-command dependency or forgotten read is added.
+
+All transfer dependency arrays are built before the first GPU prefix. Their
+real capacities, temporary frontier/interval/hash capacities, original live
+Plan and allocator owners, plus the simultaneous borrowed resource index and
+retained resource clones, are preflighted under the existing64MiB Graph cap.
+The original parent reservation is not raised. The public-only profiler adds
+encoded COPY-node/barrier aggregate deltas after the original real sync; there
+are no prompt identifiers, text, route traces or persisted private metrics.
+
+Four initial CPU controls pass: an8192-node independent byte-addressed hazard
+oracle (aliases/gaps/reads/writes), disjoint copies/real slot reuse, genuine
+three-queue wait ancestry/same-segment negatives, and invalid/bounded inventory.
+The first compile caught a duplicate existing test-module alias; that fixture
+integration is fixed. Final complete actual App compilation and86 CPU controls
+pass (all previous82 plus those four transfer controls), in
+`native-transfer-visibility-final-cpu-20261020.log`. GPU acceptance is pending. No new speed, terminal or install claim for this change.
+
+A meaningful clean gain is needed before full staged tools/MAX8/semantic/privacy
+and injected terminal recovery, then official installation and actual installed
+service acceptance. The goal remains matching actual same-host Strata repeated
+4245 prefix5.3515s and matched sustained inference.

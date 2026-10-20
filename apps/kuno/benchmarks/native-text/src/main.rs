@@ -83,6 +83,10 @@ mod strata_qsa;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_schedule.rs"]
 mod strata_queue_tests;
 #[cfg(test)]
+#[allow(dead_code)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_transfer_barriers.rs"]
+mod strata_transfer_barrier_controls;
+#[cfg(test)]
 #[allow(dead_code)] // Exercise original recording owner policy without a GPU.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_binding_owners.rs"]
 mod strata_binding_owner_controls;

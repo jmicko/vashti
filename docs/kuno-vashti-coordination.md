@@ -47,8 +47,16 @@ Planner, Wgpu raw-buffer guards and temporary collection are distributed costs,
 not proof of a single driver bottleneck. The next coherent candidate preserves
 all wide/bulk/loading components, removes only fault-reporting reductions in
 selected attention fault variants, and reuses capture scratch with deduplicated
-Recording lifetime resource references. All actual views/owner bindings,
-original raw-buffer checks, signature, hazards and queue/release order remain.
+Recording lifetime resource references. Its frozenfa2138fc / SHA802e3fa2
+passes82 CPU controls,402/208 layouts,129 GPU controls and complete requests with
+physical recovery; repeated profile12.0604s is a modest gain over12.3522s but
+still behind installed11.1474s. It remains unselected and uninstalled.
+
+The next connected candidate couples exact original COPY-view intervals with
+synchronization already provided by genuine original ALL_COMMANDS peer waits.
+It retains original queue order, releases, full views and ownership. Four pure
+CPU controls pass initially; final compilation/GPU/speed acceptance is pending.
+All actual views/owner bindings, original raw-buffer checks and signatures stay.
 See [the exact contract and current gates](kuno-native-capture-attention.md).
 No API, protocol, model identity, configuration or Vashti consumer change.
 Installed3fffc266 remains selected, and the Strata parity goal stays active.

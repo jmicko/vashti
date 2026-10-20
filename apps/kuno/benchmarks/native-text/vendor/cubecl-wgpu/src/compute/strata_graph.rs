@@ -18,6 +18,8 @@ mod binding_owners;
 mod capture_scratch;
 #[path = "strata_descriptors.rs"]
 mod descriptors;
+#[path = "strata_transfer_barriers.rs"]
+mod transfer_barriers;
 
 static PROFILE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub fn set_native_strata_profile_active(active: bool) {
@@ -108,6 +110,13 @@ static REPLAY_SHAPES: [std::sync::atomic::AtomicU64; 5] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 5];
 static CAPTURE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+// Anonymous encoded COPY-node/barrier totals. Only the existing fixed-public
+// profiling collector publishes deltas, after its real original sync.
+static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
+    std::array::from_fn(|i| COPY_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
+}
 pub fn native_strata_graph_execution_stats() -> ([u64; 5], [u64; 5], u64, u64) {
     use std::sync::atomic::Ordering::Relaxed;
     (
@@ -2474,6 +2483,30 @@ impl Graph {
             .unwrap_or(0);
         let mut scratch = capture_scratch::Scratch::new(largest_access_count).map_err(fault)?;
         let scratch_bytes = scratch.metadata_bytes().map_err(fault)?;
+        let preparation_used = self
+            .recordings
+            .iter()
+            .try_fold(
+                signature
+                    .capacity()
+                    .checked_mul(size_of::<u64>())
+                    .and_then(|n| n.checked_add(scratch_bytes))
+                    .ok_or_else(|| fault("native transfer preparation metadata overflow"))?,
+                |n, r| n.checked_add(r.metadata_bytes()?),
+            )
+            .ok_or_else(|| fault("native transfer preparation metadata overflow"))?;
+        let preparation_budget = descriptors::METADATA_CAP
+            .checked_sub(preparation_used)
+            .ok_or_else(|| fault("native transfer preparation metadata capacity"))?;
+        let copy_count = self
+            .nodes
+            .iter()
+            .filter(|n| {
+                self.compute_lane == 0
+                    && !n.shared
+                    && matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill)
+            })
+            .count();
         let mut planner =
             strata_schedule::Planner::for_lane(self.nodes.len(), profiling, self.compute_lane)
                 .map_err(fault)?;
@@ -2493,11 +2526,58 @@ impl Graph {
                 .map_err(fault)?;
         }
         let plan = planner.finish().map_err(fault)?;
+        let plan_bytes = strata_schedule::plan_metadata_bytes(&plan)
+            .ok_or_else(|| fault("native transfer original plan metadata overflow"))?;
         let owners = binding_owners::Owners::collect(
             self.nodes.iter().filter_map(|node| node.owners.as_ref()),
             descriptors::METADATA_CAP,
         )
         .map_err(fault)?;
+        let preparation_budget = preparation_budget
+            .checked_sub(plan_bytes)
+            .and_then(|n| n.checked_sub(owners.metadata_bytes()))
+            .ok_or_else(|| fault("native transfer original plan metadata capacity"))?;
+        let visibility = transfer_barriers::Visibility::new(&plan.segments, preparation_budget)
+            .map_err(fault)?;
+        let transfer_budget = preparation_budget
+            .checked_sub(visibility.metadata_bytes().map_err(fault)?)
+            .ok_or_else(|| fault("native transfer visibility retained metadata capacity"))?;
+        let mut transfers =
+            transfer_barriers::Recorder::new(self.nodes.len(), copy_count, transfer_budget)
+                .map_err(fault)?;
+        for (index, node) in self.nodes.iter().enumerate() {
+            let segment = plan.node_segments[index];
+            let actual = &plan.segments[segment];
+            let original_copy = self.compute_lane == 0
+                && !node.shared
+                && matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill);
+            if actual.copy != original_copy {
+                return Err(fault("native transfer barrier original queue identity"));
+            }
+            let copy = if actual.copy {
+                self.fill_node_ranges(node, &mut scratch.ranges)?;
+                Some(scratch.ranges.as_slice())
+            } else {
+                None
+            };
+            transfers
+                .push_scoped(
+                    copy,
+                    actual.signal,
+                    visibility.before(segment).map_err(fault)?,
+                )
+                .map_err(fault)?;
+        }
+        let transfers = transfers.finish().map_err(fault)?;
+        let transfer_bytes = transfers
+            .metadata_bytes()
+            .map_err(fault)?
+            .checked_add(visibility.metadata_bytes().map_err(fault)?)
+            .ok_or_else(|| fault("native transfer visibility retained metadata overflow"))?;
+        let scratch_bytes = scratch_bytes
+            .checked_add(transfer_bytes)
+            .ok_or_else(|| fault("native transfer capture metadata overflow"))?;
+
         let live_metadata = self
             .recordings
             .iter()
@@ -2513,6 +2593,7 @@ impl Graph {
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         let owner_budget = descriptors::METADATA_CAP
             .checked_sub(live_metadata)
+            .and_then(|n| n.checked_sub(plan_bytes))
             .ok_or_else(|| fault("native queue retained metadata capacity"))?;
         // These are lifetime references only. Node views, exact signature,
         // planner intervals and genuine allocator Binding owners stay complete.
@@ -2692,32 +2773,51 @@ impl Graph {
                     | vk::PipelineStageFlags::DRAW_INDIRECT
                     | vk::PipelineStageFlags::TRANSFER
             };
-            self.fill_node_accesses(n, &mut scratch.accesses)?;
             scratch.barriers.clear();
-            for (&buffer, &access) in &scratch.accesses {
-                if let Some(before) = previous.get(&buffer).copied() {
-                    if before
-                        .intersects(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
-                        || access.intersects(
+            if copy {
+                // Only disjoint ORIGINAL transfer views omit a dependency.
+                // Any real overlap keeps the original WHOLE_SIZE barrier.
+                for dependency in transfers.node(index).map_err(fault)? {
+                    scratch.barriers.push(
+                        vk::BufferMemoryBarrier::default()
+                            .src_access_mask(dependency.before_flags())
+                            .dst_access_mask(dependency.after_flags())
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .buffer(vk::Buffer::from_raw(dependency.buffer))
+                            .offset(0)
+                            .size(vk::WHOLE_SIZE),
+                    );
+                }
+            } else {
+                if !transfers.node(index).map_err(fault)?.is_empty() {
+                    return Err(fault("native transfer barrier physical queue identity"));
+                }
+                self.fill_node_accesses(n, &mut scratch.accesses)?;
+                for (&buffer, &access) in &scratch.accesses {
+                    if let Some(before) = previous.get(&buffer).copied() {
+                        if before.intersects(
                             vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
-                        )
-                    {
-                        scratch.barriers.push(
-                            vk::BufferMemoryBarrier::default()
-                                .src_access_mask(before)
-                                .dst_access_mask(access)
-                                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                                .buffer(buffer)
-                                .offset(0)
-                                .size(vk::WHOLE_SIZE),
-                        );
-                        previous.insert(buffer, access);
+                        ) || access.intersects(
+                            vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                        ) {
+                            scratch.barriers.push(
+                                vk::BufferMemoryBarrier::default()
+                                    .src_access_mask(before)
+                                    .dst_access_mask(access)
+                                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                    .buffer(buffer)
+                                    .offset(0)
+                                    .size(vk::WHOLE_SIZE),
+                            );
+                            previous.insert(buffer, access);
+                        } else {
+                            previous.insert(buffer, before | access);
+                        }
                     } else {
-                        previous.insert(buffer, before | access);
+                        previous.insert(buffer, access);
                     }
-                } else {
-                    previous.insert(buffer, access);
                 }
             }
             if !scratch.barriers.is_empty() {
@@ -2830,6 +2930,11 @@ impl Graph {
             }
         }
         end_native_command(&self.device, self.command, boundaries.after(segment))?;
+        COPY_BARRIERS[0].fetch_add(copy_count as u64, std::sync::atomic::Ordering::Relaxed);
+        COPY_BARRIERS[1].fetch_add(
+            transfers.dependency_count() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.recordings.last_mut().unwrap().ready = true;
         if let Some(rolling) = &mut rolling {
             rolling

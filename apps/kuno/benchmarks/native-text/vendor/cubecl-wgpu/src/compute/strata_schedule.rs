@@ -625,7 +625,7 @@ fn allocate_commands(
     guard.armed = false;
     Ok(())
 }
-fn plan_metadata_bytes(plan: &Plan) -> Option<usize> {
+pub(crate) fn plan_metadata_bytes(plan: &Plan) -> Option<usize> {
     plan.segments
         .capacity()
         .checked_mul(size_of::<Segment>())?
