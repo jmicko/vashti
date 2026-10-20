@@ -2,7 +2,7 @@
 //! This only supplies compiler-owned pipeline metadata, never device authority.
 
 const SUBGROUP: u32 = 16;
-// The port currently emits one-dimensional blocks of at most sixteen tiles.
+// Original blocks and the opt-in CubeK16×N block have at most sixteen tiles.
 // Actual device workgroup and matrix capability checks still precede launch.
 const MAX_BLOCK_LANES: u32 = 256;
 
@@ -90,11 +90,17 @@ pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
     if !capability
         || matrices == 0
         || owner != entry
-        || y != 1
         || z != 1
         || x == 0
         || x > MAX_BLOCK_LANES
         || !x.is_multiple_of(SUBGROUP)
+        // CubeK keeps its genuine2D geometry. Its selected compiler entry
+        // maps logical planes/lanes to subgroup builtins, never assumes that
+        // LocalInvocationId.y equals SubgroupId. SPIR-V1.6 plus X=required16
+        // provides full-subgroup completeness without an unenabled pipeline
+        // REQUIRE_FULL_SUBGROUPS feature. Device geometry checks remain real.
+        || (y != 1
+            && (words[1] != 0x00010600 || x != SUBGROUP || y == 0 || y > 16))
         || explicit_subgroup.is_some_and(|mode| mode != (entry, SUBGROUP))
     {
         return None;
@@ -218,6 +224,26 @@ mod tests {
         for axis in [4, 5] {
             let mut words = module(128);
             instruction(&mut words, 16, 0)[axis] = 2;
+            assert_eq!(subgroup(&words), None);
+        }
+    }
+
+    #[test]
+    fn cubek_keeps_bounded_original_two_dimensional_geometry_and_spirv16() {
+        for planes in [2, 4, 8, 16] {
+            let mut words = module(16);
+            instruction(&mut words, 16, 0)[4] = planes;
+            assert_eq!(subgroup(&words), Some(16));
+        }
+        for (x, y, version) in [
+            (16, 0, 0x00010600),
+            (16, 17, 0x00010600),
+            (32, 4, 0x00010600),
+            (16, 4, 0x00010500),
+        ] {
+            let mut words = module(x);
+            words[1] = version;
+            instruction(&mut words, 16, 0)[4] = y;
             assert_eq!(subgroup(&words), None);
         }
     }

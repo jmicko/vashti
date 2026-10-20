@@ -281,3 +281,91 @@ these real lifetime boundaries, but is not implemented in this candidate.
 
 No GPU/shared build/service operation was performed here. Root still owns full
 GPU numerical, prompt, erasure/recovery and matched performance acceptance.
+
+## Opt-in complete CubeK dense pipeline — 2026-10-20
+
+`strata-cubek-gemm` adds a dense-only library candidate. It preserves the
+selected original expert kernels and small/unaligned dense fallback. It does
+not change the installed build, API, private worker protocol, context,
+quantization or prompt retention. Root owns GPU acceptance and selection.
+
+The dependency is the pinned registry `cubek-matmul=0.2.0` / `cubek-std=0.2.0`,
+MIT OR Apache-2.0, compatible with the already pinned CubeCL0.10. Their actual
+registry sources match the retained v0.2.0 audit sources. Only these two crates
+and `cubecl-std=0.10.0` are added to the preserved laboratory lockfile; existing
+package versions do not change. Dependencies are optional and this feature is
+never enabled by default. There is no vendored CubeK fork.
+
+The selected implementation is **CyclicDoubleBufferingAlgorithm**, not a
+minimal Simple/naive fallback. Its complete public batch/global/stage/tile
+pipeline includes paired operand stages, partial cyclic global readers,
+event-listener scheduling, matrix fragments and the F32 writer. The forced
+blueprint is:
+
+* Cooperative tile8x16x16, original FP16 or BF16 inputs/stages, F32 accumulation
+  and F32 output. No inferred flex32/TF32 conversion, autotuning or split-K.
+* Partition4x1x4 and stage1x4x1: M32xN64xK64, four16-lane planes, four native
+  accumulator tiles per plane, at most32768B actual compiled shared memory.
+* Increasing naive K16 arithmetic order inside the complete double-buffered
+  pipeline. `PartitionBuffering::Single` selects the one intra-partition RHS
+  register fragment (partitionN=1); the global operand pipeline still has
+  two actual stages. Reduction sizes must be divisible by128 so that this
+  even-stage algorithm adds no extra padded K64 products.
+
+The input remains the original row-major token image. The original physical
+weight image `[feature][K]` is viewed as a column-major `[K][feature]` tensor;
+there is no transpose, allocation or conversion. Output views retain the
+original row stride. Views use checked arithmetic, real existing handles and
+the authenticated descriptor alignment. Counts below32 or above4096, features
+below64 or not divisible by16, unsupported reduction sizes, and unaligned
+views use the original primitive. Actual per-axis workgroup, total invocation,
+shared-memory and exact CMMA capabilities are checked before launch.
+
+The library entry's expanded CubeCL IR gets a bounded, entry-specific topology
+normalization: `UnitPosX` becomes `UnitPosPlane`, and `UnitPosY` becomes
+`PlanePos`. Branch operands and nested scopes are visited, without changing
+math, types, argument extents or order. Other local/absolute invocation
+builtins, unreviewed operations and relaxed arithmetic flags fail compilation.
+This retains actual physical LocalSize16x4x1 and does not pretend that a
+flattened workgroup still has a useful Y coordinate. No other kernel receives
+the normalization.
+
+The Vulkan selector now admits only bounded SPIR-V1.6 true16xN matrix geometry
+(N<=16), alongside its existing1D geometry and exact known cooperative matrix
+types. Existing real subgroup-size-control device admission and required16
+pipeline metadata remain. SPIR-V1.6 and X=required16 provide full-subgroup
+completeness; the adapter independently avoids assuming any relationship
+between local invocation IDs and subgroup IDs. It does not set the
+`REQUIRE_FULL_SUBGROUPS` flag without enabling its separate feature. See the
+[Khronos subgroup rules](https://docs.vulkan.org/spec/latest/chapters/shaders.html)
+and [pipeline requirements](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineShaderStageCreateInfo.html).
+
+After the library product, a same-stream finite epilogue examines each original
+logical result exactly once, leaves finite values unchanged, replaces invalid
+values with zero and sets the original dense fault bit1. Existing full-owner
+leases, native admission, IEEE FP16 preservation, request erasure and close/
+recovery mechanisms remain. No new temporary output or arbitrary expert-DOWN
+scratch offset is introduced. Expert scatter/status processing is unchanged;
+a future library expert path needs a genuine routing output implementation.
+
+CPU preparation was isolated under
+`/media/jmicko/faststore/kuno-development/prefill-cubek-cpu-20261020/target`,
+with two build jobs and no device/service/sudo operations:
+
+* Exact production adapter typecheck and strict production Clippy pass.
+* Four focused controls cover actual compilation, unchanged fallback admission,
+  genuine owner views/overflow/alignment, nested IR normalization, rejection of
+  unsupported IDs, shader printing and relaxed math.
+*32 actual library SPIR-V modules (FP16/BF16, complete/tail counts32/33, all
+  eight physical layout combinations) pass the pinned validator for Vulkan1.3.
+  They retain true16x4x1 geometry and SIMD16 selection, real shared allocation
+  <=32768B, native matrix products and no FPFastMathMode. The actual modules
+  contain subgroup ID/lane builtins and no local/absolute invocation builtins.
+* Nine actual HAL selector controls pass, including original1D guards,
+  malformed/conflicting modules, and new2D dimension/version boundaries.
+
+These are compilation/admission results. No numerical GPU result, prompt
+duration or speedup is claimed. Root must run original full-owner FP16/BF16
+numeric controls, private fault/lifecycle controls, the matched public prompts,
+then actual erasure/close and physical recovery before selection. Compare the
+whole coupled library pipeline; do not judge an isolated staging subcomponent.

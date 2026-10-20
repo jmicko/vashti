@@ -3,6 +3,10 @@
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
 use kuno_text::{Error, Result};
 
+#[cfg(feature = "strata-cubek-gemm")]
+#[path = "strata_cubek_gemm.rs"]
+mod cubek;
+
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_numeric_probe.rs"]
 mod numeric;
@@ -1299,6 +1303,12 @@ mod native {
         bfloat: bool,
     ) -> Result<()> {
         compatible(client, bfloat)?;
+        #[cfg(feature = "strata-cubek-gemm")]
+        if super::cubek::try_dense(
+            client, h.clone(), count, columns, rows, weight_first, out_first, out_stride, bfloat,
+        )? {
+            return Ok(());
+        }
         let [input, weight, output, fault] = h;
         let use_macro =
             macro_compatible(client, &input, &weight, count, rows, columns, weight_first);

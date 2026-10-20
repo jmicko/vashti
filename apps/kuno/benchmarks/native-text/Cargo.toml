@@ -33,6 +33,8 @@ zeroize = "1.9"
 half = "=2.7.1"
 kuno-text = { path = "../../../../crates/kuno-text" }
 cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wgpu"] }
+cubek-matmul = { version = "=0.2.0", default-features = false, features = ["std"], optional = true }
+cubek-std = { version = "=0.2.0", default-features = false, optional = true }
 wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
 
 [patch.crates-io]
@@ -51,6 +53,8 @@ strata-eight-window = ["strata-rust-port"]
 strata-resident-224 = ["strata-rust-port"]
 strata-resident-240 = ["strata-resident-224"]
 strata-intel-core = ["strata-resident-240", "cubecl/wgpu-spirv", "cubecl-wgpu/kuno-strata-shared"]
+# Explicit dense-projection candidate; original expert and fallback kernels remain.
+strata-cubek-gemm = ["strata-intel-core", "dep:cubek-matmul", "dep:cubek-std"]
 # Fixed public completion check; changes only the harness request, not the engine.
 strata-public-cap-check = ["strata-intel-core"]
 # Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.
