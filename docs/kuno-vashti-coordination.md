@@ -22,7 +22,28 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 23:19UTC): full-chunk/vector successor alignment fixed,149 CPU controls pass.**
+**Live continuation (2026-10-20 23:26UTC): aligned full-chunk candidate on protected GPU run.**
+
+Frozen sourcee7c43cb553c3ea7adc8eeeef63b6c5b557083cb7 /
+SHA88ce000345a0fc1bc69af379cf51b8efcfbe5199642e7024cea83c1bd450d170,
+build`strata-parity-qsa-xmx-full-chunk-aligned-20261020`, passes149 CPU,
+420 WGSL/232 matrix layouts, exact raw/fixed stage and all original171+7 actual
+GPU numerical controls. Complete first full73/4245/4245 profile and physical
+recovery PASS: prompt5.0804/12.8765/11.4091s, load79.1419s. This improves the
+previous matrix candidate, but is NOT a clean installed-baseline or Strata win.
+Normal-scheduling full profile is ACTIVE in protected unit
+`kuno-native-qsa-xmx-full-chunk-aligned-20261020`. No overlapping GPU or heavy
+CPU test, install or device reset. Whole connected proof waits for this mode;
+then original terminal/clean-at-EACH5%/staged gates remain before selection.
+
+Pinned helper`check-native-qsa-xmx-full-chunk-aligned-bundle-20261020.py`, live
+log`strata-parity-qsa-xmx-full-chunk-aligned-connected-20261020.log`, exact
+accepted operator metadata`strata-parity-qsa-xmx-full-chunk-aligned-operator-outcome-public-20261020.json`.
+Prepared aligned acceptance helper is UNEXECUTED; preserves all original gates.
+Installed worker/gateway unchanged. Goal ACTIVE/UNMET. Bounded sudo297061 still
+ends00:17:49UTC Oct21. Same sole worktree and all boundaries below apply.
+
+**Previous checkpoint (2026-10-20 23:19UTC): full-chunk/vector successor alignment fixed,149 CPU controls pass.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. Goal ACTIVE/UNMET. Installed worker3fffc266/SHAeac78ce0

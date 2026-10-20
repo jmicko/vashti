@@ -1960,3 +1960,14 @@ successor retained alongside the original scalar path. If it stays slower,
 investigate the exact selected scalar SYCL/ISA/packed8-load behavior instead
 of describing XMX as the reference's proven fast kernel. No new reference run
 or arbitrary flag/schedule/warmup change is needed to establish this source fact.
+
+
+Aligned full-chunk sourcee7c43cb5/SHA88ce0003 passes149 selected CPU,
+420 WGSL/232 matrix layouts, exact GPU raw/fixed stage and original171+7 real
+GPU numerical controls. First full73/4245/4245 profile completes and physically
+recovers: load79.141872654s; prompt5.080417576/12.876510714/11.409061794s.
+This improves previous matrix12.2584s repeat but is not a clean selection claim;
+normal profile/connected count/compiler/pool proofs are active next, then the
+original terminal-negative/clean-at-EACH5%/staged privacy/tool/semantic gates.
+Current frozen build/unit/helper identities are in the coordination handoff.
+Installed identities unchanged; original matched Strata5.3515s still faster.
