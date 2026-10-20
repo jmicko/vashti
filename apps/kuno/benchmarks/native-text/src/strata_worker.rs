@@ -246,13 +246,19 @@ async fn serve(
             .map_err(|_| "public_matrix_audit_failed")?;
         let cases = crate::strata_matrix::public_numeric(&client, &mut arena, &file)
             .map_err(|_| "public_matrix_numeric_failed")?;
+        let mut operator_checks = crate::strata_global_moe::public_prompt_numeric(&client, &mut arena)
+            .map_err(|_| "public_prompt_route_numeric_failed")?;
+        operator_checks.extend(
+            crate::strata_prompt::experts::public_dequant_numeric(&client, &mut arena, &file)
+                .map_err(|_| "public_prompt_dequant_numeric_failed")?,
+        );
         arena.close().map_err(|_| "public_matrix_close_failed")?;
         if arena.owned_zero_audit_receipt().is_none() {
             return Err("public_matrix_erasure_unconfirmed");
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }

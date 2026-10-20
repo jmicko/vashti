@@ -25,6 +25,9 @@ use kuno_text::{
 };
 use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
+#[path = "strata_prompt_route_numeric_probe.rs"]
+mod prompt_numeric;
+pub(crate) use prompt_numeric::cases as public_prompt_numeric;
 
 const ROOT_BYTES: [u64; 11] = [
     32768,

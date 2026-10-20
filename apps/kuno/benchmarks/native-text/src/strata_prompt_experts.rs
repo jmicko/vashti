@@ -5,6 +5,9 @@
 use super::*;
 use crate::{quant_matvec as q, strata_global_sources::Sources};
 use kuno_text::model::BoundGraph;
+#[path = "strata_prompt_expert_numeric_probe.rs"]
+mod public_numeric;
+pub(crate) use public_numeric::cases as public_dequant_numeric;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Op {
