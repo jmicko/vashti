@@ -16,26 +16,27 @@ use crate::native_artifact::{Settings, verify};
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false, None, false, false)
+    run_mode(path, false, None, false, false, false)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, false, false)
+    run_mode(path, true, None, false, false, false)
 }
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
-    if profile {
-        crate::strata_prefill_profile::enable_compiled_public();
-    }
-    run_mode(path, true, Some(profile), false, false)
+    run_mode(path, true, Some(profile), false, false, false)
 }
 /// Three identical compiled-public short requests exercise cold and two warm
 /// prefix paths. Ordinary request erasure and final session close are unchanged.
 pub(crate) fn public_prefill_short_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, true)
+    run_mode(path, true, Some(false), false, true, false)
 }
 pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false)
+    run_mode(path, true, None, true, false, false)
+}
+/// Fixed-public original expert matrices only; no Session or private input.
+pub(crate) fn public_matrix_timing_check(path: &Path) -> Result<()> {
+    run_mode(path, true, None, true, false, true)
 }
 fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
@@ -53,9 +54,13 @@ fn run_mode(
     prefill_check: Option<bool>,
     matrix_check: bool,
     short_check: bool,
+    matrix_timing: bool,
 ) -> Result<()> {
     if short_check && (!public_check || prefill_check != Some(false) || matrix_check) {
         return Err("public_short_check_configuration");
+    }
+    if matrix_timing && (!public_check || !matrix_check || prefill_check.is_some() || short_check) {
+        return Err("public_matrix_timing_configuration");
     }
     if public_check {
         crate::resident_util::enable_compiled_public_diagnostics();
@@ -86,6 +91,16 @@ fn run_mode(
             "KUNO_LAB_STATIC_CACHE_BYTES",
             (5u64 * 1024 * 1024 * 1024).to_string(),
         );
+    }
+    if public_check && prefill_check == Some(true) {
+        // SAFETY: still before any runtime thread; only the compiled public
+        // diagnostic can select this fixed one-layer query scope. Private entry
+        // has already scrubbed inherited profile/authorization variables above.
+        unsafe {
+            std::env::set_var("KUNO_STRATA_NATIVE_PROFILE", "prefill-layer");
+            std::env::set_var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY", "1");
+        }
+        crate::strata_prefill_profile::enable_compiled_public();
     }
     let mut settings_file = std::fs::File::open(path).map_err(|_| "native_settings_unavailable")?;
     let trust_identity = crate::native_artifact::trusted_settings(&settings_file);
@@ -118,6 +133,7 @@ fn run_mode(
         prefill_check,
         matrix_check,
         short_check,
+        matrix_timing,
     ))
 }
 async fn serve(
@@ -127,6 +143,7 @@ async fn serve(
     prefill_check: Option<bool>,
     matrix_check: bool,
     short_check: bool,
+    matrix_timing: bool,
 ) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
@@ -255,10 +272,24 @@ async fn serve(
         arena
             .enable_public_owned_zero_audit()
             .map_err(|_| "public_matrix_audit_failed")?;
+        if matrix_timing {
+            let cases = crate::strata_matrix::public_timing(&client, &mut arena, &file)
+                .map_err(|_| "public_matrix_timing_failed")?;
+            arena.close().map_err(|_| "public_matrix_close_failed")?;
+            if arena.owned_zero_audit_receipt().is_none() {
+                return Err("public_matrix_erasure_unconfirmed");
+            }
+            eprintln!(
+                "public_prefill_matrix_timing {}",
+                serde_json::json!({"cases":cases,"closed":true,"content_saved":false})
+            );
+            return Ok(());
+        }
         let cases = crate::strata_matrix::public_numeric(&client, &mut arena, &file)
             .map_err(|_| "public_matrix_numeric_failed")?;
-        let mut operator_checks = crate::strata_global_moe::public_prompt_numeric(&client, &mut arena)
-            .map_err(|_| "public_prompt_route_numeric_failed")?;
+        let mut operator_checks =
+            crate::strata_global_moe::public_prompt_numeric(&client, &mut arena)
+                .map_err(|_| "public_prompt_route_numeric_failed")?;
         operator_checks.extend(
             crate::strata_prompt::experts::public_dequant_numeric(&client, &mut arena, &file)
                 .map_err(|_| "public_prompt_dequant_numeric_failed")?,

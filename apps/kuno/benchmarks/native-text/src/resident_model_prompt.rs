@@ -374,6 +374,8 @@ impl Workspace {
             )?;
             timing.mark("gr_router")?;
             let sources = e.strata_global_sources.as_ref().ok_or_else(error)?.clone();
+            let native_sample =
+                crate::strata_prefill_profile::NativeExpertLayer::new(start, count, layer);
             self.global_moe.as_mut().ok_or_else(error)?.enqueue_prompt(
                 m.graph,
                 &m.arena,
@@ -385,6 +387,7 @@ impl Workspace {
                 cancel,
             )?;
             timing.mark("experts")?;
+            native_sample.finish();
             for (name, index, width) in [
                 ("ffn_gate_shexp.weight", 6, 640),
                 ("ffn_up_shexp.weight", 7, 640),

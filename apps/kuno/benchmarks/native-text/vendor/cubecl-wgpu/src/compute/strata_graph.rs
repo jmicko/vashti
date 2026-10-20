@@ -22,7 +22,7 @@ fn profile_active() -> bool {
         && PROFILE_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
         && matches!(
             std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref(),
-            Ok("round-8" | "warm-round-64")
+            Ok("round-8" | "warm-round-64" | "prefill-layer")
         )
         && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
 }
