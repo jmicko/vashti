@@ -17,10 +17,17 @@ use cubecl_runtime::{
     server::{ExecutionMode, Handle, KernelArguments, MetadataBindingInfo},
 };
 use kuno_text::{Error, Result};
+#[cfg(feature = "strata-intel-core")]
+#[path = "strata_qsa_attention_numeric_probe.rs"]
+mod attention_numeric_probe;
 #[path = "strata_prompt_qsa.rs"]
 pub(crate) mod prompt;
+#[path = "strata_prompt_qsa_specialize.rs"]
+mod prompt_specialize;
 #[path = "strata_qsa_select.rs"]
 pub(crate) mod selection;
+#[cfg(feature = "strata-intel-core")]
+pub(crate) use attention_numeric_probe::cases as public_attention_numeric;
 
 // Original64-value quantization groups: 1024 signed codes and16 half scales.
 // Raw index keys live only in the three-row tail and the current MAX8 window.
@@ -94,6 +101,16 @@ impl Kernel {
         }
     }
     fn source(self) -> String {
+        let scalar = self.scalar_source();
+        if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_specialize::source(scalar)
+        } else {
+            scalar
+        }
+    }
+    // The original generated prompt kernel remains available only to the
+    // compiled-public numerical control. Decode and MTP also retain this path.
+    pub(super) fn scalar_source(self) -> String {
         let all = include_str!("strata_qsa.wgsl");
         let indexer = include_str!("strata_qsa_indexer.wgsl");
         let score = include_str!("strata_qsa_score.wgsl");
