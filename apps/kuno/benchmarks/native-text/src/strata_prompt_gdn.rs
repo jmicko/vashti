@@ -3,6 +3,8 @@
 //! native FP16 norm output are selected together. Prompt, decode and repair
 //! share native row/value-head state. Split verifier replay remains separate.
 use super::*;
+#[path = "strata_prompt_gdn_specialize.rs"]
+mod specialize;
 pub(crate) const COMPATIBILITY_INFO_PER_STAGE: u64 = 2 * 2048;
 pub(crate) const INFO_BYTES: u64 = 36 * COMPATIBILITY_INFO_PER_STAGE;
 
@@ -23,6 +25,16 @@ enum Op {
 }
 impl Op {
     fn source(self) -> String {
+        let scalar = self.scalar_source();
+        if matches!(self, Self::Recurrence | Self::RecurrenceFault) {
+            specialize::source(scalar)
+        } else {
+            scalar
+        }
+    }
+    // Preserve the original generated CB32 kernel for compiled-public golden
+    // controls. Decode/MTP recurrence sources are separate and unchanged.
+    fn scalar_source(self) -> String {
         let all = include_str!("strata_prompt_gdn.wgsl");
         let part = |name: &str| {
             all.split_once(&format!("// {name}_BEGIN\n"))
