@@ -255,8 +255,12 @@ mod tests {
                 assert_eq!(new.matches("select(0u,1u,finite(score))").count(), 48);
             }
             #[cfg(feature = "strata-qsa-paired")]
-            assert_eq!(kernel.source(), new);
-            #[cfg(not(feature = "strata-qsa-paired"))]
+            {
+                #[cfg(feature = "strata-qsa-pv-gather")]
+                let new = super::super::prompt_pv_gather::source(new);
+                assert_eq!(kernel.source(), new);
+            }
+            #[cfg(not(any(feature = "strata-qsa-paired", feature = "strata-qsa-pv-gather")))]
             assert_eq!(kernel.source(), old);
         }
     }
