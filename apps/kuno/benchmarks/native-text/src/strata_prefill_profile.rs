@@ -293,7 +293,7 @@ pub(crate) fn expert_member_geometry(map: &[u32], groups: usize) {
         padded_members * 9_830_400,
     );
 }
-fn native_backend_counts() -> [u64; 22] {
+fn native_backend_counts() -> [u64; 25] {
     let (_, _, capture, wait) = cubecl::wgpu::native_strata_graph_execution_stats();
     let rolling = cubecl::wgpu::native_strata_graph_rolling_stats();
     let copies = cubecl::wgpu::native_strata_graph_copy_barrier_stats();
@@ -321,9 +321,12 @@ fn native_backend_counts() -> [u64; 22] {
         compute[12],
         compute[13],
         compute[14],
+        compute[15],
+        compute[16],
+        compute[17],
     ]
 }
-pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 22])>);
+pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 25])>);
 impl Timer {
     // PUBLIC_QSA_TIMER_ADMISSION_BEGIN
     /// No private client lookup, enqueue, flush or synchronization is added.
@@ -397,6 +400,9 @@ impl Timer {
                         "expert_native_capture_cached_nodes",
                         "expert_native_capture_cached_views",
                         "expert_native_capture_root_revalidations",
+                        "expert_native_canonical_source_lists",
+                        "expert_native_readonly_full_roots",
+                        "expert_native_factored_source_reads",
                         "expert_native_shared_read_nodes",
                         "expert_native_shared_read_bundles",
                     ]

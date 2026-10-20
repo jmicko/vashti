@@ -77,6 +77,24 @@ pub(super) struct Guarded<'a> {
     batch: wgpu::wgc::KunoBufferHalBatch<wgpu::hal::api::Vulkan>,
 }
 impl Guarded<'_> {
+    pub fn signature_view(
+        &self,
+        r: &WgpuResource,
+    ) -> Result<super::capture_inventory::View, ServerError> {
+        use ash::vk::Handle;
+        if r.size == 0
+            || r.offset
+                .checked_add(r.size)
+                .is_none_or(|end| end > r.buffer.size())
+        {
+            return Err(fault("native signature original full owner interval"));
+        }
+        Ok(super::capture_inventory::View {
+            raw: self.get(r)?.as_raw(),
+            first: r.offset,
+            bytes: r.size,
+        })
+    }
     pub fn get(&self, resource: &WgpuResource) -> Result<vk::Buffer, ServerError> {
         let index = self
             .keys
@@ -97,10 +115,14 @@ impl Guarded<'_> {
 pub(super) struct ScopedSnapshot<'k> {
     keys: &'k Keys,
     inventory: super::capture_inventory::Snapshot,
+    readonly: Option<super::replay_signature::Readonly>,
+    source_lists: u64,
+    factored: u64,
 }
 pub(super) struct Captured<'a, 'k> {
     snapshot: &'a super::capture_inventory::Snapshot,
-    signature: &'a [u64],
+    signature: &'a super::replay_signature::Signature,
+    readonly: Option<&'a super::replay_signature::Readonly>,
     _guard: &'a Guarded<'k>,
 }
 impl<'k> Guarded<'k> {
@@ -122,45 +144,95 @@ impl<'k> Guarded<'k> {
     }
     pub fn snapshot(
         &self,
-        signature: &[u64],
+        signature: &super::replay_signature::Signature,
         nodes: usize,
         budget: usize,
     ) -> Result<ScopedSnapshot<'k>, ServerError> {
-        let inventory = super::capture_inventory::Snapshot::build(
-            signature,
-            nodes,
-            self.keys.buffers.len(),
-            |i| {
-                self.inventory_root(i)
-                    .map_err(|_| "native capture actual root unavailable")
-            },
-            budget,
-        )
+        let inventory = match signature {
+            super::replay_signature::Signature::Flat(v) => {
+                super::capture_inventory::Snapshot::build(
+                    v,
+                    nodes,
+                    self.keys.buffers.len(),
+                    |i| {
+                        self.inventory_root(i)
+                            .map_err(|_| "native capture actual root unavailable")
+                    },
+                    budget,
+                )
+            }
+            super::replay_signature::Signature::Compact(c) => {
+                if c.nodes() != nodes {
+                    return Err(fault("native canonical original node count"));
+                }
+                super::capture_inventory::Snapshot::build_canonical(
+                    c.identity(),
+                    nodes,
+                    c.views(),
+                    self.keys.buffers.len(),
+                    |i| {
+                        self.inventory_root(i)
+                            .map_err(|_| "native capture actual root unavailable")
+                    },
+                    budget,
+                )
+            }
+        }
         .map_err(fault)?;
+        let readonly = signature.compact().and_then(|c| {
+            super::replay_signature::Readonly::build(
+                c,
+                |r| inventory.root_size(r),
+                budget.saturating_sub(inventory.metadata_bytes()),
+            )
+            .ok()
+        });
+        let source_lists = signature.compact().map_or(0, |c| c.source_lists() as u64);
+        let factored = match (&readonly, signature.compact()) {
+            (Some(r), Some(c)) => r.factored_count(c).map_err(fault)?,
+            _ => 0,
+        };
         Ok(ScopedSnapshot {
             keys: self.keys,
             inventory,
+            readonly,
+            source_lists,
+            factored,
         })
     }
 }
 impl<'k> ScopedSnapshot<'k> {
     pub fn metadata_bytes(&self) -> usize {
-        self.inventory.metadata_bytes()
+        self.inventory.metadata_bytes() + self.readonly.as_ref().map_or(0, |r| r.metadata_bytes())
     }
-    pub fn stats(&self) -> [u64; 3] {
-        self.inventory.stats()
+    pub fn stats(&self) -> [u64; 6] {
+        let [a, b, c] = self.inventory.stats();
+        [
+            a,
+            b,
+            c,
+            self.source_lists,
+            self.readonly.as_ref().map_or(0, |r| r.roots().len() as u64),
+            self.factored,
+        ]
     }
     pub fn bind<'a>(
         &'a self,
         native: &'a Guarded<'k>,
-        signature: &'a [u64],
+        signature: &'a super::replay_signature::Signature,
     ) -> Result<Captured<'a, 'k>, ServerError> {
         if !std::ptr::eq(self.keys, native.keys)
             || native.keys.buffers.len() != self.inventory.roots()
         {
             return Err(fault("native capture actual root key owner changed"));
         }
-        self.inventory.check_signature(signature).map_err(fault)?;
+        match signature {
+            super::replay_signature::Signature::Flat(v) => self.inventory.check_signature(v),
+            super::replay_signature::Signature::Compact(c) => {
+                self.inventory.check_canonical(c.identity())
+            }
+        }
+        .map_err(fault)?;
         for i in 0..self.inventory.roots() {
             self.inventory
                 .check_root(i, native.inventory_root(i)?)
@@ -170,12 +242,27 @@ impl<'k> ScopedSnapshot<'k> {
         Ok(Captured {
             snapshot: &self.inventory,
             signature,
+            readonly: self.readonly.as_ref(),
             _guard: native,
         })
     }
 }
 impl Captured<'_, '_> {
-    pub fn node(&self, index: usize) -> Result<super::capture_inventory::Node<'_>, ServerError> {
-        self.snapshot.node(self.signature, index).map_err(fault)
+    pub fn readonly_views(&self) -> &[super::capture_inventory::View] {
+        self.readonly.map_or(&[], |r| r.roots())
+    }
+    pub fn readonly_contains(&self, raw: u64) -> bool {
+        self.readonly.is_some_and(|r| r.contains(raw))
+    }
+    pub fn node(&self, index: usize) -> Result<super::replay_signature::Node<'_>, ServerError> {
+        match self.signature {
+            super::replay_signature::Signature::Flat(v) => Ok(super::replay_signature::Node::Flat(
+                self.snapshot.node(v, index).map_err(fault)?,
+            )),
+            super::replay_signature::Signature::Compact(c) => Ok(c
+                .node(index)
+                .map_err(fault)?
+                .attach(self.snapshot, self.readonly)),
+        }
     }
 }

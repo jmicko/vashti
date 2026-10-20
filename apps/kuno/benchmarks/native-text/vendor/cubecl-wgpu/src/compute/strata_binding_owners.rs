@@ -118,6 +118,14 @@ impl<T> Owners<T> {
         })
     }
 
+    pub(super) fn bundles(&self) -> &[Arc<Vec<T>>] {
+        &self.bundles
+    }
+    pub(super) fn bundle_index(&self, owner: &Arc<Vec<T>>) -> Result<usize, &'static str> {
+        self.bundles
+            .binary_search_by_key(&(Arc::as_ptr(owner) as usize), |b| Arc::as_ptr(b) as usize)
+            .map_err(|_| "native source original bundle owner missing")
+    }
     pub(super) fn bundle_count(&self) -> usize {
         self.bundles.len()
     }

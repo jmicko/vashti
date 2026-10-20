@@ -43,6 +43,18 @@ infer immutability from a weight label. No omission of external footprints or
 arbitrary removal of read_dependencies. This next representation is a proposal,
 NOT implemented. Build capture indexes after replay misses, not on decode hits.
 
+The complete canonical-declaration successor is now implemented. It interns
+full original lists by genuine source owner, preserves exact expanded signature/
+replay semantics, and factors only internally redundant full-root reads after a
+sealed ANY-queue no-writer proof. All complete external footprints, real guards,
+owners, IO/INFO/epochs, queues/waits/releases/fences,24/64MiB caps and erasure stay.
+Capture indexes are built only after replay misses. Original86 App CPU controls
+pass, including six new expansion/ownership/future-write/alias/queue/compute
+and exact original-plan equivalence controls. Release/offline/original129 GPU/
+full request/actual counters/recovery/performance remain pending. Not installed.
+Exact implementation contract: [canonical full-source representation](kuno-native-compute-intervals.md#connected-canonical-full-source-representation).
+No network or Vashti consumer change.
+
 This candidate retains ALL preceding wide/bulk/miss-ring/loading/attention/
 scoped-buffer/interval/OR/sealed-mask/global-barrier/push-descriptor components.
 It reuses the SAME complete original signature allocation, revalidates every

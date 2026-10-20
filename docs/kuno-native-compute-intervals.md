@@ -580,3 +580,72 @@ GPU gates, actual full requests/new producer counts and physical recovery.
 Only a meaningful matched clean gain earns terminal/full staged thinking/tools/
 MAX8/semantic/privacy acceptance and official installation. No further Ollama
 baseline runs. The Strata parity goal remains active and unmet.
+
+
+## Connected canonical full-source representation
+
+The complete successor is implemented. At actual capture the same genuine
+immutable source Arc/allocator binding table supplies one canonical ordered full
+view list. Lifetime root retention visits each actual shared source owner once
+instead of expanding it per node. Every descriptor, full BDA view/duplicate,
+indirect operand, original node order, pipeline, release/shared flag, dispatch,
+INFO/resource field and ownership constraint remains. Ordinary non-shared
+captures keep the original flat representation. Missing compact capacity keeps
+the original flat path; all actual allocation capacities are charged.
+
+Canonical nodes reference complete source lists, not presumed smaller accesses.
+An independent original expanded-word oracle checks every field. Replay equality
+is exactly equivalent to original expansion, including mixed flat/structured and
+separately owned equal lists: comparisons use complete actual view tuples and
+all node fields, never a hash-only match or source-pointer shortcut. Source
+interning itself still requires the SAME original immutable Arc/binding owner;
+no equal-byte identity substitution occurs. Original allocator/recording owners
+and IO epochs remain the authority for real lifetimes.
+
+After a real replay MISS, a capture-only evidence object checks every stored
+full view/indirect against actual guarded root membership/extent, then binds all
+signature allocation identities. Every later actual Wgpu guard revalidates the
+same Keys owner, all live raw roots and sizes. Canonical nodes use their already
+validated layout, rather than re-parsing an expanded signature. No new index is
+built on named decode replay hits. Original flat capture lookup remains available.
+
+A separate optional SEALED whole-recording write inventory uses the actual
+original program access flags and every descriptor/COPY/FILL in ALL queues.
+Unknown classes decline proof. ONLY a root with an original FULL physical read
+view and no write anywhere on the entire root can be factored internally. A
+writer in disjoint bytes, COPY, inline/shared work, private overlay/loan or any
+future node prevents it. Never infer immutability from weight labels or fault
+values. All original host publication/pinning and BoundGraph/IO checks stay.
+A truncated/incorrect source/reference/count cannot publish a canonical signature.
+
+The original complete source declaration remains referenced by each node.
+Certified immutable members need not be expanded into each INTERNAL hazard
+update. All other original members retain their ordered full views. The original
+Planner separately retains the certified ORIGINAL whole-root footprint in its
+canonical accesses; external joins/conflicts, ownership, every node/queue/segment,
+peer wait/release and first/last ALL_COMMANDS boundaries remain. The planner
+rejects an unfactored access to a certified root rather than silently hide a
+writer. Actual descriptor/kernel dispatches still bind every original resource.
+Compute tracking excludes only proven never-written roots, which cannot create
+an internal data hazard; mutable/unknown roots keep the existing complete logic.
+No memory dependency or completion/fence credit is fabricated.
+
+All canonical views/nodes/source references, root/sort/write-proof/active-index
+lists, full volatile wipes, pending planner footprints and finished metadata
+are charged within unchanged64MiB. Proof unavailable retains full original
+tracking. The original24MiB host and8MiB tape caps remain. Actual compiled-public
+counters additionally prove canonical lists, certified full roots and logically
+factored source declarations, after the original real sync. There is no new
+HTTP/KNT2/KNR2/config/model/Vashti field or private-content persistence.
+
+All86 actual App CPU controls pass (`native-canonical-source-combined-cpu-20261020.log`):
+original80 plus six signature/ownership/proof/equivalence controls. New cases
+compare EVERY expanded word/replay mutation, separately owned equal source
+lists, unknown references/counts/budgets, actual signature/root ownership,
+missing/full/partial physical roots, unknown classes, future/disjoint/peer writes,
+and original compute dependencies. Eight512-node mixed recordings on both lanes
+with serialization on/off match the original planner's EXACT segments, waits,
+signals, releases, node mapping and full external footprints/conflicts. Original
+independent byte/alias oracles and all mathematical references remain unchanged.
+Release/offline/original129 numerical GPU/full request/producer/recovery and
+performance gates remain next. No installation, speed or sustained decode claim.

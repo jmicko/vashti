@@ -255,6 +255,7 @@ fn update_regions(
 pub(crate) struct Planner {
     result: Plan,
     hazards: HashMap<u64, Vec<Region>>,
+    readonly: Vec<Access>,
     regions: usize,
     region_capacity: usize,
     capacity: usize,
@@ -284,6 +285,7 @@ impl Planner {
                 accesses: Vec::new(),
             },
             hazards: HashMap::new(),
+            readonly: Vec::new(),
             regions: 0,
             region_capacity: 0,
             capacity,
@@ -302,6 +304,29 @@ impl Planner {
         let mut planner = Self::new(capacity, serialize)?;
         planner.inline_copies = lane == 1;
         Ok(planner)
+    }
+    /// Complete certified full-root read declarations. Internal tracking is
+    /// factored only after an authentic whole-recording no-writer proof.
+    pub fn retain_readonly(
+        &mut self,
+        views: impl Iterator<Item = Access>,
+    ) -> Result<(), &'static str> {
+        if !self.result.node_segments.is_empty() || !self.readonly.is_empty() {
+            return Err("native readonly footprint order");
+        }
+        for v in views {
+            if v.buffer == 0
+                || v.first != 0
+                || v.bytes == 0
+                || v.write
+                || self.readonly.last().is_some_and(|p| p.buffer >= v.buffer)
+                || self.readonly.len() == 65536
+            {
+                return Err("native readonly full footprint inventory");
+            };
+            self.readonly.push(v)
+        }
+        Ok(())
     }
     pub fn push(&mut self, node: &NodeAccess) -> Result<(), &'static str> {
         self.push_accesses(node.copy, node.shared, node.release_after, &node.accesses)
@@ -351,6 +376,13 @@ impl Planner {
         let segment = &mut result.segments[s];
         let own = if shared { 2 } else { usize::from(copy) };
         for access in accesses {
+            if self
+                .readonly
+                .binary_search_by_key(&access.buffer, |a| a.buffer)
+                .is_ok()
+            {
+                return Err("native readonly proof unexpected unfactored access");
+            }
             if access.buffer == 0 {
                 return Err("native queue plan null buffer");
             }
@@ -409,7 +441,11 @@ impl Planner {
         }
         let mut accesses: Vec<Access> = Vec::new();
         accesses
-            .try_reserve_exact(self.regions)
+            .try_reserve_exact(
+                self.regions
+                    .checked_add(self.readonly.len())
+                    .ok_or("native readonly footprint size overflow")?,
+            )
             .map_err(|_| "native retained access allocation")?;
         if accesses.capacity() > MAX_REGIONS * 2 {
             return Err("native retained access reserved capacity");
@@ -428,6 +464,7 @@ impl Planner {
                 });
             }
         }
+        accesses.extend(self.readonly.drain(..));
         accesses.sort_unstable_by_key(|a| (a.buffer, a.first));
         let mut keep = 0;
         for read in 0..accesses.len() {

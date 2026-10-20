@@ -19,15 +19,15 @@ pub(super) struct View {
     pub first: u64,
     pub bytes: u64,
 }
-struct Plain<T: Copy>(Vec<T>);
+pub(super) struct Plain<T: Copy>(pub Vec<T>);
 impl<T: Copy> Plain<T> {
-    fn new(n: usize) -> Result<Self, &'static str> {
+    pub(super) fn new(n: usize) -> Result<Self, &'static str> {
         let mut data = Vec::new();
         data.try_reserve_exact(n)
             .map_err(|_| "native capture index allocation")?;
         Ok(Self(data))
     }
-    fn bytes(&self) -> Result<usize, &'static str> {
+    pub(super) fn bytes(&self) -> Result<usize, &'static str> {
         self.0
             .capacity()
             .checked_mul(size_of::<T>())
@@ -66,6 +66,8 @@ pub(super) struct Snapshot {
     bytes: usize,
     lookups: Cell<u64>,
     revalidations: Cell<u64>,
+    canonical: Option<[usize; 6]>,
+    nodes: usize,
 }
 fn number(n: u64) -> Result<usize, &'static str> {
     usize::try_from(n).map_err(|_| "native capture signature count overflow")
@@ -188,6 +190,8 @@ impl Snapshot {
             bytes: 4096 + nodes * size_of::<usize>() + roots * size_of::<Root>(),
             lookups: Cell::new(0),
             revalidations: Cell::new(0),
+            canonical: None,
+            nodes,
         };
         result.bytes = 4096 + result.offsets.bytes()? + result.roots.bytes()?;
         let mut at = 0;
@@ -214,6 +218,74 @@ impl Snapshot {
         }
         Ok(result)
     }
+    pub fn build_canonical(
+        identity: [usize; 6],
+        nodes: usize,
+        views: impl Iterator<Item = View>,
+        roots: usize,
+        mut root: impl FnMut(usize) -> Result<Root, &'static str>,
+        budget: usize,
+    ) -> Result<Self, &'static str> {
+        if nodes == 0
+            || nodes > MAX_NODES
+            || roots == 0
+            || roots > MAX_ROOTS
+            || 4096 + roots * 2 * size_of::<Root>() > budget.min(MAX_BYTES)
+        {
+            return Err("native canonical root inventory capacity");
+        }
+        let mut original = Plain::new(roots)?;
+        let mut sorted = Plain::new(roots)?;
+        if 4096 + original.bytes()? + sorted.bytes()? > budget.min(MAX_BYTES) {
+            return Err("native canonical root actual capacity");
+        }
+        for i in 0..roots {
+            let v = root(i)?;
+            if v.raw == 0 || v.bytes == 0 {
+                return Err("native canonical actual root");
+            };
+            original.0.push(v);
+            sorted.0.push(v)
+        }
+        sorted.0.sort_unstable_by_key(|r| r.raw);
+        for v in views {
+            let i = sorted
+                .0
+                .binary_search_by_key(&v.raw, |r| r.raw)
+                .map_err(|_| "native canonical foreign view root")?;
+            if v.bytes == 0
+                || v.first
+                    .checked_add(v.bytes)
+                    .is_none_or(|end| end > sorted.0[i].bytes)
+            {
+                return Err("native canonical full view extent");
+            }
+        }
+        let bytes = 4096 + original.bytes()?;
+        Ok(Self {
+            offsets: Plain::new(0)?,
+            roots: original,
+            address: 0,
+            words: 0,
+            bytes,
+            lookups: Cell::new(0),
+            revalidations: Cell::new(0),
+            canonical: Some(identity),
+            nodes,
+        })
+    }
+    pub fn check_canonical(&self, identity: [usize; 6]) -> Result<(), &'static str> {
+        if self.canonical != Some(identity) {
+            return Err("native canonical signature owner changed");
+        };
+        Ok(())
+    }
+    pub fn root_size(&self, raw: u64) -> Option<u64> {
+        self.roots.0.iter().find(|r| r.raw == raw).map(|r| r.bytes)
+    }
+    pub fn note_view(&self) {
+        self.lookups.set(self.lookups.get() + 1)
+    }
     pub fn metadata_bytes(&self) -> usize {
         self.bytes
     }
@@ -231,14 +303,15 @@ impl Snapshot {
             .set(self.revalidations.get() + self.roots() as u64)
     }
     pub fn check_signature(&self, s: &[u64]) -> Result<(), &'static str> {
-        if self.address != s.as_ptr() as usize || self.words != s.len() {
+        if self.canonical.is_some() || self.address != s.as_ptr() as usize || self.words != s.len()
+        {
             return Err("native capture original signature owner changed");
         };
         Ok(())
     }
     pub fn stats(&self) -> [u64; 3] {
         [
-            self.offsets.0.len() as u64,
+            self.nodes as u64,
             self.lookups.get(),
             self.revalidations.get(),
         ]
@@ -263,6 +336,8 @@ impl Snapshot {
 }
 impl Drop for Snapshot {
     fn drop(&mut self) {
+        self.canonical = None;
+        self.nodes = 0;
         self.address = 0;
         self.words = 0;
         self.bytes = 0;

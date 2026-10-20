@@ -86,6 +86,12 @@ mod strata_push_descriptor_controls;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_capture_inventory.rs"]
 mod strata_capture_inventory_controls;
 #[cfg(test)]
+use strata_capture_inventory_controls as capture_inventory;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_replay_signature.rs"]
+mod strata_replay_signature_controls;
+#[cfg(test)]
 #[allow(dead_code)]
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_read_bundles.rs"]
 mod strata_read_bundle_controls;

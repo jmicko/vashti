@@ -28,6 +28,8 @@ mod compute_barriers;
 mod descriptors;
 #[path = "strata_push_descriptors.rs"]
 mod push_descriptors;
+#[path = "strata_replay_signature.rs"]
+mod replay_signature;
 #[path = "strata_transfer_barriers.rs"]
 mod transfer_barriers;
 
@@ -124,9 +126,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 15] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 15];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 15] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 18] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 18];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 18] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -700,7 +702,7 @@ struct Recording {
     pool: vk::CommandPool,
     descriptors: vk::DescriptorPool,
     command: vk::CommandBuffer,
-    signature: Vec<u64>,
+    signature: replay_signature::Signature,
     _resources: Vec<WgpuResource>,
     _owners: binding_owners::Owners,
 }
@@ -708,7 +710,7 @@ impl Recording {
     fn metadata_bytes(&self) -> Option<usize> {
         self.work
             .metadata_bytes()
-            .checked_add(self.signature.capacity().checked_mul(size_of::<u64>())?)?
+            .checked_add(self.signature.metadata_bytes().ok()?)?
             .checked_add(
                 self._resources
                     .capacity()
@@ -1581,7 +1583,7 @@ impl Graph {
     fn visit_captured_bindings(
         &self,
         n: &Node,
-        captured: &capture_inventory::Node<'_>,
+        captured: &replay_signature::Node<'_>,
         mut visit: impl FnMut(capture_inventory::View, vk::AccessFlags, bool) -> Result<(), ServerError>,
     ) -> Result<(), ServerError> {
         let tag = match n.dispatch {
@@ -1628,7 +1630,7 @@ impl Graph {
                         )?;
                     }
                 }
-                for i in 0..captured.reads() {
+                for i in captured.active_indices().map_err(fault)? {
                     visit(
                         captured.physical(i).map_err(fault)?,
                         vk::AccessFlags::SHADER_READ,
@@ -1660,6 +1662,13 @@ impl Graph {
         }
         let mut append = |v: capture_inventory::View, flags: vk::AccessFlags, atomic_or: bool| {
             let buffer = v.raw;
+            if captured.is_some_and(|(c, _)| c.readonly_contains(buffer)) {
+                if flags.intersects(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
+                {
+                    return Err(fault("native readonly proof unexpected original writer"));
+                }
+                return Ok(());
+            }
             if let Some(ranges) = &mut planning {
                 ranges.push(strata_schedule::Access {
                     buffer,
@@ -2611,38 +2620,55 @@ impl Graph {
                     .checked_add(sum)
             })
             .ok_or_else(|| fault("native capture signature extent"))?;
-        let mut signature = Vec::new();
         let available = descriptors::METADATA_CAP
             .checked_sub(old_metadata)
-            .ok_or_else(|| fault("native capture previous metadata capacity"))?;
-        if signature_words
-            .checked_mul(size_of::<u64>())
-            .is_none_or(|n| n > available)
-        {
-            return Err(fault("native capture signature metadata capacity"));
-        }
-        signature
-            .try_reserve_exact(signature_words)
-            .map_err(|_| fault("native capture signature allocation"))?;
-        let signature_bytes = signature
-            .capacity()
-            .checked_mul(size_of::<u64>())
-            .ok_or_else(|| fault("native capture signature capacity overflow"))?;
+            .and_then(|n| n.checked_sub(source_bytes))
+            .ok_or_else(|| fault("native signature previous metadata capacity"))?;
+        let own_views = self
+            .nodes
+            .iter()
+            .try_fold(0usize, |sum, n| {
+                sum.checked_add(n.resources.len())?
+                    .checked_add(match &n.read_dependencies {
+                        ReadDependencies::Owned(v) => v.len(),
+                        ReadDependencies::Shared(_) => 0,
+                    })
+            })
+            .ok_or_else(|| fault("native signature own view count overflow"))?;
+        let all_views = source_owners
+            .bundles()
+            .iter()
+            .try_fold(own_views, |sum, b| sum.checked_add(b.len()))
+            .ok_or_else(|| fault("native signature source view count overflow"))?;
+        let mut signature = replay_signature::Builder::new(
+            source_owners.bundle_count() > 0,
+            self.nodes.len(),
+            all_views,
+            source_owners.bundle_count(),
+            signature_words,
+            available,
+        )
+        .map_err(fault)?;
         let resource_budget = available
-            .checked_sub(source_bytes)
-            .and_then(|n| n.checked_sub(signature_bytes))
-            .ok_or_else(|| fault("native capture signature metadata capacity"))?;
+            .checked_sub(signature.metadata_bytes().map_err(fault)?)
+            .ok_or_else(|| fault("native signature resource metadata capacity"))?;
         // These are the original lifetime roots, not replacement access views.
         let resources = binding_owners::unique_resources(
-            self.nodes.iter().flat_map(|n| {
-                n.resources
-                    .iter()
-                    .chain(n.read_dependencies.iter())
-                    .chain(match &n.dispatch {
-                        Dispatch::Indirect(r) => Some(r),
-                        _ => None,
-                    })
-            }),
+            self.nodes
+                .iter()
+                .flat_map(|n| {
+                    n.resources
+                        .iter()
+                        .chain(match &n.read_dependencies {
+                            ReadDependencies::Owned(v) => v.as_slice(),
+                            ReadDependencies::Shared(_) => &[],
+                        })
+                        .chain(match &n.dispatch {
+                            Dispatch::Indirect(r) => Some(r),
+                            _ => None,
+                        })
+                })
+                .chain(source_owners.bundles().iter().flat_map(|b| b.iter())),
             |a, b| a.buffer.cmp(&b.buffer),
             resource_budget,
         )
@@ -2658,40 +2684,78 @@ impl Graph {
                 .ok_or_else(|| fault("native capture resource metadata capacity"))?,
         )?;
         let native = keys.acquire()?;
-        for n in &self.nodes {
-            signature.push(
-                n.pipeline
-                    .as_ref()
-                    .map_or(0, |p| self.pipelines[p].pipeline.as_raw()),
-            );
-            signature.extend([u64::from(n.shared), u64::from(n.release_after)]);
-            signature.push(n.resources.len() as u64);
-            for r in &n.resources {
-                signature.extend([native.get(r)?.as_raw(), r.offset, r.size]);
-            }
-            signature.push(n.read_dependencies.len() as u64);
-            for r in n.read_dependencies.iter() {
-                signature.extend([native.get(r)?.as_raw(), r.offset, r.size]);
-            }
-            match &n.dispatch {
-                Dispatch::Direct(x, y, z) => signature.extend([0, *x as u64, *y as u64, *z as u64]),
-                Dispatch::Indirect(r) => {
-                    signature.extend([1, native.get(r)?.as_raw(), r.offset, r.size])
-                }
-                Dispatch::Copy => signature.extend([2, 0, 0, 0]),
-                Dispatch::Fill => signature.extend([3, 0, 0, 0]),
+        if signature.factored() {
+            for bundle in source_owners.bundles() {
+                signature
+                    .bundle(bundle.iter().map(|r| {
+                        native
+                            .signature_view(r)
+                            .map_err(|_| "native signature actual source unavailable")
+                    }))
+                    .map_err(fault)?;
             }
         }
-        let capture_cache = native
-            .snapshot(
-                &signature,
-                self.nodes.len(),
-                resource_budget
-                    .checked_sub(resource_bytes)
-                    .and_then(|n| n.checked_sub(keys.metadata_bytes()))
-                    .unwrap_or(0),
-            )
-            .ok();
+        for n in &self.nodes {
+            let program = n.pipeline.as_ref().map(|p| &self.pipelines[p]);
+            let dispatch = match &n.dispatch {
+                Dispatch::Direct(x, y, z) => [0, *x as u64, *y as u64, *z as u64],
+                Dispatch::Indirect(v) => {
+                    let v = native.signature_view(v)?;
+                    [1, v.raw, v.first, v.bytes]
+                }
+                Dispatch::Copy => [2, 0, 0, 0],
+                Dispatch::Fill => [3, 0, 0, 0],
+            };
+            let bundle = if signature.factored() {
+                n.read_dependencies
+                    .shared()
+                    .map(|b| source_owners.bundle_index(b))
+                    .transpose()
+                    .map_err(fault)?
+            } else {
+                None
+            };
+            signature
+                .node(
+                    program.map_or(0, |p| p.pipeline.as_raw()),
+                    n.shared,
+                    n.release_after,
+                    n.resources.len(),
+                    n.read_dependencies.len(),
+                    bundle,
+                    dispatch,
+                    n.resources.iter().enumerate().map(|(i, r)| {
+                        let flags = match n.dispatch {
+                            Dispatch::Copy => {
+                                if i == 0 {
+                                    vk::AccessFlags::TRANSFER_READ
+                                } else {
+                                    vk::AccessFlags::TRANSFER_WRITE
+                                }
+                            }
+                            Dispatch::Fill => vk::AccessFlags::TRANSFER_WRITE,
+                            _ => *program
+                                .and_then(|p| p.program.accesses.get(i))
+                                .ok_or("native signature original descriptor class missing")?,
+                        };
+                        Ok(replay_signature::Entry {
+                            view: native
+                                .signature_view(r)
+                                .map_err(|_| "native signature original descriptor unavailable")?,
+                            flags,
+                            atomic_or: program
+                                .is_some_and(|p| i < 32 && p.program.atomic_or & (1u32 << i) != 0),
+                        })
+                    }),
+                    n.read_dependencies.iter().map(|r| {
+                        native
+                            .signature_view(r)
+                            .map_err(|_| "native signature original physical source unavailable")
+                    }),
+                )
+                .map_err(fault)?;
+        }
+        let signature = signature.finish().map_err(fault)?;
         drop(native); // No guard crosses recording eviction, replay or cleanup.
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
         let profiling = profile_active() && compute_count >= 2048;
@@ -2722,7 +2786,6 @@ impl Graph {
         {
             let recording = self.recordings.remove(hit);
             self.recordings.push(recording);
-            drop(capture_cache);
             drop(keys);
             drop(resources);
             self.submit_last_recording(compute_count, true, false)?;
@@ -2879,12 +2942,11 @@ impl Graph {
         if compute_scratch_bytes > 1024 * 1024 {
             return Err(fault("native compute barrier scratch capacity"));
         }
-        let scratch_bytes = scratch
+        let base_scratch_bytes = scratch
             .metadata_bytes()
             .map_err(fault)?
             .checked_add(keys.metadata_bytes())
             .and_then(|n| n.checked_add(source_bytes))
-            .and_then(|n| n.checked_add(capture_cache.as_ref().map_or(0, |c| c.metadata_bytes())))
             .and_then(|n| n.checked_add(compute_scratch_bytes))
             .and_then(|n| {
                 n.checked_add(if self.push_descriptors.is_some() {
@@ -2895,6 +2957,18 @@ impl Graph {
             })
             .ok_or_else(|| fault("native capture guarded metadata overflow"))?;
         let native = keys.acquire()?;
+        let cache_budget = descriptors::METADATA_CAP
+            .checked_sub(old_metadata)
+            .and_then(|n| n.checked_sub(signature.metadata_bytes().ok()?))
+            .and_then(|n| n.checked_sub(resource_bytes))
+            .and_then(|n| n.checked_sub(base_scratch_bytes))
+            .unwrap_or(0);
+        let capture_cache = native
+            .snapshot(&signature, self.nodes.len(), cache_budget)
+            .ok();
+        let scratch_bytes = base_scratch_bytes
+            .checked_add(capture_cache.as_ref().map_or(0, |c| c.metadata_bytes()))
+            .ok_or_else(|| fault("native capture indexed metadata overflow"))?;
         let planned_cache = capture_cache
             .as_ref()
             .map(|c| c.bind(&native, &signature))
@@ -2904,8 +2978,8 @@ impl Graph {
             .iter()
             .try_fold(
                 signature
-                    .capacity()
-                    .checked_mul(size_of::<u64>())
+                    .metadata_bytes()
+                    .ok()
                     .and_then(|n| n.checked_add(scratch_bytes))
                     .and_then(|n| n.checked_add(resource_bytes))
                     .and_then(|n| n.checked_add(owners.metadata_bytes()))
@@ -2933,6 +3007,16 @@ impl Graph {
         let mut planner =
             strata_schedule::Planner::for_lane(self.nodes.len(), profiling, self.compute_lane)
                 .map_err(fault)?;
+        if let Some(c) = &planned_cache {
+            planner
+                .retain_readonly(c.readonly_views().iter().map(|v| strata_schedule::Access {
+                    buffer: v.raw,
+                    first: v.first,
+                    bytes: v.bytes,
+                    write: false,
+                }))
+                .map_err(fault)?;
+        }
         for (index, node) in self.nodes.iter().enumerate() {
             self.fill_compute_ranges(
                 node,
@@ -3063,8 +3147,8 @@ impl Graph {
             .ok_or_else(|| fault("native transfer capture metadata overflow"))?;
 
         let other_metadata = signature
-            .capacity()
-            .checked_mul(size_of::<u64>())
+            .metadata_bytes()
+            .ok()
             .and_then(|n| {
                 n.checked_add(
                     resources
@@ -3458,7 +3542,7 @@ impl Graph {
             std::sync::atomic::Ordering::Relaxed,
         );
         let call_counts = compute.call_counts();
-        let cache_counts = capture_cache.as_ref().map_or([0; 3], |c| c.stats());
+        let cache_counts = capture_cache.as_ref().map_or([0; 6], |c| c.stats());
         for (total, amount) in COMPUTE_BARRIERS.iter().zip([
             self.nodes.len() - copy_count,
             compute.candidates(),
@@ -3473,6 +3557,9 @@ impl Graph {
             cache_counts[0] as usize,
             cache_counts[1] as usize,
             cache_counts[2] as usize,
+            cache_counts[3] as usize,
+            cache_counts[4] as usize,
+            cache_counts[5] as usize,
             self.nodes
                 .iter()
                 .filter(|n| n.read_dependencies.shared().is_some())
