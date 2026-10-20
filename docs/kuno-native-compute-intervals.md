@@ -2042,3 +2042,13 @@ Disjoint scratch-slot ownership is checked for all32 real subgroups. Original
 K order, matrix/store counts, precision controls, shared envelope, output and
 fault/source/metadata checks remain. Release/offline/171 actual GPU controls,
 whole original profile/count/pool proofs and original clean/staged gates pending.
+
+
+Frozen subgroup-publication3228cd9e/SHA0e45b16a passes145 selected CPU,
+420 WGSL/208 matrix layouts and all original171 real GPU numerical controls
+and physical recovery. Protected full profile/normal-proof unit is ACTIVE;
+no whole-model or speed acceptance yet. Exact scalar/pool predecessor865a9c16
+normal first/repeat11.608595581/10.128802681s is the causal comparison; do not
+attribute the known XMX-versus-scalar attention difference to publication.
+Original installed clean first12.962279132/repeat11.147390805s and5%-each gate
+remain unchanged. Same-source acceptance helper is prepared, not executed.

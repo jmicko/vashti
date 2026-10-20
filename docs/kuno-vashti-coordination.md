@@ -22,7 +22,38 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 23:52UTC): coherent native subgroup publication candidate,145 CPU pass.**
+**Live active handoff (2026-10-20 23:58UTC): subgroup publication frozen;171 GPU controls pass; full run ACTIVE.**
+
+Use ONLY the same Kuno worktree/branch below. Frozen source
+3228cd9e7596b6c0ba6dd3935a44f834b2dba691 / worker SHA
+0e45b16ae74b01e7ff2d5c9e3aa19d1f4d11451fccffaa967577da1ba2f16deb,
+build`strata-parity-subgroup-publish-20261020`, passes145 actual selected CPU,
+420 WGSL/208 matrix layouts and original129+42 real GPU numerical controls,
+with close/physical recovery. Both actual compiler paths apply required SG
+memory fences; no precision/owner/source/erasure guard changed. XMX stays as
+complete optional source; this build selects the matched scalar QSA path.
+
+Protected unit`kuno-native-subgroup-publish-connected-20261020` is ACTIVE,
+loading/running original73/4245/4245 full profile, then original normal-profile
+and original compiler/count/scratch/pool/source/recovery chain. DO NOT launch
+another GPU job or heavy CPU task, reset hardware, install or assume completion.
+Root helper`check-native-subgroup-publish-connected-20261020.py` pins source,
+worker SHA and exact CPU/release feature equality,145 selected controls and all
+original full proofs. Live log`strata-parity-subgroup-publish-connected-20261020.log`
+under existing artifact base. A timeout observing this unit is not a stopped job.
+
+Exact scalar/pool predecessor865a9c16 profile first/repeat11.6322/10.2892s,
+normal11.6086/10.1288s. Compare this arm when attributing publication changes;
+keep original installed clean12.9623/11.1474s and Strata5.3515s for selection and
+goal. No speed claim yet. Prepared`check-native-subgroup-publish-acceptance-20261020.py`
+is UNEXECUTED: requires full connected proof, preserves terminal-negative,
+FRESH clean45/4245/4245 at-EACH5% and staged quality/API/privacy gates.
+Installed worker/gateway unchanged; goal ACTIVE/UNMET. Bounded sudo297061 /
+sharedshell3556 still valid, ends00:17:49UTC Oct21. Never kill sharedshell.
+No API/configuration/model/frontend/release change. Contract and source rationale
+remain in the next checkpoint's linked specification.
+
+**Previous checkpoint (2026-10-20 23:52UTC): coherent native subgroup publication candidate,145 CPU pass.**
 
 Use ONLY the existing Kuno worktree/branch below. Previous full matrix bundle
 remains intact and optional; its clean failure is preserved. Installed worker/
