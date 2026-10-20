@@ -47,6 +47,35 @@ type Args = TensorArgs<()>;
 type Inputs<F> = TensorInputs<Vector<F, Const<4>>, Vector<F, Const<4>>, Vector<f32, Const<4>>>;
 type Output = TensorOutput<Vector<f32, Const<4>>>;
 const SHARED_CAP: usize = 32768;
+#[cfg(any(feature = "strata-cubek-m64", test))]
+const M64_SHARED_CAP: usize = 34816;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MatrixPlan {
+    partition_m: u32,
+    required_shared: usize,
+}
+fn matrix_plan(count: usize, available_shared: usize) -> MatrixPlan {
+    #[cfg(all(feature = "strata-cubek-m64", feature = "strata-cubek-tilewise"))]
+    if count >= 256 && available_shared >= M64_SHARED_CAP {
+        return MatrixPlan {
+            partition_m: 8,
+            required_shared: M64_SHARED_CAP,
+        };
+    }
+    let _ = (count, available_shared);
+    MatrixPlan {
+        partition_m: 4,
+        required_shared: SHARED_CAP,
+    }
+}
+fn matrix_scheme(plan: MatrixPlan) -> Result<TilingScheme> {
+    TilingScheme::builder()
+        .with_tile_size(TileSize::new(8, 16, 16))
+        .with_partition_size(PartitionSize::new(plan.partition_m, 1, 4))
+        .with_stage_size(StageSize::new(1, 4, 1))
+        .build()
+        .map_err(|_| Error::InvalidFormat("CubeK fixed matrix tiling"))
+}
 
 #[path = "strata_cubek_expert.rs"]
 mod routed_expert;
@@ -472,14 +501,16 @@ fn launch<F: Float>(
         vector_sizes,
         max_cube_count: client.properties().hardware.max_cube_count,
     };
-    // M32×N64×K64, four true SIMD16 planes, four accumulators each. CubeK
-    // owns the complete double-buffered loading/stage/fragment/store pipeline.
-    let scheme = TilingScheme::builder()
-        .with_tile_size(TileSize::new(8, 16, 16))
-        .with_partition_size(PartitionSize::new(4, 1, 4))
-        .with_stage_size(StageSize::new(1, 4, 1))
-        .build()
-        .map_err(|_| Error::InvalidFormat("CubeK fixed tiling"))?;
+    // Both complete blueprints keep true SIMD16, K64 paired stages and
+    // ordered K16 products. The opt-in high-count M64 choice requires its
+    // actual compiled per-workgroup shared footprint, never a residency guess.
+    let plan = matrix_plan(count, client.properties().hardware.max_shared_memory_size);
+    if client.properties().hardware.max_shared_memory_size < plan.required_shared {
+        return Err(Error::InvalidFormat(
+            "CubeK actual matrix shared capability",
+        ));
+    }
+    let scheme = matrix_scheme(plan)?;
     let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
         .partition_buffering(PartitionBuffering::Single)
         .build();
@@ -604,6 +635,12 @@ mod tests {
         )
     }
     fn definition<F: Float>(count: usize) -> KernelDefinition {
+        definition_partition::<F>(count, 4)
+    }
+    pub(super) fn definition_partition<F: Float>(
+        count: usize,
+        partition_m: u32,
+    ) -> KernelDefinition {
         let props = properties();
         let elem = F::as_type_native_unchecked().storage_type();
         let f32_ty = ElemType::Float(FloatKind::F32).into();
@@ -637,7 +674,7 @@ mod tests {
         .unwrap();
         let scheme = TilingScheme::builder()
             .with_tile_size(TileSize::new(8, 16, 16))
-            .with_partition_size(PartitionSize::new(4, 1, 4))
+            .with_partition_size(PartitionSize::new(partition_m, 1, 4))
             .with_stage_size(StageSize::new(1, 4, 1))
             .build()
             .unwrap();
@@ -652,6 +689,13 @@ mod tests {
         let config =
             <Family as BatchMatmulFamily<()>>::expand_config(&props, &blueprint, &dtypes, &vectors)
                 .unwrap();
+        assert_eq!(
+            <Family as BatchMatmulFamily<()>>::cubedim_resource(&blueprint, &dtypes, &vectors)
+                .unwrap()
+                .num_planes(16)
+                .unwrap_or_else(|e| panic!("{e}")),
+            4
+        );
         let input = <Inputs<F> as ConcreteInputsFactory<Algorithm>>::create(
             lhs, rhs, &blueprint, &problem, &vectors, &dtypes,
         );
@@ -665,7 +709,7 @@ mod tests {
         let output = <Output as LaunchArg>::register(output, &mut launcher);
         let plan = cubek_std::cube_count::CubeCountPlan::new_from_problem(
             cubek_std::cube_count::Count3d {
-                x: count.div_ceil(32) as u32,
+                x: count.div_ceil(partition_m as usize * 8) as u32,
                 y: 20,
                 z: 1,
             },
@@ -689,6 +733,25 @@ mod tests {
         let errors = builder.scope.pop_errors();
         assert!(errors.is_empty(), "{errors:?}");
         builder.build(settings)
+    }
+    #[test]
+    fn m64_choice_is_explicit_high_count_and_real_per_workgroup_cap_only() {
+        for count in [32, 33, 128, 255, 256, 257, 4096] {
+            for shared in [32768, 34815, 34816, 49152] {
+                let actual = matrix_plan(count, shared);
+                let selected = cfg!(all(
+                    feature = "strata-cubek-m64",
+                    feature = "strata-cubek-tilewise"
+                )) && count >= 256
+                    && shared >= M64_SHARED_CAP;
+                assert_eq!(actual.partition_m, if selected { 8 } else { 4 });
+                assert_eq!(
+                    actual.required_shared,
+                    if selected { M64_SHARED_CAP } else { SHARED_CAP }
+                );
+                assert!(actual.required_shared <= shared);
+            }
+        }
     }
     #[test]
     fn admission_keeps_original_small_and_unaligned_fallbacks() {

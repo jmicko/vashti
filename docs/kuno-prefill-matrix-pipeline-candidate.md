@@ -486,3 +486,60 @@ it; its original public-arena guard and private/request silence are unchanged.
 Evidence is under the isolated `prefill-cubek-cpu-20261020` artifact directory:
 `tilewise-whole-spirv.log` and `tilewise-controls.log`. No GPU speed result is
 claimed by these CPU controls.
+
+### Separate bounded M64 Tilewise candidate
+
+`strata-cubek-m64` is a separate opt-in, depending on the complete Tilewise
+feature. One shared host `MatrixPlan`/scheme builder controls both dense and
+routed-expert launches. It selects M64xN64xK64 only when **count>=256** and the
+**actual client's per-workgroup shared limit is>=34816B**. Otherwise the full
+M32 Tilewise path remains. Small/unaligned native fallbacks and all original
+owner, descriptor, stream, precision, finite/status, context and erasure checks
+remain unchanged. Neither a private API setting nor an installed default is
+added by this source candidate.
+
+This blueprint uses partition8x1x4, stage1x4x1 and the same true16x4x1 launch
+geometry. It retains cooperative8x16x16 FP16/BF16 products, F32 accumulators and
+ordered K16 reductions, without split-K. Each subgroup has eight accumulator
+tiles instead of four; the per-lane-equivalent F32 accumulator storage is64
+values instead of32. These are semantic tile counts, **not measured Intel GRF
+allocation**. For sufficiently large groups it increases operand reuse across
+M and the independent work available within a subgroup. Count65 would pad128
+rows rather than M32's96, so applying M64 indiscriminately to small groups would
+add unnecessary work; the explicit256 threshold avoids that case.
+
+Actual source calibration compiled FP16/BF16 dense and genuine GU/DOWN variants
+for both M32/M64, in default and fully explicit layouts (16 modules). Every M64
+variant measured **34816B** shared versus M32's26624B and128 static cooperative
+product statements versus64 in the complete expanded modules. Those statement
+counts include loop/final-path bodies; they are not a per-inference operation
+count or throughput measurement. The library's pure resource planner also
+confirms four actual planes for each blueprint.
+
+Root's read-only physical snapshot
+`/media/jmicko/faststore/kuno-development/native-shared-limit-snapshot-20261020.json`
+reports49152B `maxComputeSharedMemorySize` for BMG G31. Vulkan adapter mapping
+exposes this as `max_compute_workgroup_storage_size`; `strata_worker` requests
+complete admitted adapter limits, and CubeCL's actual shared-memory property
+comes from the resulting device. The existing global32912B minimum alone would
+not prove M64 admission, which is why the selector separately checks34816B.
+**49152B is a per-workgroup limit, not the total SLM pool of a core/subslice.**
+It does not establish the number of resident workgroups. Actual SLM allocation
+buckets, native registers and occupancy remain unmeasured.
+
+The separate final CPU inventory compiles full256 and tail257 variants for
+FP16/BF16 dense and GU/DOWN across all eight physical layouts (64 modules),
+checking the real shared envelope, native product count, actual four-plane
+resource plan, true geometry, subgroup-only mapping, unchanged native IEEE
+controls and Vulkan1.3 validation. Existing M32 compiler controls and original
+GPU acceptance are preserved. The source-only artifacts are
+`m64-source-measurement.log`, `m64-whole-spirv.log` and `m64-controls.log` under
+`prefill-cubek-cpu-20261020`. Root must complete original numerical/lifecycle
+controls and compare the whole coupled workload before judging performance.
+
+The M64 final64-module inventory passes all checks above (two CPU shader-test
+parts,224.60s total wall time), with34816B and128 static cooperative products in
+every actual module. Seven focused original/selector/fixture/window controls
+also pass. This is CPU compiler/source acceptance; no M64 GPU numeric or speed
+result is claimed. The source keeps the already tested M32 behavior unless the
+additional feature, count boundary and actual device capability all permit it.

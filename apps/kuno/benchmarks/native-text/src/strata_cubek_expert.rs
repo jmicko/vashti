@@ -488,12 +488,13 @@ pub(crate) fn try_expert(
         vector_sizes: vectors,
         max_cube_count: hw.max_cube_count,
     };
-    let scheme = TilingScheme::builder()
-        .with_tile_size(TileSize::new(8, 16, 16))
-        .with_partition_size(PartitionSize::new(4, 1, 4))
-        .with_stage_size(StageSize::new(1, 4, 1))
-        .build()
-        .map_err(|_| Error::InvalidFormat("CubeK expert tiling"))?;
+    let plan = matrix_plan(count, hw.max_shared_memory_size);
+    if hw.max_shared_memory_size < plan.required_shared {
+        return Err(Error::InvalidFormat(
+            "CubeK actual expert shared capability",
+        ));
+    }
+    let scheme = matrix_scheme(plan)?;
     let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
         .partition_buffering(PartitionBuffering::Single)
         .build();
@@ -550,6 +551,9 @@ mod tests {
     use super::*;
 
     fn definition(count: usize, down: bool) -> KernelDefinition {
+        definition_partition(count, down, 4)
+    }
+    fn definition_partition(count: usize, down: bool, partition_m: u32) -> KernelDefinition {
         let props = super::super::tests::properties();
         let (columns, rows) = if down { (640, 2560) } else { (2560, 1280) };
         let elem = ElemType::Float(FloatKind::F16).into();
@@ -574,7 +578,7 @@ mod tests {
         );
         let scheme = TilingScheme::builder()
             .with_tile_size(TileSize::new(8, 16, 16))
-            .with_partition_size(PartitionSize::new(4, 1, 4))
+            .with_partition_size(PartitionSize::new(partition_m, 1, 4))
             .with_stage_size(StageSize::new(1, 4, 1))
             .build()
             .unwrap();
@@ -589,6 +593,13 @@ mod tests {
         let config =
             <Family as BatchMatmulFamily<()>>::expand_config(&props, &blueprint, &dtypes, &vectors)
                 .unwrap();
+        assert_eq!(
+            <Family as BatchMatmulFamily<()>>::cubedim_resource(&blueprint, &dtypes, &vectors)
+                .unwrap()
+                .num_planes(16)
+                .unwrap_or_else(|e| panic!("{e}")),
+            4
+        );
         // Metadata-only compiler fixtures. No client/device/request is created.
         let owner = |bytes| Handle::new(cubecl_common::stream_id::StreamId::current(), bytes);
         let lhs = tensor(
@@ -637,12 +648,12 @@ mod tests {
             unsafe { ArrayArg::from_raw_parts(owner(32768), 1) },
             &mut launcher,
         );
-        let count = <usize as LaunchArg>::register(count, &mut launcher);
+        let count_arg = <usize as LaunchArg>::register(count, &mut launcher);
         let rows_arg = <usize as LaunchArg>::register(rows, &mut launcher);
         let group = <usize as LaunchArg>::register(0usize, &mut launcher);
         let plan = cubek_std::cube_count::CubeCountPlan::new_from_problem(
             cubek_std::cube_count::Count3d {
-                x: 2,
+                x: count.div_ceil(partition_m as usize * 8) as u32,
                 y: rows.div_ceil(64) as u32,
                 z: 1,
             },
@@ -657,7 +668,7 @@ mod tests {
         let map = <Array<u32> as LaunchArg>::expand(&map, &mut b);
         let status = <Array<u32> as LaunchArg>::expand_output(&status, &mut b);
         let fault = <Array<Atomic<u32>> as LaunchArg>::expand_output(&fault, &mut b);
-        let count = <usize as LaunchArg>::expand(&count, &mut b);
+        let count = <usize as LaunchArg>::expand(&count_arg, &mut b);
         let rows = <usize as LaunchArg>::expand(&rows_arg, &mut b);
         let group = <usize as LaunchArg>::expand(&group, &mut b);
         let mapping = <CubeMapping as LaunchArg>::expand(&mapping, &mut b);
@@ -806,5 +817,136 @@ mod tests {
             "compiled_public_cubek_expert tilewise={} modules=32 observed_shared_bytes={observed_shared:?}",
             cfg!(feature = "strata-cubek-tilewise")
         );
+    }
+    /// Real selected opt-in M64 blueprint, compiled without constructing a GPU.
+    #[cfg(feature = "strata-cubek-m64")]
+    fn check_m64_modules(masks: std::ops::Range<usize>) {
+        use cubecl::ir::{StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, WgpuCompilationOptions};
+        use std::io::Write;
+        for mask in masks {
+            for count in [256, 257] {
+                let plan = matrix_plan(count, 49152);
+                assert_eq!(plan.partition_m, 8);
+                assert_eq!(plan.required_shared, M64_SHARED_CAP);
+                let partition_m = plan.partition_m;
+                for (name, definition) in [
+                    (
+                        "dense-fp16",
+                        super::super::tests::definition_partition::<f16>(count, partition_m),
+                    ),
+                    (
+                        "dense-bf16",
+                        super::super::tests::definition_partition::<bf16>(count, partition_m),
+                    ),
+                    ("expert-gu", definition_partition(count, false, partition_m)),
+                    (
+                        "expert-down",
+                        definition_partition(count, true, partition_m),
+                    ),
+                ] {
+                    let mut options = WgpuCompilationOptions {
+                        supports_vulkan: true,
+                        ..Default::default()
+                    };
+                    options.vulkan.max_spirv_version = (1, 6);
+                    options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+                    options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+                    options.vulkan.supports_explicit_smem = mask & 4 != 0;
+                    assert_eq!(
+                        definition.buffers.len(),
+                        if name.starts_with("dense") { 3 } else { 6 }
+                    );
+                    let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+                        &mut AutoCompiler::SpirV(Default::default()),
+                        definition,
+                        &options,
+                        ExecutionMode::Unchecked,
+                        StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                    )
+                    .unwrap() else {
+                        panic!("actual SPIR-V")
+                    };
+                    assert_eq!(
+                        kernel.shared_size, M64_SHARED_CAP,
+                        "actual M64 shared envelope"
+                    );
+                    let words =
+                        wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)
+                            .unwrap();
+                    let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)
+                        .unwrap()
+                        .unwrap_or(words);
+                    assert_eq!(
+                        wgpu::hal::vulkan::kuno_cooperative_subgroup(&words),
+                        Some(16)
+                    );
+                    let mut at = 5;
+                    let mut products = 0;
+                    let mut local = None;
+                    let mut builtin = Vec::new();
+                    while at < words.len() {
+                        let n = (words[at] >> 16) as usize;
+                        let op = words[at] & 65535;
+                        let args = &words[at + 1..at + n];
+                        if op == 16 && args.get(1) == Some(&17) {
+                            local = Some(args[2..5].to_vec());
+                        }
+                        if op == 71 && args.get(1) == Some(&11) {
+                            builtin.push(args[2]);
+                        }
+                        if op == 4459 {
+                            products += 1;
+                        }
+                        assert!(
+                            op != 71 || args.get(1) != Some(&40),
+                            "relaxed FPFastMathMode"
+                        );
+                        at += n;
+                    }
+                    assert_eq!(local, Some(vec![16, 4, 1]));
+                    assert_eq!(products, 128);
+                    assert!(builtin.contains(&40) && builtin.contains(&41));
+                    assert!(!builtin.iter().any(|b| matches!(b, 27 | 28 | 29)));
+                    println!(
+                        "compiled_public_cubek_blueprint name={name} partition_m={partition_m} count={count} mask={mask} shared_bytes={} products={products}",
+                        kernel.shared_size
+                    );
+                    let mut cmd = std::process::Command::new("spirv-val");
+                    cmd.args(["--target-env", "vulkan1.3"]);
+                    if mask & 1 != 0 {
+                        cmd.arg("--uniform-buffer-standard-layout");
+                    }
+                    let mut child = cmd
+                        .arg("-")
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    child
+                        .stdin
+                        .take()
+                        .unwrap()
+                        .write_all(
+                            &words
+                                .iter()
+                                .flat_map(|v| v.to_le_bytes())
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap();
+                    assert!(child.wait().unwrap().success());
+                }
+            }
+        }
+    }
+    #[cfg(feature = "strata-cubek-m64")]
+    #[test]
+    fn candidate_m64_actual_first_layouts() {
+        check_m64_modules(0..4);
+    }
+    #[cfg(feature = "strata-cubek-m64")]
+    #[test]
+    fn candidate_m64_actual_second_layouts() {
+        check_m64_modules(4..8);
     }
 }
