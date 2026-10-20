@@ -305,6 +305,14 @@ async fn serve(
                 eprintln!("public_gdn_math_numeric_error {error}");
                 "public_prompt_gdn_math_numeric_failed"
             })?;
+        #[cfg(feature = "strata-cubek-gemm")]
+        let expert_matrix_checks = crate::strata_matrix::public_expert_numeric(&client, &mut arena)
+            .map_err(|error| {
+                eprintln!("public_expert_matrix_numeric_error {error}");
+                "public_prompt_expert_matrix_numeric_failed"
+            })?;
+        #[cfg(not(feature = "strata-cubek-gemm"))]
+        let expert_matrix_checks: Vec<serde_json::Value> = Vec::new();
         let qsa_math_checks =
             crate::strata_qsa::public_attention_numeric(&mut arena).map_err(|error| {
                 eprintln!("public_attention_math_numeric_error {error}");
@@ -320,7 +328,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"gdn_math_checks":gdn_math_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }

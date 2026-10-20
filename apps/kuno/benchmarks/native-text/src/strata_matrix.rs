@@ -13,6 +13,14 @@ mod numeric;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use numeric::cases as public_numeric;
 
+#[cfg(feature = "strata-cubek-gemm")]
+pub(crate) fn public_expert_numeric(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut crate::private_arena::PrivateArena,
+) -> std::result::Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    cubek::public_expert_numeric(client, arena)
+}
+
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_timing_probe.rs"]
 mod timing;
@@ -1305,7 +1313,15 @@ mod native {
         compatible(client, bfloat)?;
         #[cfg(feature = "strata-cubek-gemm")]
         if super::cubek::try_dense(
-            client, h.clone(), count, columns, rows, weight_first, out_first, out_stride, bfloat,
+            client,
+            h.clone(),
+            count,
+            columns,
+            rows,
+            weight_first,
+            out_first,
+            out_stride,
+            bfloat,
         )? {
             return Ok(());
         }
@@ -1446,6 +1462,19 @@ mod native {
         down: bool,
     ) -> Result<()> {
         compatible(client, false)?;
+        #[cfg(feature = "strata-cubek-gemm")]
+        if super::cubek::try_expert(
+            client,
+            h.clone(),
+            count,
+            columns,
+            rows,
+            weight_first,
+            group,
+            down,
+        )? {
+            return Ok(());
+        }
         let [input, weight, output, map, status, fault] = h;
         let use_macro =
             macro_compatible(client, &input, &weight, count, rows, columns, weight_first);
