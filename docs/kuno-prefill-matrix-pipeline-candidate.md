@@ -179,3 +179,55 @@ compiler/tail checks and two pure sampled-oracle/full-output checks). Strict
 standalone production helper Clippy passes. Artifacts:
 `/tmp/kuno-prefill-matrix-throughput-20261020/timing-{check.rs,tests.log}`.
 No GPU work or shared build was performed for this helper.
+
+## Narrow expert K64 pipelines — 2026-10-20
+
+The protected public4245-token histogram finds26673 active expert groups:
+12221 with1–7 members,3883 with8–15,2850 with16–31,2109 with32–63,
+1690 with64–127,1576 with128–255 and2344 with256+. Almost46% of calls
+therefore always used the old masked scalar/SLM product, with two barriers
+perK16. The original full-tile microtiming misses this when it starts at8.
+Fixed-public microtiming now includes1/3/7; root's original small baseline
+measures GU682/372/415us at1/3/7 against60us at8, and411us at31. These are
+primitive timings, not prompt rates; fixed per-group dequant costs remain.
+
+This coherent candidate adds two separately compiled matrix shapes:
+
+- **M8xN64**, selected for1–8 members: four SIMD16 subgroups each own one8x16
+  accumulator. Paired A[8][64]/B[64][64] operands plus the original F32 output
+  scratch occupy exactly20480B. A single-row expert retains eight padded matrix
+  rows; it never runs a32-row/four-accumulator product.
+- **M16xN64**, selected for9–31 members: each subgroup owns two vertically
+  adjacent8x16 accumulators. Paired operands plus output occupy24576B. Counts17–24
+  round to32 rather than the old24 rows; improved staging/reuse must outweigh
+  that bounded padding in actual performance acceptance.
+
+Both shapes use the whole vectorized K64 chain: genuine aligned vec4 half/BF16
+loads, immediate publication, full-stage uniform fast loads with initialized-zero
+masked tails, separate ping-pong stages, four increasing K16 groups, and one
+uniform handoff perK64. A is shared across all four feature subgroups; B covers
+their disjoint feature ranges. Output stores, original row maps, finite/fault
+bits and the full-capacity down-status plane are unchanged. The compile-time
+M8 variant emits only one actual F32 accumulator variable; M16 emits two.
+
+Counts>=32 retain the selected M32 stage/product/epilogues/builders verbatim.
+The original scalar-half fallback remains for unsupported token counts, feature
+geometry, true vector owner alignment/lengths or actual device shared limits.
+There are no forged descriptors/capabilities, changed quantization/context,
+relaxed numerical tolerances, request retention or API changes.
+
+The actual compiler/offline inventory grows from64 to128 modules (16 definitions
+across8 layouts). It checks authentic8-byte storage, SIMD16, exact20/24/32KiB
+shared allocation, exactly three barrier instructions, two loops, and4/8/16
+ordered native matrix products with1/2/4 F32 accumulator variables. Additional
+CPU controls cover admission boundaries, every output exactly once, each full
+vector within the real image, all token/feature/K tails, disjoint paired slots
+and the original increasing K16 order. The compiled down-status test now covers
+both new variants as well as the original scalar/M32 versions.
+
+This is a complete source candidate awaiting root's original-weight GPU controls,
+whole prompts, actual erasure/close, physical recovery and matched timings.
+Source-only tests cannot establish numerical or performance acceptance. The
+existing numeric probe file is untouched; root is extending its independent
+full IEEE cases at tiny and medium counts. No GPU, sudo, service or shared build
+was used while preparing the narrow kernels.

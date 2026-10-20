@@ -524,6 +524,321 @@ mod native {
             i += 16;
         }
     }
+    #[cube]
+    #[allow(clippy::too_many_arguments)]
+    fn narrow_stage<F: Float>(
+        input: &Array<Vector<F, Const<4>>>,
+        weight: &Array<Vector<F, Const<4>>>,
+        a: &mut SharedMemory<Vector<F, Const<4>>>,
+        b: &mut SharedMemory<Vector<F, Const<4>>>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+        token_base: usize,
+        row_base: usize,
+        k: usize,
+        buffer: usize,
+        #[comptime] tile: usize,
+    ) {
+        // A full stage is uniform for the workgroup. Resolve that condition
+        // once, then expose the fixed per-lane jobs to the compiler. Publish
+        // each pair immediately; no register-first operand array stays live
+        // across the matrix products.
+        if token_base + tile <= count && k + 64 <= columns {
+            #[unroll]
+            for round in 0..comptime!(tile / 8) {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let source = (token * columns + col) / 4;
+                a[buffer * comptime!(tile * 16) + job * 2] = input[source];
+                a[buffer * comptime!(tile * 16) + job * 2 + 1] = input[source + 1];
+            }
+        } else {
+            #[unroll]
+            for round in 0..comptime!(tile / 8) {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+                let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+                if token < count && col < columns {
+                    // Genuine vector bindings and multiple-of16 reductions
+                    // guarantee both whole vectors are within the owner.
+                    let source = (token * columns + col) / 4;
+                    lo = input[source];
+                    hi = input[source + 1];
+                }
+                a[buffer * comptime!(tile * 16) + job * 2] = lo;
+                a[buffer * comptime!(tile * 16) + job * 2 + 1] = hi;
+            }
+        }
+        if row_base + 64 <= rows && k + 64 <= columns {
+            #[unroll]
+            for round in 0..8usize {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let row = row_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let source = (weight_first + row * columns + col) / 4;
+                b[buffer * 1024 + job * 2] = weight[source];
+                b[buffer * 1024 + job * 2 + 1] = weight[source + 1];
+            }
+        } else {
+            #[unroll]
+            for round in 0..8usize {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let row = row_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+                let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+                if row < rows && col < columns {
+                    let source = (weight_first + row * columns + col) / 4;
+                    lo = weight[source];
+                    hi = weight[source + 1];
+                }
+                b[buffer * 1024 + job * 2] = lo;
+                b[buffer * 1024 + job * 2 + 1] = hi;
+            }
+        }
+    }
+
+    /// Expert groups below32 tokens use8/16-row tiles and share vector-staged
+    /// A across four feature subgroups. They never execute
+    /// the four-accumulator M32 product for a one-row group.
+    #[cube]
+    fn narrow_product<F: Float>(
+        input: &Array<Vector<F, Const<4>>>,
+        weight: &Array<Vector<F, Const<4>>>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+        #[comptime] tile: usize,
+    ) -> SharedMemory<f32> {
+        let mut a = SharedMemory::<Vector<F, Const<4>>>::new(comptime!(tile * 32));
+        let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
+        let mut out = SharedMemory::<f32>::new(comptime!(tile * 64));
+        // SAFETY: the complete current operand stage is initialized before
+        // every product, including zero-masked token/feature/reduction tails.
+        let a0 = unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::A,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::RowMajor,
+            )
+        };
+        let a1 = if comptime!(tile == 16) {
+            // SAFETY: only the16-row variant loads and uses this fragment.
+            unsafe {
+                cmma::Matrix::<F>::uninitialized(
+                    cmma::MatrixIdent::A,
+                    8usize,
+                    16usize,
+                    16usize,
+                    cmma::MatrixLayout::RowMajor,
+                )
+            }
+        } else {
+            a0
+        };
+        let bm = unsafe {
+            cmma::Matrix::<F>::uninitialized(
+                cmma::MatrixIdent::B,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::ColMajor,
+            )
+        };
+        let c0 = cmma::Matrix::<f32>::from_value(
+            cmma::MatrixIdent::Accumulator,
+            8usize,
+            16usize,
+            16usize,
+            cmma::MatrixLayout::Undefined,
+            0.0,
+        );
+        let c1 = if comptime!(tile == 16) {
+            cmma::Matrix::<f32>::from_value(
+                cmma::MatrixIdent::Accumulator,
+                8usize,
+                16usize,
+                16usize,
+                cmma::MatrixLayout::Undefined,
+                0.0,
+            )
+        } else {
+            c0
+        };
+        let subgroup = usize::cast_from(UNIT_POS) / 16;
+        let token_base = usize::cast_from(CUBE_POS_Y) * tile;
+        let row_base = usize::cast_from(CUBE_POS_X) * 64;
+        narrow_stage::<F>(
+            input,
+            weight,
+            &mut a,
+            &mut b,
+            columns,
+            rows,
+            count,
+            weight_first,
+            token_base,
+            row_base,
+            0,
+            0,
+            tile,
+        );
+        sync_cube();
+        let mut k = 0usize;
+        let mut current = 0usize;
+        while k < columns {
+            let next = 1usize - current;
+            if k + 64 < columns {
+                narrow_stage::<F>(
+                    input,
+                    weight,
+                    &mut a,
+                    &mut b,
+                    columns,
+                    rows,
+                    count,
+                    weight_first,
+                    token_base,
+                    row_base,
+                    k + 64,
+                    next,
+                    tile,
+                );
+            }
+            #[unroll]
+            for step in 0..4usize {
+                let inner = step * 16;
+                if k + inner < columns {
+                    let af = current * comptime!(tile * 16) + inner / 4;
+                    let bf = current * 1024 + subgroup * 256 + inner / 4;
+                    cmma::load(&a0, &a.to_slice().slice(af, a.len()), 64);
+                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 64);
+                    cmma::execute::<F, F, f32, f32>(&a0, &bm, &c0, &c0);
+                    if comptime!(tile == 16) {
+                        cmma::load(&a1, &a.to_slice().slice(af + 128, a.len()), 64);
+                        cmma::execute::<F, F, f32, f32>(&a1, &bm, &c1, &c1);
+                    }
+                }
+            }
+            // A single uniform handoff perK64 replaces the scalar partial
+            // path's two workgroup barriers perK16. Old readers finish before
+            // stage reuse; every next-stage store is visible before the switch.
+            sync_cube();
+            current = next;
+            k += 64;
+        }
+        let first = subgroup * comptime!(tile * 16);
+        cmma::store(
+            &mut out.slice_mut(first, first + 128),
+            &c0,
+            16,
+            cmma::MatrixLayout::RowMajor,
+        );
+        if comptime!(tile == 16) {
+            cmma::store(
+                &mut out.slice_mut(first + 128, first + 256),
+                &c1,
+                16,
+                cmma::MatrixLayout::RowMajor,
+            );
+        }
+        sync_cube();
+        out
+    }
+    #[cube(launch_unchecked)]
+    pub fn dense_narrow<F: Float>(
+        input: &Array<Vector<F, Const<4>>>,
+        weight: &Array<Vector<F, Const<4>>>,
+        output: &mut Array<f32>,
+        fault: &mut Array<Atomic<u32>>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+        out_first: usize,
+        out_stride: usize,
+        #[comptime] tile: usize,
+    ) {
+        let values = narrow_product::<F>(input, weight, columns, rows, count, weight_first, tile);
+        let subgroup = usize::cast_from(UNIT_POS) / 16;
+        let mut i = usize::cast_from(UNIT_POS) % 16;
+        while i < comptime!(tile * 16) {
+            let t = usize::cast_from(CUBE_POS_Y) * tile + i / 16;
+            let row = usize::cast_from(CUBE_POS_X) * 64 + subgroup * 16 + i % 16;
+            if t < count && row < rows {
+                let v = values[subgroup * comptime!(tile * 16) + i];
+                if v.abs() <= f32::MAX {
+                    output[out_first + t * out_stride + row] = v;
+                } else {
+                    output[out_first + t * out_stride + row] = 0.0;
+                    fault[0].fetch_or(1);
+                }
+            }
+            i += 16;
+        }
+    }
+    #[cube(launch_unchecked)]
+    pub fn expert_narrow(
+        input: &Array<Vector<f16, Const<4>>>,
+        weight: &Array<Vector<f16, Const<4>>>,
+        output: &mut Array<f32>,
+        map: &Array<u32>,
+        status: &mut Array<u32>,
+        fault: &mut Array<Atomic<u32>>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+        group: usize,
+        #[comptime] down: bool,
+        #[comptime] tile: usize,
+    ) {
+        let values = narrow_product::<f16>(input, weight, columns, rows, count, weight_first, tile);
+        let subgroup = usize::cast_from(UNIT_POS) / 16;
+        let mut i = usize::cast_from(UNIT_POS) % 16;
+        while i < comptime!(tile * 16) {
+            let member = usize::cast_from(CUBE_POS_Y) * tile + i / 16;
+            let row = usize::cast_from(CUBE_POS_X) * 64 + subgroup * 16 + i % 16;
+            if member < count && row < rows {
+                let route =
+                    usize::cast_from(map[1540 + usize::cast_from(map[1028 + group]) + member]);
+                if route < usize::cast_from(map[0]) * 10 {
+                    let mut base = member * 1280;
+                    if down {
+                        base = route * 2560;
+                    }
+                    let v = values[subgroup * comptime!(tile * 16) + i];
+                    let valid = v.abs() <= f32::MAX;
+                    if valid {
+                        output[base + row] = v;
+                    } else {
+                        output[base + row] = 0.0;
+                        fault[0].fetch_or(128);
+                    }
+                    if down && row == 0 {
+                        let mut good = 0u32;
+                        if valid && status[route] == 1 {
+                            good = 1;
+                        }
+                        // Same full-capacity plane as prompt activation and
+                        // the rank-ordered reducer, including routes >20479.
+                        status[comptime!(crate::strata_prompt::groups::ROUTES) + route] = good;
+                    }
+                } else {
+                    fault[0].fetch_or(128);
+                }
+            }
+            i += 16;
+        }
+    }
     #[cube(launch_unchecked)]
     pub fn dense<F: Float>(
         input: &Array<F>,
@@ -616,6 +931,14 @@ mod native {
             ("dense_macro_bf16", definition_dense_macro::<bf16>()),
             ("expert_macro_gu", definition_expert_macro(false)),
             ("expert_macro_down", definition_expert_macro(true)),
+            ("dense_narrow8_fp16", definition_dense_narrow::<f16>(8)),
+            ("dense_narrow8_bf16", definition_dense_narrow::<bf16>(8)),
+            ("expert_narrow8_gu", definition_expert_narrow(false, 8)),
+            ("expert_narrow8_down", definition_expert_narrow(true, 8)),
+            ("dense_narrow16_fp16", definition_dense_narrow::<f16>(16)),
+            ("dense_narrow16_bf16", definition_dense_narrow::<bf16>(16)),
+            ("expert_narrow16_gu", definition_expert_narrow(false, 16)),
+            ("expert_narrow16_down", definition_expert_narrow(true, 16)),
         ]
     }
     fn settings() -> KernelSettings {
@@ -737,6 +1060,66 @@ mod native {
         );
         b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
     }
+    fn definition_dense_narrow<F: Float>(tile: usize) -> KernelDefinition {
+        let mut b = KernelBuilder::default();
+        AddressType::U32.register(&mut b.scope);
+        let t = Vector::<F, Const<4>>::as_type(&b.scope);
+        let input = b.input_array(t);
+        let weight = b.input_array(t);
+        let output = b.output_array(f32::as_type(&b.scope));
+        let fault = b.output_array(
+            cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
+        );
+        let args: [cubecl::ir::ManagedVariable; 6] =
+            std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
+        dense_narrow::expand::<F>(
+            &mut b.scope,
+            input.into(),
+            weight.into(),
+            output.into(),
+            fault.into(),
+            args[0].clone().into(),
+            args[1].clone().into(),
+            args[2].clone().into(),
+            args[3].clone().into(),
+            args[4].clone().into(),
+            args[5].clone().into(),
+            tile,
+        );
+        b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
+    }
+    fn definition_expert_narrow(down: bool, tile: usize) -> KernelDefinition {
+        let mut b = KernelBuilder::default();
+        AddressType::U32.register(&mut b.scope);
+        let t = Vector::<f16, Const<4>>::as_type(&b.scope);
+        let input = b.input_array(t);
+        let weight = b.input_array(t);
+        let output = b.output_array(f32::as_type(&b.scope));
+        let map = b.input_array(u32::as_type(&b.scope));
+        let status = b.output_array(u32::as_type(&b.scope));
+        let fault = b.output_array(
+            cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
+        );
+        let args: [cubecl::ir::ManagedVariable; 5] =
+            std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
+        expert_narrow::expand(
+            &mut b.scope,
+            input.into(),
+            weight.into(),
+            output.into(),
+            map.into(),
+            status.into(),
+            fault.into(),
+            args[0].clone().into(),
+            args[1].clone().into(),
+            args[2].clone().into(),
+            args[3].clone().into(),
+            args[4].clone().into(),
+            down,
+            tile,
+        );
+        b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
+    }
     fn half_arg(handle: Handle) -> Result<ArrayArg<WgpuRuntime>> {
         if handle.size_in_used() == 0 || !handle.size_in_used().is_multiple_of(2) {
             return Err(Error::InvalidBufferLength);
@@ -776,6 +1159,66 @@ mod native {
         weight_first: usize,
     ) -> bool {
         macro_geometry(
+            count,
+            rows,
+            columns,
+            weight_first,
+            client.properties().hardware.max_shared_memory_size,
+            [input, weight].map(|h| (h.size_in_used(), h.offset_start.unwrap_or(0))),
+        )
+    }
+    const NARROW8_SHARED_BYTES: usize = 2 * (8 + 64) * 64 * 2 + 8 * 64 * 4;
+    const NARROW16_SHARED_BYTES: usize = 2 * (16 + 64) * 64 * 2 + 16 * 64 * 4;
+    pub(super) fn compiled_shared_bytes(name: &str) -> Option<usize> {
+        if name.contains("narrow8") {
+            Some(NARROW8_SHARED_BYTES)
+        } else if name.contains("narrow16") {
+            Some(NARROW16_SHARED_BYTES)
+        } else if name.contains("macro") {
+            Some(MACRO_SHARED_BYTES)
+        } else {
+            None
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn narrow_geometry(
+        count: usize,
+        rows: usize,
+        columns: usize,
+        weight_first: usize,
+        shared_bytes: usize,
+        bindings: [(u64, u64); 2],
+    ) -> Option<usize> {
+        let tile = match count {
+            1..=8 => 8,
+            9..=31 => 16,
+            _ => return None,
+        };
+        let bytes = if tile == 8 {
+            NARROW8_SHARED_BYTES
+        } else {
+            NARROW16_SHARED_BYTES
+        };
+        (rows >= 32
+            && columns >= 16
+            && columns.is_multiple_of(16)
+            && weight_first.is_multiple_of(4)
+            && shared_bytes >= bytes
+            && bindings.iter().all(|&(bytes, offset)| {
+                bytes != 0 && bytes.is_multiple_of(8) && offset.is_multiple_of(8)
+            }))
+        .then_some(tile)
+    }
+    fn narrow_compatible(
+        client: &ComputeClient<WgpuRuntime>,
+        input: &Handle,
+        weight: &Handle,
+        count: usize,
+        rows: usize,
+        columns: usize,
+        weight_first: usize,
+    ) -> Option<usize> {
+        narrow_geometry(
             count,
             rows,
             columns,
@@ -838,12 +1281,13 @@ mod native {
         let [input, weight, output, fault] = h;
         let use_macro =
             macro_compatible(client, &input, &weight, count, rows, columns, weight_first);
-        let ia = if use_macro {
+        let narrow = narrow_compatible(client, &input, &weight, count, rows, columns, weight_first);
+        let ia = if use_macro || narrow.is_some() {
             macro_half_arg(input)?
         } else {
             half_arg(input)?
         };
-        let wa = if use_macro {
+        let wa = if use_macro || narrow.is_some() {
             macro_half_arg(weight)?
         } else {
             half_arg(weight)?
@@ -869,6 +1313,23 @@ mod native {
                         weight_first,
                         out_first,
                         out_stride,
+                    );
+                } else if let Some(tile) = narrow {
+                    dense_narrow::launch_unchecked::<bf16, WgpuRuntime>(
+                        client,
+                        CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(tile) as u32, 1),
+                        CubeDim::new_1d(64),
+                        ia,
+                        wa,
+                        oa,
+                        fa,
+                        columns,
+                        rows,
+                        count,
+                        weight_first,
+                        out_first,
+                        out_stride,
+                        tile,
                     );
                 } else {
                     dense::launch_unchecked::<bf16, WgpuRuntime>(
@@ -903,6 +1364,23 @@ mod native {
                         weight_first,
                         out_first,
                         out_stride,
+                    );
+                } else if let Some(tile) = narrow {
+                    dense_narrow::launch_unchecked::<f16, WgpuRuntime>(
+                        client,
+                        CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(tile) as u32, 1),
+                        CubeDim::new_1d(64),
+                        ia,
+                        wa,
+                        oa,
+                        fa,
+                        columns,
+                        rows,
+                        count,
+                        weight_first,
+                        out_first,
+                        out_stride,
+                        tile,
                     );
                 } else {
                     dense::launch_unchecked::<f16, WgpuRuntime>(
@@ -940,12 +1418,13 @@ mod native {
         let [input, weight, output, map, status, fault] = h;
         let use_macro =
             macro_compatible(client, &input, &weight, count, rows, columns, weight_first);
-        let ia = if use_macro {
+        let narrow = narrow_compatible(client, &input, &weight, count, rows, columns, weight_first);
+        let ia = if use_macro || narrow.is_some() {
             macro_half_arg(input)?
         } else {
             half_arg(input)?
         };
-        let wa = if use_macro {
+        let wa = if use_macro || narrow.is_some() {
             macro_half_arg(weight)?
         } else {
             half_arg(weight)?
@@ -975,6 +1454,25 @@ mod native {
                     group,
                     down,
                 );
+            } else if let Some(tile) = narrow {
+                expert_narrow::launch_unchecked::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(tile) as u32, 1),
+                    CubeDim::new_1d(64),
+                    ia,
+                    wa,
+                    oa,
+                    ma,
+                    sa,
+                    fa,
+                    columns,
+                    rows,
+                    count,
+                    weight_first,
+                    group,
+                    down,
+                    tile,
+                );
             } else {
                 expert::launch_unchecked::<WgpuRuntime>(
                     client,
@@ -1001,6 +1499,198 @@ mod native {
     mod stage_tests {
         use super::*;
         #[test]
+        fn narrow_selection_requires_original_vector_owners_and_actual_shape_shared_limit() {
+            let actual = [(80 * 1024 * 1024, 0), (80 * 1024 * 1024, 256)];
+            assert_eq!(NARROW8_SHARED_BYTES, 20480);
+            assert_eq!(NARROW16_SHARED_BYTES, 24576);
+            for count in 1..=31 {
+                let tile = if count <= 8 { 8 } else { 16 };
+                let bytes = if tile == 8 {
+                    NARROW8_SHARED_BYTES
+                } else {
+                    NARROW16_SHARED_BYTES
+                };
+                assert_eq!(narrow_geometry(count, 33, 16, 4, bytes, actual), Some(tile));
+                assert_eq!(narrow_geometry(count, 33, 16, 4, bytes - 1, actual), None);
+                for (rows, columns, first) in [(31, 16, 4), (33, 15, 4), (33, 17, 4), (33, 16, 1)] {
+                    assert_eq!(
+                        narrow_geometry(count, rows, columns, first, bytes, actual),
+                        None
+                    );
+                }
+                for bad in [(0, 0), (6, 0), (8, 2)] {
+                    for index in 0..2 {
+                        let mut b = actual;
+                        b[index] = bad;
+                        assert_eq!(narrow_geometry(count, 33, 16, 4, bytes, b), None);
+                    }
+                }
+            }
+            for count in [0, 32, 64] {
+                assert_eq!(narrow_geometry(count, 33, 16, 4, 32768, actual), None);
+            }
+            assert!(macro_geometry(32, 33, 16, 4, 32768, actual));
+        }
+
+        #[test]
+        fn narrow_epilogue_covers_each_live_output_once_without_m32_work() {
+            for count in [1usize, 3, 7, 8, 9, 15, 16, 17, 31] {
+                let tile = if count <= 8 { 8 } else { 16 };
+                assert!(tile <= 16);
+                if count <= 8 {
+                    assert_eq!(tile, 8);
+                }
+                for rows in [32usize, 33, 65, 1280, 2560] {
+                    let mut visits = vec![0u8; count * rows];
+                    for gy in 0..count.div_ceil(tile) {
+                        for gx in 0..rows.div_ceil(64) {
+                            for sg in 0..4 {
+                                for lane in 0..16 {
+                                    for i in (lane..tile * 16).step_by(16) {
+                                        let t = gy * tile + i / 16;
+                                        let row = gx * 64 + sg * 16 + i % 16;
+                                        if t < count && row < rows {
+                                            visits[t * rows + row] += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    assert!(visits.iter().all(|&n| n == 1), "count{count} rows{rows}");
+                }
+            }
+        }
+
+        #[test]
+        fn narrow_vector_stages_preserve_every_operand_tail_and_ordered_k16() {
+            for count in [1usize, 3, 7, 8, 9, 16, 17, 31] {
+                let tile = if count <= 8 { 8 } else { 16 };
+                let a_span = tile * 16;
+                for rows in [32usize, 33, 65] {
+                    for columns in [16usize, 64, 80, 640, 2560] {
+                        let weight_first = 4;
+                        for token_base in (0..count).step_by(tile) {
+                            for row_base in (0..rows).step_by(64) {
+                                let mut a = vec![None; 2 * a_span];
+                                let mut b = vec![None; 2048];
+                                let fill =
+                                    |k: usize,
+                                     buffer: usize,
+                                     a: &mut [Option<usize>],
+                                     b: &mut [Option<usize>]| {
+                                        let mut av = vec![0u8; a_span];
+                                        let mut bv = vec![0u8; 1024];
+                                        let full_a =
+                                            token_base + tile <= count && k + 64 <= columns;
+                                        let full_b = row_base + 64 <= rows && k + 64 <= columns;
+                                        for lane in 0..64 {
+                                            for round in 0..tile / 8 {
+                                                let job = lane + round * 64;
+                                                let t = token_base + job / 8;
+                                                let col = k + job % 8 * 8;
+                                                for half in 0..2 {
+                                                    let at = job * 2 + half;
+                                                    av[at] += 1;
+                                                    a[buffer * a_span + at] = if full_a
+                                                        || (t < count && col < columns)
+                                                    {
+                                                        assert!(t < count && col + 7 < columns);
+                                                        let source = (t * columns + col) / 4 + half;
+                                                        assert!(source * 4 + 3 < count * columns);
+                                                        Some(source)
+                                                    } else {
+                                                        None
+                                                    };
+                                                }
+                                            }
+                                            for round in 0..8 {
+                                                let job = lane + round * 64;
+                                                let row = row_base + job / 8;
+                                                let col = k + job % 8 * 8;
+                                                for half in 0..2 {
+                                                    let at = job * 2 + half;
+                                                    bv[at] += 1;
+                                                    b[buffer * 1024 + at] = if full_b
+                                                        || (row < rows && col < columns)
+                                                    {
+                                                        assert!(row < rows && col + 7 < columns);
+                                                        let source =
+                                                            (weight_first + row * columns + col)
+                                                                / 4
+                                                                + half;
+                                                        assert!(
+                                                            source * 4 + 3
+                                                                < weight_first + rows * columns
+                                                        );
+                                                        Some(source)
+                                                    } else {
+                                                        None
+                                                    };
+                                                }
+                                            }
+                                        }
+                                        assert!(av.into_iter().chain(bv).all(|n| n == 1));
+                                    };
+                                fill(0, 0, &mut a, &mut b);
+                                let mut current = 0;
+                                let mut order = Vec::new();
+                                for k in (0..columns).step_by(64) {
+                                    let next = 1 - current;
+                                    if k + 64 < columns {
+                                        fill(k + 64, next, &mut a, &mut b);
+                                    }
+                                    for inner in (0..64).step_by(16).filter(|i| k + i < columns) {
+                                        order.push(k + inner);
+                                        for sg in 0..4 {
+                                            for tr in 0..tile {
+                                                for col in 0..16 {
+                                                    let t = token_base + tr;
+                                                    let expected = if t < count {
+                                                        Some((t * columns + k + inner + col) / 4)
+                                                    } else {
+                                                        None
+                                                    };
+                                                    let at = current * a_span
+                                                        + tr * 16
+                                                        + (inner + col) / 4;
+                                                    assert_eq!(a[at], expected);
+                                                }
+                                            }
+                                            for feature in 0..16 {
+                                                for col in 0..16 {
+                                                    let row = row_base + sg * 16 + feature;
+                                                    let expected = if row < rows {
+                                                        Some(
+                                                            (weight_first
+                                                                + row * columns
+                                                                + k
+                                                                + inner
+                                                                + col)
+                                                                / 4,
+                                                        )
+                                                    } else {
+                                                        None
+                                                    };
+                                                    let at = current * 1024
+                                                        + (sg * 16 + feature) * 16
+                                                        + (inner + col) / 4;
+                                                    assert_eq!(b[at], expected);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    current = next;
+                                }
+                                assert_eq!(order, (0..columns).step_by(16).collect::<Vec<_>>());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        #[test]
         fn vector_binding_geometry_prices_actual_storage_and_keeps_small_fallback() {
             let actual = [(80 * 1024 * 1024, 0), (80 * 1024 * 1024, 256)];
             assert!(macro_geometry(32, 32, 16, 4, 32768, actual));
@@ -1024,7 +1714,7 @@ mod native {
             assert_eq!(MACRO_SHARED_BYTES, 32768);
         }
         #[test]
-        fn actual_macro_compiler_uses_vec4_half_storage_and_exact32k_shared() {
+        fn actual_staged_compiler_preserves_vector_storage_envelopes_and_order() {
             use cubecl::ir::{ElemType, StorageType, UIntKind};
             use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
             use cubecl::{Compiler, WgpuCompilationOptions};
@@ -1032,7 +1722,7 @@ mod native {
             for mask in 0..8 {
                 for (name, definition) in definitions()
                     .into_iter()
-                    .filter(|(name, _)| name.contains("macro"))
+                    .filter(|(name, _)| compiled_shared_bytes(name).is_some())
                 {
                     let mut options = WgpuCompilationOptions {
                         supports_vulkan: true,
@@ -1052,7 +1742,11 @@ mod native {
                     .unwrap() else {
                         panic!("actual SPIRV required")
                     };
-                    assert_eq!(kernel.shared_size, MACRO_SHARED_BYTES, "{name} mask{mask}");
+                    assert_eq!(
+                        kernel.shared_size,
+                        compiled_shared_bytes(name).unwrap(),
+                        "{name} mask{mask}"
+                    );
                     let mut types = BTreeMap::new();
                     let mut pointers = BTreeMap::new();
                     let mut variables = BTreeMap::new();
@@ -1070,7 +1764,7 @@ mod native {
                         let op = words[at] & 65535;
                         let args = &words[at + 1..at + count];
                         match op {
-                            22 | 23 | 28 | 29 | 30 => {
+                            22 | 23 | 28 | 29 | 30 | 4456 => {
                                 types.insert(args[0], (op, args[1..].to_vec()));
                             }
                             32 => {
@@ -1114,7 +1808,31 @@ mod native {
                         "first-load, stage handoff and epilogue fences: {name}"
                     );
                     assert_eq!(loops, 2, "only K64 and output loops: {name} mask{mask}");
-                    assert_eq!(products, 16, "four ordered K16 groups: {name} mask{mask}");
+                    let expected_products = if name.contains("narrow8") {
+                        4
+                    } else if name.contains("narrow16") {
+                        8
+                    } else {
+                        16
+                    };
+                    assert_eq!(
+                        products, expected_products,
+                        "four ordered K16 groups: {name} mask{mask}"
+                    );
+                    let accumulators = function_variables
+                        .iter()
+                        .filter(|pointer| {
+                            let ty = pointers[pointer];
+                            types.get(&ty).is_some_and(|(op, args)| {
+                                *op == 4456 && types[&args[0]].0 == 22 && types[&args[0]].1[0] == 32
+                            })
+                        })
+                        .count();
+                    assert_eq!(
+                        accumulators,
+                        expected_products / 4,
+                        "actual live F32 accumulator variables: {name}"
+                    );
                     for pointer in function_variables {
                         let ty = pointers[&pointer];
                         assert!(
@@ -1382,8 +2100,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let AutoRepresentation::SpirV(kernel) = compiled else {
                     return Err("matrix compiler representation".into());
                 };
-                if name.contains("macro") && kernel.shared_size != 32768 {
-                    return Err("macro matrix original32KiB shared envelope".into());
+                if native::compiled_shared_bytes(name).is_some_and(|n| kernel.shared_size != n) {
+                    return Err("staged matrix original shared envelope".into());
                 }
                 let canonical =
                     wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)?;
@@ -1540,7 +2258,15 @@ mod tests {
             options.vulkan.supports_explicit_smem = mask & 4 != 0;
             for definition in super::native::definitions()
                 .into_iter()
-                .filter(|(name, _)| matches!(*name, "expert_down" | "expert_macro_down"))
+                .filter(|(name, _)| {
+                    matches!(
+                        *name,
+                        "expert_down"
+                            | "expert_macro_down"
+                            | "expert_narrow8_down"
+                            | "expert_narrow16_down"
+                    )
+                })
                 .map(|(_, definition)| definition)
             {
                 let compiled = Compiler::compile(
