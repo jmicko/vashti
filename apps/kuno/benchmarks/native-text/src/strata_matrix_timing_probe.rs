@@ -7,7 +7,7 @@ use std::time::Instant;
 use zeroize::Zeroizing;
 
 type ProbeResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-const COUNTS: [usize; 8] = [8, 16, 31, 32, 64, 80, 160, 320];
+const COUNTS: [usize; 11] = [1, 3, 7, 8, 16, 31, 32, 64, 80, 160, 320];
 const WARM: usize = 3;
 const REPEATS: usize = 64;
 
@@ -299,7 +299,7 @@ mod tests {
         for count in COUNTS {
             let (weights, input, actual) = fixture(count);
             let (samples, max_abs) = check_values(&actual, &weights, &input, count).unwrap();
-            assert!(samples >= 21);
+            assert!(samples >= 7);
             assert_eq!(max_abs, 0.);
             for (token, row) in [(0, 0), (count - 1, 64), (count / 2, 31)] {
                 let mut wrong = actual.clone();

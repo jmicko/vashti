@@ -154,7 +154,7 @@ It never loads a complete Session or transfers the model. Inputs are compiled
 dyadic values; there is no caller text, seed/preset input or private-wire flag.
 
 The helper runs the unchanged `native::run_dense` primitive at actual
-GU1280x2560 and DOWN2560x640 shapes with counts8/16/31/32/64/80/160/320. Each
+GU1280x2560 and DOWN2560x640 shapes with counts1/3/7/8/16/31/32/64/80/160/320. Each
 shape warms three launches, checks results, queues64 measured launches and
 waits for one genuine completion fence. Reports distinguish host enqueue from
 complete duration, include per-call FLOPs and effective GFLOPs/s, and explicitly
