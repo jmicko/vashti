@@ -127,3 +127,34 @@ A meaningful clean gain is needed before full staged tools/MAX8/semantic/privacy
 and injected terminal recovery, then official installation and actual installed
 service acceptance. The goal remains matching actual same-host Strata repeated
 4245 prefix5.3515s and matched sustained inference.
+
+## Next source-level lead: stage misses rather than all routed groups
+
+This is a connected proposal, not implemented or measured. Pinned Strata's
+`sycl/src/prefill/prefill.cpp:3796-3850` returns immediately for resident experts
+and advances `stage_next` only for actual HOST copies. Its native branch at
+3964-3983 records a raw-slot `used` event only if `slot >= 0`.
+
+Kuno `strata_prompt_experts.rs` instead advances its lookahead and raw-slot
+index for EVERY group (`issued < group + RAW_SLOTS`, `group % RAW_SLOTS`),
+binds that raw slot even for resident sources, and gives every DOWN dequant
+kernel the release-after marker. `Plan::source` chooses one resident/host tier
+for all three original roles, while effective loan shadows can override it.
+The recorded no-loan long prompt has26,338 groups and39,225 role copies:13,075
+HOST groups and13,263 resident groups. This is a group count, not the earlier
+73% route-weighted resident fraction. A nominal eight-group lookahead therefore
+usually stages fewer than eight actual misses.
+
+An authentic Strata-style next change should couple miss-only staging-slot
+assignment/lookahead, a genuine non-overlapping resident raw descriptor (if a
+checked view in existing32MiB raw-root padding fits), and release markers only
+for actual streamed slots. Merely changing group modulo leaves false raw-slot
+reads in the original planner; merely suppressing release markers can reduce
+overlap. Preserve full actual source-table/BDA dependency inventory and current
+loan/shadow/retirement checks. Classify from `Sources::effective_role` under the
+original immutable PromptLayer borrow, not just a stale base-plan resident bit.
+Every genuine slot still keeps its original GPU completion/wait dependencies.
+Any producer/strict-grammar release metadata change must be connected and tested,
+with the six logical operator phases and authentic owned INFO/views unchanged.
+No extra GPU allocation, narrowed source declaration or stale placement cache
+is authorized by this proposal. Check all quant/loan geometries before selection.
