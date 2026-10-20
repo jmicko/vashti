@@ -212,14 +212,10 @@ fn public_guard_cause(error: &Error) -> &'static str {
     }
 }
 fn public_guard_diagnostic(cause: &'static str) {
-    if crate::strata_intel_core::enabled()
-        && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
-    {
-        // Private worker startup removes this laboratory variable; only the
-        // compiled-public fixed-fixture entry reinstalls it. Prefix already
-        // belongs to the public numeric-only diagnostic collector.
-        eprintln!("public_device_error native_qsa_guarded static_cause={cause}");
-    }
+    // The existing source-only diagnostic flag is enabled by every compiled
+    // public entry, including the short check. Ordinary inference cannot enable
+    // it by environment or private protocol; fault() is silent in that case.
+    let _ = fault(format_args!("native_qsa_guarded static_cause={cause}"));
 }
 fn guarded<T>(poison: &AtomicBool, op: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(op)) {

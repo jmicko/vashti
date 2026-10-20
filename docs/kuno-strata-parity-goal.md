@@ -58,3 +58,45 @@ Current review ownership: matrix agent603a1de7 owns strata_matrix.rs; runtime
 agent owns strata_graph.rs; short agent owns controller/target/MTP/IO plus one
 immutable known-input headless recording identity in server/base.rs. Root owns
 integration, public profiling geometry, GPU testing and installation.
+
+## First protected measurements in this goal
+
+Artifacts live below `/media/jmicko/faststore/kuno-development`; all inputs in
+these checks are compiled public fixtures. No request text, response text,
+expert identities or routes are retained. The installed baseline remains
+c8db19de / SHAfb31e124; the following candidates are not installed.
+
+- `strata-parity-installed-reference-20261020`: seed424242, temperature0,
+  context32768 and200-output cap, matching retained historical Strata settings.
+  Kuno35-token code prefix1.53335s,200 outputs35.4123 tokens/s;30-token prose
+  prefix1.33445s,200 outputs28.7183 tokens/s. Historical upstream code27.3 and
+  prose36.0 tokens/s are workload-dependent bounds, not a current controlled A/B.
+- Matrix source6413fa09 / SHA232bea52 and combined matrix+command-boundary
+  sourcebfd920cc / SHA f8d5cae3 each pass all original14 full IEEE matrix cases
+  and39 router/dequant controls, actual arena close and physical recovery.
+  Combined warm4245-token profiled prefix23.86855s versus previous selected
+ 24.96584s. This is a small gain, not parity. Expert interval15.82034s and
+  attention6.32888s still dominate this instrumented workload.
+- Public histogram:12,221 of26,673 expert groups have1–7 rows;3,883 have8–15;
+  2,850 have16–31. These cover6.8% of useful expert rows but expose expensive
+  old small/tail matrix execution. Arithmetic-work estimates are not measured
+  hardware FLOP rates or a private-request profile.
+- Sourcea2ab2abd / SHA4294bc41 exposes a separate original-weight matrix timing
+  check. All22 gate-up/down shapes pass full finite/padding/fault ownership,
+  sampled IEEE points and real close/recovery; these sampled points do not
+  replace the full numerical controls. `strata-parity-matrix-timing-base-20261020`
+  records GU count3/7/31 at371.5/415.4/410.7us versus aligned count8 at59.9us.
+  DOWN count3/7/31 is104.3/115.2/100.8us. It includes actual host enqueue and one
+  real completion fence for64 repeats after3 warmups. A complete staged M8/M16
+  narrow family is being prepared with additional full IEEE tail cases.
+- MAX8 headless source7c96b6e4 / SHA14b4c9ec builds, but its first cold45-token
+  public request fails the unchanged QSA guarded check. No output is accepted.
+  `strata-parity-headless-max8-short-20261020` records failure and confirmed
+  physical recovery, normal admission and zero new driver faults. Trace/fix the
+  original cause; do not weaken that guard or install this artifact.
+
+The new fixed-public native GPU sampler is restricted to request3/chunk0/layer24
+of `--public-prefill-profile`; it is not available through private inference.
+Its existing query threshold/caps, actual-fence ownership, no-replay policy and
+serial diagnostic execution remain unchanged. Await a real sample before
+claiming an operator breakdown. See `kuno-prefill-native-gpu-profile.md`.
