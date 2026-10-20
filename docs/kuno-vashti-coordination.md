@@ -22,6 +22,31 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Active complete uniform-QK candidate (2026-10-20).**
+
+Complete FMA e854a89d/SHA420dc7d0 passes111 CPU,408/208 layouts, all129 GPU
+controls, complete requests/all old/new producer proofs, native FMA ISA and
+physical recovery18:33:15UTC. All three non-dyadic QSA controls now match the
+scalar bits as well as passing unchanged F64 bounds; original nine bitwise
+cases remain. Repeat profile11.1741s is unchanged/slower versus11.0518s,
+with actual expert groups26338 ->26673. No clean/staged/terminal/sustained or
+install acceptance. Keep the full source; static instruction reduction alone
+is not a whole-prompt win. GDN ordinary16 proof remains missing as documented.
+
+The next coupled `strata-qsa-uniform` keeps all components and additionally
+broadcasts immutable selected IDs, hoists exact shuffle indices, and samples
+the exact original lane-zero score before uniform sticky-fault checks outside
+the lane-zero store branch. No changed arithmetic or skipped failure/owner/
+queue/footprint/budget checks. All114 actual App CPU controls pass, including
+complete-source undo, real module topology and adversarial other-lane cases.
+Freeze/offline/original129/full request/actual compiler/recovery remain next.
+Exact contract: [complete FMA and uniform successor](kuno-native-compute-intervals.md#complete-fma-result-and-coupled-uniform-qk-successor).
+No API/protocol/configuration/model identity or Vashti consumer change.
+
+A new bounded credential refresh owns outer128882/loop128884, parent3556,
+18:39:26..20:39:26UTC; verified old64142 retired. Shared shell untouched.
+No current GPU job; FMA's recovery is complete. Installed binaries unchanged.
+
 **Active complete QK FMA candidate (2026-10-20).**
 
 Actual pinned default INT8 Strata attention disassembly proves seven

@@ -891,3 +891,69 @@ Native-code SUMMARY PRECEDES its assembly in Mesa output; splitting only at
 summary ends would omit the last program's assembly. No GPU, model mount,
 private trace, driver, service or system configuration was used for extraction.
 No API, protocol/configuration/model identity or Vashti consumer change.
+
+
+## Complete FMA result and coupled uniform-QK successor
+
+Frozene854a89d45ba8c38528366f74c13e2506c641707 / SHA
+420dc7d09da202b712dedcfca33f0d9d5e7b031de20962063f339f546e2eba0e
+(`strata-parity-qsa-fma-20261020`) passes111 actual CPU controls,408/208
+offline layouts, all129 original numerical GPU cases, complete real requests/
+all inherited producer proofs, actual QK native FMA ISA proof and physical
+recovery18:33:15UTC. All nine original bitwise QSA cases pass; the three
+non-dyadic cases ALSO now match original scalar partial/stats bits while passing
+their unchanged independent F64 bounds. Actual native optimized ISA4127
+instructions/348 MADs/zero spills versus previous4461 instructions. Exact
+compiler scopes disambiguate reference2002/1599 and optimized4109/4127; do
+not infer ordinary/native identities from interleaved old unscoped summaries.
+
+Repeated profile11.174104s versus preceding11.051815s is unchanged/slower;
+QSA attention/merge1.459168s versus1.467331s is unchanged. Expert groups also
+change26338 ->26673 (same original weights/seed/prompt; FMA changes actual
+FP32 routes). Do not claim an overall speed gain from the reduced static code.
+The complete FMA source is retained; no partial rollback. Owned summary
+`strata-parity-qsa-fma-public-summary-20261020.json`, root receipts
+`strata-parity-qsa-fma-20261020-{operators,profile}`. No clean/full staged/
+terminal/sustained or installation acceptance. GDN ordinary16 proof is still
+missing; actual native16/ordinary32 limitation remains visible.
+
+The next COMPLETE opt-in `strata-qsa-uniform` couples three compiler changes,
+while keeping FMA, paired/padded/local-fault and all earlier components:
+
+- Broadcast immutable selected token IDs from subgroup lane zero. Every lane
+  originally reads the SAME `row[c0/c1]` word: the paired cell indices are
+  subgroup-uniform and the original whole-workgroup initialization barrier
+  precedes this immutable read phase. Broadcast preserves the exact original
+  selected ID/causal failure, and explicitly exposes uniformity to the compiler.
+  No replacement expert/token or guessed smaller footprint is admitted.
+- Materialize each of the five `lane XOR distance` indices once, then use
+  explicit subgroupShuffle at those exact indices for every original QK,
+  maximum and sum step. Physical subgroup32 and all original addition/XOR
+  pairings stay. No operation reordering, new barrier or subgroup-size change.
+- Broadcast the exact original lane-ZERO score (`dot/16`) before checking it
+  for finiteness outside the lane-zero store branch. This samples the SAME
+  original score, even for arbitrary NaN payloads/other-lane values. Every
+  invocation contributes the same old lane-zero failure to the existing sticky
+  OR; final fault/status/output is unchanged. A raw all-lane finite check without
+  the score broadcast is NOT equivalent and is explicitly rejected by the CPU
+  counterexample. Original lane-zero SLM/status stores and all other predicates
+  stay. The existing local-fault rewrite follows, so valid lane-zero stores no
+  longer carry divergent per-invocation sticky-fault SSA state.
+
+No arithmetic, dequantization rounding, operands, max/exp, chronological PV,
+private owner/extent/header/epoch, dependency footprint, queue, actual Wgpu
+guard, lifetime/fence/quarantine, budget or erasure gate changes. The independent
+scalar reference is untouched. New complete-source undo controls compare every
+remaining byte; actual SPIR-V proves50 BroadcastFirst sites, zero ShuffleXor,
+all original250 indexed reduction steps plus12 existing PV gathers, unchanged
+256-invocation geometry and original workgroup barriers. Initial CPU collector
+used incorrect numeric opcodes for Shuffle/ShuffleXor; corrected against the
+local SPIR-V enum (345/346). This is a test-collector fix, not weakened shader
+or numerical acceptance. All original129 GPU controls remain mandatory.
+The opt-in requires the full FMA/paired/padded/local-fault feature bundle.
+
+A fresh bounded credential refresh now owns outer128882/loop128884, parent3556,
+started18:39:26UTC, ends20:39:26UTC; log/PID/owner files
+`sudo-refresh-qsa-uniform-20261020.*`. Verified prior64142 loop was retired;
+the shared shell is untouched. Never kill its process group. No API/protocol/
+configuration/model identity or Vashti change.

@@ -36,6 +36,9 @@ mod prompt_paired;
 mod prompt_pv_gather;
 #[path = "strata_prompt_qsa_specialize.rs"]
 mod prompt_specialize;
+#[cfg(any(test, feature = "strata-qsa-uniform"))]
+#[path = "strata_prompt_qsa_uniform.rs"]
+mod prompt_uniform;
 #[path = "strata_qsa_select.rs"]
 pub(crate) mod selection;
 #[cfg(feature = "strata-intel-core")]
@@ -130,6 +133,12 @@ impl Kernel {
         #[cfg(feature = "strata-qsa-fma")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_fma::source(source)
+        } else {
+            source
+        };
+        #[cfg(feature = "strata-qsa-uniform")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_uniform::source(source)
         } else {
             source
         };
