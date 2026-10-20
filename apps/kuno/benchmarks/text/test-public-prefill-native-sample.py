@@ -34,12 +34,18 @@ fn prefill_sampling_never_selects_target_verification_policy() {
 # Authorization is created only after inherited experiment configuration was
 # scrubbed, and before any runtime threads. Private entry never enables it.
 scrub = worker.index("std::env::remove_var(name)")
-public_gate = worker.index("if public_check && prefill_check == Some(true)")
+public_gate = worker.index("if public_check && (prefill_check == Some(true) || rolling_failure)")
 public_enable = worker.index("strata_prefill_profile::enable_compiled_public()")
 runtime = worker.index("cubecl::future::block_on(serve(")
 assert scrub < public_gate < public_enable < runtime
 assert worker.count("strata_prefill_profile::enable_compiled_public()") == 1
-assert "run_mode(path, false, None, false, false, false)" in worker
+assert 'if !rolling_failure {\n            crate::strata_prefill_profile::enable_compiled_public();' in worker
+assert 'run_mode(path, true, Some(false), false, false, false, true)' in worker
+arm = worker.index('cubecl::wgpu::arm_native_strata_public_rolling_failure()')
+assert worker.index('engine::Session::load(') < arm < worker.index('let result = session.run(')
+assert '"ordinary_reusable_session_claimed":false,"owned_zero_claimed":false' in worker
+
+assert "run_mode(path, false, None, false, false, false, false)" in worker
 assert 'set_var("KUNO_STRATA_NATIVE_PROFILE", "prefill-layer")' in worker[public_gate:runtime]
 assert 'set_var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY", "1")' in worker[public_gate:runtime]
 # The RAII scope must include the original completion fence. Enqueue alone is
