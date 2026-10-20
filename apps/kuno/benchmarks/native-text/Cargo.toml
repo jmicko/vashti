@@ -60,6 +60,7 @@ strata-cubek-m64 = ["strata-cubek-tilewise"]
 strata-cubek-balanced = ["strata-cubek-tilewise"]
 strata-cubek-wide = ["strata-cubek-balanced"]
 strata-native-wide = ["strata-intel-core"]
+strata-native-wide32 = ["strata-native-wide"]
 # Fixed public completion check; changes only the harness request, not the engine.
 strata-public-cap-check = ["strata-intel-core"]
 # Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.
