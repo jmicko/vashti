@@ -206,3 +206,52 @@ separate `attention_checks` inventory (full26+39 unchanged). It builds; actual
 71-control hardware acceptance is pending. See
 `kuno-strata-attention-numeric-controls.md`. No private API/protocol/configuration
 or frontend consumer changed. The accepted installation is stillfb31e124.
+
+## Compiler specialization and verified timing attribution
+
+Fresh upstream phase timing uses the same pinned binary and same public requests,
+adding only `STRATA_PREFILL_TIMING=1`. The separate presence-tested SYNC debugging
+flag remains absent. `strata-matched-timing-reference-20261020` completes, validates
+both4244-prefix summaries, contains the actual process under swap/core0 and
+confirms physical recovery. Instrumented repeat6.290s versus clean5.352s; queue
+event intervals include idle time and endpoint overhead, not isolated kernels.
+Repeat QSA attention680ms, GDN projections158ms, recurrence227ms and output96ms
+highlight remaining math gaps. Expert dequant875ms, GU+SwiGLU545ms and DOWN with
+lookahead gaps2358ms cannot be added to independent host times. Host staging319ms
+and copy wait87ms are not a measured PCIe bandwidth. Full public source/client
+provenance and attribution are retained in the reference directory's TIMING.md.
+
+Sourcee9b6bd4c / SHAcf867264 (`strata-parity-qsa-specialized-controls-20261020`)
+expands the complete selected prompt QSA K8/twelve-head scalar pipeline without
+changing other attention/decode/MTP shaders or fixed barriers. All original9
+actual GPU scalar-versus-candidate partial/stat/fault comparisons complete with
+bitwise equality on their bounded fixtures. The combined receipt still fails
+because the independent ranked selection control disagrees at start2050/count3.
+Full physical recovery/normal admission/zero driver fault delta are confirmed;
+this failed receipt is not an80-control acceptance. A stricter non-dyadic and
+nonzero query-row-offset extension is being prepared before selection.
+
+The selection failure is now concretely diagnosed. Positive start0 passes; later
+ranked case has244 mismatched output words and fault0, with clean owning tails.
+A CPU simulation of the old radix key with `v+0` optimized away reproduces exactly
+244 mismatches: negative zero and positive zero incorrectly receive different
+ordered integer keys. Fix40653af1 canonicalizes IEEE zero bits before the key
+transform. The independent numeric oracle, original six cases, finite/status
+faults and all comparison thresholds are unchanged. Initial fixture failure from
+upload_f32 rejecting deliberate NaN poison was separately repaired by uploading
+its exact wiping raw bits; no production upload guard was relaxed.
+
+The whole cf867264 public profile also completes all3 correct requests and actual
+close/recovery. Warm4245 prefixes14.4097/14.4597s, QSA family1.8111s versus2.9727s
+in the earlier comparable profile. Total expert interval8.3447s, attention4.6148s.
+Routing group count26570 versus26673 differs slightly, so do not attribute every
+whole-request millisecond solely to QSA. Both use the same public input count and
+20.0257-trillion useful-matrix-FLOP estimate. Finer numeric controls and final
+semantic/thinking/tools acceptance remain required; nothing new is installed.
+
+GDN source987d1977 similarly expands the complete selected32-scalar state
+recurrence while retaining all original FMA/fault/barrier order. CPU Naga/SPIR-V
+acceptance only; its original-versus-candidate real-arena10-case golden control
+is being integrated before GPU acceptance. An optional pure-Rust CubeK dense
+projection path is also under isolated review; it is not yet a selected dependency
+or measured speed result. No frontend/API contract changes.
