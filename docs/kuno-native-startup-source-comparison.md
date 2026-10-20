@@ -107,3 +107,78 @@ unbounded source envelope or changed expert placement is needed.
 If constructor or MTP instead dominates, investigate that measured interval
 first. No loading implementation or startup speed claim follows from this
 source-only note. Prompt-processing parity remains the current priority.
+
+## Opt-in bounded implementation, 2026-10-20
+
+The later fixed-public CPU profile
+`strata-native-fast-cpu-readyfix-20261020/receipt.json` measured the
+`global_sources` arrival at 2.035910497 s and `shared_target_weights` at
+97.967252358 s: 95.931341861 s for the interval above. Its USER-only samples
+sum to 14.327 s in this interval (4.884 s `memmove`, 3.477 s HOST load,
+2.709 s the fill closure and 2.422 s `memset`). This confirms the source
+construction interval dominates, but does not attribute the remaining wall time
+between kernel work, disk waits and GPU fences. It does not justify eliminating
+initialization or identity checks.
+
+`strata-parallel-loading` now selects one connected startup candidate:
+
+* HOST expert payload is read directly into its original already-initialized
+  mapped allocation by at most eight scoped readers. They share the original
+  `PositionalReader` and disjoint safe mutable slices. Each source read retains
+  its descriptor/model identity, tensor bounds, absolute source bounds and
+  pre/post stat checks. A replaced pathname is never reopened. Every worker is
+  joined, including on spawn/read error or panic, before the original mapping
+  can flush, unmap, seal or register. Original allocation padding remains zero;
+  embedding and loan-shadow preparation keep their previous paths.
+* Resident cache fill uses the same original checked layout and at most 16 MiB
+  per source Vec. It retains the actual previous `client.sync()` completion
+  future while reading/packing the next window. CubeCL synchronously consumes
+  the moved write source and submits its staging copy before this future is
+  returned, so one next CPU window overlaps one actual backend window. It joins
+  the previous completion before another write or any owner publication. The
+  original full-byte window initialization, root identity checks and final graph
+  identity checks remain in force.
+* The completion guard is armed before scheduling. A next-read error/panic
+  joins the actual previous completion; a synchronous scheduling/sync-creation
+  failure drains through the original client. A failed or panicked drain retains
+  all original destination roots for terminal process teardown. It cannot return
+  a ready cache, pretend completion or claim reusable/erased owners.
+* Reservation retains the existing two 16 MiB upload allowances and 1 MiB
+  source allowance. The option adds exactly 2,621,440 B for eight requested
+  256 KiB thread stacks plus 64 KiB per-thread setup/TLS allowance. Job metadata
+  stays within the existing separate global cap. These are explicit requested
+  bounds, not a claim about unrelated OS allocator/kernel accounting. There is
+  no model-sized temporary or new persistent model copy.
+
+The normal/restore cache paths are unchanged when the option is disabled.
+No request processing, private profiling, graph scheduling, inference API,
+Vashti storage or privacy contract changes. The existing four public phase
+markers can measure the whole improvement; this candidate adds no diagnostic
+fields or production content logging.
+
+`python3 apps/kuno/benchmarks/text/test-parallel-startup-loading.py` runs eight
+direct tests of the actual scoped-reader and upload-completion policies.
+`--deps-dir` can link the retained real `kuno_text` and CubeCL libraries without
+rebuilding them, adding two tiny fixed-public GGUF tests and type checking the
+actual native completion future: **10 tests passed**. Checks cover exact
+disjoint fill/tails, initialized padding, invalid geometry, worker error/panic
+joins, source pathname replacement versus original-FD mutation/foreign-owner
+rejection, actual join-on-error and unknown-completion quarantine. Source gates
+also verify the original mapped initialization/flush ordering and actual CubeCL
+submit/completion boundary. These checks do not compile the complete changed
+worker, perform real DMA/fault injection, validate GPU recovery or measure load
+speed. Full opt-in worker compilation and protected positive/recovery/loading
+acceptance remain root's gates before runtime selection.
+
+Exact CPU checks run in the isolated startup worktree (all passed):
+
+```sh
+python3 apps/kuno/benchmarks/text/test-parallel-startup-loading.py
+python3 apps/kuno/benchmarks/text/test-parallel-startup-loading.py --deps-dir /media/jmicko/faststore/kuno-development/root-native-text-target-20261005/release/deps
+rustfmt --edition 2024 --check apps/kuno/benchmarks/native-text/src/strata_global_gpu.rs apps/kuno/benchmarks/native-text/src/strata_global_host.rs apps/kuno/benchmarks/native-text/src/strata_global_plan.rs apps/kuno/benchmarks/native-text/src/strata_parallel_reads.rs apps/kuno/benchmarks/native-text/src/strata_upload_completion.rs
+git diff --check
+```
+
+The additional reservation is **2.5 MiB** (2.62144 decimal MB), with original
+two-window capacity unchanged. No actual GPU, system service or installed
+binary was accessed or changed by these checks.

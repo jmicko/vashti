@@ -541,7 +541,32 @@ impl Plan {
         first: u64,
         destination: &mut [u8],
     ) -> Result<()> {
-        self.load_chunk_range_with(graph, index, first, destination, |pair| Ok(pair.expert))
+        self.load_chunk_range_with(
+            graph,
+            index,
+            first,
+            destination,
+            |pair| Ok(pair.expert),
+            |tensor, source, target| tensor.read_range(source, target),
+        )
+    }
+    #[cfg(feature = "strata-parallel-loading")]
+    pub(crate) fn load_chunk_read_at<'f>(
+        &self,
+        graph: BoundGraph<'_, 'f>,
+        reader: &kuno_text::gguf::PositionalReader<'f>,
+        index: usize,
+        first: u64,
+        destination: &mut [u8],
+    ) -> Result<()> {
+        self.load_chunk_range_with(
+            graph,
+            index,
+            first,
+            destination,
+            |pair| Ok(pair.expert),
+            |tensor, source, target| reader.read_range(tensor, source, target),
+        )
     }
     pub(crate) fn load_chunk_placed(
         &self,
@@ -551,17 +576,23 @@ impl Plan {
         destination: &mut [u8],
         placement: &crate::strata_global_sources::Placement,
     ) -> Result<()> {
-        self.load_chunk_range_with(graph, index, first, destination, |pair| {
-            placement.original_at(pair.layer, pair.expert)
-        })
+        self.load_chunk_range_with(
+            graph,
+            index,
+            first,
+            destination,
+            |pair| placement.original_at(pair.layer, pair.expert),
+            |tensor, source, target| tensor.read_range(source, target),
+        )
     }
-    fn load_chunk_range_with(
+    fn load_chunk_range_with<'f>(
         &self,
-        graph: BoundGraph<'_, '_>,
+        graph: BoundGraph<'_, 'f>,
         index: usize,
         first: u64,
         destination: &mut [u8],
         mut original: impl FnMut(RankedPair) -> Result<usize>,
+        mut read: impl FnMut(kuno_text::TensorView<'f>, u64, &mut [u8]) -> Result<()>,
     ) -> Result<()> {
         self.check_binding(graph)?;
         if destination.len() as u64 > PUBLIC_UPLOAD_WINDOW {
@@ -588,7 +619,7 @@ impl Plan {
                     .checked_mul(role_bytes)
                     .and_then(|at| at.checked_add(source_first))
                     .ok_or(Error::ArithmeticOverflow)?;
-                tensor.read_range(source, &mut destination[range])
+                read(tensor, source, &mut destination[range])
             },
         )?;
         graph.verify_unchanged()?;

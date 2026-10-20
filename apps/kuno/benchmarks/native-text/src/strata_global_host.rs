@@ -2,6 +2,9 @@
 //! sole CubeCL immutable registry. No fixed 432-page or uniform-bank assumption.
 #[path = "strata_global_exchange.rs"]
 pub(crate) mod exchange;
+#[cfg(feature = "strata-parallel-loading")]
+#[path = "strata_parallel_reads.rs"]
+mod parallel_reads;
 #[path = "strata_prompt_shadow.rs"]
 mod shadow;
 #[path = "strata_prompt_shadow_plan.rs"]
@@ -18,9 +21,21 @@ const SOURCE_WINDOW: u64 = 1024 * 1024;
 // Global plan, owner maps/aliases and inspection temporaries replace the old
 // fixed-bank metadata cap. Bounded startup upload owns at most one original
 // chunk plus its backend copy; the HOST reader owns one additional window.
+// The optional direct-reader path also charges its eight bounded thread stacks
+// and per-worker setup allowance; actual readers join before page publication.
 const GLOBAL_METADATA_CAP: u64 =
     32 * 1024 * 1024 + crate::strata_global_sources::PLACEMENT_HOST_BYTES;
-const SETUP_WINDOWS: u64 = 2 * crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW + SOURCE_WINDOW;
+const SETUP_WINDOWS: u64 = 2 * crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW
+    + SOURCE_WINDOW
+    + if cfg!(feature = "strata-parallel-loading") {
+        PARALLEL_SETUP_BYTES
+    } else {
+        0
+    };
+#[cfg(feature = "strata-parallel-loading")]
+const PARALLEL_SETUP_BYTES: u64 = parallel_reads::SETUP_BYTES;
+#[cfg(not(feature = "strata-parallel-loading"))]
+const PARALLEL_SETUP_BYTES: u64 = 0;
 const MAX_ALIGNMENT: u64 = 1024 * 1024;
 fn envelope(bytes: u64) -> KResult<u64> {
     bytes
@@ -250,11 +265,19 @@ impl Host {
             .map_err(|_| fail())?;
         host.registry_budget = Some(registry_budget);
         let mut charges = HeapCharges::default();
+        #[cfg(feature = "strata-parallel-loading")]
+        let reader = graph
+            .tensor("blk.0.ffn_gate_exps.weight")?
+            .positional_reader()?;
+        #[cfg(not(feature = "strata-parallel-loading"))]
         let mut window = Zeroizing::new(Vec::new());
-        window
-            .try_reserve_exact(SOURCE_WINDOW as usize)
-            .map_err(|_| Error::LimitExceeded("global HOST source window"))?;
-        window.resize(SOURCE_WINDOW as usize, 0);
+        #[cfg(not(feature = "strata-parallel-loading"))]
+        {
+            window
+                .try_reserve_exact(SOURCE_WINDOW as usize)
+                .map_err(|_| Error::LimitExceeded("global HOST source window"))?;
+            window.resize(SOURCE_WINDOW as usize, 0);
+        }
         for (layer, l) in plan.layers.iter().enumerate() {
             for (role, pieces) in l.roles.iter().enumerate() {
                 let name = [
@@ -282,26 +305,73 @@ impl Host {
                         },
                         &mut charges,
                         |mapped| {
-                            for ordinal in 0..p.count {
-                                let expert = l.expert_at(p.first + ordinal)?;
+                            #[cfg(feature = "strata-parallel-loading")]
+                            {
                                 let bytes = usize::try_from(p.expert_bytes)
                                     .map_err(|_| Error::ArithmeticOverflow)?;
-                                let target =
-                                    window.get_mut(..bytes).ok_or(Error::InvalidBufferLength)?;
-                                tensor.read_range(
-                                    (expert as u64)
-                                        .checked_mul(p.expert_bytes)
-                                        .ok_or(Error::ArithmeticOverflow)?,
-                                    target,
-                                )?;
-                                copy_range(
-                                    mapped,
-                                    p.logical_bytes as usize,
-                                    ordinal as u64 * p.expert_bytes,
-                                    target,
-                                )
-                                .map_err(Error::InvalidFormat)?;
-                                target.zeroize();
+                                if bytes == 0 || bytes > SOURCE_WINDOW as usize {
+                                    return Err(Error::InvalidBufferLength);
+                                }
+                                let logical = p
+                                    .count
+                                    .checked_mul(bytes)
+                                    .ok_or(Error::ArithmeticOverflow)?;
+                                if logical as u64 != p.logical_bytes {
+                                    return Err(Error::InvalidBufferLength);
+                                }
+                                let target = mapped
+                                    .get_mut(..logical)
+                                    .ok_or(Error::InvalidBufferLength)?;
+                                // All allocation padding is already initialized.
+                                // Scoped workers borrow disjoint FINAL spans;
+                                // none may outlive this original mapped owner.
+                                parallel_reads::fill(target, bytes, |ordinal, target| {
+                                    let expert = l.expert_at(
+                                        p.first
+                                            .checked_add(ordinal)
+                                            .ok_or(Error::ArithmeticOverflow)?,
+                                    )?;
+                                    reader.read_range(
+                                        tensor,
+                                        (expert as u64)
+                                            .checked_mul(p.expert_bytes)
+                                            .ok_or(Error::ArithmeticOverflow)?,
+                                        target,
+                                    )
+                                })
+                                .map_err(|error| match error {
+                                    parallel_reads::Failure::Read(error) => error,
+                                    parallel_reads::Failure::Geometry => Error::InvalidBufferLength,
+                                    parallel_reads::Failure::Spawn => {
+                                        Error::LimitExceeded("global HOST read workers")
+                                    }
+                                })?;
+                                reader.verify_file_unchanged()?;
+                            }
+                            #[cfg(not(feature = "strata-parallel-loading"))]
+                            {
+                                for ordinal in 0..p.count {
+                                    let expert = l.expert_at(p.first + ordinal)?;
+                                    let bytes = usize::try_from(p.expert_bytes)
+                                        .map_err(|_| Error::ArithmeticOverflow)?;
+                                    let target = window
+                                        .get_mut(..bytes)
+                                        .ok_or(Error::InvalidBufferLength)?;
+                                    tensor.read_range(
+                                        (expert as u64)
+                                            .checked_mul(p.expert_bytes)
+                                            .ok_or(Error::ArithmeticOverflow)?,
+                                        target,
+                                    )?;
+                                    copy_range(
+                                        mapped,
+                                        p.logical_bytes as usize,
+                                        ordinal as u64 * p.expert_bytes,
+                                        target,
+                                    )
+                                    .map_err(Error::InvalidFormat)?;
+                                    target.zeroize();
+                                }
                             }
                             Ok(())
                         },
