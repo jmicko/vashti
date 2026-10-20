@@ -197,10 +197,39 @@ fn graph_plan(graph: BoundGraph<'_, '_>) -> Result<(Layout, u64)> {
         expected,
     ))
 }
+fn public_guard_cause(error: &Error) -> &'static str {
+    // Only source-owned static labels escape. No Display, values, addresses,
+    // model paths, panic payloads or request metadata are reported.
+    match error {
+        Error::InvalidFormat(label) | Error::LimitExceeded(label) => label,
+        Error::InvalidBufferLength => "invalid_buffer_length",
+        Error::ArithmeticOverflow => "arithmetic_overflow",
+        Error::OutOfBounds => "out_of_bounds",
+        Error::Io(_) => "model_io_failed",
+        Error::UnsupportedVersion(_) => "unsupported_version",
+        Error::UnsupportedTensorType(_) => "unsupported_tensor_type",
+        Error::FileChanged => "model_file_changed",
+    }
+}
+fn public_guard_diagnostic(cause: &'static str) {
+    if crate::strata_intel_core::enabled()
+        && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+    {
+        // Private worker startup removes this laboratory variable; only the
+        // compiled-public fixed-fixture entry reinstalls it. Prefix already
+        // belongs to the public numeric-only diagnostic collector.
+        eprintln!("public_device_error native_qsa_guarded static_cause={cause}");
+    }
+}
 fn guarded<T>(poison: &AtomicBool, op: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(op)) {
         Ok(Ok(v)) => Ok(v),
-        _ => {
+        failure => {
+            match failure {
+                Ok(Err(error)) => public_guard_diagnostic(public_guard_cause(&error)),
+                Err(_) => public_guard_diagnostic("panic_suppressed"),
+                Ok(Ok(_)) => unreachable!(),
+            }
             poison.store(true, Ordering::Release);
             Err(fault("native QSA batch guarded failure"))
         }
