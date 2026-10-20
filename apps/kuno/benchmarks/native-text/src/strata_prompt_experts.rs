@@ -278,6 +278,7 @@ pub(crate) fn enqueue(
     // Native Intel prefill groups on the host once per layer. This is a bounded
     // routing-only readback, not decode's CPU expert/input contribution.
     let groups = super::groups::validate(map, count)?;
+    crate::strata_prefill_profile::expert_member_geometry(map, groups);
     crate::strata_prefill_profile::count("expert_group_count", groups as u64);
     crate::strata_prefill_profile::count("expert_fp16_image_bytes", (groups * DQ_WORDS * 4) as u64);
     let mut issued = 0;
