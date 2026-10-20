@@ -295,7 +295,11 @@ async fn serve(
                 .map_err(|_| "public_prompt_dequant_numeric_failed")?,
         );
         let attention_checks = crate::strata_qsa::selection::public_numeric(&mut arena)
-            .map_err(|_| "public_prompt_attention_numeric_failed")?;
+            .map_err(|error| {
+                // This branch accepts only compiled public diagnostic inputs.
+                eprintln!("public_attention_numeric_error {error}");
+                "public_prompt_attention_numeric_failed"
+            })?;
         arena.close().map_err(|_| "public_matrix_close_failed")?;
         if arena.owned_zero_audit_receipt().is_none() {
             return Err("public_matrix_erasure_unconfirmed");
