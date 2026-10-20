@@ -24,7 +24,7 @@ instrumentation or relaxed memory/hazard guards are added.
 
 **Latest completed Kuno development (2026-10-20 16:53UTC; installed native32 unchanged).**
 
-Full capture/source source`bfbfc0c3d51d39409e364530fef44ad65d93495d`, worker
+Full capture/source candidate`bfbfc0c3d51d39409e364530fef44ad65d93495d`, worker
 SHA`ac01855f2dc9002208f81b88533a364657594d4bd4d6e1e9e7c94b1113baa90d`,
 build`strata-parity-capture-inventory-20261020`, passes80 actual App CPU,
 408/208 offline layouts, all129 original numerical GPU controls, complete real
@@ -73,10 +73,11 @@ connected experiments are in [the synchronization guide](kuno-native-compute-int
 
 Installed worker/gateway SHAeac78ce0/d3ed07f4 are unchanged. Completed recovery
 16:53:49UTC: Intel50,688,000B, NVIDIA compute0, all faults0, endpoints200 and
-normal inactive/unpaused admission/waiting0. No test job should remain active;
+normal inactive/unpaused admission/waiting0. Independent17:01:14UTC check
+reconfirmed those values and installed hashes. No test job remains active;
 verify live state before starting another. A new bounded task-owned sudo refresh
-was started16:59UTC (exact PID in `sudo-refresh-capture-inventory-20261020.pid`,
-parent3556); the verified old6524 loop is retired. Never kill the shared shell.
+is64142, parent3556, started16:59:33UTC and bounded until18:59UTC
+(PID file `/media/jmicko/faststore/kuno-development/sudo-refresh-capture-inventory-20261020.pid`); the verified old6524 loop is retired. Never kill the shared shell.
 No API, KNT2/KNR2, configuration, model identity or Vashti change. No frontend,
 package, version or release. The parity goal stays active and unmet. Earlier
 records below retain chronological context.
