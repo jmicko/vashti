@@ -747,3 +747,16 @@ Plan/release/wait while avoiding false same-queue dependencies. Its55 actual
 CPU controls pass; see [the exact synchronization contract and gates](kuno-native-compute-intervals.md).
 Release/GPU/full-model acceptance is pending. All complete preceding components
 stay; installed3fffc266/SHAeac78ce0 remains selected, parity goal unmet.
+
+The complete interval sourcef1e09df7/SHAe705298b passes55 CPU controls,
+408/208 offline, original129 GPU and complete model/recovery, but profiled
+repeat12.3372s regresses from11.5435s. Coupled actual-final-SPIR-V OR-only
+source2b32bbea/SHA9452beed passes60 CPU,408/208, original129 GPU, complete
+requests/counts and physical recovery.162,742 actual OR views and44% fewer
+barrier ENTRIES are proven; repeat12.2718s is unchanged, so neither is installed.
+The full connected pipeline remains intact. Next source proposal is the sealed
+actual access-class manifest and actual barrier-call counters described in
+[kuno-native-compute-intervals.md](kuno-native-compute-intervals.md#next-coherent-source-proposal-sealed-access-class-manifest).
+Do not clear full-root history after narrowing destination to one node alone.
+No API/consumer/installation change. Installed matched clean11.1474s vs Strata
+5.3515s remains the reference; the active parity goal remains unmet.

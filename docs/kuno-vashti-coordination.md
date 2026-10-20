@@ -22,6 +22,36 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Latest Kuno-only development validation (2026-10-20 15:25UTC).**
+The complete pipeline remains intact. Scoped actual-buffer guard source45795611 /
+SHA8944b257 passes101 CPU,408/208 offline layouts, all129 numerical GPU controls,
+complete requests/counts and recovery, but profiled repeat11.5435s is unchanged.
+Complete-view interval sourcef1e09df7/SHAe705298b passes55 CPU and the same GPU/
+whole-model gates, but repeat12.3372s regresses. Coupled actual-final-SPIR-V
+OR-only source2b32bbea/SHA9452beed passes60 CPU,408/208, original129 GPU,
+complete requests/counts and physical recovery. It proves162,742 actual OR-only
+views and241,948 vs431,700 buffer barrier ENTRIES (44% fewer), yet repeat12.2718s
+is unchanged. Entries are not hardware flushes or barrier calls. None is selected
+or installed; no new clean/staged/terminal or sustained acceptance is claimed.
+Installed matched clean11.1474s vs same-host Strata5.3515s stays the reference.
+
+Next is the [sealed actual access-class manifest proposal](kuno-native-compute-intervals.md#next-coherent-source-proposal-sealed-access-class-manifest).
+Current conservative barriers include all six destination classes even when a
+root never uses them. A sealed complete per-buffer/per-queue future-class union
+could narrow them safely while retaining every original full view, external
+boundary, queue wait/release, owner and64MiB budget. This mask cost is a hypothesis,
+not a measured hardware cause. Add actual barrier-call counts. Never narrow to
+one node's destination mask and clear old history: later reads in untouched
+bytes through a different access class could lose a dependency.
+
+Exact code/artifact/receipt identities, tests, limitations and next gates are in
+[the synchronization guide](kuno-native-compute-intervals.md). Physical snapshot:
+Intel50,688,000B, NVIDIA compute0, faults0, all services200 and normal admission.
+Installed worker/gateway SHAeac78ce0/d3ed07f4 were reverified unchanged afterward.
+No API, KNT2/KNR2, config, model identity or Vashti integration change; no frontend,
+package or release. The parity goal remains active and unmet. Earlier development
+checkpoint descriptions below retain their chronological context.
+
 The complete bulk/PV/loading source12caac8b / SHAa2ad0c62 now passes402/144
 layouts, all103 GPU controls, three full public requests and a separate clean
 45/4245/4245 comparison, with physical recovery and healthy services. Three
