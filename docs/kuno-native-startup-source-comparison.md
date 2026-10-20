@@ -182,3 +182,43 @@ git diff --check
 The additional reservation is **2.5 MiB** (2.62144 decimal MB), with original
 two-window capacity unchanged. No actual GPU, system service or installed
 binary was accessed or changed by these checks.
+
+## Remaining resident-fill pipeline difference
+
+After the initial option, HOST reads are parallel but resident-cache source
+reads remain serial inside `Plan::load_chunk_read_at`: one physical 16 MiB
+window is packed in frequency-ranked slot order, then uploaded while the next
+window is packed. Static reconstruction from the original committed profile,
+the exact DASLab quant payload sizes and the previously accepted 11,998-pair
+capacity gives **24,445,798,400 B**, 46 roots, **1,460** physical windows and
+**37,408** intersected original-role read calls. Consecutive profile slots change
+layer 6,761 times out of 11,997 transitions. This quantifies source traversal;
+it does not measure physical disk I/O, file-cache misses or sync overhead.
+
+The selected pinned Strata GGUF pipeline
+(`sycl/src/program/generate.cpp:4518–4589`) admits slots in original profile
+order, then sorts its *read jobs* by layer/expert. Up to eight readers fill
+double page-locked batches of 64 experts while prior copies execute. The same
+11,998 pairs require 188 such batches. Its maximum blob is 2,662,400 B for this
+profile, so its two64-batch temporary can be 340,787,200 B (325 MiB), substantially
+larger than our current explicitly bounded two16 MiB allowance. Its fewer batches
+are not evidence that increasing our allowance alone would close the load gap.
+
+The next bounded coherent candidate is to retain every original resident slot
+and address, but construct a checked immutable source-job permutation ordered by
+original shard/tensor/expert offsets, fill disjoint staging spans with the same
+eight original-FD readers, and scatter uploads to their original GPU roots.
+Retain complete byte initialization, original role/tensor/file bounds, every
+pre/post identity check, original-root ownership and true previous-completion
+drain/quarantine. Start with the existing total window budget; any larger or
+direct page-locked upload variant needs a separate explicit quote and actual
+source/staging lifetime proof. Do not silently adopt Strata's 325 MiB temporary
+or change residency merely to make loading sequential.
+
+The current root-observed roughly82-second first-request arrival was from a
+whole-model attempt that later failed batch admission; it is **not an accepted
+startup result**. Existing coarse markers still combine GPU-cache fill and HOST
+construction. Before choosing this next loader change over prompt work, obtain
+separate fixed-public numeric timing for resident-cache source fill/actual joins
+and HOST allocate/fill/flush/import. No new loader code, timing run, GPU action
+or speed claim follows from this remaining-gap assessment.
