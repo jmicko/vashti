@@ -49,3 +49,29 @@ The three new tests also live inside the actual native matrix module and run
 under the ordinary matrix test filter. Existing GPU tolerances are unchanged.
 Production full build, physical numerical matrices, whole-model outputs,
 erasure/close/recovery and end-to-end timing remain root-task acceptance gates.
+
+## Register-first successor to ab475149
+
+The ab475149 baseline remains a distinct complete candidate. Its coherent
+successor changes the prefetch phase as a whole: four A jobs and eight B jobs
+per lane load into fixed local arrays of8 and16vec4 values BEFORE current-stage
+MMA. The same vectors publish to the independent SLM stage AFTER current-stage
+MMA, then the original uniform barrier switches stages. All load/publish job
+loops are statically unrolled. Initial-stage publication, bit-preserving vector
+types, zero masking,32KiB shared allocation, orderedK16 math and fault/owner
+checks remain unchanged.
+
+This removes the immediate next-load-to-SLM-store dependency before current
+math. It still does not guarantee asynchronous execution. The extra per-lane
+payload is96 half values (192 bytes), so register pressure/occupancy and possible
+driver spills must earn an actual end-to-end gain.
+
+All64 actual variants validate again. The actual compiled-module test now
+requires that no Function-storage prefetch array survive: CubeCL's optimizer
+scalarizes the statically indexed locals into SSA vectors. This does not prove
+the physical driver allocates every value to registers without spilling. The
+index/tail/ping-pong test now models fixed per-lane prefetch vectors separately
+and publishes them only after current-stage reads. All3 focused CPU tests and
+standalone production-module strict Clippy pass. Evidence:
+`/tmp/kuno-prefill-submit-review/register-matrix-{tests.log,check.log}`.
+No new physical correctness, timing or installation acceptance.
