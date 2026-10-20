@@ -6568,7 +6568,7 @@ impl Workspace {
         } else {
             None
         };
-        let (output, ple) = completed_proof(
+        let (mut output, ple) = completed_proof(
             || Ok(output),
             || {
                 self.ple.prepare_device_prefix_after_whole_model_fence(
