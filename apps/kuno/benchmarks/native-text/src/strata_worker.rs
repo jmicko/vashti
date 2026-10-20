@@ -103,6 +103,12 @@ fn run_mode(
     if public_check {
         crate::resident_util::enable_compiled_public_diagnostics();
     }
+    // Capture this fixed-public selector before the original inherited-env
+    // scrub. Private entry cannot select it, and no diagnostic env survives.
+    let qsa_stage_only = cfg!(feature = "strata-qsa-xmx")
+        && public_check
+        && matrix_check
+        && std::env::var("KUNO_LAB_PUBLIC_QSA_XMX_STAGE_ONLY").as_deref() == Ok("1");
     let worker_started = Instant::now();
     use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
     CubeClRuntimeConfig::set(Default::default());
@@ -187,6 +193,7 @@ fn run_mode(
         short_check,
         matrix_timing,
         rolling_failure,
+        qsa_stage_only,
     ))
 }
 #[allow(clippy::too_many_arguments)] // Explicit internal diagnostic selectors; no wire fields.
@@ -199,6 +206,7 @@ async fn serve(
     short_check: bool,
     matrix_timing: bool,
     rolling_failure: bool,
+    qsa_stage_only: bool,
 ) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
@@ -327,6 +335,20 @@ async fn serve(
         arena
             .enable_public_owned_zero_audit()
             .map_err(|_| "public_matrix_audit_failed")?;
+        #[cfg(feature = "strata-qsa-xmx")]
+        if qsa_stage_only {
+            let report = crate::strata_qsa::prompt_xmx::public_stage_probe(&mut arena)
+                .map_err(|_| "public_qsa_xmx_stage_failed")?;
+            arena.close().map_err(|_| "public_matrix_close_failed")?;
+            if arena.owned_zero_audit_receipt().is_none() {
+                return Err("public_matrix_erasure_unconfirmed");
+            }
+            eprintln!(
+                "public_prefill_qsa_xmx_stage {}",
+                serde_json::json!({"report":report,"closed":true,"content_saved":false})
+            );
+            return Ok(());
+        }
         if matrix_timing {
             let cases = crate::strata_matrix::public_timing(&client, &mut arena, &file)
                 .map_err(|_| "public_matrix_timing_failed")?;

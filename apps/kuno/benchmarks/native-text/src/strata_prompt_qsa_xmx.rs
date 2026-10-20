@@ -43,6 +43,17 @@ fn scale(cache: &Array<u32>, token: usize, offset: usize) -> f32 {
     value
 }
 
+#[cube]
+fn stage_split(hi: &mut SharedMemory<f16>, lo: &mut SharedMemory<f16>, i: usize, x: f32) {
+    let h = f16::cast_from(x);
+    hi[i] = h;
+    lo[i] = f16::cast_from(x - f32::cast_from(h));
+}
+#[path = "strata_qsa_xmx_stage_probe.rs"]
+mod stage_probe;
+pub(crate) use stage_probe::definition as stage_definition;
+pub(crate) use stage_probe::run as public_stage_probe;
+
 #[cube(launch_unchecked)]
 fn attention_xmx(
     query: &Array<f32>,
@@ -178,9 +189,7 @@ fn attention_xmx(
                         x = v * up;
                     }
                 }
-                let hi = f16::cast_from(x);
-                qh[i] = hi;
-                ql[i] = f16::cast_from(x - f32::cast_from(hi));
+                stage_split(&mut qh, &mut ql, i, x);
                 i += 128;
             }
             sync_cube();
@@ -324,9 +333,7 @@ fn attention_xmx(
                             x = prob[h * 64 + col] * (vs * (16384.0 / reduction[g]));
                         }
                     }
-                    let hi = f16::cast_from(x);
-                    qh[i] = hi;
-                    ql[i] = f16::cast_from(x - f32::cast_from(hi));
+                    stage_split(&mut qh, &mut ql, i, x);
                     i += 128;
                 }
                 sync_cube();

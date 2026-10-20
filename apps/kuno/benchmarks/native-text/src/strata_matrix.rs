@@ -2390,10 +2390,16 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 .into_iter()
                 .chain(native_expert_wide::definitions());
             #[cfg(feature = "strata-qsa-xmx")]
-            let definitions = definitions.into_iter().chain(std::iter::once((
-                "qsa_xmx_attention",
-                crate::strata_qsa::prompt_xmx::definition(),
-            )));
+            let definitions = definitions.into_iter().chain([
+                (
+                    "qsa_xmx_attention",
+                    crate::strata_qsa::prompt_xmx::definition(),
+                ),
+                (
+                    "qsa_xmx_stage",
+                    crate::strata_qsa::prompt_xmx::stage_definition(),
+                ),
+            ]);
             for (name, definition) in definitions {
                 let mut compiler = AutoCompiler::SpirV(Default::default());
                 let mut options = WgpuCompilationOptions {
@@ -2436,6 +2442,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 #[cfg(feature = "strata-qsa-xmx")]
                 let expected_shared = if name == "qsa_xmx_attention" {
                     Some(crate::strata_qsa::prompt_xmx::SHARED_BYTES)
+                } else if name == "qsa_xmx_stage" {
+                    Some(1536)
                 } else {
                     expected_shared
                 };

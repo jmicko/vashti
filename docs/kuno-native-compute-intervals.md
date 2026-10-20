@@ -1790,3 +1790,22 @@ allHTTP200 and normal admission; no GPU job remains. Installed native32/gateway
 unchanged. New bounded sudo refresh297061 ends2026-10-21 00:17:49UTC, owned parent
 sharedshell3556 must never be killed. Goal ACTIVE/UNMET. No reset/reboot, new API,
 configuration/model identity/frontend/release change.
+
+
+### Fixed-public dynamic stage and identity-product control
+
+The next laboratory control factors the exact unchanged hi/lo writes into one
+shared production helper, then calls it on1024 compiled public Q-like/P-like
+F32 values. A real subgroup16 cooperative identity product checks both staged
+halves together, alongside exact host-half high/low reference checks and full
+original parent padding/fault/erasure audit. The control itself has1536B SLM and
+uses authentic separate private-arena owners; outputs are aggregate mismatches
+and max errors only. It does not accept text, stdin, user data or model outputs.
+
+A fixed-public-only selector on the existing laboratory matrix entry is captured
+BEFORE the original inherited-environment scrub, gated by public_check AND
+matrix_check AND compiled feature. No diagnostic environment survives; the
+private worker cannot select it. This targeted numerical control does not replace
+original171+7 GPU, full count/profile/recovery or unchanged clean/staged gates.
+The new probe's real SPIRV is added to all8 device-layout offline validations.
+No API/protocol/config/model identity/frontend/install/release change.
