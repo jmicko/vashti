@@ -30,21 +30,59 @@ The existing host launch wrapper permits these offsets for counts at most8 even
 without a PromptScope; its original row/context validation is exercised too.
 No wrapper guard is bypassed or weakened for these additional cases.
 
-The oracle and candidate must have **bit-identical complete partial and
+The original nine cases still require **bit-identical complete partial and
 statistics owners**, including every inactive query/chunk and physical tail.
-An independent coordinate checker also demands zeros in every inactive region.
-Their complete fault owners must agree exactly:0 for valid inputs,1 for each
-negative control, and zero physical padding. Fixed public buffer data stays in
-wiping RAM and actual readback leases; the original whole-owner reader includes
-the full runtime I/O audit. The parent worker still owns final close/zero audit.
+All twelve cases independently demand exact zero inactive regions and exact
+complete fault parity:0 for valid inputs,1 for each negative control, and zero
+physical padding. Fixed public inputs stay in wiping RAM and actual readback
+leases; the original whole-owner reader includes its runtime I/O audit. The
+parent worker still owns final close/zero audit.
 
-Aggregate numeric diagnosis prints mismatch counts, maximum finite absolute and
-relative error, maximum ULP distance, and nonfinite mismatch counts before any
-final bitwise rejection. These measurements set no acceptance tolerance. A pure
-math mismatch is collected across all twelve cases after each genuine reset,
-then still fails the complete check; runtime, owner, tail or fault failures
-abort immediately. This permits inspecting all three rounding-sensitive cases
-without converting failed parity into a passing receipt.
+The extra three non-dyadic cases exposed finite bit differences after legal
+F32 contraction/rounding while the original nine remained bit-identical. Their
+new independent acceptance does not choose either GPU result as ground truth.
+`strata_qsa_attention_f64_oracle.rs` decodes the original host INT8 codes/FP16
+scales exactly, reads the actual F32 query bits and causal selected IDs, then
+computes each64-cell chunk's scores, maximum, exponential denominator and weighted
+V sum in F64. It checks **both** unchanged scalar and optimized complete outputs
+against that mathematical result. Its head/query-offset/chunk/feature loops do
+not mirror GPU lanes, parse generated shaders or consume GPU intermediates.
+The actual reference arrays and error bounds are held in caller-owned wiping RAM.
+
+Each live word gets an operation-derived error bound; the observed difference
+between GPU implementations never enters it. With unit roundoff `u=2^-24` and
+`gamma(n)=n*u/(1-n*u)`:
+
+- Exact Q8 decode is verified for these original finite public operands. A
+  changed fixture requiring a rounded decode is rejected instead of silently
+  omitting that error term.
+- QK permits `gamma(13)*sum(abs(q*k))/16`: one product, seven sequential lane
+  adds and five subgroup adds per reduction path. Division contributes at most
+  2.5ULP, bounded by5u times the possible score magnitude. F64 reference summation
+  receives its separate negligible rounding allowance.
+- The maximum inherits the greatest score bound. Subtraction error and
+  exponential sensitivity propagate it to each weight. The explicit exp
+  allowance follows [WGSL floating-point accuracy](https://www.w3.org/TR/WGSL/#floating-point-accuracy):
+  `(3+2*abs(x))ULP`, with one normal F32 ULP bounded by2u times magnitude.
+  A fixture outside the finite, normal exponential domain is rejected.
+- The positive denominator uses a six-add pair/tree bound. The64-term weighted
+  V sum uses a conservative `gamma(128)` weighted L1 bound covering even
+  unfused multiply-plus-add implementations, plus propagated weight error.
+
+No fitted absolute floor, FTZ replacement, ignored NaN or comparison only against
+the legacy GPU result is used. Each component must pass its own bound, rather
+than a tolerance scaled by the largest unrelated owner value. Original matrix
+IEEE references/tolerances, shader arithmetic and production compilation policy
+are untouched. Only the new three cases use F64 numerical acceptance; the nine
+original bitwise gates remain mandatory.
+
+Aggregate diagnosis retains scalar-versus-optimized bit mismatch counts,
+absolute/relative/ULP distances and nonfinite counts. For each GPU path versus
+F64 it additionally reports complete checked-word/mismatch/nonfinite counts,
+maximum absolute error, infinity-norm normalized error, maximum individual bound
+and maximum error-to-bound ratio. No buffer arrays are printed. A healthy math
+failure is collected after each genuine reset and still rejects the full run;
+runtime, owner, tail or fault failures abort immediately.
 
 Results belong in a separate `qsa_math_checks` array, preserving existing matrix,
 router/dequant and active-prefix selection case counts. Only fixed case names,
@@ -53,9 +91,11 @@ persisted. Each case drains/resets the original arena before its result is
 published, including on failed comparisons.
 
 `apps/kuno/benchmarks/text/test-qsa-attention-parity-controls.py` compiles the
-actual pure geometry/checker region and verifies the original scalar, actual
-candidate, whole-owner readback, exact comparison, NaN upload and cleanup call
-sites. Its three CPU tests check causal inputs, poison tails, all active/inactive
-chunk coordinates, physical padding, fault rejection, exact global query offsets,
-and numeric diagnosis without relaxing bitwise acceptance. They are not GPU parity
-or device ownership proof.
+actual pure geometry/checker region and independent oracle module. Three original
+CPU tests retain causal/poison/owner/fault/offset coverage; three F64 tests check
+actual non-dyadic geometry0/32/64, exact unpacking and finite bounds, and reject
+wrong query offsets, K codes, head/chunk order, inactive/physical tails and NaNs.
+The script also checks the distinct scalar task, actual candidate launch, both
+F64 consumers and reset-before-result call sites. These are CPU controls, not
+GPU parity, device ownership or whole-model quality proof. The parent must run
+all twelve actual kernels and existing controls before accepting a new candidate.
