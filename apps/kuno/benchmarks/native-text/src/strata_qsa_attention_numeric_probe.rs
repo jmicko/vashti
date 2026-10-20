@@ -40,13 +40,26 @@ fn geometry(start: usize, count: usize, capacity: usize) -> bool {
         && start.checked_add(count).is_some_and(|end| end <= capacity)
 }
 
+fn offset_geometry(start: usize, count: usize, capacity: usize, offset: usize) -> bool {
+    geometry(start, count, capacity)
+        && [0, 32, 64].contains(&offset)
+        && start
+            .checked_add(offset)
+            .and_then(|v| v.checked_add(count))
+            .is_some_and(|end| end <= capacity)
+}
+
 fn selected_rows(start: usize, count: usize) -> Vec<u32> {
-    let mut selected = vec![u32::MAX; OWNER_ROWS * SELECT_WORDS];
+    selected_rows_at(start, count, 0)
+}
+fn selected_rows_at(start: usize, count: usize, offset: usize) -> Vec<u32> {
+    let mut selected = vec![u32::MAX; (offset + OWNER_ROWS) * SELECT_WORDS];
     for row in 0..count {
-        let visible = start + row + 1;
+        let query_row = row + offset;
+        let visible = start + query_row + 1;
         let width = visible.min(SELECT_WORDS);
         for i in 0..width {
-            selected[row * SELECT_WORDS + i] = (visible - width + i) as u32;
+            selected[query_row * SELECT_WORDS + i] = (visible - width + i) as u32;
         }
     }
     selected
@@ -73,6 +86,52 @@ fn inactive_zero(words: &[u32], start: usize, count: usize, stats: bool) -> bool
 
 fn fault_words_match(words: &[u32], control: Control) -> bool {
     words.first().copied() == Some(control.fault()) && words[1..].iter().all(|&word| word == 0)
+}
+
+#[derive(Default, Debug)]
+struct Difference {
+    mismatches: usize,
+    max_abs: f64,
+    max_relative: f64,
+    max_ulp: u32,
+    nonfinite_mismatches: usize,
+}
+fn numeric_difference(reference: &[u32], actual: &[u32]) -> Difference {
+    let mut result = Difference {
+        mismatches: reference.len().abs_diff(actual.len()),
+        ..Default::default()
+    };
+    for (&expected, &observed) in reference.iter().zip(actual) {
+        if expected == observed {
+            continue;
+        }
+        result.mismatches += 1;
+        let expected = f32::from_bits(expected);
+        let observed = f32::from_bits(observed);
+        if !expected.is_finite() || !observed.is_finite() {
+            result.nonfinite_mismatches += 1;
+            continue;
+        }
+        let error = (f64::from(expected) - f64::from(observed)).abs();
+        result.max_abs = result.max_abs.max(error);
+        // Diagnosis only, never an acceptance threshold. A finite floor keeps
+        // the metadata finite when the scalar reference is exactly zero.
+        result.max_relative = result
+            .max_relative
+            .max(error / f64::from(expected).abs().max(1e-30));
+        let ordered = |value: f32| {
+            let bits = if value == 0.0 { 0 } else { value.to_bits() };
+            if bits & 0x80000000 != 0 {
+                !bits
+            } else {
+                bits | 0x80000000
+            }
+        };
+        result.max_ulp = result
+            .max_ulp
+            .max(ordered(expected).abs_diff(ordered(observed)));
+    }
+    result
 }
 
 #[cfg(test)]
@@ -167,6 +226,53 @@ mod tests {
         assert!(!fault_words_match(&[0, 0], Control::NonfiniteQuery));
         assert!(!fault_words_match(&[], Control::Causal));
     }
+    #[test]
+    fn actual_query_offsets_and_numeric_diagnosis_do_not_relax_bitwise_gate() {
+        for (start, count, offset) in [(17, 5, 0), (31, 3, 32), (1983, 8, 64)] {
+            assert!(offset_geometry(start, count, 4096, offset));
+            let selected = selected_rows_at(start, count, offset);
+            assert_eq!(selected.len(), (offset + OWNER_ROWS) * SELECT_WORDS);
+            assert!(
+                selected[..offset * SELECT_WORDS]
+                    .iter()
+                    .all(|&v| v == u32::MAX)
+            );
+            for row in offset..offset + count {
+                let visible = start + row + 1;
+                let width = visible.min(SELECT_WORDS);
+                assert_eq!(
+                    selected[row * SELECT_WORDS + width - 1],
+                    (visible - 1) as u32
+                );
+            }
+            assert!(
+                selected[(offset + count) * SELECT_WORDS..]
+                    .iter()
+                    .all(|&v| v == u32::MAX)
+            );
+        }
+        for offset in [1, 31, 33, 63, 65, usize::MAX] {
+            assert!(!offset_geometry(0, 1, 4096, offset));
+        }
+        assert!(!offset_geometry(32767, 1, 32768, 32));
+        let same = numeric_difference(&[0, 1f32.to_bits()], &[0, 1f32.to_bits()]);
+        assert_eq!(same.mismatches, 0);
+        let changed = numeric_difference(
+            &[1f32.to_bits(), (-2f32).to_bits(), 0, f32::NAN.to_bits()],
+            &[
+                1f32.to_bits() + 1,
+                (-1f32).to_bits(),
+                (-0f32).to_bits(),
+                f32::INFINITY.to_bits(),
+            ],
+        );
+        assert_eq!(changed.mismatches, 4);
+        assert_eq!(changed.max_abs, 1.0);
+        assert_eq!(changed.max_relative, 0.5);
+        assert_eq!(changed.max_ulp, 8388608);
+        assert_eq!(changed.nonfinite_mismatches, 1);
+        assert_eq!(numeric_difference(&[0], &[0, 0]).mismatches, 1);
+    }
 }
 // QSA_ATTENTION_PARITY_ORACLE_END
 
@@ -252,18 +358,42 @@ fn check(
     count: usize,
     capacity: usize,
     control: Control,
-) -> ProbeResult<serde_json::Value> {
-    if !geometry(start, count, capacity) {
+    query_offset: usize,
+    nondyadic: bool,
+) -> ProbeResult<(serde_json::Value, bool)> {
+    if !offset_geometry(start, count, capacity, query_offset)
+        || !crate::strata_intel_core::enabled()
+        || crate::strata_prompt::active()
+    {
         return Err("public QSA attention fixed geometry".into());
     }
-    let mut queries = Zeroizing::new(vec![0u32; OWNER_ROWS * QUERY_WORDS]);
+    let input_rows = query_offset + OWNER_ROWS;
+    let effective_start = start + query_offset;
+    let mut queries = Zeroizing::new(vec![0u32; input_rows * QUERY_WORDS]);
     for (i, value) in queries.iter_mut().enumerate() {
-        *value = ((((i * 17 + i / QUERY_WORDS * 3) % 43) as f32 - 21.0) / 32.0).to_bits();
+        let row = i / QUERY_WORDS;
+        *value = if nondyadic {
+            if !(query_offset..query_offset + count).contains(&row) {
+                // A wrong query-row read must fault, not coincidentally use
+                // another finite row of this deterministic public fixture.
+                f32::NAN.to_bits()
+            } else {
+                ((((i * 17 + row * 3) % 43) as f32 - 21.0) / 31.0
+                    + ((i / 256 % 7) as f32 - 3.0) / 127.0)
+                    .to_bits()
+            }
+        } else {
+            ((((i * 17 + row * 3) % 43) as f32 - 21.0) / 32.0).to_bits()
+        };
     }
     if control == Control::NonfiniteQuery {
         queries[0] = f32::NAN.to_bits();
     }
-    let mut selected = Zeroizing::new(selected_rows(start, count));
+    let mut selected = Zeroizing::new(if query_offset == 0 {
+        selected_rows(start, count)
+    } else {
+        selected_rows_at(start, count, query_offset)
+    });
     if control == Control::FutureSelection {
         selected[0] = (start + 1) as u32;
     }
@@ -278,10 +408,16 @@ fn check(
             cache[token * CACHE_WORDS + word] = codes;
         }
         for word in 0..8 {
-            // Finite exact powers of two as the original packed FP16 scales.
-            const SCALES: [u32; 4] = [0x2000, 0x2400, 0x2800, 0x2c00];
+            // Preserve the first nine fixtures exactly. The additional three
+            // use finite non-power-of-two FP16 significands with nontrivial
+            // F32 queries so rounding cannot hide behind power-of-two inputs.
+            let scales = if nondyadic {
+                [0x2113u32, 0x2487, 0x299d, 0x2c53]
+            } else {
+                [0x2000u32, 0x2400, 0x2800, 0x2c00]
+            };
             cache[token * CACHE_WORDS + 256 + word] =
-                SCALES[(token + word * 2) % 4] | (SCALES[(token + word * 2 + 1) % 4] << 16);
+                scales[(token + word * 2) % 4] | (scales[(token + word * 2 + 1) % 4] << 16);
         }
     }
     let query = arena.upload_u32(&queries)?;
@@ -299,6 +435,33 @@ fn check(
         arena.allocate_zeroed(1)?,
     ];
     let owners = |output: [BufferId; 3]| -> ProbeResult<[Handle; 7]> {
+        let ids = [
+            query, cache, candidate, selected, output[0], output[1], output[2],
+        ];
+        let logical = [
+            input_rows * QUERY_WORDS,
+            capacity * CACHE_WORDS,
+            OWNER_ROWS * CACHE_WORDS,
+            input_rows * SELECT_WORDS,
+            OWNER_ROWS * PARTIAL_ROW,
+            OWNER_ROWS * STATS_ROW,
+            1,
+        ];
+        for (index, (&id, expected)) in ids.iter().zip(logical).enumerate() {
+            let layout = arena.layout(id)?;
+            let owner = arena.handle(id)?;
+            if layout.logical_words != expected
+                || owner.size_in_used() != layout.owned_bytes as u64
+                || ids[..index].contains(&id)
+            {
+                return Err("public QSA exact original role owner geometry".into());
+            }
+            for &previous in &ids[..index] {
+                if crate::strata_prompt::storage::overlaps(arena.handle(previous)?, owner)? {
+                    return Err("public QSA overlapping original role owners".into());
+                }
+            }
+        }
         Ok([
             arena.handle(query)?.clone(),
             arena.handle(cache)?.clone(),
@@ -321,7 +484,7 @@ fn check(
         0,
         0,
         0,
-        0,
+        query_offset as u32,
     ];
     scalar_launch(arena, owners(reference)?, p)?;
     // Actual production kernel selection and original launch validation.
@@ -338,13 +501,27 @@ fn check(
     let actual_partial = read_owner(arena, actual[0])?;
     let actual_stats = read_owner(arena, actual[1])?;
     let actual_fault = read_owner(arena, actual[2])?;
-    if reference_partial.as_slice() != actual_partial.as_slice()
-        || reference_stats.as_slice() != actual_stats.as_slice()
-    {
-        return Err("public QSA attention original scalar bit parity failed".into());
-    }
-    if !inactive_zero(&actual_partial, start, count, false)
-        || !inactive_zero(&actual_stats, start, count, true)
+    let partial_diff = numeric_difference(&reference_partial, &actual_partial);
+    let stats_diff = numeric_difference(&reference_stats, &actual_stats);
+    // Fixed-public aggregate numerical diagnosis only. This does not set any
+    // tolerance or change the original bitwise gate, including signed zeros.
+    println!(
+        "public_device_error qsa_attention_math_numeric control={control:?} start={start} count={count} query_offset={query_offset} nondyadic={nondyadic} partial_mismatches={} partial_max_abs={} partial_max_relative={} partial_max_ulp={} partial_nonfinite_mismatches={} stats_mismatches={} stats_max_abs={} stats_max_relative={} stats_max_ulp={} stats_nonfinite_mismatches={}",
+        partial_diff.mismatches,
+        partial_diff.max_abs,
+        partial_diff.max_relative,
+        partial_diff.max_ulp,
+        partial_diff.nonfinite_mismatches,
+        stats_diff.mismatches,
+        stats_diff.max_abs,
+        stats_diff.max_relative,
+        stats_diff.max_ulp,
+        stats_diff.nonfinite_mismatches
+    );
+    if !inactive_zero(&actual_partial, effective_start, count, false)
+        || !inactive_zero(&actual_stats, effective_start, count, true)
+        || !inactive_zero(&reference_partial, effective_start, count, false)
+        || !inactive_zero(&reference_stats, effective_start, count, true)
     {
         return Err("public QSA attention inactive row chunk or owner padding changed".into());
     }
@@ -354,27 +531,39 @@ fn check(
     {
         return Err("public QSA attention original fault parity failed".into());
     }
-    Ok(
-        serde_json::json!({"family":"prompt-qsa-attention-scalar-parity","control":control.label(),"start":start,"count":count,"capacity":capacity,"fault":control.fault(),"bit_exact_partial_and_stats":true,"full_owner_and_tail_checked":true,"actual_prompt_attention_fault_kernel":true,"unchanged_scalar_shader_reference":true,"unique_reference_kernel_identity":true,"fabricated_prompt_scope":false}),
-    )
+    let bit_exact = reference_partial.as_slice() == actual_partial.as_slice()
+        && reference_stats.as_slice() == actual_stats.as_slice();
+    Ok((
+        serde_json::json!({"family":"prompt-qsa-attention-scalar-parity","control":control.label(),"start":start,"count":count,"capacity":capacity,"query_offset":query_offset,"nondyadic_operands":nondyadic,"fault":control.fault(),"bit_exact_partial_and_stats":bit_exact,"full_owner_and_tail_checked":true,"actual_prompt_attention_fault_kernel":true,"unchanged_scalar_shader_reference":true,"unique_reference_kernel_identity":true,"original_host_launch_validation":true,"fabricated_prompt_scope":false}),
+        bit_exact,
+    ))
 }
 
 pub(crate) fn cases(arena: &mut PrivateArena) -> ProbeResult<Vec<serde_json::Value>> {
     let mut reports = Vec::new();
-    for (start, count, capacity, control) in [
-        (0, 1, 4096, Control::Causal),
-        (31, 3, 4096, Control::Causal),
-        (60, 4, 4096, Control::Causal),
-        (62, 8, 4096, Control::Causal),
-        (2047, 7, 4096, Control::Causal),
-        (4094, 8, 32768, Control::Causal),
-        (32760, 8, 32768, Control::Causal),
-        (62, 3, 4096, Control::FutureSelection),
-        (62, 3, 4096, Control::NonfiniteQuery),
+    let mut all_bit_exact = true;
+    for (start, count, capacity, control, offset, nondyadic) in [
+        (0, 1, 4096, Control::Causal, 0, false),
+        (31, 3, 4096, Control::Causal, 0, false),
+        (60, 4, 4096, Control::Causal, 0, false),
+        (62, 8, 4096, Control::Causal, 0, false),
+        (2047, 7, 4096, Control::Causal, 0, false),
+        (4094, 8, 32768, Control::Causal, 0, false),
+        (32760, 8, 32768, Control::Causal, 0, false),
+        (62, 3, 4096, Control::FutureSelection, 0, false),
+        (62, 3, 4096, Control::NonfiniteQuery, 0, false),
+        (17, 5, 4096, Control::Causal, 0, true),
+        (31, 3, 4096, Control::Causal, 32, true),
+        (1983, 8, 4096, Control::Causal, 64, true),
     ] {
-        let attempt = check(arena, start, count, capacity, control);
+        let attempt = check(arena, start, count, capacity, control, offset, nondyadic);
         arena.reset()?;
-        reports.push(attempt?);
+        let (report, bit_exact) = attempt?;
+        all_bit_exact &= bit_exact;
+        reports.push(report);
+    }
+    if !all_bit_exact {
+        return Err("public QSA attention original scalar bit parity failed".into());
     }
     Ok(reports)
 }

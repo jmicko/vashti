@@ -17,10 +17,14 @@ assert "gr_batch_probe::read_native_public(arena, id)" in text
 assert "arena.layout(id)?.owned_words" in text
 assert "arena.upload_u32(&queries)" in text
 assert "queries[0] = f32::NAN.to_bits();" in text
-assert "reference_partial.as_slice() != actual_partial.as_slice()" in text
-assert "reference_stats.as_slice() != actual_stats.as_slice()" in text
+assert "reference_partial.as_slice() == actual_partial.as_slice()" in text
+assert "reference_stats.as_slice() == actual_stats.as_slice()" in text
 assert "reference_fault.as_slice() != actual_fault.as_slice()" in text
-assert text.index("let attempt = check(") < text.index("arena.reset()?;") < text.index("reports.push(attempt?);")
+assert "if !all_bit_exact" in text
+assert "public QSA attention original scalar bit parity failed" in text
+assert "query_offset as u32" in text
+assert "[0x2113u32, 0x2487, 0x299d, 0x2c53]" in text
+assert text.index("let attempt = check(") < text.index("arena.reset()?;") < text.index("let (report, bit_exact) = attempt?;") < text.index("reports.push(report);")
 with tempfile.TemporaryDirectory(prefix="kuno-qsa-attention-parity-oracle-") as directory:
     directory = Path(directory)
     source = directory / "oracle.rs"
