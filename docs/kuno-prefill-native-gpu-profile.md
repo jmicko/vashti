@@ -22,6 +22,18 @@ expert kernels map to `matrix`; GU and DOWN are intentionally combined. Other
 classes are `dequant`, `gather`, `activate`, `ordered_copy`, `ordered_fill`, `other`.
 No expert IDs, route values, tensor names, tokens or request content are emitted.
 
+The same public coarse `experts` interval also reports two existing backend
+host counters: `expert_native_capture_cpu` and `expert_native_wait_cpu`.
+Each retains the collector's numeric triple format `[calls,total_ns,total_ns]`;
+the third field deliberately repeats this CPU counter rather than representing
+an enqueue slice. Deltas cover the interval through its existing real sync,
+with no new fence, timestamp pool or private profiling switch. These are
+process-global native counters, so the protected public worker must remain the
+sole workload. Capture includes native planning/descriptor/command recording
+before queue submission; wait includes actual native fence wait calls. Neither
+is a GPU kernel duration. The old `experts` enqueue field ends before native
+recording in sync and therefore does not include capture CPU work.
+
 The existing backend owns every query pool through the actual matching fence,
 requires at least2048 compute nodes, caps recordings at16384 nodes, validates
 timestamp geometry, serializes the sampled plan and disables replay. Those

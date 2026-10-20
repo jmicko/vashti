@@ -276,27 +276,53 @@ pub(crate) fn expert_member_geometry(map: &[u32], groups: usize) {
         padded_members * 9_830_400,
     );
 }
-pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant)>);
+fn native_cpu_counts() -> [u64; 2] {
+    let (_, _, capture, wait) = cubecl::wgpu::native_strata_graph_execution_stats();
+    [capture, wait]
+}
+pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 2])>);
 impl Timer {
     pub(crate) fn new(client: &ComputeClient<WgpuRuntime>) -> kuno_text::Result<Self> {
         if !ENABLED.load(Ordering::Acquire) {
             return Ok(Self(None));
         }
         cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
-        Ok(Self(Some((client.clone(), Instant::now()))))
+        Ok(Self(Some((
+            client.clone(),
+            Instant::now(),
+            native_cpu_counts(),
+        ))))
     }
     pub(crate) fn mark(&mut self, name: &'static str) -> kuno_text::Result<()> {
-        if let Some((client, start)) = &mut self.0 {
+        if let Some((client, start, native_before)) = &mut self.0 {
             let enqueue_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
             cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
             let ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            let native_after = native_cpu_counts();
             TOTALS.with(|v| {
                 let mut v = v.borrow_mut();
                 let t = v.entry(name).or_default();
                 t.0 += 1;
                 t.1 = t.1.saturating_add(ns);
                 t.2 = t.2.saturating_add(enqueue_ns);
+                if name == "experts" {
+                    // The enqueue slice ends BEFORE sync records native Vulkan
+                    // descriptors/commands. Report that CPU cost separately;
+                    // it must not be mistaken for GPU kernel time. The public
+                    // protected unit is the sole process/device workload.
+                    for (index, name) in ["expert_native_capture_cpu", "expert_native_wait_cpu"]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let delta = native_after[index].saturating_sub(native_before[index]);
+                        let total = v.entry(name).or_default();
+                        total.0 += 1;
+                        total.1 = total.1.saturating_add(delta);
+                        total.2 = total.2.saturating_add(delta);
+                    }
+                }
             });
+            *native_before = native_after;
             *start = Instant::now();
         }
         Ok(())
