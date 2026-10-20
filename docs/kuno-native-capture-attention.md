@@ -59,9 +59,19 @@ The fault transformation's complete attention arithmetic is reversible and
 merge's entire arithmetic prefix compares unchanged. All single-lane,
 multi-lane, all-good and pre-existing fault-bit aggregation retain sticky OR.
 
-Final combined source compilation, scratch/owner/planner controls, full offline
-layouts,129 original GPU controls, complete real requests/counts and recovery
-remain required before performance selection. A meaningful clean gain is needed
+Frozen complete worker sourcefa2138fc926c1c3b99ac4add5edc31814e8f489f,
+SHA256 `802e3fa2b85c0d30037c9c636d5a0db599f9f78047b3c44cc91286971f1a50e5`,
+build `strata-parity-capture-attention-20261020`, selects all previous ten
+features PLUS the explicit local-fault feature. Final actual App compilation
+and82 focused CPU controls pass:39 QSA,37 queue/planning/submit/recovery policy,
+three binding/resource lifetime, one actual scratch reuse/bound and two bulk
+serializer/budget cases. Release build and402 ordinary/208 matrix offline
+layouts pass. Exact logs are `native-qsa-host-scratch-final-cpu-20261020.log`,
+`strata-parity-capture-attention-build-20261020.log` and
+`strata-parity-capture-attention-offline-20261020.log` under the artifact base.
+
+All129 original GPU controls, complete real requests/counts and physical
+recovery remain required before performance selection. A meaningful clean gain is needed
 before full staged tools/MAX8/semantic/privacy and injected terminal recovery,
 then official installation and actual installed service acceptance. Do not call
 CPU compilation proof of runtime recovery or compare diagnostic sampled-layer
