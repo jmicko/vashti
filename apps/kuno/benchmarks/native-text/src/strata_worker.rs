@@ -16,21 +16,26 @@ use crate::native_artifact::{Settings, verify};
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false, None, false)
+    run_mode(path, false, None, false, false)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, false)
+    run_mode(path, true, None, false, false)
 }
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
     if profile {
         crate::strata_prefill_profile::enable_compiled_public();
     }
-    run_mode(path, true, Some(profile), false)
+    run_mode(path, true, Some(profile), false, false)
+}
+/// Three identical compiled-public short requests exercise cold and two warm
+/// prefix paths. Ordinary request erasure and final session close are unchanged.
+pub(crate) fn public_prefill_short_check(path: &Path) -> Result<()> {
+    run_mode(path, true, Some(false), false, true)
 }
 pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true)
+    run_mode(path, true, None, true, false)
 }
 fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
@@ -47,7 +52,11 @@ fn run_mode(
     public_check: bool,
     prefill_check: Option<bool>,
     matrix_check: bool,
+    short_check: bool,
 ) -> Result<()> {
+    if short_check && (!public_check || prefill_check != Some(false) || matrix_check) {
+        return Err("public_short_check_configuration");
+    }
     if public_check {
         crate::resident_util::enable_compiled_public_diagnostics();
     }
@@ -108,6 +117,7 @@ fn run_mode(
         public_check,
         prefill_check,
         matrix_check,
+        short_check,
     ))
 }
 async fn serve(
@@ -116,6 +126,7 @@ async fn serve(
     public_check: bool,
     prefill_check: Option<bool>,
     matrix_check: bool,
+    short_check: bool,
 ) -> Result<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
@@ -384,7 +395,7 @@ async fn serve(
                 public_index += 1;
                 current = Some(prepare(
                     wire::Generate {
-                        prompt: Zeroizing::new(public_prompt(300)),
+                        prompt: Zeroizing::new(public_prompt(if short_check { 0 } else { 300 })),
                         outputs: 32,
                         context: 32768,
                         temperature: 0.,
