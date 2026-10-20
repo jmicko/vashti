@@ -195,6 +195,36 @@ fn check(
     let actual = read_owner(arena, selected)?;
     let faults = read_owner(arena, fault)?;
     let positive = matches!(control, Control::Causal);
+    let live_mismatches = if positive && actual.len() >= count * STRIDE {
+        (0..count)
+            .map(|row| {
+                actual[row * STRIDE..(row + 1) * STRIDE]
+                    .iter()
+                    .zip(expected_row(start, row))
+                    .filter(|(actual, expected)| **actual != *expected)
+                    .count()
+            })
+            .sum::<usize>()
+    } else {
+        0
+    };
+    let selected_padding_nonzero = actual
+        .get(count * STRIDE..)
+        .map(|padding| padding.iter().filter(|&&word| word != 0).count())
+        .unwrap_or(usize::MAX);
+    let fault_padding_nonzero = faults
+        .get(1..)
+        .map(|padding| padding.iter().filter(|&&word| word != 0).count())
+        .unwrap_or(usize::MAX);
+    // Fixed-public fixture coordinates and aggregate numeric counts only.
+    // Never print selected indices, source arrays, request text or pointers.
+    println!(
+        "public_device_error qsa_active_prefix_numeric control={control:?} start={start} count={count} active={active} expected_fault={} actual_fault={:?} live_mismatches={live_mismatches} selected_padding_nonzero={selected_padding_nonzero} fault_padding_nonzero={fault_padding_nonzero} selected_owner_words={} fault_owner_words={}",
+        u32::from(!positive),
+        faults.first().copied(),
+        actual.len(),
+        faults.len()
+    );
     if faults.first().copied() != Some(u32::from(!positive))
         || faults[1..].iter().any(|&word| word != 0)
         || !selected_matches(&actual, start, count, positive)
