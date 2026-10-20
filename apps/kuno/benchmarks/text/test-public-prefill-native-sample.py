@@ -51,6 +51,18 @@ finish = prompt.index("native_sample.finish();", completed)
 assert sample < enqueue < completed < finish
 assert 'cubecl::future::block_on(client.sync())' in profile
 assert '"public_prefill_native_gpu_profile {}"' in profile
+# Anonymous rolling metadata is published only through the existing enabled
+# public Timer after its original real sync, never from the backend itself.
+assert 'native_strata_graph_rolling_stats()' in profile
+mark = profile.index("pub(crate) fn mark(&mut self, name: &'static str)")
+sync = profile.index('cubecl::future::block_on(client.sync())', mark)
+for field in ['expert_native_rolling_recordings', 'expert_native_rolling_windows', 'expert_native_rolling_segments']:
+    assert profile.index('"' + field + '"', mark) > sync
+issued = graph.index('let [windows, segments] = rolling.submitted_counts();')
+accepted = graph.index('rolling.accept().map_err(fault)?;', issued)
+assert graph.index('total.fetch_add(amount,', accepted) > accepted
+assert 'pub fn native_strata_graph_rolling_stats() -> [u64; 3]' in graph
+assert '"expert_native_rolling_' not in graph
 assert 'if let Some(before) = self.0.take()' in profile
 assert 'impl Drop for NativeExpertLayer' in profile
 # Preserve existing query capacity, timing authorization, serialized diagnostic

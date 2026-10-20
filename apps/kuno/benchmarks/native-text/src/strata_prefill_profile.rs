@@ -286,11 +286,12 @@ pub(crate) fn expert_member_geometry(map: &[u32], groups: usize) {
         padded_members * 9_830_400,
     );
 }
-fn native_cpu_counts() -> [u64; 2] {
+fn native_backend_counts() -> [u64; 5] {
     let (_, _, capture, wait) = cubecl::wgpu::native_strata_graph_execution_stats();
-    [capture, wait]
+    let rolling = cubecl::wgpu::native_strata_graph_rolling_stats();
+    [capture, wait, rolling[0], rolling[1], rolling[2]]
 }
-pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 2])>);
+pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 5])>);
 impl Timer {
     pub(crate) fn new(client: &ComputeClient<WgpuRuntime>) -> kuno_text::Result<Self> {
         if !ENABLED.load(Ordering::Acquire) {
@@ -300,7 +301,7 @@ impl Timer {
         Ok(Self(Some((
             client.clone(),
             Instant::now(),
-            native_cpu_counts(),
+            native_backend_counts(),
         ))))
     }
     pub(crate) fn mark(&mut self, name: &'static str) -> kuno_text::Result<()> {
@@ -308,7 +309,7 @@ impl Timer {
             let enqueue_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
             cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
             let ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
-            let native_after = native_cpu_counts();
+            let native_after = native_backend_counts();
             TOTALS.with(|v| {
                 let mut v = v.borrow_mut();
                 let t = v.entry(name).or_default();
@@ -329,6 +330,22 @@ impl Timer {
                         total.0 += 1;
                         total.1 = total.1.saturating_add(delta);
                         total.2 = total.2.saturating_add(delta);
+                    }
+                    // Counts only after this interval's original real sync.
+                    // These prove actual rolling issuance rather than selector
+                    // intent; private calls never enable this collector.
+                    for (index, name) in [
+                        "expert_native_rolling_recordings",
+                        "expert_native_rolling_windows",
+                        "expert_native_rolling_segments",
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let delta =
+                            native_after[index + 2].saturating_sub(native_before[index + 2]);
+                        let total = v.entry(name).or_default();
+                        total.0 = total.0.saturating_add(delta);
                     }
                 }
             });

@@ -35,6 +35,17 @@ submitted GPU work. Wait includes actual native fence wait calls. Neither
 is a GPU kernel duration. The old `experts` enqueue field ends before native
 recording in sync and therefore does not include capture CPU work.
 
+The same public `experts` interval reports anonymous actual rolling issuance
+counters as `[count,0,0]`: `expert_native_rolling_recordings`,
+`expert_native_rolling_windows` and `expert_native_rolling_segments`.
+A recording is credited only after all original segments and the final joined
+fence have actually been queued and its matching original flight accepted.
+Windows count nonempty successful prefix submissions, not selector intentions.
+The existing Timer publishes deltas only after its actual completion sync;
+these process-global counters contain no request identity, route or content and
+are never logged/published by ordinary private inference. Timestamp-sampled
+recordings deliberately use the original nonrolling path and contribute zero.
+
 The existing backend owns every query pool through the actual matching fence,
 requires at least2048 compute nodes, caps recordings at16384 nodes, validates
 timestamp geometry, serializes the sampled plan and disables replay. Those

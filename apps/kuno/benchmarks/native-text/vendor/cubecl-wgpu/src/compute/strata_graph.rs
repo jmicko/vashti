@@ -111,6 +111,15 @@ pub fn native_strata_graph_execution_stats() -> ([u64; 5], [u64; 5], u64, u64) {
         WAIT_NS.load(Relaxed),
     )
 }
+// Anonymous process totals only, like CAPTURE_NS. No request identity,
+// route, shape or content; only the compiled-public bridge publishes deltas.
+static ROLLING_TOTALS: [std::sync::atomic::AtomicU64; 3] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+/// Accepted original recordings, nonempty submitted windows and original
+/// submitted segments. Counts imply actual host submission, not completion.
+pub fn native_strata_graph_rolling_stats() -> [u64; 3] {
+    std::array::from_fn(|i| ROLLING_TOTALS[i].load(std::sync::atomic::Ordering::Relaxed))
+}
 static SUBMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static DISPATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static REPLAYS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -2538,8 +2547,12 @@ impl Graph {
         );
         if let Some(rolling) = rolling {
             let id = self.recordings.last().unwrap().id;
+            let [windows, segments] = rolling.submitted_counts();
             self.mark_last_submitted(id)?;
             rolling.accept().map_err(fault)?;
+            for (total, amount) in ROLLING_TOTALS.iter().zip([1, windows, segments]) {
+                total.fetch_add(amount, std::sync::atomic::Ordering::Relaxed);
+            }
         } else {
             self.submit_last_recording(compute_count, false, profiling)?;
         }

@@ -25,6 +25,7 @@ struct Rolling<B: Backend> {
     next: usize,
     recorded_nodes: usize,
     submitted_nodes: usize,
+    submitted_windows: usize,
     touched: [bool; 3],
     final_queued: bool,
     accepted: bool,
@@ -41,6 +42,7 @@ impl<B: Backend> Rolling<B> {
             next: 0,
             recorded_nodes: 0,
             submitted_nodes: 0,
+            submitted_windows: 0,
             touched: [false; 3],
             final_queued: false,
             accepted: false,
@@ -61,6 +63,7 @@ impl<B: Backend> Rolling<B> {
         {
             return Ok(());
         }
+        let before = self.next;
         while self.next < self.closed {
             let own = self.backend.queue(self.next)?;
             if own >= self.touched.len() {
@@ -71,6 +74,9 @@ impl<B: Backend> Rolling<B> {
             self.touched[own] = true;
             self.backend.submit(self.next)?;
             self.next += 1;
+        }
+        if self.next != before {
+            self.submitted_windows += 1;
         }
         self.submitted_nodes = nodes;
         Ok(())
@@ -237,6 +243,9 @@ impl Submission {
     pub fn closed(&mut self, end: usize, nodes: usize, force: bool) -> Result<(), &'static str> {
         self.0.closed(end, nodes, force)
     }
+    pub fn submitted_counts(&self) -> [u64; 2] {
+        [self.0.submitted_windows as u64, self.0.next as u64]
+    }
     pub fn finish(&mut self) -> Result<(), &'static str> {
         self.0.finish()
     }
@@ -315,6 +324,8 @@ mod tests {
         assert!(rolling.finish().is_err());
         rolling.closed(140, 130, true).unwrap();
         rolling.finish().unwrap();
+        assert_eq!(rolling.submitted_windows, 3);
+        assert_eq!(rolling.next, 140);
         rolling.accept().unwrap();
         let mut expected: Vec<_> = (0..140).map(Event::Submit).collect();
         expected.push(Event::Join);
