@@ -22,6 +22,21 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Active disjoint expert scratch candidate (2026-10-20).**
+
+Uniform84316ccb/SHA7e6b0991 completes all114 CPU,408/208 offline,129 GPU,
+full request/compiler/inherited producer/routed-count and recovery gates.
+Repeat11.1290s is unchanged; no clean/staged/terminal/sustained/install acceptance.
+Physical18:53:52UTC is healthy/clear. Source review disproves per-dispatch INFO
+uploads. The next complete`strata-expert-scratch-ring` couples two real input/GU
+slots and exact GU/DOWN image views inside the SAME original priced roots.
+No arithmetic, six-phase grammar, full source, owner/hazard/epoch/queue/fence,
+budget or erasure exception. Actual array metadata and all original checks stay.
+Exact contract and pending gates:
+[disjoint expert scratch](kuno-native-compute-intervals.md#completed-uniform-attention-and-disjoint-expert-scratch-candidate).
+No API, protocol/configuration/model identity or Vashti change. Installed worker
+and gateway are unchanged; this is an explicit unselected backend candidate.
+
 **Active complete uniform-QK candidate (2026-10-20).**
 
 Complete FMA e854a89d/SHA420dc7d0 passes111 CPU,408/208 layouts, all129 GPU

@@ -67,7 +67,6 @@ fn registered_matrix(h: [Handle; 6], params: &[u32], vector: bool) -> KernelArgu
 
 #[test]
 fn real_array_and_scalar_registration_matches_the_complete_logical_grammar() {
-    use cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar;
     let stream = StreamId::current();
     let h = [
         80 * 1024 * 1024,
@@ -83,6 +82,40 @@ fn real_array_and_scalar_registration_matches_the_complete_logical_grammar() {
             .offset_start(256)
             .offset_end(256)
     });
+    check_registered_grammar(h, None);
+}
+
+#[cfg(feature = "strata-expert-scratch-ring")]
+#[test]
+fn disjoint_scratch_slots_pass_the_unchanged_complete_original_six_phase_grammar() {
+    let stream = StreamId::current();
+    let owner = |bytes| {
+        Handle::new(stream, bytes + 512)
+            .offset_start(256)
+            .offset_end(256)
+    };
+    let stage = [
+        owner(storage::WORKING_BYTES),
+        owner(storage::WORKING_BYTES),
+        owner(allocation::RAW_RING_BYTES),
+    ];
+    let gu = owner(groups::GU_BYTES);
+    for slot in scratch_ring::slots(&stage, &gu).unwrap() {
+        let h = [
+            slot.input,
+            slot.gu_image.clone(),
+            slot.gu,
+            owner(groups::MAP_WORDS as u64 * 4),
+            owner(groups::STATUS_WORDS as u64 * 4),
+            owner(4),
+            owner(groups::PART_BYTES),
+        ];
+        check_registered_grammar(h, Some([slot.gu_image, slot.down_image]));
+    }
+}
+
+fn check_registered_grammar(h: [Handle; 7], weights: Option<[Handle; 2]>) {
+    use cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar;
     for mode_and_class in 0..8 {
         let mode = mode_and_class % 4;
         let resident = mode_and_class >= 4;
@@ -134,7 +167,9 @@ fn real_array_and_scalar_registration_matches_the_complete_logical_grammar() {
             let rows = if down { 2560 } else { 1280 };
             let original = [
                 h[0].clone(),
-                h[1].clone(),
+                weights
+                    .as_ref()
+                    .map_or_else(|| h[1].clone(), |w| w[usize::from(down)].clone()),
                 h[if down { 6 } else { 2 }].clone(),
                 h[3].clone(),
                 h[4].clone(),

@@ -74,6 +74,8 @@ strata-qsa-local-fault = ["strata-intel-core"]
 strata-native-expert-bulk = ["strata-intel-core"]
 # One connected original-source miss-only transfer ring and release policy.
 strata-prefill-miss-ring = ["strata-native-expert-bulk"]
+# Complete two-slot activation/GU/DQ views; original graph owns all hazards.
+strata-expert-scratch-ring = ["strata-prefill-miss-ring"]
 strata-parallel-loading = ["strata-intel-core"]
 strata-native-push-descriptors = ["strata-intel-core"]
 strata-gdn-subgroup16 = ["strata-intel-core"]

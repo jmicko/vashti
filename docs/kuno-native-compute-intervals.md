@@ -968,3 +968,66 @@ No performance/install acceptance yet. Every preceding exit and guarded QK
 decision is subgroup-uniform: the original full fixed32 groups keep lane zero
 active at every immutable-ID and original-score broadcast. No partial subgroup
 or arbitrarily chosen first-lane value is substituted.
+
+
+## Completed uniform attention and disjoint expert scratch candidate
+
+Uniform-QK84316ccb / SHA7e6b0991 passes114 App CPU,408/208 offline layouts,
+all129 original numerical GPU controls, full real requests, actual compiler
+and all inherited producer proofs. Actual routed group counts remain exactly
+[7663,26673,26673], identical to the FMA reference. Repeated4245 prefix11.128987s
+and QSA attention/merge1.495390s are unchanged versus FMA11.174104/1.459168s.
+No clean/staged/terminal/sustained/install acceptance or overall gain claim.
+Public summary`strata-parity-qsa-uniform-public-summary-20261020.json`; unit
+`kuno-native-qsa-uniform-connected-20261020` exits successfully. Physical
+18:53:52UTC recovery: Intel50,688,000B, NVIDIA compute0, all driver faults0,
+HTTP200 and normal inactive/unpaused admission/waiting0. Installed identities
+remain unchanged. All complete components stay retained opt-in.
+
+Source inspection rules out a per-QSA-dispatch INFO upload: stream flush
+already prepares those pages together. Do not implement another batching API
+based on that discarded hypothesis. The concrete expert difference is scratch
+reuse: Gather, GU, Activate and Down all reuse the same packed-input area;
+all groups reuse the same GU area. Both dequantizers also declare the entire
+shared image area despite accessing disjoint actual roles/slots. Strata uses
+separate grouped Xs/GU/Hh spans and two FP16 image slots.
+
+The next complete opt-in`strata-expert-scratch-ring` / builder
+`--expert-scratch-ring` couples TWO genuine packed-input/GU slots and separate
+GU/DOWN FP16 image descriptors. Slots alternate by group modulo2, matching
+original DQ2. Input and hidden remain intentionally shared WITHIN one slot,
+as in the old six-phase program; different slots do not overlap. Slot0 GU is
+the original admitted GU view. Two20MiB input views and slot1's20MiB GU fit
+inside the original80MiB working0 area, using60MiB without increasing any
+priced root, placement, original host/graph/tape cap or allocation. DQ role
+views carve the original working1 two-slot image area. Shader-relative image
+offsets become zero ONLY with these real rebased descriptors. Both dequantizer
+and matrix consumer use those exact views; no scheduler-only footprint narrowing.
+
+The original shaders, arithmetic, raw source declarations/miss ring,6 logical
+phases and authentic full/wide/tail products remain unchanged. The SAME closed
+batch grammar sees the actual new views and array metadata; no special grammar
+exception is introduced. The graph resolves every new original owner under its
+actual guard, computes hazards from the complete descriptors, and keeps original
+copy waits, INFO epochs, lane/fence, budget, quarantine and erasure behavior.
+All static views are prepared before enqueueing the batch; malformed extents,
+alignment, capacity, streams and overlapping roles are rejected. This removes
+false scratch conflicts but is not a claim of complete cross-expert parallelism:
+remaining global pipeline dependencies still order real consumers.
+
+Original129 GPU controls plus full requests/identical routed group counts,
+actual new scratch counts, unchanged producer/owner proofs, physical recovery
+and measured timings are required. Any numerical/guard failure remains a
+failure; do not relax existing references. No API/KNT2/KNR2/configuration/model
+identity or Vashti change. No installation or speed claim before acceptance.
+
+
+The complete source now passes117 selected actual App CPU controls (the prior
+114 plus real disjoint ownership/extent controls and both actual slot layouts
+through original scalar/macro/narrow/wide+tail/resident/streamed grammar).
+Log`native-expert-scratch-complete-cpu-20261020.log`. An initial broad `scratch`
+test filter also selected four unrelated old feature-profile fixtures; those
+failed their existing scratch/profile expectations. They remain unchanged and
+the full failed log`native-expert-scratch-new-cpu-20261020.log` is retained.
+The117-control pass is an exact named set, NOT a whole-suite pass or a claim
+that those four unrelated configurations were fixed. No GPU acceptance yet.

@@ -193,6 +193,10 @@ const GU_WORDS: usize = 1280 * 2560 / 2;
 const DOWN_WORDS: usize = 2560 * 640 / 2;
 const DQ_WORDS: usize = GU_WORDS + DOWN_WORDS;
 
+#[cfg(any(test, feature = "strata-expert-scratch-ring"))]
+#[path = "strata_prompt_expert_scratch.rs"]
+mod scratch_ring;
+
 /// Actual descriptor view of one raw transfer slot. All source role spans are
 /// original-format bytes; no scheduler-only narrowed declaration is accepted.
 fn raw_slot(root: &Handle, slot: usize, roles: [usize; 3]) -> Result<Handle> {
@@ -345,6 +349,8 @@ fn enqueue_original(
     {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
+    #[cfg(feature = "strata-expert-scratch-ring")]
+    let scratch = scratch_ring::slots(&stage, &owners[2])?;
     let mixed_image = super::mixed_input_image(&owners[1], count, 0, 2560, false);
     let gather_input = mixed_image.as_ref().unwrap_or(&owners[1]);
     let projections = geometry.projections();
@@ -427,7 +433,28 @@ fn enqueue_original(
         // the full prompt geometry for all shader ownership/route checks.
         let members = map[516 + group] as usize;
         let [gather_groups, activate_groups] = member_dispatches(members, count)?;
+        #[cfg(not(feature = "strata-expert-scratch-ring"))]
         let dq = (group % DEQUANT_SLOTS) * DQ_WORDS;
+        #[cfg(feature = "strata-expert-scratch-ring")]
+        let current = &scratch[group % scratch_ring::SLOTS];
+        #[cfg(feature = "strata-expert-scratch-ring")]
+        let (input, gu, gu_image, down_image, gu_first, down_first) = (
+            current.input.clone(),
+            current.gu.clone(),
+            current.gu_image.clone(),
+            current.down_image.clone(),
+            0,
+            0,
+        );
+        #[cfg(not(feature = "strata-expert-scratch-ring"))]
+        let (input, gu, gu_image, down_image, gu_first, down_first) = (
+            stage[0].clone(),
+            owners[2].clone(),
+            stage[1].clone(),
+            stage[1].clone(),
+            dq * 2,
+            (dq + GU_WORDS) * 2,
+        );
         let base = [
             count as u32,
             2560,
@@ -438,8 +465,8 @@ fn enqueue_original(
             0, // The actual raw descriptor starts at this slot, not the root.
             (role_bytes[0] / 4) as u32,
             ((role_bytes[0] + role_bytes[1]) / 4) as u32,
-            dq as u32,
-            (dq + GU_WORDS) as u32,
+            (gu_first / 2) as u32,
+            (down_first / 2) as u32,
             (raw_stride / 4) as u32,
             mixed_image.is_some() as u32,
             0,
@@ -449,7 +476,7 @@ fn enqueue_original(
         let args = KernelArguments::new().with_buffers(vec![
             owners[0].clone().binding(),
             gather_input.clone().binding(),
-            stage[0].clone().binding(),
+            input.clone().binding(),
             fault.clone().binding(),
         ]);
         dispatch(client, Op::Gather, [gather_groups, 1, 1], args, base)?;
@@ -483,7 +510,12 @@ fn enqueue_original(
                         raw_slots[group % RAW_SLOTS].clone().binding()
                     }
                 },
-                stage[1].clone().binding(),
+                if down {
+                    down_image.clone()
+                } else {
+                    gu_image.clone()
+                }
+                .binding(),
                 fault.clone().binding(),
             ]);
             args = crate::strata_intel_core::bind(args, owners[0].stream)?;
@@ -524,9 +556,9 @@ fn enqueue_original(
         crate::strata_matrix::expert(
             client,
             [
-                stage[0].clone(),
-                stage[1].clone(),
-                owners[2].clone(),
+                input.clone(),
+                gu_image.clone(),
+                gu.clone(),
                 owners[0].clone(),
                 owners[6].clone(),
                 fault.clone(),
@@ -534,15 +566,15 @@ fn enqueue_original(
             map[516 + group] as usize,
             2560,
             1280,
-            dq * 2,
+            gu_first,
             group,
             false,
         )?;
         timing.mark("expert_cpu_gu_product");
         let args = KernelArguments::new().with_buffers(vec![
             owners[0].clone().binding(),
-            owners[2].clone().binding(),
-            stage[0].clone().binding(),
+            gu.clone().binding(),
+            input.clone().binding(),
             owners[6].clone().binding(),
             fault.clone().binding(),
         ]);
@@ -551,8 +583,8 @@ fn enqueue_original(
         crate::strata_matrix::expert(
             client,
             [
-                stage[0].clone(),
-                stage[1].clone(),
+                input.clone(),
+                down_image.clone(),
                 owners[3].clone(),
                 owners[0].clone(),
                 owners[6].clone(),
@@ -561,7 +593,7 @@ fn enqueue_original(
             map[516 + group] as usize,
             640,
             2560,
-            (dq + GU_WORDS) * 2,
+            down_first,
             group,
             true,
         )?;
@@ -571,6 +603,11 @@ fn enqueue_original(
     }
     #[cfg(feature = "strata-prefill-miss-ring")]
     miss_ring.finish()?;
+    #[cfg(feature = "strata-expert-scratch-ring")]
+    {
+        crate::strata_prefill_profile::count("expert_native_scratch_groups", groups as u64);
+        crate::strata_prefill_profile::count("expert_native_scratch_slots", scratch.len() as u64);
+    }
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
