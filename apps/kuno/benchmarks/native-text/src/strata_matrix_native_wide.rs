@@ -586,36 +586,42 @@ pub(super) fn try_dense(
     Ok(true)
 }
 
+fn definition<F: Float>() -> KernelDefinition {
+    let mut b = KernelBuilder::default();
+    cubecl::ir::AddressType::U32.register(&mut b.scope);
+    let input = b.input_array(Vector::<F, Const<4>>::as_type(&b.scope));
+    let weight = b.input_array(Vector::<F, Const<4>>::as_type(&b.scope));
+    let output = b.output_array(f32::as_type(&b.scope));
+    let fault = b.output_array(
+        cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
+    );
+    let args: [cubecl::ir::ManagedVariable; 4] =
+        std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
+    dense_wide::expand::<F>(
+        &mut b.scope,
+        input.into(),
+        weight.into(),
+        output.into(),
+        fault.into(),
+        args[0].clone().into(),
+        args[1].clone().into(),
+        args[2].clone().into(),
+        args[3].clone().into(),
+    );
+    let errors = b.scope.pop_errors();
+    assert!(errors.is_empty(), "{errors:?}");
+    b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(THREADS)))
+}
+pub(super) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
+    vec![
+        ("dense_wide_native_fp16", definition::<f16>()),
+        ("dense_wide_native_bf16", definition::<bf16>()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl::ir::AddressType;
-    fn definition<F: Float>() -> KernelDefinition {
-        let mut b = KernelBuilder::default();
-        AddressType::U32.register(&mut b.scope);
-        let input = b.input_array(Vector::<F, Const<4>>::as_type(&b.scope));
-        let weight = b.input_array(Vector::<F, Const<4>>::as_type(&b.scope));
-        let output = b.output_array(f32::as_type(&b.scope));
-        let fault = b.output_array(
-            cubecl::ir::StorageType::Atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)).into(),
-        );
-        let args: [cubecl::ir::ManagedVariable; 4] =
-            std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
-        dense_wide::expand::<F>(
-            &mut b.scope,
-            input.into(),
-            weight.into(),
-            output.into(),
-            fault.into(),
-            args[0].clone().into(),
-            args[1].clone().into(),
-            args[2].clone().into(),
-            args[3].clone().into(),
-        );
-        let errors = b.scope.pop_errors();
-        assert!(errors.is_empty(), "{errors:?}");
-        b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(THREADS)))
-    }
     #[test]
     fn full_tile_selection_requires_real_caps_and_preserves_tails() {
         let yes = |c, k, n, w, s, u, d, pmin, pmax| selected(c, k, n, w, s, u, d, pmin, pmax);

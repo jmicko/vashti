@@ -7,6 +7,10 @@ use kuno_text::{Error, Result};
 #[path = "strata_cubek_gemm.rs"]
 mod cubek;
 
+#[cfg(feature = "strata-native-wide")]
+#[path = "strata_matrix_native_wide.rs"]
+mod native_wide;
+
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_numeric_probe.rs"]
 mod numeric;
@@ -1311,6 +1315,20 @@ mod native {
         bfloat: bool,
     ) -> Result<()> {
         compatible(client, bfloat)?;
+        #[cfg(feature = "strata-native-wide")]
+        if super::native_wide::try_dense(
+            client,
+            h.clone(),
+            count,
+            columns,
+            rows,
+            weight_first,
+            out_first,
+            out_stride,
+            bfloat,
+        )? {
+            return Ok(());
+        }
         #[cfg(feature = "strata-cubek-gemm")]
         if super::cubek::try_dense(
             client,
@@ -2330,7 +2348,10 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         // the all-disabled or all-enabled combination of these layout flags.
         for layout_mask in 0u8..8 {
             let standard_layout = layout_mask & 1 != 0;
-            for (name, definition) in native::definitions() {
+            let definitions = native::definitions();
+            #[cfg(feature = "strata-native-wide")]
+            let definitions = definitions.into_iter().chain(native_wide::definitions());
+            for (name, definition) in definitions {
                 let mut compiler = AutoCompiler::SpirV(Default::default());
                 let mut options = WgpuCompilationOptions {
                     supports_vulkan: true,
@@ -2350,9 +2371,14 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let AutoRepresentation::SpirV(kernel) = compiled else {
                     return Err("matrix compiler representation".into());
                 };
-                if native::compiled_shared_bytes(name, layout_mask & 4 != 0)
-                    .is_some_and(|n| kernel.shared_size != n)
-                {
+                let expected_shared = native::compiled_shared_bytes(name, layout_mask & 4 != 0);
+                #[cfg(feature = "strata-native-wide")]
+                let expected_shared = if name.starts_with("dense_wide_native_") {
+                    Some(native_wide::SHARED_BYTES)
+                } else {
+                    expected_shared
+                };
+                if expected_shared.is_some_and(|n| kernel.shared_size != n) {
                     return Err("staged matrix original shared envelope".into());
                 }
                 let canonical =

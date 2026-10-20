@@ -22,7 +22,10 @@ pub(crate) fn cases(
     file: &kuno_text::GgufFile,
 ) -> ProbeResult<Vec<serde_json::Value>> {
     let (max_rows, columns) = (
-        if cfg!(feature = "strata-cubek-wide") {
+        if cfg!(any(
+            feature = "strata-cubek-wide",
+            feature = "strata-native-wide"
+        )) {
             320usize
         } else {
             65usize
@@ -73,7 +76,10 @@ pub(crate) fn cases(
             (35, 64),
             (257, 64),
         ];
-        let wide_shapes: &[(usize, usize)] = if cfg!(feature = "strata-cubek-wide") {
+        let wide_shapes: &[(usize, usize)] = if cfg!(any(
+            feature = "strata-cubek-wide",
+            feature = "strata-native-wide"
+        )) {
             // Full M/N, M tail, then a simultaneous M/N tail from the
             // original complete320-row weight. Preserve the same F64 oracle.
             &[(512, 128), (513, 128), (513, 320)]
@@ -100,6 +106,20 @@ pub(crate) fn cases(
                 u::handle(arena, output)?,
                 u::handle(arena, fault)?,
             ];
+            #[cfg(feature = "strata-native-wide")]
+            let actual_native_wide_launch = super::native_wide::try_dense(
+                client,
+                handles.clone(),
+                count,
+                columns,
+                rows,
+                0,
+                0,
+                rows,
+                bfloat,
+            )?;
+            #[cfg(not(feature = "strata-native-wide"))]
+            let actual_native_wide_launch = false;
             #[cfg(feature = "strata-cubek-gemm")]
             let actual_cubek_launch = super::cubek::try_dense(
                 client,
@@ -114,7 +134,7 @@ pub(crate) fn cases(
             )?;
             #[cfg(not(feature = "strata-cubek-gemm"))]
             let actual_cubek_launch = false;
-            if !actual_cubek_launch {
+            if !actual_cubek_launch && !actual_native_wide_launch {
                 native::run_dense(client, handles, count, columns, rows, 0, 0, rows, bfloat)?;
             }
             #[cfg(feature = "strata-cubek-wide")]
@@ -122,8 +142,14 @@ pub(crate) fn cases(
                 actual_cubek_launch && super::cubek::public_dense_uses_wide(client, count);
             #[cfg(not(feature = "strata-cubek-wide"))]
             let actual_cubek_wide_launch = false;
-            if count >= 512 && !actual_cubek_wide_launch {
+            if cfg!(feature = "strata-cubek-wide") && count >= 512 && !actual_cubek_wide_launch {
                 return Err("public wide matrix actual selection rejected".into());
+            }
+            if cfg!(feature = "strata-native-wide")
+                && actual_native_wide_launch
+                    != (count >= 512 && count % 128 == 0 && rows % 128 == 0)
+            {
+                return Err("public native wide actual selection rejected".into());
             }
             let actual = probe::read_native_public(arena, output)?;
             if probe::read_native_public(arena, fault)?
@@ -185,6 +211,7 @@ pub(crate) fn cases(
                 "max_abs":max_abs,"ftz_oracle_mismatches":ftz_mismatches,"ftz_max_abs":ftz_max_abs,
                 "actual_cubek_launch":actual_cubek_launch,
                 "actual_cubek_wide_launch":actual_cubek_wide_launch,
+                "actual_native_wide_launch":actual_native_wide_launch,
                 "ftz_is_additional_diagnosis_only":true,"actual_native_kernels":true,"full_owner_and_tail_checked":true}),
             );
             arena.reset()?;
