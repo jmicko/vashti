@@ -8,6 +8,60 @@ use std::{
 
 pub(super) type Bundle = Arc<Vec<Binding>>;
 
+/// Keep one genuine resource clone for each distinct underlying buffer, ONLY
+/// for Recording lifetime retention. All per-node views, signatures, access
+/// intervals and allocator Binding bundles remain independently unchanged.
+pub(super) fn unique_resources<'a, T: Clone + 'a>(
+    resources: impl Iterator<Item = &'a T> + Clone,
+    compare: impl Fn(&T, &T) -> std::cmp::Ordering,
+    budget: usize,
+) -> Result<Vec<T>, &'static str> {
+    let count = resources
+        .clone()
+        .try_fold(0usize, |n, _| n.checked_add(1))
+        .ok_or("native retained resource index overflow")?;
+    if count
+        .checked_mul(size_of::<&T>())
+        .is_none_or(|n| n > budget)
+    {
+        return Err("native retained resource index capacity");
+    }
+    let mut original = Vec::new();
+    original
+        .try_reserve_exact(count)
+        .map_err(|_| "native retained resource index allocation")?;
+    let index_bytes = original
+        .capacity()
+        .checked_mul(size_of::<&T>())
+        .filter(|n| *n <= budget)
+        .ok_or("native retained resource index capacity")?;
+    original.extend(resources);
+    original.sort_unstable_by(|a, b| compare(a, b));
+    original.dedup_by(|a, b| compare(a, b).is_eq());
+    if original
+        .len()
+        .checked_mul(size_of::<T>())
+        .and_then(|n| n.checked_add(index_bytes))
+        .is_none_or(|n| n > budget)
+    {
+        return Err("native retained resource peak capacity");
+    }
+    let mut retained = Vec::new();
+    retained
+        .try_reserve_exact(original.len())
+        .map_err(|_| "native retained resource allocation")?;
+    if retained
+        .capacity()
+        .checked_mul(size_of::<T>())
+        .and_then(|n| n.checked_add(index_bytes))
+        .is_none_or(|n| n > budget)
+    {
+        return Err("native retained resource actual peak capacity");
+    }
+    retained.extend(original.into_iter().cloned());
+    Ok(retained)
+}
+
 pub(super) struct Owners<T = Binding> {
     bundles: Vec<Arc<Vec<T>>>,
     bytes: usize,
@@ -115,5 +169,56 @@ mod tests {
         assert!(owners.metadata_bytes() >= 4097 * size_of::<u64>());
         assert!(Owners::collect([&first].into_iter(), 4096).is_err());
         assert!(Owners::<u64>::collect([&Arc::new(Vec::new())].into_iter(), 65536).is_err());
+    }
+
+    #[test]
+    fn resource_views_dedup_only_lifetime_roots_and_each_recording_retains_them() {
+        #[derive(Clone)]
+        struct View {
+            owner: Arc<Probe>,
+            offset: usize,
+        }
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let owner = Arc::new(Probe(dropped.clone()));
+        let other = Arc::new(Probe(dropped.clone()));
+        let views = vec![
+            View {
+                owner: owner.clone(),
+                offset: 0,
+            },
+            View {
+                owner: owner.clone(),
+                offset: 128,
+            },
+            View {
+                owner: other.clone(),
+                offset: 0,
+            },
+        ];
+        let compare = |a: &View, b: &View| Arc::as_ptr(&a.owner).cmp(&Arc::as_ptr(&b.owner));
+        let first = unique_resources(views.iter(), compare, 4096).unwrap();
+        let second = unique_resources(views.iter(), compare, 4096).unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(second.len(), 2);
+        assert_eq!(
+            views.iter().map(|v| v.offset).collect::<Vec<_>>(),
+            [0, 128, 0]
+        );
+        assert!(unique_resources(views.iter(), compare, 3 * size_of::<&View>() - 1).is_err());
+        assert!(
+            unique_resources(
+                views.iter(),
+                compare,
+                3 * size_of::<&View>() + size_of::<View>()
+            )
+            .is_err()
+        );
+        drop(views);
+        drop(owner);
+        drop(other);
+        drop(first);
+        assert_eq!(dropped.load(Ordering::SeqCst), 0);
+        drop(second);
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
     }
 }

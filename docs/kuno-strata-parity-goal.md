@@ -264,6 +264,51 @@ of this binary. It explicitly preserves six logical phases while accounting
 for extra real prefix/tail dispatches; the current unchanged-six-dispatch
 candidate retains its strict six-times-group-count acceptance requirement.
 
+## Complete wide expert and host-batching checkpoint
+
+Frozen source6e61895b2f221fc102da39f7274cefb159b2a110, SHA256
+`763e39ec2447146a9edffc6bf5745a92575eb7711dd0fabb94ecdf15e283fe2a`,
+artifact `strata-parity-native-wide-expert-host-20261020`, connects all ten
+features: native32 dense and routed expert prefixes with authentic tails,
+paired/padded PV attention, complete logical expert bulk, host Vulkan batching,
+and bounded parallel loading. No component is removed from this candidate.
+
+Release build, actual App serializer/budget2 controls, native-wide5 controls
+(including64 shader layouts),402/208 complete offline layouts,129 actual GPU
+controls and three complete compiled-public requests pass. Receipts:
+`strata-parity-native-wide-expert-host-20261020-{operators,profile}/receipt.json`.
+GPU data are checked against original full-owner bitwise/F64 references. Actual
+96 batches /26,338 groups /158,028 logical phases /57,294 matrix pieces,
+4,642 wide prefixes /4,618 tails /162,646 physical launches and39,225 HOST copies
+satisfy the complete six-logical grammar. Wide blocks19,172 count128-member
+blocks per role, not complete two-dimensional GPU CTA counts.
+
+Profile load82.0189s; first/repeated4245 prefixes13.1426/12.3522s. Repeated experts
+8.0298s include1.6502s enqueue,2.7996s capture and3.4032s wait intervals. QSA
+attention/merge1.50585s. The sampled original layer24 legacy matrix label30.0886ms
+plus13.6733ms OTHER (including the genuine new wide/tail kernels) is43.7619ms;
+reporting just the old matrix label would falsely imply a much larger gain.
+There are48,851 original segments and1,474 rolling windows. These are diagnostic
+profiles, not a clean A/B; installed repeat11.1474s and Strata5.3515s remain
+faster. No full staged/terminal/installation acceptance is claimed for6e61895b.
+
+`strata-native-wide-expert-cpu-20261020/receipt.json` adds a successful protected
+199Hz user-CPU leaf diagnostic of the SAME source/artifact, fixed public input
+only, no stacks/registers/memory sampling. Raw perf data are deleted before
+passed=true, child exit, admission resume, physical recovery and HTTP200.
+Load81.7564s; profiled long prefixes13.3184/12.4560s. Repeated prefix samples
+3.7085s user CPU (738 samples): memset0.5729s, Planner::push0.2261s,
+_int_malloc0.1960s, Wgpu buffer_as_hal0.1709s, Vec in-place collection0.0905s,
+unlink_chunk0.0854s and further smaller hash/access collection costs. These are
+flat sampled leaf estimates, not inclusive wall attribution or GPU time.
+Actual host-after: Intel50,688,000B, NVIDIA compute0, zero new driver faults,
+Kuno/Ollama/Vashti200, no active/waiting/paused/recovery admission. The safe
+unprivileged summary is `strata-native-wide-expert-cpu-public-summary-20261020.json`.
+
+The following [capture/attention candidate](kuno-native-capture-attention.md)
+keeps the complete pipeline and targets these distributed host costs plus
+fault-only GPU synchronization. The parity goal remains active and unmet.
+
 ## Prior combined operator checkpoint
 
 Selected default-native source0771a726 / SHA256

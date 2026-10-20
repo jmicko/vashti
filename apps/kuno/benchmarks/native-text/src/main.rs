@@ -87,6 +87,10 @@ mod strata_queue_tests;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_binding_owners.rs"]
 mod strata_binding_owner_controls;
 #[cfg(test)]
+#[allow(dead_code)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_capture_scratch.rs"]
+mod strata_capture_scratch_controls;
+#[cfg(test)]
 #[allow(dead_code)] // Validate original native readback bounds without creating a device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_readback.rs"]
 mod strata_readback_tests;

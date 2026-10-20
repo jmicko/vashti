@@ -403,7 +403,6 @@ pub(super) mod tests {
             Kernel::Attention,
             Kernel::MtpAttention,
             Kernel::PromptMerge,
-            Kernel::PromptMergeFault,
             Kernel::Merge,
             Kernel::MtpMerge,
             Kernel::PromptScoreFault,

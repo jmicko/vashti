@@ -22,6 +22,9 @@ use kuno_text::{Error, Result};
 mod attention_numeric_probe;
 #[path = "strata_prompt_qsa.rs"]
 pub(crate) mod prompt;
+#[cfg(any(test, feature = "strata-qsa-local-fault"))]
+#[path = "strata_prompt_qsa_local_fault.rs"]
+mod prompt_local_fault;
 #[cfg(any(test, feature = "strata-qsa-paired"))]
 #[path = "strata_prompt_qsa_paired.rs"]
 mod prompt_paired;
@@ -108,7 +111,7 @@ impl Kernel {
     }
     fn source(self) -> String {
         let scalar = self.scalar_source();
-        if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             let specialized = prompt_specialize::source(scalar);
             #[cfg(feature = "strata-qsa-paired")]
             let specialized = prompt_paired::source(specialized);
@@ -117,7 +120,15 @@ impl Kernel {
             specialized
         } else {
             scalar
+        };
+        self.finish_prompt_source(source)
+    }
+    fn finish_prompt_source(self, source: String) -> String {
+        #[cfg(feature = "strata-qsa-local-fault")]
+        if matches!(self, Self::PromptAttentionFault | Self::PromptMergeFault) {
+            return prompt_local_fault::source(self, source);
         }
+        source
     }
     // The original generated prompt kernel remains available only to the
     // compiled-public numerical control. Decode and MTP also retain this path.

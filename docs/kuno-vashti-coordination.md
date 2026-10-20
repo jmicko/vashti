@@ -32,13 +32,24 @@ Load82.18s improves from roughly101s, but clean repeated prefix12.4769s is
 slower than installed11.1474s. The complete bundle is kept, **unselected and
 uninstalled**; no new full staged/terminal acceptance is claimed for it.
 
-The next connected opt-in native32 routed-expert source/probe/public hook is
-integrated atb17c64c1, with five CPU controls including64 new shader layouts.
-Its complete worker typecheck passes. Strict multi-piece batch grammar and
-per-pool Vulkan allocation/same-queue submission packing remain in isolated
-implementation. Every original release event, segment, queue dependency and
-owner stays. No new26 GPU acceptance or speed is claimed yet. See
-[exact source, receipts and remaining gates](kuno-strata-parity-goal.md#complete-bulkpvloading-execution-now-passes).
+The complete routed-wide/bulk/host-batching worker6e61895b / SHA763e39ec
+now passes402/208 offline layouts, all129 actual GPU controls, real six-logical
+phase/eight-piece serializer and budget controls, and three complete public
+requests with genuine wide/tail batch counts and physical recovery. Profiled
+long prefixes13.1426/12.3522s remain slower than installed11.1474s and upstream
+5.3515s. This complete connected pipeline stays **unselected and uninstalled**;
+no partial component rollback or new staged/terminal acceptance is claimed.
+
+A separate protected leaf-CPU diagnostic passes with raw sampling deleted,
+complete requests, healthy services, normal admission and physical recovery.
+Repeated4245 prefix12.4560s samples3.7085s user CPU: allocation/zeroing,
+Planner, Wgpu raw-buffer guards and temporary collection are distributed costs,
+not proof of a single driver bottleneck. The next coherent candidate preserves
+all wide/bulk/loading components, removes only fault-reporting reductions in
+selected attention fault variants, and reuses capture scratch with deduplicated
+Recording lifetime resource references. All actual views/owner bindings,
+original raw-buffer checks, signature, hazards and queue/release order remain.
+See [the exact contract and current gates](kuno-native-capture-attention.md).
 No API, protocol, model identity, configuration or Vashti consumer change.
 Installed3fffc266 remains selected, and the Strata parity goal stays active.
 

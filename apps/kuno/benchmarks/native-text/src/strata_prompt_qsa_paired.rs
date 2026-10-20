@@ -258,10 +258,10 @@ mod tests {
             {
                 #[cfg(feature = "strata-qsa-pv-gather")]
                 let new = super::super::prompt_pv_gather::source(new);
-                assert_eq!(kernel.source(), new);
+                assert_eq!(kernel.source(), kernel.finish_prompt_source(new));
             }
             #[cfg(not(any(feature = "strata-qsa-paired", feature = "strata-qsa-pv-gather")))]
-            assert_eq!(kernel.source(), old);
+            assert_eq!(kernel.source(), kernel.finish_prompt_source(old));
         }
     }
 

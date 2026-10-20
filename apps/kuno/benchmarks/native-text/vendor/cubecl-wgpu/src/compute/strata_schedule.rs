@@ -304,11 +304,22 @@ impl Planner {
         Ok(planner)
     }
     pub fn push(&mut self, node: &NodeAccess) -> Result<(), &'static str> {
+        self.push_accesses(node.copy, node.shared, node.release_after, &node.accesses)
+    }
+    /// Borrow authentic access intervals so capture can reuse its temporary
+    /// vector. The complete original planning and hazard logic is unchanged.
+    pub fn push_accesses(
+        &mut self,
+        node_copy: bool,
+        node_shared: bool,
+        release_after: bool,
+        accesses: &[Access],
+    ) -> Result<(), &'static str> {
         // This selects only the queue. The original node still carries its
         // COPY/FILL dispatch and TRANSFER accesses in Graph's actual encoder.
-        let shared = node.shared;
+        let shared = node_shared;
         // Shared COPY/FILL commands execute on its compute-capable queue.
-        let copy = node.copy && !self.inline_copies && !shared;
+        let copy = node_copy && !self.inline_copies && !shared;
         let result = &mut self.result;
         let index = result.node_segments.len();
         if index >= self.capacity {
@@ -334,12 +345,12 @@ impl Planner {
                 result.last_shared = signal;
             }
         }
-        self.release_next = node.release_after;
+        self.release_next = release_after;
         let s = result.segments.len() - 1;
         result.node_segments.push(s);
         let segment = &mut result.segments[s];
         let own = if shared { 2 } else { usize::from(copy) };
-        for access in &node.accesses {
+        for access in accesses {
             if access.buffer == 0 {
                 return Err("native queue plan null buffer");
             }

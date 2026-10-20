@@ -67,6 +67,8 @@ strata-native-expert-wide = ["strata-native-wide32"]
 strata-qsa-paired = ["strata-intel-core"]
 # Coherent experiments remain explicit until full runtime acceptance.
 strata-qsa-pv-gather = ["strata-intel-core"]
+# Preserve fault predicates while removing fault-only workgroup reductions.
+strata-qsa-local-fault = ["strata-intel-core"]
 strata-native-expert-bulk = ["strata-intel-core"]
 strata-parallel-loading = ["strata-intel-core"]
 # Fixed public completion check; changes only the harness request, not the engine.

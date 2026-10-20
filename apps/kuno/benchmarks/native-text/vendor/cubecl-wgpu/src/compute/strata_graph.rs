@@ -14,6 +14,8 @@ use std::{
 use wgpu::naga;
 #[path = "strata_binding_owners.rs"]
 mod binding_owners;
+#[path = "strata_capture_scratch.rs"]
+mod capture_scratch;
 #[path = "strata_descriptors.rs"]
 mod descriptors;
 
@@ -1350,17 +1352,17 @@ impl Graph {
         self.nodes.push(node);
         Ok(())
     }
-    fn node_bindings<'a>(
+    fn visit_node_bindings(
         &self,
-        n: &'a Node,
-    ) -> Result<Vec<(&'a WgpuResource, vk::AccessFlags)>, ServerError> {
-        let mut accesses = Vec::new();
+        n: &Node,
+        mut visit: impl FnMut(&WgpuResource, vk::AccessFlags) -> Result<(), ServerError>,
+    ) -> Result<(), ServerError> {
         match n.dispatch {
             Dispatch::Copy => {
-                accesses.push((&n.resources[0], vk::AccessFlags::TRANSFER_READ));
-                accesses.push((&n.resources[1], vk::AccessFlags::TRANSFER_WRITE));
+                visit(&n.resources[0], vk::AccessFlags::TRANSFER_READ)?;
+                visit(&n.resources[1], vk::AccessFlags::TRANSFER_WRITE)?;
             }
-            Dispatch::Fill => accesses.push((&n.resources[0], vk::AccessFlags::TRANSFER_WRITE)),
+            Dispatch::Fill => visit(&n.resources[0], vk::AccessFlags::TRANSFER_WRITE)?,
             _ => {
                 let p = &self.pipelines[n
                     .pipeline
@@ -1368,47 +1370,58 @@ impl Graph {
                     .ok_or_else(|| fault("native graph compute identity"))?];
                 for (r, access) in n.resources.iter().zip(&p.program.accesses) {
                     if !access.is_empty() {
-                        accesses.push((r, *access));
+                        visit(r, *access)?;
                     }
                 }
                 for r in &n.read_dependencies {
-                    accesses.push((r, vk::AccessFlags::SHADER_READ));
+                    visit(r, vk::AccessFlags::SHADER_READ)?;
                 }
                 if let Dispatch::Indirect(r) = &n.dispatch {
-                    accesses.push((r, vk::AccessFlags::INDIRECT_COMMAND_READ));
+                    visit(r, vk::AccessFlags::INDIRECT_COMMAND_READ)?;
                 }
             }
         }
-        Ok(accesses)
+        Ok(())
     }
-    fn node_accesses(&self, n: &Node) -> Result<HashMap<vk::Buffer, vk::AccessFlags>, ServerError> {
-        let mut accesses = HashMap::new();
-        for (r, access) in self.node_bindings(n)? {
+    fn fill_node_accesses(
+        &self,
+        n: &Node,
+        accesses: &mut HashMap<vk::Buffer, vk::AccessFlags>,
+    ) -> Result<(), ServerError> {
+        accesses.clear();
+        self.visit_node_bindings(n, |r, access| {
             *accesses.entry(raw_buffer(r)?).or_default() |= access;
-        }
-        Ok(accesses)
+            Ok(())
+        })
+    }
+    fn fill_node_ranges(
+        &self,
+        n: &Node,
+        accesses: &mut Vec<strata_schedule::Access>,
+    ) -> Result<(), ServerError> {
+        accesses.clear();
+        self.visit_node_bindings(n, |r, access| {
+            if r.size == 0
+                || r.offset
+                    .checked_add(r.size)
+                    .is_none_or(|end| end > r.buffer.size())
+            {
+                return Err(fault("native queue actual resource interval"));
+            }
+            accesses.push(strata_schedule::Access {
+                buffer: raw_buffer(r)?.as_raw(),
+                first: r.offset,
+                bytes: r.size,
+                write: access
+                    .intersects(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE),
+            });
+            Ok(())
+        })
     }
     fn node_ranges(&self, n: &Node) -> Result<Vec<strata_schedule::Access>, ServerError> {
-        self.node_bindings(n)?
-            .into_iter()
-            .map(|(r, access)| {
-                if r.size == 0
-                    || r.offset
-                        .checked_add(r.size)
-                        .is_none_or(|end| end > r.buffer.size())
-                {
-                    return Err(fault("native queue actual resource interval"));
-                }
-                Ok(strata_schedule::Access {
-                    buffer: raw_buffer(r)?.as_raw(),
-                    first: r.offset,
-                    bytes: r.size,
-                    write: access.intersects(
-                        vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
-                    ),
-                })
-            })
-            .collect()
+        let mut accesses = Vec::new();
+        self.fill_node_ranges(n, &mut accesses)?;
+        Ok(accesses)
     }
     /// Tag genuinely enqueued target/draft nodes; no submission/completion grant.
     pub(crate) fn shared_boundary(
@@ -2449,42 +2462,72 @@ impl Graph {
         } else {
             None
         };
+        let largest_access_count = self
+            .nodes
+            .iter()
+            .map(|n| {
+                n.resources.len()
+                    + n.read_dependencies.len()
+                    + usize::from(matches!(n.dispatch, Dispatch::Indirect(_)))
+            })
+            .max()
+            .unwrap_or(0);
+        let mut scratch = capture_scratch::Scratch::new(largest_access_count).map_err(fault)?;
+        let scratch_bytes = scratch.metadata_bytes().map_err(fault)?;
         let mut planner =
             strata_schedule::Planner::for_lane(self.nodes.len(), profiling, self.compute_lane)
                 .map_err(fault)?;
         for node in &self.nodes {
-            let accesses = self.node_ranges(node)?;
+            self.fill_node_ranges(node, &mut scratch.ranges)?;
             planner
-                .push(&strata_schedule::NodeAccess {
-                    copy: matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
-                    shared: node.shared,
-                    release_after: node.release_after
+                .push_accesses(
+                    matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
+                    node.shared,
+                    node.release_after
                         || node
                             .pipeline
                             .as_ref()
                             .is_some_and(|p| self.pipelines[p].program.release_after),
-                    accesses,
-                })
+                    &scratch.ranges,
+                )
                 .map_err(fault)?;
         }
         let plan = planner.finish().map_err(fault)?;
-        let resources: Vec<_> = self
-            .nodes
-            .iter()
-            .flat_map(|n| {
-                n.resources
-                    .iter()
-                    .chain(&n.read_dependencies)
-                    .cloned()
-                    .chain(match &n.dispatch {
-                        Dispatch::Indirect(r) => Some(r.clone()),
-                        _ => None,
-                    })
-            })
-            .collect();
         let owners = binding_owners::Owners::collect(
             self.nodes.iter().filter_map(|node| node.owners.as_ref()),
             descriptors::METADATA_CAP,
+        )
+        .map_err(fault)?;
+        let live_metadata = self
+            .recordings
+            .iter()
+            .try_fold(
+                signature
+                    .capacity()
+                    .checked_mul(size_of::<u64>())
+                    .and_then(|n| n.checked_add(owners.metadata_bytes()))
+                    .and_then(|n| n.checked_add(scratch_bytes))
+                    .ok_or_else(|| fault("native queue metadata overflow"))?,
+                |n, r| n.checked_add(r.metadata_bytes()?),
+            )
+            .ok_or_else(|| fault("native queue metadata overflow"))?;
+        let owner_budget = descriptors::METADATA_CAP
+            .checked_sub(live_metadata)
+            .ok_or_else(|| fault("native queue retained metadata capacity"))?;
+        // These are lifetime references only. Node views, exact signature,
+        // planner intervals and genuine allocator Binding owners stay complete.
+        let resources = binding_owners::unique_resources(
+            self.nodes.iter().flat_map(|n| {
+                n.resources
+                    .iter()
+                    .chain(&n.read_dependencies)
+                    .chain(match &n.dispatch {
+                        Dispatch::Indirect(r) => Some(r),
+                        _ => None,
+                    })
+            }),
+            |a, b| a.buffer.cmp(&b.buffer),
+            owner_budget,
         )
         .map_err(fault)?;
         let other_metadata = signature
@@ -2504,8 +2547,11 @@ impl Graph {
             .iter()
             .try_fold(other_metadata, |n, r| n.checked_add(r.metadata_bytes()?))
             .ok_or_else(|| fault("native queue metadata overflow"))?;
+        let capture_metadata = retained_metadata
+            .checked_add(scratch_bytes)
+            .ok_or_else(|| fault("native queue capture metadata overflow"))?;
         let command_budget = descriptors::METADATA_CAP
-            .checked_sub(retained_metadata)
+            .checked_sub(capture_metadata)
             .ok_or_else(|| fault("native queue retained metadata capacity"))?;
         let work = strata_schedule::Commands::new(
             &self.device,
@@ -2518,7 +2564,7 @@ impl Graph {
             command_budget,
         )
         .map_err(fault)?;
-        let metadata = retained_metadata
+        let metadata = capture_metadata
             .checked_add(work.metadata_bytes())
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         if metadata > descriptors::METADATA_CAP {
@@ -2646,9 +2692,9 @@ impl Graph {
                     | vk::PipelineStageFlags::DRAW_INDIRECT
                     | vk::PipelineStageFlags::TRANSFER
             };
-            let accesses = self.node_accesses(n)?;
-            let mut dependencies = Vec::new();
-            for (buffer, access) in accesses {
+            self.fill_node_accesses(n, &mut scratch.accesses)?;
+            scratch.barriers.clear();
+            for (&buffer, &access) in &scratch.accesses {
                 if let Some(before) = previous.get(&buffer).copied() {
                     if before
                         .intersects(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
@@ -2656,7 +2702,7 @@ impl Graph {
                             vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
                         )
                     {
-                        dependencies.push(
+                        scratch.barriers.push(
                             vk::BufferMemoryBarrier::default()
                                 .src_access_mask(before)
                                 .dst_access_mask(access)
@@ -2674,7 +2720,7 @@ impl Graph {
                     previous.insert(buffer, access);
                 }
             }
-            if !dependencies.is_empty() {
+            if !scratch.barriers.is_empty() {
                 unsafe {
                     self.device.cmd_pipeline_barrier(
                         self.command,
@@ -2682,7 +2728,7 @@ impl Graph {
                         supported_stages,
                         vk::DependencyFlags::empty(),
                         &[],
-                        &dependencies,
+                        &scratch.barriers,
                         &[],
                     );
                 }
