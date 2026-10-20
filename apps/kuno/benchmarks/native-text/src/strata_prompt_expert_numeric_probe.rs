@@ -61,7 +61,15 @@ fn image_difference(
             }
         }
         drop(actual);
-        cubecl::future::block_on(arena.client()?.sanitize_transient_io_audited())?;
+        let receipt = cubecl::future::block_on(arena.client()?.sanitize_transient_io_audited())?;
+        let full = receipt
+            .upload_bytes
+            .checked_add(receipt.uniform_bytes)
+            .and_then(|n| n.checked_add(receipt.readback_bytes))
+            .ok_or_else(|| fail("output_readback_audit_count_overflow"))?;
+        if full == 0 || receipt.inspected_bytes != full || receipt.inspected_buffers == 0 {
+            return Err(fail("output_readback_audit_incomplete"));
+        }
     }
     Ok(mismatches)
 }
