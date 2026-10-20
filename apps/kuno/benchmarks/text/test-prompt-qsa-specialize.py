@@ -30,7 +30,7 @@ const WINDOW_SCORE_GRID: [usize; 3] = [256, 1, 1];
 '''
 header += f'#[path="{native / "strata_prompt_qsa_specialize.rs"}"] mod prompt_specialize;\n'
 libraries = {}
-for name in ['wgpu', 'half']:
+for name in ['wgpu', 'half', 'cubecl']:
     matches = list(args.deps_dir.glob(f'lib{name}-*.rlib'))
     if not matches:
         parser.error(f'no existing {name} rlib under --deps-dir')

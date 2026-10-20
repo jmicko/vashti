@@ -20,6 +20,14 @@ pub(super) fn source(mut scalar: String) -> String {
     assert!(scalar.contains("let query_row=t+p.reserved;"));
     assert!(scalar.contains("let n=cells(query_row,p.start);"));
     assert!(scalar.contains("fn kv(token:u32,offset:u32)->f32 {return q8_value(cache["));
+    // Fixed expansion exposes neighboring multiply/add expressions to native
+    // contraction that the original dynamic array/loop materialized apart.
+    // Use the existing native FMul NoContraction postpass for this candidate
+    // only; explicit chronological PV FMA instructions remain untouched.
+    scalar.insert_str(
+        0,
+        "// STRATA_ROUND_PRODUCTS: original materialized prompt QSA products.\n",
+    );
 
     // Every one of these 12 stores is in range: tid is 0..255 and the shared
     // query row is exactly 12*256 elements. Descriptors/owning roots stay whole.
@@ -166,7 +174,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let words = n::back::spv::write_vec(
+        let mut words = n::back::spv::write_vec(
             &module,
             &info,
             &options,
@@ -176,6 +184,10 @@ mod tests {
             }),
         )
         .expect("actual prompt attention SPIR-V lowering");
+        if source.contains("STRATA_ROUND_PRODUCTS") {
+            words = cubecl::wgpu::preserve_native_product_rounding(&words)
+                .expect("actual native prompt attention product-rounding pass");
+        }
         (module, words)
     }
 
@@ -210,6 +222,49 @@ mod tests {
                 .iter()
                 .map(|(_, f)| arrays(f))
                 .sum::<usize>()
+    }
+
+    #[test]
+    fn actual_rounding_pass_marks_every_product_and_keeps_explicit_fmas() {
+        use std::collections::HashSet;
+        for kernel in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
+            assert!(!kernel.scalar_source().contains("STRATA_ROUND_PRODUCTS"));
+            let source = kernel.source();
+            assert!(source.contains("STRATA_ROUND_PRODUCTS"));
+            let (_, words) = compiled(&source);
+            let mut cursor = 5;
+            let mut products = HashSet::new();
+            let mut precise = HashSet::new();
+            let mut explicit_fmas = 0;
+            while cursor < words.len() {
+                let size = (words[cursor] >> 16) as usize;
+                match words[cursor] & 65535 {
+                    // OpFMul ResultType, ResultId, Operand1, Operand2.
+                    133 => {
+                        products.insert(words[cursor + 2]);
+                    }
+                    // OpDecorate Target, NoContraction=42.
+                    71 if size == 3 && words[cursor + 2] == 42 => {
+                        precise.insert(words[cursor + 1]);
+                    }
+                    // OpExtInst ResultType, ResultId, Set, GLSL.std.450 Fma=50.
+                    12 if size >= 5 && words[cursor + 4] == 50 => {
+                        explicit_fmas += 1;
+                    }
+                    _ => {}
+                }
+                cursor += size;
+            }
+            assert!(!products.is_empty());
+            assert_eq!(products, precise);
+            assert_eq!(explicit_fmas, 12);
+            // Actual native postpass is annotation-only and idempotent; it
+            // changes no product/add/FMA opcode and preserves the header.
+            assert_eq!(
+                cubecl::wgpu::preserve_native_product_rounding(&words).unwrap(),
+                words
+            );
+        }
     }
 
     #[test]

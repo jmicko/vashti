@@ -83,3 +83,32 @@ the unchanged scalar shader, existing full shader/numerical checks, complete
 request/state erasure/recovery, then the matched public prompt profile. Do not
 weaken original IEEE/denormal, owner, fault, or numerical acceptance limits to
 select this candidate. No private content should be profiled or saved.
+
+## Rounding-sensitive golden gate and candidate repair
+
+The initial nine actual GPU controls with dyadic inputs passed, but the three
+additional non-dyadic controls rejected the first expansion: partial maximum
+absolute differences were about1.67e-6,3.81e-6 and5.72e-6; stats differences
+reached7.63e-6, with no nonfinite mismatch. The bitwise gate remains strict;
+these controls are not accepted and no threshold or reference is changed.
+
+Inspection found that the existing native graph's
+`preserve_native_product_rounding` postpass runs only for generated source
+containing `STRATA_ROUND_PRODUCTS`. Neither original attention nor the first
+expanded shader had that marker. Fixed expansion lets a native compiler see
+neighboring products/adds that the dynamic array/loops previously materialized
+across stores or control flow, so its implicit contraction can differ.
+
+The candidate generator now adds the existing marker only to the specialized
+prompt attention source. The original scalar golden source, base WGSL and
+non-prompt paths remain unchanged. Five exact-source CPU tests pass, including
+the real native postpass: every emitted FMul result receives NoContraction,
+all12 explicit chronological PV FMA instructions remain, and the postpass is
+idempotent. Both actual postpass modules pass standalone Vulkan1.3 SPIR-V
+validation. Fault SPIR-V is11514 words after annotation; loop/array/barrier
+evidence is unchanged.
+
+This is a source/compiler repair candidate, not proof of restored GPU parity:
+the original dynamic kernel's native contraction choices still require the
+same twelve actual GPU golden controls before acceptance. Do not modify the
+original reference to force agreement.
