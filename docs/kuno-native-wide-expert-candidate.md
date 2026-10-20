@@ -41,6 +41,11 @@ Seven runtime **u32** scalars are `[columns, rows, full_count, weight_first,
 group, member_base, piece_members]`. Original InfoBuilder packing puts them in
 u32 words0..6, zero-padding word7, then the six original physical and six logical
 array lengths in words8..19:80 bytes total,10 u64s, dynamic_metadata_offset10.
+For the first two vec4<F16> arrays, physical length is `used_bytes/8`, while
+logical length is `used_bytes/32`: original `vector()` supplies `used_bytes/8`
+to ArrayArg, then original KernelLauncher divides its logical length by four.
+The four scalar arrays retain equal physical/logical lengths. Neither the
+runtime argument nor arithmetic is changed to make the two lengths equal.
 The actual generated KernelDefinition has exactly six buffers and seven U32
 scalars; original INFO construction/padding remains unchanged. Backend validation
 must check actual generated records and binding lengths, not assume this layout.
@@ -96,3 +101,11 @@ Artifacts: `/media/jmicko/faststore/kuno-development/prefill-native-expert-wide-
 The separate shared oracle/native26 probe is source548ac64e; the native14 CubeK
 contract remains unchanged. The source-only proposal and exact histogram are in
 `kuno-native-wide-expert-proposal.md`. No throughput or deployment claim yet.
+
+The follow-up INFO fixture now checks those genuine unequal vector lengths
+explicitly, and the generated-name getter is test-only. Its layout check is
+supplemented by the hardware-free **real** KernelLauncher/ArrayArg/scalar seam
+`real_array_and_scalar_registration_matches_the_complete_logical_grammar`
+(agent source91dc671b, integrated by the parent separately). That seam covers
+legacy small/narrow/macro and the complete split-eight launch grammar without
+constructing a device or bypassing private scope authority.

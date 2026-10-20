@@ -1207,6 +1207,7 @@ pub(super) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
     out
 }
 
+#[cfg(test)]
 pub(super) fn entry_names() -> [&'static str; 4] {
     [
         core::any::type_name::<expert_wide_gu::ExpertWideGu<WgpuRuntime>>(),
@@ -1544,13 +1545,31 @@ mod tests {
             );
         }
         let scalars = [2560u32, 1280, 257, 128, 10, 256, 1];
-        let lens = [640u64, 820000, 5242880, 65536, 131072, 1];
+        let buffer_lens = [640u64, 820000, 5242880, 65536, 131072, 1];
+        // Production vector() passes ArrayArg.length=used_bytes/8 for each
+        // vec4<f16> input/weight. KernelLauncher::process_array independently
+        // divides that logical length by vector_size=4; its physical buffer
+        // length is used_bytes/Type.size=used_bytes/8. The four scalar arrays
+        // retain equal physical/logical lengths. This checks exact InfoBuilder
+        // packing, supplemented by the actual KernelLauncher registration seam
+        // in strata_expert_bulk_budget_tests (not a fabricated GPU dispatch).
+        let logical_lens = [
+            buffer_lens[0] / 4,
+            buffer_lens[1] / 4,
+            buffer_lens[2],
+            buffer_lens[3],
+            buffer_lens[4],
+            buffer_lens[5],
+        ];
+        assert_ne!(&buffer_lens[..2], &logical_lens[..2]);
         let mut builder = cubecl::InfoBuilder::default();
         for v in scalars {
             builder.scalars.push(v);
         }
-        for v in lens {
-            builder.metadata.register_array(v, v, AddressType::U32);
+        for (buffer_len, logical_len) in buffer_lens.into_iter().zip(logical_lens) {
+            builder
+                .metadata
+                .register_array(buffer_len, logical_len, AddressType::U32);
         }
         let packed = builder.finish(AddressType::U32);
         let words = packed
@@ -1560,8 +1579,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(&words[..7], &scalars);
         assert_eq!(words[7], 0);
-        assert_eq!(&words[8..14], &lens.map(|n| n as u32));
-        assert_eq!(&words[14..20], &lens.map(|n| n as u32));
+        assert_eq!(&words[8..14], &buffer_lens.map(|n| n as u32));
+        assert_eq!(&words[14..20], &logical_lens.map(|n| n as u32));
         assert_eq!(packed.dynamic_metadata_offset, 10);
         assert_eq!(words.len(), 20);
     }
