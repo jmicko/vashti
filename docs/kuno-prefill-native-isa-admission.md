@@ -64,3 +64,52 @@ all device caps, selected entry, malformed extents and nonliteral overrides.
 The fixtures are not executable shaders. Full worker compilation, original
 shader controls, actual GPU correctness/recovery and clean whole-model timing
 remain root-controlled acceptance gates; no new speed or installation is claimed.
+
+## Native 32-subgroup follow-up
+
+The separately protected fixed-public capture in
+`strata-parity-native-wide32-20261020-operators` now passes all 103 actual
+operator controls and physical recovery. Its receipt identifies source
+`3fffc266383917cada88fd176b273db8a6b737f4` and worker SHA256
+`eac78ce0029205c9d503c78a1b2c868082801cf966b4e8a3d3bc7585ece80f4c`.
+This follow-up establishes correct execution and actual spill elimination;
+whole-model throughput is a separate pending measurement.
+
+| Input | Actual source hash | Header / summary lines | K32 loop lines |
+| --- | --- | --- | --- |
+| BF16 | `0x06a70106bd9a861c` | 24588 / 24589 | 24674–24834 |
+| FP16 | `0x0ac876bac0bc0d62` | 49581 / 49582 | 49670–49838 |
+
+The respective compiler BLAKE3 identifiers are
+`3577bf71f80bfd417ed0c2278a102914043549d53abae76822ec0f673ad75a02` and
+`5a81aee046cb503f836148ef2d4a84c629aef473c09f73569e6fff492201bb27`.
+Final NIR at lines 23148–23155 and 48137–48145 confirms workgroup 512x1x1,
+required/min/max subgroup 16 and real shared allocation 49,152 B. The aligned
+512x128 numerical-case selection and unique geometry attribute these shaders
+to the native32 dense entry. BF16 runs first in the actual original probe;
+the second shader also retains the FP16 float-control execution mode.
+
+Both summaries report zero spills/fills and 128 GRFs. BF16 has 1,207 static
+instructions, FP16 1,212, with 283 non-scratch sends and one K loop each.
+The following counts are the actual static instructions inside one K32 loop,
+per hardware thread/subgroup, not measured traffic or elapsed time:
+
+| Instruction/message kind | Prior 16-subgroup tile | New 32-subgroup tile |
+| --- | --- | --- |
+| Scratch loads | 27 | 0 |
+| Scratch stores | 40 | 0 |
+| DPAS | 16 | 8 |
+| Global loads | 8 | 4 |
+| SLM loads | 40 | 24 |
+| SLM stores | 4 | 2 |
+| SLM fence | 1 | 1 |
+| Barrier message | 1 | 1 |
+| All sends, including scratch | 121 | 32 |
+
+Workgroup totals preserve 256 DPAS instructions per K32 iteration
+(`16*16 == 32*8`) and 128 global-load instructions (`16*8 == 32*4`).
+Scratch sends drop from 1,072 per workgroup/iteration to zero. SLM load-message
+counts rise from 640 to 768 after subgroup normalization; payload sizes and
+hardware scheduling still matter, so instruction ratios are not a speedup
+prediction. The complete accepted output tile and original ordered K16
+arithmetic remain unchanged. No GPU generation/inference content was captured.
