@@ -154,21 +154,73 @@ mod native {
         sync_cube();
         out
     }
+    // Two K64 operand buffers: A[2][32][64] and B[2][64][64].
+    // Half/BF16 vectors preserve their original bits; no F32 round trip.
+    #[cube]
+    #[allow(clippy::too_many_arguments)]
+    fn macro_stage<F: Float>(
+        input: &Array<Vector<F, Const<4>>>,
+        weight: &Array<Vector<F, Const<4>>>,
+        a: &mut SharedMemory<Vector<F, Const<4>>>,
+        b: &mut SharedMemory<Vector<F, Const<4>>>,
+        columns: usize,
+        rows: usize,
+        count: usize,
+        weight_first: usize,
+        token_base: usize,
+        row_base: usize,
+        k: usize,
+        buffer: usize,
+    ) {
+        let mut job = usize::cast_from(UNIT_POS);
+        while job < 256 {
+            // One8-half job is two legal four-element Vulkan vectors. Each
+            // row has eight jobs and each of64 lanes handles four A jobs.
+            let token = token_base + job / 8;
+            let col = k + (job % 8) * 8;
+            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+            if token < count && col < columns {
+                // Host proves columns and weight_first multiples of4; kernel
+                // reduction dimensions are multiples of16. No partial vector.
+                lo = input[(token * columns + col) / 4];
+                hi = input[(token * columns + col) / 4 + 1];
+            }
+            a[buffer * 512 + job * 2] = lo;
+            a[buffer * 512 + job * 2 + 1] = hi;
+            job += 64;
+        }
+        job = usize::cast_from(UNIT_POS);
+        while job < 512 {
+            let row = row_base + job / 8;
+            let col = k + (job % 8) * 8;
+            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+            if row < rows && col < columns {
+                lo = weight[(weight_first + row * columns + col) / 4];
+                hi = weight[(weight_first + row * columns + col) / 4 + 1];
+            }
+            b[buffer * 1024 + job * 2] = lo;
+            b[buffer * 1024 + job * 2 + 1] = hi;
+            job += 64;
+        }
+    }
+
     /// Four subgroups, each owning four8x16 results. Two A and two B
     /// fragments feed four accumulators, doubling operand reuse without
     /// changing the ordered K16 reduction of any output. The complete
     /// workgroup covers32 input rows by64 output features.
     #[cube]
     fn macro_product<F: Float>(
-        input: &Array<F>,
-        weight: &Array<F>,
+        input: &Array<Vector<F, Const<4>>>,
+        weight: &Array<Vector<F, Const<4>>>,
         columns: usize,
         rows: usize,
         count: usize,
         weight_first: usize,
     ) -> SharedMemory<f32> {
-        let mut a = SharedMemory::<F>::new(512usize);
-        let mut b = SharedMemory::<F>::new(1024usize);
+        let mut a = SharedMemory::<Vector<F, Const<4>>>::new(1024usize);
+        let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
         let mut out = SharedMemory::<f32>::new(2048usize);
         // SAFETY: both operands are loaded before the corresponding products.
         let a0 = unsafe {
@@ -245,78 +297,72 @@ mod native {
         let subgroup = usize::cast_from(UNIT_POS) / 16;
         let token_base = usize::cast_from(CUBE_POS_Y) * 32;
         let row_base = usize::cast_from(CUBE_POS_X) * 64;
-        let token = token_base + (subgroup / 2) * 16;
-        let row = row_base + (subgroup % 2) * 32;
+        // Buffer0 is fully initialized, including every masked tail, before
+        // any subgroup reads it. Each lane copies eight consecutive half
+        // values as two genuine vec4 loads/stores without float conversion.
+        macro_stage::<F>(
+            input,
+            weight,
+            &mut a,
+            &mut b,
+            columns,
+            rows,
+            count,
+            weight_first,
+            token_base,
+            row_base,
+            0,
+            0,
+        );
+        sync_cube();
         let mut k = 0usize;
+        let mut current = 0usize;
         while k < columns {
-            // This branch is uniform across the whole workgroup. Complete
-            // macro tiles retain direct original-global-buffer loads. Tails
-            // stage only valid rows and initialize every inactive operand.
-            if token_base + 32 <= count && row_base + 64 <= rows {
-                cmma::load(
-                    &a0,
-                    &input.to_slice().slice(token * columns + k, input.len()),
-                    u32::cast_from(columns),
+            let next = 1usize - current;
+            // Software prefetch: independent next-stage global loads/stores
+            // are issued before current-stage MMA. This expresses overlap
+            // opportunity, not a guaranteed asynchronous DMA operation.
+            if k + 64 < columns {
+                macro_stage::<F>(
+                    input,
+                    weight,
+                    &mut a,
+                    &mut b,
+                    columns,
+                    rows,
+                    count,
+                    weight_first,
+                    token_base,
+                    row_base,
+                    k + 64,
+                    next,
                 );
-                cmma::load(
-                    &a1,
-                    &input
-                        .to_slice()
-                        .slice((token + 8) * columns + k, input.len()),
-                    u32::cast_from(columns),
-                );
-                cmma::load(
-                    &b0,
-                    &weight
-                        .to_slice()
-                        .slice(weight_first + row * columns + k, weight.len()),
-                    u32::cast_from(columns),
-                );
-                cmma::load(
-                    &b1,
-                    &weight
-                        .to_slice()
-                        .slice(weight_first + (row + 16) * columns + k, weight.len()),
-                    u32::cast_from(columns),
-                );
-            } else {
-                let mut i = usize::cast_from(UNIT_POS);
-                while i < 1024 {
-                    let col = k + i % 16;
-                    if i < 512 {
-                        let t = token_base + i / 16;
-                        let mut av = F::new(0.0);
-                        if t < count && col < columns {
-                            av = input[t * columns + col];
-                        }
-                        a[i] = av;
-                    }
-                    let r = row_base + i / 16;
-                    let mut bv = F::new(0.0);
-                    if r < rows && col < columns {
-                        bv = weight[weight_first + r * columns + col];
-                    }
-                    b[i] = bv;
-                    i += 64;
+            }
+            let mut inner = 0usize;
+            while inner < 64 {
+                if k + inner < columns {
+                    let af = current * 512 + (subgroup / 2) * 256 + inner / 4;
+                    let bf = current * 1024 + (subgroup % 2) * 512 + inner / 4;
+                    // Offsets index real vec4 storage; cmma's stride remains
+                    // the64 scalar elements in each staged row. The compiler
+                    // divides by the authentic vector width for the pointer.
+                    cmma::load(&a0, &a.to_slice().slice(af, a.len()), 64);
+                    cmma::load(&a1, &a.to_slice().slice(af + 128, a.len()), 64);
+                    cmma::load(&b0, &b.to_slice().slice(bf, b.len()), 64);
+                    cmma::load(&b1, &b.to_slice().slice(bf + 256, b.len()), 64);
+                    cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
+                    cmma::execute::<F, F, f32, f32>(&a0, &b1, &c1, &c1);
+                    cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);
+                    cmma::execute::<F, F, f32, f32>(&a1, &b1, &c3, &c3);
                 }
-                sync_cube();
-                let af = (subgroup / 2) * 256;
-                let bf = (subgroup % 2) * 512;
-                cmma::load(&a0, &a.to_slice().slice(af, af + 128), 16);
-                cmma::load(&a1, &a.to_slice().slice(af + 128, af + 256), 16);
-                cmma::load(&b0, &b.to_slice().slice(bf, bf + 256), 16);
-                cmma::load(&b1, &b.to_slice().slice(bf + 256, bf + 512), 16);
+                inner += 16;
             }
-            cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
-            cmma::execute::<F, F, f32, f32>(&a0, &b1, &c1, &c1);
-            cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);
-            cmma::execute::<F, F, f32, f32>(&a1, &b1, &c3, &c3);
-            // No subgroup may overwrite a tail operand before its neighbors
-            // finish all four products. Complete global tiles need no barrier.
-            if !(token_base + 32 <= count && row_base + 64 <= rows) {
-                sync_cube();
-            }
-            k += 16;
+            // All old readers finish before either stage is reused. Every
+            // next-stage write is visible before it becomes current. Loop
+            // conditions and the barrier are uniform across the workgroup.
+            sync_cube();
+            current = next;
+            k += 64;
         }
         cmma::store(
             &mut out.slice_mut(subgroup * 512, subgroup * 512 + 128),
@@ -347,8 +393,8 @@ mod native {
     }
     #[cube(launch_unchecked)]
     pub fn dense_macro<F: Float>(
-        input: &Array<F>,
-        weight: &Array<F>,
+        input: &Array<Vector<F, Const<4>>>,
+        weight: &Array<Vector<F, Const<4>>>,
         output: &mut Array<f32>,
         fault: &mut Array<Atomic<u32>>,
         columns: usize,
@@ -384,8 +430,8 @@ mod native {
     }
     #[cube(launch_unchecked)]
     pub fn expert_macro(
-        input: &Array<f16>,
-        weight: &Array<f16>,
+        input: &Array<Vector<f16, Const<4>>>,
+        weight: &Array<Vector<f16, Const<4>>>,
         output: &mut Array<f32>,
         map: &Array<u32>,
         status: &mut Array<u32>,
@@ -599,7 +645,7 @@ mod native {
     fn definition_dense_macro<F: Float>() -> KernelDefinition {
         let mut b = KernelBuilder::default();
         AddressType::U32.register(&mut b.scope);
-        let t = F::as_type(&b.scope);
+        let t = Vector::<F, Const<4>>::as_type(&b.scope);
         let input = b.input_array(t);
         let weight = b.input_array(t);
         let output = b.output_array(f32::as_type(&b.scope));
@@ -626,7 +672,7 @@ mod native {
     fn definition_expert_macro(down: bool) -> KernelDefinition {
         let mut b = KernelBuilder::default();
         AddressType::U32.register(&mut b.scope);
-        let t = f16::as_type(&b.scope);
+        let t = Vector::<f16, Const<4>>::as_type(&b.scope);
         let input = b.input_array(t);
         let weight = b.input_array(t);
         let output = b.output_array(f32::as_type(&b.scope));
@@ -661,6 +707,57 @@ mod native {
         let words = handle.size_in_used() as usize / 2;
         // SAFETY: typed half elements, not the u32 elements of raw_arg.
         Ok(unsafe { ArrayArg::from_raw_parts(handle, words) })
+    }
+    const MACRO_OPERAND_BYTES: usize = 2 * (32 + 64) * 64 * 2;
+    const MACRO_SHARED_BYTES: usize = MACRO_OPERAND_BYTES + 2048 * 4;
+    #[allow(clippy::too_many_arguments)]
+    fn macro_geometry(
+        count: usize,
+        rows: usize,
+        columns: usize,
+        weight_first: usize,
+        shared_bytes: usize,
+        bindings: [(u64, u64); 2],
+    ) -> bool {
+        count >= 32
+            && rows >= 32
+            && columns >= 16
+            && columns.is_multiple_of(16)
+            && weight_first.is_multiple_of(4)
+            && shared_bytes >= MACRO_SHARED_BYTES
+            && bindings.iter().all(|&(bytes, offset)| {
+                bytes != 0 && bytes.is_multiple_of(8) && offset.is_multiple_of(8)
+            })
+    }
+    fn macro_compatible(
+        client: &ComputeClient<WgpuRuntime>,
+        input: &Handle,
+        weight: &Handle,
+        count: usize,
+        rows: usize,
+        columns: usize,
+        weight_first: usize,
+    ) -> bool {
+        macro_geometry(
+            count,
+            rows,
+            columns,
+            weight_first,
+            client.properties().hardware.max_shared_memory_size,
+            [input, weight].map(|h| (h.size_in_used(), h.offset_start.unwrap_or(0))),
+        )
+    }
+    fn macro_half_arg(handle: Handle) -> Result<ArrayArg<WgpuRuntime>> {
+        if handle.size_in_used() == 0
+            || !handle.size_in_used().is_multiple_of(8)
+            || !handle.offset_start.unwrap_or(0).is_multiple_of(8)
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let vectors = handle.size_in_used() as usize / 8;
+        // SAFETY: authentic aligned vec4<F16/BF16> binding, eight bytes per
+        // element. No scalar length or forged vector pointer is supplied.
+        Ok(unsafe { ArrayArg::from_raw_parts(handle, vectors) })
     }
     fn compatible(client: &ComputeClient<WgpuRuntime>, bfloat: bool) -> Result<()> {
         let kind = ElemType::Float(if bfloat {
@@ -702,15 +799,25 @@ mod native {
     ) -> Result<()> {
         compatible(client, bfloat)?;
         let [input, weight, output, fault] = h;
-        let ia = half_arg(input)?;
-        let wa = half_arg(weight)?;
+        let use_macro =
+            macro_compatible(client, &input, &weight, count, rows, columns, weight_first);
+        let ia = if use_macro {
+            macro_half_arg(input)?
+        } else {
+            half_arg(input)?
+        };
+        let wa = if use_macro {
+            macro_half_arg(weight)?
+        } else {
+            half_arg(weight)?
+        };
         let oa = crate::resident_util::raw_arg(output.clone(), output.size_in_used() as usize / 4)?;
         let fa = crate::resident_util::raw_arg(fault, 1)?;
         // SAFETY: caller checked original owner intervals; padded tile operands
         // are synthesized in workgroup memory and stores mask inactive rows.
         unsafe {
             if bfloat {
-                if count >= 32 && rows >= 32 {
+                if use_macro {
                     dense_macro::launch_unchecked::<bf16, WgpuRuntime>(
                         client,
                         CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(32) as u32, 1),
@@ -744,7 +851,7 @@ mod native {
                     );
                 }
             } else {
-                if count >= 32 && rows >= 32 {
+                if use_macro {
                     dense_macro::launch_unchecked::<f16, WgpuRuntime>(
                         client,
                         CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(32) as u32, 1),
@@ -794,8 +901,18 @@ mod native {
     ) -> Result<()> {
         compatible(client, false)?;
         let [input, weight, output, map, status, fault] = h;
-        let ia = half_arg(input)?;
-        let wa = half_arg(weight)?;
+        let use_macro =
+            macro_compatible(client, &input, &weight, count, rows, columns, weight_first);
+        let ia = if use_macro {
+            macro_half_arg(input)?
+        } else {
+            half_arg(input)?
+        };
+        let wa = if use_macro {
+            macro_half_arg(weight)?
+        } else {
+            half_arg(weight)?
+        };
         let oa = crate::resident_util::raw_arg(output.clone(), output.size_in_used() as usize / 4)?;
         let ma = crate::resident_util::raw_arg(map.clone(), map.size_in_used() as usize / 4)?;
         let sa = crate::resident_util::raw_arg(status.clone(), status.size_in_used() as usize / 4)?;
@@ -803,7 +920,7 @@ mod native {
         // SAFETY: the actual prompt grouping/row map and all physical packed
         // images were checked by the original-source expert caller.
         unsafe {
-            if count >= 32 && rows >= 32 {
+            if use_macro {
                 expert_macro::launch_unchecked::<WgpuRuntime>(
                     client,
                     CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(32) as u32, 1),
@@ -842,6 +959,223 @@ mod native {
             }
         }
         Ok(())
+    }
+    #[cfg(test)]
+    mod stage_tests {
+        use super::*;
+        #[test]
+        fn vector_binding_geometry_prices_actual_storage_and_keeps_small_fallback() {
+            let actual = [(80 * 1024 * 1024, 0), (80 * 1024 * 1024, 256)];
+            assert!(macro_geometry(32, 32, 16, 4, 32768, actual));
+            for (count, rows, columns, first, shared) in [
+                (31, 32, 16, 4, 32768),
+                (32, 31, 16, 4, 32768),
+                (32, 32, 15, 4, 32768),
+                (32, 32, 16, 1, 32768),
+                (32, 32, 16, 4, 32767),
+            ] {
+                assert!(!macro_geometry(count, rows, columns, first, shared, actual));
+            }
+            for bad in [(0, 0), (6, 0), (8, 2)] {
+                for index in 0..2 {
+                    let mut b = actual;
+                    b[index] = bad;
+                    assert!(!macro_geometry(32, 32, 16, 4, 32768, b));
+                }
+            }
+            assert_eq!(MACRO_OPERAND_BYTES, 24576);
+            assert_eq!(MACRO_SHARED_BYTES, 32768);
+        }
+        #[test]
+        fn actual_macro_compiler_uses_vec4_half_storage_and_exact32k_shared() {
+            use cubecl::ir::{ElemType, StorageType, UIntKind};
+            use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+            use cubecl::{Compiler, WgpuCompilationOptions};
+            use std::collections::BTreeMap;
+            for mask in 0..8 {
+                for (name, definition) in definitions()
+                    .into_iter()
+                    .filter(|(name, _)| name.contains("macro"))
+                {
+                    let mut options = WgpuCompilationOptions {
+                        supports_vulkan: true,
+                        ..Default::default()
+                    };
+                    options.vulkan.max_spirv_version = (1, 6);
+                    options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+                    options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+                    options.vulkan.supports_explicit_smem = mask & 4 != 0;
+                    let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+                        &mut AutoCompiler::SpirV(Default::default()),
+                        definition,
+                        &options,
+                        ExecutionMode::Unchecked,
+                        StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                    )
+                    .unwrap() else {
+                        panic!("actual SPIRV required")
+                    };
+                    assert_eq!(kernel.shared_size, MACRO_SHARED_BYTES, "{name} mask{mask}");
+                    let mut types = BTreeMap::new();
+                    let mut pointers = BTreeMap::new();
+                    let mut variables = BTreeMap::new();
+                    let mut bindings = BTreeMap::new();
+                    let mut strides = BTreeMap::new();
+                    let mut barriers = 0;
+                    let words = &kernel.assembled_module;
+                    let mut at = 5;
+                    while at < words.len() {
+                        let count = (words[at] >> 16) as usize;
+                        assert!(count != 0 && at + count <= words.len());
+                        let op = words[at] & 65535;
+                        let args = &words[at + 1..at + count];
+                        match op {
+                            22 | 23 | 28 | 29 | 30 => {
+                                types.insert(args[0], (op, args[1..].to_vec()));
+                            }
+                            32 => {
+                                pointers.insert(args[0], args[2]);
+                            }
+                            59 => {
+                                variables.insert(args[1], args[0]);
+                            }
+                            71 if args.len() == 3 && args[1] == 33 => {
+                                bindings.insert(args[2], args[0]);
+                            }
+                            71 if args.len() == 3 && args[1] == 6 => {
+                                strides.insert(args[0], args[2]);
+                            }
+                            224 => barriers += 1,
+                            _ => {}
+                        }
+                        at += count;
+                    }
+                    for binding in [0, 1] {
+                        let variable = bindings[&binding];
+                        let structure = pointers[&variables[&variable]];
+                        assert_eq!(types[&structure].0, 30);
+                        let array = types[&structure].1[0];
+                        assert!(matches!(types[&array].0, 28 | 29));
+                        assert_eq!(strides[&array], 8);
+                        let vector = types[&array].1[0];
+                        assert_eq!(types[&vector].0, 23);
+                        assert_eq!(types[&vector].1[1], 4);
+                        let element = types[&vector].1[0];
+                        assert_eq!(types[&element].0, 22);
+                        assert_eq!(types[&element].1[0], 16);
+                    }
+                    assert!(
+                        barriers >= 3,
+                        "first-load, stage handoff and epilogue fences: {name}"
+                    );
+                }
+            }
+        }
+        #[test]
+        fn vector_staging_covers_tails_once_and_pingpong_preserves_every_k16() {
+            // Indices, not floating arithmetic: validate full live vectors,
+            // masked storage and stage generations independently of device math.
+            for count in [32usize, 35, 65] {
+                for rows in [32usize, 33, 65] {
+                    for columns in [16usize, 64, 80, 640, 2560] {
+                        for token_base in (0..count).step_by(32) {
+                            for row_base in (0..rows).step_by(64) {
+                                let mut a = vec![None; 1024];
+                                let mut b = vec![None; 2048];
+                                let fill =
+                                    |k: usize,
+                                     buffer: usize,
+                                     a: &mut [Option<usize>],
+                                     b: &mut [Option<usize>]| {
+                                        let mut writes_a = vec![0u8; 512];
+                                        let mut writes_b = vec![0u8; 1024];
+                                        for lane in 0..64 {
+                                            for job in (lane..256).step_by(64) {
+                                                let t = token_base + job / 8;
+                                                let col = k + job % 8 * 8;
+                                                for half in 0..2 {
+                                                    let i = job * 2 + half;
+                                                    writes_a[i] += 1;
+                                                    a[buffer * 512 + i] =
+                                                        if t < count && col < columns {
+                                                            assert!(col + 7 < columns);
+                                                            Some((t * columns + col) / 4 + half)
+                                                        } else {
+                                                            None
+                                                        };
+                                                }
+                                            }
+                                            for job in (lane..512).step_by(64) {
+                                                let row = row_base + job / 8;
+                                                let col = k + job % 8 * 8;
+                                                for half in 0..2 {
+                                                    let i = job * 2 + half;
+                                                    writes_b[i] += 1;
+                                                    b[buffer * 1024 + i] =
+                                                        if row < rows && col < columns {
+                                                            assert!(col + 7 < columns);
+                                                            Some((row * columns + col) / 4 + half)
+                                                        } else {
+                                                            None
+                                                        };
+                                                }
+                                            }
+                                        }
+                                        assert!(
+                                            writes_a.into_iter().chain(writes_b).all(|v| v == 1)
+                                        );
+                                    };
+                                fill(0, 0, &mut a, &mut b);
+                                let mut order = Vec::new();
+                                let mut current = 0;
+                                for k in (0..columns).step_by(64) {
+                                    let next = 1 - current;
+                                    if k + 64 < columns {
+                                        fill(k + 64, next, &mut a, &mut b);
+                                    }
+                                    for inner in (0..64).step_by(16).filter(|i| k + i < columns) {
+                                        order.push(k + inner);
+                                        for sg in 0..4 {
+                                            for tr in 0..16 {
+                                                for col in 0..16 {
+                                                    let t = token_base + (sg / 2) * 16 + tr;
+                                                    let expected = if t < count {
+                                                        Some((t * columns + k + inner + col) / 4)
+                                                    } else {
+                                                        None
+                                                    };
+                                                    let i = current * 512
+                                                        + ((sg / 2) * 16 + tr) * 16
+                                                        + (inner + col) / 4;
+                                                    assert_eq!(a[i], expected);
+                                                }
+                                            }
+                                            for row in 0..32 {
+                                                for col in 0..16 {
+                                                    let r = row_base + (sg % 2) * 32 + row;
+                                                    let expected = if r < rows {
+                                                        Some((r * columns + k + inner + col) / 4)
+                                                    } else {
+                                                        None
+                                                    };
+                                                    let i = current * 1024
+                                                        + ((sg % 2) * 32 + row) * 16
+                                                        + (inner + col) / 4;
+                                                    assert_eq!(b[i], expected);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Every reader is now complete before old stage reuse.
+                                    current = next;
+                                }
+                                assert_eq!(order, (0..columns).step_by(16).collect::<Vec<_>>());
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 #[allow(clippy::too_many_arguments)]
@@ -983,6 +1317,9 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let AutoRepresentation::SpirV(kernel) = compiled else {
                     return Err("matrix compiler representation".into());
                 };
+                if name.contains("macro") && kernel.shared_size != 32768 {
+                    return Err("macro matrix original32KiB shared envelope".into());
+                }
                 let canonical =
                     wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)?;
                 let canonical = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&canonical)?
