@@ -13,9 +13,13 @@ and physical recovery. It adds original timeline submission batching7e28bc5a,
 which shows no material additional profile gain. Clean matched4245 prefixes
 34.505/34.532s versus installed43.205s (**20.1% shorter**). Original b45446bc
 staged thinking/tools/API/privacy/Ollama recovery passes; exact694e90d9 API
-acceptance is running. A further coherent shared-memory/vector-load/double-stage
-macro candidate is under implementation. No installation, API change or Vashti
-consumer work yet.
+acceptance now passes too. Further coherent shared-memory macro6dfaf5ef /
+SHAa50e28b3 passes all14+39 GPU cases and complete public profile/recovery;
+warm4245 profile25.392s (**41.6% shorter** than installed43.4647s profiled).
+Register-prefetch/short-prefix combined076d0ec3/SHA6d3ab0b1 passes numerical GPU
+gates but rejects the first short whole-model prefix. Recovery passes; exact
+fixed-public backend error diagnosis is running. This candidate is NOT accepted
+for installation. No installation, API change or Vashti consumer work yet.
 See [current receipts and remaining gates](kuno-prefill-strata-gap-investigation.md#protected-gpu-continuation-2026-10-19-local-time).
 
 **Prior CPU preparation checkpoint (superseded by GPU continuation above).**

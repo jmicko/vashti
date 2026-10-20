@@ -15,8 +15,10 @@ is43.205s; API/tool/privacy/recovery acceptance is recorded in
 The new coupled candidate below is NOT installed. The user subsequently authorized
 protected GPU validation at home; actual matrix, router, dequant and complete
 public-request checks now pass. The clean matched4245-token time is34.532s,
-20.1% shorter than installed43.205s. Final API acceptance and a further coupled
-shared-memory matrix candidate are in progress. No API or Vashti consumer change.
+20.1% shorter than installed43.205s. Its exact staged API acceptance now passes.
+A further coupled shared-memory matrix candidate passes and reaches25.392s
+profiled; a register-prefetch/short-prefix extension is under diagnosis. No API
+or Vashti consumer change.
 
 ## Protected GPU continuation (2026-10-19 local time)
 
@@ -95,9 +97,11 @@ graceful unload, subsequent ordinary Ollama and actual physical recovery.
 Toolbox4207/4293-token prefixes38.807/40.827s (previous46.991/49.630s);
 warm35-token code4.141s,362 outputs/10.719s. Receipt:
 `native-prefill-coupled-stage-check-20261019/receipt.json`.
-Final694e90d9 isolated staged API acceptance is running; do not replace its exact
-artifact gate with this earlier worker receipt. No installation or new live
-Vashti/browser/image acceptance is claimed.
+Final694e90d9 isolated staged API acceptance also passes all these gates and real
+physical recovery, with its exact SHA28004b38. Toolbox prefixes39.001/41.020s;
+warm35-token code4.190s,362 outputs/10.751s. Receipt:
+`native-prefill-batched-stage-check-20261019/receipt.json`. No installation or new
+live Vashti/browser/image acceptance is claimed.
 
 Further candidate under implementation keeps the32x64/four-accumulator macro
 but couples K64 shared operand staging, vector loads and two-stage preparation.
@@ -108,6 +112,50 @@ remain required. Do not claim asynchronous copy from source ordering alone.
 `df904195` adds only a compiled-public64-dispatch/one-fence DQ diagnostic to
 separate repeated-fence cost from bounded completed batched work. Favorable
 same-weight cache reuse is explicitly not a whole-prompt estimate.
+
+### Shared-memory matrix continuation
+
+Integrated source6dfaf5ef (original isolatedab475149), frozen artifact
+`strata-prefill-shared-macro-20261019`, SHA256
+`a50e28b3d09a50349265f6a263105cd39563dd99f5af1737401f9be8ea1d63c0`, passes
+all14 matrix +39 router/dequant actual GPU cases and complete physical recovery.
+Receipt: `prefill-shared-macro-operators-numeric-20261019/receipt.json`.
+All402 ordinary /64 matrix offline configurations validate on the frozen binary.
+The complete same public profile passes all requests, original answer, actual
+request erasure and close, then restores memory/admission/services/fault counts.
+Repeated4245-token profile **25.3916s**, versus35.0018s before shared staging and
+installed43.4647s: **41.6% shorter than installed profiled baseline**. Experts
+16.3217s (was21.4536), attention7.0605s (was10.1416). Load105.515s.
+Receipt: `prefill-shared-macro-profile-20261019/receipt.json`. Clean matched/API
+acceptance is still required before installing this exact artifact.
+
+`faf5c6f6` (isolateda9dc9a96) completes register-first next-stage prefetch, keeping
+source6dfaf5ef as a distinct coherent baseline. It loads fixed unrolled A/B local
+vectors before the current ordered MMA group and publishes the next shared stage
+after the group, before the original uniform barrier. Actual compiled macro
+modules scalarize the local arrays;32KiB shared allocation remains. This does
+not prove driver register pressure/spills or an asynchronous speedup.
+
+`076d0ec3` (isolated695a34fb) adds an existing-authority MAX3 known-prefix
+stepping stone for<=64 fresh rows, with actual fenced R, exact next input teacher
+tokens, checked target/draft cursors and wiping RAM. See
+[upstream selection and complete short-path limits](kuno-strata-short-prompt-path.md).
+It does not claim full upstream MAX8/no-head/device-carry parity. This matters
+because upstream's historical~0.7s short prompts normally use verification
+windows, not the same per-expert FP16 prefill used in our earlier comparison.
+
+Combined076d0ec3 frozen artifact `strata-prefill-pipelined-short-20261019`, SHA256
+`6d3ab0b1921b193d9066e6de5f7b5dcf34a5d2aabeb117f4d977609fed0927f1`, passes
+all14+39 GPU numerical cases, complete owner/erasure and physical recovery, and
+all402/64 offline shaders. Whole-model profile REJECTS at the first
+`short_prompt_chunk`, before any reply; static error `resident graph device
+operation`, worker1. Actual recovery passes; this is NOT acceptance for ordinary
+inference or installation. Receipt:
+`prefill-pipelined-short-profile-20261019/receipt.json`.
+The original helper omitted the compiled-public `public_device_error` line from
+its failure filter. A second protected same-binary diagnostic run includes that
+fixed-public-only detail, without changing production guards. No exact cause
+or accepted speed is claimed for this combined candidate yet.
 
 ## Comparison evidence
 
