@@ -55,7 +55,12 @@ fn native_class(name: &str) -> usize {
         "StrataPromptExpertF16Swiglu" => 3,
         "OrderedCopy" => 4,
         "OrderedFill" => 5,
-        _ if name.contains("::expert::Expert") || name.contains("::expert_macro::ExpertMacro") => 1,
+        _ if name.contains("::expert::Expert")
+            || name.contains("::expert_macro::ExpertMacro")
+            || name.contains("::expert_narrow::ExpertNarrow") =>
+        {
+            1
+        }
         _ => 6,
     }
 }
@@ -98,6 +103,10 @@ mod native_sample_tests {
             ("kuno_native_text::strata_matrix::native::expert::Expert", 1),
             (
                 "kuno_native_text::strata_matrix::native::expert_macro::ExpertMacro",
+                1,
+            ),
+            (
+                "kuno_native_text::strata_matrix::native::expert_narrow::ExpertNarrow",
                 1,
             ),
             ("StrataPromptExpertGather", 2),
@@ -245,7 +254,11 @@ pub(crate) fn expert_member_geometry(map: &[u32], groups: usize) {
         };
         group_counts[bin] += 1;
         member_counts[bin] += u64::from(members);
-        let tile = if members < 32 { 8 } else { 32 };
+        let tile = match members {
+            0..=8 => 8,
+            9..=31 => 16,
+            _ => 32,
+        };
         padded_members += u64::from(members.div_ceil(tile) * tile);
     }
     for (i, (group_name, member_name)) in names.into_iter().enumerate() {
