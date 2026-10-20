@@ -22,7 +22,48 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 20:49UTC): complete command re-encoding candidate.**
+**Authoritative active handoff (2026-10-20 21:34UTC): coupled completed-pool reuse.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`; preserve canonical Vashti notes. Installed worker
+3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 remain unchanged.
+Goal active/unmet; matched Strata repeat5.3515s still leads.
+
+Exact-count cdbb041b and capacity2137a0f1 each pass original numerical,
+compiler/producer/ownership, both full public profiles and physical recovery,
+but FAIL actual reuse exercise (ZERO idle candidates/re-encodes). Their timings
+are fallback diagnostics, not accepted optimization evidence. Preserve failed
+exercise receipts. Do not infer that queue capacity alone was the cause.
+
+Complete source865a9c16 retains every prior component and connects completed
+pool retirement at ORIGINAL idle eviction/I/O cleanup to later adoption. At
+most one typed content-free reset pool inventory survives: device/Graph/family,
+MAIN/COPY/SHARED pools, timelines/monotonic epochs and command handles only.
+Original plans/signatures/source/resources/private owners are still destroyed
+before original erasure. Original real flight/access/handoff joins authorize
+retirement; all fresh plan/source/descriptor/owner/barrier checks still apply.
+Small unkeyed/unprofiled MAIN captures can also consume that original capacity
+and keep unused handles for later retirement. Actual old+new allocations remain
+inside the original64MiB metadata cap. No GPU/device reset/reboot.
+
+All136 selected CPU controls pass on final source. Frozen release build
+`strata-parity-idle-pools-coupled-20261020`, workerSHA361978398e3c798a6c59eb09dc091719d0d6862787b5ea72a5ab95175c9c3a28,
+is built. Offline420/208,
+original171 GPU/full proof chain, BOTH public profile modes and actual pool
+retirement/adoption must pass before clean selection. Public counters explicitly
+separate per-expert intervals from process-total retirements/adoptions between
+intervals. Fallback-only success cannot validate this new path. No current
+GPU execution, clean/terminal/staged/sustained/install acceptance claimed yet.
+Artifacts/helpers under `/media/jmicko/faststore/kuno-development`; exact contract:
+[completed resource retirement](kuno-native-compute-intervals.md#coupled-completed-resource-retirement-and-adoption).
+
+Last independent21:33:09UTC: Intel50,688,000B, NVIDIA compute0, all driver faults0,
+Kuno/Ollama/Vashti200, admission inactive/unpaused/recoveryfalse/waiting0.
+Bounded owned sudo refresh PID220143/parent sharedshell3556 ends22:38:06UTC.
+Never kill the shared shell. No API/KNT2/KNR2/config/model identity/frontend/
+release change. Backend-only internals require no Vashti consumer change.
+
+**Previous handoff (2026-10-20 20:49UTC): complete command re-encoding candidate.**
 
 Use ONLY`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; preserve canonical Vashti notes. Installed worker

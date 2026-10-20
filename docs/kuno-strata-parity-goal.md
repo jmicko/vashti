@@ -9,6 +9,21 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
+## Active coupled resource reuse checkpoint (2026-10-20 21:34UTC)
+
+Final source865a9c16 passes136 selected actual CPU controls. Release freeze and
+exact-source offline/GPU proof follow. Earlier exact-count/capacity versions
+passed numerical/recovery controls but NEVER reused a recording; failed exercise
+receipts are retained. No speed gain or installation is claimed for those paths.
+The complete coupled candidate retains at most one reset, content-free original
+pool/command/timeline inventory through original retirement; no private plan or
+resource owner survives original cleanup/erasure. Small MAIN captures share that
+capacity as well. All original source/numerical/hazard/capacity/epoch checks and
+all prior coupled optimization components remain. Details and active job state:
+[coordination handoff](kuno-vashti-coordination.md),
+[exact resource contract](kuno-native-compute-intervals.md#coupled-completed-resource-retirement-and-adoption).
+Installed3fffc266 and gateway36626d30 remain unchanged; Strata parity is UNMET.
+
 ## Latest complete candidate checkpoint (2026-10-20 20:31UTC)
 
 Installed native32 remains unchanged. The complete source03815d0b / SHA f0c926f2
