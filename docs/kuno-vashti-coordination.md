@@ -7,10 +7,15 @@ with the unchanged oracle and all three complete public profile requests,
 real request erasure, close, physical recovery and zero driver-fault changes.
 Matched warm profiled4245-token prefix43.4647 ->34.9928s (19.5% shorter).
 This remains well behind upstream Strata's reported4K result; it is not a clean
-HTTP or new local Strata comparison.39 added actual router/dequant operator cases
-are built at9a18f1f5 / SHA493bf946 but GPU acceptance is pending. Staged
-thinking/tool/API checks and a coherent native submission-batching candidate
-are in progress. No installation, API change or Vashti consumer work yet.
+HTTP or new local Strata comparison. Final694e90d9 / SHA28004b38 passes all14
+matrix +39 actual router/dequant GPU cases, unchanged oracles, real erasure/close
+and physical recovery. It adds original timeline submission batching7e28bc5a,
+which shows no material additional profile gain. Clean matched4245 prefixes
+34.505/34.532s versus installed43.205s (**20.1% shorter**). Original b45446bc
+staged thinking/tools/API/privacy/Ollama recovery passes; exact694e90d9 API
+acceptance is running. A further coherent shared-memory/vector-load/double-stage
+macro candidate is under implementation. No installation, API change or Vashti
+consumer work yet.
 See [current receipts and remaining gates](kuno-prefill-strata-gap-investigation.md#protected-gpu-continuation-2026-10-19-local-time).
 
 **Prior CPU preparation checkpoint (superseded by GPU continuation above).**

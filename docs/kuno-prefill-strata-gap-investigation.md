@@ -13,9 +13,10 @@ image-enabled gateway36626d30 / SHAd3ed07f4. Its matched4,245-token warm prompt
 is43.205s; API/tool/privacy/recovery acceptance is recorded in
 [kuno-prompt-processing-profile.md](kuno-prompt-processing-profile.md).
 The new coupled candidate below is NOT installed. The user subsequently authorized
-protected GPU validation at home; actual matrix and complete public-request checks
-now pass, with preliminary profiled timings below. API acceptance and further
-queue-submission work are in progress. No API or Vashti consumer change.
+protected GPU validation at home; actual matrix, router, dequant and complete
+public-request checks now pass. The clean matched4245-token time is34.532s,
+20.1% shorter than installed43.205s. Final API acceptance and a further coupled
+shared-memory matrix candidate are in progress. No API or Vashti consumer change.
 
 ## Protected GPU continuation (2026-10-19 local time)
 
@@ -58,9 +59,55 @@ Production WGSL, matrix and quantization math are unchanged from5fbc3ca5.
 Audited probe artifact `strata-prefill-coupled-operators-audited-20261019`, source
 9a18f1f5, SHA256
 `493bf946a58fdae4c4b382102dfe116c9a313f2b485e3ad73df1c10694e148f3`.
-Build passes; actual39-case GPU acceptance remains pending at this checkpoint.
-The frozen original candidate's isolated staged thinking/tool/API test is running.
-No installation or new live Vashti/browser/image acceptance is claimed.
+The initial probe run passes fourteen matrices and six valid router sizes, then
+fails BEFORE GPU fault injection: `Upload::floats` rejects the intended NaN.
+`694e90d9` repairs only that compiled-public fixture using the existing owned raw
+word upload. No production finite check is removed. Historical failed receipt:
+`prefill-coupled-operators-numeric-20261019`; recovery passes.
+
+`7e28bc5a` adds bounded per-physical-queue submission batching while preserving
+every actual timeline edge, command, queue authority and final joined fence;
+27 focused original-source CPU tests pass. See
+[exact queue contract and limits](kuno-prefill-transfer-runtime-review.md).
+Frozen7e28bc5a / SHAfff19863 complete public profile passes, repeated4245-token
+35.0018s, experts21.4536s: no material change from34.9928s/21.4586s. This bounds
+the benefit of this particular host-call reduction; it does not isolate GPU math
+from every remaining recording/planning cost.
+
+Frozen source694e90d9 / worker SHA256
+`28004b38bb9e836fa17e85926dcacd60785a5b929828ca6617106fe7056edc82`, artifact
+`strata-prefill-batched-submit-checked-20261019`, now passes ALL **14 matrix +
+9 router +30 dequant GPU cases**, original references/tolerances, exact dequant
+FP16 bits, real full-owner/tail audits and close. Physical recovery and zero
+driver-fault deltas pass. Receipt:
+`prefill-batched-submit-operators-numeric-20261019/receipt.json`.
+
+Same694e90d9 artifact clean public check passes all45/4245/4245-token requests,
+correct replies and actual request erasure/close. Warm4245 prefixes34.5050 and
+34.5316s, versus installed matched43.2055s: **20.1% shorter** on the repeat.
+Cold load104.265s; loading is not improved. Recovery passes. Receipt:
+`prefill-batched-submit-clean-20261019/receipt.json`.
+
+Original coupled5fbc3ca5/b45446bc isolated private staged API passes preload,
+ten-tool streamed weather call, role=tool result, two identical35-token code
+requests, same-worker reuse, write_bytes0, denied unprivileged inspection,
+graceful unload, subsequent ordinary Ollama and actual physical recovery.
+Toolbox4207/4293-token prefixes38.807/40.827s (previous46.991/49.630s);
+warm35-token code4.141s,362 outputs/10.719s. Receipt:
+`native-prefill-coupled-stage-check-20261019/receipt.json`.
+Final694e90d9 isolated staged API acceptance is running; do not replace its exact
+artifact gate with this earlier worker receipt. No installation or new live
+Vashti/browser/image acceptance is claimed.
+
+Further candidate under implementation keeps the32x64/four-accumulator macro
+but couples K64 shared operand staging, vector loads and two-stage preparation.
+It replaces the old tail operand arrays:24KiB operands +8KiB F32 output =32KiB
+per workgroup, within the existing native minimum32912-byte device limit.
+Original orderedK16 accumulation, rounded input bits and fault/output owners
+remain required. Do not claim asynchronous copy from source ordering alone.
+`df904195` adds only a compiled-public64-dispatch/one-fence DQ diagnostic to
+separate repeated-fence cost from bounded completed batched work. Favorable
+same-weight cache reuse is explicitly not a whole-prompt estimate.
 
 ## Comparison evidence
 
