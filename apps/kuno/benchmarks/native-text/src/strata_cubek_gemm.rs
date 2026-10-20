@@ -286,6 +286,26 @@ fn tensor(handle: Handle, shape: [usize; 2], strides: [usize; 2]) -> TensorBindi
     }
 }
 
+fn finite_grid(elements: usize, limits: (u32, u32, u32)) -> Result<CubeCount> {
+    if elements == 0 || limits.0 == 0 || limits.1 == 0 || limits.2 == 0 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let blocks = elements.div_ceil(128);
+    let y = blocks.div_ceil(limits.0 as usize);
+    if y > limits.1 as usize {
+        return Err(Error::LimitExceeded("CubeK finite grid"));
+    }
+    let x = blocks.div_ceil(y);
+    let covered = x
+        .checked_mul(y)
+        .and_then(|n| n.checked_mul(128))
+        .ok_or(Error::ArithmeticOverflow)?;
+    if covered > u32::MAX as usize {
+        return Err(Error::LimitExceeded("CubeK finite index"));
+    }
+    Ok(CubeCount::Static(x as u32, y as u32, 1))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_dense(
     client: &ComputeClient<WgpuRuntime>,
@@ -302,8 +322,8 @@ pub(super) fn try_dense(
         return Ok(false);
     }
     let hw = &client.properties().hardware;
-    if hw.max_units_per_cube < 64
-        || hw.max_cube_dim.0 < 16
+    if hw.max_units_per_cube < 128
+        || hw.max_cube_dim.0 < 128
         || hw.max_cube_dim.1 < 4
         || hw.max_cube_dim.2 < 1
         || hw.max_shared_memory_size < SHARED_CAP
@@ -381,6 +401,10 @@ fn launch<F: Float>(
         .checked_mul(out_stride)
         .and_then(|n| n.checked_add(rows))
         .ok_or(Error::ArithmeticOverflow)?;
+    let guard_grid = finite_grid(
+        count.checked_mul(rows).ok_or(Error::ArithmeticOverflow)?,
+        client.properties().hardware.max_cube_count,
+    )?;
     let lhs_handle = checked_view(input, 0, lhs_elements, 2)?;
     let rhs_handle = checked_view(weight, weight_first, rhs_elements, 2)?;
     let out_handle = checked_view(output.clone(), out_first, out_elements, 4)?;
@@ -500,7 +524,7 @@ fn launch<F: Float>(
         );
         finite_output::launch_unchecked::<WgpuRuntime>(
             client,
-            CubeCount::Static((count * rows).div_ceil(128) as u32, 1, 1),
+            guard_grid,
             CubeDim::new_1d(128),
             ArrayArg::from_raw_parts(output.clone(), output.size_in_used() as usize / 4),
             ArrayArg::from_raw_parts(fault, 1),
@@ -763,6 +787,36 @@ mod tests {
             (new(4).offset_start(8), 0, 1, 2),
         ] {
             assert!(checked_view(handle, first, elements, bytes).is_err());
+        }
+    }
+    #[test]
+    fn actual_guard_grid_spreads_large_outputs_without_exceeding_real_limits_or_index_width() {
+        for elements in [1, 128, 129, 4096 * 2560, 4096 * 10240, 4096 * 16384] {
+            let CubeCount::Static(x, y, z) = finite_grid(elements, (65535, 65535, 65535)).unwrap()
+            else {
+                panic!("static")
+            };
+            assert!(x > 0 && x <= 65535 && y > 0 && y <= 65535 && z == 1);
+            let span = x as usize * y as usize * 128;
+            assert!(
+                span >= elements && span < elements + 128 * y as usize && span <= u32::MAX as usize
+            );
+            // ABSOLUTE_POS has contiguous128-wide workgroup intervals;
+            // (groupY*groupsX+groupX)*128+lane is bijective over this span.
+            for (gy, gx) in [(0, 0), (y - 1, x - 1)] {
+                let first = (gy as usize * x as usize + gx as usize) * 128;
+                assert!(first + 127 < span);
+            }
+        }
+        for (n, limits) in [
+            (0, (65535, 65535, 65535)),
+            (129, (1, 1, 1)),
+            (1, (0, 1, 1)),
+            (1, (1, 0, 1)),
+            (1, (1, 1, 0)),
+            (u32::MAX as usize, (65535, 65535, 65535)),
+        ] {
+            assert!(finite_grid(n, limits).is_err());
         }
     }
     #[test]

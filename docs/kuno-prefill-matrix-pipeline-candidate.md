@@ -347,15 +347,21 @@ leases, native admission, IEEE FP16 preservation, request erasure and close/
 recovery mechanisms remain. No new temporary output or arbitrary expert-DOWN
 scratch offset is introduced. Expert scatter/status processing is unchanged;
 a future library expert path needs a genuine routing output implementation.
+The finite epilogue uses a balanced true2D grid bounded by actual device group
+counts, including large4096x10240 projection results. CubeCL's actual
+`ABSOLUTE_POS` flattens these dimensions; excess invocations remain masked.
+Grid padding must fit the real U32 index width. Its128-invocation block is
+checked separately from the library's64-invocation block before either launch.
 
 CPU preparation was isolated under
 `/media/jmicko/faststore/kuno-development/prefill-cubek-cpu-20261020/target`,
 with two build jobs and no device/service/sudo operations:
 
 * Exact production adapter typecheck and strict production Clippy pass.
-* Four focused controls cover actual compilation, unchanged fallback admission,
+* Five focused controls cover actual compilation, unchanged fallback admission,
   genuine owner views/overflow/alignment, nested IR normalization, rejection of
-  unsupported IDs, shader printing and relaxed math.
+  unsupported IDs, shader printing and relaxed math, and the actual guard-grid
+  planner's large-output coverage, hardware/count/index bounds.
 *32 actual library SPIR-V modules (FP16/BF16, complete/tail counts32/33, all
   eight physical layout combinations) pass the pinned validator for Vulkan1.3.
   They retain true16x4x1 geometry and SIMD16 selection, real shared allocation
