@@ -96,6 +96,62 @@ fn matrix_scheme(plan: MatrixPlan) -> Result<TilingScheme> {
         .map_err(|_| Error::InvalidFormat("CubeK fixed matrix tiling"))
 }
 
+const WIDE_SHARED_CAP: usize = 36864;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DensePlan {
+    Original(MatrixPlan),
+    Wide,
+}
+impl DensePlan {
+    fn required_shared(self) -> usize {
+        match self {
+            Self::Original(plan) => plan.required_shared,
+            Self::Wide => WIDE_SHARED_CAP,
+        }
+    }
+    fn cube_dim(self) -> CubeDim {
+        CubeDim::new_2d(16, if self == Self::Wide { 8 } else { 4 })
+    }
+    fn scheme(self) -> Result<TilingScheme> {
+        match self {
+            Self::Original(plan) => matrix_scheme(plan),
+            Self::Wide => TilingScheme::builder()
+                .with_tile_size(TileSize::new(8, 16, 16))
+                .with_partition_size(PartitionSize::new(4, 4, 2))
+                .with_stage_size(StageSize::new(4, 2, 1))
+                .build()
+                .map_err(|_| Error::InvalidFormat("CubeK fixed wide dense tiling")),
+        }
+    }
+    fn buffering(self) -> PartitionBuffering {
+        match self {
+            Self::Original(_) => matrix_partition_buffering(),
+            Self::Wide => PartitionBuffering::Double,
+        }
+    }
+}
+fn dense_plan(
+    count: usize,
+    available_shared: usize,
+    max_units: u32,
+    max_dim: (u32, u32, u32),
+) -> DensePlan {
+    if cfg!(all(
+        feature = "strata-cubek-wide",
+        feature = "strata-cubek-tilewise"
+    )) && count >= 512
+        && available_shared >= WIDE_SHARED_CAP
+        && max_units >= 128
+        && max_dim.0 >= 16
+        && max_dim.1 >= 8
+        && max_dim.2 >= 1
+    {
+        DensePlan::Wide
+    } else {
+        DensePlan::Original(matrix_plan(count, available_shared))
+    }
+}
+
 #[path = "strata_cubek_expert.rs"]
 mod routed_expert;
 #[allow(unused_imports)]
@@ -520,18 +576,24 @@ fn launch<F: Float>(
         vector_sizes,
         max_cube_count: client.properties().hardware.max_cube_count,
     };
-    // Both complete blueprints keep true SIMD16, K64 paired stages and
-    // ordered K16 products. The opt-in high-count M64 choice requires its
-    // actual compiled per-workgroup shared footprint, never a residency guess.
-    let plan = matrix_plan(count, client.properties().hardware.max_shared_memory_size);
-    if client.properties().hardware.max_shared_memory_size < plan.required_shared {
+    // Every complete blueprint keeps true SIMD16 and ordered K16 products.
+    // Wide dense uses K32 paired stages and eight real subgroups; original
+    // M32/M64 use K64 and four. Every choice checks actual device resources.
+    let hw = &client.properties().hardware;
+    let plan = dense_plan(
+        count,
+        hw.max_shared_memory_size,
+        hw.max_units_per_cube,
+        hw.max_cube_dim,
+    );
+    if hw.max_shared_memory_size < plan.required_shared() {
         return Err(Error::InvalidFormat(
             "CubeK actual matrix shared capability",
         ));
     }
-    let scheme = matrix_scheme(plan)?;
+    let scheme = plan.scheme()?;
     let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
-        .partition_buffering(matrix_partition_buffering())
+        .partition_buffering(plan.buffering())
         .build();
     let expanded = <Algorithm as Routine<()>>::expand_blueprint(
         &problem,
@@ -541,7 +603,7 @@ fn launch<F: Float>(
     .map_err(|_| Error::InvalidFormat("CubeK fixed matrix blueprint"))?;
     let info = <Algorithm as Routine<()>>::prepare(&problem, &settings, expanded)
         .map_err(|_| Error::InvalidFormat("CubeK fixed matrix resources"))?;
-    if info.cube_dim != CubeDim::new_2d(16, 4) || info.dtypes != dtypes {
+    if info.cube_dim != plan.cube_dim() || info.dtypes != dtypes {
         return Err(Error::InvalidFormat(
             "CubeK fixed precision or geometry changed",
         ));
@@ -657,6 +719,16 @@ mod tests {
         definition_partition::<F>(count, 4)
     }
     pub(super) fn definition_partition<F: Float>(count: usize, m_tiles: u32) -> KernelDefinition {
+        definition_plan::<F>(
+            count,
+            1280,
+            DensePlan::Original(MatrixPlan {
+                m_tiles,
+                required_shared: if m_tiles == 8 { 34816 } else { SHARED_CAP },
+            }),
+        )
+    }
+    fn definition_plan<F: Float>(count: usize, rows: usize, plan: DensePlan) -> KernelDefinition {
         let props = properties();
         let elem = F::as_type_native_unchecked().storage_type();
         let f32_ty = ElemType::Float(FloatKind::F32).into();
@@ -671,10 +743,10 @@ mod tests {
             elem,
         );
         let rhs = InputBinding::new(
-            tensor(shape(1280 * 2560 * 2), [2560, 1280], [1, 2560]),
+            tensor(shape((rows * 2560 * 2) as u64), [2560, rows], [1, 2560]),
             elem,
         );
-        let out = tensor(shape((count * 1280 * 4) as u64), [count, 1280], [1280, 1]);
+        let out = tensor(shape((count * rows * 4) as u64), [count, rows], [rows, 1]);
         let problem = MatmulProblem::from_shapes_and_strides(
             lhs.data().shape.clone(),
             rhs.data().shape.clone(),
@@ -688,13 +760,11 @@ mod tests {
             None,
         )
         .unwrap();
-        let scheme = matrix_scheme(MatrixPlan {
-            m_tiles,
-            required_shared: if m_tiles == 8 { 34816 } else { SHARED_CAP },
-        })
-        .unwrap();
+        let scheme = plan.scheme().unwrap();
+        let block_m = scheme.elements_per_stage_along_m() as usize;
+        let block_n = scheme.elements_per_stage_along_n() as usize;
         let blueprint = TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, 16, &problem)
-            .partition_buffering(matrix_partition_buffering())
+            .partition_buffering(plan.buffering())
             .build();
         let vectors = MatmulVectorSizes {
             lhs: 4,
@@ -709,7 +779,7 @@ mod tests {
                 .unwrap()
                 .num_planes(16)
                 .unwrap_or_else(|e| panic!("{e}")),
-            4
+            plan.cube_dim().y
         );
         let input = <Inputs<F> as ConcreteInputsFactory<Algorithm>>::create(
             lhs, rhs, &blueprint, &problem, &vectors, &dtypes,
@@ -717,15 +787,15 @@ mod tests {
         let output = <Output as ConcreteOutputFactory<Algorithm>>::create(
             out, &blueprint, &problem, &vectors, &dtypes,
         );
-        let settings = KernelSettings::default().cube_dim(CubeDim::new_2d(16, 4));
+        let settings = KernelSettings::default().cube_dim(plan.cube_dim());
         let mut launcher = KernelLauncher::<WgpuRuntime>::new(settings.clone());
         launcher.with_scope(|scope| scope.device_properties(&props));
         let input = <Inputs<F> as LaunchArg>::register(input, &mut launcher);
         let output = <Output as LaunchArg>::register(output, &mut launcher);
         let plan = cubek_std::cube_count::CubeCountPlan::new_from_problem(
             cubek_std::cube_count::Count3d {
-                x: count.div_ceil(m_tiles as usize * 8) as u32,
-                y: 20,
+                x: count.div_ceil(block_m) as u32,
+                y: rows.div_ceil(block_n) as u32,
                 z: 1,
             },
         );
@@ -786,6 +856,156 @@ mod tests {
                 assert_eq!(scheme.elements_per_stage_along_k(), 64);
             }
         }
+    }
+    #[test]
+    fn candidate_wide_requires_explicit_feature_count_and_true_eight_plane_limits() {
+        for count in [32, 255, 256, 511, 512, 513, 4096] {
+            for shared in [32768, 34816, 36863, 36864, 49152] {
+                for (units, dims) in [
+                    (127, (16, 8, 1)),
+                    (128, (15, 8, 1)),
+                    (128, (16, 7, 1)),
+                    (128, (16, 8, 0)),
+                    (128, (16, 8, 1)),
+                    (1024, (1024, 1024, 64)),
+                ] {
+                    let plan = dense_plan(count, shared, units, dims);
+                    let selected = cfg!(all(
+                        feature = "strata-cubek-wide",
+                        feature = "strata-cubek-tilewise"
+                    )) && count >= 512
+                        && shared >= WIDE_SHARED_CAP
+                        && units >= 128
+                        && dims.0 >= 16
+                        && dims.1 >= 8
+                        && dims.2 >= 1;
+                    assert_eq!(plan == DensePlan::Wide, selected);
+                    if selected {
+                        let scheme = plan.scheme().unwrap();
+                        assert_eq!(scheme.elements_per_stage_along_m(), 128);
+                        assert_eq!(scheme.elements_per_stage_along_n(), 128);
+                        assert_eq!(scheme.elements_per_stage_along_k(), 32);
+                        assert_eq!(scheme.partitions_per_stage_along_m(), 4);
+                        assert_eq!(scheme.partitions_per_stage_along_n(), 2);
+                        assert_eq!(plan.cube_dim(), CubeDim::new_2d(16, 8));
+                        assert_eq!(plan.buffering(), PartitionBuffering::Double);
+                        assert_eq!(plan.required_shared(), WIDE_SHARED_CAP);
+                    } else {
+                        assert_eq!(plan, DensePlan::Original(matrix_plan(count, shared)));
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(feature = "strata-cubek-wide")]
+    fn check_wide_modules(masks: std::ops::Range<u32>) {
+        use cubecl::ir::{StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, WgpuCompilationOptions};
+        use std::io::Write;
+        for mask in masks {
+            for count in [512, 513] {
+                let plan = dense_plan(count, 49152, 1024, (1024, 1024, 64));
+                assert_eq!(plan, DensePlan::Wide);
+                for (name, definition) in [
+                    ("fp16", definition_plan::<f16>(count, 128, plan)),
+                    ("bf16", definition_plan::<bf16>(count, 128, plan)),
+                ] {
+                    let mut options = WgpuCompilationOptions {
+                        supports_vulkan: true,
+                        ..Default::default()
+                    };
+                    options.vulkan.max_spirv_version = (1, 6);
+                    options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+                    options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+                    options.vulkan.supports_explicit_smem = mask & 4 != 0;
+                    let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+                        &mut AutoCompiler::SpirV(Default::default()),
+                        definition,
+                        &options,
+                        ExecutionMode::Unchecked,
+                        StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                    )
+                    .unwrap() else {
+                        panic!("actual SPIR-V required")
+                    };
+                    assert_eq!(kernel.shared_size, WIDE_SHARED_CAP);
+                    let words =
+                        wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)
+                            .unwrap();
+                    let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)
+                        .unwrap()
+                        .unwrap_or(words);
+                    assert_eq!(
+                        wgpu::hal::vulkan::kuno_cooperative_subgroup(&words),
+                        Some(16)
+                    );
+                    let mut at = 5;
+                    let mut local = None;
+                    let mut builtin = Vec::new();
+                    let mut products = 0;
+                    while at < words.len() {
+                        let n = (words[at] >> 16) as usize;
+                        let op = words[at] & 65535;
+                        let args = &words[at + 1..at + n];
+                        if op == 16 && args.get(1) == Some(&17) {
+                            local = Some(args[2..5].to_vec());
+                        }
+                        if op == 71 && args.get(1) == Some(&11) {
+                            builtin.push(args[2]);
+                        }
+                        if op == 4459 {
+                            products += 1;
+                        }
+                        assert!(
+                            op != 71 || args.get(1) != Some(&40),
+                            "relaxed FPFastMathMode"
+                        );
+                        at += n;
+                    }
+                    assert_eq!(local, Some(vec![16, 8, 1]));
+                    assert!(builtin.contains(&40) && builtin.contains(&41));
+                    assert!(!builtin.iter().any(|b| matches!(b, 27 | 28 | 29)));
+                    assert_eq!(products, 128);
+                    let mut cmd = std::process::Command::new("spirv-val");
+                    cmd.args(["--target-env", "vulkan1.3"]);
+                    if mask & 1 != 0 {
+                        cmd.arg("--uniform-buffer-standard-layout");
+                    }
+                    let mut child = cmd
+                        .arg("-")
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap();
+                    child
+                        .stdin
+                        .take()
+                        .unwrap()
+                        .write_all(
+                            &words
+                                .iter()
+                                .flat_map(|v| v.to_le_bytes())
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap();
+                    assert!(child.wait().unwrap().success(), "{name}/{count}/{mask}");
+                    println!(
+                        "compiled_public_cubek_wide name={name} count={count} mask={mask} shared_bytes={} products={products}",
+                        kernel.shared_size
+                    );
+                }
+            }
+        }
+    }
+    #[cfg(feature = "strata-cubek-wide")]
+    #[test]
+    fn candidate_wide_actual_first_layouts() {
+        check_wide_modules(0..4);
+    }
+    #[cfg(feature = "strata-cubek-wide")]
+    #[test]
+    fn candidate_wide_actual_second_layouts() {
+        check_wide_modules(4..8);
     }
     #[test]
     fn admission_keeps_original_small_and_unaligned_fallbacks() {

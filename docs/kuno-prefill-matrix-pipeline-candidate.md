@@ -590,3 +590,58 @@ resource-planner planes. The preliminary balanced Single-buffer log was
 intentionally stopped when Double buffering was approved; it is incomplete
 and is not the acceptance artifact. No GPU numeric or speed result is claimed
 by the final CPU acceptance.
+
+### Separate complete wide dense Tilewise candidate
+
+`strata-cubek-wide` is an additional dense-only opt-in. With count>=512 and
+the actual client's shared limit>=36864B, at least128 workgroup invocations
+and dimension bounds covering16x8x1, it selects a complete M128xN128xK32
+Tilewise pipeline. Otherwise the existing M32/M64 dense plan remains. Routed
+GU/DOWN always retain their existing genuine four-plane plan. The original
+outer admission also retains its128-lane finite-guard requirements; the wide
+selection does not substitute smaller/fabricated device limits. Actual library
+prepare must return exactly16x8x1 and the original fixed dtypes before launch.
+
+The forced blueprint uses partition4x4x2, stage4x2x1, true SIMD16 and eight
+actual library compute planes, together with Double RHS partition buffering.
+It includes the library's complete paired global operand stages, tilewise
+loaders, stage matmul, original output and separate finite-output guard.
+No extra temporary output, quantization/layout conversion, split-K or reduction
+reordering is introduced. Two successive ordered K16 products per K32 stage
+retain the original FP16/BF16 to F32 arithmetic contract. Descriptor alignment,
+full owner bounds, stream identity and fault handling are unchanged.
+
+The input operand stages require32768B and genuine eight-plane publication
+requires4096B, for a compiled total36864B. Each subgroup owns16 accumulator
+tiles instead of M32's four, or128 F32 lane-equivalent values. This is a logical
+fragment count, not measured Intel native GRF allocation, occupancy or speed.
+The larger M/N tile reuses operands across more output products, while the
+K32 paired stages keep the actual per-workgroup shared footprint bounded.
+
+The existing native selector already admits original SPIR-V1.6 LocalSize
+16x8x1 with the known subgroup-scoped8x16x16 matrix types, actual subgroup
+lane/ID builtins, and required SIMD16. No selector override or physical feature
+is widened for this candidate. Root's separate physical query reports the B70
+maxComputeWorkgroupSubgroups=64, maxWorkgroupInvocations=1024 and per-workgroup
+shared limit49152B, with required SIMD16 compute support. These real properties
+do not imply a specific number of resident workgroups.
+
+The isolated CPU artifact is
+`prefill-cubek-cpu-20261020/wide-whole-controls.log`. Dedicated controls compile
+the actual selected full512/tail513 entries, both FP16/BF16 and all eight
+physical storage-layout modes (32 modules), checking actual eight-plane resource
+planning,16x8x1 entry geometry, genuine subgroup mapping, shared size, preserved
+native IEEE controls, absence of relaxed arithmetic and Vulkan1.3 validation.
+The pure selection control covers count/capability boundaries and verifies
+that unavailable wide geometry falls back to the original plan. GPU numeric
+acceptance must additionally preserve all prior controls and add the four
+actual512/513-by128-output cases, both original dtypes, before whole-workload
+performance is judged. No GPU result is claimed by this source candidate.
+
+All32 actual wide modules and the boundary/real-geometry selection control
+pass (three tests,32.62s CPU-only wall time). Every module reports exactly
+36864B shared and128 static cooperative product statements, with the original
+finite guard still a separate unchanged kernel. The actual8-plane resource
+planner and original16x8x1 entry/subgroup/IEEE/Vulkan checks pass in every full
+and tail layout. Existing M32/M64 compiler controls remain in place; protected
+GPU numerical/lifecycle and full-model timing gates are still required.
