@@ -121,7 +121,33 @@ three-queue wait ancestry/same-segment negatives, and invalid/bounded inventory.
 The first compile caught a duplicate existing test-module alias; that fixture
 integration is fixed. Final complete actual App compilation and86 CPU controls
 pass (all previous82 plus those four transfer controls), in
-`native-transfer-visibility-final-cpu-20261020.log`. GPU acceptance is pending. No new speed, terminal or install claim for this change.
+`native-transfer-visibility-final-cpu-20261020.log`.
+
+Frozen sourcec12a241874464d2dfaefed994934bcfb9b1acf90 / SHA256
+`71847abaf62ef0e5eaf5b5dddddab8b1d2e657bfc4084450aa6eb8a859121711`,
+build `strata-parity-copy-visibility-20261020`, passes release compilation,
+402/208 offline layouts, all129 actual GPU controls, three complete public
+requests with genuine bulk/wide-tail counts, graceful worker exit and physical
+recovery. Receipts: `strata-parity-copy-visibility-20261020-{operators,profile}`;
+owned public-only summary: `strata-parity-copy-visibility-public-summary-20261020.json`.
+
+Load80.3572s; first/repeated4245 prefixes12.8943/12.0792s, effectively unchanged
+fromfa2138fc12.8209/12.0604s. Repeated expert wall7.7633s, enqueue1.5489s,
+capture2.5336s, wait3.5022s; QSA attention/merge1.46897s. Actual40,281 COPY
+nodes are encoded with ZERO per-copy barriers; original external boundaries
+and all48,851 segments/1,474 windows remain.39,225 original HOST role copies
+and complete expert arithmetic counts remain. The source change demonstrably
+runs but does NOT give a meaningful full-prompt gain. Sampled layer24 COPY
+28.5436ms, DQ19.5498ms, matrix30.0816ms +OTHER13.6820ms including new wide/tails.
+Those sampled serial intervals are not pure DMA rates or full-request speed.
+
+Final host-after: Intel50,688,000B, NVIDIA compute0, no new driver faults,
+Kuno/Ollama/Vashti200 and normal idle admission. The candidate stays correct,
+connected, unselected and uninstalled. No clean A/B, full terminal/staged private
+acceptance, new sustained speed gain or release is claimed. Installed3fffc266 /
+SHAeac78ce0 remains selected. Stop spending runs on COPY barriers as the major
+bottleneck; follow the coherent miss-only ring lead below.
+
 
 A meaningful clean gain is needed before full staged tools/MAX8/semantic/privacy
 and injected terminal recovery, then official installation and actual installed

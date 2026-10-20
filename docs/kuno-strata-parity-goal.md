@@ -307,7 +307,17 @@ unprivileged summary is `strata-native-wide-expert-cpu-public-summary-20261020.j
 
 The following [capture/attention candidate](kuno-native-capture-attention.md)
 keeps the complete pipeline and targets these distributed host costs plus
-fault-only GPU synchronization. The parity goal remains active and unmet.
+fault-only GPU synchronization. Sourcefa2138fc / SHA802e3fa2 passes82 CPU,
+402/208 layouts,129 GPU controls and full public requests/recovery; repeated
+prefix12.0604s is a small diagnostic gain over12.3522s, but remains slower than
+installed11.1474s. Successorc12a2418 / SHA71847aba connects exact original COPY
+ranges and genuine ALL_COMMANDS wait ancestry.86 CPU/402208 layout/129 GPU and
+complete request/recovery gates pass; all40,281 per-copy barriers are omitted,
+yet repeat12.0792s gives no meaningful gain. Both remain unselected/uninstalled;
+no clean, staged/terminal or new sustained acceptance is claimed for them.
+The next source lead is the connected Strata miss-only staging ring; see the
+exact proposal, artifact hashes, numbers and physical recovery in that guide.
+The parity goal remains active and unmet.
 
 ## Prior combined operator checkpoint
 

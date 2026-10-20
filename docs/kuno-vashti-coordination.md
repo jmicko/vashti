@@ -54,8 +54,15 @@ still behind installed11.1474s. It remains unselected and uninstalled.
 
 The next connected candidate couples exact original COPY-view intervals with
 synchronization already provided by genuine original ALL_COMMANDS peer waits.
-It retains original queue order, releases, full views and ownership. Four pure
-CPU controls pass initially; final compilation/GPU/speed acceptance is pending.
+It retains original queue order, releases, full views and ownership. Frozen
+c12a2418 / SHA71847aba passes86 CPU controls,402/208 layouts, all129 GPU controls,
+complete public requests/counts and physical recovery. It encodes40,281 COPY
+nodes with zero per-copy barriers, but repeat12.0792s is unchanged from12.0604s:
+this is not the main bottleneck. No installation or clean/staged/terminal
+acceptance is claimed for either candidate. The next coherent source lead is
+Strata's miss-only eight-slot staging ring and conditional streamed-slot release;
+Kuno currently advances its slots for resident groups too. The exact proposal
+preserves full BDA/source/loan guards and couples all required pieces.
 All actual views/owner bindings, original raw-buffer checks and signatures stay.
 See [the exact contract and current gates](kuno-native-capture-attention.md).
 No API, protocol, model identity, configuration or Vashti consumer change.
