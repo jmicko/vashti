@@ -5,7 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
 options=set(sys.argv[2:])
-if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--qsa-paired'}:raise ValueError('build feature selector')
+if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--qsa-paired','--qsa-pv-gather','--native-expert-bulk','--parallel-loading'}:raise ValueError('build feature selector')
 if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise ValueError('GPU route usage requires explicit Intel core selection')
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 if '--cubek-gemm' in options and '--intel-core' not in options:raise ValueError('CubeK candidate requires explicit Intel core')
@@ -16,6 +16,7 @@ if '--cubek-wide' in options and not {'--intel-core','--cubek-gemm','--cubek-til
 if '--native-wide' in options and ('--intel-core' not in options or any(x.startswith('--cubek-') for x in options)):raise ValueError('native wide candidate requires Intel core and separate CubeK selection')
 if '--native-wide32' in options and '--native-wide' not in options:raise ValueError('native 32-subgroup candidate requires explicit full native wide selection')
 if '--qsa-paired' in options and '--intel-core' not in options:raise ValueError('paired prompt attention requires explicit Intel core')
+if options & {'--qsa-pv-gather','--native-expert-bulk','--parallel-loading'} and '--intel-core' not in options:raise ValueError('coherent native candidates require explicit Intel core')
 features=['strata-rust-port']+(['strata-eight-window'] if '--eight' in options else [])+(['strata-resident-224'] if '--resident-224' in options else [])+(['strata-resident-240'] if '--resident-240' in options else [])+(['strata-intel-core'] if '--intel-core' in options else [])+(['strata-gpu-adaptive-usage'] if '--gpu-adaptive-usage' in options else [])
 features += ['strata-public-cap-check'] if '--capped-check' in options else []
 features += ['strata-cubek-gemm'] if '--cubek-gemm' in options else []
@@ -26,6 +27,9 @@ features += ['strata-cubek-wide'] if '--cubek-wide' in options else []
 features += ['strata-native-wide'] if '--native-wide' in options else []
 features += ['strata-native-wide32'] if '--native-wide32' in options else []
 features += ['strata-qsa-paired'] if '--qsa-paired' in options else []
+features += ['strata-qsa-pv-gather'] if '--qsa-pv-gather' in options else []
+features += ['strata-native-expert-bulk'] if '--native-expert-bulk' in options else []
+features += ['strata-parallel-loading'] if '--parallel-loading' in options else []
 source_paths=['apps/kuno/benchmarks/native-text','crates/kuno-text','apps/kuno/src/native_protocol.rs','apps/kuno/src/native_artifact.rs','apps/kuno/src/image_privacy.rs','apps/kuno/benchmarks/text/build-strata-port.py','apps/kuno/benchmarks/text/run-strata-port.py']
 subprocess.run(['git','diff','--quiet','HEAD','--',*source_paths],cwd=root,check=True)
 commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
