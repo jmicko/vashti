@@ -22,7 +22,46 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 20:31UTC): template complete; clean selection FAILS; safe checkpoint.**
+**Authoritative active handoff (2026-10-20 20:49UTC): complete command re-encoding candidate.**
+
+Use ONLY`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`; preserve canonical Vashti notes. Installed worker
+3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 are unchanged.
+The previous complete template bundle passes numerical/recovery checks but fails
+clean FIRST13.7806s vs12.9623s, despite repeat10.3836s vs11.1474s. Not installed.
+Do not roll back any component or weaken any original reference/selection gate.
+
+New source`cdbb041bc34df1d9dac8fb483e14cef9b1211114`, frozenSHA
+`82e9581007365556e44e083b84ef4250976d8b77249a2773fab82f6af9a4d3bb`, retains ALL
+components and re-encodes original completed expert recordings using their
+original3 pools, command inventory, descriptor pool and timeline epochs. Only
+original flight-book-not-live, ready/unnamed/unprofiled/same-family/header and
+large expert/full32-push cases qualify. Queue COUNTS must match; queue order can
+differ via allocation-free permutation using old node scratch. Full original
+new plan/ranges/bindings/source/owner/barrier/64MiB capacity/erasure checks remain.
+A source guard is released before retiring old resource owners, and reacquired
+with original full validation before encoding. No side cache or cross-erasure
+retention. Vulkan command-pool lifecycle reset is never a GPU/device reset.
+
+All132 selected actual CPU controls,420/208 offline and original129+42 GPU
+controls pass. Protected`kuno-native-command-reencode-connected-20261020` is
+ACTIVE: full original proofs + GPU-sampler and normal-host-only whole-model runs.
+New proof requires ACTUAL re-encoded recordings/commands in every long request;
+fallback success alone is insufficient. No clean/staged/install claim yet.
+Do not overlap shared GPU/services or heavy CPU work while profiles run.
+Artifacts/helpers under`/media/jmicko/faststore/kuno-development`, build/prefix
+`strata-parity-command-reencode-20261020`, anticipated owned
+`strata-parity-command-reencode-20261020-reencode-public-summary.json`.
+
+Last independent20:44:51UTC recovery before the new run: Intel50,688,000B,
+NVIDIA compute0,all driver faults0,allHTTP200 and normal admission. The new
+bounded sudo refresh PID220143 (parent sharedshell3556) runs until22:38:06UTC;
+old128882/128884 naturally exited. Do not kill sharedshell or reset/reboot GPUs.
+Goal active/unmet. No API/KNT2/KNR2/config/model identity/frontend/release change.
+Exact contract and test limits:
+[idle recording re-encoding](kuno-native-compute-intervals.md#complete-idle-recording-re-encoding-candidate).
+
+**Previous checkpoint (2026-10-20 20:31UTC): template complete; clean selection FAILS; safe checkpoint.**
 
 Use ONLY`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; preserve canonical Vashti checkout/notes. Installed
