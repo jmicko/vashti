@@ -24,17 +24,17 @@ use cubek_matmul::{
         ConcreteInputsFactory, ConcreteOutputFactory, MatmulArgs, TensorArgs, TensorInputs,
         TensorOutput,
     },
-    routines::{
-        BlueprintStrategy, DeviceSettings, Routine,
-        double_buffering::CyclicDoubleBufferingAlgorithm,
-    },
+    routines::{BlueprintStrategy, DeviceSettings, Routine},
 };
 use cubek_std::{InputBinding, PartitionSize, StageSize, TileSize};
 use half::{bf16, f16};
 use kuno_text::{Error, Result};
 use std::marker::PhantomData;
 
-type Algorithm = CyclicDoubleBufferingAlgorithm;
+#[cfg(not(feature = "strata-cubek-tilewise"))]
+type Algorithm = cubek_matmul::routines::double_buffering::CyclicDoubleBufferingAlgorithm;
+#[cfg(feature = "strata-cubek-tilewise")]
+type Algorithm = cubek_matmul::routines::double_buffering::TilewiseDoubleBufferingAlgorithm;
 type Family = <Algorithm as Routine<()>>::BatchMatmul;
 type LibraryConfig = <Family as BatchMatmulFamily<()>>::Config;
 type Precision<F> = (
@@ -55,7 +55,7 @@ pub(super) use routed_expert::try_expert;
 #[path = "strata_cubek_expert_probe.rs"]
 mod routed_expert_probe;
 #[allow(unused_imports)]
-pub(super) use routed_expert_probe::cases as public_expert_numeric;
+pub(crate) use routed_expert_probe::cases as public_expert_numeric;
 
 /// The original library's entry calls these same public families. Fixed types
 /// avoid introducing flex32/TF32, type inference, autotuning, or split-K.
@@ -834,6 +834,7 @@ mod tests {
         use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
         use cubecl::{Compiler, WgpuCompilationOptions};
         use std::io::Write;
+        let mut observed_shared = std::collections::BTreeSet::new();
         for mask in 0..8 {
             for (name, definition) in [
                 ("fp16-full", definition::<f16>(32)),
@@ -859,6 +860,7 @@ mod tests {
                 .unwrap() else {
                     panic!("actual SPIR-V required")
                 };
+                observed_shared.insert(kernel.shared_size);
                 assert!(
                     kernel.shared_size <= SHARED_CAP,
                     "actual {}",
@@ -928,5 +930,9 @@ mod tests {
                 assert!(child.wait().unwrap().success(), "{name} mask{mask}");
             }
         }
+        println!(
+            "compiled_public_cubek_dense tilewise={} modules=32 observed_shared_bytes={observed_shared:?}",
+            cfg!(feature = "strata-cubek-tilewise")
+        );
     }
 }

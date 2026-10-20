@@ -687,6 +687,7 @@ mod tests {
         use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
         use cubecl::{Compiler, WgpuCompilationOptions};
         use std::io::Write;
+        let mut observed_shared = std::collections::BTreeSet::new();
         for mask in 0..8 {
             for (count, down) in [(32, false), (33, false), (32, true), (33, true)] {
                 let mut options = WgpuCompilationOptions {
@@ -710,6 +711,7 @@ mod tests {
                 .unwrap() else {
                     panic!("real SPIR-V required")
                 };
+                observed_shared.insert(kernel.shared_size);
                 assert!(kernel.shared_size <= SHARED_CAP);
                 let words =
                     wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)
@@ -800,5 +802,9 @@ mod tests {
                 );
             }
         }
+        println!(
+            "compiled_public_cubek_expert tilewise={} modules=32 observed_shared_bytes={observed_shared:?}",
+            cfg!(feature = "strata-cubek-tilewise")
+        );
     }
 }

@@ -443,3 +443,46 @@ owners, <=32KiB real shared memory, true16x4x1 geometry, native products and no
 relaxed-math or physical invocation-ID dependency are checked from the compiled
 modules. Actual GPU numerical/status/fault/erasure acceptance and useful
 performance are still root-owned gates; this source preparation claims neither.
+
+### Complete Tilewise alternative, after the cyclic artifact
+
+`strata-cubek-tilewise` selects the pinned library's complete
+`TilewiseDoubleBufferingAlgorithm` through the shared algorithm alias. Both
+dense projections and the routed GU/DOWN adapter therefore use the same new
+family together. Without that additional opt-in, the complete cyclic artifact
+remains available. The root-owned build selector requires explicit Intel/core
+and CubeK selection; no installed/private runtime flag or API is added.
+
+This changes actual per-plane loading **and** operand stage layout, while
+retaining M32xN64xK64, original fixed types, ordered K16 reductions, checked
+physical layouts/owners, finite/status stores, mapping normalization and the
+same32KiB bound. The library uses row-major tilewise LHS and column-major
+tilewise RHS loaders. A plane owns a complete tile's loads; RHS K tiles for a
+feature tile are grouped in shared memory rather than the cyclic family's
+row-major tile ordering. Both families already vectorize contiguous K values
+inside each tile; the cyclic version must not be described as simply having
+uncoalesced scalar weight reads.
+
+For this fixed blueprint, A and B each have16 tiles per stage, divisible by
+four actual loading planes. A has32 vec4s/tile and B64; each plane therefore
+has a complete integral8/16-task workload. Global paired operand stages,
+partial reader bounds, event-listener scheduling, stage/fragments and the
+original F32 plane writer are all library implementations. No naive/minimal
+calibration path, larger-M occupancy change, split-K, relaxed arithmetic or
+extra result owner is introduced. CPU compiled checks exercise the actual
+selected family in32 dense plus32 expert layout/full/tail modules and print
+the measured shared-memory sizes only in those fixed-public test binaries.
+GPU numerical/lifecycle acceptance and whole-workload performance remain
+required before selection; source layout differences are a hypothesis.
+
+The actual Tilewise source passes all64 compiled-module controls above and
+six focused source/admission/IR/fixture/window tests in the full worker crate.
+Both the dense and expert compiled inventories report **26624B** shared in all
+eight layout modes, below the unchanged32768B admission cap. This includes the
+library's actual fragment-sized publication buffer; an assumed whole-output
+tile should not be added when estimating a future blueprint. The public expert
+probe alias is crate-visible so the root matrix module may directly re-export
+it; its original public-arena guard and private/request silence are unchanged.
+Evidence is under the isolated `prefill-cubek-cpu-20261020` artifact directory:
+`tilewise-whole-spirv.log` and `tilewise-controls.log`. No GPU speed result is
+claimed by these CPU controls.
