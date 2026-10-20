@@ -9,6 +9,7 @@ pub(super) const HOST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SEGMENTS: usize = 32769;
 
 pub(super) struct Record {
+    queue: usize,
     command: vk::CommandBuffer,
     signal: [vk::Semaphore; 1],
     signal_value: [u64; 1],
@@ -101,6 +102,7 @@ impl Batches {
         for (index, (segment, command)) in plan.segments.iter().zip(commands).enumerate() {
             let own = segment.queue();
             let mut record = Record {
+                queue: own,
                 command: *command,
                 signal: [timelines[own]],
                 signal_value: [base + segment.signal],
@@ -176,6 +178,38 @@ impl Batches {
             );
         }
         Ok(submit(&views))
+    }
+
+    /// One original CLOSED segment in global plan order. Unlike queue-wide
+    /// batching, its wait targets are all earlier already-submitted segments,
+    /// so an error/unwind cannot strand a queue behind an unsubmitted future
+    /// signal. Metadata validation/allocation still covers the complete plan.
+    pub(super) fn with_record<R>(
+        &self,
+        index: usize,
+        submit: impl FnOnce(&[vk::SubmitInfo<'_>]) -> R,
+    ) -> Result<R, &'static str> {
+        let record = self
+            .records
+            .get(index)
+            .ok_or("native rolling record index")?;
+        let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
+            .signal_semaphore_values(&record.signal_value)
+            .wait_semaphore_values(&record.wait_values[..record.wait_count]);
+        let view = vk::SubmitInfo::default()
+            .command_buffers(std::slice::from_ref(&record.command))
+            .signal_semaphores(&record.signal)
+            .wait_semaphores(&record.waits[..record.wait_count])
+            .wait_dst_stage_mask(&record.stages[..record.wait_count])
+            .push_next(&mut timeline);
+        Ok(submit(std::slice::from_ref(&view)))
+    }
+
+    pub(super) fn record_queue(&self, index: usize) -> Result<usize, &'static str> {
+        self.records
+            .get(index)
+            .map(|record| record.queue)
+            .ok_or("native rolling record queue")
     }
 }
 
@@ -350,6 +384,95 @@ mod tests {
                     assert!(done > before, "all queue heads waiting is a deadlock");
                 }
                 assert!(completed[1] >= plan.last_copy && completed[2] >= plan.last_shared);
+            }
+        }
+    }
+
+    #[test]
+    fn rolling_original_segments_keep_exact_dependencies_and_only_backward_signals() {
+        let nodes: Vec<_> = (0..4096)
+            .map(|i| {
+                node(
+                    i % 3,
+                    (i % 11) as u64 + 1,
+                    ((i / 11) % 5 * 64) as u64,
+                    i % 4 != 0,
+                )
+            })
+            .collect();
+        for lane in 0..2 {
+            for serialize in [false, true] {
+                let plan = original(&nodes, lane, serialize);
+                let commands = handles(&plan);
+                let timelines = semaphores();
+                let upload = Some(Wait {
+                    semaphore: vk::Semaphore::from_raw(99),
+                    value: 77,
+                });
+                let batches = Batches::new(&plan, &commands, timelines, 123, upload).unwrap();
+                for (index, segment) in plan.segments.iter().enumerate() {
+                    assert_eq!(batches.record_queue(index).unwrap(), segment.queue());
+                    batches
+                        .with_record(index, |views| {
+                            assert_eq!(views.len(), 1);
+                            let view = &views[0];
+                            assert_eq!(view.command_buffer_count, 1);
+                            assert_eq!(view.signal_semaphore_count, 1);
+                            let expected: Vec<_> =
+                                incoming_dependencies(index, segment, timelines, 123, upload)
+                                    .into_iter()
+                                    .flatten()
+                                    .collect();
+                            // SAFETY: actual with_record owns all these arrays/pNext
+                            // through this synchronous callback, just as at submit.
+                            unsafe {
+                                assert_eq!(*view.p_command_buffers, commands[index]);
+                                assert_eq!(*view.p_signal_semaphores, timelines[segment.queue()]);
+                                let timeline =
+                                    &*view.p_next.cast::<vk::TimelineSemaphoreSubmitInfo<'_>>();
+                                assert_eq!(
+                                    timeline.s_type,
+                                    vk::StructureType::TIMELINE_SEMAPHORE_SUBMIT_INFO
+                                );
+                                assert!(timeline.p_next.is_null());
+                                assert_eq!(timeline.signal_semaphore_value_count, 1);
+                                assert_eq!(
+                                    *timeline.p_signal_semaphore_values,
+                                    123 + segment.signal
+                                );
+                                assert_eq!(view.wait_semaphore_count as usize, expected.len());
+                                assert_eq!(
+                                    timeline.wait_semaphore_value_count as usize,
+                                    expected.len()
+                                );
+                                for (offset, dependency) in expected.iter().enumerate() {
+                                    assert_eq!(
+                                        *view.p_wait_semaphores.add(offset),
+                                        dependency.semaphore
+                                    );
+                                    assert_eq!(
+                                        *timeline.p_wait_semaphore_values.add(offset),
+                                        dependency.value
+                                    );
+                                    assert_eq!(
+                                        *view.p_wait_dst_stage_mask.add(offset),
+                                        vk::PipelineStageFlags::ALL_COMMANDS
+                                    );
+                                    if dependency.semaphore != vk::Semaphore::from_raw(99) {
+                                        let original = dependency.value - 123;
+                                        assert!(original < segment.signal);
+                                        assert_eq!(
+                                            timelines[plan.segments[original as usize - 1].queue()],
+                                            dependency.semaphore
+                                        );
+                                    }
+                                }
+                            }
+                        })
+                        .unwrap();
+                }
+                assert!(batches.record_queue(commands.len()).is_err());
+                assert!(batches.with_record(commands.len(), |_| ()).is_err());
             }
         }
     }

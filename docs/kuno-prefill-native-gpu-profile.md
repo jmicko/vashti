@@ -29,8 +29,9 @@ the third field deliberately repeats this CPU counter rather than representing
 an enqueue slice. Deltas cover the interval through its existing real sync,
 with no new fence, timestamp pool or private profiling switch. These are
 process-global native counters, so the protected public worker must remain the
-sole workload. Capture includes native planning/descriptor/command recording
-before queue submission; wait includes actual native fence wait calls. Neither
+sole workload. Capture includes native planning/descriptor/command recording and host queue
+submission calls; with rolling submission, its later portion overlaps already
+submitted GPU work. Wait includes actual native fence wait calls. Neither
 is a GPU kernel duration. The old `experts` enqueue field ends before native
 recording in sync and therefore does not include capture CPU work.
 

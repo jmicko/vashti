@@ -1,8 +1,11 @@
 //! Dependency-complete native primary/copy/shared submissions. No model content.
 use ash::vk;
 use std::collections::HashMap;
+#[path = "strata_rolling.rs"]
+mod rolling;
 #[path = "strata_submit.rs"]
 mod submit;
+pub(crate) use rolling::Submission as RollingSubmission;
 
 /// Recording is optional for authentic uncaptured target/draft work. A named
 /// recording must belong to this request and an inference (not commit) family.
@@ -145,7 +148,8 @@ pub const NATIVE_QUEUE_HOST_BYTES: usize = 144 * 1024 * 1024
     + submit::HOST_BYTES
     + 2 * super::strata_info_transfer::HOST_BYTES
     + super::strata_io_reuse::HOST_BYTES
-    + super::strata_allocator_scope::HOST_BYTES;
+    + super::strata_allocator_scope::HOST_BYTES
+    + 4096; // Bounded rolling lifecycle/device/queue/recovery-fence metadata.
 
 fn insert_region(
     regions: &mut Vec<Region>,
@@ -573,13 +577,12 @@ impl Commands {
             + self.plan.accesses.capacity() * std::mem::size_of::<Access>()
             + std::mem::size_of::<Self>()
     }
-    pub fn submit(
+    fn prepare_submission(
         &mut self,
         queues: [vk::Queue; 3],
         copy_queue: &wgpu::hal::vulkan::KunoTransferQueue,
-        fence: vk::Fence,
         uploads: Option<super::strata_info_transfer::Wait>,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(u64, submit::Batches), &'static str> {
         // Both native graph copies and the original adaptive worker submit
         // through the SAME actual adopted queue authority. Compute queues stay
         // on their original serialized engine thread; no cross-queue lock.
@@ -607,6 +610,36 @@ impl Commands {
         }
         let batches =
             submit::Batches::new(&self.plan, &self.commands, self.timelines, base, uploads)?;
+        Ok((base, batches))
+    }
+    pub fn begin_rolling(
+        &mut self,
+        queues: [vk::Queue; 3],
+        copy_queue: &wgpu::hal::vulkan::KunoTransferQueue,
+        fence: vk::Fence,
+        uploads: Option<super::strata_info_transfer::Wait>,
+    ) -> Result<RollingSubmission, &'static str> {
+        let (base, batches) = self.prepare_submission(queues, copy_queue, uploads)?;
+        RollingSubmission::new(
+            &self.device,
+            queues,
+            copy_queue,
+            batches,
+            fence,
+            self.timelines,
+            base,
+            [0, self.plan.last_copy, self.plan.last_shared],
+            self.plan.segments.len(),
+        )
+    }
+    pub fn submit(
+        &mut self,
+        queues: [vk::Queue; 3],
+        copy_queue: &wgpu::hal::vulkan::KunoTransferQueue,
+        fence: vk::Fence,
+        uploads: Option<super::strata_info_transfer::Wait>,
+    ) -> Result<(), &'static str> {
+        let (base, batches) = self.prepare_submission(queues, copy_queue, uploads)?;
         // These semaphores are created as TIMELINE above, never binary. Vulkan
         // timeline waits may precede their signal submission on another queue.
         // Group only by the actual queue; original per-queue command order,
@@ -632,26 +665,42 @@ impl Commands {
         }
         // The original target fence owns all three queues, including peers
         // with no following compute consumer. Replays retain the same owners.
-        let mut waits = [vk::Semaphore::null(); 2];
-        let mut values = [0; 2];
-        let mut count = 0;
-        for (peer, last) in [(1, self.plan.last_copy), (2, self.plan.last_shared)] {
-            if last != 0 {
-                waits[count] = self.timelines[peer];
-                values[count] = base + last;
-                count += 1;
-            }
-        }
-        let stages = [vk::PipelineStageFlags::ALL_COMMANDS; 2];
-        let mut timeline =
-            vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values[..count]);
-        let join = vk::SubmitInfo::default()
-            .wait_semaphores(&waits[..count])
-            .wait_dst_stage_mask(&stages[..count])
-            .push_next(&mut timeline);
-        unsafe { self.device.queue_submit(queues[0], &[join], fence) }
-            .map_err(|_| "native all queue join")
+        join_queues(
+            &self.device,
+            queues[0],
+            self.timelines,
+            base,
+            [0, self.plan.last_copy, self.plan.last_shared],
+            fence,
+        )
     }
+}
+fn join_queues(
+    device: &ash::Device,
+    primary: vk::Queue,
+    timelines: [vk::Semaphore; 3],
+    base: u64,
+    last: [u64; 3],
+    fence: vk::Fence,
+) -> Result<(), &'static str> {
+    let mut waits = [vk::Semaphore::null(); 2];
+    let mut values = [0; 2];
+    let mut count = 0;
+    for (peer, last) in [(1, last[1]), (2, last[2])] {
+        if last != 0 {
+            waits[count] = timelines[peer];
+            values[count] = base + last;
+            count += 1;
+        }
+    }
+    let stages = [vk::PipelineStageFlags::ALL_COMMANDS; 2];
+    let mut timeline =
+        vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values[..count]);
+    let join = vk::SubmitInfo::default()
+        .wait_semaphores(&waits[..count])
+        .wait_dst_stage_mask(&stages[..count])
+        .push_next(&mut timeline);
+    unsafe { device.queue_submit(primary, &[join], fence) }.map_err(|_| "native all queue join")
 }
 impl Drop for Commands {
     fn drop(&mut self) {

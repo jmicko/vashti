@@ -623,6 +623,54 @@ mod command_boundary_tests {
     }
 }
 // NATIVE_COMMAND_BOUNDARIES_END
+// NATIVE_ROLLING_SELECTION_BEGIN
+fn rolling_prefill_selected(
+    lane: usize,
+    named: bool,
+    profiling: bool,
+    nodes: usize,
+    compute: usize,
+    expert_image: bool,
+) -> bool {
+    lane == 0
+        && !named
+        && !profiling
+        && expert_image
+        && (1024..=32768).contains(&compute)
+        && (compute..=32768).contains(&nodes)
+}
+#[cfg(test)]
+mod rolling_selection_tests {
+    use super::*;
+    #[test]
+    fn only_large_unnamed_unprofiled_main_expert_recordings_can_stream() {
+        for lane in 0..3 {
+            for named in [false, true] {
+                for profiling in [false, true] {
+                    for image in [false, true] {
+                        for compute in [0, 1023, 1024, 2048, 32768, 32769] {
+                            assert_eq!(
+                                rolling_prefill_selected(
+                                    lane, named, profiling, compute, compute, image
+                                ),
+                                lane == 0
+                                    && !named
+                                    && !profiling
+                                    && image
+                                    && (1024..=32768).contains(&compute)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(!rolling_prefill_selected(0, false, false, 1023, 1024, true));
+        assert!(!rolling_prefill_selected(
+            0, false, false, 32769, 1024, true
+        ));
+    }
+}
+// NATIVE_ROLLING_SELECTION_END
 fn begin_native_command(
     device: &ash::Device,
     command: vk::CommandBuffer,
@@ -1754,17 +1802,18 @@ impl Graph {
     }
     /// Attach the actual retained recording to its own lane fence before
     /// submitting anything. Partial failures remain owned and never complete.
-    fn submit_last_recording(
+    fn prepare_last_recording(
         &mut self,
         compute_count: usize,
         replay: bool,
         profiling: bool,
-    ) -> Result<(), ServerError> {
+        require_ready: bool,
+    ) -> Result<Option<super::strata_info_transfer::Wait>, ServerError> {
         let recording = self
             .recordings
             .last()
             .ok_or_else(|| fault("native submission recording missing"))?;
-        if !recording.ready
+        if recording.ready != require_ready
             || recording.family != self.family
             || recording.compute_count != compute_count
         {
@@ -1803,6 +1852,33 @@ impl Graph {
         // still live. A reset failure leaves conservative terminal retention.
         unsafe { self.device.reset_fences(&[fence]) }
             .map_err(|_| fault("native lane fence reset"))?;
+        Ok(info_wait)
+    }
+    fn mark_last_submitted(&mut self, id: u64) -> Result<(), ServerError> {
+        if self
+            .recordings
+            .last()
+            .is_none_or(|recording| recording.id != id || !recording.ready)
+        {
+            return Err(fault("native completed recording identity changed"));
+        }
+        self.flights
+            .submitted(self.compute_lane, id)
+            .map_err(fault)?;
+        // The recording owns every original resource. Drop only duplicate
+        // enqueue metadata so another lane can build its own subsequent work.
+        self.nodes.clear();
+        Ok(())
+    }
+    fn submit_last_recording(
+        &mut self,
+        compute_count: usize,
+        replay: bool,
+        profiling: bool,
+    ) -> Result<(), ServerError> {
+        let info_wait = self.prepare_last_recording(compute_count, replay, profiling, true)?;
+        let id = self.recordings.last().unwrap().id;
+        let fence = self.fences[self.compute_lane];
         self.recordings
             .last_mut()
             .unwrap()
@@ -1820,13 +1896,7 @@ impl Graph {
                 info_wait,
             )
             .map_err(fault)?;
-        self.flights
-            .submitted(self.compute_lane, id)
-            .map_err(fault)?;
-        // The recording owns every original resource. Drop only duplicate
-        // enqueue metadata so another lane can build its own subsequent work.
-        self.nodes.clear();
-        Ok(())
+        self.mark_last_submitted(id)
     }
     fn complete_math_submission(&mut self) -> Result<(), ServerError> {
         self.handoff.complete().map_err(fault)?;
@@ -2212,6 +2282,44 @@ impl Graph {
                 .map(|s| s.queue()),
         )
         .map_err(fault)?;
+        let mut rolling = if rolling_prefill_selected(
+            self.compute_lane,
+            key.is_some(),
+            profiling,
+            self.nodes.len(),
+            compute_count,
+            self.nodes.iter().any(|node| {
+                node.pipeline.as_ref().is_some_and(|pipeline| {
+                    self.pipelines[pipeline].program.name == "StrataPromptExpertF16Image"
+                })
+            }),
+        ) {
+            // The complete original inventory, metadata caps, range hazards,
+            // INFO epoch and recording-owned pools/resources were preflighted
+            // above. Bind the ONE original flight before any prefix can run.
+            let info_wait = self.prepare_last_recording(compute_count, false, false, false)?;
+            Some(
+                self.recordings
+                    .last_mut()
+                    .unwrap()
+                    .work
+                    .begin_rolling(
+                        [
+                            self.queue,
+                            self.copy_queue.raw_identity(),
+                            self.compute_queues
+                                [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                            .queue,
+                        ],
+                        &self.copy_queue,
+                        self.fences[self.compute_lane],
+                        info_wait,
+                    )
+                    .map_err(fault)?,
+            )
+        } else {
+            None
+        };
         begin_native_command(&self.device, self.command, boundaries.before(0))?;
         if let Some(profile) = &self.recordings.last().unwrap().profile {
             unsafe {
@@ -2230,6 +2338,11 @@ impl Graph {
             let next = work.plan.node_segments[index];
             if next != segment {
                 end_native_command(&self.device, self.command, boundaries.after(segment))?;
+                if let Some(rolling) = &mut rolling {
+                    // Only already-ended command buffers enter the prefix.
+                    // Recovery remains armed across every later fallible call.
+                    rolling.closed(next, index, false).map_err(fault)?;
+                }
                 segment = next;
                 self.command = work.commands[segment];
                 begin_native_command(&self.device, self.command, boundaries.before(segment))?;
@@ -2409,11 +2522,27 @@ impl Graph {
         }
         end_native_command(&self.device, self.command, boundaries.after(segment))?;
         self.recordings.last_mut().unwrap().ready = true;
+        if let Some(rolling) = &mut rolling {
+            rolling
+                .closed(
+                    self.recordings.last().unwrap().work.plan.segments.len(),
+                    self.nodes.len(),
+                    true,
+                )
+                .map_err(fault)?;
+            rolling.finish().map_err(fault)?;
+        }
         CAPTURE_NS.fetch_add(
             capture_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
-        self.submit_last_recording(compute_count, false, profiling)?;
+        if let Some(rolling) = rolling {
+            let id = self.recordings.last().unwrap().id;
+            self.mark_last_submitted(id)?;
+            rolling.accept().map_err(fault)?;
+        } else {
+            self.submit_last_recording(compute_count, false, profiling)?;
+        }
         if wait {
             self.complete_scoped_submission()?;
         }
