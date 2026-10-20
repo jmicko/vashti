@@ -294,8 +294,17 @@ async fn serve(
             crate::strata_prompt::experts::public_dequant_numeric(&client, &mut arena, &file)
                 .map_err(|_| "public_prompt_dequant_numeric_failed")?,
         );
-        let attention_checks = crate::strata_qsa::selection::public_numeric(&mut arena)
-            .map_err(|error| {
+        let qsa_math_checks =
+            crate::strata_qsa::public_attention_numeric(&mut arena).map_err(|error| {
+                eprintln!("public_attention_math_numeric_error {error}");
+                "public_prompt_attention_math_numeric_failed"
+            })?;
+        eprintln!(
+            "public_attention_math_controls_complete {}",
+            qsa_math_checks.len()
+        );
+        let attention_checks =
+            crate::strata_qsa::selection::public_numeric(&mut arena).map_err(|error| {
                 // This branch accepts only compiled public diagnostic inputs.
                 eprintln!("public_attention_numeric_error {error}");
                 "public_prompt_attention_numeric_failed"
@@ -306,7 +315,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"attention_checks":attention_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }
