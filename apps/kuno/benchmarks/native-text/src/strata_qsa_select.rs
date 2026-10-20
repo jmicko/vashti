@@ -333,6 +333,11 @@ mod active_prefix_tests {
         assert!(select.contains("if w==0u{continue;}"));
         assert!(select.contains("scores[t*p.score_stride+b]"));
         assert!(validate.contains("status[t*p.status_stride+b]"));
+        assert!(select.contains("let raw=bitcast<u32>(v)"));
+        assert!(select.contains("select(raw,0u,(raw&0x7fffffffu)==0u)"));
+        assert!(select.contains("(raw&0x7fffffffu)>0x7f800000u"));
+        assert!(!select.contains("v+0.0"));
+        assert!(validate.contains("!finite(v)||v<0.0"));
         let initialize = select.find("j=width+tid;j<p.stride;j+=1024u").unwrap();
         let sentinel = select.find("=p.blocks*4u;").unwrap();
         let first_write = select.find("if n<=width").unwrap();

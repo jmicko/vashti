@@ -29,10 +29,24 @@ still requires its real final `arena.close()` and owned-zero audit before
 publishing the combined receipt. A fault/erasure failure is never a pass.
 
 `python3 apps/kuno/benchmarks/text/test-qsa-active-prefix-controls.py` compiles
-the exact production oracle/checker with`rustc --test -D warnings`. Two tests
+the exact production oracle/checker with`rustc --test -D warnings`. Three tests
 compare it with independent cell-level ranking and reject changed live/tail/
 padding outputs. Structural checks confirm actual primitive calls, poison
 inventories, full-owning read and reset-before-report. Rustfmt/diff checks pass.
 No shared Cargo build, GPU, sudo, service or installation was performed for
 these controls. They still require root's full compile and genuine device run;
 CPU preparation does not prove selection, numerics, erasure or performance.
+
+The first actual ranked fixture subsequently exposed a signed-zero key bug:
+`start2050/count3` had fault0 and244 live selected-word mismatches, with unchanged
+complete output/fault padding. A CPU simulation of the old key with its floating
+`v+0` canonicalization folded away reproduces exactly244 mismatches. The unchanged
+numeric oracle treats positive and negative zero as equal; unsigned radix keys
+must do so too. The repair explicitly maps either zero bit pattern to integer0
+before the existing ordered-float bit transform, and identifies NaNs from their
+IEEE bit magnitude. GPU finite/status validation and negative-score rejection
+remain unchanged; neither the oracle nor the acceptance comparison is relaxed.
+The third CPU case verifies exact agreement with the original numeric oracle
+and preserves the old244-mismatch reproduction. All actual selection WGSL sources
+pass CPU Naga validation. Genuine protected GPU acceptance of this repair remains
+a separate gate.

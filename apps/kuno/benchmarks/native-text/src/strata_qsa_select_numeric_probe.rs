@@ -65,6 +65,59 @@ fn selected_matches(actual: &[u32], start: usize, count: usize, positive: bool) 
 mod tests {
     use super::*;
     #[test]
+    fn explicit_zero_key_matches_numeric_oracle_and_reproduces_old_244_word_failure() {
+        // Simulate the GPU key if the driver folds its old floating v+0 away.
+        // Compare with the unchanged independent numeric sort-and-expand oracle.
+        fn key(value: f32, canonical: bool) -> u32 {
+            let raw = value.to_bits();
+            if raw & 0x7fffffff > 0x7f800000 {
+                return 0;
+            }
+            let bits = if canonical && raw & 0x7fffffff == 0 {
+                0
+            } else {
+                raw
+            };
+            if bits & 0x80000000 != 0 {
+                !bits
+            } else {
+                bits | 0x80000000
+            }
+        }
+        assert_eq!(key(-0.0, true), key(0.0, true));
+        assert_ne!(key(-0.0, false), key(0.0, false));
+        assert_eq!(key(f32::NAN, true), 0);
+        let mut old_mismatches = 0;
+        for (start, count) in [(0, 3), (2050, 3), (4094, 3), (32764, 4)] {
+            for row in 0..count {
+                let visible = start + row + 1;
+                let width = visible.min(STRIDE);
+                for canonical in [false, true] {
+                    let mut cells: Vec<_> = (0..visible).collect();
+                    cells.sort_by(|&a, &b| {
+                        key(public_score(row, b / 4), canonical)
+                            .cmp(&key(public_score(row, a / 4), canonical))
+                            .then(a.cmp(&b))
+                    });
+                    cells.truncate(width);
+                    cells.sort_unstable();
+                    let expected = expected_row(start, row);
+                    let mismatches = cells
+                        .iter()
+                        .zip(&expected)
+                        .filter(|(a, b)| **a as u32 != **b)
+                        .count();
+                    if canonical {
+                        assert_eq!(mismatches, 0);
+                    } else {
+                        old_mismatches += mismatches;
+                    }
+                }
+            }
+        }
+        assert_eq!(old_mismatches, 244);
+    }
+    #[test]
     fn independent_weighted_oracle_preserves_ties_partial_blocks_and_chronology() {
         assert_eq!(
             &expected_row(0, 0)[..4],

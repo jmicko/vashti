@@ -64,7 +64,10 @@ var<workgroup> warp_scan:array<u32,33>;
 var<workgroup> digit:u32;
 var<workgroup> above_shared:u32;
 var<workgroup> enabled:u32;
-fn key(v:f32)->u32{let f=v+0.0;let b=bitcast<u32>(f);if !(f==f){return 0u;}return select(b|0x80000000u,~b,(b&0x80000000u)!=0u);}
+// The sort order treats both IEEE zeros as equal. Do not express this as v+0:
+// WGSL/driver signed-zero simplification can retain -0's sign before bitcast.
+// Integer canonicalization makes stable threshold ties independent of that.
+fn key(v:f32)->u32{let raw=bitcast<u32>(v);let b=select(raw,0u,(raw&0x7fffffffu)==0u);if (raw&0x7fffffffu)>0x7f800000u{return 0u;}return select(b|0x80000000u,~b,(b&0x80000000u)!=0u);}
 fn weight(b:u32,nbid:u32,n:u32)->u32{return select(n-nbid*4u,4u,b<nbid);}
 fn scan(v:u32,lane:u32,warp:u32)->vec2<u32>{
     var x=v;for(var d=1u;d<32u;d*=2u){let y=subgroupShuffleUp(x,d);if lane>=d{x+=y;}}
