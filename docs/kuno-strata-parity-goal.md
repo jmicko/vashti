@@ -9,6 +9,21 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
+## Active matrix-attention checkpoint (2026-10-20 22:26UTC)
+
+Complete Rust QK/softmax/PV source585dc471/SHAfd43c5cb is implemented and frozen.
+It fits the ACTUAL Vulkan48KiB envelope (48420B scratch), retains all previous
+components and passes144 CPU/420 WGSL/216 matrix layouts. Actual hardware emits
+SIMD16/48 DPAS with0 spills/fills. First new full-batch numerical case FAILS the
+unchanged F64 bounds, so no whole-model or speed acceptance/installation occurs.
+A new compiled-SPIRV control proves both hi/lo cast/residual chains survive CPU
+compilation; all145 selected CPU tests pass. Next verify actual GPU hi/lo staging
+and matrix/scaling precision, not loosen references or blame a driver by inference.
+Exact failures/artifacts/next steps in [active handoff](kuno-vashti-coordination.md)
+and [precision checkpoint](kuno-native-compute-intervals.md#first-actual-matrix-attention-execution-and-precision-checkpoint).
+Installed3fffc266/gateway36626d30 remain. Actual22:25UTC services/GPU recovery passes.
+Strata5.3515s still leads correct repeat9.6808s; goal ACTIVE/UNMET.
+
 ## Latest tested checkpoint (2026-10-20 21:51UTC): pool reuse is real; FIRST gate still fails
 
 Complete source865a9c16/SHA36197839 passes136 selected CPU,420/208 offline,

@@ -500,6 +500,59 @@ pub(crate) fn definition() -> KernelDefinition {
 mod tests {
     use super::*;
     #[test]
+    fn actual_compiled_split_retains_half_rounding_before_f32_residual() {
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{
+            Compiler, WgpuCompilationOptions,
+            ir::{ElemType, StorageType, UIntKind},
+        };
+        let mut options = WgpuCompilationOptions {
+            supports_vulkan: true,
+            ..Default::default()
+        };
+        options.vulkan.max_spirv_version = (1, 6);
+        let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+            &mut AutoCompiler::SpirV(Default::default()),
+            definition(),
+            &options,
+            cubecl::server::ExecutionMode::Unchecked,
+            StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+        )
+        .unwrap() else {
+            panic!("actual matrix SPIRV");
+        };
+        let w = &kernel.assembled_module;
+        let mut widths = std::collections::BTreeMap::new();
+        let mut conversions = std::collections::BTreeMap::new();
+        let mut pairs = 0;
+        let mut at = 5;
+        while at < w.len() {
+            let n = (w[at] >> 16) as usize;
+            let op = w[at] & 65535;
+            let a = &w[at + 1..at + n];
+            if op == 22 {
+                widths.insert(a[0], a[1]);
+            }
+            if op == 115 {
+                conversions.insert(a[1], (widths.get(&a[0]).copied(), a[2]));
+            }
+            if op == 131 && widths.get(&a[0]) == Some(&32) {
+                if let Some((Some(32), half)) = conversions.get(&a[3]) {
+                    if let Some((Some(16), original)) = conversions.get(half) {
+                        if *original == a[2] {
+                            pairs += 1;
+                        }
+                    }
+                }
+            }
+            at += n;
+        }
+        assert_eq!(
+            pairs, 2,
+            "both Q and probability residuals need actual half rounding"
+        );
+    }
+    #[test]
     fn every_cooperative_tile_has_exact_one_writer_and_stays_inside_original_slots() {
         assert_eq!(SHARED_BYTES, 48420);
         assert!(SHARED_BYTES <= 49152);

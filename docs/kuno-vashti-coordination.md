@@ -22,7 +22,62 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 22:19UTC): complete48KiB kernel plus authentic fault-view fixture.**
+**Authoritative active handoff (2026-10-20 22:26UTC): XMX executes; precision failure diagnosed to next probe.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Complete matrix candidate source
+585dc471c56879466a9bcbe40f6a8229ff06e6a9 / frozenSHA
+fd43c5cb4cece90f4987f50a71d482072a3d2ca21fae6ea80eaff9b762ca03fb,
+build`strata-parity-qsa-xmx-logical-20261020`, retains ALL prior components.
+144 CPU and420 WGSL/216 matrix offline layouts pass. Actual XMX DOES execute:
+ordinary+retained native compilers each emitSIMD16/48 DPAS/5777 instructions,
+zero spills/fills. Protected operator run then correctly FAILS first new large
+F64 case(start0,count16,offset0) and physically recovers. No whole-model profile,
+clean speed, staged API or installation was attempted for XMX. Do not describe
+this as an unexercised selector anymore, or as numerical/performance acceptance.
+
+Original scalar has0 F64 mismatches. Candidate partial78071 mismatches,
+max_abs0.00382843435/max_bound0.000251863085; stats696 mismatches,
+max_abs0.00181380627/max_bound0.000112587659. Existing operation-derived bounds
+are UNCHANGED. Half-precision-scale error suggests hi/lo staging/conversion is
+worth testing but DOES NOT establish a driver/compiler bug. New CPU test
+`actual_compiled_split_retains_half_rounding_before_f32_residual` proves both
+F32->F16->F32->FSub chains ARE present in actual generated SPIRV (2 pairs), so
+CPU compiler conversion elimination is NOT the established cause. All145 selected
+CPU controls pass with that additional test. Production source is unchanged by
+this test-only addition; frozen585dc471 is the actual failed GPU artifact.
+
+Next: add a bounded fixed-public GPU numeric control of the ACTUAL shared hi/lo
+staging helper, compare staged/reconstructed values to the host half reference,
+and inspect DPAS operand/accumulation/scale behavior. Consider exact integer RTE
+half-rounding in F32 if actual evidence supports it; do not blindly blame Mesa,
+change the quant, lower bounds or abandon half of the connected kernel. Preserve
+old12 small bitwise/F64 references, full-owner/tail/fault/causal checks and the
+additional7 large actual-path controls. Only after all pass run original complete
+profiles/count proof, terminal/clean-at-EACH5% gate and staged quality/install.
+
+Owned artifact base`/media/jmicko/faststore/kuno-development`:
+`strata-parity-qsa-xmx-logical-precision-postmortem-public-20261020.json` has exact
+actual compiler rows and passed=false/recovered=true;
+`strata-parity-qsa-xmx-logical-connected-20261020.log` contains only fixed-public
+numeric metadata, including both F64 comparison rows. Protected raw compiler
+code remains in its original operator directory, not public/private request data.
+CPU log`native-qsa-xmx-precision-complete-cpu-20261020.log`:145 pass. Complete
+wrapper`check-native-qsa-xmx-connected-20261020.py` retains original171+7 gates,
+actual ordinary/native16 DPAS and derived full-model launch-count requirements.
+
+No GPU job remains. Independent22:25:14UTC: Intel50,688,000B, NVIDIA compute0,
+all driver faults0, Kuno/Ollama/Vashti200, admission inactive/unpaused/recoveryfalse/
+waiting0. Installed3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 unchanged.
+Bounded sudo refresh297061 (parent sharedshell3556; NEVER kill sharedshell) ends
+2026-10-21 00:17:49UTC; old220143 naturally expires22:38UTC. Goal ACTIVE/UNMET;
+Strata5.3515s still leads prior correct candidate repeat9.6808s. No reset/reboot,
+API/KNT2/KNR2/config/model identity/frontend/release change.
+Details: [matrix candidate](kuno-native-compute-intervals.md#complete-matrix-attention-successor-under-implementation).
+
+**Previous active handoff:**
+
+**Previous handoff (2026-10-20 22:19UTC): complete48KiB kernel plus authentic fault-view fixture.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. Final candidate source585dc471c56879466a9bcbe40f6a8229ff06e6a9,

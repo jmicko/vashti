@@ -1753,3 +1753,40 @@ the genuine logical fault handle from its original arena BufferId, as production
 already does. The entire authentic parent is retained and read afterward for
 padding-zero checks; the production exact4-byte check remains UNCHANGED. No fake
 length/view, source/owner/epoch waiver or test threshold change is introduced.
+
+
+### First actual matrix-attention execution and precision checkpoint
+
+Final logical-view source585dc471c56879466a9bcbe40f6a8229ff06e6a9 /
+SHAfd43c5cb4cece90f4987f50a71d482072a3d2ca21fae6ea80eaff9b762ca03fb
+passes144 CPU and420/216 offline. Hardware selector and authentic logical fault
+view now pass, and actual ordinary+retained native compiler scopes each show
+SIMD16,48 DPAS,5777 instructions,0 spills/fills. First large causal(start0,count16,
+capacity4096,offset0) executes, but the original independent F64 bound FAILS.
+Original scalar mismatches0; candidate partial mismatches78071,max_abs
+0.0038284343515728736,max_error_to_bound25.629098220813116; candidate stats
+mismatches696,max_abs0.0018138062745212125,max_error_to_bound46.61242040278987.
+Full original owner/tail/fault checks precede this F64 comparison. No whole-model
+profile or speed test follows a failed numerical acceptance. No install.
+
+Postmortem public summary
+`strata-parity-qsa-xmx-logical-precision-postmortem-public-20261020.json` preserves
+passed=false and physical_recovery_passed=true, exact source/hash and real ISA
+rows. Root wrapper stops before all downstream proof/acceptance stages. Earlier
+58KiB and padded-fault failures were unexercised; this one IS actual math failure.
+
+Additional actual-compiled SPIRV CPU control finds exactly2 complete
+F32->F16->F32 conversions feeding F32 residual subtraction (Q and P). The entire
+selected145 CPU set passes. This rules out the simple CPU-optimizer-dropping-casts
+hypothesis at SPIRV level; it does NOT prove the driver's dynamic rounding or
+which matrix/scaling step causes the error. Next fixed-public GPU control should
+measure the actual shared hi/lo stage against host half rounding, then verify
+DPAS operands, scale groups and accumulation. Keep all original F64 bounds,
+old12 references and new7 full-batch cases. No weakening/fake fixture/partial
+component rollback or performance-led abandonment is acceptable.
+
+Independent22:25:14UTC: Intel50,688,000B,NVIDIA compute0,all driver faults0,
+allHTTP200 and normal admission; no GPU job remains. Installed native32/gateway
+unchanged. New bounded sudo refresh297061 ends2026-10-21 00:17:49UTC, owned parent
+sharedshell3556 must never be killed. Goal ACTIVE/UNMET. No reset/reboot, new API,
+configuration/model identity/frontend/release change.
