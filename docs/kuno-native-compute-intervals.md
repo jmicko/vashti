@@ -360,3 +360,56 @@ Next is a protected fixed-public leaf-CPU diagnostic on THIS complete bundle,
 using original DSO-aware helper and raw-data deletion; no additional performance
 claim from instrumented sampling. Use actual symbols to distinguish the remaining
 allocation, immutable binding/dependency packing, planner and driver costs.
+
+
+## Complete push-bundle CPU diagnostic and next coherent host work
+
+The protected DSO-aware fixed-public diagnostic on source9dc5786a/SHA85b9461b
+passes complete requests, raw-record deletion and actual physical recovery.
+Receipt `strata-native-push-descriptors-dso-cpu-20261020/receipt.json`; owned
+`strata-native-push-descriptors-dso-cpu-public-summary-20261020.json`.
+All726,548 raw recording bytes were deleted; no private requests, callchains,
+registers, stack copies or memory samples were collected. Only fixed-public
+aggregate symbols/time windows persist. Instrumented repeated4245 prefix11.87723s
+is a diagnostic, NOT a new clean comparison or sustained inference result.
+
+Repeated prompt samples3.48241s user CPU (693 samples): libc memset0.46231s,
+actual Planner::push_accesses0.25628s, fill_compute_ranges closure0.14070s,
+malloc0.10050s, libc statx0.09548s, actual compute Recorder::push0.09045s,
+memmove0.08543s, real guarded native-buffer lookup0.07538s, hash lookup0.07035s.
+These are leaf samples, not inclusive/wall times. In particular memset/statx
+callers are not known from this sample; do NOT invent a filesystem-per-kernel,
+privacy failure or driver-only explanation. Allocation/planning/binding work is
+still a distributed category; there is no single proven dominant function.
+
+Physical recovery16:23:02UTC: Intel50,688,000B, NVIDIA compute0, faults0,
+all endpoints200 and admission inactive/unpaused/no recovery/waiting0. Both
+completed development candidates remain connected, unselected and uninstalled.
+Installed worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 remain.
+
+Next source investigation should combine complete immutable binding metadata
+reuse across ORIGINAL capture passes with immutable full BDA source bundles,
+not another isolated change of shader arithmetic or queue guesses. Current
+signature, original Planner, class manifest, compute interval pass and descriptor
+encoder repeatedly materialize/look up the same complete original views. A
+capture-owned sealed inventory could reuse actual raw identity/view/type/access
+facts while retaining every original field/signature, full dependency, original
+queue-selected Plan and all ownership/INFO/flight/erasure checks. It must be
+built from actual immutable nodes, check counts/membership before any prefix,
+revalidate actual raw roots under EACH real reacquired Wgpu destruction guard,
+and never retain an unguarded handle without revalidation. No stale source or
+same-bytes identity substitute is allowed. Actual allocation/peak capacities,
+old/new tables, complete source bundles and wipes must remain within64MiB;
+if optional proof is unavailable keep the current correct path. Sharing a full
+BDA bundle must preserve every original binding, view, stream and publication
+lifetime, not narrow source declarations or omit admission checks. This remains
+an investigation/proposal, NOT an implemented or measured gain. Use coarse
+compiled-public subphase timing if needed to choose the connected changes;
+never publish private metadata. Keep all current connected pipeline pieces.
+
+After implementation: original CPU/oracle/budget/lifecycle controls, full129
+unchanged numerical GPU controls, complete real requests and actual producer
+counts plus physical recovery. Only a meaningful matched CLEAN gain justifies
+terminal recovery/full staged thinking/tools/MAX8/semantic/privacy acceptance
+and the official installation transaction. Installed clean11.14739s versus
+Strata5.3515s remains authoritative. The parity goal is active and unmet.

@@ -22,7 +22,7 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Kuno-only development checkpoints (2026-10-20; latest16:19UTC below).**
+**Kuno-only development checkpoints (2026-10-20; latest16:23UTC below).**
 The complete pipeline remains intact. Scoped actual-buffer guard source45795611 /
 SHA8944b257 passes101 CPU,408/208 offline layouts, all129 numerical GPU controls,
 complete requests/counts and recovery, but profiled repeat11.5435s is unchanged.
@@ -69,6 +69,15 @@ Repeated profile11.8305s is unchanged from11.9077s; cold load118.88s regresses.
 No clean/staged/terminal, sustained gain or install claim. The complete bundle
 stays intact. Protected fixed-public DSO-aware CPU profiling is next; raw samples
 are removed, and actual physical recovery is required. No consumer/API change.
+
+The complete9dc5786a bundle's protected DSO-aware CPU diagnostic now passes
+with all726,548 raw bytes deleted and actual recovery16:23:02UTC. Repeated
+prompt samples3.4824s CPU: memset0.4623s, Planner0.2563s, full-view fill0.1407s,
+plus distributed allocation/hash/guard work. Leaves do not identify callers or
+promise equivalent wall savings. Next proposal is complete immutable binding
+inventory/source-bundle reuse across original capture passes, with exact real
+root revalidation, original full views/queues/owners/epochs/erasure and64MiB
+budget. It is not implemented. No new install, release or consumer/API change.
 
 Exact code/artifact/receipt identities, tests, limitations and next gates are in
 [the synchronization guide](kuno-native-compute-intervals.md). Physical snapshot:
