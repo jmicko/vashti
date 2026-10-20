@@ -760,3 +760,13 @@ on Workgroup arrays). No GPU test was started for that artifact. Correct the
 offline producer to apply the SAME checked normalization already used by both
 actual shader factories before spirv-val; no validator/numerical rule is relaxed.
 The corrected successor retains the exact same kernel and pipeline behavior.
+
+Corrected frozen source022d799bbf76d58391c8dedfe316cb8b392d0afc / worker
+SHAe3ba33c026b50a9a7c3442f1e8e8ca80c1c676687d35a40182f705aae7691fa8,
+build`strata-parity-gdn-subgroup16-v2-20261020`. Offline408 ordinary/208 matrix
+layouts pass, including both actual named GDN entries318/323 through the
+unchanged spirv-val gate after actual HAL normalization. The protected unit
+`kuno-native-gdn-subgroup16-connected-20261020` now runs original129 GPU controls
+then full requests/all inherited producer proofs and actual compiler-scope
+selection/spill evidence. No actual GPU correctness/performance acceptance yet.
+Both tests and workers retain swap/core0 and real recovery checks.

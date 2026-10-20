@@ -70,8 +70,11 @@ barriers and checks. Both actual ordinary and retained native pipelines inspect
 complete emitted SPIR-V and retain physical device limits. Unknown proof or
 other kernels retain their original policy. Original scalar numerical references
 remain unchanged. All94 actual App CPU controls pass, including real compiled
-source equivalence and unsupported metadata/geometry/barrier cases. Frozen
-release/offline/original129/full request/actual compiler ISA/recovery remain next.
+source equivalence and unsupported metadata/geometry/barrier cases. Corrected frozen source022d799b / SHAe3ba33c0
+(`strata-parity-gdn-subgroup16-v2-20261020`) passes408/208 offline layouts,
+including both actual named entries through unchanged spirv-val after existing
+HAL normalization. Original129/full request/actual compiler ISA/recovery now
+run in `kuno-native-gdn-subgroup16-connected-20261020`.
 No performance or shader-specific spill attribution is claimed yet.
 Exact contract: [subgroup-independent GDN](kuno-native-compute-intervals.md#subgroup-independent-gdn-register-pressure-candidate).
 No API, KNT2/KNR2, configuration, model identity or Vashti change.
