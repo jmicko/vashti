@@ -837,3 +837,18 @@ actual access-class manifest and actual barrier-call counters described in
 Do not clear full-root history after narrowing destination to one node alone.
 No API/consumer/installation change. Installed matched clean11.1474s vs Strata
 5.3515s remains the reference; the active parity goal remains unmet.
+
+
+## Persistent-query XMX checkpoint (2026-10-20 23:05UTC)
+
+Explicit RTE fixes the actual shared-stage residual and all178 GPU numerical
+controls pass. Completed original full requests physically recover, but repeated
+profile12.2788s remains slower than matched Strata5.3515s and original installed
+clean11.1474s. Different nonempty group counts stop the historical FMA equality
+proof after recovery; that failure is preserved and no normal/clean/staged/
+installation acceptance is claimed. Independent original-route conservation
+passes against actual maps and launch grammar. The new XMX-only applicability
+contract and complete persistent-query successor are documented in
+[kuno-native-compute-intervals.md](kuno-native-compute-intervals.md#persistent-query-matrix-successor-and-route-inventory-contract).
+All earlier components remain connected. Goal ACTIVE/UNMET; installed worker
+3fffc266/SHAeac78ce0 and image-enabled gateway36626d30/SHAd3ed07f4 unchanged.

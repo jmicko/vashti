@@ -22,7 +22,52 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 22:47UTC): explicit rounding passes exact GPU stage and178 numerical controls.**
+**Authoritative active handoff (2026-10-20 23:05UTC): persistent-query XMX successor; original full numerical controls retained.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Installed worker3fffc266/SHAeac78ce0 and gateway
+36626d30/SHAd3ed07f4 remain unchanged; goal ACTIVE/UNMET.
+
+RTE source78d948aa/SHA7047b381 passes all original171+7 actual GPU controls,
+then completes ALL original73/4245/4245 requests and physical recovery. Prompt
+5.0131/13.7087/12.2788s; this is a slower diagnostic, NOT selection. The unit
+`kuno-native-qsa-xmx-rte-connected-20261020` is TERMINAL, stopped after recovery
+on the historical FMA identical-group-population assertion. Normal profile,
+connected-chain acceptance, clean selection and install did NOT run. Preserve
+that failed receipt. Independent actual inventory now verifies all34560/
+2037120/2037120 route members, group histograms, original6-phase launch grammar,
+resident/streamed work and exact scratch batches/slots. Original FMA population
+equality is explicitly NOT claimed for changed accepted matrix arithmetic.
+
+New complete successor keeps query high/low data across all selected attention
+chunks, matching upstream's workgroup lifetime. It uses32-cell K/V microtiles
+inside original64-cell external partials,42276B actual shared envelope, and keeps
+original merge, buffers, source/owner/fault/causal checks and explicit RTE fix.
+No component rollback. All147 actual selected CPU checks pass, including the additional exact
+owned-slot initialization-before-accumulation boundary test.
+Release/offline/GPU/full-profile/clean/staged/install acceptance remains pending.
+
+The XMX-specific wrapper chain has unique `*-xmx-inventory-connected-20261020.py`
+names; all original wrappers remain byte-identical. Only three historical FMA
+population-equality assertions become independently checked work inventories.
+Repository validator `apps/kuno/benchmarks/text/validate-xmx-route-counters.py`
+has omission/duplication/bucket-negative tests; its frozen SHA is
+c17daf2a8da62fb11dad1850042dc4932c872ccf63e1aadb25ab5b0419792bf1.
+Artifact manifest`qsa-xmx-inventory-wrapper-manifest-20261020.json` records original
+and variant hashes. Actual old RTE receipt passes inventory without changing it.
+All178 numerical, actual compiler/launch/pool, source/owner/recovery and original
+at-EACH5% clean selection requirements stay. See
+[persistent-query contract](kuno-native-compute-intervals.md#persistent-query-matrix-successor-and-route-inventory-contract).
+
+Independent23:00UTC state: Intel50,688,000B; NVIDIA compute0; driver faults0;
+Kuno/Ollama/Vashti200; admission inactive/unpaused/recoveryfalse/waiting0.
+Owned bounded sudo297061/sharedshell3556 ends00:17:49UTC Oct21. Never kill the
+shared shell or reset/reboot GPUs. No API/KNT2/KNR2/config/model/frontend/release
+change. No GPU job is active at this checkpoint.
+
+**Previous handoff (superseded; the RTE unit below is now terminal):**
+
+**Previous handoff (2026-10-20 22:47UTC): explicit rounding passes exact GPU stage and178 numerical controls.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. Complete candidate source78d948aa99d9aced6a0e47d8679720fa01ed7a9a /

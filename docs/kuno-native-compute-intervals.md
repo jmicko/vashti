@@ -1859,3 +1859,44 @@ negatives, full original parent/tail audits. Genuine model loading/profiles and
 whole original producer/compiler/count/ownership/recovery proof are ACTIVE next;
 this is not yet whole-model correctness or performance acceptance. Source/hash
 and live unit are recorded in the authoritative coordination handoff.
+
+
+### Persistent-query matrix successor and route inventory contract
+
+The completed RTE73/4245/4245 profile is5.013139936/13.708709647/12.278836102s,
+all requests correct and physically recovered. Original171+7 numerical controls
+pass. The historical FMA group-equality gate then fails: actual7665/26604/26604
+versus7663/26673/26673. Preserve the failure. Different accepted matrix arithmetic
+can change nonempty routing populations; it does not justify assuming missing
+work, or replacing those numbers with a new magic expected population.
+
+For XMX only, independent inventory must conserve every original routed member:
+48 authenticated layers *10 selected experts *(original prompt_tokens-1), using
+the actual validated map's seven group/member histograms. Each bucket must obey
+its actual row bounds; groups must equal resident+streamed and scratch groups.
+Bulk batches remain48*ceil(rows/4096); logical phases6*groups, matrix pieces
+2*groups+tail pieces, actual launches6*groups+tail pieces, scratch slots2*batches,
+with0<=tails<=wide-prefixes<=2*groups. Identical seeded long requests must
+conserve identical inventories after original private erasure. All original
+scalar/F64 operation-derived numerical bounds,171+7 real GPU controls, source,
+owner, epoch, compiler, actual-path/launch/pool, recovery and at-EACH5% clean
+selection remain required. This is a variant-specific applicability correction;
+it is NOT a claim that the historical FMA group-stability proof passed. Old
+helpers and failed receipts remain unchanged. The repository validator and its
+negative tests reject omitted/duplicated members/groups/launches/scratch/batches
+and impossible bucket populations; actual old RTE receipt passes this proof.
+
+The complete next kernel retains query staging for the lifetime of one workgroup
+per(query position,KV head), rather than re-rounding all query heads in each
+64-cell chunk. All16 query heads(12 real+4 zero) persist; K/V use32-cell microtiles
+to fit actual Vulkan49152B SLM.42276B consists of query hi/lo16384B, K/V16384B,
+probability hi/lo2048B, matrix results4096B, probabilities3072B, indices256B and
+reduction36B. No device buffer allocation or source-view relaxation is added.
+Original64-cell statistics/partials and original merge stay unchanged. First
+microtile initializes each output; the SAME invocation accumulates the optional
+second microtile into its own initialized slot, with original barriers retained.
+No cross-workgroup read, stale request read or changed private-owner lifetime.
+CPU coverage must include every chunk boundary, partial tails, exact once cell
+coverage and same-invocation initialization. Real GPU F64/full-parent/tail/fault
+controls and both full-profile modes remain mandatory before speed selection.
+This source compiles; complete hardware/performance acceptance is pending.
