@@ -23,7 +23,7 @@ pub(crate) fn cases(
 ) -> ProbeResult<Vec<serde_json::Value>> {
     let (max_rows, columns) = (
         if cfg!(feature = "strata-cubek-wide") {
-            128usize
+            320usize
         } else {
             65usize
         },
@@ -74,7 +74,9 @@ pub(crate) fn cases(
             (257, 64),
         ];
         let wide_shapes: &[(usize, usize)] = if cfg!(feature = "strata-cubek-wide") {
-            &[(512, 128), (513, 128)]
+            // Full M/N, M tail, then a simultaneous M/N tail from the
+            // original complete320-row weight. Preserve the same F64 oracle.
+            &[(512, 128), (513, 128), (513, 320)]
         } else {
             &[]
         };
