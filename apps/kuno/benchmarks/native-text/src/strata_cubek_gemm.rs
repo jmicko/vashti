@@ -48,6 +48,15 @@ type Inputs<F> = TensorInputs<Vector<F, Const<4>>, Vector<F, Const<4>>, Vector<f
 type Output = TensorOutput<Vector<f32, Const<4>>>;
 const SHARED_CAP: usize = 32768;
 
+#[path = "strata_cubek_expert.rs"]
+mod routed_expert;
+#[allow(unused_imports)]
+pub(super) use routed_expert::try_expert;
+#[path = "strata_cubek_expert_probe.rs"]
+mod routed_expert_probe;
+#[allow(unused_imports)]
+pub(super) use routed_expert_probe::cases as public_expert_numeric;
+
 /// The original library's entry calls these same public families. Fixed types
 /// avoid introducing flex32/TF32, type inference, autotuning, or split-K.
 #[cube(launch_unchecked)]
@@ -541,7 +550,7 @@ fn launch<F: Float>(
 mod tests {
     use super::*;
     use cubecl::ir::Instruction;
-    fn properties() -> cubecl::ir::DeviceProperties {
+    pub(super) fn properties() -> cubecl::ir::DeviceProperties {
         use cubecl::ir::{
             HardwareProperties, MemoryDeviceProperties, UIntKind,
             features::{Features, MmaConfig, TypeUsage},

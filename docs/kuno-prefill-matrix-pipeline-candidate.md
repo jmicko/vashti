@@ -375,3 +375,71 @@ duration or speedup is claimed. Root must run original full-owner FP16/BF16
 numeric controls, private fault/lifecycle controls, the matched public prompts,
 then actual erasure/close and physical recovery before selection. Compare the
 whole coupled library pipeline; do not judge an isolated staging subcomponent.
+
+### Opt-in routed expert continuation
+
+The same optional CubeK feature now also provides `cubek::try_expert(client,
+[input,weight,output,map,status,fault],count,columns,rows,weight_first,group,down)`.
+This function returns the **actual enqueue** result, with `false` preserving the
+original small/unaligned primitive. The integration owner must call it only
+inside the existing `strata_matrix::expert` admission, before the original
+native fallback. That entry/admission and its existing leases are unchanged in
+this commit; the root task owns that wiring.
+
+GU is the actual2560-to1280 product and writes member-contiguous original GU.
+DOWN is the actual640-to2560 product and scatters each member to its original
+route in the complete PART owner. Custom public `MatmulArgs` and write-only
+CubeCL views integrate these stores into the unchanged complete cyclic GEMM;
+there is no temporary result owner, copy, readback or additional runtime
+kernel. The output view checks the genuine computed F32vec4 SSA type before
+scalar publication. Unsupported accumulator reads, raw linear slices and TMA
+access fail compilation rather than pretending a routed image is contiguous.
+
+The original map header/group/member/route bounds precede every actual mapped
+write. Finite values are unchanged; nonfinite values become positive zero and
+set original fault bit128. Only the unique vector containing feature zero
+updates DOWN's original `ROUTES+route` status plane, using the original
+feature-zero-finite AND incoming-status-equals-one condition. Other invalid
+features still set fault128 without changing this status rule. Real original
+six handles, exact complete GU/PART/map/status extents, descriptor offsets,
+same-stream identity and exact FP16-toF32 CMMA capability are checked. Existing
+native top-level owner/phase/context validation, request erasure and completion
+remain authoritative. Kernel mapping comes from the actual prepared library
+`cube_count_plan`; it is never defaulted or fabricated.
+
+Separate public acceptance is exported as
+`cubek::public_expert_numeric(&client,&mut arena)`. It requires an already
+selected **empty original public-audit arena** and the identical client; it
+cannot promote a private request arena to public access. Root should budget
+at least512MiB for this call because PART itself is400MiB. It returns14
+additional static/numeric reports, without replacing the prior97 controls:
+
+* Both actual GU/DOWN at counts32,33,64,257, including complete and partial M.
+* Both products with nonfinite feature0, nonfinite feature4, and one deliberate
+  invalid-route trip after authentic fixed-public group construction/validation.
+* The original grouping builder/validator constructs a full4096-row map. The
+  selected group has a nonzero member offset and sorted, noncontiguous routes
+  above20479. Weights use a genuine descriptor-aligned128-half-element prefix.
+* Every output, status, fault and source owner word is checked, including
+  inactive routes, complete owning padding, unchanged source prefixes, valid/
+  invalid incoming statuses and feature-zero-only propagation. The independent
+  full F64 oracle uses the unchanged `1e-4+3e-4*abs(reference)` threshold and
+  original FP16 values, including an intentional positive subnormal row.
+
+PART inspection uses genuine16MiB views inside the original live full owner,
+not a monolithic400MiB readback or an enlarged allocation claim. Every mapped
+lease is wiped on successful or failed checks, dropped and joined through the
+actual runtime I/O sanitizer before the next window. Each case resets/drains/
+erases the real arena before its report can be returned. The enclosing
+protected client's explicit close/audit and physical recovery remain required.
+These diagnostics have no caller-controlled text, prompt persistence or
+private-worker logging.
+
+CPU preparation uses the same isolated artifact target, two build jobs, no GPU
+or services. The real routed CubeK entry compiled in32 variants (GU/DOWN,
+full32/tail33, eight physical layout modes), passed the original FP16 preserve
+and SIMD16 selection, and passed Vulkan1.3 SPIR-V validation. Exact six storage
+owners, <=32KiB real shared memory, true16x4x1 geometry, native products and no
+relaxed-math or physical invocation-ID dependency are checked from the compiled
+modules. Actual GPU numerical/status/fault/erasure acceptance and useful
+performance are still root-owned gates; this source preparation claims neither.
