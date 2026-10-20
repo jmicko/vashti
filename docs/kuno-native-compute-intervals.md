@@ -847,3 +847,47 @@ The reference's larger stream-all ring is conditional: pinned
 pairs are below10%; otherwise it returns STAGE8. Do not infer that Kuno simply
 missed a384-slot default without inspecting actual placement and byte budgets.
 No API/KNT2/KNR2/configuration/model identity or Vashti consumer change.
+
+
+## Connected explicit QK FMA candidate
+
+CPU-only extraction/disassembly of the actual pinned default INT8 image
+(`attn_chunk_kernel_2ad0a4`, not opt-in lane-cell/XMX) establishes chronological
+FMA chains in QK: one float multiply followed by seven float MADs per head,
+then the original XOR reduction. Strata's99 static float MAD instructions
+include84 QK and12 PV plus setup. Its actual shader is SIMD32/128GRFs.
+The earlier source comment claiming universal Strata contract(off) was incorrect
+for this AOT binary; no build flag or source assumption substitutes for this
+observed code. The preserved legacy product-rounding postpass remains unchanged.
+
+New opt-in `strata-qsa-fma` changes ONLY the seven chronological per-lane QK
+accumulation statements to explicit FMA, retaining the separately rounded FIRST
+product, exact operands/first-to-last term order and every XOR step. All public
+INT8 dequantization products and other remaining FMuls retain original
+NoContraction. Query/SLM layout, paired-cell reuse/full guarded tail, probability
+gather/padding, max/exp/sums, chronological PV FMAs, stores, all finite/fault and
+causality checks, INFO, dispatch, original owners/epochs and queue/lifetimes
+remain unchanged. No unsafe fast-math flags or blanket precision relaxation.
+Keep all complete preceding coupled components including native GDN candidate.
+
+The original scalar GPU reference is untouched. All original nine bitwise QSA
+cases and three independent operation-bounded F64 cases MUST pass unchanged,
+as must the other original129 controls; no numerical acceptance rule is widened
+for FMA. New CPU controls restore the complete original source byte-for-byte by
+undoing only these statements across all eight status/fault/paired/gather
+variants; real Naga/SPIR-V proves exactly7 additional Fmas and7 fewer FMuls per
+actual dot, every remaining product precise, identical group/barrier/shuffle
+geometry and fault predicates. Test the whole connected pipeline after all
+original numerical checks, before claiming speed or installation.
+
+Public static ISA lives under `strata-public-attention-isa-20261020`. Extraction
+selected-0.json is GDN (directory qsa), selected-1.json is default INT8 QSA
+(directory gdn); directory names reflect initial extraction order and are NOT
+selection evidence. `.text.*.asm` and `.ze_info` files are hidden dot files;
+`rg --files`/plain ls omit them. No need to rerun ocloc assuming they are absent.
+Duplicate `dump/` is the same QSA disassembly. Public original Kuno numeric
+compiler code is extracted in `kuno-public-qsa-last-four-isa-20261020.txt`.
+Native-code SUMMARY PRECEDES its assembly in Mesa output; splitting only at
+summary ends would omit the last program's assembly. No GPU, model mount,
+private trace, driver, service or system configuration was used for extraction.
+No API, protocol/configuration/model identity or Vashti consumer change.

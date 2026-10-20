@@ -334,7 +334,7 @@ pub fn native_expert_shader_words(source: &str) -> Result<Vec<u32>, ServerError>
     lower(&canonical_workgroup_layout(&words)?)
 }
 
-/// Preserve Strata contract(off)'s separately rounded F32 products. The actual
+/// Preserve the legacy Rust path's separately rounded F32 products. The actual
 /// native registry and CPU validator share this postpass. No IDs, instructions,
 /// descriptor interfaces, placements or explicit FMA operations are changed.
 pub fn preserve_native_product_rounding(words: &[u32]) -> Result<Vec<u32>, ServerError> {

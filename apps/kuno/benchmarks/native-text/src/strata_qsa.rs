@@ -22,6 +22,9 @@ use kuno_text::{Error, Result};
 mod attention_numeric_probe;
 #[path = "strata_prompt_qsa.rs"]
 pub(crate) mod prompt;
+#[cfg(any(test, feature = "strata-qsa-fma"))]
+#[path = "strata_prompt_qsa_fma.rs"]
+mod prompt_fma;
 #[cfg(any(test, feature = "strata-qsa-local-fault"))]
 #[path = "strata_prompt_qsa_local_fault.rs"]
 mod prompt_local_fault;
@@ -124,6 +127,12 @@ impl Kernel {
         self.finish_prompt_source(source)
     }
     fn finish_prompt_source(self, source: String) -> String {
+        #[cfg(feature = "strata-qsa-fma")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_fma::source(source)
+        } else {
+            source
+        };
         #[cfg(feature = "strata-qsa-local-fault")]
         if matches!(self, Self::PromptAttentionFault | Self::PromptMergeFault) {
             return prompt_local_fault::source(self, source);

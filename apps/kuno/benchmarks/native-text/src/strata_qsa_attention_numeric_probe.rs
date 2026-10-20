@@ -512,7 +512,12 @@ fn check(
         0,
         query_offset as u32,
     ];
+    // Static compiler delimiters belong only to this compiled-public entry.
+    // Each actual sync closes its scope before another shader may be compiled.
+    eprintln!("public_qsa_compiler_scope reference");
     scalar_launch(arena, owners(reference)?, p)?;
+    cubecl::future::block_on(arena.client()?.sync())?;
+    eprintln!("public_qsa_compiler_scope optimized");
     // Actual production kernel selection and original launch validation.
     super::launch(
         arena,
@@ -521,6 +526,8 @@ fn check(
         owners(actual)?.to_vec(),
         p,
     )?;
+    cubecl::future::block_on(arena.client()?.sync())?;
+    eprintln!("public_qsa_compiler_scope complete");
     let reference_partial = read_owner(arena, reference[0])?;
     let reference_stats = read_owner(arena, reference[1])?;
     let reference_fault = read_owner(arena, reference[2])?;

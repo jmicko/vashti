@@ -22,6 +22,22 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Active complete QK FMA candidate (2026-10-20).**
+
+Actual pinned default INT8 Strata attention disassembly proves seven
+chronological QK MADs after the first multiply; the previous universal
+contract(off) assumption was wrong for this AOT binary. The new opt-in
+`strata-qsa-fma` matches those explicit FMA steps, retaining first/dequantization
+rounding and every original reduction, owner, fault and scheduling guard.
+The independent scalar reference, original nine bitwise QSA cases and three
+operation-bounded F64 cases stay unchanged. All111 actual App CPU controls pass,
+including the17 affected complete-source/SPIR-V controls. The complete bundle
+retains every preceding component, including native GDN16 with its documented
+ordinary32 fallback limitation. Freeze/offline/original129 GPU/full request/
+actual compiler/recovery/performance gates remain next; no speed/install claim.
+Exact contract: [explicit QK FMA](kuno-native-compute-intervals.md#connected-explicit-qk-fma-candidate).
+No API/protocol/configuration/model identity or Vashti consumer change.
+
 **Latest Kuno checkpoint (2026-10-20 18:15UTC; installed native32 unchanged).**
 
 Completed canonical-source5b173ad8/SHA cc0aa6aa passes86 CPU,408/208 layouts,
