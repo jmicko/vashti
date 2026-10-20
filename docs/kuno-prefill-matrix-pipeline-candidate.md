@@ -645,3 +645,73 @@ finite guard still a separate unchanged kernel. The actual8-plane resource
 planner and original16x8x1 entry/subgroup/IEEE/Vulkan checks pass in every full
 and tail layout. Existing M32/M64 compiler controls remain in place; protected
 GPU numerical/lifecycle and full-model timing gates are still required.
+
+### Separate native direct-CMMA full-tile wide candidate
+
+`strata-native-wide` is separate from the experimental CubeK family; the build
+selector rejects combining their flags. The new module
+`strata_matrix_native_wide.rs` implements a complete direct-CMMA dense kernel
+using the existing CubeCL Rust frontend and existing native Vulkan selector.
+Mapped experts remain on the accepted native paths. A returned `true` from
+`try_dense` means this actual kernel was launched; root-owned private/public
+wiring must use that returned result rather than infer execution from a feature.
+
+Selection requires count>=512, count and output-feature count divisible by128,
+nonzero K divisible by32, aligned genuine vec4 FP16/BF16 operand views, actual
+shared memory>=40960B and a real256-invocation256x1x1 workgroup capability.
+Actual SIMD16 must lie in the device's subgroup range and the original
+8x16x16 FP16/BF16-to-F32 CMMA feature must be present. Existing fixed-subgroup
+native pipeline/device admission remains in force. All other geometry, including
+count513 and320-feature tails, returns `false` for the original dense fallback.
+Logical owner lengths, source/output offsets, stride, shared stream, exact
+four-byte fault owner, complete output extent and U32 index/grid bounds are
+checked before launch. No request content or new runtime state is retained.
+
+The true256-thread workgroup has sixteen16-lane subgroups, arranged4M by4N.
+Each subgroup owns32x32 results, fed by four A and two B fragments into eight
+explicit F32 accumulators. This retains64 F32 lane-equivalent accumulator
+values, rather than the experimental eight-subgroup library wide kernel's128.
+These are semantic fragment counts, not measured Intel GRF use or occupancy.
+The complete workgroup computes M128xN128xK32 blocks with successive ordered
+K16 products, preserving the original FP16/BF16 and F32 arithmetic contract.
+
+Each real typed operand allocation contains two128x32 half stages (16KiB),
+for32KiB of paired operand storage. Every full stage uses256 threads with two
+fixed jobs each, publishing pairs of genuine vec4 loads immediately to SLM.
+The next stage is issued before current-stage arithmetic, following the
+accepted native ordering without a large register-first payload or a claimed
+asynchronous DMA guarantee. Uniform workgroup barriers protect initial
+publication and every stage switch.
+
+One separate real8KiB scratch allocation holds one8x16 F32 fragment for every
+subgroup. Eight explicit publication phases reuse it for the eight accumulators;
+each phase is cooperative store, uniform workgroup barrier, unique finite output
+writes, then another uniform barrier before reuse. Original finite values are
+written unchanged; nonfinite values become zero and set the original fault bit1.
+No whole128x128 F32 scratch result, output copy, operand-free alias assumption,
+new dtype/layout conversion, split-K or tolerance change is introduced. The
+actual expected per-workgroup allocation is40KiB, below the separately observed
+B70 per-workgroup49,152B cap; this does not establish hardware occupancy.
+
+The isolated CPU acceptance artifact is
+`prefill-cubek-cpu-20261020/native-wide-whole-controls.log`. There are sixteen
+distinct compiled modules (FP16/BF16 times eight physical storage-layout modes);
+generic runtime512/1024 shape values do not create different shader modules.
+Controls check actual256x1x1/required16 metadata, subgroup-ID/lane builtins,
+real shared allocations, native IEEE preservation, original finite fault,
+cooperative instruction/publication/barrier structure and Vulkan1.3 validation.
+Separate pure controls cover full-tile/capability selection and tail fallback,
+complete original owner bounds/offsets and the full-stage/output address
+bijections. Root must preserve the original GPU numerical controls and add
+actual full-tile512 and rejected513-tail cases before any performance judgment.
+
+The full distinct-module and three pure-control batch passes (four tests,7.45s
+CPU shader-test wall time). Every actual module reports40,960B shared,16 static
+cooperative product statements,12 cooperative loads,8 fragment stores and18
+workgroup barrier statements, matching the explicit phase structure. This is
+static compiler inventory, not per-inference event counts or throughput. A
+subsequent focused host-view control passes with extra genuine owner-offset,
+stream-mismatch and scalar-view-alignment cases. Valid scalar-only operand
+views return to the original fallback; no invalid vector pointer is fabricated.
+No GPU correctness or speed result is claimed here. Root owns the minimal
+feature-gated module/actual launch wiring and protected numerical acceptance.
