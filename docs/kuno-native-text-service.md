@@ -726,3 +726,33 @@ The proposed Vashti-owned prefix snapshot extension is **not implemented**.
 Its approximate raw sizes, remaining format/privacy/validation requirements and
 network tradeoffs are in the profile document. A later shared contract and
 separate Kuno/Vashti acceptance are required before adding that optional request.
+
+## Native Strata parity continuation installed — 2026-10-20
+
+Selected source0771a726 / worker SHA256
+`ccdaf8861819ec3dfb6e92208904dba5f989d79f49d176289f69e265be2e8057`
+is installed through unchanged gateway36626d30 / SHAd3ed07f4. The official
+transaction preserves the entire configuration and root-enrolled identities;
+backup/rollback `/var/lib/kuno-strata-parity-native-20261020` restoresfb31e124.
+This is an internal implementation change: API, KNT2/KNR2, settings, model name,
+context512..32768, thinking/tool rendering, keep-alive, Ollama compatibility and
+private content-free behavior are unchanged. No Vashti integration is required.
+
+The selected complete pipeline combines checked MAX8 headless known-prefix
+processing, scalar-state GDN, QSA specialization, original native matrices,
+bounded rolling submission and borrowed immutable layer bindings. All97 actual
+operator controls pass. The explicit public terminal-prefix failure test proves
+real recovery-fence waits on two queues, protected terminal process exit and
+physical GPU recovery, then a fresh worker succeeds. No reset/reboot.
+Protected staged thinking/ten-tool call/result,64/65/66 boundaries,16 MAX8 tails,
+two complete semantic repeats (155 cases each), privacy, ordinary Ollama and
+physical recovery pass. See the active coordination guide for exact receipts.
+
+Matched clean4245-token repeated prefix24.9658 ->12.4373s; first long14.1743s.
+The fresh matched Strata reference remains5.3515s, so parity is still pending.
+Actual installed public repeated code/identity/mount checks pass: cold load
+100.3023s and first short prefix9.9475s including JIT; warm35-token prefix1.1636s,
+501 outputs/15.2889s (~32.77 tokens/s), total19.7015s. This is no new decode gain.
+Actual nonroot worker, swap/core0, write_bytes0, denied inspection, zero OOM/new
+GPU faults and healthy services/admission are confirmed. Experimental matrix
+variants remain uninstalled; no new Vashti browser/image QA or release is claimed.
