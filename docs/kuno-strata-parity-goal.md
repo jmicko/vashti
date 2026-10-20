@@ -852,3 +852,13 @@ contract and complete persistent-query successor are documented in
 [kuno-native-compute-intervals.md](kuno-native-compute-intervals.md#persistent-query-matrix-successor-and-route-inventory-contract).
 All earlier components remain connected. Goal ACTIVE/UNMET; installed worker
 3fffc266/SHAeac78ce0 and image-enabled gateway36626d30/SHAd3ed07f4 unchanged.
+
+
+Complete persistent-query ad3a542d/SHAc92fed0f now passes all147 CPU,420/232
+offline,178 numerical GPU controls, raw/fixed stage and BOTH complete profile/
+compiler/launch/inventory/pool/recovery proofs. Normal repeat12.1523s remains
+slower than Strata5.3515s; no clean/staged/install acceptance. Full64-cell vector
+staging/register-accumulation successor retains the whole bundle, passes148
+selected CPU checks and is ready for freeze/hardware validation. See active
+coordination handoff and exact compute-interval contract. Installed identity and
+all original selection/privacy requirements stay; goal ACTIVE/UNMET.

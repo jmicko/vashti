@@ -22,48 +22,54 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 23:05UTC): persistent-query XMX successor; original full numerical controls retained.**
+**Authoritative active handoff (2026-10-20 23:15UTC): complete persistent-query proof passes; full-chunk/vector successor ready to freeze.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
-`codex/strata-rust-port`. Installed worker3fffc266/SHAeac78ce0 and gateway
-36626d30/SHAd3ed07f4 remain unchanged; goal ACTIVE/UNMET.
+`codex/strata-rust-port`. Goal ACTIVE/UNMET. Installed worker3fffc266/SHAeac78ce0
+and image-enabled gateway36626d30/SHAd3ed07f4 remain unchanged.
 
-RTE source78d948aa/SHA7047b381 passes all original171+7 actual GPU controls,
-then completes ALL original73/4245/4245 requests and physical recovery. Prompt
-5.0131/13.7087/12.2788s; this is a slower diagnostic, NOT selection. The unit
-`kuno-native-qsa-xmx-rte-connected-20261020` is TERMINAL, stopped after recovery
-on the historical FMA identical-group-population assertion. Normal profile,
-connected-chain acceptance, clean selection and install did NOT run. Preserve
-that failed receipt. Independent actual inventory now verifies all34560/
-2037120/2037120 route members, group histograms, original6-phase launch grammar,
-resident/streamed work and exact scratch batches/slots. Original FMA population
-equality is explicitly NOT claimed for changed accepted matrix arithmetic.
+Complete persistent-query sourcead3a542db28ab1d181ec982b63242b5360134494 /
+SHAc92fed0f7e236dc69537f481c669aadf991d6ae32110b6abf9f20e838476e611,
+build`strata-parity-qsa-xmx-persistent-query-20261020`, passes147 actual selected
+CPU controls,420 WGSL/232 matrix layouts, exact GPU stage, original171+7 GPU
+numerical controls and BOTH full original73/4245/4245 profile modes. Complete
+source/owner/compiler/actual-XMX dispatch/routed-work/scratch/pool proofs PASS.
+Both recover physically; independent final state/services normal, faults0.
+Profile first/repeat13.6317/12.2584s; normal13.6275/12.1523s. Normal QSA attention/
+merge3.4817s. This is no speed win; no clean/staged/install acceptance was run.
+Entire bundle remains intact. Source/helper/receipts are frozen; preserve old
+RTE historical FMA group-equality failure and its correct applicability account.
 
-New complete successor keeps query high/low data across all selected attention
-chunks, matching upstream's workgroup lifetime. It uses32-cell K/V microtiles
-inside original64-cell external partials,42276B actual shared envelope, and keeps
-original merge, buffers, source/owner/fault/causal checks and explicit RTE fix.
-No component rollback. All147 actual selected CPU checks pass, including the additional exact
-owned-slot initialization-before-accumulation boundary test.
-Release/offline/GPU/full-profile/clean/staged/install acceptance remains pending.
+New full-chunk successor retains the persistent query and explicit RTE fix, but
+stages one64-dimension K/V scale group across ALL64 cells. Each complete P.V
+product now stays in registers and initializes its original partial ONCE,
+avoiding the optional second microtile's global read/add/write. K/V and P hi/lo
+are genuine vec4 shared stores and views; original scalar owner/source offsets
+and original merge stay. Shared storage36132B, below actual49152B. This is the
+connected staging+matrix+publication change, not an isolated component rollback.
+All148 actual selected CPU controls pass, including exact once partial/cell
+coverage, packed scalar coverage and original cooperative-view bounds. Original
+numerical references/bounds/171+7 hardware controls and all clean gates remain.
+Freeze/release/offline/GPU/full profiles/clean/staged/install are pending.
 
-The XMX-specific wrapper chain has unique `*-xmx-inventory-connected-20261020.py`
-names; all original wrappers remain byte-identical. Only three historical FMA
-population-equality assertions become independently checked work inventories.
-Repository validator `apps/kuno/benchmarks/text/validate-xmx-route-counters.py`
-has omission/duplication/bucket-negative tests; its frozen SHA is
-c17daf2a8da62fb11dad1850042dc4932c872ccf63e1aadb25ab5b0419792bf1.
-Artifact manifest`qsa-xmx-inventory-wrapper-manifest-20261020.json` records original
-and variant hashes. Actual old RTE receipt passes inventory without changing it.
-All178 numerical, actual compiler/launch/pool, source/owner/recovery and original
-at-EACH5% clean selection requirements stay. See
-[persistent-query contract](kuno-native-compute-intervals.md#persistent-query-matrix-successor-and-route-inventory-contract).
+Artifacts under`/media/jmicko/faststore/kuno-development`:
+- `strata-parity-qsa-xmx-persistent-query-20261020-qsa-xmx-public-summary.json`
+  proves actual ordinary/native SIMD16 DPAS and cumulative dispatch24/1620/3216
+  in BOTH modes, all original and additional numerical controls and recovery.
+- `strata-parity-qsa-xmx-persistent-query-20261020-outcome-public.json` exports
+  only compiled-public aggregate metrics/profile counters/clock metadata.
+- `strata-parity-qsa-xmx-persistent-query-20261020-reencode-public-summary.json`
+  proves actual idle-pool reuse and preserves all original owner/budget checks.
+- `qsa-xmx-inventory-wrapper-manifest-20261020.json` pins8 variant wrappers;
+  original wrappers unchanged; frozen validator SHA
+  c17daf2a8da62fb11dad1850042dc4932c872ccf63e1aadb25ab5b0419792bf1.
 
-Independent23:00UTC state: Intel50,688,000B; NVIDIA compute0; driver faults0;
-Kuno/Ollama/Vashti200; admission inactive/unpaused/recoveryfalse/waiting0.
-Owned bounded sudo297061/sharedshell3556 ends00:17:49UTC Oct21. Never kill the
-shared shell or reset/reboot GPUs. No API/KNT2/KNR2/config/model/frontend/release
-change. No GPU job is active at this checkpoint.
+Independent post-run state: Intel50,688,000B, NVIDIA compute0, driver faults0,
+Kuno/Ollama/Vashti200, admission inactive/unpaused/recoveryfalse/waiting0.
+No GPU job remains. Owned bounded sudo297061/sharedshell3556 ends00:17:49UTC
+Oct21. Never kill sharedshell or reset/reboot GPUs. No API/KNT2/KNR2/config/model/
+frontend/release change. Exact source contracts and applicability rationale:
+[persistent-query and full-chunk matrix contracts](kuno-native-compute-intervals.md#persistent-query-matrix-successor-and-route-inventory-contract).
 
 **Previous handoff (superseded; the RTE unit below is now terminal):**
 

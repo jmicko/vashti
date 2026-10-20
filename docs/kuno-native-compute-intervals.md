@@ -1900,3 +1900,34 @@ CPU coverage must include every chunk boundary, partial tails, exact once cell
 coverage and same-invocation initialization. Real GPU F64/full-parent/tail/fault
 controls and both full-profile modes remain mandatory before speed selection.
 This source compiles; complete hardware/performance acceptance is pending.
+
+
+Persistent-query sourcead3a542d/SHAc92fed0f passes147 CPU,420/232 offline, exact
+raw/fixed GPU stage, original171+7 GPU controls, both original full profiles and
+ALL XMX-specific inventory/actual-compiler/dispatch/pool/source/owner/recovery
+proofs. Real dispatch24/1620/3216 in both modes. Historical FMA population equality
+is explicitly not claimed; original failed RTE receipt remains unchanged.
+Profile first/repeat13.631683071/12.258440799s; normal13.627533674/12.152310732s.
+Normal QSA attention/merge3.481686084s: retaining query alone is insufficient.
+No clean selection, staged quality or install acceptance follows this diagnostic.
+
+The complete next source keeps the query and exact RTE fix, while processing
+all64 cells of each K/V64-dimension scale group in one stage. It makes genuine
+vec4 shared stores for K,V,P-high/P-low; cooperative offsets divide by4 only at
+the typed vector view, while matrix strides remain original scalar counts64.
+Query view stays scalar and original stride256; same explicit integer rounding
+helper materializes highs before probability residuals as for scalar query and
+fixed-public stage. Full P.V64-cell sums stay in registers, then write each
+original partial once. No output partial is read or added back from global
+memory. Original partial/stats/fault owners, merge and query-row offsets remain.
+
+Actual source SLM36132B: query hi/lo16384B, reused K/V8192B, P hi/lo4096B,
+product tiles4096B, probabilities3072B, indices256B and reductions36B. All real
+barriers around shared-stage reuse remain. Fewer stages and publications replace
+the two32-cell microtiles together; it is not a partial rollback or a weaker
+allocation/source/numerical contract. All148 actual selected CPU controls pass:
+original146 plus exact-once chunk/partial coverage and complete vec4 scalar/
+cooperative-view bounds. Full original171+7 numerical and both profile/proof
+modes must pass on this new frozen artifact before original clean-at-EACH5%,
+terminal-negative, staged thinking/tools/MAX8/semantic/privacy/install gates.
+No new speed or installation claim is made yet.
