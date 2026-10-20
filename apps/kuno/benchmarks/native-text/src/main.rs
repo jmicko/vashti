@@ -125,6 +125,9 @@ mod strata_binding_owner_controls;
 #[allow(dead_code)]
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_capture_scratch.rs"]
 mod strata_capture_scratch_controls;
+#[cfg(all(test, feature = "strata-public-host-clock"))]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_host_capture_profile.rs"]
+mod strata_host_capture_controls;
 #[cfg(test)]
 #[allow(dead_code)] // Validate original native readback bounds without creating a device.
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_readback.rs"]

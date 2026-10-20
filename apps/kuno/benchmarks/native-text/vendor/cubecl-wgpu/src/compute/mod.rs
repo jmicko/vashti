@@ -23,6 +23,8 @@ pub use strata_graph::{
     native_strata_graph_stats, native_strata_operator_profile,
     native_strata_public_rolling_failure_stats, set_native_strata_profile_active,
 };
+#[cfg(feature = "kuno-public-host-clock")]
+pub use strata_graph::{NATIVE_CAPTURE_CPU_LABELS, native_strata_host_capture_profile};
 pub use strata_physical::{native_expert_shader_words, preserve_native_product_rounding};
 pub use strata_schedule::NATIVE_QUEUE_HOST_BYTES;
 mod binding_cache;

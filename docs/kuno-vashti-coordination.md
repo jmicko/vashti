@@ -22,6 +22,43 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Authoritative active handoff (2026-10-20 19:48UTC): host capture diagnosis.**
+
+Use ONLY`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`; preserve canonical Vashti checkout/notes. No API,
+KNT2/KNR2/configuration/model identity, frontend, version or release change.
+Installed source3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 are unchanged.
+The complete candidate retains ALL prior wide/attention/bulk/loading/miss-ring/
+barrier/source/push/slot/compact components. Do not partially roll them back.
+
+Compact5ac1e4e/SHA1a789884 completes120 CPU,420/208 offline, original129+42
+GPU controls, full real requests/all producer/compiler/routed-count proofs,
+terminal-negative recovery and fresh clean45/4245/4245 requests. Native QSA
+4320->2654 instructions does NOT improve whole-prompt time by itself. Clean
+repeat11.1474->10.2885s (7.71% shorter), FIRST12.9623->13.7110s (5.78% slower).
+The existing5%-faster-at-EACH-position selection gate FAILS. Full staged API/
+semantic tests and installation were NOT started. No sustained or install claim.
+Owned summaries`strata-parity-qsa-compact-{public-summary,clean-selection-public-summary}-20261020.json`.
+
+Actual19:46:19UTC recovery: Intel50,688,000B, NVIDIA compute0, all driver faults0,
+Kuno/Ollama/Vashti200, admission inactive/unpaused/no recovery/waiting0. No GPU
+job remains from acceptance. The bounded owned sudo refresh128882/128884 lasts
+until20:39:26UTC. Never kill shared shell3556 or reset/reboot either GPU.
+
+Next explicit`strata-public-host-clock` / builder`--public-host-clock` diagnostic
+retains the complete bundle and adds eight public-only wall/THREAD-CPU intervals
+inside capture. No extra GPU command, wait, footprint or private observation.
+All123 actual App CPU controls pass. The sole dependency change is one edge to
+already-locked libc; no version/download/system change. Do not call elapsed
+capture pure CPU cost or wall-minus-CPU exclusively GPU waiting. The original
+std launcher already reuses its IR Scope/INFO via thread-local storage; don't
+assume repeated IR Scope construction without evidence. Freeze,420/208 offline,
+original171 GPU/full request/new host-clock proof and physical recovery follow.
+Exact contract, failed first scratch guard/fix, identities, commands and limits:
+[CPU-clock diagnosis](kuno-native-compute-intervals.md#clean-selection-outcome-and-fixed-public-cpu-clock-diagnosis).
+Goal remains active/unmet: matched Strata repeat5.3515s still leads. Backend-only
+work needs no Vashti consumer change. Earlier entries are chronological context.
+
 **Active complete compact-QK successor (2026-10-20).**
 
 Corrected scratchb1fb992b/SHA37cf3a1e completes118 CPU,420/208 offline,

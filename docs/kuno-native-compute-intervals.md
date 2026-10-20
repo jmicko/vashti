@@ -1155,3 +1155,109 @@ with identical256-invocation geometry, shared globals and original barriers.
 No numerical reference/guard changes, shader drift exception or partial rollback.
 Freeze/offline, original129+42 GPU/full request/compiler/group/recovery/timing
 are next; no speed or installation claim for compact-QK yet.
+
+
+Frozen compact-QK5ac1e4e34a9e7923816d099915f1b50771721d29 / SHA
+1a789884c13fcb0dd60533f98db4b6c424b65b6dbb1795a490170da9b6d55e50
+(`strata-parity-qsa-compact-20261020`) passes120 CPU,420/208 offline,
+original129+42 GPU controls, full requests/all inherited and new producer
+proofs, exact original routed counts, actual compiler and physical recovery.
+Native SIMD32 ISA4320->2654 instructions,348->180 MADs, zero spills/fills.
+The smaller program does NOT improve measured QSA attention/merge:1.505209s
+versus1.494770s. Repeat profile10.677227s versus scratch10.624366s is unchanged;
+first long11.971158s. Keep ALL complete components. No partial rollback or speed
+claim from the static code size. Experts6.465395s, capture1.399600s, actualwait
+3.497518s and enqueue1.413363s show the remaining distributed host/compute cost.
+
+Owned summary`strata-parity-qsa-compact-public-summary-20261020.json`; all root
+receipts/proofs use`strata-parity-qsa-compact-20261020-{operators,profile}`.
+Actual19:36:50UTC independent recovery is healthy/clear (see the shared shell;
+profile receipt recovery19:35:08UTC): Intel50,688,000B, NVIDIA compute0, all
+faults0, HTTP200, normal inactive/unpaused/no recovery/waiting0. Installed worker
+and gateway remain unchanged. No clean/staged/terminal/sustained acceptance yet.
+
+Protected`kuno-native-qsa-compact-acceptance-20261020` now runs original terminal
+negative recovery, a FRESH clean45/4245/4245-token check, then full staged
+thinking/tools/MAX8/code/privacy acceptance ONLY if the clean FIRST and REPEATED
+long prefixes EACH beat the installed native32 reference by the existing5% gate.
+No threshold reduction, warmup relocation, prompt cache, altered workload or
+comparison with a different model. New wrapper
+`check-native-qsa-compact-acceptance-20261020.py` verifies frozen source/hash,
+all171 original/new controls, actual client swap/core0, and every step's full
+physical recovery (including services, NVIDIA, driver faults and admission),
+not a legacy passed flag written before finally. If speed gate fails, keep the
+complete candidate unselected and investigate the remaining host path; do not
+perform installation or unrelated API/UI work. Goal remains active/unmet.
+
+
+## Clean selection outcome and fixed-public CPU-clock diagnosis
+
+Compact5ac1e4e / SHA1a789884 passes the original terminal-negative partial-submit
+recovery test and a FRESH complete clean45/4245/4245 run, with actual recovery.
+Clean FIRST long13.711003s versus installed12.962279s is5.78% SLOWER; repeated
+10.288472s versus11.147391s is7.71% shorter. The original5%-at-EACH-position
+selection gate FAILS. `clean-selection.json` records both positions and false;
+do not cherry-pick the repeat, lower the gate or install this candidate.
+The full staged API/semantic check was deliberately NOT started after that
+failed gate. No new staged/terminal-success-reuse/sustained/install acceptance.
+Terminal failure retains its original explicit process-exit/quarantine policy;
+its passed recovery is not an ordinary reusable-session/owned-zero claim.
+
+The coupled source stays intact. Next diagnosis adds explicit opt-in
+`strata-public-host-clock` / `--public-host-clock`, never deployed policy.
+Its new vendor feature depends only on the ALREADY LOCKED libc crate; the lock
+change is one existing dependency edge, no version/download/system change.
+The existing fixed-public selected-layer guard (`PROFILE_ACTIVE`, authorized
+native profile selector and `KUNO_LAB_LANGUAGE_PUBLIC_ONLY=1`) enables eight
+coarse capture marks. Every mark records BOTH monotonic wall and actual current
+thread CPU ns. A missing/invalid/nonmonotonic thread clock is counted explicitly,
+not silently reported as zero CPU work. Ordinary private code constructs no active
+clock profiler, records no extra counters or diagnostic data, and default
+builds do not contain this optional clock path.
+
+Phases: inventory/signature; snapshot/preparation; original queue plan/classes;
+original COPY dependencies; original compute dependencies; retained/rolling
+preparation; command encoding/rolling; finalization. Complete original signatures,
+actual owning guards, full descriptor/BDA views, INFO epochs, node ordering,
+real queues/headers/fences, source visibility, original budgets/quarantine and
+private erasure remain unchanged. No added GPU submission, wait, event/query,
+barrier or memory access. The anonymous static256-byte counters and tiny timer
+carry only labels/counts/durations, no pointer, model value, route/expert ID,
+prompt, response, stack/register/memory sample or file content. The existing
+compiled-public sampled-layer JSON gains a clearly separate`host_capture`
+map with columns[calls,wall_ns,thread_cpu_ns,cpu_clock_unavailable]. No Kuno
+client API, KNT2/KNR2/configuration/model identity or Vashti change.
+
+CPU controls exercise actual enabled/disabled clock behavior and inspect the
+actual public-only graph gate/eight static marks. Numerical shaders remain
+unchanged; all prior components and original references/guards stay. Compile
+only AFTER the active GPU acceptance unit has ended. Then original CPU/GPU/
+complete request/recovery gates and the fixed-public sampled-layer diagnostic
+locate the next connected optimization. Do not call elapsed capture time pure
+CPU cost or infer that wall-minus-CPU is exclusively GPU waiting. These clocks
+are diagnostic, not accepted performance. Clean/source/private product policy
+and existing selection threshold remain unchanged.
+
+
+Actual19:46:19UTC recovery after the failed clean selection: Intel50,688,000B,
+NVIDIA compute0, driver faults0, allHTTP200, normal inactive/unpaused admission,
+recovery=false/waiting0. No staging or installation was started, no GPU work
+remains from acceptance. Installed identities remain unchanged.
+One source hypothesis is already ruled out: the original std KernelLauncher
+uses a thread-local reused IR Scope and reused INFO lease. Do not attribute
+host time to reconstructing an IR Scope on every launch. A prepared-launch
+proposal must demonstrate which actual remaining work it removes. Keep full
+private wiping, owner checks and original global visibility; memset symbols
+alone never justify deleting erasure or lifetime validation.
+
+
+All123 selected actual App CPU controls now pass, including disabled timing,
+real Linux thread/wall clocks with explicit availability and the ACTUAL public
+only graph gate/eight marks. Source has no new GPU operation or numerical
+change. Logs`native-host-clock-{cpu-build,complete-cpu}-20261020.log`.
+An initial editing helper stopped before writing Graph because its final-command
+marker also matched an earlier segment boundary; corrected to the exact final
+encoding boundary. Only our incidental main/mod formatting was restored before
+applying the intended edits. No failed or partial edit was frozen/run on GPU.
+No shader/numerical/header/reference/selection gate was relaxed.
+Freeze/offline/original129+42/full request/host-clock/recovery remain next.

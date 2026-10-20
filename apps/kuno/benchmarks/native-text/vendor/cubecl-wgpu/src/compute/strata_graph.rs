@@ -33,6 +33,14 @@ mod replay_signature;
 #[path = "strata_transfer_barriers.rs"]
 mod transfer_barriers;
 
+#[cfg(feature = "kuno-public-host-clock")]
+#[path = "strata_host_capture_profile.rs"]
+mod host_capture_profile;
+#[cfg(feature = "kuno-public-host-clock")]
+pub use host_capture_profile::LABELS as NATIVE_CAPTURE_CPU_LABELS;
+#[cfg(feature = "kuno-public-host-clock")]
+pub use host_capture_profile::totals as native_strata_host_capture_profile;
+
 static PROFILE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub fn set_native_strata_profile_active(active: bool) {
     PROFILE_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
@@ -2597,6 +2605,8 @@ impl Graph {
             return Ok(());
         }
         let capture_start = std::time::Instant::now();
+        #[cfg(feature = "kuno-public-host-clock")]
+        let mut host_clock = host_capture_profile::Timer::new(profile_active());
         // The caller joins real primary-queue initialization/readback work.
         // INFO copies carry their own actual native transfer dependency. Every
         // original owner stays retained through the real completion fence.
@@ -2773,6 +2783,8 @@ impl Graph {
                 .map_err(fault)?;
         }
         let signature = signature.finish().map_err(fault)?;
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(0);
         drop(native); // No guard crosses recording eviction, replay or cleanup.
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
         let profiling = profile_active() && compute_count >= 2048;
@@ -3016,6 +3028,8 @@ impl Graph {
                     && matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill)
             })
             .count();
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(1);
         let mut classes = compute_barriers::ClassBuilder::new(
             self.nodes.len(),
             preparation_budget.min(1024 * 1024),
@@ -3083,6 +3097,8 @@ impl Graph {
             .checked_sub(plan_bytes)
             .and_then(|n| n.checked_sub(class_bytes))
             .ok_or_else(|| fault("native transfer original plan metadata capacity"))?;
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(2);
         let visibility = transfer_barriers::Visibility::new(&plan.segments, preparation_budget)
             .map_err(fault)?;
         let transfer_budget = preparation_budget
@@ -3121,6 +3137,8 @@ impl Graph {
                 .map_err(fault)?;
         }
         let transfers = transfers.finish().map_err(fault)?;
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(3);
         let compute_budget = transfer_budget
             .checked_sub(transfers.metadata_bytes().map_err(fault)?)
             .and_then(|n| n.checked_add(class_bytes)) // already charged above; Recorder owns it now
@@ -3152,6 +3170,8 @@ impl Graph {
             compute.push(segment.queue(), ranges).map_err(fault)?;
         }
         let compute = compute.finish().map_err(fault)?;
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(4);
         drop(planned_cache); // Original signature allocation moves intact into Recording below.
         let transfer_bytes = transfers
             .metadata_bytes()
@@ -3283,6 +3303,8 @@ impl Graph {
         } else {
             None
         };
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(5);
         let native = keys.acquire()?;
         let encoded_cache = capture_cache
             .as_ref()
@@ -3553,6 +3575,8 @@ impl Graph {
             }
         }
         end_native_command(&self.device, self.command, boundaries.after(segment))?;
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(6);
         COPY_BARRIERS[0].fetch_add(copy_count as u64, std::sync::atomic::Ordering::Relaxed);
         COPY_BARRIERS[1].fetch_add(
             transfers.dependency_count() as u64,
@@ -3600,6 +3624,8 @@ impl Graph {
         drop(native); // Before node drops, Wgpu completion, cleanup or erasure.
         drop(capture_cache); // Wipe capture-only indices while original keys still live.
         drop(keys);
+        #[cfg(feature = "kuno-public-host-clock")]
+        host_clock.mark(7);
         CAPTURE_NS.fetch_add(
             capture_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             std::sync::atomic::Ordering::Relaxed,

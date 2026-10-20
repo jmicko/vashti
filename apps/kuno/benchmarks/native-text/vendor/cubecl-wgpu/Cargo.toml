@@ -35,6 +35,7 @@ resolver = "2"
 
 [features]
 kuno-strata-shared = []
+kuno-public-host-clock = ["dep:libc"]
 default = [
     "cubecl-runtime/default",
     "cubecl-common/default",
@@ -125,6 +126,10 @@ default-features = false
 
 [dependencies.hashbrown]
 version = "0.16"
+
+[dependencies.libc]
+version = "0.2"
+optional = true
 
 [dependencies.log]
 version = "^0.4.22"

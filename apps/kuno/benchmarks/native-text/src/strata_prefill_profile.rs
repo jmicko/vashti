@@ -158,11 +158,19 @@ fn native_totals() -> [(u64, u64); NATIVE_CLASSES.len()] {
 /// One fixed-public expert interval only. Keep this guard alive through the
 /// existing coarse Timer's real completion fence, not just enqueue_prompt().
 /// Drop on error disables sampling without publishing incomplete timestamps.
-pub(crate) struct NativeExpertLayer(Option<[(u64, u64); NATIVE_CLASSES.len()]>);
+pub(crate) struct NativeExpertLayer {
+    before: Option<[(u64, u64); NATIVE_CLASSES.len()]>,
+    #[cfg(feature = "strata-public-host-clock")]
+    host_before: [[u64; 4]; 8],
+}
 impl NativeExpertLayer {
     pub(crate) fn new(start: usize, count: usize, layer: usize) -> Self {
         if !ENABLED.load(Ordering::Acquire) {
-            return Self(None);
+            return Self {
+                before: None,
+                #[cfg(feature = "strata-public-host-clock")]
+                host_before: [[0; 4]; 8],
+            };
         }
         let selected = NativeSelection {
             authorized: std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
@@ -174,14 +182,22 @@ impl NativeExpertLayer {
         }
         .selects();
         if !selected {
-            return Self(None);
+            return Self {
+                before: None,
+                #[cfg(feature = "strata-public-host-clock")]
+                host_before: [[0; 4]; 8],
+            };
         }
         let before = native_totals();
         cubecl::wgpu::set_native_strata_profile_active(true);
-        Self(Some(before))
+        Self {
+            before: Some(before),
+            #[cfg(feature = "strata-public-host-clock")]
+            host_before: cubecl::wgpu::native_strata_host_capture_profile(),
+        }
     }
     pub(crate) fn finish(mut self) {
-        if let Some(before) = self.0.take() {
+        if let Some(before) = self.before.take() {
             cubecl::wgpu::set_native_strata_profile_active(false);
             let after = native_totals();
             let classes: BTreeMap<_, _> = NATIVE_CLASSES
@@ -201,16 +217,38 @@ impl NativeExpertLayer {
             // Counts/ns only, never source labels, experts, routes or tokens.
             // Zero timestamp_calls honestly means the existing graph threshold
             // did not sample this interval; no cap or fence is relaxed.
-            eprintln!(
-                "public_prefill_native_gpu_profile {}",
-                serde_json::json!({"sampled_layers":1,"request_index":3,"start":0,"count":4096,"layer":24,"timestamp_calls":timestamp_calls,"classes":classes})
-            );
+            #[allow(unused_mut)]
+            let mut record = serde_json::json!({"sampled_layers":1,"request_index":3,"start":0,"count":4096,"layer":24,"timestamp_calls":timestamp_calls,"classes":classes});
+            #[cfg(feature = "strata-public-host-clock")]
+            {
+                let after = cubecl::wgpu::native_strata_host_capture_profile();
+                let host: BTreeMap<_, _> = cubecl::wgpu::NATIVE_CAPTURE_CPU_LABELS
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, label)| {
+                        (
+                            label,
+                            std::array::from_fn::<_, 4, _>(|j| {
+                                after[i][j].saturating_sub(self.host_before[i][j])
+                            }),
+                        )
+                    })
+                    .collect();
+                record["host_capture_columns"] = serde_json::json!([
+                    "calls",
+                    "wall_ns",
+                    "thread_cpu_ns",
+                    "cpu_clock_unavailable"
+                ]);
+                record["host_capture"] = serde_json::json!(host);
+            }
+            eprintln!("public_prefill_native_gpu_profile {}", record);
         }
     }
 }
 impl Drop for NativeExpertLayer {
     fn drop(&mut self) {
-        if self.0.is_some() {
+        if self.before.is_some() {
             cubecl::wgpu::set_native_strata_profile_active(false);
         }
     }

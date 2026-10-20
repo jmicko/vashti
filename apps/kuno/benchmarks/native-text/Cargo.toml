@@ -83,6 +83,8 @@ strata-qsa-fma = ["strata-intel-core"]
 strata-qsa-uniform = ["strata-qsa-fma", "strata-qsa-paired", "strata-qsa-pv-gather", "strata-qsa-local-fault"]
 # Retain paired/uniform/FMA QK in its exact single guarded body.
 strata-qsa-compact = ["strata-qsa-uniform"]
+# Fixed-public timing diagnosis only; never enabled by deployed worker policy.
+strata-public-host-clock = ["strata-intel-core", "cubecl-wgpu/kuno-public-host-clock"]
 # Fixed public completion check; changes only the harness request, not the engine.
 strata-public-cap-check = ["strata-intel-core"]
 # Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.

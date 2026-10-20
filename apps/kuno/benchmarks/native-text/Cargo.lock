@@ -610,6 +610,7 @@ dependencies = [
  "derive_more",
  "half",
  "hashbrown 0.16.1",
+ "libc",
  "log",
  "rspirv",
  "sanitize-filename",
