@@ -29,14 +29,19 @@ pub(super) fn source(mut scalar: String) -> String {
         "// STRATA_ROUND_PRODUCTS: original materialized prompt QSA products.\n",
     );
 
-    // Every one of these 12 stores is in range: tid is 0..255 and the shared
-    // query row is exactly 12*256 elements. Descriptors/owning roots stay whole.
+    // Match Strata's actual float4 SLM accesses, keeping the exact12KiB query
+    // image. All768 vector stores are disjoint and initialized before the same
+    // original barrier. Global descriptors/owning roots remain scalar and whole.
+    replace_once(
+        &mut scalar,
+        "var<workgroup> sq:array<f32,3072>;",
+        "var<workgroup> sq:array<vec4<f32>,768>;",
+    );
     let mut query_load = String::new();
-    for h in 0..12 {
+    for v in 0..3 {
         query_load.push_str(&format!(
-            "sq[tid+{}u]=query[query_row*6144u+kvh*3072u+tid+{}u];\n",
-            h * 256,
-            h * 256
+            "{{let vector=tid+{}u;let base=query_row*6144u+kvh*3072u+vector*4u;\nsq[vector]=vec4<f32>(query[base],query[base+1u],query[base+2u],query[base+3u]);}}\n",
+            v * 256
         ));
     }
     replace_once(
@@ -79,9 +84,11 @@ pub(super) fn source(mut scalar: String) -> String {
             .find(end)
             .expect("prompt QK closing source drift");
     let mut body = scalar[body_at..body_end].to_owned();
-    let mut dot = String::from("var dot=k0*sq[off];\n");
+    let mut dot = String::from("let qa=sq[off/4u];let qb=sq[off/4u+1u];\nvar dot=k0*qa.x;\n");
     for j in 1..8 {
-        dot.push_str(&format!("dot+=k{j}*sq[off+{j}u];\n"));
+        let vector = if j < 4 { "qa" } else { "qb" };
+        let component = ["x", "y", "z", "w"][j % 4];
+        dot.push_str(&format!("dot+=k{j}*{vector}.{component};\n"));
     }
     replace_once(
         &mut body,
@@ -312,11 +319,13 @@ mod tests {
             for old in ["var k:array", "var accum:array", "for(var j=", "for(var d="] {
                 assert!(!expanded.contains(old));
             }
-            assert!(expanded.contains("let query_row=t+p.reserved;let n=cells(query_row,p.start);"));
+            assert!(
+                expanded.contains("let query_row=t+p.reserved;let n=cells(query_row,p.start);")
+            );
             assert!(expanded.contains("if token>=p.start+query_row+1u"));
             assert!(expanded.contains("let tok=selected[query_row*2051u+chunk*64u+tid]"));
             assert!(expanded.contains("if atomicLoad(&broken)!=0u"));
-            let dot = "var dot=k0*sq[off];\ndot+=k1*sq[off+1u];\ndot+=k2*sq[off+2u];\ndot+=k3*sq[off+3u];\ndot+=k4*sq[off+4u];\ndot+=k5*sq[off+5u];\ndot+=k6*sq[off+6u];\ndot+=k7*sq[off+7u];";
+            let dot = "let qa=sq[off/4u];let qb=sq[off/4u+1u];\nvar dot=k0*qa.x;\ndot+=k1*qa.y;\ndot+=k2*qa.z;\ndot+=k3*qa.w;\ndot+=k4*qb.x;\ndot+=k5*qb.y;\ndot+=k6*qb.z;\ndot+=k7*qb.w;";
             assert_eq!(expanded.matches(dot).count(), 12);
             for h in 0..12 {
                 assert_eq!(
@@ -333,6 +342,58 @@ mod tests {
                 assert_eq!(expanded.matches("select(0u,1u,finite(score))").count(), 12);
                 assert!(expanded.contains("for(var i=tid;i<here*12u;i+=256u)"));
             }
+        }
+    }
+
+    #[test]
+    fn typed_shared_query_preserves_every_original_component_and_barrier() {
+        use wgpu::naga as n;
+        let mut visited = [false; 3072];
+        for thread in 0..256 {
+            for job in 0..3 {
+                for component in 0..4 {
+                    let at = (thread + job * 256) * 4 + component;
+                    assert!(!visited[at]);
+                    visited[at] = true;
+                }
+            }
+        }
+        assert!(visited.into_iter().all(|v| v));
+        for head in 0..12 {
+            for lane in 0..32 {
+                for j in 0..8 {
+                    let off = head * 256 + lane * 8;
+                    assert_eq!(((off / 4 + j / 4) * 4 + j % 4), off + j);
+                }
+            }
+        }
+        for kernel in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
+            let (module, _) = compiled(&kernel.source());
+            let query = module
+                .global_variables
+                .iter()
+                .find(|(_, v)| v.name.as_deref() == Some("sq"))
+                .unwrap()
+                .1;
+            assert_eq!(query.space, n::AddressSpace::WorkGroup);
+            let n::TypeInner::Array { base, size, stride } = module.types[query.ty].inner else {
+                panic!("original shared query array");
+            };
+            assert_eq!(
+                size,
+                n::ArraySize::Constant(std::num::NonZeroU32::new(768).unwrap())
+            );
+            assert_eq!(stride, 16);
+            assert!(matches!(
+                module.types[base].inner,
+                n::TypeInner::Vector {
+                    size: n::VectorSize::Quad,
+                    scalar: n::Scalar {
+                        kind: n::ScalarKind::Float,
+                        width: 4
+                    }
+                }
+            ));
         }
     }
 

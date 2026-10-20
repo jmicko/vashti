@@ -4,6 +4,26 @@ This is a Kuno-only arithmetic-preserving candidate. It is not an installed
 worker, a GPU acceptance result, or a speed claim. No API, model, precision,
 prompt retention, tool, Vashti, or context-setting change is needed.
 
+## Typed query SLM follow-up
+
+The actual selected upstream kernel reads each head's eight query components
+through two `sycl::float4` shared-memory loads
+(`sycl/src/kernels/cuda/qsa_decode_attn.dp.cpp:229–232`). The expanded Rust
+shader still used eight individual scalar SLM loads. The follow-up makes this
+physical access explicit: the same12KiB shared image is768 `vec4<f32>` values.
+Each of256 threads initializes three disjoint vectors from the unchanged scalar
+global query owner, before the same original barrier. Each head/lane then loads
+two genuine vectors and consumes components in the original left-to-right dot
+order. There is no96-register per-thread query cache or new owner/descriptor.
+
+CPU coverage checks exact initialization coverage, every head/lane/component
+coordinate, actual Naga WorkGroup array type/stride/extent, original four
+barriers, NoContraction products and explicit PV FMAs. All six controls pass;
+independent source review finds no bounds/causality/closing change. Original
+scalar source and decode/MTP remain unchanged. GPU math, complete requests and
+measured performance remain required before selection; vector source alone is
+not a bandwidth or speed result.
+
 ## Selected upstream path and concrete difference
 
 Pinned MIT Strata `fb58e0d` normally selects its scalar INT8-KV sparse attention
