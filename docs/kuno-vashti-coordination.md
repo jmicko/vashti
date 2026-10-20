@@ -18,18 +18,9 @@ OOM/driver faults, healthy services and normal admission confirmed.
 
 **No API, KNT2/KNR2, configuration, model identity or Vashti change.**
 No frontend, fresh browser/image QA, package, version bump or release is claimed.
-Root alone owns the shared GPUs/services. Further complete paired-attention and
-descriptor-batch candidates remain separate/uninstalled; first combined pipeline
-is correct but offers no clear additional prefix gain. Its scheduling/branch
-follow-up and public CPU profiling are in progress. Parent-only public load
-markers locate98.159s of103.486s startup in original weight-store construction;
-no private content instrumentation or relaxed memory/hazard guards are added.
-Corrected public CPU sampling now passes and leaves services/admission normal,
-Intel50,688,000B, NVIDIA compute0 and zero driver faults. Full paired/bulk
-successor8c91e6ab remains correct but profiled11.7921s offers no clear extra
-prefix gain. Its sampled host costs are distributed across initialization,
-range planning, allocation/bindings and dispatch; source proposals for a larger
-coherent native group submission and bounded parallel loading are under review.
+Root alone owns the shared GPUs/services. The original paired/bulk source and
+public CPU profiles are retained in the parity guide; no private content
+instrumentation or relaxed memory/hazard guards are added.
 
 The complete bulk/PV/loading source12caac8b / SHAa2ad0c62 now passes402/144
 layouts, all103 GPU controls, three full public requests and a separate clean
@@ -43,8 +34,10 @@ uninstalled**; no new full staged/terminal acceptance is claimed for it.
 
 The next connected opt-in native32 routed-expert source/probe/public hook is
 integrated atb17c64c1, with five CPU controls including64 new shader layouts.
-Its strict multi-piece batch grammar is still in isolated implementation; no
-whole-worker/new26 GPU acceptance or speed is claimed yet. See
+Its complete worker typecheck passes. Strict multi-piece batch grammar and
+per-pool Vulkan allocation/same-queue submission packing remain in isolated
+implementation. Every original release event, segment, queue dependency and
+owner stays. No new26 GPU acceptance or speed is claimed yet. See
 [exact source, receipts and remaining gates](kuno-strata-parity-goal.md#complete-bulkpvloading-execution-now-passes).
 No API, protocol, model identity, configuration or Vashti consumer change.
 Installed3fffc266 remains selected, and the Strata parity goal stays active.
