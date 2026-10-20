@@ -52,6 +52,17 @@ fn stage<F: Float>(
 }
 
 #[cube]
+fn publication_barrier() {
+    if comptime!(cfg!(feature = "strata-native-subgroup-publish")) {
+        // Both real Vulkan compiler paths add AcquireRelease|WorkgroupMemory.
+        // Only this subgroup owns and consumes its128-F32 publication slot.
+        sync_plane();
+    } else {
+        sync_cube();
+    }
+}
+
+#[cube]
 #[allow(clippy::too_many_arguments)]
 fn publish(
     acc: &cmma::Matrix<f32>,
@@ -73,7 +84,7 @@ fn publish(
         cmma::MatrixLayout::RowMajor,
     );
     // Every cooperative store completes before any lane consumes its fragment.
-    sync_cube();
+    publication_barrier();
     #[unroll]
     for round in 0..8usize {
         let i = usize::cast_from(UNIT_POS_PLANE) + round * 16;
@@ -89,8 +100,9 @@ fn publish(
         }
     }
     // No subgroup may overwrite its shared fragment before all consumers finish.
-    // Both barriers are uniform and execute for every publication phase.
-    sync_cube();
+    // Both barriers are uniform within the owning subgroup and retain shared
+    // memory acquire/release ordering for every publication phase.
+    publication_barrier();
 }
 
 #[cube(launch_unchecked)]
@@ -659,7 +671,7 @@ pub(super) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     #[test]
     fn full_tile_selection_requires_real_caps_and_preserves_tails() {
@@ -904,6 +916,98 @@ mod tests {
         ];
         assert!(check_bounds(&padded, 512, 32, 128, 4, 5, 131).is_ok());
     }
+    pub(crate) fn assert_publication_scope_contract(words: &[u32]) {
+        fn constants(words: &[u32]) -> std::collections::BTreeMap<u32, u32> {
+            let mut values = std::collections::BTreeMap::new();
+            let mut at = 5;
+            while at < words.len() {
+                let n = (words[at] >> 16) as usize;
+                if words[at] & 65535 == 43 && n == 4 {
+                    values.insert(words[at + 2], words[at + 3]);
+                }
+                at += n;
+            }
+            values
+        }
+        let result = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(words).unwrap();
+        if !cfg!(feature = "strata-native-subgroup-publish") {
+            assert!(result.is_none());
+            return;
+        }
+        let after = result.expect("actual selected subgroup publication");
+        let values = constants(words);
+        let mut restored = after.clone();
+        let mut subgroup = 0;
+        let mut workgroup = 0;
+        let mut at = 5;
+        let mut first = None;
+        while at < words.len() {
+            let n = (words[at] >> 16) as usize;
+            if words[at] & 65535 == 224 {
+                let scope = values[&words[at + 1]];
+                assert_eq!(values[&words[at + 2]], scope);
+                if scope == 3 {
+                    subgroup += 1;
+                    first.get_or_insert(at);
+                    assert_eq!(values[&words[at + 3]], 0);
+                    assert_eq!(values[&after[at + 3]], 264);
+                    restored[at + 3] = words[at + 3];
+                } else {
+                    assert_eq!(scope, 2);
+                    workgroup += 1;
+                }
+            }
+            at += n;
+        }
+        assert_eq!(subgroup, M_FRAGMENTS * 4);
+        assert_eq!(workgroup, 2);
+        assert_eq!(
+            restored, words,
+            "ONLY existing subgroup memory-semantics operands change"
+        );
+        assert!(
+            wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&after)
+                .unwrap()
+                .is_none()
+        );
+        let at = first.unwrap();
+        let mut bad = words.to_vec();
+        bad[at + 2] = words[at + 3];
+        assert!(wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&bad).is_err());
+        let mut bad = words.to_vec();
+        bad[at + 3] = words[at + 1];
+        assert!(wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&bad).is_err());
+        let mut bad = words.to_vec();
+        let mut at = 5;
+        while at < bad.len() {
+            let n = (bad[at] >> 16) as usize;
+            if bad[at] & 65535 == 43 && n == 4 && bad[at + 3] == 264 {
+                bad[at + 3] = 265;
+            }
+            at += n;
+        }
+        assert!(wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&bad).is_err());
+    }
+
+    #[test]
+    fn subgroup_publication_slots_are_disjoint_and_have_only_local_consumers() {
+        let mut owners = vec![None; SUBGROUPS * 128];
+        for sg in 0..SUBGROUPS {
+            for lane in 0..16usize {
+                for round in 0..8usize {
+                    let at = sg * 128 + lane + round * 16;
+                    assert!(owners[at].replace(sg).is_none());
+                    assert_eq!(at / 128, sg);
+                }
+            }
+        }
+        assert!(owners.iter().all(Option::is_some));
+        for sg in 0..SUBGROUPS {
+            for i in 0..128usize {
+                assert_eq!(owners[sg * 128 + i], Some(sg));
+            }
+        }
+    }
     #[test]
     fn actual_full_tile_module_keeps_real_subgroups_ieee_stages_publication_and_faults() {
         use cubecl::ir::{StorageType, UIntKind};
@@ -937,6 +1041,10 @@ mod tests {
                 let words =
                     wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)
                         .unwrap();
+                assert_publication_scope_contract(&words);
+                let words = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&words)
+                    .unwrap()
+                    .unwrap_or(words);
                 let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)
                     .unwrap()
                     .unwrap_or(words);

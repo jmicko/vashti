@@ -110,6 +110,17 @@ fn stage<F: Float>(
 }
 
 #[cube]
+fn publication_barrier() {
+    if comptime!(cfg!(feature = "strata-native-subgroup-publish")) {
+        // Both real Vulkan compiler paths add AcquireRelease|WorkgroupMemory.
+        // Only this subgroup owns and consumes its128-F32 publication slot.
+        sync_plane();
+    } else {
+        sync_cube();
+    }
+}
+
+#[cube]
 #[allow(clippy::too_many_arguments)]
 fn publish_routed(
     acc: &cmma::Matrix<f32>,
@@ -132,7 +143,7 @@ fn publish_routed(
         16,
         cmma::MatrixLayout::RowMajor,
     );
-    sync_cube();
+    publication_barrier();
     #[unroll]
     for round in 0..8usize {
         let i = usize::cast_from(UNIT_POS_PLANE) + round * 16;
@@ -150,7 +161,7 @@ fn publish_routed(
             down,
         );
     }
-    sync_cube();
+    publication_barrier();
 }
 
 #[cube]
@@ -1629,6 +1640,18 @@ mod tests {
                 let words =
                     wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)
                         .unwrap();
+                if wide {
+                    super::super::native_wide::tests::assert_publication_scope_contract(&words);
+                } else {
+                    assert!(
+                        wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&words)
+                            .unwrap()
+                            .is_none()
+                    );
+                }
+                let words = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&words)
+                    .unwrap()
+                    .unwrap_or(words);
                 let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)
                     .unwrap()
                     .unwrap_or(words);

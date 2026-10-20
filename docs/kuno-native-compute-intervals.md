@@ -2003,3 +2003,42 @@ are not isolated GPU/CPU/disk/PCIe measurements. The ~7-9ms request rebind and
 penalty source is unproven; use fixed-public subphase clocks if investigating.
 Matched Strata's selected32-query scalar fallback remains the relevant source
 comparison; optional XMX must not be described as its measured680ms path.
+
+
+### Connected subgroup-local native publication proposal
+
+Opt-in`strata-native-subgroup-publish` retains the complete dense/native-expert
+and pooled recording bundle. It changes only the two barriers around each
+per-subgroup128-F32 result slot in native dense and native wide expert GU/DOWN
+publication. Exact SG16 identities own disjoint scratch ranges[sg*128,(sg+1)*128).
+Every producer and consumer is in that same subgroup; no peer subgroup reads its
+slot. Input double-buffer stages KEEP original full-workgroup barriers. All
+matrix FMA/K order, output addressing, finite/fault/status/scatter handling,
+full physical/source/view/epoch/retirement and graph dependencies remain.
+
+CubeCL SyncPlane currently lowers to Subgroup execution/memory scope with RELAXED
+semantics. That alone is INSUFFICIENT for SLM publication. Both actual ordinary
+HAL and retained-native compiler paths must strengthen only this recognized
+cooperative shader's relaxed subgroup barriers to AcquireRelease|WorkgroupMemory,
+retaining Subgroup execution/memory scope. Reuse an existing genuine unsigned32
+264 constant; reject unsupported scopes/semantics or missing literal definitions.
+Do not change input workgroup barriers, ownership, allocations, GPU resets or
+other shaders. Offline and compiled CPU controls must prove exact narrow diff,
+correct scopes/semantics, input-barrier preservation and malformed-case rejection.
+Original numerical and full-model/clean/staged gates remain required. Select the
+matched Strata scalar QSA path for this comparison; complete optional XMX source
+stays intact. No API/configuration/model/frontend change or accepted speed claim.
+
+
+The coherent subgroup-publication candidate now passes145 actual selected CPU
+controls (matching scalar-QSA release features;4 XMX-only tests excluded).
+Actual dense FP16/BF16 and expert GU/DOWN definitions across all8 layouts prove
+exactly2 input-stage workgroup barriers and8 subgroup publication barriers;
+only relaxed subgroup memory-semantic operands become genuine existing264.
+Restoring those operands reproduces the complete original generated words.
+Scope/unsupported-semantics/missing-fence-constant negatives reject; a second
+application is unchanged. Genuine original tail kernels receive no transform.
+Disjoint scratch-slot ownership is checked for all32 real subgroups. Original
+K order, matrix/store counts, precision controls, shared envelope, output and
+fault/source/metadata checks remain. Release/offline/171 actual GPU controls,
+whole original profile/count/pool proofs and original clean/staged gates pending.

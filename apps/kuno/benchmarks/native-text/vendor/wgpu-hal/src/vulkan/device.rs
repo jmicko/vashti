@@ -722,6 +722,9 @@ impl super::Device {
                 log::error!("{reason}");
                 crate::DeviceError::Unexpected
             })?;
+            let canonical = super::kuno_cooperative_subgroup_shared_barriers(&canonical)
+                .map_err(|_| crate::DeviceError::Unexpected)?
+                .unwrap_or(canonical);
             native_words = if let Some(precise) = super::kuno_cooperative_fp16_preserve(&canonical)
                 .map_err(|_| crate::DeviceError::Unexpected)?
             {

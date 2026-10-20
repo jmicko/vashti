@@ -32,7 +32,7 @@ pub use device::kuno_native_workgroup_layout;
 mod kuno_independent_subgroup;
 pub use kuno_independent_subgroup::{KUNO_GDN_SIMD16_ENTRY, kuno_gdn_subgroup16};
 mod kuno_cooperative;
-pub use kuno_cooperative::kuno_cooperative_subgroup;
+pub use kuno_cooperative::{kuno_cooperative_subgroup, kuno_cooperative_subgroup_shared_barriers};
 mod kuno_fp16;
 pub use kuno_fp16::kuno_cooperative_fp16_preserve;
 mod drm;

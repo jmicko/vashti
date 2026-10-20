@@ -534,6 +534,9 @@ pub(crate) fn register_spirv_module(
     // contain several such subgroups. The shared selector checks the literal
     // block shape and known subgroup-scoped matrix types before selecting16.
     let words = super::strata_physical::canonical_workgroup_layout(&kernel.assembled_module)?;
+    let words = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&words)
+        .map_err(|_| fault("native SPIRV subgroup shared fence"))?
+        .unwrap_or(words);
     // create_module first creates the HAL ShaderModule, which verifies the
     // device's FloatControls properties. Native replay creates its own Vulkan
     // module from Program.words, so it must apply the identical FP16 controls.

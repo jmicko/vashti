@@ -2456,6 +2456,9 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 }
                 let canonical =
                     wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)?;
+                let canonical =
+                    wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&canonical)?
+                        .unwrap_or(canonical);
                 let canonical = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&canonical)?
                     .unwrap_or(canonical);
                 let words = &canonical;

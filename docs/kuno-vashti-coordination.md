@@ -22,7 +22,45 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 23:36UTC): full-chunk math accepted; clean selection FAILS, system recovered.**
+**Authoritative active handoff (2026-10-20 23:52UTC): coherent native subgroup publication candidate,145 CPU pass.**
+
+Use ONLY the existing Kuno worktree/branch below. Previous full matrix bundle
+remains intact and optional; its clean failure is preserved. Installed worker/
+gateway unchanged. Goal ACTIVE/UNMET; no GPU job remains at this checkpoint.
+
+New`strata-native-subgroup-publish`/builder`--subgroup-publish` requires BOTH
+native wide32 dense and expert kernels. Only per-SG result-publication execution
+barriers become subgroup scoped. Actual scratch ranges[sg*128,(sg+1)*128) are
+disjoint, producer/consumers all in that exact16-lane subgroup. Original input
+stages retain full-workgroup barriers; all FMA/K order, source/buffer/epoch/fault/
+finite/status/scatter checks, allocations and retirement remain unchanged.
+
+Plain CubeCL SyncPlane emits RELAXED memory semantics, so BOTH actual ordinary
+HAL and retained-native compiler paths now strengthen those recognized subgroup
+barriers to AcquireRelease|WorkgroupMemory, retaining subgroup scope. Existing
+genuine literal264 is reused; no new IDs, no other word changed, no ownership
+completion inferred. Unsupported scope/semantics/missing literal fail closed.
+All145 actual selected CPU checks pass, including real dense FP16/BF16 and
+routed-expert modules across ALL8 layouts, exact narrow-diff/restoration,
+unchanged2 input barriers, expected8 publication fences, idempotence and memory
+scope/semantics/missing-constant negatives, and disjoint scratch ownership.
+Original tails are verified untouched by the transform. Test selection excludes
+only4 XMX-feature-only cases; uses matching release feature set.
+
+Release/offline/original171 GPU/full both-mode/clean/staged/install acceptance
+remain pending. Use the original complete scalar-QSA/pool wrapper chain and keep
+historical FMA group counts/numerical/source/owner guards; this variant changes
+no arithmetic. No API/configuration/model/frontend/release change. Exact memory
+contract:[subgroup publication](kuno-native-compute-intervals.md#connected-subgroup-local-native-publication-proposal).
+Artifacts: `native-subgroup-publish-{cpu-build,complete-cpu}-20261020.log`,
+`native-subgroup-publish-cpu-selection-20261020.json` under the existing artifact
+base. Owned cached sudo297061/sharedshell3556 ends00:17:49UTC Oct21. Do not kill
+the shared shell or reset/reboot the GPUs. Fresh accepted safe state below remains
+the last runtime check; only CPU compilation has run since it.
+
+**Previous handoff (full matrix validation and preserved speed failure):**
+
+**Previous handoff (2026-10-20 23:36UTC): full-chunk math accepted; clean selection FAILS, system recovered.**
 
 Goal ACTIVE/UNMET. Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
 branch`codex/strata-rust-port`. Preserve the other checkout's coordination files.

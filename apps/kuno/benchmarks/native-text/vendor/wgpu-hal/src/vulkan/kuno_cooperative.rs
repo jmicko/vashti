@@ -1,11 +1,70 @@
 //! Fixed subgroup selection for the port's Intel cooperative matrix shaders.
 //! This only supplies compiler-owned pipeline metadata, never device authority.
+use alloc::vec::Vec;
 
 const SUBGROUP: u32 = 16;
 // Original blocks and the opt-in CubeK16×N block have at most sixteen tiles.
 // A separately recognized native512×1 block must prove genuine subgroup
 // topology below. Physical workgroup/subgroup caps still precede execution.
 const MAX_BLOCK_LANES: u32 = 256;
+
+/// CubeCL's subgroup execution barrier has relaxed memory semantics. Native
+/// publication also communicates through each subgroup's disjoint SLM slot.
+/// Strengthen memory ordering in BOTH actual compiler paths; never narrow an
+/// existing workgroup execution barrier or infer a resource ownership grant.
+pub fn kuno_cooperative_subgroup_shared_barriers(
+    words: &[u32],
+) -> Result<Option<Vec<u32>>, &'static str> {
+    if words.len() < 5 || words[0] != 0x07230203 || words[3] == 0 || words[4] != 0 {
+        return Err("cooperative subgroup barrier module header");
+    }
+    if kuno_cooperative_subgroup(words) != Some(SUBGROUP) {
+        return Ok(None);
+    }
+    let mut positions = Vec::new();
+    let mut memory_constant = None;
+    let mut at = 5;
+    while at < words.len() {
+        let n = (words[at] >> 16) as usize;
+        if n == 0 || at.checked_add(n).is_none_or(|end| end > words.len()) {
+            return Err("cooperative subgroup barrier instruction extent");
+        }
+        let op = words[at] & 65535;
+        if op == 43 && n == 4 && words[at + 3] == 264 && constant(words, words[at + 2]) == Some(264)
+        {
+            memory_constant = Some(words[at + 2]);
+        }
+        if op == 224 {
+            if n != 4 {
+                return Err("cooperative subgroup barrier operand extent");
+            }
+            let execution = constant(words, words[at + 1])
+                .ok_or("cooperative subgroup barrier execution scope")?;
+            if execution == 3 {
+                if constant(words, words[at + 2]) != Some(3) {
+                    return Err("cooperative subgroup barrier memory scope");
+                }
+                match constant(words, words[at + 3]) {
+                    Some(0) => positions.push(at + 3),
+                    Some(264) => {}
+                    _ => return Err("cooperative subgroup barrier memory semantics"),
+                }
+            }
+        }
+        at += n;
+    }
+    if positions.is_empty() {
+        return Ok(None);
+    }
+    // Existing full input-stage barriers provide this literal unsigned32
+    // AcquireRelease|WorkgroupMemory constant. No new IDs/types are invented.
+    let memory = memory_constant.ok_or("cooperative subgroup shared fence constant")?;
+    let mut out = words.to_vec();
+    for position in positions {
+        out[position] = memory;
+    }
+    Ok(Some(out))
+}
 
 /// Select SIMD16 for the port's subgroup-scoped8x16x16 matrix instructions.
 /// A block may contain several independent16-lane subgroups. Other shaders,
