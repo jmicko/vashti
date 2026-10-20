@@ -120,9 +120,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 4] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 4];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 4] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 8] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 8];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 8] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -1484,8 +1484,12 @@ impl Graph {
         n: &Node,
         accesses: &mut Vec<compute_barriers::Access>,
         native: &capture_buffers::Guarded<'_>,
+        mut planning: Option<&mut Vec<strata_schedule::Access>>,
     ) -> Result<(), ServerError> {
         accesses.clear();
+        if let Some(ranges) = &mut planning {
+            ranges.clear();
+        }
         self.visit_node_bindings(n, |r, flags, atomic_or| {
             if r.size == 0
                 || r.offset
@@ -1494,8 +1498,19 @@ impl Graph {
             {
                 return Err(fault("native compute barrier actual owner interval"));
             }
+            let buffer = native.get(r)?.as_raw();
+            if let Some(ranges) = &mut planning {
+                ranges.push(strata_schedule::Access {
+                    buffer,
+                    first: r.offset,
+                    bytes: r.size,
+                    write: flags.intersects(
+                        vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                    ),
+                });
+            }
             accesses.push(compute_barriers::Access {
-                buffer: native.get(r)?.as_raw(),
+                buffer,
                 first: r.offset,
                 bytes: r.size,
                 flags,
@@ -2678,11 +2693,21 @@ impl Graph {
                     && matches!(n.dispatch, Dispatch::Copy | Dispatch::Fill)
             })
             .count();
+        let mut classes = compute_barriers::ClassBuilder::new(
+            self.nodes.len(),
+            preparation_budget.min(1024 * 1024),
+        )
+        .ok();
         let mut planner =
             strata_schedule::Planner::for_lane(self.nodes.len(), profiling, self.compute_lane)
                 .map_err(fault)?;
         for node in &self.nodes {
-            self.fill_node_ranges(node, &mut scratch.ranges, Some(&native))?;
+            self.fill_compute_ranges(
+                node,
+                &mut compute_ranges,
+                &native,
+                Some(&mut scratch.ranges),
+            )?;
             planner
                 .push_accesses(
                     matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
@@ -2695,12 +2720,34 @@ impl Graph {
                     &scratch.ranges,
                 )
                 .map_err(fault)?;
+            let segment = planner.last_segment().map_err(fault)?;
+            if classes.as_mut().is_some_and(|c| {
+                c.push(
+                    segment.queue(),
+                    if segment.copy {
+                        None
+                    } else {
+                        Some(&compute_ranges)
+                    },
+                )
+                .is_err()
+            }) {
+                // Optimization evidence unavailable: retain the original broad
+                // destination policy. Original full-view planning still runs.
+                classes = None;
+            }
         }
         let plan = planner.finish().map_err(fault)?;
+        let classes = classes.and_then(|c| c.finish().ok());
+        let class_bytes = classes
+            .as_ref()
+            .map_or(Ok(0), |c| c.metadata_bytes())
+            .map_err(fault)?;
         let plan_bytes = strata_schedule::plan_metadata_bytes(&plan)
             .ok_or_else(|| fault("native transfer original plan metadata overflow"))?;
         let preparation_budget = preparation_budget
             .checked_sub(plan_bytes)
+            .and_then(|n| n.checked_sub(class_bytes))
             .ok_or_else(|| fault("native transfer original plan metadata capacity"))?;
         let visibility = transfer_barriers::Visibility::new(&plan.segments, preparation_budget)
             .map_err(fault)?;
@@ -2736,15 +2783,24 @@ impl Graph {
         let transfers = transfers.finish().map_err(fault)?;
         let compute_budget = transfer_budget
             .checked_sub(transfers.metadata_bytes().map_err(fault)?)
+            .and_then(|n| n.checked_add(class_bytes)) // already charged above; Recorder owns it now
             .ok_or_else(|| fault("native compute barrier retained metadata capacity"))?;
-        let mut compute =
-            compute_barriers::Recorder::new(self.nodes.len(), compute_budget).map_err(fault)?;
+        let mut compute = match classes {
+            Some(classes) => {
+                compute_barriers::Recorder::with_classes(self.nodes.len(), compute_budget, classes)
+                    .or_else(|_| {
+                        compute_barriers::Recorder::broad(self.nodes.len(), compute_budget)
+                    })
+            }
+            None => compute_barriers::Recorder::broad(self.nodes.len(), compute_budget),
+        }
+        .map_err(fault)?;
         for (index, node) in self.nodes.iter().enumerate() {
             let segment = &plan.segments[plan.node_segments[index]];
             let ranges = if segment.copy {
                 None
             } else {
-                self.fill_compute_ranges(node, &mut compute_ranges, &native)?;
+                self.fill_compute_ranges(node, &mut compute_ranges, &native, None)?;
                 Some(compute_ranges.as_mut_slice())
             };
             compute.push(segment.queue(), ranges).map_err(fault)?;
@@ -2948,27 +3004,25 @@ impl Graph {
                 if !transfers.node(index).map_err(fault)?.is_empty() {
                     return Err(fault("native transfer barrier physical queue identity"));
                 }
-                for dependency in compute.node(index).map_err(fault)? {
-                    scratch.barriers.push(
-                        vk::BufferMemoryBarrier::default()
-                            .src_access_mask(dependency.before)
-                            .dst_access_mask(compute_barriers::all_accesses())
-                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                            .buffer(vk::Buffer::from_raw(dependency.buffer))
-                            .offset(0)
-                            .size(vk::WHOLE_SIZE),
-                    );
-                }
             }
-            if !scratch.barriers.is_empty() {
+            let global = if copy {
+                None
+            } else {
+                compute_barriers::global_masks(compute.node(index).map_err(fault)?)
+            };
+            if !scratch.barriers.is_empty() || global.is_some() {
+                let global_barrier = global.map(|(before, after)| {
+                    vk::MemoryBarrier::default()
+                        .src_access_mask(before)
+                        .dst_access_mask(after)
+                });
                 unsafe {
                     self.device.cmd_pipeline_barrier(
                         self.command,
                         supported_stages,
                         supported_stages,
                         vk::DependencyFlags::empty(),
-                        &[],
+                        global_barrier.as_slice(),
                         &scratch.barriers,
                         &[],
                     );
@@ -3070,11 +3124,16 @@ impl Graph {
             transfers.dependency_count() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
+        let call_counts = compute.call_counts();
         for (total, amount) in COMPUTE_BARRIERS.iter().zip([
             self.nodes.len() - copy_count,
             compute.candidates(),
             compute.count(),
             compute.proven_or_views(),
+            call_counts[0],
+            call_counts[1],
+            call_counts[2],
+            call_counts[3],
         ]) {
             total.fetch_add(amount as u64, std::sync::atomic::Ordering::Relaxed);
         }

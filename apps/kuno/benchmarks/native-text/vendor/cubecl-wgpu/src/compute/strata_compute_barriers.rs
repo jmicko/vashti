@@ -27,6 +27,109 @@ pub(super) struct Access {
     pub flags: vk::AccessFlags,
     pub atomic_or: bool,
 }
+/// Complete actual access classes from the same immutable original inventory.
+pub(super) struct ClassBuilder {
+    roots: [HashMap<u64, vk::AccessFlags>; 3],
+    expected: usize,
+    seen: usize,
+    budget: usize,
+}
+pub(super) struct SealedClasses {
+    roots: [HashMap<u64, vk::AccessFlags>; 3],
+    nodes: usize,
+}
+fn class_bytes(roots: &[HashMap<u64, vk::AccessFlags>; 3]) -> Result<usize, &'static str> {
+    roots
+        .iter()
+        .try_fold(4096usize, |n, r| {
+            n.checked_add(
+                r.capacity()
+                    .checked_mul(2)?
+                    .checked_mul(size_of::<(u64, vk::AccessFlags)>() + 1)?,
+            )
+        })
+        .ok_or("native compute class metadata overflow")
+}
+impl ClassBuilder {
+    pub fn new(nodes: usize, budget: usize) -> Result<Self, &'static str> {
+        if nodes == 0 || nodes > MAX_NODES || budget < 4096 {
+            return Err("native compute class inventory capacity");
+        }
+        Ok(Self {
+            roots: Default::default(),
+            expected: nodes,
+            seen: 0,
+            budget,
+        })
+    }
+    pub fn push(&mut self, queue: usize, accesses: Option<&[Access]>) -> Result<(), &'static str> {
+        if queue >= 3 || self.seen == self.expected {
+            return Err("native compute class original node/queue");
+        }
+        if let Some(accesses) = accesses {
+            if accesses.len() > 4129 {
+                return Err("native compute class access capacity");
+            }
+            for a in accesses {
+                if a.buffer == 0
+                    || a.bytes == 0
+                    || a.first.checked_add(a.bytes).is_none()
+                    || a.flags.is_empty()
+                    || !all_accesses().contains(a.flags)
+                {
+                    return Err("native compute class actual view");
+                }
+                if let Some(flags) = self.roots[queue].get_mut(&a.buffer) {
+                    *flags |= a.flags;
+                    continue;
+                }
+                if self.roots[queue].len() == MAX_ROOTS {
+                    return Err("native compute class root capacity");
+                }
+                // Charge old + worst new hash allocation before growth.
+                let growth = (self.roots[queue].capacity() + 4)
+                    .checked_mul(4 * (size_of::<(u64, vk::AccessFlags)>() + 1))
+                    .ok_or("native compute class growth overflow")?;
+                if class_bytes(&self.roots)?
+                    .checked_add(growth)
+                    .is_none_or(|n| n > self.budget)
+                {
+                    return Err("native compute class metadata capacity");
+                }
+                self.roots[queue]
+                    .try_reserve(1)
+                    .map_err(|_| "native compute class allocation")?;
+                self.roots[queue].insert(a.buffer, a.flags);
+                if class_bytes(&self.roots)? > self.budget {
+                    return Err("native compute class actual metadata capacity");
+                }
+            }
+        }
+        self.seen += 1;
+        Ok(())
+    }
+    pub fn finish(self) -> Result<SealedClasses, &'static str> {
+        if self.seen != self.expected {
+            return Err("native compute class incomplete inventory");
+        }
+        Ok(SealedClasses {
+            roots: self.roots,
+            nodes: self.expected,
+        })
+    }
+}
+impl SealedClasses {
+    pub fn metadata_bytes(&self) -> Result<usize, &'static str> {
+        class_bytes(&self.roots)
+    }
+    fn flags(&self, queue: usize, buffer: u64) -> Result<vk::AccessFlags, &'static str> {
+        self.roots
+            .get(queue)
+            .and_then(|r| r.get(&buffer))
+            .copied()
+            .ok_or("native compute class unknown queue/root")
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Region {
     first: u64,
@@ -38,10 +141,30 @@ struct Region {
 pub(super) struct Dependency {
     pub buffer: u64,
     pub before: vk::AccessFlags,
+    pub after: vk::AccessFlags,
+}
+/// Global memory scope is at least as strong as each original full-buffer
+/// scope. Pure WARs still return Some(EMPTY,EMPTY), preserving execution order.
+pub(super) fn global_masks(
+    dependencies: &[Dependency],
+) -> Option<(vk::AccessFlags, vk::AccessFlags)> {
+    if dependencies.is_empty() {
+        return None;
+    }
+    let mut before = vk::AccessFlags::empty();
+    let mut after = vk::AccessFlags::empty();
+    for dependency in dependencies {
+        if !dependency.after.is_empty() {
+            before |= dependency.before;
+            after |= dependency.after;
+        }
+    }
+    Some((before, after))
 }
 struct Root {
     regions: Vec<Region>,
     legacy: vk::AccessFlags,
+    future_classes: Option<vk::AccessFlags>,
 }
 
 pub(super) struct Plan {
@@ -49,6 +172,10 @@ pub(super) struct Plan {
     dependencies: Vec<Dependency>,
     candidates: usize,
     proven_or_views: usize,
+    legacy_calls: usize,
+    actual_calls: usize,
+    narrowed: usize,
+    execution_only: usize,
 }
 impl Plan {
     pub fn node(&self, index: usize) -> Result<&[Dependency], &'static str> {
@@ -69,6 +196,14 @@ impl Plan {
     }
     pub fn proven_or_views(&self) -> usize {
         self.proven_or_views
+    }
+    pub fn call_counts(&self) -> [usize; 4] {
+        [
+            self.legacy_calls,
+            self.actual_calls,
+            self.narrowed,
+            self.execution_only,
+        ]
     }
     pub fn metadata_bytes(&self) -> Result<usize, &'static str> {
         self.nodes
@@ -92,9 +227,31 @@ pub(super) struct Recorder {
     regions: usize,
     expected: usize,
     budget: usize,
+    sealed_classes: bool,
 }
 impl Recorder {
+    #[cfg(test)]
     pub fn new(nodes: usize, budget: usize) -> Result<Self, &'static str> {
+        Self::broad(nodes, budget)
+    }
+    pub fn broad(nodes: usize, budget: usize) -> Result<Self, &'static str> {
+        Self::build(nodes, budget, None)
+    }
+    pub fn with_classes(
+        nodes: usize,
+        budget: usize,
+        classes: SealedClasses,
+    ) -> Result<Self, &'static str> {
+        if classes.nodes != nodes {
+            return Err("native compute class original node count");
+        }
+        Self::build(nodes, budget, Some(classes))
+    }
+    fn build(
+        nodes: usize,
+        budget: usize,
+        classes: Option<SealedClasses>,
+    ) -> Result<Self, &'static str> {
         if nodes == 0 || nodes > MAX_NODES {
             return Err("native compute barrier node capacity");
         }
@@ -102,7 +259,14 @@ impl Recorder {
             .checked_mul(size_of::<Range<usize>>() + 4 * size_of::<Dependency>())
             .and_then(|n| n.checked_add(4096))
             .ok_or("native compute barrier metadata overflow")?;
-        if wanted > budget {
+        if wanted
+            .checked_add(
+                classes
+                    .as_ref()
+                    .map_or(Ok(0), SealedClasses::metadata_bytes)?,
+            )
+            .is_none_or(|n| n > budget)
+        {
             return Err("native compute barrier metadata capacity");
         }
         let mut result = Self {
@@ -111,12 +275,17 @@ impl Recorder {
                 dependencies: Vec::new(),
                 candidates: 0,
                 proven_or_views: 0,
+                legacy_calls: 0,
+                actual_calls: 0,
+                narrowed: 0,
+                execution_only: 0,
             },
             roots: Default::default(),
             region_capacity: 0,
             regions: 0,
             expected: nodes,
             budget,
+            sealed_classes: classes.is_some(),
         };
         result
             .plan
@@ -128,6 +297,30 @@ impl Recorder {
             .dependencies
             .try_reserve_exact(nodes * 4)
             .map_err(|_| "native compute barrier dependency allocation")?;
+        if let Some(classes) = classes {
+            let original_class_bytes = classes.metadata_bytes()?;
+            for (queue, entries) in classes.roots.into_iter().enumerate() {
+                let next = (entries.len() + 4)
+                    .checked_mul(4 * (size_of::<(u64, Root)>() + 1))
+                    .and_then(|n| n.checked_add(original_class_bytes))
+                    .ok_or("native compute class root metadata overflow")?;
+                result.check(next)?;
+                result.roots[queue]
+                    .try_reserve(entries.len())
+                    .map_err(|_| "native compute class root allocation")?;
+                result.check(original_class_bytes)?;
+                for (buffer, future) in entries {
+                    result.roots[queue].insert(
+                        buffer,
+                        Root {
+                            regions: Vec::new(),
+                            legacy: vk::AccessFlags::empty(),
+                            future_classes: Some(future),
+                        },
+                    );
+                }
+            }
+        }
         result.check(0)?;
         Ok(result)
     }
@@ -176,6 +369,12 @@ impl Recorder {
                 .map_err(|_| "native compute barrier dependency allocation")?;
             self.check(0)?;
         }
+        self.plan.narrowed += usize::from(
+            self.sealed_classes
+                && !dependency.after.is_empty()
+                && dependency.after != all_accesses(),
+        );
+        self.plan.execution_only += usize::from(dependency.after.is_empty());
         self.plan.dependencies.push(dependency);
         Ok(())
     }
@@ -190,6 +389,7 @@ impl Recorder {
             return Err("native compute barrier original node/queue");
         }
         let begin = self.plan.dependencies.len();
+        let legacy_begin = self.plan.candidates;
         if let Some(accesses) = accesses {
             if accesses.len() > 4129 {
                 return Err("native compute barrier access capacity");
@@ -217,6 +417,10 @@ impl Recorder {
                 let current_flags = current
                     .iter()
                     .fold(vk::AccessFlags::empty(), |all, a| all | a.flags);
+                let future = old.and_then(|r| r.future_classes);
+                if self.sealed_classes && future.is_none_or(|f| !f.contains(current_flags)) {
+                    return Err("native compute class unsealed future access");
+                }
                 let legacy = old.map_or(vk::AccessFlags::empty(), |r| r.legacy);
                 let legacy_barrier =
                     !legacy.is_empty() && (legacy | current_flags).intersects(writes());
@@ -245,7 +449,19 @@ impl Recorder {
                     }
                 }
                 if hazard {
-                    self.dependency(Dependency { buffer, before })?;
+                    // Retire a read-only root with execution ordering alone.
+                    // A disjoint outstanding writer anywhere on this full root
+                    // still requires real availability/visibility operations.
+                    let after = if before.intersects(writes()) {
+                        future.unwrap_or_else(all_accesses)
+                    } else {
+                        vk::AccessFlags::empty()
+                    };
+                    self.dependency(Dependency {
+                        buffer,
+                        before,
+                        after,
+                    })?;
                 }
                 if !self.roots[queue].contains_key(&buffer) {
                     if self.roots[queue].len() == MAX_ROOTS {
@@ -300,6 +516,7 @@ impl Recorder {
                 let root = self.roots[queue].entry(buffer).or_insert_with(|| Root {
                     regions: Vec::new(),
                     legacy: vk::AccessFlags::empty(),
+                    future_classes: None,
                 });
                 root.legacy = next_legacy;
                 let regions = &mut root.regions;
@@ -333,6 +550,8 @@ impl Recorder {
                 first = end;
             }
         }
+        self.plan.legacy_calls += usize::from(self.plan.candidates != legacy_begin);
+        self.plan.actual_calls += usize::from(self.plan.dependencies.len() != begin);
         self.plan.nodes.push(begin..self.plan.dependencies.len());
         Ok(())
     }
@@ -602,6 +821,233 @@ mod tests {
             }
         }
         assert!(p.finish().unwrap().proven_or_views() > 0);
+    }
+    #[test]
+    fn pure_war_uses_only_execution_but_disjoint_pending_writes_cannot_be_retired_without_memory() {
+        let mut r = Recorder::new(2, 1 << 20).unwrap();
+        r.push(0, Some(&mut [a(1, 0, 8, vk::AccessFlags::SHADER_READ)]))
+            .unwrap();
+        r.push(0, Some(&mut [a(1, 0, 8, vk::AccessFlags::SHADER_WRITE)]))
+            .unwrap();
+        let p = r.finish().unwrap();
+        assert!(p.node(1).unwrap()[0].after.is_empty());
+        assert_eq!(p.call_counts(), [1, 1, 0, 1]);
+        let mut r = Recorder::new(2, 1 << 20).unwrap();
+        r.push(
+            0,
+            Some(&mut [
+                a(1, 0, 8, vk::AccessFlags::SHADER_READ),
+                a(1, 32, 8, vk::AccessFlags::SHADER_WRITE),
+            ]),
+        )
+        .unwrap();
+        r.push(0, Some(&mut [a(1, 0, 8, vk::AccessFlags::SHADER_WRITE)]))
+            .unwrap();
+        let p = r.finish().unwrap();
+        assert_eq!(p.node(1).unwrap()[0].after, all_accesses());
+    }
+    #[test]
+    fn real_global_mask_producer_unions_data_dependencies_and_preserves_execution_only_calls() {
+        let deps = [
+            Dependency {
+                buffer: 1,
+                before: vk::AccessFlags::SHADER_WRITE,
+                after: vk::AccessFlags::SHADER_READ,
+            },
+            Dependency {
+                buffer: 2,
+                before: vk::AccessFlags::TRANSFER_WRITE,
+                after: vk::AccessFlags::UNIFORM_READ,
+            },
+            Dependency {
+                buffer: 3,
+                before: vk::AccessFlags::INDIRECT_COMMAND_READ,
+                after: vk::AccessFlags::empty(),
+            },
+        ];
+        assert_eq!(
+            global_masks(&deps),
+            Some((
+                vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                vk::AccessFlags::SHADER_READ | vk::AccessFlags::UNIFORM_READ
+            ))
+        );
+        assert_eq!(
+            global_masks(&deps[2..]),
+            Some((vk::AccessFlags::empty(), vk::AccessFlags::empty()))
+        );
+        assert_eq!(global_masks(&[]), None);
+    }
+    #[test]
+    fn sealed_future_classes_cover_untouched_bytes_without_importing_other_queue_classes() {
+        let inputs = vec![
+            (0, vec![a(1, 0, 16, vk::AccessFlags::SHADER_WRITE)]),
+            (0, vec![a(1, 32, 16, vk::AccessFlags::SHADER_WRITE)]),
+            (0, vec![a(1, 8, 8, vk::AccessFlags::SHADER_READ)]),
+            (
+                0,
+                vec![a(1, 32, 16, vk::AccessFlags::INDIRECT_COMMAND_READ)],
+            ),
+            (2, vec![a(1, 0, 48, vk::AccessFlags::TRANSFER_READ)]),
+            (0, vec![a(1, 8, 8, vk::AccessFlags::SHADER_WRITE)]),
+        ];
+        let mut c = ClassBuilder::new(inputs.len(), 1 << 20).unwrap();
+        for (q, views) in &inputs {
+            c.push(*q, Some(views)).unwrap();
+        }
+        let c = c.finish().unwrap();
+        let expected = vk::AccessFlags::SHADER_READ
+            | vk::AccessFlags::SHADER_WRITE
+            | vk::AccessFlags::INDIRECT_COMMAND_READ;
+        assert_eq!(c.flags(0, 1).unwrap(), expected);
+        assert_eq!(c.flags(2, 1).unwrap(), vk::AccessFlags::TRANSFER_READ);
+        let mut r = Recorder::with_classes(inputs.len(), 1 << 20, c).unwrap();
+        for (q, mut views) in inputs {
+            r.push(q, Some(&mut views)).unwrap();
+        }
+        let p = r.finish().unwrap();
+        assert_eq!(
+            (0..6).map(|i| p.node(i).unwrap().len()).collect::<Vec<_>>(),
+            [0, 0, 1, 0, 0, 1]
+        );
+        assert_eq!(p.node(2).unwrap()[0].after, expected);
+        assert_eq!(p.call_counts(), [3, 2, 1, 1]);
+    }
+    #[test]
+    fn unsealed_future_class_unknown_root_queue_count_and_capacity_cannot_grant_a_mask() {
+        assert!(ClassBuilder::new(0, 1 << 20).is_err());
+        assert!(ClassBuilder::new(MAX_NODES + 1, 1 << 20).is_err());
+        assert!(ClassBuilder::new(1, 4095).is_err());
+        assert!(ClassBuilder::new(1, 1 << 20).unwrap().finish().is_err());
+        assert!(
+            ClassBuilder::new(1, 4096)
+                .unwrap()
+                .push(0, Some(&[a(1, 0, 4, writes())]))
+                .is_err()
+        );
+        let sealed = || {
+            let mut c = ClassBuilder::new(2, 1 << 20).unwrap();
+            c.push(0, Some(&[a(1, 0, 4, vk::AccessFlags::SHADER_WRITE)]))
+                .unwrap();
+            c.push(0, Some(&[a(1, 0, 4, vk::AccessFlags::SHADER_READ)]))
+                .unwrap();
+            c.finish().unwrap()
+        };
+        assert!(Recorder::with_classes(3, 1 << 20, sealed()).is_err());
+        for (q, view) in [
+            (0, a(1, 0, 4, vk::AccessFlags::INDIRECT_COMMAND_READ)),
+            (2, a(1, 0, 4, vk::AccessFlags::SHADER_READ)),
+            (0, a(2, 0, 4, vk::AccessFlags::SHADER_READ)),
+        ] {
+            let mut p = Recorder::with_classes(2, 1 << 20, sealed()).unwrap();
+            p.push(0, Some(&mut [a(1, 0, 4, vk::AccessFlags::SHADER_WRITE)]))
+                .unwrap();
+            assert!(p.push(q, Some(&mut [view])).is_err());
+            assert!(p.finish().is_err());
+        }
+    }
+    #[test]
+    fn sealed_manifest_mixed_aliases_match_the_independent_byte_oracle() {
+        let mut seed = 0x987654u64;
+        let mut inputs = Vec::new();
+        let mut classes = [[vk::AccessFlags::empty(); 4]; 3];
+        for _ in 0..2048 {
+            let mut random = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            };
+            let q = (random() % 3) as usize;
+            let mut views = Vec::new();
+            for _ in 0..(random() % 6 + 1) {
+                let b = (random() % 4) as usize;
+                let first = random() % 60;
+                let bytes = random() % 4 + 1;
+                let kind = random() % 6;
+                let flags = match kind {
+                    0 => vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+                    1 => vk::AccessFlags::SHADER_READ,
+                    2 => vk::AccessFlags::TRANSFER_WRITE,
+                    3 => vk::AccessFlags::UNIFORM_READ,
+                    4 => vk::AccessFlags::INDIRECT_COMMAND_READ,
+                    _ => vk::AccessFlags::SHADER_WRITE,
+                };
+                views.push(Access {
+                    buffer: b as u64 + 1,
+                    first,
+                    bytes,
+                    flags,
+                    atomic_or: kind == 0,
+                });
+                classes[q][b] |= flags;
+            }
+            inputs.push((q, views));
+        }
+        let mut c = ClassBuilder::new(inputs.len(), 8 << 20).unwrap();
+        for (q, v) in &inputs {
+            c.push(*q, Some(v)).unwrap();
+        }
+        let mut p = Recorder::with_classes(inputs.len(), 8 << 20, c.finish().unwrap()).unwrap();
+        let mut flags = [[[0u32; 64]; 4]; 3];
+        let mut atomic = [[[false; 64]; 4]; 3];
+        for (index, (q, mut input)) in inputs.into_iter().enumerate() {
+            let mut current = [[0u32; 64]; 4];
+            let mut is_or = [[false; 64]; 4];
+            for a in &input {
+                let b = (a.buffer - 1) as usize;
+                for at in a.first as usize..(a.first + a.bytes) as usize {
+                    is_or[b][at] = if current[b][at] == 0 {
+                        a.atomic_or
+                    } else {
+                        is_or[b][at] && a.atomic_or
+                    };
+                    current[b][at] |= a.flags.as_raw();
+                }
+            }
+            p.push(q, Some(&mut input)).unwrap();
+            let actual = p.plan.node(index).unwrap();
+            for b in 0..4 {
+                let hazard = (0..64).any(|at| {
+                    flags[q][b][at] != 0
+                        && current[b][at] != 0
+                        && (flags[q][b][at] | current[b][at]) & writes().as_raw() != 0
+                        && !(atomic[q][b][at] && is_or[b][at])
+                });
+                let found = actual
+                    .iter()
+                    .filter(|d| d.buffer == b as u64 + 1)
+                    .collect::<Vec<_>>();
+                assert_eq!(found.len(), usize::from(hazard));
+                if hazard {
+                    assert_eq!(
+                        found[0].before.as_raw(),
+                        flags[q][b].iter().fold(0, |a, b| a | *b)
+                    );
+                    assert_eq!(
+                        found[0].after,
+                        if found[0].before.intersects(writes()) {
+                            classes[q][b]
+                        } else {
+                            vk::AccessFlags::empty()
+                        }
+                    );
+                    flags[q][b] = [0; 64];
+                    atomic[q][b] = [false; 64];
+                }
+                for at in 0..64 {
+                    if current[b][at] != 0 {
+                        atomic[q][b][at] = if flags[q][b][at] == 0 {
+                            is_or[b][at]
+                        } else {
+                            atomic[q][b][at] && is_or[b][at]
+                        };
+                        flags[q][b][at] |= current[b][at];
+                    }
+                }
+            }
+        }
+        assert!(p.finish().unwrap().call_counts()[1] > 0);
     }
     #[test]
     fn proven_or_never_bypasses_clear_observation_or_a_non_atomic_alias() {

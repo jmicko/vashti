@@ -383,6 +383,14 @@ impl Planner {
         }
         Ok(())
     }
+    /// Read only the actual queue selected for the most recent original node.
+    pub fn last_segment(&self) -> Result<&Segment, &'static str> {
+        self.result
+            .node_segments
+            .last()
+            .and_then(|i| self.result.segments.get(*i))
+            .ok_or("native queue original last node missing")
+    }
     pub fn finish(mut self) -> Result<Plan, &'static str> {
         if self.result.node_segments.len() != self.capacity {
             return Err("native queue plan incomplete");

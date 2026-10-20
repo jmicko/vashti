@@ -186,3 +186,73 @@ still does not reduce wall cost, the other concrete CPU lead is immutable shared
 complete BDA dependency bundles: current per-node Vec clones/packing still
 repeat the same full layer inventory. Keep genuine handles/epochs/loan checks;
 never substitute fake/narrow dependency declarations.
+
+## Connected sealed manifest, global scopes and execution-only WAR
+
+The next complete implementation retains every preceding pipeline component.
+During the ORIGINAL planning pass, one checked binding visit fills both the
+original ordered write/read intervals and exact typed compute accesses. After
+pushing that node, the actual Planner's read-only `last_segment()` supplies its
+real queue; no guessed queue mapping or extra full binding traversal is added.
+A bounded ClassBuilder unions real access classes per actual VkBuffer/queue.
+The consumed sealed manifest includes the original node count. Every actual
+compute node is checked against its sealed root/class membership before a plan
+can finish and BEFORE any prefix. Unknown future classes/roots/queues fail closed.
+
+The masks are moved once into the genuine per-root hazard table, with old/new
+hash allocation peaks charged. They never mutate there. There is no repeated
+separate manifest lookup per dependency. Builder capacity is capped at1MiB
+within the unchanged64MiB Graph allowance. Unavailable optional builder evidence
+or initial cached-manifest allocation retains the correct broad policy; no
+narrow mask is guessed. Existing hard preflight/admission limits still apply.
+After complete barrier precomputation the class/root temporaries drop; actual
+encoded dependency masks remain in the immutable plan and command buffers.
+All original signature/owners/INFO/replay/unknown-flight/erasure checks remain.
+
+A genuine data hazard uses the sealed COMPLETE future-class union, not this
+one node's mask. The same original supported stage masks, full external
+ALL_COMMANDS memory boundaries and exact cross-queue waits/releases remain.
+Retiring full-root history therefore preserves future typed reads in untouched
+bytes. Broad fallback still covers all six supported classes. No declared
+resource view is narrowed or indirect/physical source dependency omitted.
+
+Two coupled ordinary Vulkan optimizations are included:
+
+- A root with ONLY preceding reads needs execution ordering before a writer,
+  with zero memory access masks. An outstanding writer ANYWHERE on the complete
+  root prevents this exemption, even when the triggering overlap is read-only.
+  Atomic OR read/write states remain writers. Original stage ordering and the
+  actual barrier call stay; there is no false GPU completion or early slot reuse.
+- Required compute dependencies at the same original node boundary become ONE
+  global memory barrier using the union of required source/destination masks.
+  This broadens memory resource scope and preserves all original CPU-validated
+  views and real lifetime owners; it removes per-buffer driver bookkeeping.
+  A pure execution-only boundary emits an actual zero-access barrier. An empty
+  dependency list emits none. Dedicated COPY barriers, per-target host-read
+  boundaries, actual queue/family policies and command boundaries stay unchanged.
+
+Primary semantics/reference:
+[Khronos synchronization examples](https://docs.vulkan.org/guide/latest/synchronization_examples.html),
+compute-to-compute read-then-write and global-vs-per-resource examples. The guide
+confirms execution ordering suffices for WAR and recommends global memory
+barriers for ordinary compute buffer dependencies. No shader arithmetic or
+instruction words change here.
+
+Compiled-public counters now distinguish original/actual internal compute
+barrier CALLS, buffer dependency ENTRIES, entries narrowed by the sealed manifest,
+and execution-only entries. Counts are not hardware flush or completion proof.
+No private request trace or new network/API/configuration/consumer field exists.
+
+The actual combined App compiles and65 CPU controls pass: three final-SPIR-V
+proof,11 interval/manifest/mask controls,37 original queue/planning/rolling/
+recovery, four transfer, three owner, one scratch, two actual serializer/budget,
+two real KernelTask/Box release and two profiler controls. New cases cover
+2048 mixed nodes against the independent three-queue byte oracle with sealed
+classes, future indirect reads in untouched bytes, wrong future class/root/queue/
+count/capacity, pure WAR versus disjoint pending writers, and the ACTUAL global
+mask producer including execution-only calls. The original8192-node and mixed
+alias oracles remain. Log `native-sealed-global-complete-cpu-20261020.log`.
+An integration compile caught an incomplete Option conversion for fallback;
+this was fixed before final CPU acceptance. No numerical GPU tolerance/reference
+was changed. Frozen release/offline/original129 GPU/full request/count/recovery
+and performance results are pending; no installation or speed claim yet.

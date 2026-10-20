@@ -44,6 +44,15 @@ not a measured hardware cause. Add actual barrier-call counts. Never narrow to
 one node's destination mask and clear old history: later reads in untouched
 bytes through a different access class could lose a dependency.
 
+The complete sealed-manifest successor is now implemented, coupled with actual
+queue-selected class collection in the original pass, cached immutable masks,
+execution-only WAR boundaries and one global compute memory barrier per required
+node. All original data hazards, full views, queue waits/releases, external
+boundaries, ownership and64MiB limits remain. Actual App65 CPU controls pass.
+Release/offline/original129 GPU/full-model/performance acceptance is pending.
+See [the exact connected contract](kuno-native-compute-intervals.md#connected-sealed-manifest-global-scopes-and-execution-only-war).
+It is not selected or installed, and requires no Vashti/API change.
+
 Exact code/artifact/receipt identities, tests, limitations and next gates are in
 [the synchronization guide](kuno-native-compute-intervals.md). Physical snapshot:
 Intel50,688,000B, NVIDIA compute0, faults0, all services200 and normal admission.
