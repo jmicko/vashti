@@ -1,6 +1,20 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno-only Strata prompt optimization (2026-10-20; installed and backend-validated).**
+**Active Kuno-only goal: match Strata (2026-10-20; candidate work in progress).**
+The user explicitly requested a new parity goal. See
+[reference scope, source decisions and protected receipts](kuno-strata-parity-goal.md).
+The accepted installation remains workerc8db19de / SHAfb31e124 and unchanged
+gateway36626d30 / SHAd3ed07f4 below. New matrix/graph candidates pass the
+original53 GPU controls and reduce a profiled warm4245-token prefix to23.869s,
+but this is not Strata parity or a new installation. The MAX8 headless candidate
+currently fails an unchanged QSA guard; recovery is confirmed and that artifact
+must not be installed. Further narrow matrix and active-prefix attention work
+is being developed together with an isolated, matched upstream reference.
+No API, KNT2/KNR2, configuration, model name or Vashti consumer change. Do not
+release or consume this checkpoint as an accepted worker. Preserve full original
+numerical, ownership, privacy, thinking/tool and physical recovery gates.
+
+**Prior accepted Kuno-only Strata prompt optimization (2026-10-20; installed and backend-validated).**
 Selected worker sourcec8db19de / SHAfb31e124 is installed through the unchanged
 image-enabled gateway36626d30 / SHAd3ed07f4. The official transaction preserves
 the complete configuration and root-enrolled model identities. Backup/rollback:
