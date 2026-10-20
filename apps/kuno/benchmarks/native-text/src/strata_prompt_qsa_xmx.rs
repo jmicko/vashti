@@ -8,7 +8,7 @@ use kuno_text::{Error, Result};
 
 pub(crate) const THREADS: u32 = 128;
 pub(crate) const SHARED_BYTES: usize =
-    8192 * 2 + 4096 * 2 + 2048 * 2 + (1024 + 768) * 4 + 64 * 4 + 9 * 4;
+    8192 * 2 + 4096 * 2 + 2048 * 2 + (1024 + 768) * 4 + 64 * 4 + 12 * 4;
 
 static LAUNCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn launch_count() -> u64 {
@@ -140,7 +140,10 @@ fn attention_xmx(
         let mut tile = SharedMemory::<f32>::new(1024usize);
         let mut prob = SharedMemory::<f32>::new(768usize);
         let mut rows = SharedMemory::<u32>::new(64usize);
-        let mut reduction = SharedMemory::<f32>::new(9usize);
+        // Pad this final scalar stage to16-byte size, like every other stage.
+        // Explicit-layout allocation may visit stages in different orders;
+        // no vector alignment hole may exceed the authenticated shared bound.
+        let mut reduction = SharedMemory::<f32>::new(12usize);
         let mut qm = 0.0f32;
         let mut i = tid;
         while i < 3072 {
@@ -655,7 +658,7 @@ mod tests {
     }
     #[test]
     fn every_cooperative_tile_has_exact_one_writer_and_stays_inside_original_slots() {
-        assert_eq!(SHARED_BYTES, 36132);
+        assert_eq!(SHARED_BYTES, 36144);
         assert!(SHARED_BYTES <= 49152);
         assert_eq!(THREADS, 8 * 16);
         let mut outputs = std::collections::BTreeSet::new();
@@ -727,6 +730,35 @@ mod tests {
                 assert!(initialized[used..].iter().all(|&v| !v));
             }
         }
+    }
+    #[test]
+    fn compiled_attention_shared_envelope_is_exact_for_every_layout() {
+        use cubecl::ir::{ElemType, StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, WgpuCompilationOptions};
+        let mut actual = Vec::new();
+        for mask in 0u8..8 {
+            let mut options = WgpuCompilationOptions {
+                supports_vulkan: true,
+                ..Default::default()
+            };
+            options.vulkan.max_spirv_version = (1, 6);
+            options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+            options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+            options.vulkan.supports_explicit_smem = mask & 4 != 0;
+            let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+                &mut AutoCompiler::SpirV(Default::default()),
+                definition(),
+                &options,
+                cubecl::server::ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap() else {
+                panic!("actual matrix SPIRV");
+            };
+            actual.push(kernel.shared_size);
+        }
+        assert_eq!(actual, vec![SHARED_BYTES; 8]);
     }
     #[test]
     fn packed_stages_cover_all_scalars_and_cooperative_views_stay_in_bounds() {

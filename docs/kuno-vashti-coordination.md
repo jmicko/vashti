@@ -22,7 +22,7 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 23:15UTC): complete persistent-query proof passes; full-chunk/vector successor ready to freeze.**
+**Authoritative active handoff (2026-10-20 23:19UTC): full-chunk/vector successor alignment fixed,149 CPU controls pass.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. Goal ACTIVE/UNMET. Installed worker3fffc266/SHAeac78ce0
@@ -45,12 +45,26 @@ stages one64-dimension K/V scale group across ALL64 cells. Each complete P.V
 product now stays in registers and initializes its original partial ONCE,
 avoiding the optional second microtile's global read/add/write. K/V and P hi/lo
 are genuine vec4 shared stores and views; original scalar owner/source offsets
-and original merge stay. Shared storage36132B, below actual49152B. This is the
+and original merge stay. Shared storage36144B, below actual49152B. This is the
 connected staging+matrix+publication change, not an isolated component rollback.
-All148 actual selected CPU controls pass, including exact once partial/cell
-coverage, packed scalar coverage and original cooperative-view bounds. Original
+All149 actual selected CPU controls pass, including exact once partial/cell
+coverage, packed scalar coverage, cooperative-view bounds and exact36144B
+reflection for ALL8 actual compiled memory layouts. Original
 numerical references/bounds/171+7 hardware controls and all clean gates remain.
-Freeze/release/offline/GPU/full profiles/clean/staged/install are pending.
+Unaligned source96842067/SHA6ca665aa fails its ORIGINAL offline shared-envelope
+check before any GPU launch: implicit36132B, some explicit layouts36136B due to
+vector alignment. Preserve that failed artifact/log. Padding only reduction9
+->12 words makes every stage size a multiple of16, ALL8 actual compiler layouts
+now36144B. No check/threshold is removed or loosened. New freeze/release/offline/
+GPU/full profiles/clean/staged/install are pending.
+
+Reference-source audit also confirms matched Strata5.3515s did NOT opt into
+XMX. `public-reference-client.py` has an explicit container-env allowlist with
+no`STRATA_PROMPT_ATTN_XMX`; pinned SYCL XMX mode defaults0 and caller uses the
+original decode-attention batch fallback,32 queries. This matrix candidate is
+an opt-in successor, NOT the measured reference's selected attention kernel.
+Do not attribute Strata's680ms timing to XMX. Keep original scalar fallback and
+its numerical controls; compare exact scalar code/ISA if matrix remains slower.
 
 Artifacts under`/media/jmicko/faststore/kuno-development`:
 - `strata-parity-qsa-xmx-persistent-query-20261020-qsa-xmx-public-summary.json`

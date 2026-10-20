@@ -1931,3 +1931,32 @@ cooperative-view bounds. Full original171+7 numerical and both profile/proof
 modes must pass on this new frozen artifact before original clean-at-EACH5%,
 terminal-negative, staged thinking/tools/MAX8/semantic/privacy/install gates.
 No new speed or installation claim is made yet.
+
+
+The unaligned full-chunk artifact96842067/SHA6ca665aa is rejected OFFLINE before
+any GPU launch: reflected implicit36132B, some explicit36136B. The original
+exact envelope guard caught vector-alignment holes; its failure is preserved in
+`strata-parity-qsa-xmx-full-chunk-offline-20261020.log`. Actual CPU diagnostic
+reflects[36132,36132,36132,36132,36136,36132,36136,36136]. Allocation order can
+change padding: do not replace the expected size with an observed per-mask list
+or relax exact equality. Instead pad only reduction9->12 scalar words so ALL
+stage lengths are multiples of16. All149 actual selected CPU checks PASS;
+the new real compiler test verifies ALL8 layouts exactly36144B. Device
+admission and original offline exact equality use that same complete bound.
+No arithmetic, fault/causal/owner/source/threshold guard changed. No GPU call
+was made with the rejected unaligned binary. Aligned release/hardware/full
+performance acceptance is pending.
+
+### Exact selected reference attention path
+
+Pinned`public-reference-client.py::runtime_command` constructs its container
+engine environment explicitly; no`STRATA_PROMPT_ATTN_XMX` enters. Pinned
+`sycl/src/kernels/cuda/qsa_prompt_attn_xmx.dp.cpp:364` defaults its opt-in mode0,
+returnsfalse, and`sycl/src/prefill/prefill.cpp:3152` then dispatches original
+`qsa_decode_attn_batch` in32-query batches(`attn_batch=32`). Its lane-cell switch
+also defaultsfalse. Thus the matched5.3515s and instrumented QSA680ms reference
+are NOT evidence of XMX performance. The current XMX work is a complete optional
+successor retained alongside the original scalar path. If it stays slower,
+investigate the exact selected scalar SYCL/ISA/packed8-load behavior instead
+of describing XMX as the reference's proven fast kernel. No new reference run
+or arbitrary flag/schedule/warmup change is needed to establish this source fact.

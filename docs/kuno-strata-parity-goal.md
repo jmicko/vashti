@@ -862,3 +862,13 @@ staging/register-accumulation successor retains the whole bundle, passes148
 selected CPU checks and is ready for freeze/hardware validation. See active
 coordination handoff and exact compute-interval contract. Installed identity and
 all original selection/privacy requirements stay; goal ACTIVE/UNMET.
+
+
+Full-chunk96842067/SHA6ca665aa is correctly rejected offline before GPU use:
+vector-alignment holes exceed its exact nominal bound by4B on some layouts.
+Pad reduction9->12 words; all149 selected CPU checks now pass, ALL8 actual
+compiled layouts exactly36144B. Original exact envelope/numerical/ownership
+checks remain. Matched reference source explicitly leaves XMX opt-in disabled;
+its selected scalar fallback, not optional XMX, produced5.3515s. Record and use
+that distinction in future performance attribution. Aligned artifact and full
+hardware acceptance pending; installed identities unchanged, goal ACTIVE/UNMET.
