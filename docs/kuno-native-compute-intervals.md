@@ -1293,3 +1293,50 @@ and a witness of the unchanged original GPU/rolling selector. Exact-source
 420/208 offline,171 GPU, full public requests and physical recovery follow.
 Normal-path results, not the serialized sampler alone, will choose the next
 connected optimization. No API/frontend/install/release change.
+
+
+### Complete push-template encoding candidate
+
+The next candidate retains the complete bundle and all original descriptor view,
+owner/range/type/count checks. On the existing explicitly selected push path,
+Vulkan1.1+ devices with all actual required entry points may create one
+PUSH_DESCRIPTORS descriptor-update template per immutable pipeline layout. A
+fixed32-entry stack array describes the SAME ordered storage/uniform bindings,
+one descriptor each, reading complete VkDescriptorBufferInfo values at their
+actual C-stride offsets. Each dispatch still validates and writes EVERY original
+view and calls the command with that pipeline's own template/layout/set0.
+Only rebuilding WriteDescriptorSet structures per dispatch is removed. No
+shader/math/fault/queue/barrier/source/recording/epoch/budget/erasure change.
+Template creation failure or unsupported device keeps the original complete
+push implementation; non-push devices keep the original fresh-set path.
+
+Templates own no model content, buffer handles or data pointers; they are
+layout-only driver objects destroyed with their pipeline after original joined
+completion. Unknown completion preserves the entire original Graph as before.
+The fixed creation array is explicitly added to the existing conservative stack
+reservation. Anonymous aggregate template dispatches extend only the existing
+compiled-public laboratory profile, never inference API/private tracing.
+Official contract: Vulkan vkCmdPushDescriptorSetWithTemplateKHR and
+VkDescriptorUpdateTemplateCreateInfo reference pages (Vulkan1.1 plus enabled
+VK_KHR_push_descriptor); actual instance/device versions and function pointers
+are checked. Original per-call type/view guards remain in both implementations.
+CPU controls compare every template offset/type/binding and decoded live input
+view against the original complete writes, including malformed extent/type
+rejection. Original GPU references and full requests remain authoritative.
+This is an unselected backend candidate; no installation or speed claim.
+
+
+All128 selected actual App CPU controls pass (original125 plus three template
+controls). Every original packer test remains intact; the original writes and
+template route share the same complete-view/type validator. Source changes add
+one optional layout-only handle to each pipeline, checked effective instance
+and physical Vulkan versions plus all three actual entry points, and explicit
+post-completion destruction. Creation/unsupported fallback remains the original
+full writes; no partial descriptor update/cache is permitted. Anonymous template
+dispatch totals are appended after all old laboratory counter indices, preserving
+the original schema fields and old index meanings. Capture stack reservation
+includes the actual32 template entries in addition to every old term. Exact-source
+GPU/full-request/normal-path host clock and clean selection gates remain next.
+Primary references:
+[push command](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdPushDescriptorSetWithTemplate.html),
+[template creation](https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorUpdateTemplateCreateInfo.html).

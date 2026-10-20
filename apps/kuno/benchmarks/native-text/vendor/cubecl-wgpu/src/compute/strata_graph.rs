@@ -144,9 +144,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 20] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 20];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 20] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 21] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 21];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 21] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -629,6 +629,7 @@ struct Pipeline {
     pipeline: vk::Pipeline,
     program: Arc<Program>,
     push_descriptors: bool,
+    push_template: Option<vk::DescriptorUpdateTemplate>,
 }
 #[derive(Debug)]
 enum ReadDependencies {
@@ -679,6 +680,7 @@ pub(crate) struct Graph {
     identity: u64,
     program_limits: ProgramDeviceLimits,
     push_descriptors: Option<(ash::khr::push_descriptor::Device, u32)>,
+    push_templates: bool,
     timestamp_period: f64,
     timestamp_bits: u32,
     compute_queues: [ComputeQueue; 2],
@@ -1032,6 +1034,25 @@ impl Graph {
         } else {
             None
         };
+        // KHR push templates require an effective Vulkan1.1 implementation.
+        // Query actual entry points rather than invoking ash's unavailable stub.
+        let push_templates = push_descriptors.is_some()
+            && push_descriptors::templates_supported(
+                h.shared_instance().instance_api_version(),
+                props.properties.api_version,
+                [
+                    c"vkCreateDescriptorUpdateTemplate",
+                    c"vkDestroyDescriptorUpdateTemplate",
+                    c"vkCmdPushDescriptorSetWithTemplateKHR",
+                ]
+                .iter()
+                .all(|name| unsafe {
+                    h.shared_instance()
+                        .raw_instance()
+                        .get_device_proc_addr(h.raw_device().handle(), name.as_ptr())
+                        .is_some()
+                }),
+            );
         let timestamp_period = props.properties.limits.timestamp_period as f64;
         let physical_limits = props.properties.limits;
         let timestamp_bits = unsafe {
@@ -1200,6 +1221,7 @@ impl Graph {
             identity,
             program_limits,
             push_descriptors,
+            push_templates,
             timestamp_period,
             timestamp_bits,
             compute_queues: [
@@ -1407,6 +1429,29 @@ impl Graph {
                     return Err(fault("native graph pipeline"));
                 }
             };
+            // Layout-only, no dispatch data is retained. Driver creation failure
+            // leaves the complete original push path available on this pipeline.
+            let push_template = if push && self.push_templates {
+                push_descriptors::template_entries(&p.bindings)
+                    .ok()
+                    .and_then(|entries| unsafe {
+                        self.device
+                            .create_descriptor_update_template(
+                                &vk::DescriptorUpdateTemplateCreateInfo::default()
+                                    .descriptor_update_entries(&entries[..p.bindings.len()])
+                                    .template_type(
+                                        vk::DescriptorUpdateTemplateType::PUSH_DESCRIPTORS_KHR,
+                                    )
+                                    .pipeline_bind_point(vk::PipelineBindPoint::COMPUTE)
+                                    .pipeline_layout(layout)
+                                    .set(0),
+                                None,
+                            )
+                            .ok()
+                    })
+            } else {
+                None
+            };
             self.pipelines.insert(
                 pipeline.clone(),
                 Pipeline {
@@ -1416,6 +1461,7 @@ impl Graph {
                     pipeline: pipeline_native,
                     program: p,
                     push_descriptors: push,
+                    push_template,
                 },
             );
         }
@@ -3334,6 +3380,7 @@ impl Graph {
         let mut segment = 0usize;
         let mut fresh_descriptors = None;
         let mut pushed_nodes = 0usize;
+        let mut template_nodes = 0usize;
         let mut fresh_nodes = 0usize;
         for (index, n) in self.nodes.iter().enumerate() {
             let work = &self.recordings.last().unwrap().work;
@@ -3524,21 +3571,45 @@ impl Graph {
                         .offset(r.offset)
                         .range(r.size);
                 }
-                let writes =
-                    push_descriptors::writes(&infos[..n.resources.len()], &p.program.bindings)
-                        .map_err(fault)?;
-                unsafe {
-                    self.push_descriptors
-                        .as_ref()
-                        .unwrap()
-                        .0
-                        .cmd_push_descriptor_set(
-                            self.command,
-                            vk::PipelineBindPoint::COMPUTE,
-                            p.layout,
-                            0,
-                            &writes[..n.resources.len()],
-                        );
+                if let Some(template) = p.push_template {
+                    // Same original complete live views and type/range checks;
+                    // only the immutable write-layout description is reused.
+                    push_descriptors::validate_infos(
+                        &infos[..n.resources.len()],
+                        &p.program.bindings,
+                    )
+                    .map_err(fault)?;
+                    unsafe {
+                        self.push_descriptors
+                            .as_ref()
+                            .unwrap()
+                            .0
+                            .cmd_push_descriptor_set_with_template(
+                                self.command,
+                                template,
+                                p.layout,
+                                0,
+                                infos.as_ptr().cast(),
+                            );
+                    }
+                    template_nodes += 1;
+                } else {
+                    let writes =
+                        push_descriptors::writes(&infos[..n.resources.len()], &p.program.bindings)
+                            .map_err(fault)?;
+                    unsafe {
+                        self.push_descriptors
+                            .as_ref()
+                            .unwrap()
+                            .0
+                            .cmd_push_descriptor_set(
+                                self.command,
+                                vk::PipelineBindPoint::COMPUTE,
+                                p.layout,
+                                0,
+                                &writes[..n.resources.len()],
+                            );
+                    }
                 }
                 pushed_nodes += 1;
             }
@@ -3619,6 +3690,7 @@ impl Graph {
         ]) {
             total.fetch_add(amount as u64, std::sync::atomic::Ordering::Relaxed);
         }
+        COMPUTE_BARRIERS[20].fetch_add(template_nodes as u64, std::sync::atomic::Ordering::Relaxed);
         drop(encoded_cache); // End the immutable original-signature borrow before ready bookkeeping.
         self.recordings.last_mut().unwrap().ready = true;
         if let Some(rolling) = &mut rolling {
@@ -3673,6 +3745,10 @@ impl Drop for Graph {
             self.nodes.clear();
             self.recordings.clear();
             for (_, p) in self.pipelines.drain() {
+                if let Some(template) = p.push_template {
+                    self.device
+                        .destroy_descriptor_update_template(template, None);
+                }
                 self.device.destroy_pipeline(p.pipeline, None);
                 self.device.destroy_pipeline_layout(p.layout, None);
                 self.device
