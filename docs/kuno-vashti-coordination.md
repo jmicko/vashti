@@ -22,80 +22,54 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Kuno-only development checkpoints (2026-10-20; latest16:23UTC below).**
-The complete pipeline remains intact. Scoped actual-buffer guard source45795611 /
-SHA8944b257 passes101 CPU,408/208 offline layouts, all129 numerical GPU controls,
-complete requests/counts and recovery, but profiled repeat11.5435s is unchanged.
-Complete-view interval sourcef1e09df7/SHAe705298b passes55 CPU and the same GPU/
-whole-model gates, but repeat12.3372s regresses. Coupled actual-final-SPIR-V
-OR-only source2b32bbea/SHA9452beed passes60 CPU,408/208, original129 GPU,
-complete requests/counts and physical recovery. It proves162,742 actual OR-only
-views and241,948 vs431,700 buffer barrier ENTRIES (44% fewer), yet repeat12.2718s
-is unchanged. Entries are not hardware flushes or barrier calls. None is selected
-or installed; no new clean/staged/terminal or sustained acceptance is claimed.
-Installed matched clean11.1474s vs same-host Strata5.3515s stays the reference.
+**Active Kuno development (2026-10-20 16:50UTC; installed native32 unchanged).**
 
-Next is the [sealed actual access-class manifest proposal](kuno-native-compute-intervals.md#next-coherent-source-proposal-sealed-access-class-manifest).
-Current conservative barriers include all six destination classes even when a
-root never uses them. A sealed complete per-buffer/per-queue future-class union
-could narrow them safely while retaining every original full view, external
-boundary, queue wait/release, owner and64MiB budget. This mask cost is a hypothesis,
-not a measured hardware cause. Add actual barrier-call counts. Never narrow to
-one node's destination mask and clear old history: later reads in untouched
-bytes through a different access class could lose a dependency.
+The complete original-signature inventory/full-source-bundle candidate is
+frozen from source`bfbfc0c3d51d39409e364530fef44ad65d93495d`, worker SHA256
+`ac01855f2dc9002208f81b88533a364657594d4bd4d6e1e9e7c94b1113baa90d`,
+build`strata-parity-capture-inventory-20261020`. All80 actual App CPU controls
+and408 ordinary/208 matrix offline layouts pass. Original129 numerical GPU
+controls followed by full public requests/actual producer counts/physical
+recovery are running in protected unit`kuno-native-capture-inventory-connected-20261020`.
+No new speed, full staged/terminal acceptance or installation claim yet.
 
-The complete sealed-manifest successor is now implemented, coupled with actual
-queue-selected class collection in the original pass, cached immutable masks,
-execution-only WAR boundaries and one global compute memory barrier per required
-node. All original data hazards, full views, queue waits/releases, external
-boundaries, ownership and64MiB limits remain. Actual App65 CPU controls pass.
-Release/offline/original129 GPU/full-model/performance acceptance is pending.
-See [the exact connected contract](kuno-native-compute-intervals.md#connected-sealed-manifest-global-scopes-and-execution-only-war).
-It is not selected or installed, and requires no Vashti/API change.
+This candidate retains ALL preceding wide/bulk/miss-ring/loading/attention/
+scoped-buffer/interval/OR/sealed-mask/global-barrier/push-descriptor components.
+It reuses the SAME complete original signature allocation, revalidates every
+actual root under EACH real guard, retains all original full views/access flags/
+queue selection/INFO/owners/fences/erasure and64MiB, and shares only identical
+ordered complete source lists inside one batch. Optional snapshot evidence
+unavailable retains the old lookup path; source-cache overflow materializes the
+full original views. Original24MiB host cap and8MiB tape remain. The actual
+fixture charges18.92MiB; worst-case tape/node budget plus miss-ring metadata
+fits. Actual new counters prove reuse, full root revalidation and real sharing.
+Exact contract, CPU controls, limits and next gates:
+[connected capture/source reuse](kuno-native-compute-intervals.md#connected-original-signature-inventory-and-full-source-bundles).
 
-Sealed/global source065815af / SHA21446b89 now passes65 CPU,408/208 offline,
-all129 original GPU controls, complete requests with actual masks/calls proofs,
-graceful exit and physical recovery. Repeated profile11.9077s improves only
-modestly; no clean/staged/terminal or installation acceptance is claimed.
-Actual calls162,838 versus163,798 original remain near one per kernel.
-The next explicit connected candidate is command-buffer-owned push descriptors,
-with genuine extension/limit checks, full original binding writes and unchanged
-fallback, owner/fence/metadata/recovery/math rules; exact contract is in the guide.
+The latest COMPLETED preceding build9dc5786a/SHA85b9461b passes73 CPU,
+408/208 layouts, all129 original numerical GPU controls, complete real requests,
+actual164,182 pushed and zero fresh expert descriptor dispatches, graceful exit
+and physical recovery. Repeat profile11.8305s is unchanged from11.9077s for
+sealed/global065815af; installed clean11.1474s and same-host Strata5.3515s
+remain faster. Neither development candidate is selected or installed; no
+clean/staged/terminal/sustained acceptance is claimed for either.
 
-Complete push source9dc5786a/SHA85b9461b passes73 CPU,408/208 offline,
-all129 original GPU controls, complete requests and actual164,182 pushed /
-zero fresh expert dispatches, graceful exit and physical recovery16:19:39UTC.
-Repeated profile11.8305s is unchanged from11.9077s; cold load118.88s regresses.
-No clean/staged/terminal, sustained gain or install claim. The complete bundle
-stays intact. Protected fixed-public DSO-aware CPU profiling is next; raw samples
-are removed, and actual physical recovery is required. No consumer/API change.
+Its protected DSO-aware CPU diagnostic passes, all726,548 raw bytes removed,
+actual recovery16:23:02UTC. Repeated prompt samples3.4824s user CPU, distributed
+across memset0.4623s, Planner0.2563s, full-view fill0.1407s and allocation/hash/
+guard work. Leaf samples do not identify callers or promise equivalent wall
+savings. Exact source/artifact/receipt identities, results and retained earlier
+connected experiments are in [the synchronization guide](kuno-native-compute-intervals.md).
 
-The complete9dc5786a bundle's protected DSO-aware CPU diagnostic now passes
-with all726,548 raw bytes deleted and actual recovery16:23:02UTC. Repeated
-prompt samples3.4824s CPU: memset0.4623s, Planner0.2563s, full-view fill0.1407s,
-plus distributed allocation/hash/guard work. Leaves do not identify callers or
-promise equivalent wall savings. Next proposal is complete immutable binding
-inventory/source-bundle reuse across original capture passes, with exact real
-root revalidation, original full views/queues/owners/epochs/erasure and64MiB
-budget. It is not implemented. No new install, release or consumer/API change.
-
-The connected original-signature inventory/full-source-bundle successor is now
-implemented. It reuses the SAME full signature allocation, revalidates every
-actual raw root under EACH real guard, retains original views/flags/queues/
-owners/INFO/fences and64MiB, and shares only exact ordered full original source
-lists within one batch. Source-cache overflow materializes the original full
-views. Original24MiB host cap and8MiB tape remain; actual fixture18.92MiB and
-worst-cap budget pass. Actual App80 CPU controls pass. Release/offline/original129
-GPU/full request/counter/recovery/performance gates remain pending. No install,
-consumer/API change or performance claim. Exact contract is in the guide.
-
-Exact code/artifact/receipt identities, tests, limitations and next gates are in
-[the synchronization guide](kuno-native-compute-intervals.md). Physical snapshot:
-Intel50,688,000B, NVIDIA compute0, faults0, all services200 and normal admission.
-Installed worker/gateway SHAeac78ce0/d3ed07f4 were reverified unchanged afterward.
-No API, KNT2/KNR2, config, model identity or Vashti integration change; no frontend,
-package or release. The parity goal remains active and unmet. Earlier development
-checkpoint descriptions below retain their chronological context.
+Installed worker/gateway SHAeac78ce0/d3ed07f4 were reverified unchanged; latest
+independent physical snapshot16:25:48UTC: Intel50,688,000B, NVIDIA compute0,
+all faults0, endpoints200 and normal inactive/unpaused admission/waiting0.
+A test is currently active; re-read live unit/receipt/physical state before
+starting another job. The bounded task-owned sudo refresh6524 (parent3556,
+started15:25UTC) expires17:25UTC; verify identity before touching it. Do not
+kill the shared shell. No API, KNT2/KNR2, configuration, model identity or Vashti
+change. No frontend, package, version or release. The parity goal is active
+and unmet. Earlier descriptions below retain chronological context.
 
 The complete bulk/PV/loading source12caac8b / SHAa2ad0c62 now passes402/144
 layouts, all103 GPU controls, three full public requests and a separate clean
