@@ -8,6 +8,7 @@ use std::{sync::atomic::AtomicBool, time::Instant};
 use zeroize::Zeroizing;
 #[path = "strata_short_prompt_plan.rs"]
 mod short_prompt;
+pub(crate) const SHORT_PROMPT_PREFIX_LIMIT: usize = short_prompt::PREFIX_LIMIT;
 // One actual MAX3 host R copy coexists with the existing compact output packet.
 // Both fit in the existing charged request HOST envelope; no owner is added.
 const SHORT_CARRY_HOST_BYTES: usize =
@@ -332,48 +333,59 @@ pub(super) fn run<'m, 'f>(
             // prefix inputs. This bounded first step deliberately reuses the
             // existing MAX3 full-commit/host-R path: no nonce/prediction grant
             // is repurposed, and no prompt scratch/cache slots are borrowed.
-            for chunk in short.chunks() {
-                crate::resident_util::cancel(cancel)?;
-                let start = chunk.start;
-                let end = chunk.end;
-                let (inputs, teacher) = short.inputs(request.prompt, chunk)?;
-                if target.completed_target_rows_cursor(executor)? != start
-                    || draft.as_ref().is_some_and(|d| d.position() != start)
-                {
-                    return Err("global short prompt entry cursor rejected".into());
-                }
-                phase("short_prompt_chunk");
-                let rows = target.prefill_chunk_with_carry(executor, inputs, cancel)?;
-                if rows.start() != start
-                    || rows.count() != inputs.len()
-                    || target.completed_target_rows_cursor(executor)? != end
-                {
-                    return Err("global short prompt completed rows rejected".into());
-                }
-                if let Some(draft) = draft.as_deref_mut() {
-                    let mut carries = Zeroizing::new(Vec::with_capacity(
-                        inputs.len() * crate::resident_model::batch::target_rows::HC_WIDTH,
-                    ));
-                    for row in 0..inputs.len() {
-                        if rows.position(row)? != start + row {
-                            return Err("global short prompt row identity rejected".into());
-                        }
-                        carries.extend_from_slice(rows.hidden(row)?);
+            target.with_short_prompt_io(executor, cancel, |target, executor| {
+                for chunk in short.chunks() {
+                    crate::resident_util::cancel(cancel)?;
+                    let start = chunk.start;
+                    let end = chunk.end;
+                    let (inputs, teacher) = short.inputs(request.prompt, chunk)?;
+                    if target.completed_short_prompt_rows_cursor(executor)? != start
+                        || draft.as_ref().is_some_and(|d| d.position() != start)
+                    {
+                        return Err(Error::InvalidFormat(
+                            "global short prompt entry cursor rejected",
+                        ));
                     }
-                    // Release the original output-host lease BEFORE further
-                    // model work. This is a fenced, wiping copy of actual R;
-                    // teacher tokens are exact NEXT INPUTS, never greedy picks.
-                    drop(rows);
-                    draft.append_kv_group(teacher, &carries, cancel)?;
-                } else {
-                    drop(rows);
+                    phase("short_prompt_chunk");
+                    let rows = target.prefill_known_short_window(executor, inputs, cancel)?;
+                    if rows.start() != start
+                        || rows.count() != inputs.len()
+                        || target.completed_short_prompt_rows_cursor(executor)? != end
+                    {
+                        return Err(Error::InvalidFormat(
+                            "global short prompt completed rows rejected",
+                        ));
+                    }
+                    if let Some(draft) = draft.as_deref_mut() {
+                        let mut carries = Zeroizing::new(Vec::with_capacity(
+                            inputs.len() * crate::resident_model::batch::target_rows::HC_WIDTH,
+                        ));
+                        for row in 0..inputs.len() {
+                            if rows.position(row)? != start + row {
+                                return Err(Error::InvalidFormat(
+                                    "global short prompt row identity rejected",
+                                ));
+                            }
+                            carries.extend_from_slice(rows.hidden(row)?);
+                        }
+                        // Release the original output-host lease BEFORE further
+                        // model work. This is a fenced, wiping copy of actual R;
+                        // teacher tokens are exact NEXT INPUTS, never greedy picks.
+                        drop(rows);
+                        draft.append_kv_group(teacher, &carries, cancel)?;
+                    } else {
+                        drop(rows);
+                    }
+                    if target.completed_short_prompt_rows_cursor(executor)? != end
+                        || draft.as_ref().is_some_and(|d| d.position() != end)
+                    {
+                        return Err(Error::InvalidFormat(
+                            "global short prompt teacher cursor rejected",
+                        ));
+                    }
                 }
-                if target.completed_target_rows_cursor(executor)? != end
-                    || draft.as_ref().is_some_and(|d| d.position() != end)
-                {
-                    return Err("global short prompt teacher cursor rejected".into());
-                }
-            }
+                Ok(())
+            })?;
         } else {
             target.with_prompt_ple_source(
                 executor,

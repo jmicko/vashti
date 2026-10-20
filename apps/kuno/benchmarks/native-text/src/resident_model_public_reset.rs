@@ -185,6 +185,31 @@ impl RetainedReady {
             .ok_or(rejected())?
             .starting_after_erasure(self.scope)
     }
+    /// Same original retained erasure provenance under an explicitly bounded
+    /// ShortPrefix nonce. This never erases/replaces the receipt or treats the
+    /// retained PLE generation as a fresh generation-zero constructor.
+    pub(super) fn check_short_prefix(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<()> {
+        model.validate_native_projection_owners(executor)?;
+        if self.fault != model.b.fault
+            || self.binding != model.graph.binding_id()
+            || self.context != model.context
+        {
+            return Err(rejected());
+        }
+        model
+            .native_batch
+            .as_ref()
+            .ok_or(rejected())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(rejected())?
+            .starting_short_after_erasure(self.scope, model.admission.request_io_reuse_active())?;
+        model.validate_retained_native_cursor_state(true)
+    }
 }
 /// Only this coordinator can mint the all-arena/source/fault/final-cancel
 /// capability. Family permits cannot publish merely from a Ready cursor.
@@ -201,11 +226,14 @@ fn commit_after_reset_fence<T>(
 
 impl ResidentModel<'_, '_> {
     fn validate_retained_native_cursor(&self) -> Result<()> {
+        self.validate_retained_native_cursor_state(false)
+    }
+    fn validate_retained_native_cursor_state(&self, short_prefix: bool) -> Result<()> {
         if self.position != 0
             || crate::strata_sampler::request::active()
             || crate::strata_prompt::active()
             || ple_batch::prompt_source::active()
-            || self.admission.request_io_reuse_active()
+            || self.admission.request_io_reuse_active() != short_prefix
             || self.ple_history.tokens().iter().any(|&t| t != -1)
             || self.ple_conv.history().iter().any(|&v| v != 0.)
         {

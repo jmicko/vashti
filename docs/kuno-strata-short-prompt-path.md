@@ -58,29 +58,47 @@ target completion checks apply and no host residual copy is made.
 
 The maximum extra wiping RAM carry is3×10,240×4=122,880bytes, included in the
 existing4MiB request HOST bound. It does not add a GPU owner, fabricated carry
-grant, new request nonce, prompt persistence, wire field or setting. Longer
+grant, prompt persistence, wire field or setting. Longer
 prefixes retain the existing layer-major prompt path/cache loan unchanged. The
 final prompt input, generation policy selection, sampler history and original
 request erasure/rebind/close path remain unchanged.
 
-This avoids expanding the fragile InitialWindow/generation authority just to
-experiment with the selected short-read strategy. The tradeoffs are real: MAX3
+An initial protected run correctly rejected the legacy full-commit entry with
+`native submission requires original request reuse`. The coupled correction
+adds a distinct **ShortPrefix** authority with an actual original runtime nonce:
+only cursor0 entry,1..64 known prefix inputs, MAX3 per window, and no generation
+scope credit. Entry checks the original model/erasure boundary before beginning
+the actual nonce. Closing checks no live output lease, completed native families,
+the original fault word and the real full owned I/O closing audit before returning
+to Prefill. The original final count1 InitialWindow and long generation scope
+remain separate. No backend guard is weakened or caller-supplied nonce invented.
+
+Warm cursor0 checks retain the original `RetainedReady` provenance through a
+dedicated short-scope check: same fault/binding/context, erased PLE/history state,
+matching previous erased scope and unchanged generation counter. The original
+no-nonce retained checks are unchanged; the used PLE generation is never replaced
+with a fresh constructor stamp. Actual short-prefix cursor checks use that bounded
+authority while its runtime nonce is live.
+
+The tradeoffs are real: MAX3
 windows still compute their original heads and read compact residuals to wiping
 RAM before teaching MTP. It is a functional stepping stone, not claimed full
 Strata short-read parity or an accepted speed result.
 
 ## Remaining complete path
 
-The existing language I/O authority distinguishes Prefill (at most3rows without
-the generation nonce), InitialWindow (exact final count1 input), and generation.
+The language I/O authority now distinguishes Prefill (at most3rows without
+the generation nonce), bounded ShortPrefix with an actual audited nonce,
+InitialWindow (exact final count1 input), and generation.
 An existing `DeviceCarry` also authenticates actual predicted tokens; it cannot
 be reused for arbitrary known next teacher tokens. `append_prompt_device` needs
 the large prompt scope and its original workspace. A full MAX8/no-head/device
 short-read needs a connected implementation, not a relaxed prediction check:
 
-1. Add a dedicated bounded known-prefix I/O phase and supported policy selection
-   after the real original unstarted/retained request boundary. Keep final-input
-   and generation admission distinct; do not fabricate an accepted-prefill stamp.
+1. Extend the dedicated bounded known-prefix I/O phase from MAX3 to the genuinely
+   reserved MAX8 policy after the real original unstarted/retained boundary.
+   Keep final-input and generation admission distinct; do not fabricate an
+   accepted-prefill stamp.
 2. Add a known-input whole-commit purpose that omits the unused final head and
    exposes actual fenced residual rows using its own non-prediction capability.
 3. Teach the exact next input IDs to MTP from that genuine device residual source
@@ -96,6 +114,14 @@ The actual pure planner is compiled directly with the existing dependency rlibs:
 two CPU tests pass, covering empty/final-only and1/3/4/64/65 input boundaries,
 every shifted teacher slice, tails, invalid lengths/ranges and overflow. Evidence:
 `/media/jmicko/faststore/kuno-development/prefill-short-prompt-plan-tests-20261019.log`.
+Four further CPU cases compile the actual pure Geometry/Authority source and its
+actual tests using existing dependency rlibs, with selected-profile constants:
+two previous InitialWindow cases and two new short-scope/rearm cases pass. They
+cover true/false actual-nonce state, MAX3 even with MAX8 reserved, threshold and
+cursor bounds, no early generation/rearm/closed-scope credit, matching original
+erased scope, and the unchanged final count1 handoff. Evidence:
+`/media/jmicko/faststore/kuno-development/prefill-short-prefix-authority-tests-20261019.log`.
+These are metadata lifecycle tests, not backend nonce or model completion proof.
 Rustfmt and diff checks pass. No GPU or whole-worker compile was performed by this
 isolated task. The caller owns the next selected-worker build and hardware tests.
 

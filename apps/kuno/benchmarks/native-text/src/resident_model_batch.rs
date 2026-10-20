@@ -5029,6 +5029,134 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             },
         )
     }
+    /// Known short-prefix scope with a REAL original runtime nonce. It has no
+    /// generation credit: all original completed input rows and the full I/O
+    /// closing audit must precede returning to final-input Prefill admission.
+    pub(crate) fn with_short_prompt_io<T>(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cancel: &AtomicBool,
+        body: impl FnOnce(&mut Self, &mut GpuExecutor<'f>) -> Result<T>,
+    ) -> Result<T> {
+        if !crate::strata_intel_core::enabled() || crate::strata_prompt::active() {
+            return Err(chunk_error!());
+        }
+        self.validate_native_request_boundary(executor)?;
+        let permit = self
+            .native_batch
+            .as_ref()
+            .ok_or(chunk_error!())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(chunk_error!())?;
+        permit.identity(self.graph.binding_id(), self.context)?;
+        permit.validate_short_begin(self.position, self.admission.request_io_reuse_active())?;
+        self.native_batch
+            .as_ref()
+            .ok_or(chunk_error!())?
+            .target_rows
+            .as_ref()
+            .ok_or(chunk_error!())?
+            .check_no_live_output()?;
+        self.lab_oracle_attempt(executor, |model, executor| {
+            model.admission.begin_public_target_request_io_reuse()?;
+            model
+                .native_batch
+                .as_mut()
+                .ok_or(chunk_error!())?
+                .public_language_request_io
+                .as_mut()
+                .ok_or(chunk_error!())?
+                .begin_short(model.position, model.admission.request_io_reuse_active())?;
+            let output = body(model, executor)?;
+            model
+                .native_batch
+                .as_ref()
+                .ok_or(chunk_error!())?
+                .target_rows
+                .as_ref()
+                .ok_or(chunk_error!())?
+                .check_no_live_output()?;
+            model.completed_native_projection_boundary(executor)?;
+            model
+                .native_batch
+                .as_ref()
+                .ok_or(chunk_error!())?
+                .public_language_request_io
+                .as_ref()
+                .ok_or(chunk_error!())?
+                .validate_short_end(model.position, model.admission.request_io_reuse_active())?;
+            batch_io::read_fault(&model.arena, &model.admission, model.b.fault, cancel)?;
+            // The admission closes its ACTUAL nonce only after the original
+            // owned upload/uniform/readback spans pass the complete zero audit.
+            model.admission.end_request_io_reuse()?;
+            public_language_request_io::check_runtime(model.arena.client().map_err(u::fault)?)?;
+            model
+                .native_batch
+                .as_mut()
+                .ok_or(chunk_error!())?
+                .public_language_request_io
+                .as_mut()
+                .ok_or(chunk_error!())?
+                .end_short(model.position, model.admission.request_io_reuse_active())?;
+            u::cancel(cancel)?;
+            Ok(output)
+        })
+    }
+    /// Legitimate MAX3 known-input purpose: full ordinary target commit and
+    /// actual fenced compact R output, under the bounded ShortPrefix authority.
+    /// This never labels known next tokens as greedy/predicted output.
+    pub(crate) fn prefill_known_short_window(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tokens: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<NativeTargetRows> {
+        self.completed_short_prompt_rows_cursor(executor)?;
+        let permit = self
+            .native_batch
+            .as_ref()
+            .ok_or(chunk_error!())?
+            .public_language_request_io
+            .as_ref()
+            .ok_or(chunk_error!())?;
+        permit.identity(self.graph.binding_id(), self.context)?;
+        permit.validate_short_run(
+            self.position,
+            tokens.len(),
+            self.admission.request_io_reuse_active(),
+        )?;
+        self.prefill_chunk_with_carry(executor, tokens, cancel)
+    }
+    /// Actual original short-prefix boundary, including a retained request's
+    /// original erasure provenance at cursor0 while its real short nonce is on.
+    /// The ordinary no-nonce constructor/rebind checks remain unchanged.
+    pub(crate) fn completed_short_prompt_rows_cursor(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<usize> {
+        let native = self.native_batch.as_ref().ok_or(chunk_error!())?;
+        if !executor.target_rows_reserved || native.target_rows.is_none() {
+            return Err(chunk_error!());
+        }
+        executor.check_target_rows_policy()?;
+        let permit = native
+            .public_language_request_io
+            .as_ref()
+            .ok_or(chunk_error!())?;
+        permit.identity(self.graph.binding_id(), self.context)?;
+        permit.validate_short_cursor(self.position, self.admission.request_io_reuse_active())?;
+        if self.position == 0 {
+            if let Some(ready) = &native.retained_ready {
+                ready.check_short_prefix(self, executor)?;
+            } else {
+                self.validate_unstarted_native_boundary(executor)?;
+            }
+        } else {
+            self.completed_native_projection_boundary(executor)?;
+        }
+        Ok(self.position)
+    }
     /// Actual final-prompt count1 window. The SAME scoped Verified/Pending
     /// observer as later windows consumes its original R before adaptation is
     /// joined. Earlier prompt matrix rows never train usage or draft here.

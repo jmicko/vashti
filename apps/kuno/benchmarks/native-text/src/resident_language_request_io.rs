@@ -89,6 +89,7 @@ pub(super) fn check_runtime(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Prefill,
+    ShortPrefix,   // actual bounded known-input nonce, no generation scope credit
     InitialWindow, // real short runtime nonce; not long generation authority
     Active,
     Closed,
@@ -135,7 +136,11 @@ impl Authority {
             }
     }
     fn active(&self, actual: bool) -> Result<bool> {
-        if actual != matches!(self.phase, Phase::InitialWindow | Phase::Active)
+        if actual
+            != matches!(
+                self.phase,
+                Phase::ShortPrefix | Phase::InitialWindow | Phase::Active
+            )
             || self.base_scopes.checked_add(u64::from(matches!(
                 self.phase,
                 Phase::Active | Phase::Closed
@@ -166,6 +171,7 @@ impl Authority {
         let end = start.checked_add(count).ok_or(rejected())?;
         match self.phase {
             Phase::Prefill if end <= self.geometry.prompt => Ok(()),
+            Phase::ShortPrefix if end < self.geometry.prompt => Ok(()),
             Phase::Active
                 if start >= self.geometry.prompt
                     && start < self.geometry.final_cursor()
@@ -249,6 +255,63 @@ impl Authority {
             return Err(rejected());
         }
         Ok(self.scopes)
+    }
+    fn validate_short_begin(&self, position: usize, actual: bool) -> Result<()> {
+        self.active(actual)?;
+        let prefix = self.geometry.prompt.checked_sub(1).ok_or(rejected())?;
+        if !crate::strata_intel_core::enabled()
+            || self.phase != Phase::Prefill
+            || position != 0
+            || actual
+            || !(1..=crate::strata_engine::controller::SHORT_PROMPT_PREFIX_LIMIT).contains(&prefix)
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    fn begin_short(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.validate_short_begin(position, false)?;
+        if !actual {
+            return Err(rejected());
+        }
+        self.phase = Phase::ShortPrefix;
+        self.active(actual).map(|_| ())
+    }
+    fn validate_short_run(&self, start: usize, count: usize, actual: bool) -> Result<()> {
+        if self.phase != Phase::ShortPrefix {
+            return Err(rejected());
+        }
+        self.run(start, count, actual)
+    }
+    fn validate_short_cursor(&self, position: usize, actual: bool) -> Result<()> {
+        self.active(actual)?;
+        if self.phase != Phase::ShortPrefix || position >= self.geometry.prompt {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    fn starting_short_after_erasure(&self, scope: u64, actual: bool) -> Result<()> {
+        self.validate_short_cursor(0, actual)?;
+        if scope == 0 || self.base_scopes != scope || self.scopes != scope {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    fn validate_short_end(&self, position: usize, actual: bool) -> Result<()> {
+        self.active(actual)?;
+        if self.phase != Phase::ShortPrefix || position.checked_add(1) != Some(self.geometry.prompt)
+        {
+            return Err(rejected());
+        }
+        Ok(())
+    }
+    fn end_short(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.validate_short_end(position, true)?;
+        if actual {
+            return Err(rejected());
+        }
+        self.phase = Phase::Prefill;
+        self.active(false).map(|_| ())
     }
     fn validate_initial_begin(&self, position: usize, actual: bool) -> Result<()> {
         self.active(actual)?;
@@ -378,8 +441,10 @@ impl Permit {
         Ok(())
     }
     pub(super) fn enable_four_rows(&mut self) -> Result<()> {
-        if matches!(self.authority.phase, Phase::InitialWindow | Phase::Active)
-            || self.authority.four_rows
+        if matches!(
+            self.authority.phase,
+            Phase::ShortPrefix | Phase::InitialWindow | Phase::Active
+        ) || self.authority.four_rows
         {
             return Err(rejected());
         }
@@ -436,6 +501,32 @@ impl Permit {
     }
     pub(super) fn active(&self, actual: bool) -> Result<bool> {
         self.authority.active(actual)
+    }
+    pub(super) fn validate_short_begin(&self, position: usize, actual: bool) -> Result<()> {
+        self.authority.validate_short_begin(position, actual)
+    }
+    pub(super) fn begin_short(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.authority.begin_short(position, actual)
+    }
+    pub(super) fn validate_short_run(
+        &self,
+        position: usize,
+        count: usize,
+        actual: bool,
+    ) -> Result<()> {
+        self.authority.validate_short_run(position, count, actual)
+    }
+    pub(super) fn validate_short_cursor(&self, position: usize, actual: bool) -> Result<()> {
+        self.authority.validate_short_cursor(position, actual)
+    }
+    pub(super) fn starting_short_after_erasure(&self, scope: u64, actual: bool) -> Result<()> {
+        self.authority.starting_short_after_erasure(scope, actual)
+    }
+    pub(super) fn validate_short_end(&self, position: usize, actual: bool) -> Result<()> {
+        self.authority.validate_short_end(position, actual)
+    }
+    pub(super) fn end_short(&mut self, position: usize, actual: bool) -> Result<()> {
+        self.authority.end_short(position, actual)
     }
     pub(super) fn validate_initial_begin(&self, position: usize, actual: bool) -> Result<()> {
         self.authority.validate_initial_begin(position, actual)
@@ -925,6 +1016,112 @@ mod initial_window_tests {
             );
             a.end_initial(prompt, false).unwrap();
             assert_eq!(a.scopes, index as u64);
+            a.begin(prompt, true).unwrap();
+            a.end(prompt, false).unwrap();
+            assert_eq!(a.retained_native_scope().unwrap(), index as u64 + 1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod short_prefix_scope_tests {
+    use super::*;
+    #[test]
+    fn short_prefix_uses_real_nonce_max_three_and_no_generation_credit() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let capacity = crate::qsa_gpu::MAX_CONTEXT;
+        for prefix in [1usize, 3, 4, 63, 64] {
+            let prompt = prefix + 1;
+            let geometry = Geometry::new(prompt, 2).unwrap();
+            let mut authority = Authority::new(geometry, capacity, false).unwrap();
+            authority.four_rows = true; // even retained MAX8 generation permits keep MAX3 here
+            assert!(authority.validate_short_begin(1, false).is_err());
+            assert!(authority.validate_short_begin(0, true).is_err());
+            assert!(authority.begin_short(0, false).is_err());
+            authority.validate_short_begin(0, false).unwrap();
+            authority.begin_short(0, true).unwrap();
+            for position in [0, prefix] {
+                authority.validate_short_cursor(position, true).unwrap();
+            }
+            assert!(authority.validate_short_cursor(0, false).is_err());
+            assert!(authority.validate_short_cursor(prompt, true).is_err());
+            assert!(authority.starting_short_after_erasure(0, true).is_err());
+            assert_eq!(authority.scopes, 0);
+            assert!(authority.current_scope(true).is_err());
+            assert!(authority.validate_short_run(0, 1, false).is_err());
+            for start in (0..prefix).step_by(3) {
+                let count = (prefix - start).min(3);
+                authority.validate_short_run(start, count, true).unwrap();
+            }
+            for (start, count) in [(0, 0), (0, 4), (prefix, 1), (usize::MAX, 3)] {
+                assert!(authority.validate_short_run(start, count, true).is_err());
+            }
+            assert!(authority.prompt_chunk(0, 1, true).is_err());
+            assert!(authority.begin_short(0, true).is_err());
+            assert!(authority.begin_initial(prefix, true).is_err());
+            assert!(authority.begin(prompt, true).is_err());
+            assert!(authority.end(prompt, false).is_err());
+            assert!(authority.retained_native_scope().is_err());
+            assert!(authority.validate_short_end(prefix - 1, true).is_err());
+            assert!(authority.validate_short_end(prompt, true).is_err());
+            assert!(authority.end_short(prefix, true).is_err());
+            authority.validate_short_end(prefix, true).unwrap();
+            authority.end_short(prefix, false).unwrap();
+            assert_eq!(authority.phase, Phase::Prefill);
+            assert_eq!(authority.scopes, 0);
+            assert!(authority.validate_short_run(0, 1, false).is_err());
+            // The original final count1 scope still has to execute and close.
+            authority.begin_initial(prefix, true).unwrap();
+            authority.run(prefix, 1, true).unwrap();
+            authority.end_initial(prompt, false).unwrap();
+            authority.begin(prompt, true).unwrap();
+            authority.end(prompt, false).unwrap();
+            assert_eq!(authority.retained_native_scope().unwrap(), 1);
+        }
+    }
+    #[test]
+    fn short_prefix_rejects_empty_large_and_rearm_before_actual_generation_close() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let capacity = crate::qsa_gpu::MAX_CONTEXT;
+        for prompt in [1, 66, 4096] {
+            let a = Authority::new(Geometry::new(prompt, 1).unwrap(), capacity, false).unwrap();
+            assert!(a.validate_short_begin(0, false).is_err());
+        }
+        let mut a = Authority::new(Geometry::new(2, 1).unwrap(), capacity, false).unwrap();
+        for (index, prefix) in [1usize, 64, 3].into_iter().enumerate() {
+            let prompt = prefix + 1;
+            if index > 0 {
+                a.rearm_native(
+                    Geometry::new(prompt, 1).unwrap(),
+                    capacity,
+                    index as u64,
+                    false,
+                )
+                .unwrap();
+            }
+            a.begin_short(0, true).unwrap();
+            if index > 0 {
+                a.starting_short_after_erasure(index as u64, true).unwrap();
+            }
+            assert!(a.starting_short_after_erasure(index as u64, false).is_err());
+            assert!(
+                a.starting_short_after_erasure(index as u64 + 1, true)
+                    .is_err()
+            );
+            assert!(
+                a.rearm_native(Geometry::new(2, 1).unwrap(), capacity, index as u64, false)
+                    .is_err()
+            );
+            assert!(a.validate_completed_native(prompt, false).is_err());
+            assert!(a.end_short(prefix - 1, false).is_err());
+            a.end_short(prefix, false).unwrap();
+            assert_eq!(a.scopes, index as u64);
+            a.begin_initial(prefix, true).unwrap();
+            a.end_initial(prompt, false).unwrap();
             a.begin(prompt, true).unwrap();
             a.end(prompt, false).unwrap();
             assert_eq!(a.retained_native_scope().unwrap(), index as u64 + 1);
