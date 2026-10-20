@@ -119,3 +119,70 @@ Exact log `native-atomic-or-complete-cpu-20261020.log`. No GPU or speed claim
 for the atomic successor yet; require original129 GPU/full-request/counts/
 physical recovery, then meaningful clean improvement and full staged/terminal
 acceptance before installation.
+
+## Complete atomic candidate result (2b32bbea)
+
+Frozen source `2b32bbeabc8ad5ac35645fbc01ff8a24652edf84`, worker SHA256
+`9452beed3c50bfb236fb6aed399865311ae62b19d8b260e9dea927d1266233dd`,
+build `strata-parity-atomic-or-20261020`, passes release compilation,
+408 ordinary/208 matrix offline layouts, all129 original GPU numerical controls,
+three complete requests/actual bulk/wide/tail/miss-ring counts and physical
+recovery. The additional `atomic-or-validation.json` passes with actual
+proven OR views162,742 on164,182 compute nodes for each long request. Actual
+barrier entries241,948 vs431,700 original whole-root entries (44% fewer).
+This is a count of BUFFER BARRIER ENTRIES, NOT hardware flushes or barrier calls.
+
+Load78.47156s; first/repeated4245 prefixes13.08708/12.27180s versus preceding
+13.20344/12.33719s: essentially unchanged. Repeated capture2.13418s,
+enqueue1.58682s, wait4.17544s, expert wall8.07705s. The whole connected candidate
+is correct but slower than the earlier complete guard bundle's profiled11.54345s;
+no clean A/B, staged/terminal acceptance, sustained gain or installation is
+claimed. The installed accepted3fffc266/SHAeac78ce0 remains selected.
+
+Exact receipts `strata-parity-atomic-or-20261020-{operators,profile}` include
+original `miss-ring-validation.json`, added `atomic-or-validation.json` and
+owned `strata-parity-atomic-or-public-summary-20261020.json`. Final snapshot
+15:25:53UTC: Intel50,688,000B, NVIDIA compute0, no new GPU faults, all three
+HTTP services200, no active/paused/waiting/recovery admission. No reset/reboot.
+
+## Next coherent source proposal: sealed access-class manifest
+
+Retain the full pipeline and all proofs above. The conservative interval
+algorithm retires old full-root history only because each real WHOLE_SIZE
+barrier has destination flags for ALL six supported access classes. That can
+force unrelated cache/indirect/uniform/transfer synchronization. Removing entry
+structs alone does not establish fewer actual pipeline stalls; most math nodes
+still have real dependencies. The mask cost is a SOURCE HYPOTHESIS, not yet a
+measured hardware cause.
+
+A coherent successor should preflight a SEALED actual access-class union for
+each genuine VkBuffer on each original physical queue, over the complete same
+immutable original Node/Plan inventory BEFORE any prefix. Derive it from every
+original descriptor access, complete physical read dependency and indirect
+resource, never BufferUsages guesses, shader names or caller hints. Consume the
+manifest immutably; validate every real node class/queue against it, plus exact
+original node counts before accepting the plan. Real barriers may then use that
+complete same-queue future-class union instead of all six classes. The union
+must cover EVERY later access in this recording, preserving the premise that
+the old full-root history can retire. Full original ALL_COMMANDS external
+memory boundaries and ALL actual cross-queue waits/releases remain necessary
+for accesses outside this sealed recording; do not optimize them away.
+
+Simply changing destination to this one node's mask and clearing old history
+is WRONG: an older write in untouched bytes may later be read through a different
+access class. Either retain a full typed visibility history, or use the complete
+sealed manifest above. Preserve the current correct broad fallback if proof is
+absent. All manifest/temporary/hash capacities and simultaneous original Plan,
+owners, keys, barriers and Recordings must fit the unchanged64MiB allowance.
+Avoid adding an unmeasured expensive per-node traversal when existing actual
+inventory passes can build the manifest; no narrowed resource view is allowed.
+
+Add actual barrier-CALL counts and exact legacy call counts, separately from
+entry counts, to the compiled-public aggregate proof. Validate complete-manifest
+membership/unknown-future-class/queue negatives and typed byte oracle controls,
+then original129 GPU/full requests/recovery. Only meaningful matched clean
+improvement justifies full staged/terminal acceptance and installation. If this
+still does not reduce wall cost, the other concrete CPU lead is immutable shared
+complete BDA dependency bundles: current per-node Vec clones/packing still
+repeat the same full layer inventory. Keep genuine handles/epochs/loan checks;
+never substitute fake/narrow dependency declarations.
