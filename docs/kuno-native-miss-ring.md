@@ -91,3 +91,51 @@ follow-up adds Zeroizing owners and a real still-owned-capacity erasure control
 (no freed-memory inspection). Its five ring/producer cases pass, including the
 new erasure case; together with previous cases this is101 App CPU controls.
 Final frozen release and actual GPU/full-request evidence remain pending.
+
+## Completed connected validation (d95a12da)
+
+Frozen source `d95a12dab3ec137e90aa4e5e1099666415e9c71e`, worker SHA256
+`07415e682c3fd8872a54546b93b365b5425c51274561b20adcce26fab450d41c`,
+build `strata-parity-miss-ring-wipe-20261020`, passes release compilation,
+408 ordinary/208 matrix offline layouts, all129 original GPU numerical controls
+and three complete public requests. Both original runtime capacity/native-layer
+proofs and the additional `miss-ring-validation.json` pass. No numerical gate,
+real INFO/view/owner inventory, or parent reservation was relaxed.
+
+Long repeated request:26,338 original groups =13,075 actual HOST misses +13,263
+resident groups;39,225 role copies; peak-slot sum768 across96 phases. Actual
+segments decrease48,851 ->36,513; rolling windows1,474 ->1,431. Profiled repeated
+4245 prefix11.55808s versus complete predecessor12.07925s (4.3% shorter);
+capture2.53357 ->1.95395s. Expert wall7.32303s, enqueue1.57346s, wait3.61396s,
+QSA attention/merge1.46706s. These are diagnostic timings, not clean throughput.
+
+Separate clean matched45/4245/4245 requests pass: load79.89410s, long first
+13.99418s/repeat11.23059s. Installed first12.96228s/repeat11.14739s remains at
+least as good, and same-host Strata repeat5.3515s is still faster. This complete
+candidate stays **unselected and uninstalled**. No new full staged/terminal
+acceptance or sustained decode gain is claimed.
+
+The protected DSO-aware leaf CPU diagnostic also completes all requests and
+physical recovery. Repeated4245 prefix11.68874s samples3.25126s user CPU:
+memset0.54271s, Planner0.16080s, Wgpu storage lookup0.12060s, memmove0.10050s,
+malloc0.09045s, interval split0.07538s, registry lookup0.07035s and snatch-lock
+read0.05025s. Driver leaves are now distinguished from Rust leaves, but unresolved
+addresses are not guessed into function names. Samples are leaf CPU estimates,
+not inclusive wall or pure GPU costs.725,548B of raw sampling were deleted before
+acceptance; only compiled-public aggregate metadata remains.
+
+Exact receipts under the artifact base:
+
+- `strata-parity-miss-ring-wipe-20261020-{operators,profile}/receipt.json`
+- `strata-parity-miss-ring-wipe-20261020-profile/miss-ring-validation.json`
+- `strata-parity-miss-ring-wipe-20261020-clean-long/receipt.json`
+- `strata-native-miss-ring-dso-cpu-20261020/receipt.json`
+- Owned summaries `strata-parity-miss-ring-wipe-public-summary-20261020.json`
+  and `strata-native-miss-ring-dso-cpu-public-summary-20261020.json`.
+
+All run cleanup snapshots show Intel50,688,000B, NVIDIA compute0, no new driver
+faults, all three service endpoints200, admission inactive/unpaused/no recovery
+and waiting0. The legacy clean helper's passed flag precedes cleanup, so its
+actual host-after and final recovery marker were independently checked by
+`verify-miss-ring-clean-recovery-20261020.py` (snapshot14:01:08UTC); DSO cleanup
+snapshot14:10:17UTC passes too. Installed worker/gateway remain unchanged.

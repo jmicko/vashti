@@ -38,6 +38,8 @@ cubek-std = { version = "=0.2.0", default-features = false, optional = true }
 wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
 
 [patch.crates-io]
+wgpu = { path = "vendor/wgpu" }
+wgpu-core = { path = "vendor/wgpu-core" }
 wgpu-hal = { path = "vendor/wgpu-hal" }
 cubecl-common = { path = "vendor/cubecl-common" }
 cubecl-runtime = { path = "vendor/cubecl-runtime" }

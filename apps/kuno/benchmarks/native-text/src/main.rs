@@ -72,6 +72,8 @@ mod strata_mtp_probability;
 mod strata_packet;
 #[cfg(test)]
 mod strata_parameter_tests;
+#[cfg(test)]
+mod strata_capture_buffer_tests;
 mod strata_ple;
 mod strata_ple_reader;
 mod strata_port;

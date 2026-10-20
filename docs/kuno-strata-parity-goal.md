@@ -717,3 +717,23 @@ acceptance only; its original-versus-candidate real-arena10-case golden control
 is being integrated before GPU acceptance. An optional pure-Rust CubeK dense
 projection path is also under isolated review; it is not yet a selected dependency
 or measured speed result. No frontend/API contract changes.
+
+## Connected miss-ring and capture-local buffer guard checkpoint
+
+The whole miss-ring d95a12da / SHA07415e68 passes101+7 CPU controls,408/208
+offline layouts, all129 GPU numerical controls, complete public counts and
+physical recovery. Profiled repeat11.5581s is faster than the preceding complete
+bundle12.0792s, but clean repeat11.2306s is only level with installed11.1474s.
+It stays unselected/uninstalled. See [exact evidence](kuno-native-miss-ring.md).
+The protected DSO-aware CPU diagnostic finishes with raw data deleted and
+recovery confirmed; no guessed driver function names or inclusive timing claims.
+
+Next connects actual Wgpu buffer lookups under one real device destruction
+lock per capture phase while retaining every original source view, planner,
+INFO/allocator owner, rolling flight and erasure check. See
+[scope, lifetime contract and current tests](kuno-native-buffer-capture.md).
+Actual App101 CPU and protected actual B70 destruction/mixed-device/failed
+lookup recovery pass. Release/offline/all numerical/full model/clean gates are
+pending. Original installed3fffc266/SHAeac78ce0 stays selected; goal5.3515s
+matched repeated prefix and sustained parity remains active. No API, model,
+configuration, consumer, package or release change.

@@ -14,6 +14,8 @@ use std::{
 use wgpu::naga;
 #[path = "strata_binding_owners.rs"]
 mod binding_owners;
+#[path = "strata_capture_buffers.rs"]
+mod capture_buffers;
 #[path = "strata_capture_scratch.rs"]
 mod capture_scratch;
 #[path = "strata_descriptors.rs"]
@@ -861,6 +863,7 @@ fn native_host_read_boundary(
     device: &ash::Device,
     command: vk::CommandBuffer,
     target: &WgpuResource,
+    native: &capture_buffers::Guarded<'_>,
 ) -> Result<(), ServerError> {
     if target.buffer.usage().contains(wgpu::BufferUsages::MAP_READ) {
         let barrier = vk::BufferMemoryBarrier::default()
@@ -868,7 +871,7 @@ fn native_host_read_boundary(
             .dst_access_mask(vk::AccessFlags::HOST_READ)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .buffer(raw_buffer(target)?)
+            .buffer(native.get(target)?)
             .offset(target.offset)
             .size(target.size);
         unsafe {
@@ -1396,10 +1399,11 @@ impl Graph {
         &self,
         n: &Node,
         accesses: &mut HashMap<vk::Buffer, vk::AccessFlags>,
+        native: &capture_buffers::Guarded<'_>,
     ) -> Result<(), ServerError> {
         accesses.clear();
         self.visit_node_bindings(n, |r, access| {
-            *accesses.entry(raw_buffer(r)?).or_default() |= access;
+            *accesses.entry(native.get(r)?).or_default() |= access;
             Ok(())
         })
     }
@@ -1407,6 +1411,7 @@ impl Graph {
         &self,
         n: &Node,
         accesses: &mut Vec<strata_schedule::Access>,
+        native: Option<&capture_buffers::Guarded<'_>>,
     ) -> Result<(), ServerError> {
         accesses.clear();
         self.visit_node_bindings(n, |r, access| {
@@ -1418,7 +1423,11 @@ impl Graph {
                 return Err(fault("native queue actual resource interval"));
             }
             accesses.push(strata_schedule::Access {
-                buffer: raw_buffer(r)?.as_raw(),
+                buffer: match native {
+                    Some(native) => native.get(r)?,
+                    None => raw_buffer(r)?,
+                }
+                .as_raw(),
                 first: r.offset,
                 bytes: r.size,
                 write: access
@@ -1429,7 +1438,7 @@ impl Graph {
     }
     fn node_ranges(&self, n: &Node) -> Result<Vec<strata_schedule::Access>, ServerError> {
         let mut accesses = Vec::new();
-        self.fill_node_ranges(n, &mut accesses)?;
+        self.fill_node_ranges(n, &mut accesses, None)?;
         Ok(accesses)
     }
     /// Tag genuinely enqueued target/draft nodes; no submission/completion grant.
@@ -2188,6 +2197,7 @@ impl Graph {
         nodes: &[Node],
         pool: vk::DescriptorPool,
         retained_metadata: usize,
+        native: &capture_buffers::Guarded<'_>,
     ) -> Result<descriptors::Batch, ServerError> {
         let plan = descriptors::Plan::new(
             nodes.iter().map(|n| match n.dispatch {
@@ -2230,7 +2240,7 @@ impl Graph {
                 }
                 infos.push(
                     vk::DescriptorBufferInfo::default()
-                        .buffer(raw_buffer(r)?)
+                        .buffer(native.get(r)?)
                         .offset(r.offset)
                         .range(r.size),
                 );
@@ -2288,7 +2298,77 @@ impl Graph {
                 .transfer(self.compute_queues[0].queue, self.queue)
                 .map_err(fault)?;
         }
+        let owners = binding_owners::Owners::collect(
+            self.nodes.iter().filter_map(|node| node.owners.as_ref()),
+            descriptors::METADATA_CAP,
+        )
+        .map_err(fault)?;
+        let old_metadata = self
+            .recordings
+            .iter()
+            .try_fold(owners.metadata_bytes(), |n, r| {
+                n.checked_add(r.metadata_bytes()?)
+            })
+            .ok_or_else(|| fault("native capture previous metadata overflow"))?;
+        let signature_words = self
+            .nodes
+            .iter()
+            .try_fold(0usize, |sum, n| {
+                n.resources
+                    .len()
+                    .checked_add(n.read_dependencies.len())?
+                    .checked_mul(3)?
+                    .checked_add(9)?
+                    .checked_add(sum)
+            })
+            .ok_or_else(|| fault("native capture signature extent"))?;
         let mut signature = Vec::new();
+        let available = descriptors::METADATA_CAP
+            .checked_sub(old_metadata)
+            .ok_or_else(|| fault("native capture previous metadata capacity"))?;
+        if signature_words
+            .checked_mul(size_of::<u64>())
+            .is_none_or(|n| n > available)
+        {
+            return Err(fault("native capture signature metadata capacity"));
+        }
+        signature
+            .try_reserve_exact(signature_words)
+            .map_err(|_| fault("native capture signature allocation"))?;
+        let resource_budget = available
+            .checked_sub(
+                signature
+                    .capacity()
+                    .checked_mul(size_of::<u64>())
+                    .ok_or_else(|| fault("native capture signature capacity overflow"))?,
+            )
+            .ok_or_else(|| fault("native capture signature metadata capacity"))?;
+        // These are the original lifetime roots, not replacement access views.
+        let resources = binding_owners::unique_resources(
+            self.nodes.iter().flat_map(|n| {
+                n.resources
+                    .iter()
+                    .chain(&n.read_dependencies)
+                    .chain(match &n.dispatch {
+                        Dispatch::Indirect(r) => Some(r),
+                        _ => None,
+                    })
+            }),
+            |a, b| a.buffer.cmp(&b.buffer),
+            resource_budget,
+        )
+        .map_err(fault)?;
+        let resource_bytes = resources
+            .capacity()
+            .checked_mul(size_of::<WgpuResource>())
+            .ok_or_else(|| fault("native capture resource metadata overflow"))?;
+        let keys = capture_buffers::Keys::new(
+            &resources,
+            resource_budget
+                .checked_sub(resource_bytes)
+                .ok_or_else(|| fault("native capture resource metadata capacity"))?,
+        )?;
+        let native = keys.acquire()?;
         for n in &self.nodes {
             signature.push(
                 n.pipeline
@@ -2298,21 +2378,22 @@ impl Graph {
             signature.extend([u64::from(n.shared), u64::from(n.release_after)]);
             signature.push(n.resources.len() as u64);
             for r in &n.resources {
-                signature.extend([raw_buffer(r)?.as_raw(), r.offset, r.size]);
+                signature.extend([native.get(r)?.as_raw(), r.offset, r.size]);
             }
             signature.push(n.read_dependencies.len() as u64);
             for r in &n.read_dependencies {
-                signature.extend([raw_buffer(r)?.as_raw(), r.offset, r.size]);
+                signature.extend([native.get(r)?.as_raw(), r.offset, r.size]);
             }
             match &n.dispatch {
                 Dispatch::Direct(x, y, z) => signature.extend([0, *x as u64, *y as u64, *z as u64]),
                 Dispatch::Indirect(r) => {
-                    signature.extend([1, raw_buffer(r)?.as_raw(), r.offset, r.size])
+                    signature.extend([1, native.get(r)?.as_raw(), r.offset, r.size])
                 }
                 Dispatch::Copy => signature.extend([2, 0, 0, 0]),
                 Dispatch::Fill => signature.extend([3, 0, 0, 0]),
             }
         }
+        drop(native); // No guard crosses recording eviction, replay or cleanup.
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
         let profiling = profile_active() && compute_count >= 2048;
         if let Some(key) = key {
@@ -2342,6 +2423,8 @@ impl Graph {
         {
             let recording = self.recordings.remove(hit);
             self.recordings.push(recording);
+            drop(keys);
+            drop(resources);
             self.submit_last_recording(compute_count, true, false)?;
             if wait {
                 self.complete_scoped_submission()?;
@@ -2482,7 +2565,12 @@ impl Graph {
             .max()
             .unwrap_or(0);
         let mut scratch = capture_scratch::Scratch::new(largest_access_count).map_err(fault)?;
-        let scratch_bytes = scratch.metadata_bytes().map_err(fault)?;
+        let scratch_bytes = scratch
+            .metadata_bytes()
+            .map_err(fault)?
+            .checked_add(keys.metadata_bytes())
+            .ok_or_else(|| fault("native capture guarded metadata overflow"))?;
+        let native = keys.acquire()?;
         let preparation_used = self
             .recordings
             .iter()
@@ -2491,6 +2579,8 @@ impl Graph {
                     .capacity()
                     .checked_mul(size_of::<u64>())
                     .and_then(|n| n.checked_add(scratch_bytes))
+                    .and_then(|n| n.checked_add(resource_bytes))
+                    .and_then(|n| n.checked_add(owners.metadata_bytes()))
                     .ok_or_else(|| fault("native transfer preparation metadata overflow"))?,
                 |n, r| n.checked_add(r.metadata_bytes()?),
             )
@@ -2511,7 +2601,7 @@ impl Graph {
             strata_schedule::Planner::for_lane(self.nodes.len(), profiling, self.compute_lane)
                 .map_err(fault)?;
         for node in &self.nodes {
-            self.fill_node_ranges(node, &mut scratch.ranges)?;
+            self.fill_node_ranges(node, &mut scratch.ranges, Some(&native))?;
             planner
                 .push_accesses(
                     matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
@@ -2528,14 +2618,8 @@ impl Graph {
         let plan = planner.finish().map_err(fault)?;
         let plan_bytes = strata_schedule::plan_metadata_bytes(&plan)
             .ok_or_else(|| fault("native transfer original plan metadata overflow"))?;
-        let owners = binding_owners::Owners::collect(
-            self.nodes.iter().filter_map(|node| node.owners.as_ref()),
-            descriptors::METADATA_CAP,
-        )
-        .map_err(fault)?;
         let preparation_budget = preparation_budget
             .checked_sub(plan_bytes)
-            .and_then(|n| n.checked_sub(owners.metadata_bytes()))
             .ok_or_else(|| fault("native transfer original plan metadata capacity"))?;
         let visibility = transfer_barriers::Visibility::new(&plan.segments, preparation_budget)
             .map_err(fault)?;
@@ -2555,7 +2639,7 @@ impl Graph {
                 return Err(fault("native transfer barrier original queue identity"));
             }
             let copy = if actual.copy {
-                self.fill_node_ranges(node, &mut scratch.ranges)?;
+                self.fill_node_ranges(node, &mut scratch.ranges, Some(&native))?;
                 Some(scratch.ranges.as_slice())
             } else {
                 None
@@ -2578,39 +2662,6 @@ impl Graph {
             .checked_add(transfer_bytes)
             .ok_or_else(|| fault("native transfer capture metadata overflow"))?;
 
-        let live_metadata = self
-            .recordings
-            .iter()
-            .try_fold(
-                signature
-                    .capacity()
-                    .checked_mul(size_of::<u64>())
-                    .and_then(|n| n.checked_add(owners.metadata_bytes()))
-                    .and_then(|n| n.checked_add(scratch_bytes))
-                    .ok_or_else(|| fault("native queue metadata overflow"))?,
-                |n, r| n.checked_add(r.metadata_bytes()?),
-            )
-            .ok_or_else(|| fault("native queue metadata overflow"))?;
-        let owner_budget = descriptors::METADATA_CAP
-            .checked_sub(live_metadata)
-            .and_then(|n| n.checked_sub(plan_bytes))
-            .ok_or_else(|| fault("native queue retained metadata capacity"))?;
-        // These are lifetime references only. Node views, exact signature,
-        // planner intervals and genuine allocator Binding owners stay complete.
-        let resources = binding_owners::unique_resources(
-            self.nodes.iter().flat_map(|n| {
-                n.resources
-                    .iter()
-                    .chain(&n.read_dependencies)
-                    .chain(match &n.dispatch {
-                        Dispatch::Indirect(r) => Some(r),
-                        _ => None,
-                    })
-            }),
-            |a, b| a.buffer.cmp(&b.buffer),
-            owner_budget,
-        )
-        .map_err(fault)?;
         let other_metadata = signature
             .capacity()
             .checked_mul(size_of::<u64>())
@@ -2687,6 +2738,7 @@ impl Graph {
                 .map(|s| s.queue()),
         )
         .map_err(fault)?;
+        drop(native); // prepare_last_recording may retire old Wgpu owners.
         let mut rolling = if rolling_prefill_selected(
             self.compute_lane,
             key.is_some(),
@@ -2730,6 +2782,7 @@ impl Graph {
         } else {
             None
         };
+        let native = keys.acquire()?;
         begin_native_command(&self.device, self.command, boundaries.before(0))?;
         if let Some(profile) = &self.recordings.last().unwrap().profile {
             unsafe {
@@ -2767,6 +2820,7 @@ impl Graph {
                     &self.nodes[index..(index + descriptors::NODE_WINDOW).min(self.nodes.len())],
                     self.recordings.last().unwrap().descriptors,
                     metadata,
+                    &native,
                 )?);
             }
             let copy = work.plan.segments[segment].copy;
@@ -2798,7 +2852,7 @@ impl Graph {
                 if !transfers.node(index).map_err(fault)?.is_empty() {
                     return Err(fault("native transfer barrier physical queue identity"));
                 }
-                self.fill_node_accesses(n, &mut scratch.accesses)?;
+                self.fill_node_accesses(n, &mut scratch.accesses, &native)?;
                 for (&buffer, &access) in &scratch.accesses {
                     if let Some(before) = previous.get(&buffer).copied() {
                         if before.intersects(
@@ -2849,8 +2903,8 @@ impl Graph {
                     unsafe {
                         self.device.cmd_copy_buffer(
                             self.command,
-                            raw_buffer(source)?,
-                            raw_buffer(target)?,
+                            native.get(source)?,
+                            native.get(target)?,
                             &[vk::BufferCopy {
                                 src_offset: source.offset,
                                 dst_offset: target.offset,
@@ -2858,7 +2912,7 @@ impl Graph {
                             }],
                         );
                     }
-                    native_host_read_boundary(&self.device, self.command, target)?;
+                    native_host_read_boundary(&self.device, self.command, target, &native)?;
                     if let Some(profile) = profile {
                         profile.stamp(self.command, index, true);
                     }
@@ -2869,13 +2923,13 @@ impl Graph {
                     unsafe {
                         self.device.cmd_fill_buffer(
                             self.command,
-                            raw_buffer(target)?,
+                            native.get(target)?,
                             target.offset,
                             target.size,
                             0,
                         );
                     }
-                    native_host_read_boundary(&self.device, self.command, target)?;
+                    native_host_read_boundary(&self.device, self.command, target, &native)?;
                     if let Some(profile) = profile {
                         profile.stamp(self.command, index, true);
                     }
@@ -2915,15 +2969,9 @@ impl Graph {
                         {
                             return Err(fault("native graph indirect extent"));
                         }
-                        let h = r
-                            .buffer
-                            .as_hal::<wgpu::hal::api::Vulkan>()
-                            .ok_or_else(|| fault("native graph indirect buffer"))?;
-                        self.device.cmd_dispatch_indirect(
-                            self.command,
-                            h.raw_buffer_handle(),
-                            r.offset,
-                        );
+                        let raw = native.get(r)?;
+                        self.device
+                            .cmd_dispatch_indirect(self.command, raw, r.offset);
                     }
                     Dispatch::Copy | Dispatch::Fill => {
                         unreachable!("transfers recorded before compute")
@@ -2951,6 +2999,8 @@ impl Graph {
                 .map_err(fault)?;
             rolling.finish().map_err(fault)?;
         }
+        drop(native); // Before node drops, Wgpu completion, cleanup or erasure.
+        drop(keys);
         CAPTURE_NS.fetch_add(
             capture_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             std::sync::atomic::Ordering::Relaxed,

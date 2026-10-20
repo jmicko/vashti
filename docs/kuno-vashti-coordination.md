@@ -65,9 +65,18 @@ Kuno currently advances its slots for resident groups too. The exact proposal
 preserves full BDA/source/loan guards and couples all required pieces.
 The complete opt-in miss-ring source is now implemented: actual effective-role
 classification, eight misses ahead, genuine disjoint resident raw view and
-role-bound resident GU/DOWN metadata plus matched closed grammar.100 App CPU
-and seven actual-runtime-source controls pass. Release/offline/GPU/full-request
-acceptance is pending; no speed or installation claim. See
+role-bound resident GU/DOWN metadata plus matched closed grammar.101 App CPU
+and seven actual-runtime-source controls pass. Frozen d95a12da / SHA07415e68
+passes408/208 offline layouts, all129 original GPU controls, complete real
+requests/counts and physical recovery. Profiled repeat11.5581s improves the full
+bundle, but clean repeat11.2306s only equals installed11.1474s. It remains
+unselected and uninstalled. DSO-aware CPU sampling completes with raw data
+removed and physical recovery; repeated prompt samples3.2513s of distributed
+CPU costs. The next coherent candidate is capture-local actual buffer lookup
+under a single real Wgpu destruction guard per phase, preserving every original
+view, INFO, owner, planner and recording lifetime. See the exact scoped guard
+contract in [native buffer capture](kuno-native-buffer-capture.md). No new
+installation claim. See
 [the exact implementation and gates](kuno-native-miss-ring.md).
 All actual views/owner bindings, original raw-buffer checks and signatures stay.
 See [the exact contract and current gates](kuno-native-capture-attention.md).
