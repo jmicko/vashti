@@ -79,14 +79,16 @@ pub(crate) fn cases(
             let fault = arena.allocate_zeroed(1)?;
             // Same original compiled primitive, authentic checked arena roots.
             // No model recording or source ownership is manufactured here.
-            native::run_dense(
+            let handles = [
+                u::handle(arena, input)?,
+                public.clone(),
+                u::handle(arena, output)?,
+                u::handle(arena, fault)?,
+            ];
+            #[cfg(feature = "strata-cubek-gemm")]
+            let actual_cubek_launch = super::cubek::try_dense(
                 client,
-                [
-                    u::handle(arena, input)?,
-                    public.clone(),
-                    u::handle(arena, output)?,
-                    u::handle(arena, fault)?,
-                ],
+                handles.clone(),
                 count,
                 columns,
                 rows,
@@ -95,6 +97,11 @@ pub(crate) fn cases(
                 rows,
                 bfloat,
             )?;
+            #[cfg(not(feature = "strata-cubek-gemm"))]
+            let actual_cubek_launch = false;
+            if !actual_cubek_launch {
+                native::run_dense(client, handles, count, columns, rows, 0, 0, rows, bfloat)?;
+            }
             let actual = probe::read_native_public(arena, output)?;
             if probe::read_native_public(arena, fault)?
                 .iter()
@@ -153,6 +160,7 @@ pub(crate) fn cases(
                 serde_json::json!({"family":"cooperative-matrix","bfloat":bfloat,
                 "count":count,"rows":rows,"columns":columns,"mismatches":mismatches,
                 "max_abs":max_abs,"ftz_oracle_mismatches":ftz_mismatches,"ftz_max_abs":ftz_max_abs,
+                "actual_cubek_launch":actual_cubek_launch,
                 "ftz_is_additional_diagnosis_only":true,"actual_native_kernels":true,"full_owner_and_tail_checked":true}),
             );
             arena.reset()?;

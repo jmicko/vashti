@@ -309,13 +309,18 @@ async fn serve(
                 eprintln!("public_attention_numeric_error {error}");
                 "public_prompt_attention_numeric_failed"
             })?;
+        let gdn_math_checks = crate::strata_gdn::prompt::public_recurrence_numeric(&mut arena)
+            .map_err(|error| {
+                eprintln!("public_gdn_math_numeric_error {error}");
+                "public_prompt_gdn_math_numeric_failed"
+            })?;
         arena.close().map_err(|_| "public_matrix_close_failed")?;
         if arena.owned_zero_audit_receipt().is_none() {
             return Err("public_matrix_erasure_unconfirmed");
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"gdn_math_checks":gdn_math_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }
