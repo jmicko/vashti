@@ -1,7 +1,7 @@
 //! Fixed-public active-prefix controls through the original Validate/Select
 //! kernels and private arena. No prompt scope, state receipt or speed claim.
 use super::{Op, launch, prompt_active_blocks};
-use crate::{private_arena::PrivateArena, resident_util as u};
+use crate::private_arena::PrivateArena;
 use zeroize::Zeroizing;
 type ProbeResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -126,11 +126,11 @@ fn read_owner(
     id: crate::private_arena::BufferId,
 ) -> ProbeResult<Zeroizing<Vec<u32>>> {
     let layout = arena.layout(id)?;
-    Ok(u::read_handle_prefix_u32(
-        arena,
-        arena.handle(id)?.clone(),
-        layout.owned_words,
-    )?)
+    let words = crate::gr_batch_probe::read_native_public(arena, id)?;
+    if words.len() != layout.owned_words {
+        return Err("public QSA actual full owner read extent".into());
+    }
+    Ok(words)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -163,7 +163,12 @@ fn check(
     if matches!(control, Control::UndersizedActive) {
         active = (start + count).div_ceil(4) - 1;
     }
-    let scores = arena.upload_f32(&scores)?;
+    // Deliberate fixed-public NaNs must reach the actual shader. The ordinary
+    // float uploader correctly rejects nonfinite data before GPU work; retain
+    // that production guard and use the original raw-word upload for this
+    // diagnostic's exact NaN/negative-zero bits instead.
+    let score_bits = Zeroizing::new(scores.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+    let scores = arena.upload_u32(&score_bits)?;
     let status = arena.upload_u32(&status)?;
     let selected = arena.allocate_zeroed(ROWS * STRIDE)?;
     let fault = arena.allocate_zeroed(1)?;
