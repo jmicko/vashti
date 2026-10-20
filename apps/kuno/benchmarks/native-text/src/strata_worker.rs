@@ -313,7 +313,14 @@ async fn serve(
     wire::write_response(&mut output, wire::READY, &[]).map_err(|_| "native_worker_pipe_failed")?;
     let first = if public_check {
         let request = wire::Generate {
-            prompt: Zeroizing::new(public_prompt(if prefill_check.is_some() { 0 } else { 600 })),
+            // The long-prefix operator profile warms the ordinary prompt path
+            // with73 tokens. Its two measured4245-token inputs remain exact.
+            // The independent short check keeps its original45-token inputs.
+            prompt: Zeroizing::new(public_prompt(match prefill_check {
+                Some(true) => 2,
+                Some(false) => 0,
+                None => 600,
+            })),
             outputs: 32,
             context: 32768,
             temperature: 0.,
