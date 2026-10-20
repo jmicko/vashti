@@ -112,7 +112,15 @@ pub(crate) fn cases(
         let up_bytes = if down {
             gate_bytes.clone()
         } else {
-            original(file, &name.replace(suffix, "ffn_up_exps.weight"), bytes)?
+            let up_name = name.replace(suffix, "ffn_up_exps.weight");
+            let up = file
+                .tensor(&up_name)
+                .ok_or_else(|| fail("original_up_missing"))?;
+            if up.info().dimensions() != tensor.dimensions() || up.info().dtype() != tensor.dtype()
+            {
+                return Err(fail("original_up_geometry"));
+            }
+            original(file, &up_name, bytes)?
         };
         let gate = public(client, gate_bytes.clone())?;
         let up = public(client, up_bytes.clone())?;
@@ -289,13 +297,14 @@ pub(crate) fn cases(
             };
             let mismatches = image_difference(arena, output_id, first, expected, changed)?;
             println!(
-                "public_prompt_dequant_numeric dtype={dtype} down={down} host={host} control={control} bit_mismatches={mismatches}"
+                "public_prompt_dequant_numeric dtype={dtype} down={down} host={host} control={control} bit_mismatches={mismatches} warm_fenced_wall_ns={warm_dispatch_ns:?}"
             );
             reports.push(
                 serde_json::json!({"family":"prompt-vector8-dequant", "dtype":dtype,
                 "down":down,"host_staged":host,"control":control,"bit_mismatches":mismatches,
                 "warm_fenced_wall_ns":warm_dispatch_ns,"image_bytes":output_words*4,
-                "actual_native_kernels":true,"original_weights":true,
+                "actual_native_kernels":true,"original_weights":control!="nonfinite",
+                "original_weight_acceptance":control=="valid",
                 "full_owner_and_tail_checked":true,"authentic_physical_sources":true}),
             );
             arena.reset()?;
