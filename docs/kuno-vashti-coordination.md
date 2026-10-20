@@ -22,26 +22,80 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Live continuation (2026-10-20 23:26UTC): aligned full-chunk candidate on protected GPU run.**
+**Authoritative active handoff (2026-10-20 23:36UTC): full-chunk math accepted; clean selection FAILS, system recovered.**
 
-Frozen sourcee7c43cb553c3ea7adc8eeeef63b6c5b557083cb7 /
+Goal ACTIVE/UNMET. Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
+branch`codex/strata-rust-port`. Preserve the other checkout's coordination files.
+No GPU test remains; both protected units are terminal. No installation occurred.
+Installed worker3fffc266/SHAeac78ce0 and image-enabled gateway36626d30/SHAd3ed07f4
+remain byte-identical, freshly rehashed. Never reset/reboot the GPUs.
+
+Frozen complete sourcee7c43cb553c3ea7adc8eeeef63b6c5b557083cb7 /
 SHA88ce000345a0fc1bc69af379cf51b8efcfbe5199642e7024cea83c1bd450d170,
-build`strata-parity-qsa-xmx-full-chunk-aligned-20261020`, passes149 CPU,
-420 WGSL/232 matrix layouts, exact raw/fixed stage and all original171+7 actual
-GPU numerical controls. Complete first full73/4245/4245 profile and physical
-recovery PASS: prompt5.0804/12.8765/11.4091s, load79.1419s. This improves the
-previous matrix candidate, but is NOT a clean installed-baseline or Strata win.
-Normal-scheduling full profile is ACTIVE in protected unit
-`kuno-native-qsa-xmx-full-chunk-aligned-20261020`. No overlapping GPU or heavy
-CPU test, install or device reset. Whole connected proof waits for this mode;
-then original terminal/clean-at-EACH5%/staged gates remain before selection.
+build`strata-parity-qsa-xmx-full-chunk-aligned-20261020`, retains every preceding
+component plus persistent query, explicit RTE, full64-cell group staging, real
+vec4 stores and register P.V accumulation with one original partial publication.
+The12-word reduction padding preserves exact36144B for ALL8 real memory layouts;
+original failed unaligned artifact96842067/SHA6ca665aa stays archived.
 
-Pinned helper`check-native-qsa-xmx-full-chunk-aligned-bundle-20261020.py`, live
-log`strata-parity-qsa-xmx-full-chunk-aligned-connected-20261020.log`, exact
-accepted operator metadata`strata-parity-qsa-xmx-full-chunk-aligned-operator-outcome-public-20261020.json`.
-Prepared aligned acceptance helper is UNEXECUTED; preserves all original gates.
-Installed worker/gateway unchanged. Goal ACTIVE/UNMET. Bounded sudo297061 still
-ends00:17:49UTC Oct21. Same sole worktree and all boundaries below apply.
+PASS:149 actual selected CPU,420 WGSL/232 matrix layouts, exact raw/fixed GPU
+stage, original171+7 real GPU numerical controls with unchanged bounds and full
+owner/tail/fault/causal audits, BOTH original73/4245/4245 profiles and complete
+compiler/actual-dispatch/routing-inventory/scratch/pool/source/owner/recovery proofs.
+Original historical FMA group equality is explicitly NOT claimed for new matrix
+arithmetic; its failed RTE receipt and original wrappers stay unchanged. XMX-only
+inventory proof conserves original48*10*(prompt_tokens-1) routes and launch grammar.
+Actual cumulative XMX dispatch24/1620/3216 in BOTH modes, real SIMD16 DPAS confirmed.
+
+Diagnostic profile first/repeat12.876510714/11.409061794s;
+normal12.780339774/11.291490952s. Normal QSA attention/merge2.665916524s versus
+prior persistent matrix3.481686084s(23.43% shorter). This is a diagnostic gain,
+not evidence of beating the installed baseline or Strata5.3515s.
+
+Original terminal-negative recovery also PASS: fired1, actual waited queues2,
+failed queues0, protected worker exit1, physical recovery; no false normal-session
+or owned-zero claim. FRESH original clean45/4245/4245 computes correctly and
+physically recovers, but original at-EACH5% gate FAILS:
+- firstlong14.899065744s vs installed12.962279132s(14.94% slower);
+- repeat10.891321504s vs installed11.147390805s(2.30% shorter, below5% required).
+Preserve this failure; do not select repeat alone, change workload/warmup, exclude
+cold compilation or install. Staged API/tool/MAX8/semantic/sustained/privacy and
+installer were NOT RUN. Source-specific acceptance exits1 only AFTER recovery.
+Prepared gated installer is UNEXECUTED; its preflight additionally requires exact
+XMX/stage/both-route proofs and original clean/staged gates.
+
+Artifacts under`/media/jmicko/faststore/kuno-development`:
+- `strata-parity-qsa-xmx-full-chunk-aligned-20261020-qsa-xmx-public-summary.json`
+- `strata-parity-qsa-xmx-full-chunk-aligned-20261020-outcome-public.json`
+- `strata-parity-qsa-xmx-full-chunk-aligned-acceptance-20261020-clean-selection-public-summary.json`
+- `strata-parity-qsa-xmx-full-chunk-aligned-final-outcome-public-20261020.json`
+- `strata-parity-qsa-xmx-full-chunk-aligned-20261020-phase-arrivals-public.json`
+- root-only raw receipts retain actual protection/host-before/host-after evidence.
+Helper variants and frozen validator remain pinned by
+`qsa-xmx-inventory-wrapper-manifest-20261020.json`; originals unchanged.
+
+Next work: preserve this COMPLETE optional matrix bundle; diagnose the cold
+first-long penalty and exact selected scalar/reference costs before another
+matrix assumption. No repeated baseline or unchanged acceptance runs. The matched
+Strata environment leaves XMX disabled and uses32-query scalar fallback: its680ms
+QSA timing is NOT an XMX result. Our normal matrix QSA2.666s and expert interval
+about6s still leave a large gap; do not claim parity or blame one queue/PCIe rate.
+Existing public markers put ~74-77s of LOAD between`global_sources` and
+`shared_target_weights`; these are BEFORE-phase labels, so that is the full
+`prepare_global_sources_before_prefill` call, NOT the later shared-target call.
+It contains static-weight preparation, expert plan/source publication/queue
+attachment and final Q6-head activation. Split those exact subphases with bounded
+fixed-public metadata if investigating startup; no private samples/content and
+no moving setup outside clean clocks. Rebind~7-9ms/preflight~55-60ms cannot
+explain the remaining long prompt. The first-long penalty cause is NOT proven.
+
+Fresh independent23:34:47UTC: Intel50,688,000B, NVIDIA compute0(704MiB desktop),
+all driver fault counters0, Kuno/Ollama/Vashti200, admission inactive/unpaused/
+recoveryfalse/waiting0; no lab worker remains. Owned bounded cached sudo297061 /
+sharedshell3556 ends00:17:49UTC Oct21; never kill sharedshell. All commits are
+local on the Kuno branch; no API/KNT2/KNR2/config/model/frontend/release change.
+Exact contracts and failed/successful receipts are detailed in
+[kuno-native-compute-intervals.md](kuno-native-compute-intervals.md#persistent-query-matrix-successor-and-route-inventory-contract).
 
 **Previous checkpoint (2026-10-20 23:19UTC): full-chunk/vector successor alignment fixed,149 CPU controls pass.**
 

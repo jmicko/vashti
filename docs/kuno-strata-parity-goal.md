@@ -872,3 +872,20 @@ checks remain. Matched reference source explicitly leaves XMX opt-in disabled;
 its selected scalar fallback, not optional XMX, produced5.3515s. Record and use
 that distinction in future performance attribution. Aligned artifact and full
 hardware acceptance pending; installed identities unchanged, goal ACTIVE/UNMET.
+
+
+## Full-chunk validation and safe checkpoint (2026-10-20 23:36UTC)
+
+Complete sourcee7c43cb5/SHA88ce0003 passes149 CPU,420/232 offline,178 GPU numeric
+controls, exact stage, BOTH full-profile and actual compiler/dispatch/inventory/
+pool/owner/recovery proofs, plus actual terminal-negative recovery. Normal QSA
+2.6659s vs3.4817s; normal whole repeat11.2915s vs12.1523s. Fresh clean ORIGINAL
+45/4245/4245 passes compute/recovery but FAILS original at-EACH5% selection:
+first14.8991s vs installed12.9623s; repeat10.8913s vs11.1474s. No staged quality,
+installation, parity or sustained-decode gain is claimed. Installed worker
+3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 freshly verified unchanged.
+No GPU worker remains, services/admission/memory/faults normal. Goal ACTIVE/UNMET.
+Exact latest direction, hashes, helpers and receipts are in the coordination
+guide. Keep the complete matrix work; investigate cold-first cost and actual
+selected scalar Strata path. Its measured reference did not enable XMX. Do not
+rerun unchanged baselines or relax the existing acceptance/erasure checks.

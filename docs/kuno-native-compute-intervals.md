@@ -1971,3 +1971,35 @@ normal profile/connected count/compiler/pool proofs are active next, then the
 original terminal-negative/clean-at-EACH5%/staged privacy/tool/semantic gates.
 Current frozen build/unit/helper identities are in the coordination handoff.
 Installed identities unchanged; original matched Strata5.3515s still faster.
+
+
+### Full-chunk complete acceptance and clean selection failure
+
+Complete alignede7c43cb5/SHA88ce0003 passes149 CPU,420/232 offline, all178
+numerical GPU controls, exact stage and BOTH complete actual compiler/dispatch/
+route-inventory/scratch/pool/source/owner/recovery proofs. Normal first/repeat
+12.780339774/11.291490952s; QSA attention/merge2.665916524s versus prior matrix
+3.481686084s(23.43% shorter). Real dispatch24/1620/3216 in both modes.
+
+Original terminal-negative also passes(actual waited recovery queues2, failures0,
+expected process exit1, physical recovery; no normal-session or owned-zero claim).
+Fresh ORIGINAL clean45/4245/4245 computes correctly and physically recovers:
+load81.432467279s; prompt10.356058856/14.899065744/10.891321504s. Original matched
+installed firstlong12.962279132/repeat11.147390805s. First regresses14.94%, repeat
+improves2.30%; neither meets original at-EACH5% selection. The acceptance helper
+correctly exits1 AFTER recovery. No staged quality or install is run. Preserve
+failure, workload and first/repeat comparison; do not exclude cold/JIT costs or
+select repeat alone. Entire optional matrix bundle remains, installed identities
+unchanged. Active parity goal remains unmet; source-specific receipts/helpers and
+safe live state are in the authoritative coordination handoff.
+
+Existing fixed-public parent-arrival phase markers bound about74-77s of startup
+between`global_sources` and`shared_target_weights`. These labels precede their
+operations: the interval is full`ResidentModel::prepare_global_sources_before_prefill`,
+including static-weight preparation, source publication/queue attachment and
+Q6-head activation, not the later shared-target-weight call. Arrival differences
+are not isolated GPU/CPU/disk/PCIe measurements. The ~7-9ms request rebind and
+~55-60ms preflight do not explain the remaining ~11s prompt. Exact cold-first
+penalty source is unproven; use fixed-public subphase clocks if investigating.
+Matched Strata's selected32-query scalar fallback remains the relevant source
+comparison; optional XMX must not be described as its measured680ms path.
