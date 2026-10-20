@@ -31,23 +31,23 @@ prefix gain. Its sampled host costs are distributed across initialization,
 range planning, allocation/bindings and dispatch; source proposals for a larger
 coherent native group submission and bounded parallel loading are under review.
 
-The complete source017ed775 / SHA5208a062 candidate now combines both with
-padded attention probability gathering.402/144 offline layouts and all103 GPU
-controls pass, but its first whole-model request rejects a valid fresh prompt
-scope because it incorrectly requires a reusable-buffer lease. See
-[the exact failed acceptance and correction boundary](kuno-strata-parity-goal.md#complete-bulk-pv-and-loading-candidate).
-Both attempts physically recover with zero driver faults and healthy services.
-The fresh/reuse authentication correction is integrated as99905e82, with191 CPU
-controls,402/144 offline layouts and all103 actual GPU controls passing. The
-whole-model run catches a second integration bug: the boxed kernel wrapper
-drops the DOWN dequantization operator's original release flag. Its genuine
-metadata forwarding repairbbc33333 passes402/144 offline layouts and all103 GPU
-controls. The complete prompt now reaches a separate INFO-packing bug: record
-length was incorrectly limited by descriptor-offset alignment. The correction
-will use the original record/page planner without reducing original logical
-extents or weakening ownership. Both failed profile receipts confirm physical
-recovery and healthy services. No completed prompt or new candidate speed/
-installation is claimed. Installed3fffc266 is unchanged.
+The complete bulk/PV/loading source12caac8b / SHAa2ad0c62 now passes402/144
+layouts, all103 GPU controls, three full public requests and a separate clean
+45/4245/4245 comparison, with physical recovery and healthy services. Three
+integration repairs preserve genuine fresh/reuse owners, original release
+metadata and original INFO page planning. Actual96 bulk batches,158,028
+launches and39,225 HOST copies match the original26,338 six-operation groups.
+Load82.18s improves from roughly101s, but clean repeated prefix12.4769s is
+slower than installed11.1474s. The complete bundle is kept, **unselected and
+uninstalled**; no new full staged/terminal acceptance is claimed for it.
+
+The next connected opt-in native32 routed-expert source/probe/public hook is
+integrated atb17c64c1, with five CPU controls including64 new shader layouts.
+Its strict multi-piece batch grammar is still in isolated implementation; no
+whole-worker/new26 GPU acceptance or speed is claimed yet. See
+[exact source, receipts and remaining gates](kuno-strata-parity-goal.md#complete-bulkpvloading-execution-now-passes).
+No API, protocol, model identity, configuration or Vashti consumer change.
+Installed3fffc266 remains selected, and the Strata parity goal stays active.
 
 **Prior Kuno-only checkpoint (2026-10-20; superseded by native32 above).**
 See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).

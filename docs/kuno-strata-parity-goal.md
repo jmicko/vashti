@@ -211,6 +211,53 @@ device alignments, rather than testing only artificial256/512-byte alignment.
 passed=false, no prompt frames and physical recovery. No new speed or
 installation is claimed; original installed3fffc266 remains selected.
 
+### Complete bulk/PV/loading execution now passes
+
+Source12caac8b8abeff560ebcaa7b2dc4454908fb2cf8 integrates the original INFO
+planner repair (isolated886576d7). Actual72-byte generated records include five
+runtime scalars and six array metadata pairs; custom Params are64 bytes. Both
+page controls and all125 original I/O-owner controls pass across device
+alignments4/8/16/32/64/256/512, with unchanged binding/page rejection and complete
+padding checks. Full worker typecheck passes. Frozen worker SHA256
+`a2ad0c62b4a378504fd1010632016f7a68871a213dc125b0abb7351a99f5a59b`
+in `strata-parity-native-bulk-info-20261020` passes402/144 offline layouts,
+all103 original GPU controls and all three complete public prompt requests.
+
+`strata-parity-native-bulk-info-20261020-profile/receipt.json` confirms actual
+bulk admission:96 batches,158,028 physical launches for26,338 groups and39,225
+original HOST-copy segments. All counts match the actual original six-command
+path. Each request returns correct arithmetic and completes original close;
+physical recovery, zero driver faults, HTTP200 and normal admission pass.
+Load81.7547s; profiled first/repeated4245-token prefixes13.0066/12.5590s. This is
+slower than prior comparable profile11.8742/11.7921s, not a prompt-speed gain.
+
+The clean45/4245/4245 run
+`strata-parity-native-bulk-info-20261020-clean-long` independently passes correct
+answers, checked close and its actual host-after recovery/log marker. Load
+82.1828s; first/repeated long14.2327/12.4769s, versus installed native32
+12.9623/11.1474s. Loading improves from about101s, but prompt processing regresses
+about12% on the repeated request. **This bundle is retained but unselected and
+uninstalled.** Full staged API/terminal-failure acceptance will be performed on
+the next complete candidate; those gates are not newly claimed for this bundle.
+
+Detailed profiling locates the regression: expert enqueueCPU1.6423s versus
+1.5562s, capture2.8532s versus1.8676s, wait3.5454s versus3.7189s. The genuine
+restored release metadata doubles rolling segments24,773->48,610; it must not be
+silently discarded to regain speed. QSA attention/merge improves modestly
+1.6466->1.5057s. These are instrumented intervals, not isolated GPU throughput.
+The whole coherent path remains connected for the next matrix candidate.
+
+The opt-in routed native32 source is now integrated as9a623de6 (isolated
+3aa83097), shared oracle/native26 as0e82258d (548ac64e), explicit feature10cd7b48
+and public-only worker hookb17c64c1. See
+[the source/CPU checkpoint](kuno-native-wide-expert-candidate.md) and
+[the unchanged-oracle boundary](kuno-native-routed-expert-probe.md).
+Five actual-source CPU controls include64 generated SPIR-V layouts; original
+macro/narrow arithmetic is reused for authentic tails. The strict six-logical-
+phase/physical-piece parser remains in isolated implementation. Do not enable or
+install this candidate before complete compilation, all original103 plus26 new
+GPU controls, actual bulk counts, full recovery/quality and clean timing pass.
+
 The subsequent source-only
 [native wide expert proposal](kuno-native-wide-expert-proposal.md) is not part
 of this binary. It explicitly preserves six logical phases while accounting
