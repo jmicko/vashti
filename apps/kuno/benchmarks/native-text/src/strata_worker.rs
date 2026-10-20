@@ -395,13 +395,21 @@ async fn serve(
             "public_attention_math_controls_complete {}",
             qsa_math_checks.len()
         );
+        #[cfg(feature = "strata-qsa-xmx")]
+        let qsa_xmx_checks =
+            crate::strata_qsa::public_attention_xmx_numeric(&mut arena).map_err(|error| {
+                eprintln!("public_attention_xmx_numeric_error {error}");
+                "public_prompt_attention_xmx_failed"
+            })?;
+        #[cfg(not(feature = "strata-qsa-xmx"))]
+        let qsa_xmx_checks: Vec<serde_json::Value> = Vec::new();
         arena.close().map_err(|_| "public_matrix_close_failed")?;
         if arena.owned_zero_audit_receipt().is_none() {
             return Err("public_matrix_erasure_unconfirmed");
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }

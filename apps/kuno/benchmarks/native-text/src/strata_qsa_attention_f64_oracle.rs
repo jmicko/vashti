@@ -64,19 +64,69 @@ pub(super) fn evaluate(
     partial_bound: &mut [f64],
     stats_bound: &mut [f64],
 ) -> Result<(), &'static str> {
-    if !(1..=ROWS).contains(&g.count)
+    evaluate_rows(
+        g,
+        query,
+        cache,
+        selected,
+        partial,
+        stats,
+        partial_bound,
+        stats_bound,
+        ROWS,
+    )
+}
+
+/// Additional full-batch control; original entry retains its exact8-row domain
+/// and the identical mathematical loops and operation-derived bounds.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn evaluate_large(
+    g: Geometry,
+    query: &[u32],
+    cache: &[u32],
+    selected: &[u32],
+    partial: &mut [f64],
+    stats: &mut [f64],
+    partial_bound: &mut [f64],
+    stats_bound: &mut [f64],
+) -> Result<(), &'static str> {
+    evaluate_rows(
+        g,
+        query,
+        cache,
+        selected,
+        partial,
+        stats,
+        partial_bound,
+        stats_bound,
+        32,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn evaluate_rows(
+    g: Geometry,
+    query: &[u32],
+    cache: &[u32],
+    selected: &[u32],
+    partial: &mut [f64],
+    stats: &mut [f64],
+    partial_bound: &mut [f64],
+    stats_bound: &mut [f64],
+    rows: usize,
+) -> Result<(), &'static str> {
+    if !(1..=rows).contains(&g.count)
         || ![0, 32, 64].contains(&g.query_offset)
         || g.capacity > 32768
         || g.start
             .checked_add(g.query_offset)
             .and_then(|n| n.checked_add(g.count))
             .is_none_or(|end| end > g.capacity)
-        || query.len() != (g.query_offset + ROWS) * QUERY
+        || query.len() != (g.query_offset + rows) * QUERY
         || cache.len() != g.capacity * CACHE
-        || selected.len() != (g.query_offset + ROWS) * SELECT
-        || partial.len() != ROWS * PARTIAL
+        || selected.len() != (g.query_offset + rows) * SELECT
+        || partial.len() != rows * PARTIAL
         || partial_bound.len() != partial.len()
-        || stats.len() != ROWS * STATS
+        || stats.len() != rows * STATS
         || stats_bound.len() != stats.len()
     {
         return Err("public QSA F64 original operand geometry");

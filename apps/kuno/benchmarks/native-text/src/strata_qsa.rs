@@ -46,6 +46,12 @@ mod prompt_uniform;
 pub(crate) mod selection;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use attention_numeric_probe::cases as public_attention_numeric;
+#[cfg(feature="strata-qsa-xmx")]
+pub(crate) use attention_numeric_probe::large_cases as public_attention_xmx_numeric;
+
+#[cfg(feature = "strata-qsa-xmx")]
+#[path = "strata_prompt_qsa_xmx.rs"]
+pub(crate) mod prompt_xmx;
 
 // Original64-value quantization groups: 1024 signed codes and16 half scales.
 // Raw index keys live only in the three-row tail and the current MAX8 window.
@@ -514,6 +520,12 @@ pub(crate) fn launch(
                 .any(|(h, n)| h.size_in_used() < (n * 4) as u64))
     {
         return Err(Error::InvalidBufferLength);
+    }
+    #[cfg(feature = "strata-qsa-xmx")]
+    if kernel == Kernel::PromptAttentionFault
+        && prompt_xmx::try_launch(arena, &handles, info, grid)?
+    {
+        return Ok(());
     }
     let mut args = KernelArguments::new();
     for h in handles {

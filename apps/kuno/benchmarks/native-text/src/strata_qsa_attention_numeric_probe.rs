@@ -55,7 +55,15 @@ fn selected_rows(start: usize, count: usize) -> Vec<u32> {
     selected_rows_at(start, count, 0)
 }
 fn selected_rows_at(start: usize, count: usize, offset: usize) -> Vec<u32> {
-    let mut selected = vec![u32::MAX; (offset + OWNER_ROWS) * SELECT_WORDS];
+    selected_rows_at_owned(start, count, offset, OWNER_ROWS)
+}
+fn selected_rows_at_owned(
+    start: usize,
+    count: usize,
+    offset: usize,
+    owned_rows: usize,
+) -> Vec<u32> {
+    let mut selected = vec![u32::MAX; (offset + owned_rows) * SELECT_WORDS];
     for row in 0..count {
         let query_row = row + offset;
         let visible = start + query_row + 1;
@@ -70,9 +78,22 @@ fn selected_rows_at(start: usize, count: usize, offset: usize) -> Vec<u32> {
 /// Actual shader coordinates: [query][KV head][chunk][12 heads][256 or2].
 /// Every unlaunched query/chunk and complete physical owner tail stays zero.
 fn inactive_zero(words: &[u32], start: usize, count: usize, stats: bool) -> bool {
+    inactive_zero_owned(words, start, count, stats, OWNER_ROWS)
+}
+fn inactive_zero_owned(
+    words: &[u32],
+    start: usize,
+    count: usize,
+    stats: bool,
+    owned_rows: usize,
+) -> bool {
     let row_words = if stats { STATS_ROW } else { PARTIAL_ROW };
     let per_slot = if stats { 12 * 2 } else { 12 * 256 };
-    if words.len() < OWNER_ROWS * row_words || !geometry(start, count, 32768) {
+    if words.len() < owned_rows * row_words
+        || count == 0
+        || count > owned_rows
+        || start.checked_add(count).is_none_or(|end| end > 32768)
+    {
         return false;
     }
     words.iter().enumerate().all(|(i, &word)| {
@@ -311,7 +332,11 @@ impl CubeTask<AutoCompiler> for ScalarAttention {
     }
 }
 
-fn scalar_launch(arena: &PrivateArena, owners: [Handle; 7], p: [u32; 12]) -> ProbeResult<()> {
+fn scalar_launch(
+    arena: &PrivateArena,
+    owners: [Handle; 7],
+    p: [u32; 12],
+) -> ProbeResult<()> {
     let mut args = KernelArguments::new();
     if owners.iter().any(|h| h.stream != owners[0].stream) {
         return Err("public QSA original scalar client identity".into());
@@ -363,13 +388,45 @@ fn check(
     query_offset: usize,
     nondyadic: bool,
 ) -> ProbeResult<(serde_json::Value, bool)> {
-    if !offset_geometry(start, count, capacity, query_offset)
-        || !crate::strata_intel_core::enabled()
-        || crate::strata_prompt::active()
-    {
+    check_impl(
+        arena,
+        start,
+        count,
+        capacity,
+        control,
+        query_offset,
+        nondyadic,
+        false,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn check_impl(
+    arena: &mut PrivateArena,
+    start: usize,
+    count: usize,
+    capacity: usize,
+    control: Control,
+    query_offset: usize,
+    nondyadic: bool,
+    large: bool,
+) -> ProbeResult<(serde_json::Value, bool)> {
+    let owned_rows = if large { 32 } else { OWNER_ROWS };
+    let geometry_ok = if large {
+        (16..=32).contains(&count)
+            && [0, 32, 64].contains(&query_offset)
+            && (4..=32768).contains(&capacity)
+            && capacity.is_multiple_of(4)
+            && start
+                .checked_add(query_offset)
+                .and_then(|n| n.checked_add(count))
+                .is_some_and(|end| end <= capacity)
+    } else {
+        offset_geometry(start, count, capacity, query_offset)
+    };
+    if !geometry_ok || !crate::strata_intel_core::enabled() || crate::strata_prompt::active() {
         return Err("public QSA attention fixed geometry".into());
     }
-    let input_rows = query_offset + OWNER_ROWS;
+    let input_rows = query_offset + owned_rows;
     let effective_start = start + query_offset;
     let mut queries = Zeroizing::new(vec![0u32; input_rows * QUERY_WORDS]);
     for (i, value) in queries.iter_mut().enumerate() {
@@ -391,11 +448,12 @@ fn check(
     if control == Control::NonfiniteQuery {
         queries[0] = f32::NAN.to_bits();
     }
-    let mut selected = Zeroizing::new(if query_offset == 0 {
-        selected_rows(start, count)
-    } else {
-        selected_rows_at(start, count, query_offset)
-    });
+    let mut selected = Zeroizing::new(selected_rows_at_owned(
+        start,
+        count,
+        query_offset,
+        owned_rows,
+    ));
     if control == Control::FutureSelection {
         selected[0] = (start + 1) as u32;
     }
@@ -422,12 +480,17 @@ fn check(
                 scales[(token + word * 2) % 4] | (scales[(token + word * 2 + 1) % 4] << 16);
         }
     }
-    let f64_reference = if nondyadic {
-        let mut partial = Zeroizing::new(vec![0.0; OWNER_ROWS * PARTIAL_ROW]);
-        let mut stats = Zeroizing::new(vec![0.0; OWNER_ROWS * STATS_ROW]);
+    let f64_reference = if nondyadic && control == Control::Causal {
+        let mut partial = Zeroizing::new(vec![0.0; owned_rows * PARTIAL_ROW]);
+        let mut stats = Zeroizing::new(vec![0.0; owned_rows * STATS_ROW]);
         let mut partial_bounds = Zeroizing::new(vec![0.0; partial.len()]);
         let mut stats_bounds = Zeroizing::new(vec![0.0; stats.len()]);
-        f64_oracle::evaluate(
+        let evaluate = if large {
+            f64_oracle::evaluate_large
+        } else {
+            f64_oracle::evaluate
+        };
+        evaluate(
             f64_oracle::Geometry {
                 start,
                 count,
@@ -449,15 +512,15 @@ fn check(
     let query = arena.upload_u32(&queries)?;
     let cache = arena.upload_u32(&cache)?;
     let selected = arena.upload_u32(&selected)?;
-    let candidate = arena.allocate_zeroed(OWNER_ROWS * CACHE_WORDS)?;
+    let candidate = arena.allocate_zeroed(owned_rows * CACHE_WORDS)?;
     let reference = [
-        arena.allocate_zeroed(OWNER_ROWS * PARTIAL_ROW)?,
-        arena.allocate_zeroed(OWNER_ROWS * STATS_ROW)?,
+        arena.allocate_zeroed(owned_rows * PARTIAL_ROW)?,
+        arena.allocate_zeroed(owned_rows * STATS_ROW)?,
         arena.allocate_zeroed(1)?,
     ];
     let actual = [
-        arena.allocate_zeroed(OWNER_ROWS * PARTIAL_ROW)?,
-        arena.allocate_zeroed(OWNER_ROWS * STATS_ROW)?,
+        arena.allocate_zeroed(owned_rows * PARTIAL_ROW)?,
+        arena.allocate_zeroed(owned_rows * STATS_ROW)?,
         arena.allocate_zeroed(1)?,
     ];
     let owners = |output: [BufferId; 3]| -> ProbeResult<[Handle; 7]> {
@@ -467,10 +530,10 @@ fn check(
         let logical = [
             input_rows * QUERY_WORDS,
             capacity * CACHE_WORDS,
-            OWNER_ROWS * CACHE_WORDS,
+            owned_rows * CACHE_WORDS,
             input_rows * SELECT_WORDS,
-            OWNER_ROWS * PARTIAL_ROW,
-            OWNER_ROWS * STATS_ROW,
+            owned_rows * PARTIAL_ROW,
+            owned_rows * STATS_ROW,
             1,
         ];
         for (index, (&id, expected)) in ids.iter().zip(logical).enumerate() {
@@ -514,20 +577,42 @@ fn check(
     ];
     // Static compiler delimiters belong only to this compiled-public entry.
     // Each actual sync closes its scope before another shader may be compiled.
-    eprintln!("public_qsa_compiler_scope reference");
+    if large {
+        eprintln!("public_qsa_xmx_compiler_scope reference");
+    } else {
+        eprintln!("public_qsa_compiler_scope reference");
+    }
     scalar_launch(arena, owners(reference)?, p)?;
     cubecl::future::block_on(arena.client()?.sync())?;
-    eprintln!("public_qsa_compiler_scope optimized");
+    if large {
+        eprintln!("public_qsa_xmx_compiler_scope optimized");
+    } else {
+        eprintln!("public_qsa_compiler_scope optimized");
+    }
     // Actual production kernel selection and original launch validation.
-    super::launch(
-        arena,
-        Kernel::PromptAttentionFault,
-        [ATTENTION_CHUNKS, 2, count],
-        owners(actual)?.to_vec(),
-        p,
-    )?;
+    if large {
+        #[cfg(feature = "strata-qsa-xmx")]
+        if !super::prompt_xmx::try_launch(arena, &owners(actual)?, p, [ATTENTION_CHUNKS, 2, count])?
+        {
+            return Err("public large QSA did not exercise actual XMX kernel".into());
+        }
+        #[cfg(not(feature = "strata-qsa-xmx"))]
+        return Err("public large QSA XMX feature absent".into());
+    } else {
+        super::launch(
+            arena,
+            Kernel::PromptAttentionFault,
+            [ATTENTION_CHUNKS, 2, count],
+            owners(actual)?.to_vec(),
+            p,
+        )?;
+    }
     cubecl::future::block_on(arena.client()?.sync())?;
-    eprintln!("public_qsa_compiler_scope complete");
+    if large {
+        eprintln!("public_qsa_xmx_compiler_scope complete");
+    } else {
+        eprintln!("public_qsa_compiler_scope complete");
+    }
     let reference_partial = read_owner(arena, reference[0])?;
     let reference_stats = read_owner(arena, reference[1])?;
     let reference_fault = read_owner(arena, reference[2])?;
@@ -551,10 +636,16 @@ fn check(
         stats_diff.max_ulp,
         stats_diff.nonfinite_mismatches
     );
-    if !inactive_zero(&actual_partial, effective_start, count, false)
-        || !inactive_zero(&actual_stats, effective_start, count, true)
-        || !inactive_zero(&reference_partial, effective_start, count, false)
-        || !inactive_zero(&reference_stats, effective_start, count, true)
+    if !inactive_zero_owned(&actual_partial, effective_start, count, false, owned_rows)
+        || !inactive_zero_owned(&actual_stats, effective_start, count, true, owned_rows)
+        || !inactive_zero_owned(
+            &reference_partial,
+            effective_start,
+            count,
+            false,
+            owned_rows,
+        )
+        || !inactive_zero_owned(&reference_stats, effective_start, count, true, owned_rows)
     {
         return Err("public QSA attention inactive row chunk or owner padding changed".into());
     }
@@ -599,10 +690,14 @@ fn check(
         f64_metadata = serde_json::json!({"passed":all_passed,"both_gpu_paths_checked":true,"bounds_from_operations_not_measurements":true,"sides":sides});
         all_passed
     } else {
-        bit_exact
+        if large {
+            control != Control::Causal
+        } else {
+            bit_exact
+        }
     };
     Ok((
-        serde_json::json!({"family":"prompt-qsa-attention-scalar-parity","control":control.label(),"start":start,"count":count,"capacity":capacity,"query_offset":query_offset,"nondyadic_operands":nondyadic,"fault":control.fault(),"bit_exact_partial_and_stats":bit_exact,"original_bitwise_required":!nondyadic,"independent_f64":f64_metadata,"numerical_acceptance_passed":accepted,"full_owner_and_tail_checked":true,"actual_prompt_attention_fault_kernel":true,"unchanged_scalar_shader_reference":true,"unique_reference_kernel_identity":true,"original_host_launch_validation":true,"fabricated_prompt_scope":false}),
+        serde_json::json!({"family":"prompt-qsa-attention-scalar-parity","control":control.label(),"start":start,"count":count,"capacity":capacity,"query_offset":query_offset,"nondyadic_operands":nondyadic,"fault":control.fault(),"bit_exact_partial_and_stats":bit_exact,"original_bitwise_required":!nondyadic && !large,"actual_large_xmx_kernel":large,"negative_fault_control_only":large && control != Control::Causal,"independent_f64":f64_metadata,"numerical_acceptance_passed":accepted,"full_owner_and_tail_checked":true,"actual_prompt_attention_fault_kernel":true,"unchanged_scalar_shader_reference":true,"unique_reference_kernel_identity":true,"original_host_launch_validation":true,"fabricated_prompt_scope":false}),
         accepted,
     ))
 }
@@ -634,6 +729,38 @@ pub(crate) fn cases(arena: &mut PrivateArena) -> ProbeResult<Vec<serde_json::Val
         return Err(
             "public QSA attention original bit or independent F64 acceptance failed".into(),
         );
+    }
+    Ok(reports)
+}
+
+#[cfg(feature = "strata-qsa-xmx")]
+pub(crate) fn large_cases(arena: &mut PrivateArena) -> ProbeResult<Vec<serde_json::Value>> {
+    let mut reports = Vec::new();
+    for (start, count, capacity, offset, control) in [
+        (0, 16, 4096, 0, Control::Causal),
+        (31, 31, 4096, 0, Control::Causal),
+        (62, 32, 4096, 32, Control::Causal),
+        (1983, 32, 4096, 64, Control::Causal),
+        (32704, 32, 32768, 32, Control::Causal),
+        (62, 32, 4096, 0, Control::FutureSelection),
+        (62, 32, 4096, 0, Control::NonfiniteQuery),
+    ] {
+        let attempt = check_impl(
+            arena,
+            start,
+            count,
+            capacity,
+            control,
+            offset,
+            control == Control::Causal,
+            true,
+        );
+        arena.reset()?;
+        let (report, passed) = attempt?;
+        if !passed {
+            return Err("public large QSA original F64 bound failed".into());
+        }
+        reports.push(report);
     }
     Ok(reports)
 }

@@ -1684,3 +1684,40 @@ using fallback cannot prove a new >=16-row kernel. Validate real shared storage,
 actual CMMA subgroup support and full original source/owner/epoch/erasure guards.
 No XMX code is implemented at this checkpoint. No API/protocol/configuration,
 model identity/frontend/version/release change.
+
+
+### Complete matrix-attention successor under implementation
+
+The next opt-in `strata-qsa-xmx` retains the entire865a9c16 bundle. One Rust
+CubeCL kernel implements QK hi/lo half staging, exact INT8 codes/per64 half scales,
+per64-cell softmax and scaled probability hi/lo PV as a connected layout. It
+writes the SAME partial/stat/fault owners consumed by the original merge; no new
+private buffer, model source or persistence. Original short(<16-row), scalar,
+decode and MTP paths remain. Selection requires actual8x16x16 half->F32 CMMA,
+128 threads and58,660B real SLM; unsupported hardware keeps the original path.
+Full private owner/offset/causal/fault admission remains. No speed claim yet.
+
+Keep the original twelve small numerical controls and exact F64 bounds. Add a
+separate large control (16/31/32 rows, offsets0/32/64, long32768-capacity boundary)
+that MUST launch actual CMMA and checks both original scalar and candidate against
+the SAME independent mathematical oracle. The original8-row oracle entry keeps
+its domain; a new32-row entry shares identical loops and derived error bounds.
+Negative future-selection/nonfinite controls must preserve sticky fault and full
+inactive/tail zeros; do not claim failed-input payload math is accepted. Original
+shader references and old bitwise requirements remain unchanged. Public reports
+record anonymous actual XMX launches only through existing compiled-public gate.
+No release/install/API/config/model identity/frontend change is authorized by this
+experiment; full exact-source runtime/clean/staged acceptance is still required.
+
+
+Final-source CPU compile and144 selected controls PASS (all previous136 plus
+original QSA geometry/oracle controls and new tile/split tests). Initial CubeCL
+compilation exposed constant-expression expansion and an unsupported early-return
+form; corrected before any device execution. Half-scale decoding uses exact
+32-bit exponent/significand construction, so no unrequested shaderInt16 feature
+is introduced. The original mathematical oracle loops/operation-derived bounds
+are unchanged; its old eight-row entry still rejects larger input. New large
+compiler delimiters are distinct, preserving original scalar/FMA ISA scopes.
+Next: freeze full bundle, validate420 WGSL variants plus216 matrix layouts,
+original171 GPU controls plus7 new actual-XMX controls, both request profiles,
+actual launch-count proof and physical recovery. No GPU or speed result yet.

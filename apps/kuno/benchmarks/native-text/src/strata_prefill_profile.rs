@@ -272,6 +272,11 @@ pub(crate) fn report() {
             ] {
                 report.insert(name, (process[index], 0, 0));
             }
+            #[cfg(feature = "strata-qsa-xmx")]
+            report.insert(
+                "public_worker_total_qsa_xmx_launches",
+                (crate::strata_qsa::prompt_xmx::launch_count(), 0, 0),
+            );
             eprintln!(
                 "public_prefill_profile {}",
                 serde_json::to_string(&report).unwrap()
