@@ -181,8 +181,25 @@ was confirmed after the failed trials as well.
   The installed Mesa ANV pre-Xe3 path has no supported256-GRF environment switch.
   A complete32-subgroup candidate keeps the same128x128x32 reuse and halves
   each thread's accumulators, using512 invocations and exactly49,152B shared.
-  This next artifact needs actual-device subgroup/SLM admission, original
-  numerical GPU controls and full request/recovery measurements before selection.
+  Source3fffc266 / SHAeac78ce0 now passes actual-device admission, all103
+  original GPU controls,402 ordinary/144 matrix offline layouts and complete
+  public profiling/recovery. Its repeated4245-token profile is11.8168s
+  (first11.7837s), versus16-subgroup12.6279s. GDN input/output projections
+  fall0.7500/0.2974 ->0.3657/0.1525s and QSA projections0.2168/0.1005
+  ->0.1105/0.0527s. Expert execution7.3597s/capture1.9064s and QSA attention
+  1.6581s remain essentially unchanged. Both actual wide kernels have zero
+  scratch spills/fills and the same total256 DPAS instructions per workgroup
+  K32 iteration. Static instruction counts are not measured cycles. Receipts:
+  `strata-parity-native-wide32-20261020-{operators,profile}`; see the
+  [exact ISA evidence](kuno-prefill-native-isa-admission.md).
+  Full clean/private staged acceptance is running; it is not installed yet.
+- Opt-in paired-cell QK attentiona814962d reuses the same query vectors across
+  two original selected cells. Ten actual source/Naga/SPIR-V CPU controls pass
+  both enabled and disabled; original scalar/math oracles remain unchanged.
+  GPU numerical and whole-request evidence is still pending. A complete
+  bounded descriptor-batch candidate is also in isolated development to reduce
+  measured native capture overhead while preserving every fresh original set,
+  queue hazard, flight and recovery owner. Neither is a speed claim.
 - Actual loaded capacity is11,998 resident expert pairs/24,445,798,400B versus
   the fresh reference11,608 pairs, so lower resident capacity is not the cause
   of the gap. The immutable host complement is registered/pinned and copied

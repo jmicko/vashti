@@ -38,10 +38,13 @@ and complete requests but regresses33.9067s. Neither is installed. A wider
 library pipeline43281fd6 passes117 GPU controls but regresses28.7764s and remains
 unselected. Original-native wide9cf2236b passes103 controls and complete prefixes
 12.8885/12.6279s in profiling; it is uninstalled and not a clean A/B. Actual
-compiler ISA reveals hot-loop register spills; the next complete native variant
-redistributes the same tile across32 subgroups with half the accumulators per
-thread. GPU and full recovery acceptance are still required for that variant.
-See the parity guide for exact artifact receipts and capacity/ISA evidence.
+compiler ISA revealed hot-loop register spills. Complete32-subgroup successor
+3fffc266 / SHAeac78ce0 removes them and passes103 GPU controls, full public
+requests/recovery and402/144 offline shader layouts; profiled long prefixes
+11.7837/11.8168s. Its full clean/private staged checks are running; it remains
+uninstalled. Opt-in paired-cell attention and bounded descriptor batching are
+next combined candidates, without a GPU speed claim yet. See the parity guide
+for exact artifact receipts and capacity/ISA evidence.
 
 **No API, KNT2/KNR2, configuration, model name or Vashti consumer change.**
 Original DASLab IQ3_S plus Q2 MTP, context512..32768, thinking/tools, private
