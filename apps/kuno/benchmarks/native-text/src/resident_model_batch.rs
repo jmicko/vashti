@@ -1869,6 +1869,7 @@ pub(crate) enum Purpose {
     Advance,
     LastLogits,
     AllRowsWithCarry,
+    KnownPrefix,
 }
 pub(crate) enum PrefixPhase<'a> {
     Verified(&'a mut NativeTargetRows),
@@ -1885,6 +1886,7 @@ enum ChunkOutput {
     Legacy(Zeroizing<Vec<f32>>),
     #[allow(dead_code)] // Read by the additive parent-registered result method.
     TargetRows(NativeTargetRows),
+    KnownPrefix(target_rows::KnownInputCarryReceipt),
 }
 struct Outer {
     residual: [BufferId; 2],
@@ -4990,7 +4992,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         purpose: Purpose,
         cancel: &AtomicBool,
     ) -> Result<Zeroizing<Vec<f32>>> {
-        if purpose == Purpose::AllRowsWithCarry {
+        if matches!(purpose, Purpose::AllRowsWithCarry | Purpose::KnownPrefix) {
             return Err(Error::InvalidFormat(concat!(
                 "native model chunk rejected at source line ",
                 line!()
@@ -5004,7 +5006,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
             |output| match output {
                 ChunkOutput::Legacy(logits) => Ok(logits),
-                ChunkOutput::TargetRows(_) | ChunkOutput::AcceptedPrefix(_) => Err(chunk_error!()),
+                ChunkOutput::TargetRows(_)
+                | ChunkOutput::AcceptedPrefix(_)
+                | ChunkOutput::KnownPrefix(_) => Err(chunk_error!()),
             },
         )
     }
@@ -5025,7 +5029,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
             |output| match output {
                 ChunkOutput::TargetRows(rows) => Ok(rows),
-                ChunkOutput::Legacy(_) | ChunkOutput::AcceptedPrefix(_) => Err(chunk_error!()),
+                ChunkOutput::Legacy(_)
+                | ChunkOutput::AcceptedPrefix(_)
+                | ChunkOutput::KnownPrefix(_) => Err(chunk_error!()),
             },
         )
     }
@@ -5103,16 +5109,25 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             Ok(output)
         })
     }
-    /// Legitimate MAX3 known-input purpose: full ordinary target commit and
-    /// actual fenced compact R output, under the bounded ShortPrefix authority.
-    /// This never labels known next tokens as greedy/predicted output.
+    /// Full known-input MAX8 commit, without a vocabulary head or host R packet.
+    /// The distinct original carry grant feeds exact next INPUT tokens to MTP;
+    /// it never labels those teachers as predictions or grants draft sampling.
     pub(crate) fn prefill_known_short_window(
         &mut self,
         executor: &mut GpuExecutor<'f>,
         tokens: &[u32],
+        teacher: &[u32],
+        mut draft: Option<&mut crate::resident_mtp::ResidentMtp<'_, '_>>,
         cancel: &AtomicBool,
-    ) -> Result<NativeTargetRows> {
-        self.completed_short_prompt_rows_cursor(executor)?;
+    ) -> Result<()> {
+        let start = self.completed_short_prompt_rows_cursor(executor)?;
+        target_rows::validate_known_teacher_pair(tokens, teacher)?;
+        if draft
+            .as_ref()
+            .is_some_and(|draft| draft.position() != start)
+        {
+            return Err(chunk_error!());
+        }
         let permit = self
             .native_batch
             .as_ref()
@@ -5122,11 +5137,40 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(chunk_error!())?;
         permit.identity(self.graph.binding_id(), self.context)?;
         permit.validate_short_run(
-            self.position,
+            start,
             tokens.len(),
             self.admission.request_io_reuse_active(),
         )?;
-        self.prefill_chunk_with_carry(executor, tokens, cancel)
+        let receipt = self.execute_native_chunk(
+            executor,
+            tokens,
+            Purpose::KnownPrefix,
+            None,
+            cancel,
+            |output| match output {
+                ChunkOutput::KnownPrefix(receipt) => Ok(receipt),
+                _ => Err(chunk_error!()),
+            },
+        )?;
+        let end = start
+            .checked_add(tokens.len())
+            .ok_or(Error::ArithmeticOverflow)?;
+        if self.completed_short_prompt_rows_cursor(executor)? != end {
+            return Err(chunk_error!());
+        }
+        if let Some(draft) = draft.as_deref_mut() {
+            let source = self.borrow_known_target_carry(executor, &receipt, teacher)?;
+            // The actual immutable original R owner supplies the visibility
+            // dependency. No fabricated range, nonce or source capability.
+            let visibility = self.known_target_draft_scope(&receipt)?;
+            visibility.enter()?;
+            draft.append_known_device_group(start, teacher, &source, cancel)?;
+            visibility.finish()?;
+            if draft.position() != end {
+                return Err(chunk_error!());
+            }
+        }
+        u::cancel(cancel)
     }
     /// Actual original short-prefix boundary, including a retained request's
     /// original erasure provenance at cursor0 while its real short nonce is on.
@@ -5527,6 +5571,27 @@ impl Workspace {
         if select.is_some() && purpose != Purpose::AllRowsWithCarry {
             return Err(chunk_error!());
         }
+        if purpose == Purpose::KnownPrefix {
+            self.validate_global_scope(e, &m.admission)?;
+            let rows = self.target_rows.as_ref().ok_or(chunk_error!())?;
+            if crate::strata_prompt::active()
+                || !self.public_four_rows_reserved
+                || !e.target_four_rows_reserved
+                || !rows.four_rows_reserved()
+            {
+                return Err(chunk_error!());
+            }
+            let permit = self
+                .public_language_request_io
+                .as_ref()
+                .ok_or(chunk_error!())?;
+            permit.identity(m.graph.binding_id(), m.context)?;
+            permit.validate_short_run(
+                m.position,
+                tokens.len(),
+                m.admission.request_io_reuse_active(),
+            )?;
+        }
         self.prove_outer(m).inspect_err(|_| chunk_failure_site!())?;
         if !crate::strata_intel_core::enabled()
             || e.strata_global_sources.is_none()
@@ -5710,7 +5775,7 @@ impl Workspace {
         // remaining required internal submission has its own retained segment.
         // Math mode is immutable recording identity: full-row calls must not
         // reuse a verification graph that deliberately omits candidate writes.
-        let branch = if purpose == Purpose::AllRowsWithCarry
+        let branch = if matches!(purpose, Purpose::AllRowsWithCarry | Purpose::KnownPrefix)
             && *start != 0
             && m.admission.request_io_reuse_active()
         {
@@ -5746,6 +5811,7 @@ impl Workspace {
                 .and_then(|key| key.with_deferred_gdn_state(select.is_some() && *count > 1))
                 .and_then(|key| key.with_target_grouped_status_folds(grouped_status_folds))
                 .and_then(|key| key.with_target_ple_handoff(deferred_ple))
+                .and_then(|key| key.with_target_known_inputs(purpose == Purpose::KnownPrefix))
                 .map_err(u::fault)
                 .inspect_err(|_| chunk_failure_site!())?,
             )
@@ -6745,6 +6811,15 @@ impl Workspace {
                 .inspect_err(|_| chunk_failure_site!())?;
         }
         m.position = *start + selected_prefix.unwrap_or(*count);
+        if purpose == Purpose::KnownPrefix {
+            output = ChunkOutput::KnownPrefix(target_rows::known_receipt(
+                self.target_rows.as_ref().ok_or(chunk_error!())?,
+                m.graph.binding_id(),
+                self.outer.residual[*current],
+                *start,
+                *count,
+            )?);
+        }
         Ok(output)
     }
     #[allow(clippy::too_many_arguments)] // Original execution owners plus scoped prefix selection.
@@ -6760,7 +6835,7 @@ impl Workspace {
         if crate::strata_intel_core::enabled() {
             return self.run_global(m, e, tokens, purpose, select, cancel);
         }
-        if select.is_some() {
+        if select.is_some() || purpose == Purpose::KnownPrefix {
             return Err(chunk_error!());
         }
         self.prove_outer(m)?;

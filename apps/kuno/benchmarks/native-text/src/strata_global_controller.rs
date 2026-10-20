@@ -9,10 +9,9 @@ use zeroize::Zeroizing;
 #[path = "strata_short_prompt_plan.rs"]
 mod short_prompt;
 pub(crate) const SHORT_PROMPT_PREFIX_LIMIT: usize = short_prompt::PREFIX_LIMIT;
-// One actual MAX3 host R copy coexists with the existing compact output packet.
-// Both fit in the existing charged request HOST envelope; no owner is added.
-const SHORT_CARRY_HOST_BYTES: usize =
-    short_prompt::WINDOW_ROWS * crate::resident_model::batch::target_rows::HC_WIDTH * 4;
+// Known-prefix residuals stay in their original device owner. The source
+// receipt/borrow is fixed bounded metadata charged by target_rows::HOST_BYTES;
+// there is no separate request-dependent host R allocation here.
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn elapsed(start: Instant) -> Result<u64> {
     u64::try_from(start.elapsed().as_nanos()).map_err(Into::into)
@@ -31,11 +30,7 @@ impl Request<'_> {
     pub(super) fn validate(&self) -> Result<()> {
         self.sampling.validate()?;
         self.speculation.validate()?;
-        if crate::strata_speculation::HOST_BYTES
-            + MAX_OUTPUTS * 4
-            + 64 * 1024
-            + SHORT_CARRY_HOST_BYTES
-            > REQUEST_HOST_BYTES
+        if crate::strata_speculation::HOST_BYTES + MAX_OUTPUTS * 4 + 64 * 1024 > REQUEST_HOST_BYTES
         {
             return Err("global speculative host quote rejected".into());
         }
@@ -329,10 +324,9 @@ pub(super) fn run<'m, 'f>(
     if plan.prefix() != 0 {
         phase("prompt_prefix");
         if let Some(short) = short_prompt::Plan::new(request.prompt.len()) {
-            // Upstream serving chooses quantized verification for<=64 fresh
-            // prefix inputs. This bounded first step deliberately reuses the
-            // existing MAX3 full-commit/host-R path: no nonce/prediction grant
-            // is repurposed, and no prompt scratch/cache slots are borrowed.
+            // Upstream reads known short inputs in quantized verification
+            // windows, discarding picks. The dedicated MAX8 purpose omits the
+            // head and teaches exact next INPUTS directly from original R.
             target.with_short_prompt_io(executor, cancel, |target, executor| {
                 for chunk in short.chunks() {
                     crate::resident_util::cancel(cancel)?;
@@ -347,35 +341,13 @@ pub(super) fn run<'m, 'f>(
                         ));
                     }
                     phase("short_prompt_chunk");
-                    let rows = target.prefill_known_short_window(executor, inputs, cancel)?;
-                    if rows.start() != start
-                        || rows.count() != inputs.len()
-                        || target.completed_short_prompt_rows_cursor(executor)? != end
-                    {
-                        return Err(Error::InvalidFormat(
-                            "global short prompt completed rows rejected",
-                        ));
-                    }
-                    if let Some(draft) = draft.as_deref_mut() {
-                        let mut carries = Zeroizing::new(Vec::with_capacity(
-                            inputs.len() * crate::resident_model::batch::target_rows::HC_WIDTH,
-                        ));
-                        for row in 0..inputs.len() {
-                            if rows.position(row)? != start + row {
-                                return Err(Error::InvalidFormat(
-                                    "global short prompt row identity rejected",
-                                ));
-                            }
-                            carries.extend_from_slice(rows.hidden(row)?);
-                        }
-                        // Release the original output-host lease BEFORE further
-                        // model work. This is a fenced, wiping copy of actual R;
-                        // teacher tokens are exact NEXT INPUTS, never greedy picks.
-                        drop(rows);
-                        draft.append_kv_group(teacher, &carries, cancel)?;
-                    } else {
-                        drop(rows);
-                    }
+                    target.prefill_known_short_window(
+                        executor,
+                        inputs,
+                        teacher,
+                        draft.as_deref_mut(),
+                        cancel,
+                    )?;
                     if target.completed_short_prompt_rows_cursor(executor)? != end
                         || draft.as_ref().is_some_and(|d| d.position() != end)
                     {

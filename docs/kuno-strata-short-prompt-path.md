@@ -165,3 +165,66 @@ healthy services/admission. Weights remain warm; all test clients/staged service
 and the task sudo refresh loop are stopped. See the
 [service acceptance](kuno-native-text-service.md#native-strata-prompt-optimization-2026-10-20).
 No fresh live Vashti or release claim is made here.
+
+## Connected MAX8/headless/device-teacher candidate — 2026-10-20
+
+The installed `c8db19de` / `fb31e124` checkpoint above remains the measured MAX3
+implementation. This successor is a **CPU-checked candidate**, not a new GPU,
+installation or performance result. It implements the previously missing coupled
+path together rather than deciding on any individual change's speed:
+
+- Fresh prefixes through64 inputs use the genuinely reserved MAX8 quantized
+  model window. `ShortPrefix` still owns the actual runtime nonce, excludes the
+  final ordinary input, and receives no generation-scope credit. The existing
+  unstarted/retained-erasure checks and full closing I/O audit remain in place.
+- A distinct `KnownPrefix` purpose executes the original target layer math and
+  all whole-model fault, PLE, GDN, QSA and MoE acceptance/commit proofs, but runs no
+  vocabulary head or target-pick/output packet. It creates a source receipt only
+  after the actual full commit. Legacy prefill and verification cannot request
+  or consume this distinct output purpose.
+- The receipt identifies the original residual `BufferId`, opaque graph binding,
+  actual row-generation and fully committed window. An immutable model/arena
+  borrow authenticates those identities again before another model can read R.
+  No predicted token, synthetic hidden vector or caller-declared pointer/range
+  is substituted. Exact next INPUT IDs come from the original request slice;
+  overlapping teacher/input rows must match, and the MTP consumer checks the
+  exact immutable teacher slice and start/count again.
+- The real original MAIN→draft visibility scope pins that R owner while the
+  existing native MTP front copies its bounded R rows device-to-device, computes
+  the original front math and joins its actual full fault/ledger fence. Only then
+  can the source borrow report completion and the visibility scope close. MTP
+  advances its KV cursor without issuing a prediction/full-forward stamp. An
+  abandoned in-flight copy or visibility scope retains the original retirement
+  behavior. There is no host residual allocation or download/re-upload.
+- Headless and head-producing target programs have a separate immutable
+  `NativeStrataBranch` inventory flag. Its family1-only setter changes recording
+  identity, not input, nonce, submission, commit or erasure authority. All
+  existing constructors default to the original head-producing inventory.
+  This prevents a retained target graph from accidentally restoring omitted
+  head work or replaying a headless graph for generation.
+
+The final count1 input, real generation sampling/policy, prompt history,
+request erasure, retained model rebind, long4096-token path, API and Vashti
+integration are unchanged. No transfer-runtime or matrix implementation changes
+are part of this candidate. Known-input metadata uses the existing8KiB carry
+quote and existing MAX8 owners; the full-worker test includes its actual type
+size check. The earlier MAX3 host-carry allowance in the controller is removed.
+
+Nine focused CPU tests pass by compiling actual pure source bodies and tests
+against existing dependency rlibs, without a shared Cargo build. They cover
+MAX8 tails and exact teacher slices,64/65 threshold, real-phase nonce/cursor
+requirements, no generation credit/rearm bypass, source-generation/full-commit
+identity, changed teacher rejection, and distinct headless/head recording keys.
+The standalone extraction uses generic numeric binding IDs and public geometry
+constants, and changes only helper visibility to fit its local module. It is not
+an original GPU-owner, backend-nonce or device-completion proof. Evidence:
+`/media/jmicko/faststore/kuno-development/prefill-known-device-pure-tests-20261020.log`.
+The original actual-type quote assertion remains in the full crate tests.
+
+Next acceptance requires the complete selected-worker build, cold and repeated
+short requests on one model, prefix63/64/65 boundaries, short↔long transitions,
+correct arithmetic/code/prose, thinking/tool result use, and all original
+privacy/erasure/unload/physical-recovery checks. Numerical references and
+semantic-quality acceptance must remain unchanged; a changed complete response
+alone is not a regression or proof of quality. Measure matched short/long prompt
+and generation performance only after those complete checks pass.

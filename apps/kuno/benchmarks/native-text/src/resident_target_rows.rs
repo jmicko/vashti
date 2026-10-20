@@ -69,7 +69,10 @@ macro_rules! rejected {
 }
 #[path = "resident_target_carry.rs"]
 mod device_carry;
-pub(crate) use device_carry::{DeviceCarry, DeviceCarryReceipt, VerifiedCarryContext};
+pub(crate) use device_carry::{
+    DeviceCarry, DeviceCarryReceipt, KnownInputCarry, KnownInputCarryReceipt, VerifiedCarryContext,
+};
+pub(super) use device_carry::{known_receipt, validate_known_teacher_pair};
 
 pub(super) fn check_public_audit(reserved: bool, public_zero_audit: bool) -> Result<()> {
     if reserved && !public_zero_audit {

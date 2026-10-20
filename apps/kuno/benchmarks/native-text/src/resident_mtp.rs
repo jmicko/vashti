@@ -137,6 +137,10 @@ enum NativeFrontInputs<'a> {
         &'a [u32],
         &'a crate::resident_model::batch::target_rows::DeviceCarry<'a>,
     ),
+    Known(
+        &'a [u32],
+        &'a crate::resident_model::batch::target_rows::KnownInputCarry<'a>,
+    ),
 }
 
 /// Original TOKEN/CARRY owners staged before graph capture. One outstanding
@@ -4877,7 +4881,9 @@ impl ResidentMtp<'_, '_> {
             NativeFrontInputs::Host(tokens, carries) => {
                 tokens.len() != count || carries.len() != count * k::WIDE
             }
-            NativeFrontInputs::Device(tokens, _) => tokens.len() != count,
+            NativeFrontInputs::Device(tokens, _) | NativeFrontInputs::Known(tokens, _) => {
+                tokens.len() != count
+            }
         }) {
             return Err(Error::InvalidBufferLength);
         }
@@ -4896,6 +4902,12 @@ impl ResidentMtp<'_, '_> {
                 NativeFrontInputs::Device(tokens, source) => {
                     self.upload_native_front(ids[f::TOKEN], tokens)?;
                     source.copy_rows(&self.arena, ids[f::CARRY], fault_id, 0, count)?;
+                    self.tick(1)?;
+                }
+                NativeFrontInputs::Known(tokens, source) => {
+                    source.validate_teacher(start, tokens)?;
+                    self.upload_native_front(ids[f::TOKEN], tokens)?;
+                    source.copy_rows(&self.arena, ids[f::CARRY], fault_id, count)?;
                     self.tick(1)?;
                 }
             }

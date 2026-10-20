@@ -310,6 +310,206 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     }
 }
 
+/// A distinct capability for a fully committed KNOWN input window. It contains
+/// no greedy prediction and cannot authorize speculative selection or drafting.
+/// Construction occurs only after the original whole-model/family commit.
+pub(crate) struct KnownInputCarryReceipt {
+    source: Zeroizing<BufferId>,
+    identity: KnownIdentity,
+}
+struct KnownIdentity<B = GraphBindingId> {
+    binding: B,
+    generation: Zeroizing<u64>,
+    geometry: Zeroizing<[usize; 2]>,
+}
+impl<B: PartialEq> KnownIdentity<B> {
+    fn validate(&self, generation: u64, binding: B, position: usize, count: usize) -> Result<()> {
+        if self.binding != binding
+            || *self.generation != generation
+            || !(1..=FOUR_ROWS).contains(&count)
+            || self.geometry[1] != count
+            || self.geometry[0].checked_add(count) != Some(position)
+        {
+            return Err(rejected!());
+        }
+        Ok(())
+    }
+}
+/// Bind the teacher to the original requested inputs, rather than to unused
+/// predictions. The final teacher is the next request input owned by the caller;
+/// all other teachers must exactly equal the shifted current input sequence.
+pub(in crate::resident_model::batch) fn validate_known_teacher_pair(
+    inputs: &[u32],
+    teacher: &[u32],
+) -> Result<()> {
+    if !(1..=FOUR_ROWS).contains(&inputs.len())
+        || teacher.len() != inputs.len()
+        || inputs
+            .iter()
+            .chain(teacher)
+            .any(|&t| t >= VOCABULARY as u32)
+        || teacher[..teacher.len() - 1] != inputs[1..]
+    {
+        return Err(rejected!());
+    }
+    Ok(())
+}
+pub(in crate::resident_model::batch) fn known_receipt(
+    owner: &Owners,
+    binding: GraphBindingId,
+    source: BufferId,
+    start: usize,
+    count: usize,
+) -> Result<KnownInputCarryReceipt> {
+    if !crate::strata_intel_core::enabled() || !owner.four_reserved {
+        return Err(rejected!());
+    }
+    owner.check_no_live_output()?;
+    coordinates_selected(count, start, true)?;
+    Ok(KnownInputCarryReceipt {
+        source: Zeroizing::new(source),
+        identity: KnownIdentity {
+            binding,
+            generation: Zeroizing::new(owner.carry_generation.get()),
+            geometry: Zeroizing::new([start, count]),
+        },
+    })
+}
+
+/// Immutable original R borrow plus the actual request's immutable next INPUT
+/// IDs. A separate type prevents prediction-token checks from being bypassed.
+/// The same-client draft visibility and real consumer fence remain mandatory.
+pub(crate) struct KnownInputCarry<'a> {
+    arena: &'a PrivateArena,
+    receipt: &'a KnownInputCarryReceipt,
+    teacher: &'a [u32],
+    completion: CopyCompletion<'a>,
+}
+fn validate_known_teacher_tokens(
+    original_start: usize,
+    count: usize,
+    original_teacher: &[u32],
+    start: usize,
+    tokens: &[u32],
+) -> Result<()> {
+    if original_start != start
+        || !(1..=FOUR_ROWS).contains(&count)
+        || count != tokens.len()
+        || original_teacher != tokens
+    {
+        return Err(rejected!());
+    }
+    Ok(())
+}
+impl KnownInputCarry<'_> {
+    pub(crate) fn validate_teacher(&self, start: usize, tokens: &[u32]) -> Result<()> {
+        validate_known_teacher_tokens(
+            self.receipt.identity.geometry[0],
+            self.receipt.identity.geometry[1],
+            self.teacher,
+            start,
+            tokens,
+        )
+    }
+    pub(crate) fn copy_rows(
+        &self,
+        destination: &PrivateArena,
+        id: BufferId,
+        fault: BufferId,
+        count: usize,
+    ) -> Result<()> {
+        let client = destination.client().map_err(u::fault)?;
+        if !std::ptr::eq(client.info(), self.arena.client().map_err(u::fault)?.info())
+            || self.completion.retired.load(Ordering::Acquire)
+            || count != self.teacher.len()
+        {
+            return Err(rejected!());
+        }
+        let words = copy_span(0, count, self.receipt.identity.geometry[1])?;
+        let source = gr::full_private(self.arena, *self.receipt.source, MAX_BATCH * HC_WIDTH)?;
+        let layout = destination.layout(id).map_err(u::fault)?;
+        let dest = gr::full_private(destination, id, layout.logical_words)?;
+        let fault = gr::full_private(destination, fault, 1)?;
+        if words.end > MAX_BATCH * HC_WIDTH || words.len() > layout.logical_words {
+            return Err(rejected!());
+        }
+        gr::physical(self.arena, &[source.clone(), dest.clone(), fault])?;
+        let read = source.offset_end(
+            ((self
+                .arena
+                .layout(*self.receipt.source)
+                .map_err(u::fault)?
+                .owned_words
+                - words.end)
+                * 4) as u64,
+        );
+        let write = dest.offset_end(((layout.owned_words - words.len()) * 4) as u64);
+        self.completion.in_flight.set(true);
+        u::copy_words::launch::<WgpuRuntime>(
+            client,
+            u::grid(words.len())?,
+            CubeDim::new_1d(64),
+            u::raw_arg(read, words.len())?,
+            u::raw_arg(write, words.len())?,
+        );
+        Ok(())
+    }
+    /// # Safety
+    /// The sole original MTP front consumer has joined its real fault/ledger
+    /// fence after every copy. Enqueue alone never grants completion.
+    pub(crate) unsafe fn completed(&self) {
+        self.completion.in_flight.set(false);
+    }
+}
+impl<'m, 'f> ResidentModel<'m, 'f> {
+    pub(crate) fn borrow_known_target_carry<'a>(
+        &'a self,
+        executor: &GpuExecutor<'f>,
+        receipt: &'a KnownInputCarryReceipt,
+        teacher: &'a [u32],
+    ) -> Result<KnownInputCarry<'a>> {
+        self.completed_short_prompt_rows_cursor(executor)?;
+        let native = self.native_batch.as_ref().ok_or_else(|| rejected!())?;
+        let owner = native.target_rows.as_ref().ok_or_else(|| rejected!())?;
+        owner.check_no_live_output()?;
+        receipt.identity.validate(
+            owner.carry_generation.get(),
+            self.graph.binding_id(),
+            self.position,
+            teacher.len(),
+        )?;
+        if !owner.four_reserved
+            || !native.outer.residual.contains(&*receipt.source)
+            || teacher.iter().any(|&t| t >= VOCABULARY as u32)
+        {
+            return Err(rejected!());
+        }
+        let source = gr::full_private(&self.arena, *receipt.source, MAX_BATCH * HC_WIDTH)?;
+        gr::physical(&self.arena, &[source])?;
+        Ok(KnownInputCarry {
+            arena: &self.arena,
+            receipt,
+            teacher,
+            completion: CopyCompletion {
+                retired: &self.retired,
+                in_flight: Cell::new(false),
+            },
+        })
+    }
+    /// Visibility is prepared from the exact original R owner, not a host-made
+    /// interval. The returned runtime scope cannot publish model state or erase.
+    pub(crate) fn known_target_draft_scope(
+        &self,
+        receipt: &KnownInputCarryReceipt,
+    ) -> Result<crate::executor::NativeDraftScope> {
+        self.admission.prepare_native_draft_scope(gr::full_private(
+            &self.arena,
+            *receipt.source,
+            MAX_BATCH * HC_WIDTH,
+        )?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +648,74 @@ mod tests {
                 + std::mem::size_of::<DeviceCarry<'_>>()
                 + FOUR_ROWS * 4
                 + 3 * std::mem::size_of::<Handle>()
+                < HOST_BYTES
+        );
+    }
+}
+
+#[cfg(test)]
+mod known_input_tests {
+    use super::*;
+    #[test]
+    fn known_teacher_rows_preserve_shifted_inputs_and_exact_consumer_tokens() {
+        for count in 1..=FOUR_ROWS {
+            let input: Vec<u32> = (10..10 + count as u32).collect();
+            let next: Vec<u32> = (11..11 + count as u32).collect();
+            validate_known_teacher_pair(&input, &next).unwrap();
+            validate_known_teacher_tokens(40, count, &next, 40, &next).unwrap();
+            let mut changed = next.clone();
+            changed[count - 1] += 7;
+            assert!(validate_known_teacher_tokens(40, count, &next, 40, &changed).is_err());
+            assert!(validate_known_teacher_tokens(40, count, &next, 41, &next).is_err());
+            assert!(validate_known_teacher_tokens(40, count + 1, &next, 40, &next).is_err());
+            assert!(validate_known_teacher_pair(&input, &next[..count - 1]).is_err());
+            if count > 1 {
+                changed[0] += 1;
+                assert!(validate_known_teacher_pair(&input, &changed).is_err());
+            }
+            let mut invalid = next.clone();
+            invalid[count - 1] = VOCABULARY as u32;
+            assert!(validate_known_teacher_pair(&input, &invalid).is_err());
+        }
+        for count in [0, FOUR_ROWS + 1] {
+            assert!(validate_known_teacher_pair(&vec![1; count], &vec![1; count]).is_err());
+        }
+    }
+    #[test]
+    fn known_carry_identity_requires_original_generation_owner_and_whole_commit() {
+        for count in 1..=FOUR_ROWS {
+            let identity = KnownIdentity {
+                binding: 91u64,
+                generation: Zeroizing::new(7),
+                geometry: Zeroizing::new([20, count]),
+            };
+            identity.validate(7, 91, 20 + count, count).unwrap();
+            for (generation, binding, position, rows) in [
+                (6, 91, 20 + count, count),
+                (7, 90, 20 + count, count),
+                (7, 91, 20, count),
+                (7, 91, 21 + count, count),
+                (7, 91, 20 + count, 0),
+                (7, 91, 20 + count, count + 1),
+            ] {
+                assert!(
+                    identity
+                        .validate(generation, binding, position, rows)
+                        .is_err()
+                );
+            }
+        }
+        let identity = KnownIdentity {
+            binding: 91u64,
+            generation: Zeroizing::new(7),
+            geometry: Zeroizing::new([usize::MAX, 1]),
+        };
+        assert!(identity.validate(7, 91, 0, 1).is_err());
+        // Both new metadata owners coexist within the existing original quote;
+        // no host residual, prediction vector or new device allocation is added.
+        assert!(
+            std::mem::size_of::<KnownInputCarryReceipt>()
+                + std::mem::size_of::<KnownInputCarry<'_>>()
                 < HOST_BYTES
         );
     }

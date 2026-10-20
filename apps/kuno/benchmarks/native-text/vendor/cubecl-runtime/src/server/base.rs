@@ -77,6 +77,7 @@ pub struct NativeStrataBranch {
     deferred_gdn_state: bool,
     grouped_status_folds: bool,
     target_ple_handoff: bool,
+    target_known_inputs: bool,
     family: u8,
     rows: u8,
     proposals: u8,
@@ -159,6 +160,19 @@ impl NativeStrataBranch {
     pub fn target_ple_handoff(self) -> Option<bool> {
         (self.family == 1).then_some(self.target_ple_handoff)
     }
+    /// Separate immutable headless known-input math from head-producing target
+    /// verification. This is recording identity only, never input/commit authority.
+    pub fn with_target_known_inputs(mut self, known: bool) -> Result<Self, &'static str> {
+        if self.family != 1 {
+            return Err("native target known-input shape");
+        }
+        self.target_known_inputs = known;
+        Ok(self)
+    }
+    /// Target-only headless known-input inventory; other families have none.
+    pub fn target_known_inputs(self) -> Option<bool> {
+        (self.family == 1).then_some(self.target_known_inputs)
+    }
     /// Static target geometry only; no request controls or access authority.
     pub fn target_geometry(self) -> Option<(u8, u16, u8)> {
         (self.family == 1).then_some((self.rows, self.context_capacity, self.state_role))
@@ -189,6 +203,7 @@ impl NativeStrataBranch {
             deferred_gdn_state: false,
             grouped_status_folds: false,
             target_ple_handoff: false,
+            target_known_inputs: false,
             family: 1,
             rows,
             proposals: 0,
@@ -233,6 +248,7 @@ impl NativeStrataBranch {
             deferred_gdn_state: false,
             grouped_status_folds: false,
             target_ple_handoff: false,
+            target_known_inputs: false,
             family: 2,
             rows,
             proposals,
@@ -259,6 +275,7 @@ impl NativeStrataBranch {
             deferred_gdn_state: false,
             grouped_status_folds: false,
             target_ple_handoff: false,
+            target_known_inputs: false,
             family: 3,
             rows: 1,
             proposals: step,
@@ -2156,5 +2173,38 @@ mod tests {
         let actual = cube_count_spread(&max, required);
         let expected = [25, 32, 4];
         assert_eq!(actual, expected);
+    }
+}
+
+#[cfg(test)]
+mod known_input_recording_tests {
+    use super::*;
+    #[test]
+    fn headless_known_input_recordings_cannot_replay_prediction_heads() {
+        for rows in 1..=8 {
+            for role in 0..=3 {
+                let head = NativeStrataBranch::target_window_with_state(rows, 32768, role)
+                    .unwrap()
+                    .with_target_ple_handoff(true)
+                    .unwrap()
+                    .with_target_grouped_status_folds(true)
+                    .unwrap();
+                let known = head.with_target_known_inputs(true).unwrap();
+                assert_ne!(head, known);
+                assert_eq!(head.target_known_inputs(), Some(false));
+                assert_eq!(known.target_known_inputs(), Some(true));
+                assert_eq!(head.target_geometry(), known.target_geometry());
+                assert_eq!(known.with_target_known_inputs(false).unwrap(), head);
+            }
+        }
+        for other in [
+            NativeStrataBranch::target_commit(4, 32768, 0).unwrap(),
+            NativeStrataBranch::mtp_round(4, 3).unwrap(),
+            NativeStrataBranch::mtp_step(1).unwrap(),
+        ] {
+            assert_eq!(other.target_known_inputs(), None);
+            assert!(other.with_target_known_inputs(true).is_err());
+            assert!(other.with_target_known_inputs(false).is_err());
+        }
     }
 }

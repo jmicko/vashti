@@ -1,11 +1,12 @@
 //! Bounded known-input prefix geometry. No GPU/state/commit authority lives
 //! here; actual original model output and both completed cursors remain checked
-//! by the controller. MAX3 retains existing Prefill admission unchanged.
+//! by the controller. MAX8 is the separately reserved known-prefix shape;
+//! ordinary Prefill/final-input/generation admission remains unchanged.
 use kuno_text::{Error, Result};
 use zeroize::Zeroizing;
 
 pub(super) const PREFIX_LIMIT: usize = 64;
-pub(super) const WINDOW_ROWS: usize = 3;
+pub(super) const WINDOW_ROWS: usize = crate::strata_port::verify_capacity();
 pub(super) struct Plan(Zeroizing<usize>);
 impl Plan {
     pub(super) fn new(prompt: usize) -> Option<Self> {
@@ -49,8 +50,8 @@ impl Plan {
 mod tests {
     use super::*;
     #[test]
-    fn known_short_prefix_covers_three_row_tails_and_exact_threshold() {
-        for prefix in [0usize, 1, 2, 3, 4, 63, 64] {
+    fn known_short_prefix_covers_max_eight_tails_and_exact_threshold() {
+        for prefix in [0usize, 1, 2, 3, 4, 7, 8, 9, 63, 64] {
             let prompt: Vec<u32> = (0..=prefix as u32).collect();
             let plan = Plan::new(prompt.len()).unwrap();
             assert_eq!(plan.prefix(), prefix);
@@ -76,7 +77,7 @@ mod tests {
     }
     #[test]
     fn wrong_teacher_slices_and_window_boundaries_are_rejected() {
-        for length in [1usize, 3, 4, 64, 65] {
+        for length in [1usize, 3, 4, 8, 9, 64, 65] {
             let plan = Plan::new(length).unwrap();
             let prompt = vec![7; length];
             for chunk in plan.chunks() {
@@ -85,7 +86,13 @@ mod tests {
                 assert!(plan.inputs(&wrong, chunk.clone()).is_err());
                 assert!(plan.inputs(&prompt[..length - 1], chunk).is_err());
             }
-            for bad in [0..0, 1..2, 0..4, 0..usize::MAX, usize::MAX..usize::MAX] {
+            for bad in [
+                0..0,
+                1..2,
+                0..WINDOW_ROWS + 1,
+                0..usize::MAX,
+                usize::MAX..usize::MAX,
+            ] {
                 assert!(plan.inputs(&prompt, bad).is_err());
             }
         }

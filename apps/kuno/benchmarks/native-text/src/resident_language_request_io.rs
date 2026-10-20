@@ -159,7 +159,9 @@ impl Authority {
                 Err(rejected())
             };
         }
-        if !(1..=if self.four_rows && self.phase == Phase::Active {
+        if !(1..=if self.phase == Phase::ShortPrefix
+            || self.four_rows && self.phase == Phase::Active
+        {
             crate::strata_port::verify_capacity()
         } else {
             3
@@ -1027,16 +1029,18 @@ mod initial_window_tests {
 mod short_prefix_scope_tests {
     use super::*;
     #[test]
-    fn short_prefix_uses_real_nonce_max_three_and_no_generation_credit() {
+    fn short_prefix_uses_real_nonce_max_eight_and_no_generation_credit() {
         if !crate::strata_intel_core::enabled() {
             return;
         }
         let capacity = crate::qsa_gpu::MAX_CONTEXT;
-        for prefix in [1usize, 3, 4, 63, 64] {
+        for prefix in [1usize, 3, 4, 7, 8, 9, 63, 64] {
             let prompt = prefix + 1;
             let geometry = Geometry::new(prompt, 2).unwrap();
             let mut authority = Authority::new(geometry, capacity, false).unwrap();
-            authority.four_rows = true; // even retained MAX8 generation permits keep MAX3 here
+            // Cold short reads use their own checked MAX8 reservation even
+            // before generation enables its separate four/eight-row policy.
+            assert!(!authority.four_rows);
             assert!(authority.validate_short_begin(1, false).is_err());
             assert!(authority.validate_short_begin(0, true).is_err());
             assert!(authority.begin_short(0, false).is_err());
@@ -1051,11 +1055,11 @@ mod short_prefix_scope_tests {
             assert_eq!(authority.scopes, 0);
             assert!(authority.current_scope(true).is_err());
             assert!(authority.validate_short_run(0, 1, false).is_err());
-            for start in (0..prefix).step_by(3) {
-                let count = (prefix - start).min(3);
+            for start in (0..prefix).step_by(crate::strata_port::verify_capacity()) {
+                let count = (prefix - start).min(crate::strata_port::verify_capacity());
                 authority.validate_short_run(start, count, true).unwrap();
             }
-            for (start, count) in [(0, 0), (0, 4), (prefix, 1), (usize::MAX, 3)] {
+            for (start, count) in [(0, 0), (0, 9), (prefix, 1), (usize::MAX, 3)] {
                 assert!(authority.validate_short_run(start, count, true).is_err());
             }
             assert!(authority.prompt_chunk(0, 1, true).is_err());

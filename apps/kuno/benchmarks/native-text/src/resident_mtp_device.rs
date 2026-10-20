@@ -2,7 +2,7 @@
 //! verifier device rows. A front completion does not authorize a draft follow.
 use super::window::WindowStart;
 use super::*;
-use crate::resident_model::batch::target_rows::DeviceCarry;
+use crate::resident_model::batch::target_rows::{DeviceCarry, KnownInputCarry};
 
 pub(crate) struct NativeRequestResetReceipt {
     pub(crate) private: crate::private_arena::OwnedZeroAudit,
@@ -26,6 +26,73 @@ impl NativeRequestResetReceipt {
     }
 }
 impl ResidentMtp<'_, '_> {
+    /// Whole known-input teacher forcing, with original residuals kept on the
+    /// device. It publishes only KV progress, never a prediction/forward stamp.
+    /// The caller holds the actual target MAIN->draft visibility scope and R
+    /// borrow until this consumer's real complete fault/ledger observation.
+    pub(crate) fn append_known_device_group(
+        &mut self,
+        start: usize,
+        tokens: &[u32],
+        source: &KnownInputCarry<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        if !crate::strata_intel_core::enabled()
+            || self.graph.profile() != MtpProfile::StrataQ2
+            || self.poisoned
+            || self.closed
+            || self.retired.load(Ordering::Acquire)
+            || self.live_outputs.load(Ordering::Acquire) != 0
+            || !(1..=crate::strata_port::verify_capacity()).contains(&tokens.len())
+            || self.position != start
+            || start
+                .checked_add(tokens.len())
+                .is_none_or(|end| end > k::CONTEXT)
+            || tokens.iter().any(|&token| token as usize >= k::VOCAB)
+        {
+            return Err(Error::InvalidFormat("known MTP device teacher scope"));
+        }
+        source.validate_teacher(start, tokens)?;
+        u::cancel(cancel)?;
+        self.verify_source()?;
+        self.physical()?;
+        self.last_forward.take();
+        self.last_front.take();
+        self.poisoned = true;
+        self.dispatches = 0;
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            self.clear_scratch()?;
+            self.queue_native_front(
+                tokens.len(),
+                Some(NativeFrontInputs::Known(tokens, source)),
+                start,
+                cancel,
+            )?;
+            self.guard_private(start + tokens.len())?;
+            self.complete_fault()?;
+            self.verify_source()?;
+            u::cancel(cancel)
+        }));
+        match attempted {
+            Ok(Ok(())) => {
+                // SAFETY: the original same-client full fault read and ledger
+                // fence above complete ALL queued source copies/front consumers.
+                unsafe {
+                    source.completed();
+                }
+                self.position = start + tokens.len();
+                self.poisoned = false;
+                Ok(())
+            }
+            failed => {
+                self.fail();
+                Err(match failed {
+                    Ok(Err(error)) => error,
+                    _ => Error::InvalidFormat("known MTP device teacher failed"),
+                })
+            }
+        }
+    }
     pub(crate) fn append_device_front(
         &mut self,
         start: usize,
