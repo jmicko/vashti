@@ -3,6 +3,81 @@
 //! No new flight, prompt authority, host content, queue or completion credit.
 use super::{submit::Batches, *};
 
+// NATIVE_PUBLIC_ROLLING_FAILURE_BEGIN
+/// Process-isolated compiled-public negative diagnostic only. State0 is inert;
+/// only the explicit root diagnostic setter may arm1; a real submitted window
+/// consumes it as2. No request field, private config or inherited variable arms.
+struct PublicFailure {
+    state: std::sync::atomic::AtomicU8,
+    waited: std::sync::atomic::AtomicU64,
+    failed: std::sync::atomic::AtomicU64,
+}
+impl PublicFailure {
+    const fn new() -> Self {
+        Self {
+            state: std::sync::atomic::AtomicU8::new(0),
+            waited: std::sync::atomic::AtomicU64::new(0),
+            failed: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+    fn arm(&self, authorized: bool) -> Result<(), &'static str> {
+        if !authorized {
+            return Err("native rolling failure requires compiled-public authorization");
+        }
+        self.state
+            .compare_exchange(
+                0,
+                1,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .map(|_| ())
+            .map_err(|_| "native public rolling failure already armed or fired")
+    }
+    fn after_window(&self, nonempty_success: bool) -> Result<(), &'static str> {
+        if nonempty_success
+            && self
+                .state
+                .compare_exchange(
+                    1,
+                    2,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
+                )
+                .is_ok()
+        {
+            // Ordinary Result unwinding exercises the ORIGINAL guard recovery.
+            return Err("native public injected rolling prefix failure");
+        }
+        Ok(())
+    }
+    fn recovered_queue(&self, success: bool) {
+        if self.state.load(std::sync::atomic::Ordering::Acquire) == 2 {
+            let total = if success { &self.waited } else { &self.failed };
+            total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    fn stats(&self) -> [u64; 3] {
+        [
+            u64::from(self.state.load(std::sync::atomic::Ordering::Acquire) == 2),
+            self.waited.load(std::sync::atomic::Ordering::Relaxed),
+            self.failed.load(std::sync::atomic::Ordering::Relaxed),
+        ]
+    }
+}
+static PUBLIC_FAILURE: PublicFailure = PublicFailure::new();
+// NATIVE_PUBLIC_ROLLING_FAILURE_END
+
+pub(crate) fn arm_public_failure() -> Result<(), &'static str> {
+    PUBLIC_FAILURE.arm(
+        super::super::strata_graph::enabled()
+            && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1"),
+    )
+}
+pub(crate) fn public_failure_stats() -> [u64; 3] {
+    PUBLIC_FAILURE.stats()
+}
+
 // NATIVE_ROLLING_LIFECYCLE_BEGIN
 const NODE_WINDOW: usize = 128;
 const COMMAND_WINDOW: usize = 64;
@@ -174,16 +249,21 @@ impl Backend for Vulkan {
             };
             submitted[own] = result.is_ok();
             okay &= result.is_ok();
+            if result.is_err() {
+                PUBLIC_FAILURE.recovered_queue(false);
+            }
         }
         // Attempt every actually queued recovery fence even if another queue
         // failed. Never wait on the ordinary final fence before it was queued.
         for (own, &queued) in submitted.iter().enumerate() {
             if queued {
-                okay &= unsafe {
+                let waited = unsafe {
                     self.device
                         .wait_for_fences(&[self.recovery[own]], true, 120_000_000_000)
                 }
                 .is_ok();
+                PUBLIC_FAILURE.recovered_queue(waited);
+                okay &= waited;
             }
         }
         self.recovery_pending = !okay;
@@ -241,7 +321,9 @@ impl Submission {
         Ok(Self(Rolling::new(backend, total)?))
     }
     pub fn closed(&mut self, end: usize, nodes: usize, force: bool) -> Result<(), &'static str> {
-        self.0.closed(end, nodes, force)
+        let before = self.0.next;
+        self.0.closed(end, nodes, force)?;
+        PUBLIC_FAILURE.after_window(self.0.next != before)
     }
     pub fn submitted_counts(&self) -> [u64; 2] {
         [self.0.submitted_windows as u64, self.0.next as u64]
@@ -306,6 +388,25 @@ mod tests {
             join_fail,
         };
         (Rolling::new(backend, total).unwrap(), events)
+    }
+    #[test]
+    fn public_failure_is_inert_without_explicit_authorized_one_shot_and_real_window() {
+        let failure = PublicFailure::new();
+        assert!(failure.arm(false).is_err());
+        failure.after_window(true).unwrap();
+        failure.recovered_queue(true);
+        assert_eq!(failure.stats(), [0, 0, 0]);
+        failure.arm(true).unwrap();
+        assert!(failure.arm(true).is_err());
+        failure.after_window(false).unwrap();
+        assert_eq!(failure.stats(), [0, 0, 0]);
+        assert!(failure.after_window(true).is_err());
+        failure.recovered_queue(true);
+        failure.recovered_queue(false);
+        assert_eq!(failure.stats(), [1, 1, 1]);
+        failure.after_window(true).unwrap();
+        assert!(failure.arm(true).is_err());
+        assert_eq!(failure.stats(), [1, 1, 1]);
     }
     #[test]
     fn actual_lifecycle_submits_only_closed_original_prefixes_in_global_order() {

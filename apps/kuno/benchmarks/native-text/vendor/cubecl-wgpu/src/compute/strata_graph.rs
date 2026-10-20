@@ -120,6 +120,16 @@ static ROLLING_TOTALS: [std::sync::atomic::AtomicU64; 3] =
 pub fn native_strata_graph_rolling_stats() -> [u64; 3] {
     std::array::from_fn(|i| ROLLING_TOTALS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
+/// Explicit compiled-public terminal-worker diagnostic only. No private
+/// inference setting or wire field selects this one-shot negative control.
+pub fn arm_native_strata_public_rolling_failure() -> Result<(), &'static str> {
+    strata_schedule::arm_public_failure()
+}
+/// Fired controls, actual successfully waited recovery queues, failed queues.
+/// Anonymous aggregates are reported only by the explicit public diagnostic.
+pub fn native_strata_public_rolling_failure_stats() -> [u64; 3] {
+    strata_schedule::public_failure_stats()
+}
 static SUBMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static DISPATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static REPLAYS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

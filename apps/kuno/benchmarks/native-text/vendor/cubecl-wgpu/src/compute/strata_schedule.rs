@@ -5,7 +5,9 @@ use std::collections::HashMap;
 mod rolling;
 #[path = "strata_submit.rs"]
 mod submit;
-pub(crate) use rolling::Submission as RollingSubmission;
+pub(crate) use rolling::{
+    Submission as RollingSubmission, arm_public_failure, public_failure_stats,
+};
 
 /// Recording is optional for authentic uncaptured target/draft work. A named
 /// recording must belong to this request and an inference (not commit) family.

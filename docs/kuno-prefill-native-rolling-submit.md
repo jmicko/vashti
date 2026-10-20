@@ -100,11 +100,12 @@ python3 apps/kuno/benchmarks/text/test-native-command-boundaries.py
 
 The first compiles the actual complete schedule, submit and rolling Vulkan
 modules against existing real ash/wgpu/CubeCL runtime rlibs, with only sibling
-metadata Wait/constants supplied by the existing standalone harness. It runs33
+metadata Wait/constants supplied by the existing standalone harness. It runs35
 CPU tests: original planner and epoch/owner controls, full Vulkan borrowed-view
 checks, randomized4096-node complete DAGs, closed-prefix windows, every injected
 submission failure, panic after prefix, final-join failure, acceptance failure,
-and invalid geometry. Graph source call-site checks verify full admission and
+invalid geometry, inert unauthorized diagnostic selection and the explicit
+one-shot public failure state machine. Graph source call-site checks verify full admission and
 one-flight reservation before issuance, actual command end before prefix,
 final queued join before mark/accept and original terminal owner retention.
 The second checks real persistent per-physical-queue hazard maps and original
@@ -122,3 +123,35 @@ although recording work now overlaps already submitted GPU work. The fixed
 128-node/64-command window is a conservative first bounded choice. No speedup,
 full worker compilation, live hardware success or installation is claimed by
 source/CPU validation alone. No services or installed files were changed here.
+
+## Explicit fixed-public terminal prefix failure control
+
+`cubecl::wgpu::arm_native_strata_public_rolling_failure()` is a process-local
+backend diagnostic setter for the root's explicit compiled-public worker entry;
+it is not an inference API, request option or persistent configuration. Arming
+requires the original enabled native backend and existing
+`KUNO_LAB_LANGUAGE_PUBLIC_ONLY=1` authorization. Neither an inherited variable
+alone nor an ordinary private request calls or arms it. Only one arm is allowed
+per process; repeated arms/fired controls are rejected.
+
+After Session::load, the isolated public diagnostic arms it immediately before
+its fixed-public request. `Submission::closed` first performs the REAL existing
+closed-prefix submission, then consumes the one-shot and returns an ordinary
+Err only if at least one original segment was successfully submitted. Empty
+windows never trigger it. The same original guard drop/recovery path runs;
+there is no special simulated drain or alternative completion mechanism.
+`native_strata_public_rolling_failure_stats()` returns only
+`[fired,successfully_waited_recovery_queues,failed_recovery_queues]`.
+A successful waited count is credited only after an actual recovery fence wait
+returns success; a failed recovery submit/wait increments failed once for that
+queue. No backend logging, request identity or content is added.
+
+This is intentionally a terminal negative worker: the original false-flight
+quarantine is preserved. Its failed request must not emit normal DONE/CLOSED,
+claim owned-zero or pretend the arena is reusable. Root must require the expected
+error, exactly one fired control, at least one actual waited queue and zero
+failed queues, terminate the protected negative child, verify actual physical
+GPU memory recovery, then run a fresh ordinary successful request/service check.
+Those physical and application checks remain pending parent acceptance. The CPU
+suite tests the real one-shot state machine and actual production call-site
+ordering without constructing a GPU or authorizing a private path.

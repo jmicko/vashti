@@ -32,6 +32,16 @@ assert close < rolling < begin
 assert graph.index('rolling.finish().map_err(fault)?') < graph.index('self.mark_last_submitted(id)?', loop)
 assert graph.index('self.mark_last_submitted(id)?', loop) < graph.index('rolling.accept().map_err(fault)?')
 assert 'std::mem::forget(std::mem::take(&mut self.recordings))' in graph
+# The opt-in terminal public fault consumes an explicit one-shot only AFTER
+# real production closed-prefix submission and leaves original recovery active.
+rolling_source = (compute / 'strata_rolling.rs').read_text()
+closed = rolling_source.index('let before = self.0.next;')
+assert rolling_source.index('self.0.closed(end, nodes, force)?;', closed) < rolling_source.index('PUBLIC_FAILURE.after_window(self.0.next != before)', closed)
+assert 'super::super::strata_graph::enabled()' in rolling_source
+assert 'KUNO_LAB_LANGUAGE_PUBLIC_ONLY' in rolling_source
+assert 'PUBLIC_FAILURE.recovered_queue(waited)' in rolling_source
+assert 'PUBLIC_FAILURE.recovered_queue(false)' in rolling_source
+assert 'fn native_strata_public_rolling_failure_stats() -> [u64; 3]' in graph
 libraries = {}
 for name in ['ash', 'wgpu', 'cubecl_runtime']:
     choices = list(args.deps_dir.glob(f'lib{name}-*.rlib'))
