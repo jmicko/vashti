@@ -47,7 +47,9 @@ staging-copy validation still resolves/checks each role at its actual enqueue.
 Ring/classification storage is bounded by512 groups and8KiB total temporary
 HOST metadata, inside the already reserved24MiB whole-batch parent allowance.
 The existing maximum route-conserving85-source budget fixture includes this
-storage and still fits. The8MiB command-tape,4096 binding views,32 actual
+storage and still fits. Classification and slot vectors use full-capacity
+Zeroizing owners; ring scalar state is cleared on normal/error/panic drop.
+The original8MiB command tape still owns and wipes all collected arguments. The8MiB command-tape,4096 binding views,32 actual
 pipelines,64MiB Graph cap and parent reservations are not enlarged.
 
 Only the existing compiled-public profile publishes aggregate streamed/resident
@@ -82,3 +84,10 @@ meaningful clean matched gain before full staged thinking/tools/MAX8/semantic/
 privacy, injected terminal/fresh recovery and official installation. Installed
 matched prefix11.1474s and same-host Strata5.3515s remain the references; the
 uninstalled preceding bundlec12a2418 repeat12.0792s is a diagnostic profile.
+
+The first frozen builddf9fcf16 / SHA3ffea9a2 was NOT run on a GPU or installed:
+source review identified the need to wipe the new routing metadata too. The
+follow-up adds Zeroizing owners and a real still-owned-capacity erasure control
+(no freed-memory inspection). Its five ring/producer cases pass, including the
+new erasure case; together with previous cases this is101 App CPU controls.
+Final frozen release and actual GPU/full-request evidence remain pending.

@@ -3,6 +3,7 @@
 //! were enqueued, NOT that GPU use completed: original Graph range/timeline
 //! dependencies still gate every physical overwrite.
 use kuno_text::{Error, Result};
+use zeroize::{Zeroize, Zeroizing};
 const GROUPS: usize = 512;
 const SLOTS: usize = 8;
 const RESIDENT: usize = usize::MAX;
@@ -14,7 +15,7 @@ fn reject() -> Error {
 }
 
 pub(super) struct Ring {
-    slots: Vec<usize>,
+    slots: Zeroizing<Vec<usize>>,
     issued: usize,
     consumed: usize,
     live: usize,
@@ -52,7 +53,7 @@ impl Ring {
             });
         }
         Ok(Self {
-            slots,
+            slots: Zeroizing::new(slots),
             issued: 0,
             consumed: 0,
             live: 0,
@@ -105,11 +106,43 @@ impl Ring {
         crate::strata_prefill_profile::count("expert_raw_slots_peak_sum", self.peak as u64);
         Ok(())
     }
+    fn erase(&mut self) {
+        // Includes the full allocation capacity, not only populated slots.
+        // Routing-derived metadata never survives a normal/error/panic drop.
+        self.slots.zeroize();
+        self.issued.zeroize();
+        self.consumed.zeroize();
+        self.live.zeroize();
+        self.peak.zeroize();
+        self.misses.zeroize();
+    }
+}
+impl Drop for Ring {
+    fn drop(&mut self) {
+        self.erase();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_owned_slot_capacity_and_scalar_state_are_erased_before_deallocation() {
+        let mut r = Ring::new(&[true, false, true, false, true]).unwrap();
+        while r.issue_next().unwrap().is_some() {}
+        let capacity = r.slots.capacity();
+        assert!(r.slots.iter().any(|x| *x != 0));
+        r.erase();
+        assert!(r.slots.is_empty());
+        assert_eq!(r.slots.capacity(), capacity);
+        // zeroize1.9 Vec explicitly clears every spare-capacity byte as
+        // MaybeUninit. The allocation remains genuinely owned and alive here.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(r.slots.as_ptr().cast::<u8>(), capacity * size_of::<usize>())
+        };
+        assert!(bytes.iter().all(|b| *b == 0));
+        assert_eq!([r.issued, r.consumed, r.live, r.peak, r.misses], [0; 5]);
+    }
     #[test]
     fn all_mixed_sequences_keep_eight_actual_misses_ahead_and_never_reuse_a_live_slot() {
         for len in [1, 7, 8, 9, 31, 64, 512] {

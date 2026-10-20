@@ -385,7 +385,7 @@ fn enqueue_original(
     #[cfg(feature = "strata-prefill-miss-ring")]
     let (resident_raw, mut miss_ring) = {
         let raw = resident_raw_slot(&stage[2], role_bytes)?;
-        let mut modes = Vec::with_capacity(groups);
+        let mut modes = zeroize::Zeroizing::new(Vec::with_capacity(groups));
         for group in 0..groups {
             modes.push(layer_sources.group_streamed(map[4 + group] as usize, role_bytes)?);
         }
