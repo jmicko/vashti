@@ -34,6 +34,41 @@ parity, require an agreed matched local upstream workload/settings/timing scope
 or a sufficiently documented equivalent reference; distinguish prompt/decode,
 load/first-use compilation, final erasure and whole-response time.
 
+## Latest combined operator checkpoint
+
+The accepted installation above is unchanged. Sourcee9b6bd4c /
+SHAcf867264 completes cold73 and warm4245/4245 public requests with correct
+arithmetic and actual erasure/close/recovery. Its last **profiled** prefix is
+14.4597s, expert interval8.3447s and QSA1.8111s; prior comparable QSA was2.9727s.
+Clean upstream5.3515s remains a distinct unprofiled reference; parity is not met.
+
+Source7ada5edd / SHAbba3d0f3 builds the complete GDN scalar-state path and
+opt-in CubeK cyclic-double-buffer dense family. All30 full original-weight
+FP16/BF16 matrix cases report zero numerical mismatches, but the overall public
+gate rejects before its final receipt: three newly added non-dyadic QSA controls
+differ from the unchanged scalar shader by up to5.72e-6 in partials and7.63e-6
+in statistics. The original nine dyadic cases remain bit-exact; these do not
+justify accepting the stronger cases. No numerical threshold is weakened.
+Receipt `strata-parity-coupled-complete-operators-20261020` records failure and
+actual physical recovery, all services normal and zero added driver faults.
+
+The missing compiler connection is concrete: expanded prompt-only QSA lacked
+`STRATA_ROUND_PRODUCTS`, so the native graph did not apply its existing
+NoContraction product-rounding pass. Source6256ebea / SHA4b4e5b0b adds that
+marker only to the optimized prompt shader, leaves the scalar golden reference
+unchanged, and retains explicit chronological PV FMAs. CPU actual-postpass
+controls and SPIR-V validation pass. GPU97-control and complete-request
+acceptance remain pending. The full inventory is30 matrix (including six
+actual CubeK launches),39 original router/dequant,6 causal-selector,
+12 unchanged-scalar QSA and10 unchanged-scalar GDN controls. The public helper
+requires every invariant and actual recovery before writing `passed:true`.
+
+All artifacts are under the development base. Staged API acceptance additionally
+covers actual MAX8 terminal counts1..8 ascending and descending on the same PID,
+existing64/65/66 thresholds, thinking/tool/result, repeated semantic code and
+privacy/physical recovery. These are prepared gates, not live passes yet.
+No API, protocol, model identity, consumer or installation change is claimed.
+
 ## Connected high-potential work
 
 - Matrix: improve compiler-visible K64 vector/stage/MMA execution while retaining
