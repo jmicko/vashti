@@ -157,6 +157,7 @@ fn run_mode(
         rolling_failure,
     ))
 }
+#[allow(clippy::too_many_arguments)] // Explicit internal diagnostic selectors; no wire fields.
 async fn serve(
     settings: Settings,
     worker_started: Instant,
