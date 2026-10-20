@@ -144,9 +144,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 21] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 21];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 21] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 23] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 23];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 23] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -2898,7 +2898,8 @@ impl Graph {
                 self.recordings.remove(i);
             }
         }
-        if self.pool == vk::CommandPool::null() {
+        let fresh_recording_pool = self.pool == vk::CommandPool::null();
+        if fresh_recording_pool {
             self.pool = unsafe {
                 self.device.create_command_pool(
                     &vk::CommandPoolCreateInfo::default()
@@ -3229,6 +3230,10 @@ impl Graph {
         #[cfg(feature = "kuno-public-host-clock")]
         host_clock.mark(4);
         drop(planned_cache); // Original signature allocation moves intact into Recording below.
+        // Source leases never cross retirement of old Wgpu resource owners.
+        // Every current owner stays in nodes/keys/resources; encoding reacquires
+        // and validates the original physical inventory as before.
+        drop(native); // prepare_last_recording may retire old Wgpu owners.
         let transfer_bytes = transfers
             .metadata_bytes()
             .map_err(fault)?
@@ -3262,43 +3267,124 @@ impl Graph {
         let command_budget = descriptors::METADATA_CAP
             .checked_sub(capture_metadata)
             .ok_or_else(|| fault("native queue retained metadata capacity"))?;
-        let work = strata_schedule::Commands::new(
-            &self.device,
-            self.pool,
-            self.command,
-            self.copy_family,
-            self.compute_queues[strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
-                .family,
-            plan,
-            command_budget,
-        )
-        .map_err(fault)?;
-        let metadata = capture_metadata
-            .checked_add(work.metadata_bytes())
-            .ok_or_else(|| fault("native queue metadata overflow"))?;
-        if metadata > descriptors::METADATA_CAP {
-            return Err(fault("native queue retained metadata capacity"));
-        }
-        self.next_recording = self
+        let reusable_class = fresh_recording_pool
+            && self
+                .push_descriptors
+                .as_ref()
+                .is_some_and(|(_, max)| *max >= 32)
+            && rolling_prefill_selected(
+                self.compute_lane,
+                key.is_some(),
+                profiling,
+                self.nodes.len(),
+                compute_count,
+                self.nodes.iter().any(|node| {
+                    node.pipeline.as_ref().is_some_and(|p| {
+                        matches!(
+                            self.pipelines[p].program.name,
+                            "StrataPromptExpertF16Image"
+                                | "StrataPromptExpertResidentGuImage"
+                                | "StrataPromptExpertResidentDownImage"
+                        )
+                    })
+                }),
+            );
+        let reuse = reusable_class
+            .then(|| {
+                self.recordings.iter().position(|r| {
+                    r.key.is_none()
+                        && r.family == self.family
+                        && r.ready
+                        && r.profile.is_none()
+                        && !self.flights.live(r.id)
+                        && r.work.commands.first().copied() == Some(r.command)
+                        && r.work.can_reencode(&plan, command_budget)
+                })
+            })
+            .flatten();
+        let next_recording = self
             .next_recording
             .checked_add(1)
             .ok_or_else(|| fault("native recording identity exhausted"))?;
-        let recording = Recording {
-            id: self.next_recording,
-            family: self.family,
-            key,
-            ready: false,
-            compute_count,
-            work,
-            profile,
-            device: self.device.clone(),
-            pool: self.pool,
-            descriptors: self.descriptors,
-            command: self.command,
-            signature,
-            _resources: resources,
-            _owners: owners,
+        let (recording, metadata) = if let Some(index) = reuse {
+            // This is the SAME original completed-flight test used by idle
+            // eviction. A merely ready/submitted recording cannot authorize it.
+            let metadata = capture_metadata
+                .checked_add(
+                    self.recordings[index]
+                        .work
+                        .reencoded_metadata_bytes(&plan)
+                        .ok_or_else(|| fault("native queue metadata overflow"))?,
+                )
+                .ok_or_else(|| fault("native queue metadata overflow"))?;
+            if metadata > descriptors::METADATA_CAP {
+                return Err(fault("native queue retained metadata capacity"));
+            }
+            let old = &mut self.recordings[index];
+            old.ready = false;
+            unsafe { old.work.reencode_completed(old.pool, plan, command_budget) }
+                .map_err(fault)?;
+            let mut old = self.recordings.remove(index);
+            old.id = next_recording;
+            old.key = key;
+            old.compute_count = compute_count;
+            old.signature = signature;
+            old._resources = resources;
+            old._owners = owners;
+            old.profile = profile;
+            // These scratch pools were created in this capture and have NEVER
+            // been encoded/submitted. The original completed pools remain
+            // owned by old, along with every original command and semaphore.
+            unsafe {
+                self.device.destroy_descriptor_pool(self.descriptors, None);
+                self.device.destroy_command_pool(self.pool, None);
+            }
+            COMPUTE_BARRIERS[21].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            COMPUTE_BARRIERS[22].fetch_add(
+                old.work.commands.len() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            (old, metadata)
+        } else {
+            let work = strata_schedule::Commands::new(
+                &self.device,
+                self.pool,
+                self.command,
+                self.copy_family,
+                self.compute_queues
+                    [strata_schedule::shared_peer(self.compute_lane).map_err(fault)?]
+                .family,
+                plan,
+                command_budget,
+            )
+            .map_err(fault)?;
+            let metadata = capture_metadata
+                .checked_add(work.metadata_bytes())
+                .ok_or_else(|| fault("native queue metadata overflow"))?;
+            if metadata > descriptors::METADATA_CAP {
+                return Err(fault("native queue retained metadata capacity"));
+            }
+            (
+                Recording {
+                    id: next_recording,
+                    family: self.family,
+                    key,
+                    ready: false,
+                    compute_count,
+                    work,
+                    profile,
+                    device: self.device.clone(),
+                    pool: self.pool,
+                    descriptors: self.descriptors,
+                    command: self.command,
+                    signature,
+                    _resources: resources,
+                    _owners: owners,
+                },
+                metadata,
+            )
         };
+        self.next_recording = next_recording;
         // Ownership transfers before any fallible recording/submission step.
         self.pool = vk::CommandPool::null();
         self.descriptors = vk::DescriptorPool::null();
@@ -3315,7 +3401,6 @@ impl Graph {
                 .map(|s| s.queue()),
         )
         .map_err(fault)?;
-        drop(native); // prepare_last_recording may retire old Wgpu owners.
         let mut rolling = if rolling_prefill_selected(
             self.compute_lane,
             key.is_some(),

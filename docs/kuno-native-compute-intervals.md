@@ -1463,3 +1463,56 @@ prohibited. No reuse code has been added yet. Keep root-required work bounded:
 owned sudo refresh128882/128884 expires20:39:26UTC (sharedshell3556 is NOT ours
 to kill); if sudo later blocks meaningful protected progress, leave this safe
 state and stop that run per goal policy rather than repeated workarounds.
+
+
+### Complete idle-recording re-encoding candidate
+
+Reuse only an original idle, ready, unnamed, unprofiled MAIN recording in the
+SAME Graph/family, after the original flight book proves it not live. Only the
+existing large expert rolling class and full32-binding push support qualify.
+New/old actual queue counts must match exactly, all original commands/header
+must be present, and the original64MiB retained/command metadata preflight must
+still pass. Mismatches retain original construction. No new cache/heap buffer.
+Reuse keeps that recording's original three command pools, complete command
+inventory, descriptor pool and timeline semaphores/monotonic next_base. It resets
+only those completed command pools, then re-encodes every original node, live
+binding, real range barrier and final queue fence. Different per-queue ordering
+is handled by an allocation-free permutation: old plan storage is scratch only
+AFTER the recording is made not-ready, and is replaced by the complete new plan.
+Header stays in its original MAIN pool. All actual command handles stay with
+their original physical queue family. No arithmetic/source/precision change.
+
+The physical source guard is released before retiring any old resource owner,
+then reacquired at the original encoding boundary with full current validation.
+No guard crosses owner retirement. Original request erasure clears the same
+recording inventory; unknown completion/quarantine never authorizes reuse.
+Actual old+new metadata is conservatively charged before any reset. The newly
+created but unsubmitted scratch pool/descriptor pool are discarded only once
+original pool ownership has transferred into the replacement recording.
+Anonymous actual reuse counts extend only the existing public diagnostic.
+No API/protocol/model/config/frontend/install/release change. All prior coupled
+components, numerical references, descriptor/owner/hazard/epoch guards remain.
+
+
+Implemented re-encoding retains the existing Recording object and its original
+MAIN/COPY/SHARED pools, descriptor pool, commands and timeline next_base. It
+requires the original flight-book not-live test, exact family/header identity,
+ready/unnamed/unprofiled state and original large expert rolling eligibility;
+newly created scratch pools must be unsubmitted, with full32-binding push support.
+The same old+new64MiB preflight remains conservative, including actual old command
+Vec capacity. Matching queue COUNTS allows a different queue ORDER. Three linear
+partition passes and permutation cycles reuse only the old plan's existing node
+index scratch; no new heap allocation or command handle is needed. Every original
+pool/command remains owned by the same recording. It is marked not-ready before
+any pool reset and every original node/binding/barrier/fence is re-encoded.
+Normal incompatible requests retain the original construction path. No old
+recording survives original private erasure via a new side cache.
+
+One CPU compile caught the retained metadata variable needed by later fresh-set
+window preflight; corrected by carrying the SAME conservative checked metadata
+through both construction branches. No failed build was run on GPU, no capacity
+check was removed. All132 selected actual App CPU controls now pass: prior128
+plus exhaustive small queue permutations, large32769-command mixed layouts,
+pre-mutation malformed inventory rejection, and checked actual-capacity budget
+boundaries/overflow. Exact-source original171 GPU/full proof/normal-host profile,
+physical recovery and subsequent clean/terminal/staged/install gates remain next.

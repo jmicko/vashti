@@ -83,6 +83,10 @@ mod strata_atomic_or_controls;
 mod strata_push_descriptor_controls;
 #[cfg(test)]
 #[allow(dead_code)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_command_reencode.rs"]
+mod strata_command_reencode_controls;
+#[cfg(test)]
+#[allow(dead_code)]
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_capture_inventory.rs"]
 mod strata_capture_inventory_controls;
 #[cfg(test)]

@@ -1,6 +1,8 @@
 //! Dependency-complete native primary/copy/shared submissions. No model content.
 use ash::vk;
 use std::collections::HashMap;
+#[path = "strata_command_reencode.rs"]
+mod command_reencode;
 #[path = "strata_rolling.rs"]
 mod rolling;
 #[path = "strata_submit.rs"]
@@ -777,6 +779,76 @@ impl Commands {
             |handle| unsafe { device.free_command_buffers(main_pool, &[handle]) },
         )?;
         Ok(result)
+    }
+    pub fn reencoded_metadata_bytes(&self, plan: &Plan) -> Option<usize> {
+        plan_metadata_bytes(plan)?
+            .checked_add(size_of::<Self>())?
+            .checked_add(
+                self.commands
+                    .capacity()
+                    .checked_mul(size_of::<vk::CommandBuffer>())?,
+            )
+    }
+    /// Same original command inventory; this grants no completion authority.
+    pub fn can_reencode(&self, plan: &Plan, metadata_budget: usize) -> bool {
+        command_reencode::fits_budget(
+            plan_metadata_bytes(plan),
+            self.commands.capacity(),
+            size_of::<Self>(),
+            metadata_budget,
+        ) && self.copy_pool != vk::CommandPool::null()
+            && (plan.last_shared == 0 || self.shared_pool != vk::CommandPool::null())
+            && self
+                .plan
+                .segments
+                .iter()
+                .chain(&plan.segments)
+                .all(|s| !(s.copy && s.shared))
+            && command_reencode::compatible(
+                &self.plan.segments,
+                Segment::queue,
+                plan.segments.iter().map(Segment::queue),
+                &self.commands,
+                self.plan.node_segments.len(),
+            )
+    }
+    /// Caller must prove this ORIGINAL recording idle through the original
+    /// flight book, mark it not-ready, and retain its actual MAIN pool/owners.
+    /// No reset of a device, queue, fence, epoch or semaphore is performed.
+    pub unsafe fn reencode_completed(
+        &mut self,
+        main_pool: vk::CommandPool,
+        plan: Plan,
+        metadata_budget: usize,
+    ) -> Result<(), &'static str> {
+        if !self.can_reencode(&plan, metadata_budget)
+            || main_pool == vk::CommandPool::null()
+            || main_pool == self.copy_pool
+            || main_pool == self.shared_pool
+            || self.copy_pool == self.shared_pool
+        {
+            return Err("native completed command original pool inventory");
+        }
+        for pool in [main_pool, self.copy_pool, self.shared_pool] {
+            if pool != vk::CommandPool::null() {
+                unsafe {
+                    self.device
+                        .reset_command_pool(pool, vk::CommandPoolResetFlags::empty())
+                }
+                .map_err(|_| "native completed command pool reset")?;
+            }
+        }
+        command_reencode::reorder(
+            &mut self.plan.segments,
+            Segment::queue,
+            plan.segments.iter().map(Segment::queue),
+            &mut self.commands,
+            &mut self.plan.node_segments,
+        )?;
+        self.plan = plan;
+        // Preserve all actual timeline semaphore values and next_base. The
+        // original prepare_submission must reserve a fresh monotonic epoch.
+        Ok(())
     }
     pub fn metadata_bytes(&self) -> usize {
         self.plan.segments.capacity() * std::mem::size_of::<Segment>()
