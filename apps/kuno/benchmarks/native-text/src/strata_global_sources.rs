@@ -12,6 +12,8 @@ use std::collections::HashMap;
 
 #[path = "strata_cache_placement.rs"]
 mod placement;
+#[path = "strata_prompt_layer_sources.rs"]
+mod prompt_layer;
 #[path = "strata_prompt_loan.rs"]
 mod prompt_loan;
 pub(crate) use placement::Placement;

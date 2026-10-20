@@ -275,6 +275,14 @@ pub(crate) fn enqueue(
     if (RAW_SLOTS * raw_stride) as u64 > allocation::RAW_RING_BYTES {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
+    // Bind current immutable PUBLIC prototypes once for this exact layer and
+    // checked Sources borrow. Actual per-slot source/copy and per-kernel full
+    // dependency/loan gates remain in the original Sources methods.
+    let layer_sources = sources.prompt_layer(graph, layer)?;
+    let mut raw_slots = Vec::with_capacity(RAW_SLOTS);
+    for slot in 0..RAW_SLOTS {
+        raw_slots.push(raw_slot(&stage[2], slot, role_bytes)?);
+    }
     // Native Intel prefill groups on the host once per layer. This is a bounded
     // routing-only readback, not decode's CPU expert/input contribution.
     let groups = super::groups::validate(map, count)?;
@@ -285,9 +293,7 @@ pub(crate) fn enqueue(
     for group in 0..groups {
         let mut timing = crate::strata_prefill_profile::CpuTimer::new();
         while issued < groups && issued < group + RAW_SLOTS {
-            sources.stage_prompt_group(
-                graph,
-                layer,
+            layer_sources.stage_group(
                 map[4 + issued] as usize,
                 role_bytes,
                 &stage[2],
@@ -338,22 +344,19 @@ pub(crate) fn enqueue(
                 words[3] = p.row_bytes() as u32;
                 words[5] = 2;
             }
-            let mut args = KernelArguments::new().with_buffer(
-                sources
-                    .prototype(graph, layer, if down { 2 } else { 0 })?
-                    .binding(),
-            );
+            let mut args = KernelArguments::new()
+                .with_buffer(layer_sources.prototype(if down { 2 } else { 0 })?.binding());
             if !down {
-                args = args.with_buffer(sources.prototype(graph, layer, 1)?.binding());
+                args = args.with_buffer(layer_sources.prototype(1)?.binding());
             }
             args = args.with_buffers(vec![
                 owners[0].clone().binding(),
-                raw_slot(&stage[2], group % RAW_SLOTS, role_bytes)?.binding(),
+                raw_slots[group % RAW_SLOTS].clone().binding(),
                 stage[1].clone().binding(),
                 fault.clone().binding(),
             ]);
             args = crate::strata_intel_core::bind(args, owners[0].stream)?;
-            args = sources.bind_prompt_image(layer, args)?;
+            args = layer_sources.bind_image(args)?;
             dispatch(
                 client,
                 Op::Dequant {
