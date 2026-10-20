@@ -1402,3 +1402,64 @@ If full pool recycling proves too intrusive, peer-pool/peer-command reuse with
 identical actual per-queue capacity is a smaller coherent step; MAIN stays owned
 by the new original recording pool/header. Any compatibility miss keeps original
 construction. No unchecked cache of private content or skipped erasure.
+
+
+### Template clean selection and safe checkpoint
+
+Exact source03815d0b8f47c547bf4729927dd2f98f9dd8a974 / frozen worker
+SHAf0c926f285eea8f8f7c225ff580564da10a83699a5e353077cc9db5b1663eb82
+passes the actual submitted-prefix terminal-negative check: expected worker exit1,
+fired1, TWO actual recovery queues waited, failed queues0. Intentional process
+exit/quarantine remains part of that test; no ordinary reusable-session/owned-zero
+claim replaces it. A subsequent FRESH clean45/4245/4245 process completes all
+three correct323 requests and physical recovery, but FAILS the unchanged clean
+selection gate:
+
+| Position | Installed native32 | Complete template candidate | Original5% gate |
+| --- | ---: | ---: | --- |
+| First long |12.962279132s|13.780554488s|FAIL |
+| Repeated long |11.147390805s|10.383566824s|PASS |
+
+Repeated long is6.85% shorter than installed, FIRST is6.31% slower. Do not
+cherry-pick repeat, change warm-up input, move JIT work out of the clock, change
+thresholds or claim Strata parity (matched repeat5.3515s). The prior compact
+candidate was13.7110/10.2885s; no meaningful whole-request template gain over that
+candidate is established. Every prior component is retained; none rolled back.
+Clean cold model load117.6644s, first45-token request10.4057s and3.5317s output;
+these remain separate metrics. Staged API/semantic acceptance was NOT STARTED,
+installation was NOT STARTED, and no new sustained/decode/frontend/release
+acceptance is claimed. Owned summary:
+`strata-parity-push-template-clean-selection-public-summary-20261020.json`.
+All helpers/artifacts are under`/media/jmicko/faststore/kuno-development`;
+acceptance prefix`strata-parity-push-template-acceptance-20261020`.
+
+Independent actual20:30:46UTC state: Intel50,688,000B,NVIDIA compute0, every
+kernel fault counter0, Kuno/Ollama/Vashti200, admission inactive/unpaused,
+recoveryfalse/waiting0. Both protected units ended. Installed worker3fffc266/
+SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 remain untouched. No GPU/device reset
+or reboot was used. Goal remains active/unmet. No GPU test is left running.
+
+Additional fixed-public LOAD attribution is owned at
+`strata-parity-push-template-public-load-phases-20261020.json`: labels are START
+arrivals, not per-stage completed timers. Target0.6196s, global_sources2.3877s,
+shared_target_weights76.5421s, shared_draft77.3815s, request_rebind_begin80.4441s;
+worker load80.4315s in that separate diagnostic. Thus the interval containing
+original global expert source construction is~74.15s. Do not blame all load
+cost on shader compilation or infer disk byte volume/bandwidth from phase time.
+Actual source pointers: Sources::load in strata_global_sources.rs sequentially
+loads Cache, Host, builds tables, optional exchange inventory and verifies files;
+strata_global_gpu.rs / strata_global_host.rs retain the complete parallel-reader
+and original ownership/publication fences. No loading change is implemented here.
+
+Next work retains the COMPLETE candidate, focuses on recording resource
+preparation and first-use cost, and requires actual removal/reuse of a measured
+cost. Commands already allocates in bulk per pool. Any reuse must preserve the
+original completed-flight authority and cap OLD+NEW simultaneous allocated
+metadata, pool families/header/command ownership, monotonic timeline epochs,
+full fresh descriptors/real barriers/final fences, original private reset and
+erasure boundaries. A Vulkan command-pool lifecycle reset, if implemented only
+after that authority, is not a device/driver reset; device/driver resets remain
+prohibited. No reuse code has been added yet. Keep root-required work bounded:
+owned sudo refresh128882/128884 expires20:39:26UTC (sharedshell3556 is NOT ours
+to kill); if sudo later blocks meaningful protected progress, leave this safe
+state and stop that run per goal policy rather than repeated workarounds.

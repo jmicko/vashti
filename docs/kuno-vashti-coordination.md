@@ -22,48 +22,47 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 20:24UTC): template passed full validation; clean selection active.**
+**Authoritative active handoff (2026-10-20 20:31UTC): template complete; clean selection FAILS; safe checkpoint.**
 
 Use ONLY`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; preserve canonical Vashti checkout/notes. Installed
 worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 remain unchanged.
 No API/KNT2/KNR2/configuration/model identity/frontend/release change.
 
-Normal-clock`d88c904f`/SHA84373929 passes125 CPU,420/208 offline, original129+42
-GPU, complete original public proofs and normal-path host-only73/4245/4245 run.
-It proves ZERO GPU timestamps/class samples, real rolling execution, exact
-routed counts, correct323 and physical recovery. Sampled third request/layer24:
-encoding9.184ms and retained preparation8.361ms are79% of actual thread CPU.
-The old GPU sampler serializes its layer; don't use it alone for normal CPU
-attribution. Normal repeat10.7068s is diagnostic, not clean acceptance.
-
-Complete template source`03815d0b8f47c547bf4729927dd2f98f9dd8a974`, SHA
+Complete template source`03815d0b8f47c547bf4729927dd2f98f9dd8a974`, workerSHA
 `f0c926f285eea8f8f7c225ff580564da10a83699a5e353077cc9db5b1663eb82`, passes128
-CPU,420/208 offline, original129+42 GPU, full compiler/producer/count proofs,
-BOTH original-GPU-sampler and normal-host-only complete request runs. ALL
-46746/166220/166220 expert push dispatches really use templates in both modes;
-fresh sets0. Every original live descriptor type/view/range check, full write,
-shader/queue/epoch/barrier/owner/budget/erasure component and unsupported/failure
-fallback remains. Normal repeat10.7068->10.6374s is only a small diagnostic gain;
-sampled encoding8.501ms, retained7.540ms. Preparation code was unchanged: don't
-attribute all timing variation to templates. Owned summary:
-`strata-parity-push-template-20261020-public-summary.json`.
+selected CPU,420/208 offline, original129+42 GPU, complete original compiler/
+producer/count/ownership proofs, BOTH GPU-sampler and normal-host-only whole
+public73/4245/4245 runs. Every46746/166220/166220 expert push dispatch really
+uses templates in both modes (fresh sets0). Retains all live descriptor checks,
+full writes, shader/queue/epoch/barrier/source/owner/budget/erasure components
+and unsupported/creation-failure fallback. No components rolled back.
 
-Actual independent20:23:40UTC recovery: Intel50,688,000B,NVIDIA compute0,
-all faults0, HTTP200, admission inactive/unpaused/recoveryfalse/waiting0.
-The protected`kuno-native-push-template-acceptance-20261020` unit is now ACTIVE:
-original terminal-negative -> fresh clean45/4245/4245 -> staged API/semantic
-checks ONLY if original5%-faster-at-EACH-position clean gate passes. No install.
-Do not overlap GPU/services/heavy CPU work. Helpers and artifacts are under
-`/media/jmicko/faststore/kuno-development`; prefix
-`strata-parity-push-template-acceptance-20261020`. Retain the whole coupled
-bundle even if clean performance disappoints; don't weaken any reference/gate.
-Bounded owned sudo refresh128882/128884 lasts until20:39:26UTC; never kill
-sharedshell3556 or reset/reboot GPUs. Exact contract, proof limits and next
-completed-resource reuse direction:
-[template candidate](kuno-native-compute-intervals.md#complete-push-template-encoding-candidate).
-Goal active/unmet: matched Strata repeat5.3515s still leads. No Vashti consumer
-change. Recording resource reuse is only a plan, NOT implemented.
+Terminal-negative passes with2 actual recovery queues joined and no failed
+recovery. Subsequent FRESH clean45/4245/4245 requests and actual physical
+recovery pass, but original5%-faster-at-EACH-position SELECTION FAILS:
+FIRST12.9623->13.7806s (6.31% slower), repeat11.1474->10.3836s (6.85% shorter).
+Staged API/semantic acceptance and installation were NOT started. No new
+sustained/decode/frontend/release claim; Strata repeat5.3515s still leads.
+Owned summaries`strata-parity-push-template-20261020-public-summary.json` and
+`strata-parity-push-template-clean-selection-public-summary-20261020.json` under
+`/media/jmicko/faststore/kuno-development`. Do not select only the repeat,
+change warmup input, move JIT outside the clock or weaken reference/gates.
+
+Actual independent20:30:46UTC: Intel50,688,000B,NVIDIA compute0,all faults0,
+Kuno/Ollama/Vashti200, admission inactive/unpaused/recoveryfalse/waiting0.
+No GPU job remains. Goal active/unmet. Next target: completed recording resource
+preparation and first-use costs. Normal-path CPU encoding+retained dominate
+~79% of the sampled third request/layer24; original GPU sampler serializes its
+layer. Original Commands ALREADY bulk-allocates per pool. Resource reuse is
+NOT implemented; require original completed-flight/queue/header ownership,
+old+new actual capacity caps, monotonic epochs, full fresh bindings/barriers,
+private reset/erasure and terminal recovery. Retain the whole coupled bundle.
+Owned sudo refresh128882/128884 expires20:39:26UTC; sharedshell3556 must NOT be
+killed. No GPU/device reset/reboot. Exact contracts, metrics, proof limits, source
+pointers and next gates:
+[final checkpoint](kuno-native-compute-intervals.md#template-clean-selection-and-safe-checkpoint).
+No Vashti consumer change is required.
 
 **Previous handoff (2026-10-20 19:48UTC): host capture diagnosis.**
 

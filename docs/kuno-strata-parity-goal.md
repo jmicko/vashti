@@ -9,6 +9,32 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
+## Latest complete candidate checkpoint (2026-10-20 20:31UTC)
+
+Installed native32 remains unchanged. The complete source03815d0b / SHA f0c926f2
+retains every previous optimization and adds immutable Vulkan push descriptor
+templates. All128 selected CPU,420/208 offline, original129+42 GPU controls,
+full compiler/producer/count/normal-rolling proofs, both fixed-public profile
+modes, actual template-use counts, terminal-negative and subsequent fresh clean
+requests/physical recovery pass. Clean SELECTION fails: first long13.7806s vs
+installed12.9623s; repeat10.3836s vs11.1474s. Staged API/semantics and installation
+were not started. Full bundle remains in source; no partial rollback or weakened
+math/reference/ownership/privacy/timing gate. No new sustained or release claim.
+Matched Strata repeat5.3515s still leads, so the goal remains active/unmet.
+
+Normal-path sampled third-request/layer24 thread CPU is dominated by command
+encoding and retained preparation (~79% together); GPU timestamp sampling alone
+cannot establish that distribution because it changes the sampled schedule.
+The next coherent target is completed recording resource preparation/reuse and
+first-use cost, preserving original completed-flight authority, actual queue/
+command/header ownership, complete live descriptors,64MiB old+new capacity caps,
+monotonic timeline epochs and private erasure. Commands already bulk-allocates
+per pool; don't redo that optimization. No resource reuse is implemented yet.
+Exact source/artifact/helper identities, evidence limits and safe next-step gates:
+[template selection checkpoint](kuno-native-compute-intervals.md#template-clean-selection-and-safe-checkpoint).
+Actual20:30:46UTC GPUs clear (Intel50,688,000B,NVIDIA compute0), all faults0,
+all services200 and normal admission. No protected GPU job remains from this run.
+
 ## Reference and acceptance scope
 
 Pinned MIT upstream Strata v0.1.41, source
