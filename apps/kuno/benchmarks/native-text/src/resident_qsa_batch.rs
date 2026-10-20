@@ -215,7 +215,7 @@ fn public_guard_diagnostic(cause: &'static str) {
     // The existing source-only diagnostic flag is enabled by every compiled
     // public entry, including the short check. Ordinary inference cannot enable
     // it by environment or private protocol; fault() is silent in that case.
-    let _ = fault(format_args!("native_qsa_guarded static_cause={cause}"));
+    let _ = crate::resident_util::fault(format_args!("native_qsa_guarded static_cause={cause}"));
 }
 fn guarded<T>(poison: &AtomicBool, op: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(op)) {
