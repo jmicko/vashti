@@ -29,6 +29,8 @@ mod command;
 pub mod conv;
 mod device;
 pub use device::kuno_native_workgroup_layout;
+mod kuno_independent_subgroup;
+pub use kuno_independent_subgroup::{KUNO_GDN_SIMD16_ENTRY, kuno_gdn_subgroup16};
 mod kuno_cooperative;
 pub use kuno_cooperative::kuno_cooperative_subgroup;
 mod kuno_fp16;

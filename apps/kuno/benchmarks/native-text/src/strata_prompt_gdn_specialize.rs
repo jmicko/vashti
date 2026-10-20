@@ -128,6 +128,101 @@ mod tests {
     }
 
     #[test]
+    fn selected_simd16_compilation_preserves_every_original_expression_and_whole_group_barrier() {
+        use super::super::Op;
+        for op in [
+            Op::Recurrence,
+            Op::RecurrenceFault,
+            Op::NormFault,
+            Op::ConvFault,
+        ] {
+            let (source, entry) = op.compilation();
+            let selected = cfg!(feature = "strata-gdn-subgroup16")
+                && matches!(op, Op::Recurrence | Op::RecurrenceFault);
+            let restored = source.replace(&format!("fn {entry}("), "fn main(");
+            assert_eq!(restored, op.source());
+            let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+            let info = wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            let words = wgpu::naga::back::spv::write_vec(
+                &module,
+                &info,
+                &wgpu::naga::back::spv::Options {
+                    lang_version: (1, 3),
+                    ..Default::default()
+                },
+                Some(&wgpu::naga::back::spv::PipelineOptions {
+                    shader_stage: wgpu::naga::ShaderStage::Compute,
+                    entry_point: entry.into(),
+                }),
+            )
+            .unwrap();
+            assert_eq!(
+                wgpu::hal::vulkan::kuno_gdn_subgroup16(&words),
+                if selected { Some(16) } else { None }
+            );
+            if !selected {
+                continue;
+            }
+            // Unsupported metadata cannot select this policy. Full SPIR-V
+            // validation remains a separate mandatory compiler gate.
+            for cap in [9, 61, 64, 6022, u32::MAX] {
+                let mut changed = words.clone();
+                let mut at = 5;
+                while at < changed.len() {
+                    let n = (changed[at] >> 16) as usize;
+                    if changed[at] & 65535 == 17 {
+                        changed[at + 1] = cap;
+                        break;
+                    }
+                    at += n;
+                }
+                assert_eq!(wgpu::hal::vulkan::kuno_gdn_subgroup16(&changed), None);
+            }
+            for width in [0, 16, 32, 64, 127, 129, 256] {
+                let mut changed = words.clone();
+                let mut at = 5;
+                while at < changed.len() {
+                    let n = (changed[at] >> 16) as usize;
+                    if changed[at] & 65535 == 16 {
+                        changed[at + 3] = width;
+                        break;
+                    }
+                    at += n;
+                }
+                assert_eq!(wgpu::hal::vulkan::kuno_gdn_subgroup16(&changed), None);
+            }
+            for suffix in [
+                vec![0],
+                vec![(9 << 16) | 17, 1],
+                vec![(2 << 16) | 17, 61],
+                vec![(4 << 16) | 16, 1, 35, 32],
+            ] {
+                let mut changed = words.clone();
+                changed.extend(suffix);
+                assert_eq!(wgpu::hal::vulkan::kuno_gdn_subgroup16(&changed), None);
+            }
+            // A real barrier must keep Workgroup scope. A forged subgroup
+            // constant cannot manufacture independence even without a cap.
+            let mut changed = words.clone();
+            let mut at = 5;
+            while at < changed.len() {
+                let n = (changed[at] >> 16) as usize;
+                if changed[at] & 65535 == 224 {
+                    changed[at + 1] = 0;
+                    break;
+                }
+                at += n;
+            }
+            assert_eq!(wgpu::hal::vulkan::kuno_gdn_subgroup16(&changed), None);
+        }
+    }
+
+    #[test]
     fn real_lowered_prompt_keeps_only_causal_time_loop() {
         for op in [Op::Recurrence, Op::RecurrenceFault] {
             let (old, old_spv) = compiled(&op.scalar_source());

@@ -14,7 +14,7 @@ use ash::{ext, vk};
 use hashbrown::hash_map::Entry;
 use parking_lot::Mutex;
 
-use super::{conv, RawTlasInstance};
+use super::{RawTlasInstance, conv};
 use crate::TlasInstance;
 
 impl super::DeviceShared {
@@ -714,7 +714,10 @@ impl super::Device {
         label: &crate::Label<'_>,
     ) -> Result<vk::ShaderModule, crate::DeviceError> {
         let native_words;
-        let spv = if matches!(std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(), Ok("public" | "protected-worker")) {
+        let spv = if matches!(
+            std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(),
+            Ok("public" | "protected-worker")
+        ) {
             let canonical = kuno_native_workgroup_layout(spv).map_err(|reason| {
                 log::error!("{reason}");
                 crate::DeviceError::Unexpected
@@ -1114,7 +1117,10 @@ impl crate::Device for super::Device {
             .size(desc.size)
             .usage(
                 conv::map_buffer_usage(desc.usage)
-                    | if matches!(std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(), Ok("public" | "protected-worker")) {
+                    | if matches!(
+                        std::env::var("KUNO_STRATA_INTEL_CORE").as_deref(),
+                        Ok("public" | "protected-worker")
+                    ) {
                         vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                     } else {
                         vk::BufferUsageFlags::empty()
@@ -1976,6 +1982,30 @@ impl crate::Device for super::Device {
         desc: &crate::ShaderModuleDescriptor,
         shader: crate::ShaderInput,
     ) -> Result<super::ShaderModule, crate::ShaderError> {
+        // Only this literal, validated compiler entry is subgroup independent.
+        // Probe actual complete words even on separate-entry-point devices;
+        // ordinary WGSL, overrides and any unsupported proof keep their policy.
+        let original_subgroup = self.kuno_wgsl_subgroup_size();
+        let independent16 = original_subgroup == Some(32)
+            && match &shader {
+                crate::ShaderInput::Naga(n)
+                    if n.module.entry_points.len() == 1
+                        && n.module.entry_points[0].name == super::KUNO_GDN_SIMD16_ENTRY
+                        && n.module.entry_points[0].workgroup_size == [128, 1, 1]
+                        && n.module.overrides.is_empty() =>
+                {
+                    naga::back::spv::write_vec(&n.module, &n.info, &self.naga_options, None)
+                        .ok()
+                        .is_some_and(|w| super::kuno_gdn_subgroup16(&w) == Some(16))
+                }
+                crate::ShaderInput::SpirV(w) => super::kuno_gdn_subgroup16(w) == Some(16),
+                _ => false,
+            };
+        let required_subgroup = if independent16 {
+            Some(16)
+        } else {
+            original_subgroup
+        };
         let shader_module = match shader {
             crate::ShaderInput::Naga(naga_shader)
                 if self
@@ -1987,7 +2017,7 @@ impl crate::Device for super::Device {
                 super::ShaderModule::Intermediate {
                     naga_shader,
                     runtime_checks: desc.runtime_checks,
-                    required_subgroup: self.kuno_wgsl_subgroup_size(),
+                    required_subgroup,
                 }
             }
             crate::ShaderInput::Naga(naga_shader) => {
@@ -2018,12 +2048,12 @@ impl crate::Device for super::Device {
                 .map_err(|e| crate::ShaderError::Compilation(format!("{e}")))?;
                 super::ShaderModule::Raw(
                     self.create_shader_module_impl(&spv, &desc.label)?,
-                    self.kuno_wgsl_subgroup_size(),
+                    required_subgroup,
                 )
             }
             crate::ShaderInput::SpirV(data) => {
                 let raw = self.create_shader_module_impl(data, &desc.label)?;
-                if super::kuno_cooperative_subgroup(data) == Some(16) {
+                if super::kuno_cooperative_subgroup(data) == Some(16) || independent16 {
                     super::ShaderModule::RawSubgroup16(raw)
                 } else {
                     super::ShaderModule::Raw(raw, None)

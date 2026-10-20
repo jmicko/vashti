@@ -1132,12 +1132,16 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
             },
             Some(&n::back::spv::PipelineOptions {
                 shader_stage: n::ShaderStage::Compute,
-                entry_point: "main".into(),
+                entry_point: compiled.entrypoint_name.clone(),
             }),
         )?;
         let physical = compiled.source.contains("STRATA_PHYSICAL_EXPERTS");
         let rounded = compiled.source.contains("STRATA_ROUND_PRODUCTS");
-        if physical || rounded {
+        let independent16 = compiled.entrypoint_name == wgpu::hal::vulkan::KUNO_GDN_SIMD16_ENTRY;
+        if independent16 && wgpu::hal::vulkan::kuno_gdn_subgroup16(&words) != Some(16) {
+            return Err("actual subgroup-independent GDN proof unavailable".into());
+        }
+        if physical || rounded || independent16 {
             use std::io::Write;
             if physical {
                 words = cubecl::wgpu::native_expert_shader_words(&compiled.source)?;
@@ -1164,6 +1168,9 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
                 .write_all(&bytes)?;
             if !validate.wait()?.success() {
                 return Err("physical expert SPIRV validation failed".into());
+            }
+            if independent16 {
+                println!("strata_gdn_subgroup16_shader_accepted index={index}");
             }
             if physical {
                 println!("strata_physical_shader_accepted index={index}");

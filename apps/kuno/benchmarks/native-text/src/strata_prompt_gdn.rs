@@ -37,6 +37,17 @@ impl Op {
             scalar
         }
     }
+    fn compilation(&self) -> (String, &'static str) {
+        let mut source = self.source();
+        let mut entry = "main";
+        #[cfg(feature = "strata-gdn-subgroup16")]
+        if matches!(self, Self::Recurrence | Self::RecurrenceFault) {
+            entry = wgpu::hal::vulkan::KUNO_GDN_SIMD16_ENTRY;
+            assert_eq!(source.matches("fn main(").count(), 1);
+            source = source.replacen("fn main(", &format!("fn {entry}("), 1);
+        }
+        (source, entry)
+    }
     // Preserve the original generated CB32 kernel for compiled-public golden
     // controls. Decode/MTP recurrence sources are separate and unchanged.
     fn scalar_source(self) -> String {
@@ -172,12 +183,13 @@ impl CubeTask<AutoCompiler> for Op {
         _: ExecutionMode,
         _: StorageType,
     ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
+        let (source, entry) = self.compilation();
         Ok(CompiledKernel {
-            entrypoint_name: "main".into(),
+            entrypoint_name: entry.into(),
             debug_name: None,
             debug_info: None,
             repr: None,
-            source: self.source(),
+            source,
             cube_dim: CubeDim::new_1d(128),
         })
     }

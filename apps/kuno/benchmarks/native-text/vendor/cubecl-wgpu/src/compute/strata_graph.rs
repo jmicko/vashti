@@ -432,6 +432,11 @@ pub(crate) fn register_module(
     if required_subgroup != Some(32) {
         return Err(fault("native WGSL subgroup owner requirement"));
     }
+    let required_subgroup = if wgpu::hal::vulkan::kuno_gdn_subgroup16(&words) == Some(16) {
+        Some(16)
+    } else {
+        required_subgroup
+    };
     let proven_or = atomic_or::mask(
         &words,
         bindings.iter().enumerate().fold(0u32, |mask, (index, b)| {

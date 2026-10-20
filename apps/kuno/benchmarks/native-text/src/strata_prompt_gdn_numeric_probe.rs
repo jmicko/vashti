@@ -182,15 +182,21 @@ mod tests {
             let (h, controls, state) = fixture(case);
             assert_eq!(h.len(), OWNER_ROWS * case.channels());
             assert_eq!(state.len(), case.state_words());
-            assert!(h[..count * case.channels()]
-                .iter()
-                .all(|&v| f32::from_bits(v).is_finite()));
-            assert!(h[count * case.channels()..]
-                .iter()
-                .all(|&v| f32::from_bits(v).is_nan()));
-            assert!(controls[count * heads * 2..]
-                .iter()
-                .all(|&v| f32::from_bits(v).is_nan()));
+            assert!(
+                h[..count * case.channels()]
+                    .iter()
+                    .all(|&v| f32::from_bits(v).is_finite())
+            );
+            assert!(
+                h[count * case.channels()..]
+                    .iter()
+                    .all(|&v| f32::from_bits(v).is_nan())
+            );
+            assert!(
+                controls[count * heads * 2..]
+                    .iter()
+                    .all(|&v| f32::from_bits(v).is_nan())
+            );
             assert_eq!(
                 state
                     .iter()
@@ -218,14 +224,16 @@ mod tests {
             (32767, 2, 1, 1),
             (usize::MAX, 1, 1, 1),
         ] {
-            assert!(!Case {
-                start,
-                count,
-                keys,
-                heads,
-                control: Control::Cold
-            }
-            .valid());
+            assert!(
+                !Case {
+                    start,
+                    count,
+                    keys,
+                    heads,
+                    control: Control::Cold
+                }
+                .valid()
+            );
         }
     }
 
@@ -388,8 +396,13 @@ fn check(arena: &mut PrivateArena, case: Case) -> ProbeResult<serde_json::Value>
         arena.allocate_zeroed(1)?,
     ];
     let owners = |out: [BufferId; 3]| [inputs[0], inputs[1], inputs[2], out[0], out[1], out[2]];
+    eprintln!("public_gdn_compiler_scope reference");
     primitive_launch(arena, true, owners(reference), case)?;
+    cubecl::future::block_on(arena.client()?.sync())?;
+    eprintln!("public_gdn_compiler_scope optimized");
     primitive_launch(arena, false, owners(actual), case)?;
+    cubecl::future::block_on(arena.client()?.sync())?;
+    eprintln!("public_gdn_compiler_scope complete");
     let reference_state = read_owner(arena, reference[0])?;
     let reference_output = read_owner(arena, reference[1])?;
     let reference_fault = read_owner(arena, reference[2])?;

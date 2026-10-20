@@ -76,6 +76,7 @@ strata-native-expert-bulk = ["strata-intel-core"]
 strata-prefill-miss-ring = ["strata-native-expert-bulk"]
 strata-parallel-loading = ["strata-intel-core"]
 strata-native-push-descriptors = ["strata-intel-core"]
+strata-gdn-subgroup16 = ["strata-intel-core"]
 # Fixed public completion check; changes only the harness request, not the engine.
 strata-public-cap-check = ["strata-intel-core"]
 # Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.

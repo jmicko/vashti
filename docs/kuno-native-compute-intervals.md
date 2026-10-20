@@ -710,3 +710,45 @@ Independent canonical-source clean recovery17:41:56UTC confirms Intel50,688,000B
 NVIDIA compute0, no new or existing driver faults, all services200 and normal
 unpaused admission/waiting0. Previous installed source3fffc266/SHAeac78ce0
 and unchanged gateway36626d30/SHAd3ed07f4 remain selected.
+
+
+## Subgroup-independent GDN register-pressure candidate
+
+Complete enqueue candidate3b35ea10/SHA23747779 passes original129 GPU controls,
+three full requests/all original and new producer proofs, exit and physical
+recovery17:49:54UTC. Repeated profile11.0527s versus11.1239s is unchanged. Actual
+204,463 unscoped admissions, zero protected admissions in that prefill interval;
+enqueue1.4037s, capture1.3777s, wait3.9248s. Keep the complete source, unselected;
+no staged/terminal/clean/sustained or installation acceptance is claimed.
+
+Compiler receipts also expose spills in several SIMD32 programs. The next
+connected candidate addresses register pressure for prompt GDN recurrence. Its
+128-invocation workgroup uses ONLY whole-workgroup coordinates/barriers and
+explicitly ordered per-invocation32-row state/FMA loops, with no subgroup
+arithmetic. Keep every expression, exact state mapping, causal prefetch/SLM
+barrier, finite/fault check, INFO/owner/budget and host launch validation.
+Compile ONLY the opt-in recurrence entry as required SIMD16 in BOTH ordinary
+Wgpu and retained native pipelines; all other kernels and the unchanged scalar
+numerical reference keep original metadata. Smaller hardware subgroups can
+reduce per-thread register pressure without changing logical invocation IDs.
+No performance result or shader-specific spill attribution is assumed yet.
+
+The opt-in `strata-gdn-subgroup16` changes only the literal compiler entry name.
+Both actual consumers inspect COMPLETE emitted validated SPIR-V: exactly one
+named GLCompute128x1x1 entry, only Shader capability, only original workgroup/local
+builtins, original Workgroup barriers, Device/Workgroup atomic scopes, no
+extensions, subgroup capabilities/instructions, alternate execution modes or
+specialized geometry. Unknown proof retains the original policy. The literal
+name scopes this optimization; the actual module proof establishes absence of
+subgroup dependencies. Existing device-owner marking, physical subgroup/stage/
+workgroup limits and all original numerical gates remain mandatory.
+
+The ordinary Wgpu separate-entry path obtains the SAME proof from the complete
+validated Naga module lowered to words; overrides never qualify. No globally
+disabled robustness, varying subgroup policy, relaxed arithmetic, modified
+FP32 reduction, narrower dependencies or new memory cap is introduced. Existing
+public-only numeric entry adds static compiler-scope delimiters to distinguish
+reference/selected recurrence ISA; private inference never executes that entry.
+Actual ten complete-output/next-state bitwise GDN cases, nine original QSA
+bitwise and independent F64 cases, all remaining129 numerical controls and full
+request/recovery proof remain the next gates. No network or Vashti change.

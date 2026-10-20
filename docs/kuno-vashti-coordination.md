@@ -57,19 +57,23 @@ Receipts `strata-parity-canonical-source-20261020-{operators,profile,clean}`
 and owned summary `strata-parity-canonical-source-public-summary-20261020.json`.
 Profile physical recovery17:35:39UTC; clean recovery marker is present.
 
-The next Kuno-only change removes an unused per-node enqueue range image ONLY
-when no prepared/active protected draft owner exists. It retains each original
-unconditional submission join and all original capture guards/full declarations;
-prepared-but-inactive scopes still use every original range/write/flight check.
-Raw resource validity is checked by the real capture guard before GPU publication,
-not repeatedly at unscoped enqueue. No cross-call handle cache or omitted
-dependency. Source3b35ea10056012107d720aaff510bbb3638da175 / SHA
-237477796fd59406e45abbb95ac770ef6654d073662d6a611559cebf1188d5a4
-passes90 CPU controls,408/208 layouts and the real protected GPU buffer guard
-lifecycle/recovery test. Original129 numerical gates and full request/profile/
-producer proofs now run in `kuno-native-unscoped-admission-connected-20261020`.
-No performance/full staged/terminal/install acceptance yet.
-Exact contract: [enqueue admission](kuno-native-compute-intervals.md#enqueue-admission-without-an-unused-range-image).
+Complete enqueue candidate3b35ea10/SHA23747779 passes90 CPU,408/208 layouts,
+all129 original GPU controls, full requests/all producer proofs, graceful exit
+and actual recovery17:49:54UTC. Repeated profile11.0527s versus11.1239s is
+unchanged. Actual204,463 unscoped admissions keep original full capture;
+protected-scope admissions retain every original range/write/flight check.
+No clean/staged/terminal/sustained acceptance or install claim.
+
+The next complete Kuno-only candidate selects SIMD16 for the subgroup-independent
+prompt GDN recurrence, with identical math/state mapping/causal loop/workgroup
+barriers and checks. Both actual ordinary and retained native pipelines inspect
+complete emitted SPIR-V and retain physical device limits. Unknown proof or
+other kernels retain their original policy. Original scalar numerical references
+remain unchanged. All94 actual App CPU controls pass, including real compiled
+source equivalence and unsupported metadata/geometry/barrier cases. Frozen
+release/offline/original129/full request/actual compiler ISA/recovery remain next.
+No performance or shader-specific spill attribution is claimed yet.
+Exact contract: [subgroup-independent GDN](kuno-native-compute-intervals.md#subgroup-independent-gdn-register-pressure-candidate).
 No API, KNT2/KNR2, configuration, model identity or Vashti change.
 
 This candidate retains ALL preceding wide/bulk/miss-ring/loading/attention/
