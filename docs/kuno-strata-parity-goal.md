@@ -161,10 +161,37 @@ was confirmed after the failed trials as well.
   Reference QSA849ms includes input/output projections and producer work;
   comparing Rust's whole1.885s family only to upstream680ms attention is invalid.
   See the exact scopes in `kuno-prefill-qsa-family-profile.md`.
-- Complete library M128/N128/K32, eight real subgroups, actual36,864B shared and
-  matched original-weight GPU cases are being tested separately. Larger native
-  full-tile staging with fewer accumulators per subgroup is the next bounded
-  Rust candidate. Neither is an accepted installation or a speed claim.
+- Complete library M128/N128/K32, eight real subgroups, actual36,864B shared,
+  source43281fd6 / SHAe53e00e2 passes117 actual GPU controls and complete
+  requests. Its repeated profiled prefix28.7764s is still a regression and it
+  remains unselected (`strata-parity-wide-capacity-20261020-{operators,profile}`).
+- Complete original-native M128/N128/K32,16 real SIMD16 subgroups, actual40,960B
+  shared, source9cf2236b / SHAa7ac11f1 passes103 actual GPU controls, including
+  two actual full-tile launches and four strict original fallback/tail cases.
+  All402 ordinary/144 matrix layouts validate offline. Complete profiled
+  prefixes12.8885/12.6279s improve slightly over the selected13.2952s diagnostic,
+  but this is not a clean A/B or an accepted installation. Original native
+  expert matrices remain unchanged. Receipts:
+  `strata-parity-native-wide-20261020-{operators,profile}`.
+- A process-local compiler dump during ONLY those fixed-public numerical
+  controls identifies actual native-wide FP16/BF16 kernels: requiredSIMD16,
+ 256 invocations,40,960B shared and128 GRFs. Both spill91/fill77 static values;
+  the hotK32 loop contains27 scratch loads and40 scratch stores. These are
+  compiler instruction counts, not runtime cycles or measured scratch bandwidth.
+  The installed Mesa ANV pre-Xe3 path has no supported256-GRF environment switch.
+  A complete32-subgroup candidate keeps the same128x128x32 reuse and halves
+  each thread's accumulators, using512 invocations and exactly49,152B shared.
+  This next artifact needs actual-device subgroup/SLM admission, original
+  numerical GPU controls and full request/recovery measurements before selection.
+- Actual loaded capacity is11,998 resident expert pairs/24,445,798,400B versus
+  the fresh reference11,608 pairs, so lower resident capacity is not the cause
+  of the gap. The immutable host complement is registered/pinned and copied
+  directly through the original ring; no per-request disk read or extra
+  pageable-to-pinned staging is introduced. Actual32K sessions use no borrowed
+  expert roots in either engine. The one-layer native public copy timestamps
+  imply about13.56GB/s, but are serialized diagnostic copy intervals, not a
+  clean end-to-end transfer benchmark. Reference87ms wait-copy is residual
+  compute wait, not total DMA time; those two numbers are not comparable.
 - Root owns shared GPU execution and installation; isolated agents own native
   matrix preparation and read-only compiler/source comparisons. Original
   metadata caps, real device topology, ownership and numerical gates remain.

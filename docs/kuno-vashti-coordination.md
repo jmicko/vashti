@@ -35,8 +35,13 @@ Receipts under `/media/jmicko/faststore/kuno-development`:
 Experimental library candidates remain separate: Tilewise881d5af3 passes111
 controls but regresses20.4503s; balanced M64/Doublec5932d91 passes111 controls
 and complete requests but regresses33.9067s. Neither is installed. A wider
-library pipeline and a bounded larger native dense tile are in development;
-CPU/source success does not establish their GPU correctness or performance.
+library pipeline43281fd6 passes117 GPU controls but regresses28.7764s and remains
+unselected. Original-native wide9cf2236b passes103 controls and complete prefixes
+12.8885/12.6279s in profiling; it is uninstalled and not a clean A/B. Actual
+compiler ISA reveals hot-loop register spills; the next complete native variant
+redistributes the same tile across32 subgroups with half the accumulators per
+thread. GPU and full recovery acceptance are still required for that variant.
+See the parity guide for exact artifact receipts and capacity/ISA evidence.
 
 **No API, KNT2/KNR2, configuration, model name or Vashti consumer change.**
 Original DASLab IQ3_S plus Q2 MTP, context512..32768, thinking/tools, private
