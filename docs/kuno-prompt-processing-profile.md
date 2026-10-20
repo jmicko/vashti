@@ -1,12 +1,17 @@
 # Native prompt processing investigation — 2026-10-19
 
-**Next candidate:** [Strata gap investigation](kuno-prefill-strata-gap-investigation.md)
-records the parallel router, vector dequantization, macro matrix and subgroup
-contract repairs at5fbc3ca5. Actual matrix and complete public-profile checks now
-pass, with matched warm profiled4245-token time43.4647 ->34.9928s. Additional
-operator/API gates and queue-submission work are in progress. It is NOT installed;
-the accepted installed results below remain the live baseline.
-
+**Superseded by installed continuation (2026-10-20):**
+[Strata gap investigation](kuno-prefill-strata-gap-investigation.md) records the
+selected router/vector-dequant/K64 paired-buffer matrix plus bounded short-prefix
+scope pathc8db19de / SHAfb31e124. Clean matched4245 prefix43.2055 ->24.9658s,
+42.2% shorter; staged35-token prefix1.290s. All exact numerical and private staged
+thinking/tool/semantic/privacy/recovery gates pass. Official install preserves
+the original gateway/configuration; final installed public/metadata checks pass.
+Installed warm35-token prefix1.4305s (old4.639s); code ends normally at501tokens
+and passes155 merge cases twice with identical replies. Zero worker writes/OOM/
+driver faults, swap/core0, normal admission and all services200; weights stay warm.
+No task test client/staged service or sudo-refresh loop remains.
+The source60c20e36 results below are the historical baseline for this continuation.
 
 This is Kuno backend work in `codex/strata-rust-port`. No Vashti source or API
 change is involved. The accepted direct-buffer worker below is installed through the unchanged

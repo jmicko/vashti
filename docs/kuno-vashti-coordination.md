@@ -1,32 +1,44 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno-only Strata prefill gap pass (2026-10-19; NOT installed).**
-The user is home and has authorized protected GPU testing. The original coupled
-candidate5fbc3ca5 / SHAb45446bc passes all fourteen actual FP16/BF16 matrix cases
-with the unchanged oracle and all three complete public profile requests,
-real request erasure, close, physical recovery and zero driver-fault changes.
-Matched warm profiled4245-token prefix43.4647 ->34.9928s (19.5% shorter).
-This remains well behind upstream Strata's reported4K result; it is not a clean
-HTTP or new local Strata comparison. Final694e90d9 / SHA28004b38 passes all14
-matrix +39 actual router/dequant GPU cases, unchanged oracles, real erasure/close
-and physical recovery. It adds original timeline submission batching7e28bc5a,
-which shows no material additional profile gain. Clean matched4245 prefixes
-34.505/34.532s versus installed43.205s (**20.1% shorter**). Original b45446bc
-staged thinking/tools/API/privacy/Ollama recovery passes; exact694e90d9 API
-acceptance now passes too. Further coherent shared-memory macro6dfaf5ef /
-SHAa50e28b3 passes all14+39 GPU cases and complete public profile/recovery;
-warm4245 profile25.392s (**41.6% shorter** than installed43.4647s profiled).
-Its clean repeat24.8817s is **42.4% shorter** than installed43.2055s; exact staged
-thinking/tools/API/privacy/Ollama and physical recovery pass. This is a fully
-validated fallback, still uninstalled. Initial076d0ec3/SHA6d3ab0b1 short-prefix
-extension correctly rejects a missing original runtime reuse scope; all failed
-runs recover without driver faults. Fixed7962fe68/SHA76d5f706 now passes all53
-GPU numerical/fault controls and cold plus two warm45-token requests in one
-Session, correct arithmetic, erasure/rebind/close and physical recovery. Warm
-short prefixes1.812/1.750s. The exact combined long-prefix and staged API gates
-are running before installation. No installation, API change or Vashti consumer
-work yet.
-See [current receipts and remaining gates](kuno-prefill-strata-gap-investigation.md#protected-gpu-continuation-2026-10-19-local-time).
+**Active Kuno-only Strata prompt optimization (2026-10-20; installed and backend-validated).**
+Selected worker sourcec8db19de / SHAfb31e124 is installed through the unchanged
+image-enabled gateway36626d30 / SHAd3ed07f4. The official transaction preserves
+the complete configuration and root-enrolled model identities. Backup/rollback:
+`/var/lib/kuno-prefill-selected-short-quality-20261019`.
+
+Matched clean4245-token warm prompt **43.2055 ->24.9658s (42.2% shorter)**.
+Protected staged ten-tool thinking/call/result passes;4207/4293-token prefixes
+29.506/29.920s versus previous46.991/49.630s. Short35-token code prefix1.290s
+versus previous4.639s. The new quantized short path gives a different, complete
+501-token answer: both repeats are identical and the function passes155 bounded
+merge cases in a restricted, unprivileged child. Do not compare its full response
+time directly to the previous362-token answer or relax the GPU math references.
+
+All53 actual GPU matrix/router/dequant controls,402 ordinary/64 matrix shader
+layouts, cold short plus two long requests, threshold64/65/66 requests, same-worker
+mixed/repeated API use, write_bytes0, inspection denial, graceful unload, ordinary
+Ollama and actual physical recovery pass. No driver faults or reboot. Final
+installed public requests and DynamicUser/model-mount metadata pass too. Cold
+load105.872s; warm35-token prefix1.4305s,501 outputs/15.2196s (32.92 output tokens/s,
+not a new decode gain), total21.3211s. Swap/core0, write_bytes0, inspection denied,
+zero OOM/driver faults, all services200 and normal admission. Intel weights remain
+warm (33,314,902,016B); NVIDIA compute0. No test client/staged service or task sudo
+refresh loop remains. Exact installed receipts:
+`native-prefill-selected-short-quality-installed-public-check-20261019` and
+`native-prefill-selected-short-quality-installed-final-check-20261019` under the
+artifact base in the investigation. See
+[complete source decisions, receipts and limitations](kuno-prefill-strata-gap-investigation.md)
+and [service acceptance](kuno-native-text-service.md#native-strata-prompt-optimization-2026-10-20).
+
+Contract/consumer requirements: **no API, KNT2/KNR2, setting, model name or Vashti
+change**. Original DASLab IQ3_S plus Q2 MTP stay on Intel, context512..32768,
+thinking/tools and ordinary Ollama compatibility unchanged. No shortened toolbox,
+retained prompt/KV cache or persisted content. Startup remains about106s plus
+initial warmup; no decode speedup or full Strata speed parity is claimed. Short
+MAX3/64 still copies bounded wiping residuals and computes heads; full MAX8,
+no-head/device carry and further GEMM work remain future optimizations. Failed
+register-first successor is retained in history but not selected. No fresh Vashti
+browser/image suite, package/version change or release is claimed/authorized.
 
 **Prior CPU preparation checkpoint (superseded by GPU continuation above).**
 The user authorized investigation and implementation preparation while away and
@@ -55,7 +67,7 @@ these prompt changes do not yet claim faster token generation. CubeKv0.2 is a
 researched Rust GEMM alternative, not an added dependency or selected backend.
 
 
-**Active Kuno-only prompt-processing optimization (2026-10-19, installed and backend-validated).**
+**Prior Kuno-only prompt-processing optimization (2026-10-19; superseded above).**
 Worker source60c20e36 / SHA1db4664d is installed with unchanged image-enabled
 gateway36626d30 / SHAd3ed07f4. Forward source selectiona37db7da restores the exact
 accepted matrix implementation after an unsuccessful experimental variant.

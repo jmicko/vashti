@@ -145,4 +145,23 @@ driver-fault and physical memory recovery. Compare matched public prompt timing
 only after correctness passes. Quantized decode math can legitimately change
 output from the old FP16 prompt path, so a changed362-token code fixture requires
 explicit output/quality review, not silently weakening an exact-output assertion.
-No new live Vashti acceptance or installed/release claim is made here.
+The final selected sourcec8db19de keeps this short implementation and restores
+the faster complete6dfaf5ef shared-buffer matrix. Its exact staged API now passes
+total64/65/66 inputs (prefix63/64/65), same-worker mixed long/short transitions,
+correct arithmetic and two identical complete35-token code requests. Warm code
+prefix1.3063/1.2901s. Quantized-prefix answers legitimately differ from the old
+FP16-prefill answer:501tokens rather than362. The old384-output cap failed before
+completion; the separate quality fixture permits1024, requires EOS, identical
+repeats and155 semantic merge cases per answer in a strict unprivileged child.
+No generated code executes as root or persists, and no math oracle is relaxed.
+Ten-tool thinking/call/result, actual erasure/rebind, worker write_bytes0, denied
+inspection, unload, subsequent Ollama and full physical recovery also pass.
+Receipt: `native-prefill-selected-short-stage-quality-check-20261019/receipt.json`
+under the same artifact base above. Official installation preserves the original
+gateway/configuration; final installed requests, semantic repeat and deployment
+metadata pass too. Warm installed35-token prefix1.4305s,501 outputs/15.2196s,
+actual nonroot/model mount, swap/core0, zero worker writes/OOM/driver faults and
+healthy services/admission. Weights remain warm; all test clients/staged services
+and the task sudo refresh loop are stopped. See the
+[service acceptance](kuno-native-text-service.md#native-strata-prompt-optimization-2026-10-20).
+No fresh live Vashti or release claim is made here.

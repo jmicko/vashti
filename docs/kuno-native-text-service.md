@@ -3,10 +3,13 @@
 ## Active extension contract (2026-10-19, installed backend acceptance)
 
 The user requested thinking, tool use, faster cold load and configurable context.
-Image-enabled gateway `36626d30` and prompt-optimized worker `60c20e36` are installed.
-The prior toolbox repair `a6b21a38` remains included. Protected staged checks, the installation transaction and final installed
-public-request/metadata checks pass in the
-[prompt-processing receipt](#native-prompt-processing-optimization-2026-10-19).
+Image-enabled gateway `36626d30` and selected prompt worker `c8db19de` are installed.
+The prior toolbox repair `a6b21a38` remains included. Exact staged numerical,
+thinking/tool/code-quality/privacy/recovery, official installation and final
+installed public-request/deployment metadata gates pass. See the
+[current prompt-processing receipt](#native-strata-prompt-optimization-2026-10-20).
+The previous worker60c20e36 is the historical
+[baseline](#native-prompt-processing-optimization-2026-10-19).
 The earlier actual-service/live Vashti all-tools checks are recorded in the
 [toolbox repair receipt](#kuno-toolbox-prefill-repair-2026-10-19). Earlier preview
 receipts below are historical. Ollama chat behavior follows
@@ -597,7 +600,79 @@ fidelity and later performance/loader improvements remain separate work. No new
 comparable throughput benchmark is claimed.
 
 
+## Native Strata prompt optimization (2026-10-20)
+
+This is internal Kuno work. Public Ollama routes/fields, KNT2/KNR2, thinking/tools,
+context512..32768, owned model name and content-free persistence are unchanged.
+**No Vashti connector/UI/configuration change is required.** The original DASLab
+IQ3_S shards and Q2 MTP stay on Intel. No prompt truncation, shortened tools,
+server prompt/KV cache, quantization substitution or NVIDIA dependency is added.
+
+Selected source `c8db19de33b0585278be7380db14dae7323ef560`, frozen artifact
+`strata-prefill-selected-short-20261019`, worker SHA256
+`fb31e1244af754dea9585db25b82bc5dafd6dffdfbe512d47cb2c82e98781699`.
+Commits5fbc3ca5 (router/vector dequant/matrix geometry),7e28bc5a (original timeline
+submission batching),6dfaf5ef (coherent K64 paired shared buffers/vector loads),
+076d0ec3/5aeb11e3 (bounded short input path plus real nonce/retained provenance),
+7962fe68 (compiled-public warm check) andc8db19de (accepted matrix selection)
+form the connected implementation. Additional register-first variantfaf5c6f6
+regresses and is not selected. All original owner/fault/erasure and IEEE/reference
+checks remain. [Full investigation](kuno-prefill-strata-gap-investigation.md).
+
+Matched clean compiled-public4245-token warm prefix43.2055 ->24.9658s, **42.2%
+shorter**. Exact staged toolbox4207/4293 prefixes29.5055/29.9196s versus previous
+46.991/49.630s;35-token code prefix1.2901s versus previous4.639s. The quantized
+short path produces a different complete501-token answer, so its full response
+time is not comparable to the former362-token answer. This is no claim of faster
+token generation, model loading, universal rate or local Strata parity. Startup
+remains about106s plus initial GPU warmup. The selected short implementation is
+MAX3/64 with bounded wiping host residuals and heads; full MAX8/no-head/device
+carry, larger-context work and further large GEMM optimizations remain open.
+
+Exact selected-binary acceptance under
+`/media/jmicko/faststore/kuno-development/`:
+
+- `prefill-selected-short-operators-numeric-20261019/receipt.json`:14 actual
+  FP16/BF16 original-weight matrices +9 router/30 dequant valid/fault controls,
+  unchanged oracles, full owner/tails, actual close and physical recovery.
+- `prefill-selected-short-shader-validation-20261019.log`:402 ordinary shader
+  and64 matrix configurations pass the pinned BF16-capable validator.
+- `prefill-selected-short-clean-20261019/receipt.json`: cold45 then warm4245/4245,
+  correct replies, actual erasure/retained rebind/close and physical recovery.
+- `native-prefill-selected-short-stage-quality-check-20261019/receipt.json`:
+  preload, ten-tool streamed thinking/call/result, total64/65/66 boundaries,
+  same-worker mixed/repeated requests, identical complete501-token code answers.
+  The generated merge function passes155 deterministic cases in each nonroot,
+  resource-bounded function-only-AST child; text/source/hash is not persisted.
+  Worker write_bytes0, denied inspection, graceful unload, ordinary Ollama after
+  native and actual recovery all pass; no driver faults or reboot.
+
+The initial stage's obsolete362-token assertion failed when the changed answer
+hit its384-output cap. Its failed log and recovery remain recorded; it is not
+counted as acceptance. The new fixed-public fixture allows1024 outputs, requires
+EOS/no truncation, semantic correctness and identical repeats. No GPU arithmetic
+tolerance or production guard was relaxed.
+
+Official installation preserves the exact image-enabled gateway SHA256
+`d3ed07f473b28bbb46596a619349d933edd6c166b7af10dd42f9821e4ba3048c`, complete
+configuration and trusted root-enrolled model identities. Backup/receipt/official
+rollback: `/var/lib/kuno-prefill-selected-short-quality-20261019`.
+Final installed acceptance also passes:
+`native-prefill-selected-short-quality-installed-public-check-20261019/receipt.json`
+and `native-prefill-selected-short-quality-installed-final-check-20261019/{receipt,host-final}.json`.
+Two complete identical501-token answers each pass155 merge cases. Cold load
+105.8716s, cold prefix9.5601s; warm prefix1.4305s,501 outputs/15.2196s (32.92 output
+tokens/s), full21.3211s. The shorter prefix is69.2% below the old4.639s, but different
+response length prevents a full-request speed comparison. Nonroot/mount, swap/core0,
+worker write_bytes0, inspection denial, zero OOM/driver faults, all services200 and
+normal admission pass. Intel model weights remain warm (33,314,902,016B), NVIDIA
+compute0. No test client/staged service/task sudo-refresh loop remains. No reset
+or reboot. No fresh Vashti/browser/image test, package/version change or release.
+Preserve this source selection and gateway image features in later packaging.
+
 ## Native prompt-processing optimization (2026-10-19)
+
+Historical baseline, superseded by the2026-10-20 selection above.
 
 This is internal Kuno work; the Ollama-compatible public contract, KNT2/KNR2,
 thinking/tool support, context512..32768, model naming and privacy policy above

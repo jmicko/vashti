@@ -8,21 +8,18 @@ at `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Three isolated revie
 worktrees start at1efa8372; their selected commits are integrated here.
 Canonical Vashti source and its coordination notes are untouched.
 
-**Installed backend remains60c20e36 / worker SHA1db4664d** with the unchanged
-image-enabled gateway36626d30 / SHAd3ed07f4. Its matched4,245-token warm prompt
-is43.205s; API/tool/privacy/recovery acceptance is recorded in
-[kuno-prompt-processing-profile.md](kuno-prompt-processing-profile.md).
-The new coupled candidate below is NOT installed. The user subsequently authorized
-protected GPU validation at home; actual matrix, router, dequant and complete
-public-request checks now pass. The coupled shared-memory matrix candidate
-6dfaf5ef / SHAa50e28b3 passes all numerical, full-request, staged API/privacy and
-physical recovery gates. Its clean matched4245-token time is24.8817s versus
-installed43.2055s (**42.4% shorter**); profile25.3916s. It is a validated fallback,
-not an installed worker. The subsequent register-prefetch/short-prefix extension
-7962fe68 / SHA76d5f706 now passes actual53-case GPU controls and cold plus two
-warm short requests after correcting its genuine runtime scope ownership.
-Long-prefix and staged API acceptance remain pending for that exact artifact.
-No API or Vashti consumer change.
+**Current installed worker: sourcec8db19de / SHAfb31e124**, unchanged image-enabled
+gateway36626d30 / SHAd3ed07f4. Protected exact-binary numerical, complete public,
+staged thinking/tools/threshold/code-quality/privacy and physical recovery all
+pass. Official installation preserves the complete configuration and trusted
+model identities; final installed public-request and deployment metadata acceptance pass.
+
+Before this pass the installed worker was60c20e36 / SHA1db4664d with a matched
+4245-token warm prompt43.2055s. The selected worker takes24.9658s (**42.2% shorter**),
+with warm staged35-token prefix1.2901s versus old4.639s. Toolbox4207/4293-token
+prefixes29.5055/29.9196s versus previous46.991/49.630s. These are prompt intervals,
+not universal throughput or a controlled fresh Strata comparison. Full history
+below preserves rejected variants and their gates. No API/Vashti consumer change.
 
 ## Protected GPU continuation (2026-10-19 local time)
 
@@ -188,6 +185,47 @@ Session, with actual per-request erasure, retained rebind and close. Cold load
 Receipt: `prefill-short-scope-warm-20261019/receipt.json`. This is evidence for the
 actual short branch and warm provenance, not yet complete API acceptance or a
 matched35-token Strata comparison. Original model/quantization/context stay fixed.
+
+### Final shared-buffer and short-prefix selection
+
+The first fixed-scope combined7962fe68 request run passes complete outputs,
+per-request erasure and physical recovery, but warm4245 prefixes40.0054/38.1505s
+materially regress from6dfaf5ef's25.0353/24.8817s. Receipt:
+`prefill-short-scope-clean-20261019/receipt.json`. The additional register-first
+payload is a plausible pressure/occupancy cause; spills are not measured.
+
+Forward selectionc8db19de restores `strata_matrix.rs` **exactly** to6dfaf5ef.
+Independent Git/source review confirmsfaf5c6f6 is the only intervening change
+in this file. The full K64/vector/paired-shared-buffer kernel is retained, as are
+all short-prefix nonce/provenance fixes, router/vector8 dequant, native submission
+batching and public checks in other files. This is selection between complete
+coherent kernels, not removal of the coupled shared-memory strategy.
+
+Frozen source `c8db19de33b0585278be7380db14dae7323ef560`, artifact
+`strata-prefill-selected-short-20261019`, SHA256
+`fb31e1244af754dea9585db25b82bc5dafd6dffdfbe512d47cb2c82e98781699` passes all53
+actual matrix/router/dequant controls and physical recovery; exact offline402
+ordinary/64 matrix shader layouts also pass. Receipts:
+`prefill-selected-short-operators-numeric-20261019/receipt.json` and
+`prefill-selected-short-shader-validation-20261019.log`.
+Exact clean45/4245/4245-token acceptance passes correct replies, request erasure,
+close and recovery. Cold load106.1662s; warm4245 prefixes26.5540/24.9658s. The
+repeat is **42.2160% shorter** than installed43.2055s. Receipt:
+`prefill-selected-short-clean-20261019/receipt.json`.
+
+Initial exact staged API passes preload, streamed thinking/ten-tool call and
+role=tool result. Original-worker boundary requests64/65/66 tokens (prefixes
+63/64/65) each correctly return323 without truncation or reload:2.3602/2.4359/
+4.6688s prefixes. The first35-token merge-code request processes in1.3169s but
+hits the old384-output cap, so the historical362-token assertion correctly
+rejects the acceptance fixture. This is a changed quantized-prefix answer, not
+an engine error; full recovery still passes, and no install is made. Failed
+receipt/log directory: `native-prefill-selected-short-stage-check-20261019`.
+It does NOT count as complete staged acceptance. A distinct fixed-public quality
+fixture must allow a complete answer and check the generated function semantically,
+with deterministic repeat, rather than silently weakening the old token count.
+No model code may execute as root or persist to disk. This historical checkpoint
+is superseded by the accepted quality fixture and installation continuation below.
 
 ## Comparison evidence
 
@@ -357,6 +395,9 @@ to shorten the current~102-second model load.
 
 ## Validation and next protected run
 
+Historical preparation plan, completed by the accepted selection and receipts
+above/below. Do not repeat these gates without a new change or unresolved failure.
+
 Artifact base: `/media/jmicko/faststore/kuno-development`.
 Current CPU evidence:
 
@@ -418,3 +459,55 @@ When the user is home and sudo/GPU availability is confirmed:
  before any official installation. Preserve gateway/image/configuration state.
 5. Record exact accepted hashes, measurements and limitations in coordination.
  No release, automatic Strata restart or service update is authorized here.
+
+## Accepted API and installation continuation (2026-10-20 local time)
+
+Exact selected workerc8db19de / SHAfb31e124 passes
+`native-prefill-selected-short-stage-quality-check-20261019/receipt.json` and its
+physical recovery records. Original gateway, ten public tool schemas, streamed
+low thinking/weather call, role=tool final answer, threshold total64/65/66 (known
+prefix63/64/65), same-worker35-token code repeats, request erasure, write_bytes0,
+inspection denial, graceful unload and ordinary Ollama afterward all pass.
+Both code answers end normally at501tokens and are byte-identical. Each passes
+155 deterministic merge cases plus strict function-only AST and time/space
+explanation checks in a resource-bounded nonroot child. Generated source stays
+in RAM/pipes only. The checker itself passes3 positive and13 rejection fixtures,
+and the real swap0/core0 child acceptance in `public-merge-validator-child-20261019.log`.
+This explicitly replaces an obsolete362-token response fixture, not an arithmetic
+reference/tolerance or an engine safety guard. Both failed fixtures remain recorded.
+
+Official transaction via `install-native-prefill-selected-short-quality-20261019.py`
+requires the exact53 numerical checks, complete clean45/4245/4245 requests, all
+API/semantic/boundary gates and their actual physical recovery before modifying
+anything. Installed hashes match original frozenfb31e124 worker andd3ed07f4
+gateway; full configuration equality and trusted model identities pass. Backup,
+installation receipt and official rollback script are root-only under
+`/var/lib/kuno-prefill-selected-short-quality-20261019`.
+
+Final installed acceptance passes:
+`native-prefill-selected-short-quality-installed-public-check-20261019/receipt.json`
+and `native-prefill-selected-short-quality-installed-final-check-20261019/{receipt,host-final}.json`.
+Two complete identical501-token code answers each pass155 semantic cases through
+the actual installed listener. Cold load105.8716s, cold prefix9.5601s; warm prefix
+**1.4305s versus old4.639s (69.2% shorter)**. Warm output501/15.2196s (32.918 output
+tokens/s), full request21.3211s. Different response length prevents comparing
+full-request time directly to the old362-token answer. No new decode gain claimed.
+Actual DynamicUser/model mount, swap/core0, worker write_bytes0, denied unprivileged
+inspection, zero OOM/driver faults, healthy Kuno/Ollama/Vashti and normal admission
+all pass. Native Intel weights intentionally stay warm (33,314,902,016B device
+usage); NVIDIA compute processes0. All test clients/staged services and the
+identified task sudo-refresh loop are stopped. No reboot/reset was performed.
+
+No API, protocol, configuration schema or Vashti changes. Retain original
+image-enabled gateway/runtime when packaging this worker; select release source
+c8db19de or its descendants that preserve this selection, not experimentalfaf5c6f6
+or076d0ec3 alone. This is a local installation, not a package/release. No new live
+Vashti/browser/image acceptance. Startup, broader soak, above32K context, complete
+Strata MAX8/no-head short path and remaining large-prefix GEMM gap remain open.
+
+The main remaining measured long-prefix costs in the same selected K64 matrix
+implementation are experts16.32s and attention7.06s (6dfaf5ef diagnostic, nested
+slices overlap). Larger prompt GEMM/data reuse remains the strongest long-path
+lead; short MAX8/no-head/device carry is a separate bounded follow-up. Do not
+select the slower register-first successor merely because its source looks more
+asynchronous. No new local controlled Strata comparison was performed.
