@@ -319,23 +319,28 @@ fn native_expert_info_page(
     let mut cursor = 0usize;
     for record in records {
         let data = expert_info_bytes(&record.data);
-        if data.is_empty()
-            || !record.native_parameters.is_empty()
-            || data.len() > alignment
-            || data.len() as u64 > policy.binding_limit
-        {
+        if data.is_empty() || !record.native_parameters.is_empty() {
             return Err(fault("native expert INFO original record schema"));
         }
-        let offset = cursor.div_ceil(alignment) * alignment;
-        if offset + data.len() > bytes {
+        // Descriptor alignment constrains START offsets, not logical record
+        // lengths. Original generated/custom INFO can span several alignment
+        // units. Use the unchanged original page planner and never wrap a full
+        // page back onto its already populated offset zero.
+        let current = (!page.layouts.data.is_empty()).then_some((policy.slab_bytes, cursor as u64));
+        let plan = policy.plan(data.len() as u64, current)?;
+        if !plan.slab {
+            return Err(fault("native expert INFO original record exceeds page"));
+        }
+        if current.is_some() && !plan.existing {
             break;
         }
+        let offset = plan.offset as usize;
         expert_info_bytes_mut(&mut page.data.data)[offset..offset + data.len()]
             .copy_from_slice(data);
         page.layouts
             .data
             .push(((offset as u64) << 32) | data.len() as u64);
-        cursor = offset + data.len();
+        cursor = plan.next_cursor as usize;
     }
     if page.layouts.data.is_empty() {
         return Err(fault("native expert INFO page progress"));
@@ -350,7 +355,7 @@ mod native_expert_page_tests {
     #[test]
     fn original_record_bytes_logical_lengths_and_full_padding_survive_page_boundaries() {
         for bytes in [4096, 8192] {
-            for alignment in [256, 512] {
+            for alignment in [4, 8, 16, 32, 64, 256, 512] {
                 let policy =
                     InfoPolicy::new(bytes, alignment, alignment, 1 << 20, 1 << 20).unwrap();
                 let records = (0..37)
@@ -394,12 +399,78 @@ mod native_expert_page_tests {
                     native_expert_info_page(
                         &[MetadataBindingInfo::custom(vec![
                             0;
-                            alignment as usize / 8 + 1
+                            bytes as usize / 8 + 1
                         ])],
                         policy
                     )
                     .is_err()
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn original_generated_array_info_and_custom_params_span_small_alignment_units() {
+        use cubecl_core::{InfoBuilder, ir::AddressType};
+        // Actual CubeCL serialization used by the six-array generated expert
+        // products, interleaved with the original 16-u32 custom Params format.
+        let records = (0..151)
+            .map(|index| {
+                if index % 2 == 0 {
+                    let mut builder = InfoBuilder::default();
+                    // Original generated expert argument order; runtime usize
+                    // registration uses U32 under its original AddressType::U32.
+                    for value in [2560u32, 1280, 73, 0, 37] {
+                        builder.scalars.push(value);
+                    }
+                    for length in [10485760, 10485760, 5242880, 65536, 131072, 1] {
+                        builder.metadata.register_array(length, length, AddressType::U32);
+                    }
+                    let info = builder.finish(AddressType::U32);
+                    assert_eq!(info.data.len() * 8, 72);
+                    assert_eq!(info.dynamic_metadata_offset, info.data.len());
+                    let actual = expert_info_bytes(&info.data);
+                    for (i, value) in [2560u32, 1280, 73, 0, 37].into_iter().enumerate() {
+                        assert_eq!(u32::from_ne_bytes(actual[i * 4..i * 4 + 4].try_into().unwrap()), value);
+                    }
+                    assert_eq!(&actual[20..24], &[0; 4]);
+                    info
+                } else {
+                    let words = [73u32, 2560, 1280, 864, index, 0, 0, 864, 1728, 0, 1638400, 2592, 0, 0, 0, 0];
+                    MetadataBindingInfo::custom(words.chunks_exact(2)
+                        .map(|v| u64::from(v[0]) | (u64::from(v[1]) << 32)).collect())
+                }
+            })
+            .collect::<Vec<_>>();
+        for bytes in [4096, 8192] {
+            for alignment in [4, 8, 16, 32, 64, 256, 512] {
+                let policy = InfoPolicy::new(bytes, alignment, alignment, 1 << 20, 1 << 20).unwrap();
+                let mut first = 0;
+                let mut pages = 0;
+                while first < records.len() {
+                    let page = native_expert_info_page(&records[first..], policy).unwrap();
+                    let full = expert_info_bytes(&page.data.data);
+                    let mut used = vec![false; full.len()];
+                    let mut current = None;
+                    for (index, &layout) in page.layouts.data.iter().enumerate() {
+                        let (offset, length) = ((layout >> 32) as usize, (layout as u32) as usize);
+                        let original = &records[first + index];
+                        let expected = expert_info_bytes(&original.data);
+                        let plan = policy.plan(expected.len() as u64, current).unwrap();
+                        assert_eq!((offset as u64, length as u64), (plan.offset, plan.logical));
+                        assert!(offset.is_multiple_of(alignment as usize));
+                        assert_eq!(&full[offset..offset + length], expected);
+                        assert!(used[offset..offset + length].iter().all(|v| !v));
+                        used[offset..offset + length].fill(true);
+                        current = Some((bytes, plan.next_cursor));
+                    }
+                    assert!(full.iter().zip(used).all(|(&byte, used)| used || byte == 0));
+                    first += page.layouts.data.len();
+                    pages += 1;
+                }
+                assert!(pages > 1);
+                let tight = InfoPolicy::new(bytes, alignment, alignment, 32, 32).unwrap();
+                assert!(native_expert_info_page(&records[..1], tight).is_err());
             }
         }
     }

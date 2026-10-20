@@ -147,6 +147,26 @@ the complete worker typechecks. Evidence files are
 `native-expert-box-metadata-check.log` in the same isolated directory. The
 corrected full pipeline still needs actual model/physical acceptance.
 
+The next connected attempt reached INFO packing and rejected authentic records
+larger than the device's descriptor-offset alignment. That alignment constrains
+record starts, not lengths. Page packing now uses the unchanged `InfoPolicy::plan`
+for each original record, allowing records to span multiple alignment units.
+It stops before a full page would wrap to offset zero, retains exact original
+logical descriptor lengths and bytes, and still rejects empty/symbolic records,
+binding-limit violations and records exceeding one complete fixed page. Complete
+page initialization, original ledger owners and terminal erasure are unchanged.
+CPU controls now mix actual CubeCL `InfoBuilder` six-array metadata plus the
+original five runtime-U32-address scalar arguments (72 bytes, including their
+padding) with original 64-byte custom Params across
+4/8/16/32/64/256/512-byte alignments and both page
+sizes, checking original planner offsets, byte identity, nonoverlap and all zero
+padding. No timing is accepted from the preceding failed whole-model attempt.
+Both real page controls and all 125 original I/O/page/scope controls pass;
+the complete worker typechecks. The new evidence files are
+`native-expert-real-info-page-controls.log`,
+`native-expert-real-info-owner-controls.log` and
+`native-expert-real-info-check.log` in the same isolated directory.
+
 Actual GPU arithmetic, full model execution, public selection counts, injected
 terminal recovery, clean timing, staged API/tool use, installation and physical
 recovery remain the integration task's acceptance gates. No GPU or service was

@@ -40,6 +40,8 @@ mod strata_handoff_tests;
 #[cfg(test)]
 use cubecl::wgpu::WgpuResource;
 #[cfg(test)]
+extern crate cubecl as cubecl_core;
+#[cfg(test)]
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_allocator_scope.rs"]
 mod strata_allocator_scope;
 #[cfg(test)]
