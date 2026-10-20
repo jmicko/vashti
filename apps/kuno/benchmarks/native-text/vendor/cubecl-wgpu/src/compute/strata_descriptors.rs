@@ -294,4 +294,30 @@ mod tests {
         assert!(plan.writes(&sets, &infos[..2], &types).is_err());
         assert!(plan.writes(&sets, &infos, &types[..2]).is_err());
     }
+    #[test]
+    fn actual_capture_closes_and_issues_prior_prefix_before_future_window_preparation() {
+        let source = include_str!("strata_graph.rs");
+        let capture = source
+            .split_once("let mut fresh_descriptors = None;")
+            .unwrap()
+            .1;
+        let capture = capture
+            .split_once("let accesses = self.node_accesses(n)?;")
+            .unwrap()
+            .0;
+        let mut previous = 0;
+        for marker in [
+            "if next != segment",
+            "end_native_command",
+            "rolling.closed(next, index, false)",
+            "begin_native_command",
+            "drop(fresh_descriptors.take())",
+            "self.fresh_descriptors(",
+        ] {
+            let next = capture.find(marker).expect(marker);
+            assert!(next >= previous, "capture ordering: {marker}");
+            previous = next;
+        }
+        assert_eq!(capture.matches("self.fresh_descriptors(").count(), 1);
+    }
 }

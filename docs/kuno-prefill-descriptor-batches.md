@@ -100,3 +100,28 @@ A future wide full128-row prefix plus unchanged M32 tail could cover more large
 groups, with authentic member bases and original mapped/fault/status stores.
 That is a separate candidate after dense-wide ISA/numerical/profile acceptance;
 no expert kernel was changed in this descriptor work.
+
+## Close and issue prior prefixes before preparing the next window
+
+The bounded follow-up moves only window drop/preparation after the existing
+segment-close, `rolling.closed` and next-command-begin block, before any
+current-node access/hazard/copy/compute recording. When an original128-node
+window boundary also begins a new segment, the already-closed prior prefix
+can now be submitted before a fallible future descriptor allocation/update.
+It is not delayed behind the next window's preparation. If the segment has
+not changed, no incomplete command buffer is closed or submitted early.
+
+Descriptor preparation changes no buffer contents or hazards. The same original
+Recording/rolling guard owns its pool/resources throughout; an open next command
+on allocation failure is already supported by the legacy per-node allocation
+path. Old host-window vectors are dropped only after the prior prefix is issued;
+its Vulkan sets stay pool-owned through the real fence. Submission order,
+windows, capacity, descriptor bytes and final/failed recovery are unchanged.
+
+Five helper controls pass, including an explicit guard over the actual capture
+source: end prior command, `rolling.closed`, begin next command, drop/prepare
+future descriptors, then record current accesses. The five original rolling
+lifecycle/error/panic/real-window CPU controls pass with the full worker crate
+(native32 test build13.40s; tests0.00s). Artifact:
+`descriptor-close-before-prep-controls.log` in the isolated CPU directory. No
+GPU was used or performance result inferred for this ordering follow-up.

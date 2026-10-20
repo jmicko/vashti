@@ -2581,16 +2581,6 @@ impl Graph {
         let mut segment = 0usize;
         let mut fresh_descriptors = None;
         for (index, n) in self.nodes.iter().enumerate() {
-            if index.is_multiple_of(descriptors::NODE_WINDOW) {
-                // Drop only the previous host handle/index vectors. Vulkan
-                // sets remain pool-owned through the original terminal fence.
-                drop(fresh_descriptors.take());
-                fresh_descriptors = Some(self.fresh_descriptors(
-                    &self.nodes[index..(index + descriptors::NODE_WINDOW).min(self.nodes.len())],
-                    self.recordings.last().unwrap().descriptors,
-                    metadata,
-                )?);
-            }
             let work = &self.recordings.last().unwrap().work;
             let next = work.plan.node_segments[index];
             if next != segment {
@@ -2603,6 +2593,17 @@ impl Graph {
                 segment = next;
                 self.command = work.commands[segment];
                 begin_native_command(&self.device, self.command, boundaries.before(segment))?;
+            }
+            if index.is_multiple_of(descriptors::NODE_WINDOW) {
+                // Issue an already-closed prior prefix before preparing this
+                // fallible future window. Drop only host handle/index vectors.
+                // Vulkan sets remain pool-owned through the original terminal fence.
+                drop(fresh_descriptors.take());
+                fresh_descriptors = Some(self.fresh_descriptors(
+                    &self.nodes[index..(index + descriptors::NODE_WINDOW).min(self.nodes.len())],
+                    self.recordings.last().unwrap().descriptors,
+                    metadata,
+                )?);
             }
             let copy = work.plan.segments[segment].copy;
             let previous = &mut previous[work.plan.segments[segment].queue()];
