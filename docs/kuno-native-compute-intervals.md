@@ -1840,3 +1840,22 @@ raw path is a compiled-public comparison only; private production uses fixed.
 Offline validation adds all8 layouts for both stage variants (232 matrix layouts,
 420 WGSL unchanged). The fixed stage must pass exactly, then original171+7 GPU/
 full profiles/counts, physical recovery and original clean/staged gates follow.
+
+
+RTE source78d948aa99d9aced6a0e47d8679720fa01ed7a9a /
+SHA7047b38173ed00e18c98372b00412a589297b409a6d9eadfbe47ad427a67bfbf
+passes146 actual CPU,420 WGSL/232 matrix layouts and the protected SAME-input
+raw/fixed GPU stage. Raw low zeros1024(expected1), high mismatches0, low/identity
+mismatches1023; fixed high/low/identity mismatches0, low zeros1(expected1),
+nonfinite0, full padding/fault0, original owned erasure and physical recovery PASS.
+Thus explicit rounding fixes the OBSERVED shared stage without guessing a named
+driver/compiler optimization. Summary
+`strata-parity-qsa-xmx-rte-stage-control-20261020-public-summary.json` retains both.
+
+The full protected connected run then passes original171 GPU controls and ALL7
+actual large-XMX controls with unchanged scalar/F64 bounds: causal16/31/32,
+nonzero query offsets32/64,32768-capacity boundary, future and nonfinite fault
+negatives, full original parent/tail audits. Genuine model loading/profiles and
+whole original producer/compiler/count/ownership/recovery proof are ACTIVE next;
+this is not yet whole-model correctness or performance acceptance. Source/hash
+and live unit are recorded in the authoritative coordination handoff.

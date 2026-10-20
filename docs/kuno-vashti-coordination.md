@@ -22,7 +22,54 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 22:42UTC): GPU stage failure localized; explicit rounding candidate.**
+**Authoritative active handoff (2026-10-20 22:47UTC): explicit rounding passes exact GPU stage and178 numerical controls.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Complete candidate source78d948aa99d9aced6a0e47d8679720fa01ed7a9a /
+SHA7047b38173ed00e18c98372b00412a589297b409a6d9eadfbe47ad427a67bfbf,
+build`strata-parity-qsa-xmx-rte-20261020`, retains ALL earlier components.
+146 selected CPU,420 WGSL/232 matrix layouts PASS. Same-input actual GPU
+comparison proves RAW cast helper yields1024 low zeros(expected1),1023 low and
+identity mismatches. FIXED explicit integer RTE gives0 high/low/identity
+mismatches, actual low zeros1(expected1), nonfinite0, full padding/fault0,
+owned erasure and physical recovery PASS. No bound was lowered, no extra
+barrier/buffer/copy/SLM was added, no input restriction changed.
+Owned`strata-parity-qsa-xmx-rte-stage-control-20261020-public-summary.json` records
+both real paths and recovery. This is direct observed behavior, not a claim
+identifying which Mesa optimization caused the raw cast residual to vanish.
+
+The complete protected unit`kuno-native-qsa-xmx-rte-connected-20261020` is ACTIVE.
+Original171 GPU controls PLUS all7 new actual large-XMX F64/fault controls PASS,
+including16/31/32 rows, offsets0/32/64 and32768-capacity boundary; original
+scalar refs, all operation-derived bounds and original full-owner/tail/fault/
+causal guards remain. Operator close/owned zero/physical recovery PASS. It is
+now loading full original target/MTP for the original whole-model profile,
+then normal scheduling profile and all compiler/count/pool/actual-XMX proofs.
+Do NOT overlap GPUs/services/heavy CPU, launch another test or install while live.
+No whole-model/speed/clean/staged/install claim yet. Prepared acceptance helper
+`check-native-qsa-xmx-rte-acceptance-20261020.py` is UNEXECUTED and pins this exact
+source/hash plus stage/full-XMX/pool proofs, retaining original at-EACH5% gate.
+
+Artifacts and current log under `/media/jmicko/faststore/kuno-development`:
+`strata-parity-qsa-xmx-rte-connected-20261020.log` (fixed-public metadata only),
+operator report includes actual7 accepted controls. Full connected wrapper
+`check-native-qsa-xmx-connected-20261020.py` requires actual native16 DPAS and
+full request XMX counts derived from original batching, not fallback success.
+Next after successful/recovered full proof: original terminal-negative, FRESH
+clean45/4245/4245 at-EACH5%, staged API/tools/semantic/privacy/sustained, then
+exact official install/rollback transaction. Do not skip stages or select repeat
+alone. Goal ACTIVE/UNMET; matched Strata5.3515s remains target.
+
+Installed worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 unchanged.
+Bounded cached sudo297061/parent sharedshell3556 ends00:17:49UTC Oct21; old
+220143 naturally ended22:38UTC. Never kill sharedshell or reset/reboot GPUs.
+No API/KNT2/KNR2/config/model identity/frontend/release change.
+Exact evidence/contract:
+[explicit rounding](kuno-native-compute-intervals.md#observed-dynamic-residual-failure-and-explicit-rounding-correction).
+
+**Previous active handoff:**
+
+**Previous handoff (2026-10-20 22:42UTC): GPU stage failure localized; explicit rounding candidate.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. Fixed-public dynamic stage source20630c01/SHA83bdd697
