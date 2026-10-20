@@ -9,6 +9,12 @@ mod numeric;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use numeric::cases as public_numeric;
 
+#[cfg(feature = "strata-intel-core")]
+#[path = "strata_matrix_timing_probe.rs"]
+mod timing;
+#[cfg(feature = "strata-intel-core")]
+pub(crate) use timing::cases as public_timing;
+
 pub(crate) async fn request_device(
     adapter: &wgpu::Adapter,
     descriptor: &wgpu::DeviceDescriptor<'_>,

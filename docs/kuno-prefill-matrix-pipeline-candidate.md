@@ -142,3 +142,40 @@ numerics, representative expert products, whole prompts, actual erasure/close,
 physical recovery and matched performance before selecting or installing it.
 No GPU, sudo, service, shared-target build or root-checkout mutation occurred
 while preparing this candidate.
+
+## Compiled-public expert matrix microtiming helper
+
+`strata_matrix::public_timing(client, arena, file)` is a separate diagnostic,
+not an extension of the existing complete numerical-case count. Root owns its
+compiled-public CLI hook. It reads only expert zero from one original gate/up
+pair and one original down tensor, decodes with the original GGUF dtype,
+rounds to the real FP16 images, and interleaves GU exactly like prompt inference.
+It never loads a complete Session or transfers the model. Inputs are compiled
+dyadic values; there is no caller text, seed/preset input or private-wire flag.
+
+The helper runs the unchanged `native::run_dense` primitive at actual
+GU1280x2560 and DOWN2560x640 shapes with counts8/16/31/32/64/80/160/320. Each
+shape warms three launches, checks results, queues64 measured launches and
+waits for one genuine completion fence. Reports distinguish host enqueue from
+complete duration, include per-call FLOPs and effective GFLOPs/s, and explicitly
+state that host dispatch is included. Setup, upload, reading, oracle calculation,
+erasure and compilation warmup are outside the timed region. These are repeated
+same-buffer kernel measurements, not full prompt or whole expert-pipeline rates.
+
+Before and after timing it scans the entire output owner for finite live values,
+zero padding and zero full-owner fault words, then compares token/feature boundary
+samples against the unchanged F64-product/F32-result IEEE oracle and original
+1e-4+3e-4*abs(reference) tolerance. The reports explicitly label sampled dots;
+they cannot replace complete original-weight numerical acceptance. Original
+public model weight owners remain live until each private arena reset completes.
+Every per-shape error attempts real reset before returning; caller retains
+responsibility for final owning close/audit and acceptance before publishing.
+
+CPU-only preparation typechecks the actual helper and actual modified native
+module against existing real CubeCL, GGUF, half, JSON and zeroize rlibs. Non-run
+arena/readback metadata siblings stand in only for typechecking; this is not
+runtime owner/erasure acceptance. Five tests pass (the three actual matrix
+compiler/tail checks and two pure sampled-oracle/full-output checks). Strict
+standalone production helper Clippy passes. Artifacts:
+`/tmp/kuno-prefill-matrix-throughput-20261020/timing-{check.rs,tests.log}`.
+No GPU work or shared build was performed for this helper.
