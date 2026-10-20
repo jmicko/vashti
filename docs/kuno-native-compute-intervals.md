@@ -1721,3 +1721,24 @@ compiler delimiters are distinct, preserving original scalar/FMA ISA scopes.
 Next: freeze full bundle, validate420 WGSL variants plus216 matrix layouts,
 original171 GPU controls plus7 new actual-XMX controls, both request profiles,
 actual launch-count proof and physical recovery. No GPU or speed result yet.
+
+
+First XMX sourcee2935521/SHAa38e2801 passes144 CPU and420 WGSL/216 matrix offline
+variants, but the protected operator run FAILS BEFORE actual XMX launch: selector
+correctly rejects58,660B SLM. Read-only live vulkaninfo proves B70 devicee223
+maxComputeSharedMemorySize=49152B (NVIDIA likewise49152). Do not infer that SYCL's
+larger local memory is exposed by Vulkan; no device-limit/feature/ownership guard
+was bypassed. Failed run exits and physically recovers; no whole-model or speed
+run occurs. Preserve`strata-parity-qsa-xmx-first-failure-public-20261020.json`.
+
+The connected correction stages8 query heads at a time, processes two K scale
+groups concurrently across all8 original subgroups, and processes128 PV dimensions
+at a time using paired probability images in the same Q hi/lo allocation. K/V
+still share one64-cell code image only AFTER full original workgroup fences.
+FP16 scale words are read from the original cache rather than kept in a new SLM
+array. The physical requirement is now48,420B, inside the ACTUAL49,152B limit.
+All12 heads,64 cells,256 dimensions, per64 scales and external original slots
+remain; no precision/source/fault/causal/oracle/acceptance guard is relaxed.
+CPU tile coverage is updated to the real coupled layout; original144 controls,
+all offline variants and original171+7 actual GPU controls must pass again on
+this exact correction before any whole-model speed/selection claim.

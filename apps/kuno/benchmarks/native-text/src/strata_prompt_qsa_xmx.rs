@@ -7,7 +7,7 @@ use half::f16;
 use kuno_text::{Error, Result};
 
 pub(crate) const THREADS: u32 = 128;
-pub(crate) const SHARED_BYTES: usize = 8192 * 2 + 16384 * 2 + 2048 * 4 + 64 * 4 + 256 * 4 + 9 * 4;
+pub(crate) const SHARED_BYTES: usize = 4096 * 2 + 16384 * 2 + (1024 + 768) * 4 + 64 * 4 + 9 * 4;
 
 static LAUNCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) fn launch_count() -> u64 {
@@ -68,13 +68,12 @@ fn attention_xmx(
     if t < count && kvh < 2 && chunk * 64 < cells {
         let here = (cells - chunk * 64).min(64);
         let slot = kvh * 33 + chunk;
-        let mut qh = SharedMemory::<f16>::new(4096usize);
-        let mut ql = SharedMemory::<f16>::new(4096usize);
+        let mut qh = SharedMemory::<f16>::new(2048usize);
+        let mut ql = SharedMemory::<f16>::new(2048usize);
         let mut kv = SharedMemory::<f16>::new(16384usize);
         let mut tile = SharedMemory::<f32>::new(1024usize);
-        let mut prob = SharedMemory::<f32>::new(1024usize);
+        let mut prob = SharedMemory::<f32>::new(768usize);
         let mut rows = SharedMemory::<u32>::new(64usize);
-        let mut scales = SharedMemory::<f32>::new(256usize);
         let mut reduction = SharedMemory::<f32>::new(9usize);
         let mut qm = 0.0f32;
         let mut i = tid;
@@ -118,27 +117,14 @@ fn attention_xmx(
         if tid == 0 {
             reduction[8] = (1.0 / up) / 16.0;
         }
-        i = tid;
-        while i < 4096 {
-            let mut x = 0.0f32;
-            if i < 3072 {
-                let v = query[qr * 6144 + kvh * 3072 + i];
-                if v.abs() <= f32::MAX {
-                    x = v * up;
-                }
-            }
-            let hi = f16::cast_from(x);
-            qh[i] = hi;
-            ql[i] = f16::cast_from(x - f32::cast_from(hi));
-            i += 128;
-        }
-        // Col-major K: a complete64-cell,256-feature code image. All padding
-        // and invalid cells are zero; source indices are checked before reads.
+        // K and V share one complete code image. Query heads are staged eight
+        // at a time; both scale-group halves use all eight subgroups. The real
+        // device advertises48KiB, so no hidden64KiB capability is assumed.
         i = tid;
         while i < 16384 {
-            let c = i / 256;
+            let col = i / 256;
             let d = i % 256;
-            let tok = usize::cast_from(rows[c]);
+            let tok = usize::cast_from(rows[col]);
             let mut x = 0.0f32;
             if tok < capacity {
                 x = code(cache, tok, kvh * 256 + d);
@@ -147,21 +133,7 @@ fn attention_xmx(
             i += 128;
         }
         i = tid;
-        while i < 256 {
-            let tok = usize::cast_from(rows[i / 4]);
-            let mut x = 0.0f32;
-            if tok < capacity {
-                x = scale(cache, tok, kvh * 256 + (i % 4) * 64);
-                if !(x.abs() <= f32::MAX) {
-                    fault[0].fetch_or(1);
-                    x = 0.0;
-                }
-            }
-            scales[i] = x;
-            i += 128;
-        }
-        i = tid;
-        while i < 1024 {
+        while i < 768 {
             prob[i] = 0.0;
             i += 128;
         }
@@ -184,7 +156,7 @@ fn attention_xmx(
                 cmma::MatrixLayout::RowMajor,
             )
         };
-        let b = unsafe {
+        let bm = unsafe {
             cmma::Matrix::<f16>::uninitialized(
                 cmma::MatrixIdent::B,
                 8usize,
@@ -193,43 +165,81 @@ fn attention_xmx(
                 cmma::MatrixLayout::ColMajor,
             )
         };
-        let head = (sg / 4) * 8;
         let cell = (sg % 4) * 16;
-        for g in 0..4usize {
-            let c = cmma::Matrix::<f32>::from_value(
-                cmma::MatrixIdent::Accumulator,
-                8usize,
-                16usize,
-                16usize,
-                cmma::MatrixLayout::Undefined,
-                0.0,
-            );
-            for kk in 0..4usize {
-                let k = g * 64 + kk * 16;
-                cmma::load(&ah, &qh.to_slice().slice(head * 256 + k, qh.len()), 256);
-                cmma::load(&al, &ql.to_slice().slice(head * 256 + k, ql.len()), 256);
-                cmma::load(&b, &kv.to_slice().slice(cell * 256 + k, kv.len()), 256);
-                cmma::execute::<f16, f16, f32, f32>(&ah, &b, &c, &c);
-                cmma::execute::<f16, f16, f32, f32>(&al, &b, &c, &c);
-            }
-            cmma::store(
-                &mut tile.slice_mut(sg * 128, sg * 128 + 128),
-                &c,
-                16,
-                cmma::MatrixLayout::RowMajor,
-            );
-            sync_cube();
-            i = lane;
-            while i < 128 {
-                let h = head + i / 16;
-                let col = cell + i % 16;
-                let at = h * 64 + col;
-                prob[at] += tile[sg * 128 + i] * scales[col * 4 + g];
-                i += 16;
+        for head_block in 0..2usize {
+            i = tid;
+            while i < 2048 {
+                let h = head_block * 8 + i / 256;
+                let d = i % 256;
+                let mut x = 0.0f32;
+                if h < 12 {
+                    let v = query[qr * 6144 + kvh * 3072 + h * 256 + d];
+                    if v.abs() <= f32::MAX {
+                        x = v * up;
+                    }
+                }
+                let hi = f16::cast_from(x);
+                qh[i] = hi;
+                ql[i] = f16::cast_from(x - f32::cast_from(hi));
+                i += 128;
             }
             sync_cube();
+            for round in 0..2usize {
+                let g = round + (sg / 4) * 2;
+                let c = cmma::Matrix::<f32>::from_value(
+                    cmma::MatrixIdent::Accumulator,
+                    8usize,
+                    16usize,
+                    16usize,
+                    cmma::MatrixLayout::Undefined,
+                    0.0,
+                );
+                for kk in 0..4usize {
+                    let k = g * 64 + kk * 16;
+                    cmma::load(&ah, &qh.to_slice().slice(k, qh.len()), 256);
+                    cmma::load(&al, &ql.to_slice().slice(k, ql.len()), 256);
+                    cmma::load(&bm, &kv.to_slice().slice(cell * 256 + k, kv.len()), 256);
+                    cmma::execute::<f16, f16, f32, f32>(&ah, &bm, &c, &c);
+                    cmma::execute::<f16, f16, f32, f32>(&al, &bm, &c, &c);
+                }
+                cmma::store(
+                    &mut tile.slice_mut(sg * 128, sg * 128 + 128),
+                    &c,
+                    16,
+                    cmma::MatrixLayout::RowMajor,
+                );
+                sync_cube();
+                if sg < 4 {
+                    let col = cell + lane;
+                    let tok = usize::cast_from(rows[col]);
+                    let mut s0 = 0.0f32;
+                    let mut s1 = 0.0f32;
+                    if tok < capacity {
+                        s0 = scale(cache, tok, kvh * 256 + round * 64);
+                        s1 = scale(cache, tok, kvh * 256 + (round + 2) * 64);
+                        if !(s0.abs() <= f32::MAX) {
+                            fault[0].fetch_or(1);
+                            s0 = 0.0;
+                        }
+                        if !(s1.abs() <= f32::MAX) {
+                            fault[0].fetch_or(1);
+                            s1 = 0.0;
+                        }
+                    }
+                    i = lane;
+                    while i < 128 {
+                        let h = head_block * 8 + i / 16;
+                        if h < 12 {
+                            let at = h * 64 + cell + i % 16;
+                            prob[at] += tile[sg * 128 + i] * s0;
+                            prob[at] += tile[(sg + 4) * 128 + i] * s1;
+                        }
+                        i += 16;
+                    }
+                }
+                sync_cube();
+            }
         }
-        // Same per64-cell softmax and original external partial/stat slots.
         let mut h = sg;
         while h < 12 {
             let mut maximum = f32::cast_from(-f32::MAX);
@@ -264,8 +274,7 @@ fn attention_xmx(
             h += 8;
         }
         sync_cube();
-        // All QK matrix reads are complete before replacing K storage with V
-        // and Q storage with the scaled probability hi/lo matrices.
+        // Original K matrix consumers are fully joined before V replaces K.
         i = tid;
         while i < 16384 {
             let d = i / 64;
@@ -278,81 +287,88 @@ fn attention_xmx(
             kv[i] = f16::cast_from(x);
             i += 128;
         }
-        i = tid;
-        while i < 256 {
-            let tok = usize::cast_from(rows[i / 4]);
-            let mut x = 0.0f32;
+        let vg = sg % 4;
+        let mut vmax = 0.0f32;
+        for j in 0..4usize {
+            let col = lane + j * 16;
+            let tok = usize::cast_from(rows[col]);
             if tok < capacity {
-                x = scale(cache, tok, 512 + kvh * 256 + (i % 4) * 64);
-                if !(x.abs() <= f32::MAX) {
+                let x = scale(cache, tok, 512 + kvh * 256 + vg * 64);
+                if x.abs() <= f32::MAX {
+                    vmax = max(vmax, x.abs());
+                } else {
                     fault[0].fetch_or(1);
-                    x = 0.0;
                 }
             }
-            scales[i] = x;
-            i += 128;
+        }
+        vmax = plane_max(vmax);
+        if lane == 0 && sg < 4 {
+            reduction[vg] = vmax;
         }
         sync_cube();
-        for g in 0..4usize {
-            let mut vmax = 0.0f32;
-            for col in 0..64usize {
-                vmax = max(vmax, scales[col * 4 + g].abs());
-            }
-            let mut vup = 0.0f32;
-            if vmax > 0.0 {
-                vup = 16384.0 / vmax;
-            }
-            let vdown = vmax / 16384.0;
-            i = tid;
-            while i < 1024 {
-                let hh = i / 64;
-                let col = i % 64;
-                let mut x = 0.0f32;
-                if hh < 12 {
-                    x = prob[i] * (scales[col * 4 + g] * vup);
-                }
-                let hi = f16::cast_from(x);
-                qh[i] = hi;
-                ql[i] = f16::cast_from(x - f32::cast_from(hi));
-                i += 128;
-            }
-            sync_cube();
-            let dim = g * 64 + (sg % 4) * 16;
-            let c = cmma::Matrix::<f32>::from_value(
-                cmma::MatrixIdent::Accumulator,
-                8usize,
-                16usize,
-                16usize,
-                cmma::MatrixLayout::Undefined,
-                0.0,
-            );
-            for k in 0..4usize {
-                cmma::load(&ah, &qh.to_slice().slice(head * 64 + k * 16, qh.len()), 64);
-                cmma::load(&al, &ql.to_slice().slice(head * 64 + k * 16, ql.len()), 64);
-                cmma::load(&b, &kv.to_slice().slice(dim * 64 + k * 16, kv.len()), 64);
-                cmma::execute::<f16, f16, f32, f32>(&ah, &b, &c, &c);
-                cmma::execute::<f16, f16, f32, f32>(&al, &b, &c, &c);
-            }
-            cmma::store(
-                &mut tile.slice_mut(sg * 128, sg * 128 + 128),
-                &c,
-                16,
-                cmma::MatrixLayout::RowMajor,
-            );
-            sync_cube();
-            i = lane;
-            while i < 128 {
-                let hh = head + i / 16;
-                if hh < 12 {
-                    let x = tile[sg * 128 + i] * vdown;
-                    partial[t * 202752 + (slot * 12 + hh) * 256 + dim + i % 16] = x;
-                    if !(x.abs() <= f32::MAX) {
-                        fault[0].fetch_or(1);
+        for head_block in 0..2usize {
+            for round in 0..2usize {
+                // Two independent scale-group probability matrices fit in the
+                // SAME already allocated query hi/lo storage, with a full fence.
+                i = tid;
+                while i < 1024 {
+                    let g = round * 2 + i / 512;
+                    let local = i % 512;
+                    let h = head_block * 8 + local / 64;
+                    let col = local % 64;
+                    let tok = usize::cast_from(rows[col]);
+                    let mut x = 0.0f32;
+                    if h < 12 && tok < capacity && reduction[g] > 0.0 {
+                        let vs = scale(cache, tok, 512 + kvh * 256 + g * 64);
+                        if vs.abs() <= f32::MAX {
+                            x = prob[h * 64 + col] * (vs * (16384.0 / reduction[g]));
+                        }
                     }
+                    let hi = f16::cast_from(x);
+                    qh[i] = hi;
+                    ql[i] = f16::cast_from(x - f32::cast_from(hi));
+                    i += 128;
                 }
-                i += 16;
+                sync_cube();
+                let dim = round * 128 + sg * 16;
+                let g = round * 2 + sg / 4;
+                let c = cmma::Matrix::<f32>::from_value(
+                    cmma::MatrixIdent::Accumulator,
+                    8usize,
+                    16usize,
+                    16usize,
+                    cmma::MatrixLayout::Undefined,
+                    0.0,
+                );
+                for kk in 0..4usize {
+                    let k = kk * 16;
+                    cmma::load(&ah, &qh.to_slice().slice((sg / 4) * 512 + k, qh.len()), 64);
+                    cmma::load(&al, &ql.to_slice().slice((sg / 4) * 512 + k, ql.len()), 64);
+                    cmma::load(&bm, &kv.to_slice().slice(dim * 64 + k, kv.len()), 64);
+                    cmma::execute::<f16, f16, f32, f32>(&ah, &bm, &c, &c);
+                    cmma::execute::<f16, f16, f32, f32>(&al, &bm, &c, &c);
+                }
+                cmma::store(
+                    &mut tile.slice_mut(sg * 128, sg * 128 + 128),
+                    &c,
+                    16,
+                    cmma::MatrixLayout::RowMajor,
+                );
+                sync_cube();
+                i = lane;
+                while i < 128 {
+                    let h = head_block * 8 + i / 16;
+                    if h < 12 {
+                        let v = tile[sg * 128 + i] * (reduction[g] / 16384.0);
+                        partial[t * 202752 + (slot * 12 + h) * 256 + dim + i % 16] = v;
+                        if !(v.abs() <= f32::MAX) {
+                            fault[0].fetch_or(1);
+                        }
+                    }
+                    i += 16;
+                }
+                sync_cube();
             }
-            sync_cube();
         }
     }
 }
@@ -485,19 +501,24 @@ mod tests {
     use super::*;
     #[test]
     fn every_cooperative_tile_has_exact_one_writer_and_stays_inside_original_slots() {
-        assert!(SHARED_BYTES <= 65536);
+        assert_eq!(SHARED_BYTES, 48420);
+        assert!(SHARED_BYTES <= 49152);
         assert_eq!(THREADS, 8 * 16);
         let mut outputs = std::collections::BTreeSet::new();
         let mut scores = std::collections::BTreeSet::new();
-        for sg in 0..8usize {
-            for i in 0..128 {
-                let h = (sg / 4) * 8 + i / 16;
-                let c = (sg % 4) * 16 + i % 16;
-                assert!(h < 16 && c < 64 && scores.insert(h * 64 + c));
-                for g in 0..4 {
-                    if h < 12 {
-                        let d = g * 64 + (sg % 4) * 16 + i % 16;
-                        assert!(d < 256 && outputs.insert(h * 256 + d));
+        for block in 0..2usize {
+            for sg in 0..8usize {
+                for i in 0..128usize {
+                    let h = block * 8 + i / 16;
+                    if sg < 4 {
+                        let c = sg * 16 + i % 16;
+                        assert!(scores.insert(h * 64 + c));
+                    }
+                    for round in 0..2usize {
+                        let d = round * 128 + sg * 16 + i % 16;
+                        if h < 12 {
+                            assert!(d < 256 && outputs.insert(h * 256 + d));
+                        }
                     }
                 }
             }
