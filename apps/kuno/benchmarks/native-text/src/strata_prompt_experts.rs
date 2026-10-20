@@ -11,6 +11,8 @@ mod miss_ring;
 #[path = "strata_prompt_expert_numeric_probe.rs"]
 mod public_numeric;
 pub(crate) use public_numeric::cases as public_dequant_numeric;
+#[cfg(feature = "strata-expert-scratch-ring")]
+pub(crate) use public_numeric::slot_cases as public_scratch_dequant_numeric;
 
 #[cfg(all(test, feature = "strata-native-expert-bulk"))]
 #[path = "strata_expert_bulk_budget_tests.rs"]
@@ -19,8 +21,19 @@ mod bulk_budget_tests;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Op {
     Gather,
-    Dequant { dtype: u32, down: bool },
-    ResidentDequant { dtype: u32, down: bool },
+    Dequant {
+        dtype: u32,
+        down: bool,
+    },
+    ResidentDequant {
+        dtype: u32,
+        down: bool,
+    },
+    SlotDequant {
+        dtype: u32,
+        down: bool,
+        resident: bool,
+    },
     Gemm,
     Activate,
 }
@@ -39,7 +52,10 @@ impl Op {
                 .0
         };
         let mut s = groups::shader_prefix() + section("COMMON");
-        if let Self::Dequant { dtype, down } | Self::ResidentDequant { dtype, down } = self {
+        if let Self::Dequant { dtype, down }
+        | Self::ResidentDequant { dtype, down }
+        | Self::SlotDequant { dtype, down, .. } = self
+        {
             let helpers = include_str!("iq_moe_integer.wgsl")
                 .split_once("fn iq4_byte")
                 .unwrap()
@@ -107,11 +123,22 @@ impl Op {
                 .replace("BINDINGS", &bindings)
                 .replace("CHOOSE_UP", choose_up);
             s.push_str(&code);
+            if matches!(self, Self::SlotDequant { .. }) {
+                // A separate authenticated layout, not removal of the original
+                // full-working-view guard. Role views require exact bytes AND
+                // zero shader-relative image offsets before any source read.
+                let old = "arrayLength(&packed)!=PROMPT_WORKING_WORDS/4u";
+                let guard = slot_image_guard(down);
+                assert_eq!(s.matches(old).count(), 1);
+                s = s.replace(old, &guard);
+            }
             return s;
         }
         s.push_str(section(match self {
             Self::Gather => "GATHER",
-            Self::Dequant { .. } | Self::ResidentDequant { .. } => "DEQUANT",
+            Self::Dequant { .. } | Self::ResidentDequant { .. } | Self::SlotDequant { .. } => {
+                "DEQUANT"
+            }
             Self::Gemm => "GEMM",
             Self::Activate => "ACTIVATE",
         }));
@@ -120,14 +147,35 @@ impl Op {
 }
 impl KernelMetadata for Op {
     fn native_release_after(&self) -> bool {
-        matches!(self, Self::Dequant { down: true, .. })
+        matches!(
+            self,
+            Self::Dequant { down: true, .. }
+                | Self::SlotDequant {
+                    down: true,
+                    resident: false,
+                    ..
+                }
+        )
     }
     fn name(&self) -> &'static str {
         match self {
             Self::Gather => "StrataPromptExpertGather",
-            Self::Dequant { .. } => "StrataPromptExpertF16Image",
-            Self::ResidentDequant { down: false, .. } => "StrataPromptExpertResidentGuImage",
-            Self::ResidentDequant { down: true, .. } => "StrataPromptExpertResidentDownImage",
+            Self::Dequant { .. }
+            | Self::SlotDequant {
+                resident: false, ..
+            } => "StrataPromptExpertF16Image",
+            Self::ResidentDequant { down: false, .. }
+            | Self::SlotDequant {
+                down: false,
+                resident: true,
+                ..
+            } => "StrataPromptExpertResidentGuImage",
+            Self::ResidentDequant { down: true, .. }
+            | Self::SlotDequant {
+                down: true,
+                resident: true,
+                ..
+            } => "StrataPromptExpertResidentDownImage",
             Self::Gemm => "StrataPromptExpertGemm",
             Self::Activate => "StrataPromptExpertF16Swiglu",
         }
@@ -192,6 +240,12 @@ const DEQUANT_SLOTS: usize = 2;
 const GU_WORDS: usize = 1280 * 2560 / 2;
 const DOWN_WORDS: usize = 2560 * 640 / 2;
 const DQ_WORDS: usize = GU_WORDS + DOWN_WORDS;
+fn slot_image_guard(down: bool) -> String {
+    format!(
+        "(p.r3!=0u||p.r4!=0u||arrayLength(&packed)!={}u)",
+        if down { DOWN_WORDS / 4 } else { GU_WORDS / 4 }
+    )
+}
 
 #[cfg(any(test, feature = "strata-expert-scratch-ring"))]
 #[path = "strata_prompt_expert_scratch.rs"]
@@ -523,23 +577,34 @@ fn enqueue_original(
             dispatch(
                 client,
                 {
-                    #[cfg(feature = "strata-prefill-miss-ring")]
-                    if current_raw.is_none() {
-                        Op::ResidentDequant {
+                    #[cfg(feature = "strata-expert-scratch-ring")]
+                    {
+                        Op::SlotDequant {
                             dtype: p.dtype(),
                             down,
-                        }
-                    } else {
-                        Op::Dequant {
-                            dtype: p.dtype(),
-                            down,
+                            resident: current_raw.is_none(),
                         }
                     }
-                    #[cfg(not(feature = "strata-prefill-miss-ring"))]
+                    #[cfg(not(feature = "strata-expert-scratch-ring"))]
                     {
-                        Op::Dequant {
-                            dtype: p.dtype(),
-                            down,
+                        #[cfg(feature = "strata-prefill-miss-ring")]
+                        if current_raw.is_none() {
+                            Op::ResidentDequant {
+                                dtype: p.dtype(),
+                                down,
+                            }
+                        } else {
+                            Op::Dequant {
+                                dtype: p.dtype(),
+                                down,
+                            }
+                        }
+                        #[cfg(not(feature = "strata-prefill-miss-ring"))]
+                        {
+                            Op::Dequant {
+                                dtype: p.dtype(),
+                                down,
+                            }
                         }
                     }
                 },
@@ -665,6 +730,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         },
     ]
     .into_iter()
+    .chain(slot_operators())
     .map(|op| {
         op.compile(
             &mut AutoCompiler::Wgsl(Default::default()),
@@ -673,6 +739,29 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
             StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
         )
         .unwrap()
+    })
+    .collect()
+}
+
+fn slot_operators() -> Vec<Op> {
+    if !cfg!(feature = "strata-expert-scratch-ring") {
+        return Vec::new();
+    }
+    [
+        q::IQ3_XXS,
+        q::IQ3_S,
+        q::IQ2_S,
+        q::IQ4_XS,
+        q::IQ4_NL,
+        q::Q2_0,
+    ]
+    .into_iter()
+    .flat_map(|dtype| {
+        [false, true].map(move |resident| Op::SlotDequant {
+            dtype,
+            down: matches!(dtype, q::IQ4_NL | q::Q2_0),
+            resident,
+        })
     })
     .collect()
 }

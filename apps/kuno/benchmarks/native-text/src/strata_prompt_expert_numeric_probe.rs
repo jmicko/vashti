@@ -79,6 +79,22 @@ pub(crate) fn cases(
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
 ) -> ProbeResult<Vec<serde_json::Value>> {
+    cases_with_views(client, arena, file, false)
+}
+#[cfg(feature = "strata-expert-scratch-ring")]
+pub(crate) fn slot_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    file: &kuno_text::GgufFile,
+) -> ProbeResult<Vec<serde_json::Value>> {
+    cases_with_views(client, arena, file, true)
+}
+fn cases_with_views(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    file: &kuno_text::GgufFile,
+    slot_view: bool,
+) -> ProbeResult<Vec<serde_json::Value>> {
     let mut table = Vec::<u32>::new();
     for dtype in [q::IQ3_XXS, q::IQ3_S, q::IQ2_S] {
         table.extend(q::iq_moe_integer::original_grid_words(dtype));
@@ -166,13 +182,17 @@ pub(crate) fn cases(
                         | (u32::from(half::f16::from_f32(decoded[index + 1]).to_bits()) << 16);
             }
         }
-        for (host, control) in [
+        let mut controls = vec![
             (false, "valid"),
             (true, "valid"),
             (false, "bad_extent"),
             (true, "bad_alignment"),
             (true, "nonfinite"),
-        ] {
+        ];
+        if slot_view {
+            controls.extend([(true, "bad_image_extent"), (true, "bad_image_offset")]);
+        }
+        for (host, control) in controls {
             // Finite-control corruption is a compiled-public invalid input,
             // separate from the unchanged original-weight acceptance oracle.
             let gu_bytes = if down { 256 } else { bytes };
@@ -219,8 +239,29 @@ pub(crate) fn cases(
             let map_id = arena.upload_u32(&map)?;
             let output_id = arena.allocate_zeroed((storage::WORKING_BYTES / 4) as usize)?;
             let fault_id = arena.allocate_zeroed(1)?;
-            let first = 16usize;
-            let first_param = first as u32 + u32::from(control == "bad_alignment");
+            let first = if slot_view { 256usize } else { 16usize };
+            let first_param = if control == "bad_image_offset" {
+                4
+            } else {
+                (if slot_view { 0 } else { first as u32 }) + u32::from(control == "bad_alignment")
+            };
+            let output = if slot_view {
+                let bytes = output_words * 4 - usize::from(control == "bad_image_extent") * 256;
+                u::handle(arena, output_id)?
+                    .offset_start((first * 4) as u64)
+                    .offset_end(storage::WORKING_BYTES - (first * 4 + bytes) as u64)
+            } else {
+                u::handle(arena, output_id)?
+            };
+            let op = if slot_view {
+                Op::SlotDequant {
+                    dtype,
+                    down,
+                    resident: !host,
+                }
+            } else {
+                Op::Dequant { dtype, down }
+            };
             let words = [
                 1,
                 columns as u32,
@@ -245,7 +286,11 @@ pub(crate) fn cases(
                     args = args.with_buffer(up.clone().binding());
                 }
                 for id in [map_id, raw_id, output_id, fault_id] {
-                    args = args.with_buffer(u::handle(arena, id)?.binding());
+                    args = args.with_buffer(if id == output_id {
+                        output.clone().binding()
+                    } else {
+                        u::handle(arena, id)?.binding()
+                    });
                 }
                 Ok(args
                     .with_buffer(table.clone().binding())
@@ -263,7 +308,7 @@ pub(crate) fn cases(
             // fail the same production guards before unsafe source access.
             unsafe {
                 client.launch_unchecked(
-                    Box::new(Op::Dequant { dtype, down }),
+                    Box::new(op),
                     CubeCount::Static((output_rows * columns / 8).div_ceil(256) as u32, 1, 1),
                     args()?,
                 );
@@ -271,7 +316,7 @@ pub(crate) fn cases(
             cubecl::future::block_on(client.sync()).map_err(u::fault)?;
             let mut warm_dispatch_ns = Vec::new();
             let mut batched_public_diagnostic = None;
-            if control == "valid" {
+            if control == "valid" && !slot_view {
                 // First completed original dispatch above warms compilation.
                 // Fixed-public fenced wall times are diagnostic, not pure GPU
                 // timestamps or a private request profiling switch.
@@ -279,7 +324,7 @@ pub(crate) fn cases(
                     let started = std::time::Instant::now();
                     unsafe {
                         client.launch_unchecked(
-                            Box::new(Op::Dequant { dtype, down }),
+                            Box::new(op),
                             CubeCount::Static(
                                 (output_rows * columns / 8).div_ceil(256) as u32,
                                 1,
@@ -301,7 +346,7 @@ pub(crate) fn cases(
                 for _ in 0..BATCH {
                     unsafe {
                         client.launch_unchecked(
-                            Box::new(Op::Dequant { dtype, down }),
+                            Box::new(op),
                             CubeCount::Static(
                                 (output_rows * columns / 8).div_ceil(256) as u32,
                                 1,
@@ -342,7 +387,8 @@ pub(crate) fn cases(
                 "public_prompt_dequant_numeric dtype={dtype} down={down} host={host} control={control} bit_mismatches={mismatches} warm_fenced_wall_ns={warm_dispatch_ns:?}"
             );
             reports.push(
-                serde_json::json!({"family":"prompt-vector8-dequant", "dtype":dtype,
+                serde_json::json!({"family":if slot_view {"prompt-slot-vector8-dequant"} else {"prompt-vector8-dequant"}, "dtype":dtype,
+                "requires_exact_role_view":slot_view,"requires_zero_relative_image_offsets":slot_view,
                 "down":down,"host_staged":host,"control":control,"bit_mismatches":mismatches,
                 "warm_fenced_wall_ns":warm_dispatch_ns,"image_bytes":output_words*4,
                 "batched_public_diagnostic":batched_public_diagnostic,

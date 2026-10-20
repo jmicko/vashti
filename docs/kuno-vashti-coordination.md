@@ -41,6 +41,13 @@ GPU controls but FAILS the first whole-model raw route-header guard. No timing
 or full producer acceptance; not installed. Actual19:08:55UTC recovery is clear
 and healthy. Retain every component/guard and diagnose the exact failing layer
 with compiled-public-only phase labels; no private content or GPU fault claim.
+Source inspection found the old dequantizer's exact80MiB guard rejecting the
+new smaller views. Corrected producer uses a DISTINCT SlotDequant identity
+with exact role extent AND zero relative offsets; original shaders/guards stay
+byte-identical. All118 selected CPU controls pass. Next includes42 NEW exact-role
+GPU controls in addition to the original129, then full requests/recovery/timing.
+The phase-only diagnostic4507e153 was frozen but never run. No installed change.
+
 
 
 **Active complete uniform-QK candidate (2026-10-20).**

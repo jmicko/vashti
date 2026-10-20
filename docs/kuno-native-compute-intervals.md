@@ -1049,3 +1049,39 @@ header guards. A fixed-public-only static phase marker reports the failing
 model layer without copying tensor, route/expert IDs, request/response bytes or
 private state. No private worker selects this entry/diagnostic. This is a
 correctness investigation, not a speed result or partial feature rollback.
+
+
+The failure is now located in source: the ORIGINAL dequantizer's exact
+`arrayLength(packed)==PROMPT_WORKING_WORDS/4` check correctly rejects smaller
+role descriptors. The earlier complete scratch candidate failed to connect its
+new views to a corresponding exact shader layout. Do not call this a GPU hang
+or loosen the original guard. The phase-only diagnostic4507e153/SHA23c898f0
+was frozen but NOT run; source inspection found the cause without that extra
+whole-model run. The owned failure summary is
+`strata-parity-expert-scratch-failure-public-summary-20261020.json`.
+
+The corrected COMPLETE candidate adds a DISTINCT`SlotDequant` kernel identity.
+All original Dequant/ResidentDequant sources and full80MiB checks remain
+byte-for-byte unchanged. The slot variant changes ONLY that output-layout
+predicate: exact role-sized output array AND BOTH relative offsets zero.
+It retains every source, raw, table, map, quantization, alignment, finite/fault
+and output-bound predicate, and the same streamed/resident release class.
+Actual producer dispatch selects this variant only with the real role views;
+legacy producers and original129 controls select the original kernels.
+Native batch operator names/grammar, shape/owner/array metadata checks and all
+scheduling/erasure controls remain original. No generic acceptance exception.
+
+All118 selected actual CPU controls pass, including whole-source undo for all
+12 role/residency variants, distinct kernel IDs, original release classes and
+the unchanged original grammar with both real scratch slots. The new public
+GPU gate adds42 separate exact-role dequant cases, using the SAME original
+CPU-decoded FP16 oracle and inspecting the COMPLETE original80MiB output owner,
+including unchanged bytes surrounding a real rebased descriptor. It covers
+six original quant formats, HOST/resident valid inputs, original malformed
+source extent/alignment/nonfinite cases, plus wrong role-view length and a
+nonzero-but-aligned relative image offset. Invalid layouts must fault BEFORE
+source access/write. New cases do not replace or relax the original129 controls;
+no private entry point, tensor/request trace or extra private observation.
+The new public report key is laboratory-only, not a Kuno client API change.
+Next: freeze/offline420 layouts, original129 plus42 new GPU cases, complete
+requests/producer/group-count/recovery and timings. No acceptance assumed.

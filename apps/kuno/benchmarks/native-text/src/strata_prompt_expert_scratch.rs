@@ -124,6 +124,41 @@ mod tests {
         )
     }
     #[test]
+    fn separate_role_shader_preserves_every_original_source_byte_and_release_class() {
+        use cubecl_runtime::server::native_expert_batch::native_strata_expert_operator;
+        for op in slot_operators() {
+            let Op::SlotDequant {
+                dtype,
+                down,
+                resident,
+            } = op
+            else {
+                unreachable!()
+            };
+            let old = if resident {
+                Op::ResidentDequant { dtype, down }
+            } else {
+                Op::Dequant { dtype, down }
+            };
+            let original = old.source();
+            let actual = op.source();
+            let guard = slot_image_guard(down);
+            assert_eq!(actual.matches(&guard).count(), 1);
+            assert_eq!(
+                actual.replace(&guard, "arrayLength(&packed)!=PROMPT_WORKING_WORDS/4u"),
+                original
+            );
+            assert_eq!(op.native_release_after(), old.native_release_after());
+            assert_eq!(op.name(), old.name());
+            assert_ne!(op.id(), old.id());
+            assert!(native_strata_expert_operator(
+                op.name(),
+                op.native_release_after(),
+                if down { 2 } else { 1 }
+            ));
+        }
+    }
+    #[test]
     fn actual_views_keep_original_owners_and_all_slots_and_roles_disjoint() {
         let (stage, gu) = owners();
         let slots = slots(&stage, &gu).unwrap();
