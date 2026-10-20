@@ -22,16 +22,26 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Active Kuno development (2026-10-20 16:50UTC; installed native32 unchanged).**
+**Latest completed Kuno development (2026-10-20 16:53UTC; installed native32 unchanged).**
 
-The complete original-signature inventory/full-source-bundle candidate is
-frozen from source`bfbfc0c3d51d39409e364530fef44ad65d93495d`, worker SHA256
-`ac01855f2dc9002208f81b88533a364657594d4bd4d6e1e9e7c94b1113baa90d`,
-build`strata-parity-capture-inventory-20261020`. All80 actual App CPU controls
-and408 ordinary/208 matrix offline layouts pass. Original129 numerical GPU
-controls followed by full public requests/actual producer counts/physical
-recovery are running in protected unit`kuno-native-capture-inventory-connected-20261020`.
-No new speed, full staged/terminal acceptance or installation claim yet.
+Full capture/source source`bfbfc0c3d51d39409e364530fef44ad65d93495d`, worker
+SHA`ac01855f2dc9002208f81b88533a364657594d4bd4d6e1e9e7c94b1113baa90d`,
+build`strata-parity-capture-inventory-20261020`, passes80 actual App CPU,
+408/208 offline layouts, all129 original numerical GPU controls, complete real
+requests/all old and new producer proofs, graceful exit and physical recovery.
+Repeated profile11.7815s versus preceding11.8305s is unchanged; no clean,
+full staged/terminal/sustained acceptance or install claim. Installed clean
+11.1474s and matched Strata5.3515s still lead. This bundle stays unselected.
+
+Actual204,463 cached nodes,8,968,280 cached views,21,782 guarded-root checks;
+52,676 source-reading nodes share96 full bundle instances within real batch
+captures. Next is [factoring full source declarations end to end](kuno-native-compute-intervals.md#next-coherent-source-proposal-factor-complete-source-declarations-end-to-end),
+not another isolated lookup change. Keep every full declaration, original
+signature/replay equivalence, complete write-proof/queue/owner/epoch/budget/
+guard/erasure behavior. Private scratch can alias public weight arenas; never
+infer immutability from a weight label. No omission of external footprints or
+arbitrary removal of read_dependencies. This next representation is a proposal,
+NOT implemented. Build capture indexes after replay misses, not on decode hits.
 
 This candidate retains ALL preceding wide/bulk/miss-ring/loading/attention/
 scoped-buffer/interval/OR/sealed-mask/global-barrier/push-descriptor components.
@@ -61,15 +71,15 @@ guard work. Leaf samples do not identify callers or promise equivalent wall
 savings. Exact source/artifact/receipt identities, results and retained earlier
 connected experiments are in [the synchronization guide](kuno-native-compute-intervals.md).
 
-Installed worker/gateway SHAeac78ce0/d3ed07f4 were reverified unchanged; latest
-independent physical snapshot16:25:48UTC: Intel50,688,000B, NVIDIA compute0,
-all faults0, endpoints200 and normal inactive/unpaused admission/waiting0.
-A test is currently active; re-read live unit/receipt/physical state before
-starting another job. The bounded task-owned sudo refresh6524 (parent3556,
-started15:25UTC) expires17:25UTC; verify identity before touching it. Do not
-kill the shared shell. No API, KNT2/KNR2, configuration, model identity or Vashti
-change. No frontend, package, version or release. The parity goal is active
-and unmet. Earlier descriptions below retain chronological context.
+Installed worker/gateway SHAeac78ce0/d3ed07f4 are unchanged. Completed recovery
+16:53:49UTC: Intel50,688,000B, NVIDIA compute0, all faults0, endpoints200 and
+normal inactive/unpaused admission/waiting0. No test job should remain active;
+verify live state before starting another. A new bounded task-owned sudo refresh
+was started16:59UTC (exact PID in `sudo-refresh-capture-inventory-20261020.pid`,
+parent3556); the verified old6524 loop is retired. Never kill the shared shell.
+No API, KNT2/KNR2, configuration, model identity or Vashti change. No frontend,
+package, version or release. The parity goal stays active and unmet. Earlier
+records below retain chronological context.
 
 The complete bulk/PV/loading source12caac8b / SHAa2ad0c62 now passes402/144
 layouts, all103 GPU controls, three full public requests and a separate clean

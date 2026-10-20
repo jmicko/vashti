@@ -485,3 +485,98 @@ borrow spanning ready mutation; both were repaired before final CPU acceptance.
 No numerical reference/tolerance or recovery criterion was relaxed. Release,
 offline layouts, original129 numerical GPU/full requests/actual counters/
 physical recovery and performance are next. Not installed or selected.
+
+
+## Complete capture/source result (bfbfc0c3)
+
+Source`bfbfc0c3d51d39409e364530fef44ad65d93495d`, worker SHA256
+`ac01855f2dc9002208f81b88533a364657594d4bd4d6e1e9e7c94b1113baa90d`,
+`strata-parity-capture-inventory-20261020`, passes80 actual App CPU controls,
+408/208 offline layouts, all129 original numerical GPU controls, three complete
+original-weight requests, all original bulk/wide/tail/miss-ring/OR/mask/push
+proofs and actual new capture/source counters, graceful exit and physical
+recovery. All original mathematical references and tolerances remain unchanged.
+
+Load82.47800s, first/repeated4245 prefix13.14888/11.78149s. Repeated experts
+7.58404s, enqueue1.51518s, capture2.01684s, wait3.88843s; attention2.94794s.
+Versus preceding11.83052s, this is unchanged within ordinary variation, NOT a
+meaningful win or clean comparison. Installed clean11.14739s and matched
+Strata5.3515s still lead. No new clean/staged/terminal/installed or sustained
+decode acceptance. The complete connected bundle is retained, unselected and
+uninstalled; do not roll back individual components from these partial timings.
+
+Actual repeated prompt:204,463 original nodes ALL use the cache;8,968,280
+actual cached view accesses,21,782 actual full guarded-root revalidations.
+52,676 actual source-reading nodes retain96 distinct full source bundles summed
+over the real batch captures. This is within-batch sharing; never interpret it
+as authorization for a persistent cross-request/publication cache. It proves
+that despite source-handle sharing, complete source lists are still expanded
+into the flat signature and walked repeatedly by planning and compute passes.
+
+Receipts `strata-parity-capture-inventory-20261020-{operators,profile}`, profile
+`capture-inventory-validation.json`, owned
+`strata-parity-capture-inventory-public-summary-20261020.json`.
+Recovery16:53:49UTC: Intel50,688,000B, NVIDIA compute0, faults0, endpoints200,
+admission inactive/unpaused/no recovery/waiting0. Installed remains source3fffc266
+with gateway36626d30. No network/API/config/model/Vashti change or release.
+
+## Next coherent source proposal: factor complete source declarations end to end
+
+The actual8.97 million view accesses versus96 full source-bundle instances
+changes the next target. Do NOT spend another GPU block only on faster lookups
+or byte copies. Complete source declarations are still repeatedly expanded and
+walked across signature/planner/compute representations. Factor their immutable
+representation and consume it throughout the connected pipeline instead.
+
+Required connected implementation:
+
+- Intern a full actual read bundle ONCE per capture from the SAME immutable
+  genuine Arc/source owner and original binding table. Retain every ordered
+  original buffer identity, offset, size, duplicate and full declaration. No
+  same-byte identity substitution, narrower ranges, guessed shader-name proof,
+  missing physical dependency or cross-batch/publication/request source cache.
+- A structured signature may reference that complete canonical list from each
+  original node, rather than expand it thousands of times. Preserve ALL original
+  effective signature fields, node order, dispatch, INFO, pipeline and ownership
+  distinctions. Equality/replay must be exactly equivalent to original expanded
+  comparison; a hash may reject candidates but NEVER grant equality alone.
+  Keep an independent original-expansion oracle in CPU controls. Original
+  allocator/recording owners and IO epoch checks remain essential.
+- Carry the complete shared declarations through actual original planning and
+  compute hazard processing, not just through argument cloning. Any omission of
+  repeated tracking work needs a SEALED complete original write inventory and
+  strict equivalence proof. Only sources with NO original write anywhere on
+  that full root across ALL physical queues in this recording can qualify.
+  A writer in unrelated bytes, inline transfer, COPY, private overlay/loan,
+  unknown future access or unsupported proof must keep the full original path.
+  Do not assume that a weight-containing root is immutable: public arenas can
+  alias private scratch. Existing CPU source publication/pinning guards stay.
+- Keep the complete original source footprint in external join/conflict and
+  lifetime ownership declarations even if proven redundant INTERNAL read
+  bookkeeping is factored. Preserve original node/queue order, exact segments,
+  every required peer wait/release and first/last external memory boundary.
+  Compare plans against the unchanged old planner and independent byte oracle,
+  including future writers, disjoint writes, queue changes, aliased roots,
+  unknown scope/capacity/epoch and terminal recovery negatives. This is a
+  different representation of the same full declarations, not permission to
+  simply remove read_dependencies or clear history from assumed immutability.
+- Build capture-only indexes only AFTER an actual replay miss. The present
+  prototype builds its index before the replay decision; it is unused on a hit.
+  Avoid adding that work to named decode replay. Prevalidated per-node layout
+  records can also avoid re-parsing immutable signature headers in each pass.
+  Combine these with the full declaration change, rather than running tiny
+  isolated timing experiments. Current prototype has no new sustained decode
+  or full staged acceptance, so do not install it as if that were verified.
+- Retain real Wgpu guard reacquisition/root revalidation, full original views,
+  actual counts/membership, original public/native grammar and INFO producers,
+  BoundGraph/IO/owner/fence/quarantine/erasure checks and unchanged24/64MiB caps.
+  Charge all canonical lists, per-node references, sort/hash/temporary peaks and
+  full wipes before any prefix. Missing optimization proof keeps original
+  behavior, with no increase to memory or admission limits.
+
+This is a connected source proposal, not yet implemented or measured. Then run
+original80 CPU plus producer/oracle/equivalence/budget controls, all129 numerical
+GPU gates, actual full requests/new producer counts and physical recovery.
+Only a meaningful matched clean gain earns terminal/full staged thinking/tools/
+MAX8/semantic/privacy acceptance and official installation. No further Ollama
+baseline runs. The Strata parity goal remains active and unmet.
