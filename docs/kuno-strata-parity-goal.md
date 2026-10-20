@@ -9,7 +9,7 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
-## Latest tested checkpoint (2026-10-20 21:52UTC): pool reuse is real; FIRST gate still fails
+## Latest tested checkpoint (2026-10-20 21:51UTC): pool reuse is real; FIRST gate still fails
 
 Complete source865a9c16/SHA36197839 passes136 selected CPU,420/208 offline,
 original171 GPU/full original proof chain, both public profile modes, ACTUAL pool

@@ -22,7 +22,7 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 21:52UTC): actual reuse passes; clean FIRST gate fails.**
+**Authoritative active handoff (2026-10-20 21:51UTC): actual reuse passes; clean FIRST gate fails.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; preserve canonical Vashti notes. Complete worker source
@@ -53,7 +53,7 @@ Same-host Strata repeat5.3515s still leads; goal ACTIVE/UNMET.
 
 No GPU job remains after `kuno-native-idle-pools-coupled-acceptance-20261020`
 exits at its intended failed selection assertion AFTER recovery. Independent
-21:47:13UTC: Intel50,688,000B, NVIDIA compute0, all driver faults0, allHTTP200,
+21:50:53UTC: Intel50,688,000B, NVIDIA compute0, all driver faults0, allHTTP200,
 admission inactive/unpaused/recoveryfalse/waiting0. No reset/reboot. Bounded owned
 sudo refresh220143 (parent sharedshell3556; never kill shared shell) ends22:38:06UTC.
 Artifacts under `/media/jmicko/faststore/kuno-development`: owned
