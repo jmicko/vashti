@@ -693,3 +693,20 @@ actual guarded-buffer destruction/foreign-device/budget GPU test, all129 origina
 numerical gates, full real requests and actual producer/admission counts, then
 physical recovery. A meaningful clean gain must still earn original terminal/
 full thinking/tools/MAX8/semantic/privacy acceptance and official installation.
+
+Implementation3b35ea10056012107d720aaff510bbb3638da175 is frozen as
+`strata-parity-unscoped-admission-20261020`, worker SHA
+237477796fd59406e45abbb95ac770ef6654d073662d6a611559cebf1188d5a4.
+All90 App CPU controls pass (original86 plus four actual protected-scope
+controls). The protected actual Wgpu guard lifecycle test passes, with physical
+recovery; test executable SHA25a57092b65550b7aded6a5f56e8b126d464b2ac046b0348986b4075f7dbfdd2.
+Offline408 ordinary/208 matrix layouts pass; shader math is unchanged.
+The original129 numerical gates and three full profiled requests are now running
+in `kuno-native-unscoped-admission-connected-20261020`, swap/core0.
+Artifact/receipt prefix `strata-parity-unscoped-admission-20261020`; no result
+or installation claim until terminal proof and actual recovery.
+
+Independent canonical-source clean recovery17:41:56UTC confirms Intel50,688,000B,
+NVIDIA compute0, no new or existing driver faults, all services200 and normal
+unpaused admission/waiting0. Previous installed source3fffc266/SHAeac78ce0
+and unchanged gateway36626d30/SHAd3ed07f4 remain selected.

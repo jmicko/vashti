@@ -63,7 +63,12 @@ unconditional submission join and all original capture guards/full declarations;
 prepared-but-inactive scopes still use every original range/write/flight check.
 Raw resource validity is checked by the real capture guard before GPU publication,
 not repeatedly at unscoped enqueue. No cross-call handle cache or omitted
-dependency. CPU/build/GPU/whole request/performance gates remain pending.
+dependency. Source3b35ea10056012107d720aaff510bbb3638da175 / SHA
+237477796fd59406e45abbb95ac770ef6654d073662d6a611559cebf1188d5a4
+passes90 CPU controls,408/208 layouts and the real protected GPU buffer guard
+lifecycle/recovery test. Original129 numerical gates and full request/profile/
+producer proofs now run in `kuno-native-unscoped-admission-connected-20261020`.
+No performance/full staged/terminal/install acceptance yet.
 Exact contract: [enqueue admission](kuno-native-compute-intervals.md#enqueue-admission-without-an-unused-range-image).
 No API, KNT2/KNR2, configuration, model identity or Vashti change.
 
