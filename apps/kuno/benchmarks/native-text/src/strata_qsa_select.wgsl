@@ -1,5 +1,7 @@
 // MIT Strata fb58e0: native_qsa_indexer.dp.cpp and qsa_select.dp.cpp.
 // COMMON_BEGIN
+// dead_offset is the dead-key word offset for DEAD, the actual score-grid
+// block reach for VALIDATE/SELECT. Score/status row strides remain full-sized.
 struct Params {count:u32,start:u32,blocks:u32,stride:u32,score_stride:u32,status_stride:u32,dead_offset:u32,reserved:u32}
 fn finite(x:f32)->bool{return abs(x)<=3.4028234663852886e38;}
 // COMMON_END
@@ -44,6 +46,7 @@ fn main(@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:u32){
     let t=g.x;let n=p.start+t+1u;let visible_blocks=n/4u+select(0u,1u,n%4u!=0u);
+    if p.dead_offset==0u||p.dead_offset>p.blocks||visible_blocks>p.dead_offset {if tid==0u{atomicOr(&fault[0],1u);}return;}
     for(var b=tid;b<visible_blocks;b+=256u){
         let v=scores[t*p.score_stride+b];
         if status[t*p.status_stride+b]!=1u||!finite(v)||v<0.0{atomicOr(&fault[0],1u);}
@@ -77,6 +80,13 @@ fn scan(v:u32,lane:u32,warp:u32)->vec2<u32>{
 fn main(@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) tid:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) sw:u32){
     let t=g.x;let n=p.start+t+1u;let width=min(n,2051u);let nbid=n/4u;
     if sw!=32u {if tid==0u{atomicOr(&fault[0],1u);}return;}
+    let visible_blocks=nbid+select(0u,1u,n%4u!=0u);
+    if p.dead_offset==0u||p.dead_offset>p.blocks||visible_blocks>p.dead_offset {if tid==0u{atomicOr(&fault[0],1u);}return;}
+    // Explicitly erase every unused output-tail cell. Live cells below width
+    // are written exactly once by the original selection below, so these
+    // disjoint stores need no new storage barrier or extra kernel dispatch.
+    // The sentinel is outside the original context, never a favorable cell0.
+    for(var j=width+tid;j<p.stride;j+=1024u){selected[(t+p.reserved)*p.stride+j]=p.blocks*4u;}
     if tid==0u{enabled=select(0u,1u,atomicLoad(&fault[0])==0u);}
     if workgroupUniformLoad(&enabled)==0u{return;}
     if n<=width {for(var j=tid;j<n;j+=1024u){selected[(t+p.reserved)*p.stride+j]=j;}return;}

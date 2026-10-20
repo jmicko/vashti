@@ -148,6 +148,65 @@ pub(crate) fn select(
     stride: usize,
     first: usize,
 ) -> Result<()> {
+    select_checked(arena, owners, start, count, blocks, stride, first, blocks)
+}
+
+/// Match selected SYCL prefill's last-query n_bid+1 grid reach. Keep every
+/// backing row at its original full capacity; this bounds work, not ownership.
+/// The extra exact-four tail has weight zero and is never read by selection.
+pub(super) fn prompt_active_blocks(start: usize, count: usize, blocks: usize) -> Result<usize> {
+    if count == 0 || !(1..=crate::qsa_gpu::MAX_CONTEXT / 4).contains(&blocks) {
+        return Err(Error::InvalidBufferLength);
+    }
+    let end = start.checked_add(count).ok_or(Error::ArithmeticOverflow)?;
+    if end > blocks * 4 {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok((end / 4 + 1).min(blocks))
+}
+
+/// Whole-prompt scores can omit all CTAs beyond the batch's last visible block.
+/// Ordinary decode/short-read select() retains the full bound because its
+/// native graph Position is rebound on replay independently of this parameter.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn select_active_prefix(
+    arena: &PrivateArena,
+    owners: [Handle; 4],
+    start: usize,
+    count: usize,
+    blocks: usize,
+    stride: usize,
+    first: usize,
+    active_blocks: usize,
+) -> Result<()> {
+    if !crate::strata_prompt::active()
+        || active_blocks != prompt_active_blocks(start, count, blocks)?
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    select_checked(
+        arena,
+        owners,
+        start,
+        count,
+        blocks,
+        stride,
+        first,
+        active_blocks,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_checked(
+    arena: &PrivateArena,
+    owners: [Handle; 4],
+    start: usize,
+    count: usize,
+    blocks: usize,
+    stride: usize,
+    first: usize,
+    active_blocks: usize,
+) -> Result<()> {
     let maximum = if crate::strata_prompt::active() {
         crate::strata_prompt::groups::CAPACITY
     } else {
@@ -156,6 +215,7 @@ pub(crate) fn select(
     if !crate::strata_intel_core::enabled()
         || !(1..=maximum).contains(&count)
         || !(1..=crate::qsa_gpu::MAX_CONTEXT / 4).contains(&blocks)
+        || !(1..=blocks).contains(&active_blocks)
         || stride != 2051
         || first.checked_add(count).is_none_or(|end| end > maximum)
         || first > start
@@ -179,7 +239,7 @@ pub(crate) fn select(
         stride as u32,
         blocks as u32,
         blocks as u32,
-        0,
+        active_blocks as u32,
         first as u32,
     ];
     launch(arena, Op::Validate, count, owners.clone(), p)?;
@@ -198,4 +258,79 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
             .unwrap()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod active_prefix_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_batch_reach_covers_every_causal_cell_at_full_owner_stride() {
+        for capacity in [4usize, 512, 4096, crate::qsa_gpu::MAX_CONTEXT] {
+            let blocks = capacity / 4;
+            for count in [1usize, 3, 4, 7, 8, 9, 255, 256]
+                .into_iter()
+                .filter(|&n| n <= capacity)
+            {
+                for start in [0, (capacity - count) / 2, capacity - count] {
+                    let active = prompt_active_blocks(start, count, blocks).unwrap();
+                    // Upstream includes the exact-four zero-weight tail, then
+                    // clamps to the original context owner's block capacity.
+                    assert_eq!(active, ((start + count) / 4 + 1).min(blocks));
+                    for t in 0..count {
+                        let n = start + t + 1;
+                        let visible = n.div_ceil(4);
+                        assert!(visible <= active && active <= blocks);
+                        for b in 0..=n / 4 {
+                            let weight = if b < n / 4 { 4 } else { n % 4 };
+                            if weight != 0 {
+                                assert!(b < active);
+                                assert!(t * blocks + b < count * blocks);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(prompt_active_blocks(0, 0, 8192).is_err());
+        assert!(prompt_active_blocks(0, 1, 0).is_err());
+        assert!(prompt_active_blocks(0, 1, 8193).is_err());
+        assert!(prompt_active_blocks(32767, 2, 8192).is_err());
+        assert!(prompt_active_blocks(usize::MAX, 1, 8192).is_err());
+    }
+
+    #[test]
+    fn first_prompt_chunk_omits_empty_ctas_without_repricing_owning_strides() {
+        let full = 8192usize.div_ceil(8) * 16;
+        let bounded: usize = (0..4096)
+            .step_by(256)
+            .map(|start| prompt_active_blocks(start, 256, 8192).unwrap().div_ceil(8))
+            .sum();
+        assert_eq!(bounded, 1104);
+        assert_eq!(full, 16384);
+        assert!(bounded * 100 < full * 7);
+        assert_eq!(prompt_active_blocks(32512, 256, 8192).unwrap(), 8192);
+    }
+
+    #[test]
+    fn actual_selection_sources_ignore_uncomputed_padding_and_initialize_output_tails() {
+        let validate = Op::Validate.source();
+        let select = Op::Select.source();
+        for source in [&validate, &select] {
+            assert!(source.contains("visible_blocks>p.dead_offset"));
+            assert!(source.contains("p.dead_offset>p.blocks"));
+        }
+        // Validation visits only actual causal blocks. Radix keys never read
+        // the upstream extra zero-weight tail or omitted/future score slots.
+        assert!(validate.contains("b<visible_blocks"));
+        assert!(select.contains("b<b1&&weight(b,nbid,n)>0u"));
+        assert!(select.contains("if w==0u{continue;}"));
+        assert!(select.contains("scores[t*p.score_stride+b]"));
+        assert!(validate.contains("status[t*p.status_stride+b]"));
+        let initialize = select.find("j=width+tid;j<p.stride;j+=1024u").unwrap();
+        let sentinel = select.find("=p.blocks*4u;").unwrap();
+        let first_write = select.find("if n<=width").unwrap();
+        assert!(initialize < sentinel && sentinel < first_write);
+        assert!(select.contains("selected[(t+p.reserved)*p.stride+j]"));
+    }
 }

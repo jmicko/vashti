@@ -236,7 +236,11 @@ pub(crate) fn run(
         1,
         (start + count) / 4 - start / 4,
     )?;
-    // Exactly the upstream256-query score/selection loop. Only IQ is rebased
+    // Exactly the upstream256-query score/selection loop, including C-1's
+    // last-query active grid clamp. Omitted score slots are never consumed:
+    // selection validates its reach and reads only each query's causal blocks.
+    // Both score/flag strides and selected owners stay at full capacity.
+    // Only IQ is rebased
     // (2048-byte row alignment); the2051-word selected stride stays on its full
     // owner and is addressed by a row index, never an unaligned descriptor.
     for batch in score_batches(start, count, capacity)? {
@@ -251,11 +255,12 @@ pub(crate) fn run(
         sp[3] = (blocks * 128) as u32;
         sp[4] = blocks as u32;
         sp[5] = blocks as u32;
+        let active_blocks = selection::prompt_active_blocks(query_start, rows, blocks)?;
         let iq = score_query_view(&q[7], batch)?;
         super::super::launch(
             arena,
             Kernel::PromptScoreFault,
-            [blocks.div_ceil(8), rows, 1],
+            [active_blocks.div_ceil(8), rows, 1],
             vec![
                 pooled.clone(),
                 iq,
@@ -266,7 +271,7 @@ pub(crate) fn run(
             ],
             sp,
         )?;
-        selection::select(
+        selection::select_active_prefix(
             arena,
             [q[17].clone(), q[18].clone(), q[19].clone(), fault.clone()],
             query_start,
@@ -274,6 +279,7 @@ pub(crate) fn run(
             blocks,
             2051,
             first,
+            active_blocks,
         )?;
     }
     for first in (0..count).step_by(32) {
@@ -382,6 +388,14 @@ mod score_batch_tests {
                 for b in score_batches(start, count, crate::qsa_gpu::MAX_CONTEXT).unwrap() {
                     assert_eq!(b.first, next);
                     assert_eq!(b.start, start + next);
+                    let active = selection::prompt_active_blocks(
+                        b.start,
+                        b.rows,
+                        crate::qsa_gpu::MAX_CONTEXT / 4,
+                    )
+                    .unwrap();
+                    assert!((b.start + b.rows).div_ceil(4) <= active);
+                    assert!(active <= crate::qsa_gpu::MAX_CONTEXT / 4);
                     let view = score_query_view(&query, b).unwrap();
                     assert_eq!(view.size(), parent.size());
                     assert_eq!(
