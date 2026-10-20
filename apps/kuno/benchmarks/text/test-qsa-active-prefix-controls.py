@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compile the exact public QSA oracle/checker. No model, GPU or Cargo build."""
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -17,7 +18,7 @@ assert 'Op::Select, count, owners, p' in text
 assert 'layout.owned_words' in text
 assert text.index('let attempt = check(') < text.index('arena.reset()?;') < text.index('reports.push(attempt?);')
 worker = (NATIVE / 'strata_worker.rs').read_text()
-assert 'let attention_checks = crate::strata_qsa::selection::public_numeric' in worker
+assert re.search(r'let\s+attention_checks\s*=\s*crate::strata_qsa::selection::public_numeric\(', worker)
 assert '"attention_checks":attention_checks' in worker
 with tempfile.TemporaryDirectory(prefix='kuno-qsa-active-prefix-oracle-') as directory:
     directory = Path(directory)
