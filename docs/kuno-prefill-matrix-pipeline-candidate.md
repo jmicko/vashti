@@ -231,3 +231,53 @@ Source-only tests cannot establish numerical or performance acceptance. The
 existing numeric probe file is untouched; root is extending its independent
 full IEEE cases at tiny and medium counts. No GPU, sudo, service or shared build
 was used while preparing the narrow kernels.
+
+## Authentic shared-memory lifetime reuse — 2026-10-20
+
+After the final uniform K64 handoff barrier, no A/B slice is read again; native
+matrix fragments hold values rather than operand pointers. The next candidate
+ends those real typed shared lifetimes with `SharedMemory::free`, then allocates
+the unchanged F32 result scratch. It preserves tile selection, every load/store,
+ordered matrix operation, accumulator count, finite/status/fault check, and all
+three existing barriers. It does not halve K or reinstate register prefetch.
+
+This uses the actual supported compiler path. CubeCL's SharedLiveness analysis
+keeps shared variables live until an explicit Free marker. The SPIR-V backend
+then assigns disjoint offsets to simultaneously live objects. With the real
+`VK_KHR_workgroup_memory_explicit_layout` feature, it emits truthful Aliased
+Workgroup blocks and reuses offsets for non-overlapping lifetimes. No typed
+pointer/extent, device capability, owner or physical alias metadata is forged.
+CubeCL selects this only when the authenticated Vulkan feature is enabled;
+implicit-layout devices still declare independent original arrays.
+
+| Shape | Original/implicit allocation | Actual explicit-lifetime allocation |
+| --- | ---: | ---: |
+| M32xN64xK64 | 32768B | 24576B |
+| M16xN64xK64 | 24576B | 20480B |
+| M8xN64xK64 | 20480B | 18432B |
+
+Host admission retains the larger conservative shape limits. It therefore
+cannot admit an unsupported device by assuming alias support, while the backend
+receives the compiler's actual smaller allocation on supported devices. Offline
+expectations now depend on the genuine explicit-layout flag; every original
+implicit-layout configuration remains accepted at its original allocation.
+
+CPU coverage inspects all three real Workgroup owners in every actual staged
+module. In explicit mode it requires Aliased decorations, disjoint live A/B
+ranges, and an output interval contained within an old operand interval. It then
+builds the actual instruction control-flow graph, including loop backedges:
+every operand-access-to-output-store path must cross a real Workgroup
+AcquireRelease barrier, and no operand access may be reachable after output
+publication. An actual-module negative control strips the handoff barriers and
+must fail that check. Existing8-byte vector,2-loop,3-barrier,4/8/16-product,
+1/2/4-accumulator, full-vector/tail and unchanged ownership checks remain.
+
+Allocation reduction is not an occupancy or speed result. The Vulkan maximum is
+a per-workgroup limit, and hardware allocation buckets, resident pool size and
+GRF modes all affect concurrency. Intel's [occupancy guide](https://www.intel.com/content/www/us/en/docs/oneapi/optimization-guide-gpu/2025-2/thread-mapping-and-gpu-occupancy.html)
+also warns that allocations can round up and that higher occupancy need not
+improve performance. A later K32 pipeline could combine shorter stages with
+these real lifetime boundaries, but is not implemented in this candidate.
+
+No GPU/shared build/service operation was performed here. Root still owns full
+GPU numerical, prompt, erasure/recovery and matched performance acceptance.

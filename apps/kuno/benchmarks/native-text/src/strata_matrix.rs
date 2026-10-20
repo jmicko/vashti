@@ -255,7 +255,6 @@ mod native {
     ) -> SharedMemory<f32> {
         let mut a = SharedMemory::<Vector<F, Const<4>>>::new(1024usize);
         let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
-        let mut out = SharedMemory::<f32>::new(2048usize);
         // SAFETY: both operands are loaded before the corresponding products.
         let a0 = unsafe {
             cmma::Matrix::<F>::uninitialized(
@@ -401,6 +400,17 @@ mod native {
             current = next;
             k += 64;
         }
+        // Every lane has completed the final K64 handoff barrier, and no
+        // operand slice is used beyond this uniform loop exit. Matrix fragments
+        // retain their values in registers. End the authentic SLM lifetimes
+        // before allocating output; the compiler may reuse physical offsets
+        // only on devices supporting explicit workgroup memory layout.
+        // SAFETY: uniform control flow, no surviving operand-pointer uses.
+        unsafe {
+            a.free();
+            b.free();
+        }
+        let mut out = SharedMemory::<f32>::new(2048usize);
         cmma::store(
             &mut out.slice_mut(subgroup * 512, subgroup * 512 + 128),
             &c0,
@@ -618,7 +628,6 @@ mod native {
     ) -> SharedMemory<f32> {
         let mut a = SharedMemory::<Vector<F, Const<4>>>::new(comptime!(tile * 32));
         let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
-        let mut out = SharedMemory::<f32>::new(comptime!(tile * 64));
         // SAFETY: the complete current operand stage is initialized before
         // every product, including zero-masked token/feature/reduction tails.
         let a0 = unsafe {
@@ -735,6 +744,17 @@ mod native {
             current = next;
             k += 64;
         }
+        // Every lane has completed the final K64 handoff barrier, and no
+        // operand slice is used beyond this uniform loop exit. Matrix fragments
+        // retain their values in registers. End the authentic SLM lifetimes
+        // before allocating output; the compiler may reuse physical offsets
+        // only on devices supporting explicit workgroup memory layout.
+        // SAFETY: uniform control flow, no surviving operand-pointer uses.
+        unsafe {
+            a.free();
+            b.free();
+        }
+        let mut out = SharedMemory::<f32>::new(comptime!(tile * 64));
         let first = subgroup * comptime!(tile * 16);
         cmma::store(
             &mut out.slice_mut(first, first + 128),
@@ -1169,16 +1189,17 @@ mod native {
     }
     const NARROW8_SHARED_BYTES: usize = 2 * (8 + 64) * 64 * 2 + 8 * 64 * 4;
     const NARROW16_SHARED_BYTES: usize = 2 * (16 + 64) * 64 * 2 + 16 * 64 * 4;
-    pub(super) fn compiled_shared_bytes(name: &str) -> Option<usize> {
-        if name.contains("narrow8") {
-            Some(NARROW8_SHARED_BYTES)
+    pub(super) fn compiled_shared_bytes(name: &str, explicit: bool) -> Option<usize> {
+        let (full, operands) = if name.contains("narrow8") {
+            (NARROW8_SHARED_BYTES, NARROW8_SHARED_BYTES - 8 * 64 * 4)
         } else if name.contains("narrow16") {
-            Some(NARROW16_SHARED_BYTES)
+            (NARROW16_SHARED_BYTES, NARROW16_SHARED_BYTES - 16 * 64 * 4)
         } else if name.contains("macro") {
-            Some(MACRO_SHARED_BYTES)
+            (MACRO_SHARED_BYTES, MACRO_OPERAND_BYTES)
         } else {
-            None
-        }
+            return None;
+        };
+        Some(if explicit { operands } else { full })
     }
     #[allow(clippy::too_many_arguments)]
     fn narrow_geometry(
@@ -1713,6 +1734,167 @@ mod native {
             assert_eq!(MACRO_OPERAND_BYTES, 24576);
             assert_eq!(MACRO_SHARED_BYTES, 32768);
         }
+        fn assert_actual_shared_alias_and_fenced_lifetimes(
+            words: &[u32],
+            expected: usize,
+            explicit: bool,
+        ) {
+            use std::collections::{BTreeMap, BTreeSet};
+            let mut instructions = Vec::new();
+            let mut at = 5;
+            while at < words.len() {
+                let n = (words[at] >> 16) as usize;
+                assert!(n > 0 && at + n <= words.len());
+                instructions.push((words[at] & 65535, words[at + 1..at + n].to_vec()));
+                at += n;
+            }
+            let mut types = BTreeMap::new();
+            let mut pointers = BTreeMap::new();
+            let mut constants = BTreeMap::new();
+            let mut shared = Vec::new();
+            let mut offsets = BTreeMap::new();
+            let mut aliased = BTreeSet::new();
+            let mut labels = BTreeMap::new();
+            for (i, (op, a)) in instructions.iter().enumerate() {
+                match op {
+                    21 | 22 | 23 | 28 | 30 => {
+                        types.insert(a[0], (*op, a[1..].to_vec()));
+                    }
+                    32 => {
+                        pointers.insert(a[0], a[2]);
+                    }
+                    43 => {
+                        constants.insert(a[1], a[2] as usize);
+                    }
+                    59 if a[2] == 4 => shared.push((a[1], a[0])),
+                    71 if a.len() == 2 && a[1] == 20 => {
+                        aliased.insert(a[0]);
+                    }
+                    72 if a.len() == 4 && a[1] == 0 && a[2] == 35 => {
+                        offsets.insert(a[0], a[3] as usize);
+                    }
+                    248 => {
+                        labels.insert(a[0], i);
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(shared.len(), 3);
+            let mut ranges = Vec::new();
+            let mut output = None;
+            for &(variable, pointer) in &shared {
+                let root = pointers[&pointer];
+                let (array, offset) = if explicit {
+                    assert_eq!(types[&root].0, 30);
+                    assert!(aliased.contains(&variable));
+                    (types[&root].1[0], offsets[&root])
+                } else {
+                    (root, 0)
+                };
+                assert_eq!(types[&array].0, 28);
+                let element = types[&array].1[0];
+                let elements = constants[&types[&array].1[1]];
+                let (width, is_output) = if types[&element].0 == 23 {
+                    assert_eq!(types[&element].1[1], 4);
+                    let scalar = types[&element].1[0];
+                    assert_eq!(types[&scalar].0, 22);
+                    assert_eq!(types[&scalar].1[0], 16);
+                    (8, false)
+                } else {
+                    assert_eq!(types[&element], (22, vec![32]));
+                    assert!(output.replace(variable).is_none());
+                    (4, true)
+                };
+                ranges.push((variable, offset, offset + elements * width, is_output));
+            }
+            let output = output.unwrap();
+            if explicit {
+                assert_eq!(ranges.iter().map(|r| r.2).max(), Some(expected));
+                let out = ranges.iter().find(|r| r.3).unwrap();
+                let operands = ranges.iter().filter(|r| !r.3).collect::<Vec<_>>();
+                assert!(operands[0].2 <= operands[1].1 || operands[1].2 <= operands[0].1);
+                assert!(operands.iter().any(|r| r.1 <= out.1 && out.2 <= r.2));
+            } else {
+                assert_eq!(ranges.iter().map(|r| r.2 - r.1).sum::<usize>(), expected);
+            }
+            let shared_ids = shared.iter().map(|r| r.0).collect::<BTreeSet<_>>();
+            let mut origins = BTreeMap::new();
+            let mut operand_access = BTreeSet::new();
+            let mut output_stores = Vec::new();
+            let mut barriers = BTreeSet::new();
+            let mut edges = vec![Vec::new(); instructions.len()];
+            for (i, (op, a)) in instructions.iter().enumerate() {
+                edges[i] = match op {
+                    249 => vec![labels[&a[0]]],
+                    250 => vec![labels[&a[1]], labels[&a[2]]],
+                    251 => std::iter::once(labels[&a[1]])
+                        .chain(a[3..].iter().step_by(2).map(|l| labels[l]))
+                        .collect(),
+                    56 | 252..=255 => Vec::new(),
+                    _ if i + 1 < instructions.len() => vec![i + 1],
+                    _ => Vec::new(),
+                };
+                if matches!(op, 65..=67 | 70) {
+                    origins.insert(a[1], origins.get(&a[2]).copied().unwrap_or(a[2]));
+                }
+                let access = match op {
+                    61 | 4457 => Some(a[2]),
+                    62 | 4458 => Some(a[0]),
+                    _ => None,
+                };
+                if let Some(pointer) = access {
+                    let root = origins.get(&pointer).copied().unwrap_or(pointer);
+                    if shared_ids.contains(&root) {
+                        if root != output {
+                            operand_access.insert(i);
+                        } else if matches!(op, 62 | 4458) {
+                            output_stores.push(i);
+                        }
+                    }
+                }
+                if *op == 224 {
+                    assert_eq!(constants[&a[0]], 2);
+                    assert_eq!(constants[&a[1]], 2);
+                    assert_eq!(constants[&a[2]] & 264, 264);
+                    barriers.insert(i);
+                }
+            }
+            assert!(!operand_access.is_empty() && !output_stores.is_empty());
+            // Cut real barriers from the instruction CFG: there must be no
+            // path from any operand access to any output store without a
+            // workgroup acquire/release handoff. This includes loop backedges
+            // and zero-iteration paths, rather than comparing lexical offsets.
+            let mut reverse = vec![Vec::new(); edges.len()];
+            for (i, next) in edges.iter().enumerate() {
+                for &j in next {
+                    reverse[j].push(i);
+                }
+            }
+            let mut pending = output_stores.clone();
+            let mut reached = BTreeSet::new();
+            while let Some(i) = pending.pop() {
+                if barriers.contains(&i) || !reached.insert(i) {
+                    continue;
+                }
+                assert!(
+                    !operand_access.contains(&i),
+                    "unfenced SLM lifetime overlap"
+                );
+                pending.extend(&reverse[i]);
+            }
+            // No old operand access can execute once output publication has
+            // started, even across the epilogue barrier and output-loop branches.
+            let mut pending = output_stores;
+            let mut reached = BTreeSet::new();
+            while let Some(i) = pending.pop() {
+                if !reached.insert(i) {
+                    continue;
+                }
+                assert!(!operand_access.contains(&i), "operand use after SLM reuse");
+                pending.extend(&edges[i]);
+            }
+        }
+
         #[test]
         fn actual_staged_compiler_preserves_vector_storage_envelopes_and_order() {
             use cubecl::ir::{ElemType, StorageType, UIntKind};
@@ -1722,7 +1904,7 @@ mod native {
             for mask in 0..8 {
                 for (name, definition) in definitions()
                     .into_iter()
-                    .filter(|(name, _)| compiled_shared_bytes(name).is_some())
+                    .filter(|(name, _)| compiled_shared_bytes(name, false).is_some())
                 {
                     let mut options = WgpuCompilationOptions {
                         supports_vulkan: true,
@@ -1744,9 +1926,38 @@ mod native {
                     };
                     assert_eq!(
                         kernel.shared_size,
-                        compiled_shared_bytes(name).unwrap(),
+                        compiled_shared_bytes(name, mask & 4 != 0).unwrap(),
                         "{name} mask{mask}"
                     );
+                    assert_actual_shared_alias_and_fenced_lifetimes(
+                        &kernel.assembled_module,
+                        compiled_shared_bytes(name, mask & 4 != 0).unwrap(),
+                        mask & 4 != 0,
+                    );
+                    if mask == 4 && name == "dense_macro_fp16" {
+                        // A real compiled module without its handoff barriers
+                        // remains syntactically valid, but cannot justify alias
+                        // lifetimes. Exercise that rejection without GPU work.
+                        let mut unfenced = kernel.assembled_module[..5].to_vec();
+                        let mut at = 5;
+                        while at < kernel.assembled_module.len() {
+                            let n = (kernel.assembled_module[at] >> 16) as usize;
+                            if kernel.assembled_module[at] & 65535 != 224 {
+                                unfenced.extend_from_slice(&kernel.assembled_module[at..at + n]);
+                            }
+                            at += n;
+                        }
+                        assert!(
+                            std::panic::catch_unwind(|| {
+                                assert_actual_shared_alias_and_fenced_lifetimes(
+                                    &unfenced,
+                                    MACRO_OPERAND_BYTES,
+                                    true,
+                                );
+                            })
+                            .is_err()
+                        );
+                    }
                     let mut types = BTreeMap::new();
                     let mut pointers = BTreeMap::new();
                     let mut variables = BTreeMap::new();
@@ -2100,7 +2311,9 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let AutoRepresentation::SpirV(kernel) = compiled else {
                     return Err("matrix compiler representation".into());
                 };
-                if native::compiled_shared_bytes(name).is_some_and(|n| kernel.shared_size != n) {
+                if native::compiled_shared_bytes(name, layout_mask & 4 != 0)
+                    .is_some_and(|n| kernel.shared_size != n)
+                {
                     return Err("staged matrix original shared envelope".into());
                 }
                 let canonical =
