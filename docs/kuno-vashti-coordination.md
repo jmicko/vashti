@@ -40,11 +40,14 @@ Both attempts physically recover with zero driver faults and healthy services.
 The fresh/reuse authentication correction is integrated as99905e82, with191 CPU
 controls,402/144 offline layouts and all103 actual GPU controls passing. The
 whole-model run catches a second integration bug: the boxed kernel wrapper
-drops the DOWN dequantization operator's original release flag. The six-operation
-validator correctly rejects the lost boundary; proper metadata forwarding is
-being implemented without weakening the grammar. Its failed profile receipt
-confirms physical recovery and healthy services. No completed prompt or new
-candidate speed/installation is claimed. Installed3fffc266 is unchanged.
+drops the DOWN dequantization operator's original release flag. Its genuine
+metadata forwarding repairbbc33333 passes402/144 offline layouts and all103 GPU
+controls. The complete prompt now reaches a separate INFO-packing bug: record
+length was incorrectly limited by descriptor-offset alignment. The correction
+will use the original record/page planner without reducing original logical
+extents or weakening ownership. Both failed profile receipts confirm physical
+recovery and healthy services. No completed prompt or new candidate speed/
+installation is claimed. Installed3fffc266 is unchanged.
 
 **Prior Kuno-only checkpoint (2026-10-20; superseded by native32 above).**
 See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).

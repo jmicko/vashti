@@ -189,6 +189,28 @@ HTTP200 and normal admission are confirmed after exit. Installed3fffc266 and
 its accepted performance remain unchanged. All receipts preserve numeric/static
 metadata only; no prompt, output, route trace or raw stderr is retained.
 
+The genuine metadata forwarding fix is integrated asbbc33333 (isolated
+c967984c), preserving the original strict six-operation predicate. Actual
+boxed producer controls cover all quant pairs and generated matrix families;
+the real KernelTask-to-Box and release-cache identity controls pass, as does
+the complete worker typecheck. Frozen9-feature successor SHA
+`f64fceb94fc0ff36f4fb49d15f58de86a3791853799c2038ea5479a5c05af251`
+in `strata-parity-native-bulk-release-20261020` passes402/144 offline layouts
+and all103 original GPU controls with physical recovery.
+
+Its first complete prompt reaches a further INFO-pack admission bug:
+`native expert INFO original record schema`. The packer incorrectly requires
+record length to fit the device's descriptor-offset alignment. Alignment
+constrains each record's start, not its extent; the original InfoPolicy planner
+already admits genuine records spanning multiple alignment units. The next
+repair must use the original planner, preserving every record's exact logical
+extent, byte image, slab/binding limits and zero padding. Actual generated
+matrix records and custom64-byte Params must join the CPU page tests at small
+device alignments, rather than testing only artificial256/512-byte alignment.
+`strata-parity-native-bulk-release-20261020-profile/receipt.json` records
+passed=false, no prompt frames and physical recovery. No new speed or
+installation is claimed; original installed3fffc266 remains selected.
+
 The subsequent source-only
 [native wide expert proposal](kuno-native-wide-expert-proposal.md) is not part
 of this binary. It explicitly preserves six logical phases while accounting
