@@ -31,6 +31,15 @@ prefix gain. Its sampled host costs are distributed across initialization,
 range planning, allocation/bindings and dispatch; source proposals for a larger
 coherent native group submission and bounded parallel loading are under review.
 
+The complete source017ed775 / SHA5208a062 candidate now combines both with
+padded attention probability gathering.402/144 offline layouts and all103 GPU
+controls pass, but its first whole-model request rejects a valid fresh prompt
+scope because it incorrectly requires a reusable-buffer lease. See
+[the exact failed acceptance and correction boundary](kuno-strata-parity-goal.md#complete-bulk-pv-and-loading-candidate).
+Both attempts physically recover with zero driver faults and healthy services.
+The fresh/reuse authentication correction is in isolated implementation; no
+new candidate speed or installation is claimed. Installed3fffc266 is unchanged.
+
 **Prior Kuno-only checkpoint (2026-10-20; superseded by native32 above).**
 See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).
 Selected worker source0771a726 / SHAccdaf886 is installed through unchanged

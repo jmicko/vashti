@@ -122,6 +122,53 @@ not exact internal CPU/GPU times. The next public-only CPU sampling will locate
 specific weight-store and command-recording work. No private instrumentation,
 request/response storage, cache reuse, quant substitution or hazard weakening.
 
+## Complete bulk, PV and loading candidate
+
+Frozen source017ed7751317276ce28c7657d11031cef04c5539 / SHA256
+`5208a062e15b0676e4f14d29b6eb7580525e8acac8b4f442faba9114a978c24f`
+connects native32, paired QK, padded probability gather, complete expert bulk
+submission and bounded parallel original-model loading. The explicit build is
+`strata-parity-native-bulk-pv-loading-20261020`, with all nine selected features
+listed in its `build-features.json`. Source changes include483dc993 (PV),
+def3d2d5 (actual recording allocator owners), ceff6491 (loading) and017ed775
+(complete scoped client/backend/INFO path). See the focused
+[bulk](kuno-native-expert-bulk.md), [owner](kuno-native-expert-owner-retention.md),
+[PV](kuno-qsa-pv-gather-candidate.md) and
+[loading](kuno-native-startup-source-comparison.md) notes.
+
+Offline402 ordinary/144 native shader layouts and all103 original GPU controls
+pass with physical recovery. CPU controls include122 I/O-owner/INFO-page,
+33 queue,2 recording-owner and3 real collector checks, plus the independently
+reviewed10 loading controls and13 PV controls. These do not establish completed
+whole-model execution, performance or installation of this candidate.
+
+The first complete model run reaches original capacity construction but fails
+before any prompt completes: `native expert batch requires actual reuse`.
+Fresh original prompt scopes intentionally have no reusable-buffer lease. This
+is an integration admission assumption, not evidence of numerical divergence or
+a GPU fault. The first external helper also asserted profile count before
+printing the static worker cause; it preserves no accepted timing/receipt.
+Corrected diagnostic `strata-native-bulk-pv-readyfix-20261020/receipt.json`
+records worker_exit1, no completed frames and passed=false. It captures the
+bounded static cause without retaining stderr or input/output content.
+
+Both attempts physically recover Intel50,688,000B, NVIDIA compute0, zero new
+driver faults, HTTP200 and normal admission. The installed3fffc266 worker is
+unchanged. No prompt-processing or loading gain is accepted from these failures.
+The next connected correction authenticates genuine fresh scopes separately
+from original real reuse scopes, retaining original ledger identity/epoch,
+retirement and stale-scope checks. It must not fabricate a reuse nonce, begin
+reuse over dirty owners, skip original audits or silently fall back. Explicit
+bounded scratch reservation must precede allocation. The correction remains
+in isolated implementation/review; full requests, recovery, clean timing and
+staged quality remain required before selection.
+
+The subsequent source-only
+[native wide expert proposal](kuno-native-wide-expert-proposal.md) is not part
+of this binary. It explicitly preserves six logical phases while accounting
+for extra real prefix/tail dispatches; the current unchanged-six-dispatch
+candidate retains its strict six-times-group-count acceptance requirement.
+
 ## Prior combined operator checkpoint
 
 Selected default-native source0771a726 / SHA256
