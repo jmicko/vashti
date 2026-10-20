@@ -83,7 +83,8 @@ authority while its runtime nonce is live.
 The tradeoffs are real: MAX3
 windows still compute their original heads and read compact residuals to wiping
 RAM before teaching MTP. It is a functional stepping stone, not claimed full
-Strata short-read parity or an accepted speed result.
+Strata short-read parity. Protected actual short-request acceptance is recorded
+below; complete mixed API acceptance remains separate.
 
 ## Remaining complete path
 
@@ -122,8 +123,19 @@ cursor bounds, no early generation/rearm/closed-scope credit, matching original
 erased scope, and the unchanged final count1 handoff. Evidence:
 `/media/jmicko/faststore/kuno-development/prefill-short-prefix-authority-tests-20261019.log`.
 These are metadata lifecycle tests, not backend nonce or model completion proof.
-Rustfmt and diff checks pass. No GPU or whole-worker compile was performed by this
-isolated task. The caller owns the next selected-worker build and hardware tests.
+Rustfmt and diff checks pass. Those isolated CPU checks alone do not prove a
+backend nonce or model completion. The integrated source7962fe68 now builds as
+`strata-prefill-short-scope-20261019`, worker SHA256
+`76d5f706e17f741901652121d193312ceda9955616f912bdf0810f048b5339be`.
+It passes all14 matrix and39 actual router/dequant GPU checks with unchanged
+references and real close/recovery. The compiled-public short check completes
+three45-token arithmetic requests correctly in one model Session: cold prefix
+10.0511s, two warm prefixes1.8118/1.7496s, zero repeated load time. Each returns
+4tokens; original per-request erasure and retained rebind, final close and actual
+physical recovery all pass. Model startup remains104.5667s. Evidence under
+`/media/jmicko/faststore/kuno-development/`:
+`prefill-short-scope-operators-numeric-20261019/receipt.json` and
+`prefill-short-scope-warm-20261019/receipt.json`.
 
 Protected GPU acceptance must include short requests around the actual threshold
 (prefix63/64/65), repeated requests on one loaded model and short↔long transitions;

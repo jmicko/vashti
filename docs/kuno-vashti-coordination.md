@@ -16,10 +16,16 @@ staged thinking/tools/API/privacy/Ollama recovery passes; exact694e90d9 API
 acceptance now passes too. Further coherent shared-memory macro6dfaf5ef /
 SHAa50e28b3 passes all14+39 GPU cases and complete public profile/recovery;
 warm4245 profile25.392s (**41.6% shorter** than installed43.4647s profiled).
-Register-prefetch/short-prefix combined076d0ec3/SHA6d3ab0b1 passes numerical GPU
-gates but rejects the first short whole-model prefix. Recovery passes; exact
-fixed-public backend error diagnosis is running. This candidate is NOT accepted
-for installation. No installation, API change or Vashti consumer work yet.
+Its clean repeat24.8817s is **42.4% shorter** than installed43.2055s; exact staged
+thinking/tools/API/privacy/Ollama and physical recovery pass. This is a fully
+validated fallback, still uninstalled. Initial076d0ec3/SHA6d3ab0b1 short-prefix
+extension correctly rejects a missing original runtime reuse scope; all failed
+runs recover without driver faults. Fixed7962fe68/SHA76d5f706 now passes all53
+GPU numerical/fault controls and cold plus two warm45-token requests in one
+Session, correct arithmetic, erasure/rebind/close and physical recovery. Warm
+short prefixes1.812/1.750s. The exact combined long-prefix and staged API gates
+are running before installation. No installation, API change or Vashti consumer
+work yet.
 See [current receipts and remaining gates](kuno-prefill-strata-gap-investigation.md#protected-gpu-continuation-2026-10-19-local-time).
 
 **Prior CPU preparation checkpoint (superseded by GPU continuation above).**

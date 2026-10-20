@@ -206,75 +206,6 @@ mod native {
         }
     }
 
-    /// Fixed per-lane vectors are populated before current-stage MMA and
-    /// published to the independent SLM stage only afterward. Static indices
-    /// permit register scalarization, but actual spills remain a driver choice.
-    #[cube]
-    #[allow(clippy::too_many_arguments)]
-    fn macro_prefetch<F: Float>(
-        input: &Array<Vector<F, Const<4>>>,
-        weight: &Array<Vector<F, Const<4>>>,
-        next_a: &mut Array<Vector<F, Const<4>>>,
-        next_b: &mut Array<Vector<F, Const<4>>>,
-        columns: usize,
-        rows: usize,
-        count: usize,
-        weight_first: usize,
-        token_base: usize,
-        row_base: usize,
-        k: usize,
-    ) {
-        #[unroll]
-        for round in 0..4usize {
-            let job = usize::cast_from(UNIT_POS) + round * 64;
-            let token = token_base + job / 8;
-            let col = k + (job % 8) * 8;
-            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
-            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
-            if token < count && col < columns {
-                lo = input[(token * columns + col) / 4];
-                hi = input[(token * columns + col) / 4 + 1];
-            }
-            next_a[round * 2] = lo;
-            next_a[round * 2 + 1] = hi;
-        }
-        #[unroll]
-        for round in 0..8usize {
-            let job = usize::cast_from(UNIT_POS) + round * 64;
-            let row = row_base + job / 8;
-            let col = k + (job % 8) * 8;
-            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
-            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
-            if row < rows && col < columns {
-                lo = weight[(weight_first + row * columns + col) / 4];
-                hi = weight[(weight_first + row * columns + col) / 4 + 1];
-            }
-            next_b[round * 2] = lo;
-            next_b[round * 2 + 1] = hi;
-        }
-    }
-    #[cube]
-    fn macro_publish<F: Float>(
-        a: &mut SharedMemory<Vector<F, Const<4>>>,
-        b: &mut SharedMemory<Vector<F, Const<4>>>,
-        next_a: &Array<Vector<F, Const<4>>>,
-        next_b: &Array<Vector<F, Const<4>>>,
-        buffer: usize,
-    ) {
-        #[unroll]
-        for round in 0..4usize {
-            let job = usize::cast_from(UNIT_POS) + round * 64;
-            a[buffer * 512 + job * 2] = next_a[round * 2];
-            a[buffer * 512 + job * 2 + 1] = next_a[round * 2 + 1];
-        }
-        #[unroll]
-        for round in 0..8usize {
-            let job = usize::cast_from(UNIT_POS) + round * 64;
-            b[buffer * 1024 + job * 2] = next_b[round * 2];
-            b[buffer * 1024 + job * 2 + 1] = next_b[round * 2 + 1];
-        }
-    }
-
     /// Four subgroups, each owning four8x16 results. Two A and two B
     /// fragments feed four accumulators, doubling operand reuse without
     /// changing the ordered K16 reduction of any output. The complete
@@ -386,19 +317,17 @@ mod native {
         sync_cube();
         let mut k = 0usize;
         let mut current = 0usize;
-        let mut next_a = Array::<Vector<F, Const<4>>>::new(8usize);
-        let mut next_b = Array::<Vector<F, Const<4>>>::new(16usize);
         while k < columns {
             let next = 1usize - current;
-            // Global vector loads feed only fixed per-lane locals here.
-            // Keeping SLM stores after current MMA removes their immediate
-            // load-to-store dependency from the front of the math interval.
+            // Software prefetch: independent next-stage global loads/stores
+            // are issued before current-stage MMA. This expresses overlap
+            // opportunity, not a guaranteed asynchronous DMA operation.
             if k + 64 < columns {
-                macro_prefetch::<F>(
+                macro_stage::<F>(
                     input,
                     weight,
-                    &mut next_a,
-                    &mut next_b,
+                    &mut a,
+                    &mut b,
                     columns,
                     rows,
                     count,
@@ -406,6 +335,7 @@ mod native {
                     token_base,
                     row_base,
                     k + 64,
+                    next,
                 );
             }
             let mut inner = 0usize;
@@ -426,9 +356,6 @@ mod native {
                     cmma::execute::<F, F, f32, f32>(&a1, &b1, &c3, &c3);
                 }
                 inner += 16;
-            }
-            if k + 64 < columns {
-                macro_publish::<F>(&mut a, &mut b, &next_a, &next_b, next);
             }
             // All old readers finish before either stage is reused. Every
             // next-stage write is visible before it becomes current. Loop
@@ -1092,7 +1019,6 @@ mod native {
                     let mut types = BTreeMap::new();
                     let mut pointers = BTreeMap::new();
                     let mut variables = BTreeMap::new();
-                    let mut variable_storage = BTreeMap::new();
                     let mut bindings = BTreeMap::new();
                     let mut strides = BTreeMap::new();
                     let mut barriers = 0;
@@ -1112,7 +1038,6 @@ mod native {
                             }
                             59 => {
                                 variables.insert(args[1], args[0]);
-                                variable_storage.insert(args[1], args[2]);
                             }
                             71 if args.len() == 3 && args[1] == 33 => {
                                 bindings.insert(args[2], args[0]);
@@ -1138,20 +1063,6 @@ mod native {
                         let element = types[&vector].1[0];
                         assert_eq!(types[&element].0, 22);
                         assert_eq!(types[&element].1[0], 16);
-                    }
-                    // The real optimized module scalarizes the fixed A[8] /
-                    // B[16] prefetch locals. No Function-storage array survives
-                    // that could be dynamically indexed. Register allocation
-                    // and possible driver spills remain a physical property.
-                    for (variable, pointer_type) in &variables {
-                        if variable_storage[variable] == 7 {
-                            assert!(
-                                !types
-                                    .get(&pointers[pointer_type])
-                                    .is_some_and(|(op, _)| matches!(op, 28 | 29)),
-                                "unscalarized local prefetch array: {name} mask{mask}",
-                            );
-                        }
                     }
                     assert!(
                         barriers >= 3,
@@ -1219,45 +1130,9 @@ mod native {
                                 let mut current = 0;
                                 for k in (0..columns).step_by(64) {
                                     let next = 1 - current;
-                                    let pending = if k + 64 < columns {
-                                        // Real fixed per-lane register inventory:
-                                        // four A jobs/eight B jobs, two vectors each.
-                                        let mut pa = [[None; 8]; 64];
-                                        let mut pb = [[None; 16]; 64];
-                                        for lane in 0..64 {
-                                            for round in 0..4 {
-                                                let job = lane + round * 64;
-                                                let t = token_base + job / 8;
-                                                let col = k + 64 + job % 8 * 8;
-                                                for half in 0..2 {
-                                                    pa[lane][round * 2 + half] =
-                                                        if t < count && col < columns {
-                                                            assert!(col + 7 < columns);
-                                                            Some((t * columns + col) / 4 + half)
-                                                        } else {
-                                                            None
-                                                        };
-                                                }
-                                            }
-                                            for round in 0..8 {
-                                                let job = lane + round * 64;
-                                                let r = row_base + job / 8;
-                                                let col = k + 64 + job % 8 * 8;
-                                                for half in 0..2 {
-                                                    pb[lane][round * 2 + half] =
-                                                        if r < rows && col < columns {
-                                                            assert!(col + 7 < columns);
-                                                            Some((r * columns + col) / 4 + half)
-                                                        } else {
-                                                            None
-                                                        };
-                                                }
-                                            }
-                                        }
-                                        Some((pa, pb))
-                                    } else {
-                                        None
-                                    };
+                                    if k + 64 < columns {
+                                        fill(k + 64, next, &mut a, &mut b);
+                                    }
                                     for inner in (0..64).step_by(16).filter(|i| k + i < columns) {
                                         order.push(k + inner);
                                         for sg in 0..4 {
@@ -1290,33 +1165,6 @@ mod native {
                                                 }
                                             }
                                         }
-                                    }
-                                    // Only after all current-stage reads do the
-                                    // fixed local vectors publish the next stage.
-                                    if let Some((pa, pb)) = pending {
-                                        let mut writes_a = [0u8; 512];
-                                        let mut writes_b = [0u8; 1024];
-                                        for lane in 0..64 {
-                                            for round in 0..4 {
-                                                let job = lane + round * 64;
-                                                for half in 0..2 {
-                                                    let i = job * 2 + half;
-                                                    a[next * 512 + i] = pa[lane][round * 2 + half];
-                                                    writes_a[i] += 1;
-                                                }
-                                            }
-                                            for round in 0..8 {
-                                                let job = lane + round * 64;
-                                                for half in 0..2 {
-                                                    let i = job * 2 + half;
-                                                    b[next * 1024 + i] = pb[lane][round * 2 + half];
-                                                    writes_b[i] += 1;
-                                                }
-                                            }
-                                        }
-                                        assert!(
-                                            writes_a.into_iter().chain(writes_b).all(|v| v == 1)
-                                        );
                                     }
                                     // Every reader is now complete before old stage reuse.
                                     current = next;

@@ -74,4 +74,17 @@ index/tail/ping-pong test now models fixed per-lane prefetch vectors separately
 and publishes them only after current-stage reads. All3 focused CPU tests and
 standalone production-module strict Clippy pass. Evidence:
 `/tmp/kuno-prefill-submit-review/register-matrix-{tests.log,check.log}`.
-No new physical correctness, timing or installation acceptance.
+Protected combined source7962fe68 / SHA76d5f706 passes all53 actual matrix,
+router and dequant GPU controls, cold and repeated short requests, complete
+45/4245/4245-token requests, actual erasure/close and physical recovery. However,
+its clean long prefixes40.0054/38.1505s regress materially from the coherent
+shared-buffer baseline6dfaf5ef's25.0353/24.8817s. The extra registers are a
+plausible pressure/occupancy cause, not a measured spill diagnosis. Receipt:
+`/media/jmicko/faststore/kuno-development/prefill-short-scope-clean-20261019/receipt.json`.
+
+The forward selection restores this module exactly to6dfaf5ef while retaining
+the working bounded short-prefix scope/retained-state fixes. This keeps the full
+coupled K64/vector/paired-shared-buffer implementation; it removes only the
+additional register-first successor. Numerical references, original owners,
+runtime guards, model/context and API remain unchanged. The exact recombined
+binary still needs its own complete acceptance before installation.

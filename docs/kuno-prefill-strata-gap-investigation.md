@@ -14,11 +14,15 @@ is43.205s; API/tool/privacy/recovery acceptance is recorded in
 [kuno-prompt-processing-profile.md](kuno-prompt-processing-profile.md).
 The new coupled candidate below is NOT installed. The user subsequently authorized
 protected GPU validation at home; actual matrix, router, dequant and complete
-public-request checks now pass. The clean matched4245-token time is34.532s,
-20.1% shorter than installed43.205s. Its exact staged API acceptance now passes.
-A further coupled shared-memory matrix candidate passes and reaches25.392s
-profiled; a register-prefetch/short-prefix extension is under diagnosis. No API
-or Vashti consumer change.
+public-request checks now pass. The coupled shared-memory matrix candidate
+6dfaf5ef / SHAa50e28b3 passes all numerical, full-request, staged API/privacy and
+physical recovery gates. Its clean matched4245-token time is24.8817s versus
+installed43.2055s (**42.4% shorter**); profile25.3916s. It is a validated fallback,
+not an installed worker. The subsequent register-prefetch/short-prefix extension
+7962fe68 / SHA76d5f706 now passes actual53-case GPU controls and cold plus two
+warm short requests after correcting its genuine runtime scope ownership.
+Long-prefix and staged API acceptance remain pending for that exact artifact.
+No API or Vashti consumer change.
 
 ## Protected GPU continuation (2026-10-19 local time)
 
@@ -126,8 +130,18 @@ request erasure and close, then restores memory/admission/services/fault counts.
 Repeated4245-token profile **25.3916s**, versus35.0018s before shared staging and
 installed43.4647s: **41.6% shorter than installed profiled baseline**. Experts
 16.3217s (was21.4536), attention7.0605s (was10.1416). Load105.515s.
-Receipt: `prefill-shared-macro-profile-20261019/receipt.json`. Clean matched/API
-acceptance is still required before installing this exact artifact.
+Receipt: `prefill-shared-macro-profile-20261019/receipt.json`.
+
+Exact6dfaf5ef clean acceptance now passes all45/4245/4245-token requests, original
+arithmetic answer, request erasure and close. Warm4245 prefixes25.0353/24.8817s;
+the repeat is **42.4109% shorter** than installed43.2055s. Cold load105.6827s is
+not improved. Receipt: `prefill-shared-macro-clean-20261019/receipt.json`.
+Exact private staged API also passes ten-tool streamed thinking/call/result,
+same-worker mixed and repeated code, write_bytes0, denied inspection, graceful
+unload, ordinary Ollama inference and physical recovery. Toolbox4207/4293-token
+prefixes28.1395/30.0307s versus installed46.991/49.630s; warm35-token code3.8968s,
+362 output tokens/10.8024s. Receipt:
+`native-prefill-shared-stage-check-20261019/receipt.json`.
 
 `faf5c6f6` (isolateda9dc9a96) completes register-first next-stage prefetch, keeping
 source6dfaf5ef as a distinct coherent baseline. It loads fixed unrolled A/B local
@@ -153,9 +167,27 @@ operation`, worker1. Actual recovery passes; this is NOT acceptance for ordinary
 inference or installation. Receipt:
 `prefill-pipelined-short-profile-20261019/receipt.json`.
 The original helper omitted the compiled-public `public_device_error` line from
-its failure filter. A second protected same-binary diagnostic run includes that
-fixed-public-only detail, without changing production guards. No exact cause
-or accepted speed is claimed for this combined candidate yet.
+its failure filter; the next helper included the heading but omitted multiline
+`Caused by`. The complete fixed-public diagnostic identifies
+`native submission requires original request reuse` in
+`prefill-pipelined-short-cause-20261019`. All failed runs restore physical memory,
+admission and services with no driver-fault delta. No production guard was removed.
+
+`5aeb11e3` (isolatedf8d3fccb) provides a genuine bounded ShortPrefix phase with
+the original runtime nonce, original full closing audit and retained erasure
+provenance. It does not invent a generation credit or substitute a new Ready
+constructor stamp. `7962fe68` adds compiled-public cold and two warm short
+requests. Frozen artifact `strata-prefill-short-scope-20261019`, source
+`7962fe688946ab2f08891ed53b2c240cc66c0bea`, SHA256
+`76d5f706e17f741901652121d193312ceda9955616f912bdf0810f048b5339be` passes all53
+actual GPU controls, unchanged oracles, full-owner/tail audit, close and recovery:
+`prefill-short-scope-operators-numeric-20261019/receipt.json`.
+It also completes all three45-token arithmetic requests correctly in one loaded
+Session, with actual per-request erasure, retained rebind and close. Cold load
+104.5667s, cold prefix10.0511s, warm prefixes1.8118/1.7496s; each produces4tokens.
+Receipt: `prefill-short-scope-warm-20261019/receipt.json`. This is evidence for the
+actual short branch and warm provenance, not yet complete API acceptance or a
+matched35-token Strata comparison. Original model/quantization/context stay fixed.
 
 ## Comparison evidence
 
