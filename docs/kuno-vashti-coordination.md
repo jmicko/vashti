@@ -1,6 +1,31 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno-only goal: match Strata (2026-10-20; improved native worker installed).**
+**Active Kuno-only goal: match Strata (2026-10-20; native32 installed).**
+See [the exact accepted backend and remaining work](kuno-strata-parity-goal.md#accepted-native32-installation).
+Selected worker source3fffc266 / SHAeac78ce0 is installed with unchanged
+image-enabled gateway36626d30 / SHAd3ed07f4. Official backup/rollback:
+`/var/lib/kuno-strata-parity-native-wide32-20261020` (previousccdaf886).
+Full configuration and original root-enrolled identities are preserved.
+
+Matched repeated4245-token prompt12.4373 ->11.1474s (10.37% shorter); firstlong
+14.1743 ->12.9623s. The fresh same-host Strata reference5.3515s is still faster,
+so this goal is not complete. Native32 removes actual matrix register spills;
+original103 GPU controls,402/144 offline layouts, terminal error/fresh recovery,
+full tools/MAX8/semantic/privacy tests and actual installed service checks pass.
+Warm installed35-token prefix1.0908s,501 outputs/15.0813s; no decode gain claim.
+Worker swap/core0, write_bytes0, denied inspection, nonroot/model mounts, zero
+OOM/driver faults, healthy services and normal admission confirmed.
+
+**No API, KNT2/KNR2, configuration, model identity or Vashti change.**
+No frontend, fresh browser/image QA, package, version bump or release is claimed.
+Root alone owns the shared GPUs/services. Further complete paired-attention and
+descriptor-batch candidates remain separate/uninstalled; first combined pipeline
+is correct but offers no clear additional prefix gain. Its scheduling/branch
+follow-up and public CPU profiling are in progress. Parent-only public load
+markers locate98.159s of103.486s startup in original weight-store construction;
+no private content instrumentation or relaxed memory/hazard guards are added.
+
+**Prior Kuno-only checkpoint (2026-10-20; superseded by native32 above).**
 See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).
 Selected worker source0771a726 / SHAccdaf886 is installed through unchanged
 image-enabled gateway36626d30 / SHAd3ed07f4. The official transaction preserves

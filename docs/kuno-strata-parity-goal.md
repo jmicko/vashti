@@ -2,8 +2,8 @@
 
 The user explicitly requested a new goal to match Strata. Work remains Kuno-only
 on `codex/strata-rust-port`, using the agreed integration032e2cdd and original installed
-worker c8db19de / SHAfb31e124 as the comparison baseline. Selected successor
-0771a726 / SHAccdaf886 is now installed and validated below. Preserve the canonical
+worker c8db19de / SHAfb31e124 as the original comparison baseline. Selected
+successor3fffc266 / SHAeac78ce0 is now installed, replacing0771a726 / SHAccdaf886. Preserve the canonical
 Vashti checkout and uncommitted coordination files. No API/frontend change,
 release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
@@ -35,11 +35,60 @@ parity, require an agreed matched local upstream workload/settings/timing scope
 or a sufficiently documented equivalent reference; distinguish prompt/decode,
 load/first-use compilation, final erasure and whole-response time.
 
-## Latest combined operator checkpoint
+## Accepted native32 installation
+
+Native worker source3fffc266383917cada88fd176b273db8a6b737f4 / SHA256
+`eac78ce0029205c9d503c78a1b2c868082801cf966b4e8a3d3bc7585ece80f4c`
+is now installed through the unchanged image-enabled gateway36626d30 /
+SHAd3ed07f4. Official backup/rollback:
+`/var/lib/kuno-strata-parity-native-wide32-20261020` (previousccdaf886).
+The complete configuration and original root-enrolled identities are preserved.
+No API, protocol, setting, model identity, Vashti consumer or release change.
+
+Matched clean first/repeated4245-token prefixes14.1743/12.4373 ->12.9623/11.1474s;
+first-to-first8.55% and repeat-to-repeat10.37% shorter. Fresh upstream repeat
+5.3515s remains ahead: the goal is active, not complete. The actual matrix tile
+keeps original work/precision with32 subgroups and exactly49,152B shared;
+real compiled kernels eliminate all prior91:77 scratch spills/fills. Expert
+matrix paths remain original. See the exact ISA evidence and complete prior
+candidate receipts below.
+
+All103 actual GPU controls,402/144 offline layouts, real terminal-prefix error
+recovery, fresh successful clean requests, protected full thinking/ten-tool
+call/result,64/65/66 boundaries,16 MAX8 tails, two identical complete501-token
+code answers with155 semantic cases each, privacy and physical recovery pass.
+`native-strata-parity-wide32-install-20261020.log` records the official successful
+transaction. Actual installed service checks
+`native-strata-parity-wide32-installed-{public,final}-check-20261020` pass too:
+cold load101.0112s, first35-token prefix10.0622s including JIT; warm prefix1.0908s,
+501 outputs in15.0813s (~33.22 output tokens/s), total19.3138s. No new decode
+speed gain is claimed. Nonroot DynamicUser/original model mount, swap/core0,
+write_bytes0, denied inspection, zero OOM/driver faults, HTTP200 and normal
+admission pass. Subsequent protected numerical tests deliberately unload it
+and confirm physical recovery again.
+
+The complete uninstalled combined candidatea3b36795 / SHAd7965806 (native32,
+paired QK reuse and descriptor batches) passes all103 original GPU controls and
+full public requests/recovery, but profiled prefixes11.8289/11.7768s are
+essentially unchanged from native32 alone11.7837/11.8168s. Capture1.9064->1.8394s
+is a small diagnostic change, not a demonstrated1s gain. This pipeline is kept;
+sourceefaaea7e submits closed prefixes before future descriptor preparation and
+8c91e6ab hoists the common full-pair validity branch. Their complete frozen
+successor `strata-parity-native-paired-fast-bulk-20261020` / SHA52717687 passes
+402/144 offline layouts; actual GPU/correctness and CPU profiling are next.
+
+The new fixed-public parent-only startup markers locate98.1591 of103.4862s
+inside `global_sources` before `shared_target_weights`. Target model1.6663s,
+shared head0.6375s and MTP2.5484s are smaller. These are pipe-arrival intervals,
+not exact internal CPU/GPU times. The next public-only CPU sampling will locate
+specific weight-store and command-recording work. No private instrumentation,
+request/response storage, cache reuse, quant substitution or hazard weakening.
+
+## Prior combined operator checkpoint
 
 Selected default-native source0771a726 / SHA256
 `ccdaf8861819ec3dfb6e92208904dba5f989d79f49d176289f69e265be2e8057`
-is installed and backend-validated. Gateway source36626d30 / SHA256
+was installed and backend-validated before the successor above. Gateway source36626d30 / SHA256
 `d3ed07f473b28bbb46596a619349d933edd6c166b7af10dd42f9821e4ba3048c`
 is unchanged. Official backup/rollback:
 `/var/lib/kuno-strata-parity-native-20261020`, previous workerfb31e124.
@@ -202,7 +251,7 @@ was confirmed after the failed trials as well.
   inspection denial, ordinary Ollama and actual physical recovery pass. A root
   build overlapped part of staged execution; do not claim a decode speed gain
   from those timings. An exact-hash official installer is prepared and separately
-  reviewed, but this artifact is not installed yet.
+  reviewed; the official transaction and actual installed checks above now pass.
 - Opt-in paired-cell QK attentiona814962d reuses the same query vectors across
   two original selected cells. Ten actual source/Naga/SPIR-V CPU controls pass
   both enabled and disabled; original scalar/math oracles remain unchanged.

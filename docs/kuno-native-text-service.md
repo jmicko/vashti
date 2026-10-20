@@ -756,3 +756,24 @@ Actual installed public repeated code/identity/mount checks pass: cold load
 Actual nonroot worker, swap/core0, write_bytes0, denied inspection, zero OOM/new
 GPU faults and healthy services/admission are confirmed. Experimental matrix
 variants remain uninstalled; no new Vashti browser/image QA or release is claimed.
+
+
+## Installed native32 prompt improvement — 2026-10-20
+
+Worker3fffc266 / SHAeac78ce0 replaces0771a726 / SHAccdaf886 through the unchanged
+image-enabled gateway36626d30 / SHAd3ed07f4. Backup/official restore transaction:
+`/var/lib/kuno-strata-parity-native-wide32-20261020`. Full configuration and
+root-enrolled original model identities remain unchanged. Exact artifacts and
+acceptance are in [the active backend guide](kuno-strata-parity-goal.md#accepted-native32-installation).
+
+Clean repeated4245-token prompt12.4373 ->11.1474s, first14.1743 ->12.9623s.
+All103 actual numerical controls,402/144 offline layouts, terminal recovery, full
+tools/MAX8/semantic/privacy and installed-service gates pass. Installed public
+semantic repeats remain identical/complete501 outputs and155 cases each. Warm
+35-token prefix1.0908s and15.0813s decode (~33.22 output tokens/s) are no new
+decode gain. Cold load101.0112s remains slow. Nonroot/model mount, swap/core0,
+write_bytes0, denied inspection, zero OOM/driver faults and healthy services pass.
+
+There is no API, wire, setting, model-name or Vashti change. No browser/image
+acceptance or release is claimed. The later paired-QK/descriptor-batch candidate
+is not installed; it keeps the original numerical, owner and recovery gates.
