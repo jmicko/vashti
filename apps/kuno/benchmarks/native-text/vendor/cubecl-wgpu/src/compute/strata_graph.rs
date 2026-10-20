@@ -12,6 +12,8 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 use wgpu::naga;
+#[path = "strata_descriptors.rs"]
+mod descriptors;
 
 static PROFILE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub fn set_native_strata_profile_active(active: bool) {
@@ -2131,6 +2133,95 @@ impl Graph {
         }
         self.execute(true, None, false)
     }
+    /// Prepare only fresh, never-bound sets for one bounded ORIGINAL-node
+    /// window. Recording still owns the pool/resources through its real fence;
+    /// no set is cached, recycled, updated after use or granted completion here.
+    fn fresh_descriptors(
+        &self,
+        nodes: &[Node],
+        pool: vk::DescriptorPool,
+        retained_metadata: usize,
+    ) -> Result<descriptors::Batch, ServerError> {
+        let plan = descriptors::Plan::new(
+            nodes.iter().map(|n| match n.dispatch {
+                Dispatch::Copy | Dispatch::Fill => None,
+                _ => Some(n.resources.len()),
+            }),
+            retained_metadata,
+        )
+        .map_err(fault)?;
+        let mut layouts = Vec::with_capacity(plan.set_count());
+        let mut infos = Vec::with_capacity(plan.binding_count());
+        let mut types = Vec::with_capacity(plan.binding_count());
+        // All actual layouts and full owner intervals are checked before the
+        // bulk allocation. Finish infos before borrowing any of its pointers.
+        for (index, n) in nodes.iter().enumerate() {
+            if plan.set_index(index).map_err(fault)?.is_none() {
+                continue;
+            }
+            let p = self
+                .pipelines
+                .get(
+                    n.pipeline
+                        .as_ref()
+                        .ok_or_else(|| fault("native descriptor compute identity"))?,
+                )
+                .ok_or_else(|| fault("native descriptor original pipeline"))?;
+            if n.resources.len() != p.program.bindings.len()
+                || plan.binding_range(index).map_err(fault)?.start != infos.len()
+            {
+                return Err(fault("native descriptor original binding extent"));
+            }
+            layouts.push(p.set_layout);
+            for (binding, r) in n.resources.iter().enumerate() {
+                if r.size == 0
+                    || r.offset
+                        .checked_add(r.size)
+                        .is_none_or(|end| end > r.buffer.size())
+                {
+                    return Err(fault("native descriptor actual owner extent"));
+                }
+                infos.push(
+                    vk::DescriptorBufferInfo::default()
+                        .buffer(raw_buffer(r)?)
+                        .offset(r.offset)
+                        .range(r.size),
+                );
+                types.push(p.program.bindings[binding]);
+            }
+        }
+        if layouts.len() != plan.set_count() || infos.len() != plan.binding_count() {
+            return Err(fault("native descriptor complete window inventory"));
+        }
+        let sets = if layouts.is_empty() {
+            Vec::new()
+        } else {
+            unsafe {
+                self.device.allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::default()
+                        .descriptor_pool(pool)
+                        .set_layouts(&layouts),
+                )
+            }
+            .map_err(|_| fault("native graph descriptor allocation"))?
+        };
+        // Pool ownership was transferred to Recording before this fallible
+        // operation. On any failure the original rolling guard still waits or
+        // quarantines real submitted users before the pool can be destroyed.
+        if sets.len() != plan.set_count() || sets.capacity() > descriptors::NODE_WINDOW {
+            return Err(fault("native descriptor actual allocated inventory"));
+        }
+        let writes = plan.writes(&sets, &infos, &types).map_err(fault)?;
+        if writes.len() != plan.binding_count() {
+            return Err(fault("native descriptor complete write inventory"));
+        }
+        if !writes.is_empty() {
+            // Only new sets; no descriptor already named by any submitted or
+            // recorded command is ever changed. Binding order/ranges are exact.
+            unsafe { self.device.update_descriptor_sets(&writes, &[]) };
+        }
+        descriptors::Batch::new(plan, sets).map_err(fault)
+    }
     pub(crate) fn execute(
         &mut self,
         wait: bool,
@@ -2399,7 +2490,7 @@ impl Graph {
                 total.checked_add(r.metadata_bytes()?)
             })
             .ok_or_else(|| fault("native queue metadata overflow"))?;
-        if metadata > 64 * 1024 * 1024 {
+        if metadata > descriptors::METADATA_CAP {
             return Err(fault("native queue retained metadata capacity"));
         }
         self.next_recording = self
@@ -2488,7 +2579,18 @@ impl Graph {
         }
         let mut previous: [HashMap<vk::Buffer, vk::AccessFlags>; 3] = Default::default();
         let mut segment = 0usize;
+        let mut fresh_descriptors = None;
         for (index, n) in self.nodes.iter().enumerate() {
+            if index.is_multiple_of(descriptors::NODE_WINDOW) {
+                // Drop only the previous host handle/index vectors. Vulkan
+                // sets remain pool-owned through the original terminal fence.
+                drop(fresh_descriptors.take());
+                fresh_descriptors = Some(self.fresh_descriptors(
+                    &self.nodes[index..(index + descriptors::NODE_WINDOW).min(self.nodes.len())],
+                    self.recordings.last().unwrap().descriptors,
+                    metadata,
+                )?);
+            }
             let work = &self.recordings.last().unwrap().work;
             let next = work.plan.node_segments[index];
             if next != segment {
@@ -2601,39 +2703,12 @@ impl Graph {
                 .pipeline
                 .as_ref()
                 .ok_or_else(|| fault("native graph compute identity"))?];
-            let layouts = [p.set_layout];
-            let set = unsafe {
-                self.device.allocate_descriptor_sets(
-                    &vk::DescriptorSetAllocateInfo::default()
-                        .descriptor_pool(self.recordings.last().unwrap().descriptors)
-                        .set_layouts(&layouts),
-                )
-            }
-            .map_err(|_| fault("native graph descriptor allocation"))?[0];
-            let mut infos = Vec::with_capacity(n.resources.len());
-            for r in &n.resources {
-                let h = unsafe { r.buffer.as_hal::<wgpu::hal::api::Vulkan>() }
-                    .ok_or_else(|| fault("native graph non-Vulkan buffer"))?;
-                infos.push(
-                    vk::DescriptorBufferInfo::default()
-                        .buffer(unsafe { h.raw_buffer_handle() })
-                        .offset(r.offset)
-                        .range(r.size),
-                );
-            }
-            let writes = infos
-                .iter()
-                .enumerate()
-                .map(|(i, b)| {
-                    vk::WriteDescriptorSet::default()
-                        .dst_set(set)
-                        .dst_binding(i as u32)
-                        .descriptor_type(p.program.bindings[i])
-                        .buffer_info(std::slice::from_ref(b))
-                })
-                .collect::<Vec<_>>();
+            let set = fresh_descriptors
+                .as_ref()
+                .ok_or_else(|| fault("native descriptor fresh window missing"))?
+                .set(index % descriptors::NODE_WINDOW)
+                .map_err(fault)?;
             unsafe {
-                self.device.update_descriptor_sets(&writes, &[]);
                 self.device.cmd_bind_pipeline(
                     self.command,
                     vk::PipelineBindPoint::COMPUTE,
