@@ -53,6 +53,15 @@ Release/offline/original129 GPU/full-model/performance acceptance is pending.
 See [the exact connected contract](kuno-native-compute-intervals.md#connected-sealed-manifest-global-scopes-and-execution-only-war).
 It is not selected or installed, and requires no Vashti/API change.
 
+Sealed/global source065815af / SHA21446b89 now passes65 CPU,408/208 offline,
+all129 original GPU controls, complete requests with actual masks/calls proofs,
+graceful exit and physical recovery. Repeated profile11.9077s improves only
+modestly; no clean/staged/terminal or installation acceptance is claimed.
+Actual calls162,838 versus163,798 original remain near one per kernel.
+The next explicit connected candidate is command-buffer-owned push descriptors,
+with genuine extension/limit checks, full original binding writes and unchanged
+fallback, owner/fence/metadata/recovery/math rules; exact contract is in the guide.
+
 Exact code/artifact/receipt identities, tests, limitations and next gates are in
 [the synchronization guide](kuno-native-compute-intervals.md). Physical snapshot:
 Intel50,688,000B, NVIDIA compute0, faults0, all services200 and normal admission.

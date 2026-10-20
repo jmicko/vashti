@@ -21,8 +21,9 @@ pub(super) struct Plan {
     peak_bytes: usize,
 }
 impl Plan {
-    /// Exact production node order. None means original Copy/Fill, not a
-    /// missing compute descriptor; every compute node needs1..=32 bindings.
+    /// Exact production node order. None means original Copy/Fill or a
+    /// separately validated command-owned push layout. Fresh compute nodes
+    /// still require their complete original1..=32 bindings.
     pub(super) fn new(
         counts: impl IntoIterator<Item = Option<usize>>,
         retained_bytes: usize,
@@ -302,7 +303,7 @@ mod tests {
             .unwrap()
             .1;
         let capture = capture
-            .split_once("let accesses = self.node_accesses(n)?;")
+            .split_once("let copy = work.plan.segments[segment].copy;")
             .unwrap()
             .0;
         let mut previous = 0;

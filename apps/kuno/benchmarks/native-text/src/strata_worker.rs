@@ -108,6 +108,9 @@ fn run_mode(
     // not public-fixture authorization; LANGUAGE_PUBLIC_ONLY remains absent.
     unsafe {
         std::env::set_var("KUNO_STRATA_INTEL_CORE", "protected-worker");
+        if cfg!(feature = "strata-native-push-descriptors") {
+            std::env::set_var("KUNO_STRATA_PUSH_DESCRIPTORS", "command-owned");
+        }
         std::env::set_var(
             "KUNO_LAB_STATIC_CACHE_BYTES",
             (5u64 * 1024 * 1024 * 1024).to_string(),

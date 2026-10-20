@@ -1323,6 +1323,10 @@ impl PhysicalDeviceProperties {
             if self.supports_extension(khr::buffer_device_address::NAME) {
                 extensions.push(khr::buffer_device_address::NAME);
             }
+            if std::env::var("KUNO_STRATA_PUSH_DESCRIPTORS").as_deref() == Ok("command-owned")
+                && self.supports_extension(khr::push_descriptor::NAME) {
+                extensions.push(khr::push_descriptor::NAME);
+            }
         }
 
         // Require `VK_KHR_deferred_host_operations`, `VK_KHR_acceleration_structure` `VK_KHR_buffer_device_address` (for acceleration structures) and`VK_KHR_ray_query` if `EXPERIMENTAL_RAY_QUERY` was requested

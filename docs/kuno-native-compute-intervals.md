@@ -256,3 +256,74 @@ An integration compile caught an incomplete Option conversion for fallback;
 this was fixed before final CPU acceptance. No numerical GPU tolerance/reference
 was changed. Frozen release/offline/original129 GPU/full request/count/recovery
 and performance results are pending; no installation or speed claim yet.
+
+
+## Complete sealed/global candidate result (065815af)
+
+Source065815af9f7e1bfe3ed29b5663f669a09fec7bec / worker SHA256
+21446b898fcf8c7778ff610b544c0810b474273c437a50c724d95be0658b24f7,
+`strata-parity-sealed-global-20261020`, passes65 actual App CPU controls,
+408 ordinary/208 matrix offline layouts, all129 unchanged original numerical
+GPU controls, three complete requests, actual bulk/wide/tail/miss-ring/OR and
+new synchronization-path proofs, graceful exit and actual physical recovery.
+
+Load82.80644s, first/repeated4245 prefix12.69377/11.90766s. Repeated capture
+2.18639s, enqueue1.59215s, wait3.77171s, experts7.73099s, attention2.93840s.
+The preceding development repeat12.27180s improves modestly; installed clean
+11.14739s and Strata5.3515s remain faster. This is NOT a clean comparison,
+full staged/terminal acceptance, sustained decode result or installation claim.
+
+Actual long counts:164,182 compute nodes,431,700 original buffer entries,
+241,948 actual entries,189,272 sealed-mask data entries and52,676 execution-only
+entries. Original internal calls163,798 versus actual162,838: fewer entries
+has barely reduced call boundaries. Counters prove actual encoded work, not
+hardware flushes. Original root/data/queue/owner protections remain intact.
+Receipts `strata-parity-sealed-global-20261020-{operators,profile}`, profile
+`sealed-global-validation.json`, owned `strata-parity-sealed-global-public-summary-20261020.json`.
+Physical recovery16:03:46UTC: Intel50,688,000B, NVIDIA compute0, faults0,
+all three endpoints200 and normal inactive/unpaused admission/waiting0.
+Installed source3fffc266 stays selected. No API or Vashti changes.
+
+Next connected candidate: native command-buffer-owned push descriptors on
+actually supported/enabled Vulkan devices. Strata uses USM kernel parameters;
+Kuno currently allocates/updates/binds one fresh descriptor set per original
+compute node. Earlier leaf sampling includes driver memset/allocation costs,
+though this is not proof of a dominant cause. Preserve all existing complete
+pipeline components. Enable KHR_push_descriptor only for the explicit compiled
+native candidate; query the actual maxPushDescriptors. Each real native pipeline
+uses a push layout only if its complete original descriptor count fits; all
+others keep the existing fresh-set path. Fully write every descriptor before
+EVERY dispatch, including after command-buffer/queue boundaries, with identical
+raw buffer, offset, size, type, actual INFO epoch and Binding owners. Command
+buffers own their copied descriptor state through the original real fences,
+rolling recovery/quarantine, erasure and replay signatures. No descriptor is
+mutated after use. Keep full BDA declarations and all synchronization. Reserve
+fixed stack packing within the original64MiB metadata cap before any prefix.
+Count actual pushed/fresh dispatches in the compiled-public bridge. Verify the
+actual write packer, unsupported/count fallback, original129 controls, complete
+requests/recovery and only then timings; no gain is assumed.
+Primary contract: [Khronos push descriptors](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdPushDescriptorSet.html)
+and [actual device limit](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDevicePushDescriptorProperties.html).
+
+
+The complete push-descriptor candidate is now implemented behind explicit
+`strata-native-push-descriptors` / builder `--push-descriptors`. Private worker
+startup first scrubs inherited selectors, then enables only its compiled policy.
+Only the selected native device requests the actually supported KHR extension.
+Graph queries maxPushDescriptors, selects each genuine pipeline layout, writes
+all original bindings before every dispatch, and uses the unchanged fresh-set
+path otherwise. All-push recordings keep a tiny valid pool for original ownership;
+mixed recordings size pools for actual fresh nodes. Full resources, BDA reads,
+signatures, INFO/allocator owners, original queues and recovery stay intact.
+Fixed32-entry descriptor arrays are charged before any prefix inside64MiB.
+Actual pushed/fresh dispatch counters join the compiled-public post-sync bridge.
+
+All73 distinct actual App CPU controls pass (`native-push-descriptor-combined-cpu-20261020.log`):
+original65 plus three push-selector/real-write-packer/malformed-view controls and
+five original fresh-window/writes/budget/order controls, now included directly.
+An initial compile caught a usize/u64 counter mismatch and was corrected. The
+newly included original fresh-window source-order witness had a stale delimiter
+from the older whole-buffer encoder; it now ends at the real post-window Copy
+selection and keeps all original ordering assertions. No numerical reference,
+threshold or recovery condition was relaxed. Release/offline/original129 GPU/
+full request/count/recovery and measured results remain pending. Not installed.

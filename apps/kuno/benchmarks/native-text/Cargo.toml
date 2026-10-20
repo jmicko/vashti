@@ -75,6 +75,7 @@ strata-native-expert-bulk = ["strata-intel-core"]
 # One connected original-source miss-only transfer ring and release policy.
 strata-prefill-miss-ring = ["strata-native-expert-bulk"]
 strata-parallel-loading = ["strata-intel-core"]
+strata-native-push-descriptors = ["strata-intel-core"]
 # Fixed public completion check; changes only the harness request, not the engine.
 strata-public-cap-check = ["strata-intel-core"]
 # Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.

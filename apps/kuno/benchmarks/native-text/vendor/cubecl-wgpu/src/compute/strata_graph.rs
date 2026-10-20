@@ -24,6 +24,8 @@ mod capture_scratch;
 mod compute_barriers;
 #[path = "strata_descriptors.rs"]
 mod descriptors;
+#[path = "strata_push_descriptors.rs"]
+mod push_descriptors;
 #[path = "strata_transfer_barriers.rs"]
 mod transfer_barriers;
 
@@ -120,9 +122,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 8] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 8];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 8] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 10] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 10];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 10] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -599,6 +601,7 @@ struct Pipeline {
     layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     program: Arc<Program>,
+    push_descriptors: bool,
 }
 #[derive(Debug)]
 struct Node {
@@ -626,6 +629,7 @@ struct ComputeQueue {
 pub(crate) struct Graph {
     identity: u64,
     program_limits: ProgramDeviceLimits,
+    push_descriptors: Option<(ash::khr::push_descriptor::Device, u32)>,
     timestamp_period: f64,
     timestamp_bits: u32,
     compute_queues: [ComputeQueue; 2],
@@ -955,6 +959,30 @@ impl Graph {
                 .raw_instance()
                 .get_physical_device_properties2(h.raw_physical_device(), &mut props);
         }
+        let push_descriptors = if h
+            .enabled_device_extensions()
+            .contains(&ash::khr::push_descriptor::NAME)
+            && std::env::var("KUNO_STRATA_PUSH_DESCRIPTORS").as_deref() == Ok("command-owned")
+        {
+            let mut limits = vk::PhysicalDevicePushDescriptorPropertiesKHR::default();
+            let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut limits);
+            unsafe {
+                h.shared_instance()
+                    .raw_instance()
+                    .get_physical_device_properties2(h.raw_physical_device(), &mut properties);
+            }
+            (limits.max_push_descriptors > 0).then(|| {
+                (
+                    ash::khr::push_descriptor::Device::new(
+                        h.shared_instance().raw_instance(),
+                        h.raw_device(),
+                    ),
+                    limits.max_push_descriptors,
+                )
+            })
+        } else {
+            None
+        };
         let timestamp_period = props.properties.limits.timestamp_period as f64;
         let physical_limits = props.properties.limits;
         let timestamp_bits = unsafe {
@@ -1025,20 +1053,23 @@ impl Graph {
             )
         }
         .map_err(|_| fault("native graph command pool"))?;
+        // With the full original 32-binding capacity covered, no native set
+        // allocation is needed. Keep a tiny valid pool for Recording ownership.
+        let all_push = push_descriptors.as_ref().is_some_and(|(_, n)| *n >= 32);
         let sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 262144,
+                descriptor_count: if all_push { 1 } else { 262144 },
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 32768,
+                descriptor_count: if all_push { 1 } else { 32768 },
             },
         ];
         let descriptors = match unsafe {
             d.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(32768)
+                    .max_sets(if all_push { 1 } else { 32768 })
                     .pool_sizes(&sizes),
                 None,
             )
@@ -1119,6 +1150,7 @@ impl Graph {
         Ok(Self {
             identity,
             program_limits,
+            push_descriptors,
             timestamp_period,
             timestamp_bits,
             compute_queues: [
@@ -1223,9 +1255,19 @@ impl Graph {
                         .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 })
                 .collect::<Vec<_>>();
+            let push = self
+                .push_descriptors
+                .as_ref()
+                .is_some_and(|(_, max)| push_descriptors::selected(true, *max, p.bindings.len()));
             let set_layout = match unsafe {
                 self.device.create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                    &vk::DescriptorSetLayoutCreateInfo::default()
+                        .bindings(&bindings)
+                        .flags(if push {
+                            vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR
+                        } else {
+                            vk::DescriptorSetLayoutCreateFlags::empty()
+                        }),
                     None,
                 )
             } {
@@ -1292,6 +1334,7 @@ impl Graph {
                     layout,
                     pipeline: pipeline_native,
                     program: p,
+                    push_descriptors: push,
                 },
             );
         }
@@ -2285,6 +2328,13 @@ impl Graph {
         let plan = descriptors::Plan::new(
             nodes.iter().map(|n| match n.dispatch {
                 Dispatch::Copy | Dispatch::Fill => None,
+                _ if n
+                    .pipeline
+                    .as_ref()
+                    .is_some_and(|p| self.pipelines[p].push_descriptors) =>
+                {
+                    None
+                }
                 _ => Some(n.resources.len()),
             }),
             retained_metadata,
@@ -2543,11 +2593,13 @@ impl Graph {
                 )
             }
             .map_err(|_| fault("native graph replay pool"))?;
-            let storage = self
-                .nodes
-                .iter()
-                .map(|n| n.resources.len() as u32)
-                .sum::<u32>();
+            let fresh = self.nodes.iter().filter(|n| {
+                n.pipeline
+                    .as_ref()
+                    .is_some_and(|p| !self.pipelines[p].push_descriptors)
+            });
+            let set_count = fresh.clone().count();
+            let storage = fresh.map(|n| n.resources.len() as u32).sum::<u32>();
             let sizes = [
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
@@ -2555,13 +2607,13 @@ impl Graph {
                 },
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: self.nodes.len().max(1) as u32,
+                    descriptor_count: set_count.max(1) as u32,
                 },
             ];
             self.descriptors = unsafe {
                 self.device.create_descriptor_pool(
                     &vk::DescriptorPoolCreateInfo::default()
-                        .max_sets(self.nodes.len().max(1) as u32)
+                        .max_sets(set_count.max(1) as u32)
                         .pool_sizes(&sizes),
                     None,
                 )
@@ -2665,6 +2717,13 @@ impl Graph {
             .map_err(fault)?
             .checked_add(keys.metadata_bytes())
             .and_then(|n| n.checked_add(compute_scratch_bytes))
+            .and_then(|n| {
+                n.checked_add(if self.push_descriptors.is_some() {
+                    push_descriptors::STACK_BYTES
+                } else {
+                    0
+                })
+            })
             .ok_or_else(|| fault("native capture guarded metadata overflow"))?;
         let native = keys.acquire()?;
         let preparation_used = self
@@ -2950,6 +3009,8 @@ impl Graph {
         }
         let mut segment = 0usize;
         let mut fresh_descriptors = None;
+        let mut pushed_nodes = 0usize;
+        let mut fresh_nodes = 0usize;
         for (index, n) in self.nodes.iter().enumerate() {
             let work = &self.recordings.last().unwrap().work;
             let next = work.plan.node_segments[index];
@@ -3077,25 +3138,82 @@ impl Graph {
                 .pipeline
                 .as_ref()
                 .ok_or_else(|| fault("native graph compute identity"))?];
-            let set = fresh_descriptors
-                .as_ref()
-                .ok_or_else(|| fault("native descriptor fresh window missing"))?
-                .set(index % descriptors::NODE_WINDOW)
-                .map_err(fault)?;
+            let set = if p.push_descriptors {
+                None
+            } else {
+                Some(
+                    fresh_descriptors
+                        .as_ref()
+                        .ok_or_else(|| fault("native descriptor fresh window missing"))?
+                        .set(index % descriptors::NODE_WINDOW)
+                        .map_err(fault)?,
+                )
+            };
+            if p.push_descriptors {
+                // Re-write EVERY original descriptor, even after a new command
+                // buffer or incompatible layout. Vulkan copies these views into
+                // this command buffer; all original owners remain Recording-held.
+                let mut infos =
+                    [vk::DescriptorBufferInfo::default(); push_descriptors::MAX_BINDINGS];
+                if !push_descriptors::selected(
+                    true,
+                    self.push_descriptors
+                        .as_ref()
+                        .ok_or_else(|| fault("native push authority missing"))?
+                        .1,
+                    n.resources.len(),
+                ) || n.resources.len() != p.program.bindings.len()
+                {
+                    return Err(fault("native push original descriptor extent"));
+                }
+                for (i, r) in n.resources.iter().enumerate() {
+                    if r.size == 0
+                        || r.offset
+                            .checked_add(r.size)
+                            .is_none_or(|end| end > r.buffer.size())
+                    {
+                        return Err(fault("native push actual owner extent"));
+                    }
+                    infos[i] = vk::DescriptorBufferInfo::default()
+                        .buffer(native.get(r)?)
+                        .offset(r.offset)
+                        .range(r.size);
+                }
+                let writes =
+                    push_descriptors::writes(&infos[..n.resources.len()], &p.program.bindings)
+                        .map_err(fault)?;
+                unsafe {
+                    self.push_descriptors
+                        .as_ref()
+                        .unwrap()
+                        .0
+                        .cmd_push_descriptor_set(
+                            self.command,
+                            vk::PipelineBindPoint::COMPUTE,
+                            p.layout,
+                            0,
+                            &writes[..n.resources.len()],
+                        );
+                }
+                pushed_nodes += 1;
+            }
             unsafe {
                 self.device.cmd_bind_pipeline(
                     self.command,
                     vk::PipelineBindPoint::COMPUTE,
                     p.pipeline,
                 );
-                self.device.cmd_bind_descriptor_sets(
-                    self.command,
-                    vk::PipelineBindPoint::COMPUTE,
-                    p.layout,
-                    0,
-                    &[set],
-                    &[],
-                );
+                if let Some(set) = set {
+                    self.device.cmd_bind_descriptor_sets(
+                        self.command,
+                        vk::PipelineBindPoint::COMPUTE,
+                        p.layout,
+                        0,
+                        &[set],
+                        &[],
+                    );
+                    fresh_nodes += 1;
+                }
                 match &n.dispatch {
                     Dispatch::Direct(x, y, z) => self.device.cmd_dispatch(self.command, *x, *y, *z),
                     Dispatch::Indirect(r) => {
@@ -3134,6 +3252,8 @@ impl Graph {
             call_counts[1],
             call_counts[2],
             call_counts[3],
+            pushed_nodes,
+            fresh_nodes,
         ]) {
             total.fetch_add(amount as u64, std::sync::atomic::Ordering::Relaxed);
         }
