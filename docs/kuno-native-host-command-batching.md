@@ -69,3 +69,21 @@ Before selecting this candidate, the parent must run the combined original
 numeric controls, whole-model prompt correctness, actual injected rolling
 failure/fresh recovery, staged tools/MAX8/semantic/privacy acceptance and
 physical memory recovery. No performance, install or release is claimed here.
+
+## Read-only Mesa submission review (2026-10-20)
+
+Do not assume packing contiguous VkSubmitInfo records delays intermediate
+signals through runtime coalescing. Published upstream Mesa26.2.5
+`src/vulkan/runtime/vk_queue.c:423-434` explicitly rejects merging when the
+first submit signals and the next contains commands or waits. `vk_queue_merge_submit`
+then submits the prior original record before retaining the next. Every Kuno
+segment retains its own timeline signal, so this proposed runtime-merge story
+is contradicted by that source. No batching rollback or new GPU test was made
+from that speculation. This is a source finding, not a direct hardware timeline
+measurement or verification of every Kisak distro patch.
+
+Primary source: https://archive.mesa3d.org/mesa-26.2.5.tar.xz
+SHA256794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5.
+Only the two relevant MIT source files and provenance JSON remain under the
+artifact base `mesa-driver-source-20261020`; the temporary66MiB archive was
+removed. No driver/system setting or installed engine changed for this review.

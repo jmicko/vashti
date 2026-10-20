@@ -25,12 +25,14 @@ pub(super) struct Access {
     pub first: u64,
     pub bytes: u64,
     pub flags: vk::AccessFlags,
+    pub atomic_or: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Region {
     first: u64,
     end: u64,
     flags: vk::AccessFlags,
+    atomic_or: bool,
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Dependency {
@@ -46,6 +48,7 @@ pub(super) struct Plan {
     nodes: Vec<Range<usize>>,
     dependencies: Vec<Dependency>,
     candidates: usize,
+    proven_or_views: usize,
 }
 impl Plan {
     pub fn node(&self, index: usize) -> Result<&[Dependency], &'static str> {
@@ -63,6 +66,9 @@ impl Plan {
     }
     pub fn candidates(&self) -> usize {
         self.candidates
+    }
+    pub fn proven_or_views(&self) -> usize {
+        self.proven_or_views
     }
     pub fn metadata_bytes(&self) -> Result<usize, &'static str> {
         self.nodes
@@ -104,6 +110,7 @@ impl Recorder {
                 nodes: Vec::new(),
                 dependencies: Vec::new(),
                 candidates: 0,
+                proven_or_views: 0,
             },
             roots: Default::default(),
             region_capacity: 0,
@@ -193,10 +200,13 @@ impl Recorder {
                     || a.first.checked_add(a.bytes).is_none()
                     || a.flags.is_empty()
                     || !all_accesses().contains(a.flags)
+                    || a.atomic_or
+                        && a.flags != (vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
                 {
                     return Err("native compute barrier original view");
                 }
             }
+            self.plan.proven_or_views += accesses.iter().filter(|a| a.atomic_or).count();
             accesses.sort_unstable_by_key(|a| (a.buffer, a.first));
             let mut first = 0;
             while first < accesses.len() {
@@ -229,7 +239,8 @@ impl Recorder {
                             .skip_while(|r| r.end <= a.first)
                             .take_while(|r| r.first < a.first + a.bytes)
                         {
-                            hazard |= (r.flags | a.flags).intersects(writes());
+                            hazard |= (r.flags | a.flags).intersects(writes())
+                                && !(r.atomic_or && a.atomic_or);
                         }
                     }
                 }
@@ -313,6 +324,7 @@ impl Recorder {
                             first: a.first,
                             end: a.first + a.bytes,
                             flags: a.flags,
+                            atomic_or: a.atomic_or,
                         },
                         &mut self.regions,
                     )?;
@@ -369,11 +381,13 @@ fn cover(regions: &mut Vec<Region>, new: Region, total: &mut usize) -> Result<()
                     first: at,
                     end,
                     flags: new.flags,
+                    atomic_or: new.atomic_or,
                 },
                 total,
             )?;
         } else {
             regions[i].flags |= new.flags;
+            regions[i].atomic_or &= new.atomic_or;
         }
         at = regions[i].end;
         i += 1;
@@ -381,7 +395,11 @@ fn cover(regions: &mut Vec<Region>, new: Region, total: &mut usize) -> Result<()
     let mut keep = 0;
     for read in 0..regions.len() {
         let r = regions[read];
-        if keep > 0 && regions[keep - 1].end == r.first && regions[keep - 1].flags == r.flags {
+        if keep > 0
+            && regions[keep - 1].end == r.first
+            && regions[keep - 1].flags == r.flags
+            && regions[keep - 1].atomic_or == r.atomic_or
+        {
             regions[keep - 1].end = r.end;
         } else {
             regions[keep] = r;
@@ -401,6 +419,7 @@ mod tests {
             first,
             bytes,
             flags,
+            atomic_or: false,
         }
     }
     #[test]
@@ -504,12 +523,140 @@ mod tests {
         assert_eq!(p.finish().unwrap().nodes.len(), N);
     }
     #[test]
+    fn mixed_atomic_and_non_atomic_views_match_a_byte_oracle_on_all_three_queues() {
+        let mut p = Recorder::new(2048, 8 << 20).unwrap();
+        let mut flags = [[[0u32; 64]; 4]; 3];
+        let mut atomic = [[[false; 64]; 4]; 3];
+        let mut seed = 0xabc876u64;
+        for index in 0..2048 {
+            let mut random = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            };
+            let q = (random() % 3) as usize;
+            let mut input = Vec::new();
+            let mut current = [[0u32; 64]; 4];
+            let mut is_or = [[false; 64]; 4];
+            for _ in 0..(random() % 6 + 1) {
+                let b = (random() % 4) as usize;
+                let first = (random() % 60) as usize;
+                let len = (random() % 4 + 1) as usize;
+                let mode = random() % 4;
+                let f = match mode {
+                    0 => vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+                    1 => vk::AccessFlags::SHADER_READ,
+                    2 => vk::AccessFlags::TRANSFER_WRITE,
+                    _ => vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+                };
+                let ao = mode == 0;
+                input.push(Access {
+                    buffer: b as u64 + 1,
+                    first: first as u64,
+                    bytes: len as u64,
+                    flags: f,
+                    atomic_or: ao,
+                });
+                for at in first..first + len {
+                    is_or[b][at] = if current[b][at] == 0 {
+                        ao
+                    } else {
+                        is_or[b][at] && ao
+                    };
+                    current[b][at] |= f.as_raw();
+                }
+            }
+            p.push(q, Some(&mut input)).unwrap();
+            let actual = p.plan.node(index).unwrap();
+            for b in 0..4 {
+                let hazard = (0..64).any(|at| {
+                    flags[q][b][at] != 0
+                        && current[b][at] != 0
+                        && (flags[q][b][at] | current[b][at]) & writes().as_raw() != 0
+                        && !(atomic[q][b][at] && is_or[b][at])
+                });
+                let found = actual
+                    .iter()
+                    .filter(|d| d.buffer == b as u64 + 1)
+                    .collect::<Vec<_>>();
+                assert_eq!(found.len(), usize::from(hazard));
+                if hazard {
+                    assert_eq!(
+                        found[0].before.as_raw(),
+                        flags[q][b].iter().fold(0, |a, b| a | *b)
+                    );
+                    flags[q][b] = [0; 64];
+                    atomic[q][b] = [false; 64];
+                }
+                for at in 0..64 {
+                    if current[b][at] != 0 {
+                        atomic[q][b][at] = if flags[q][b][at] == 0 {
+                            is_or[b][at]
+                        } else {
+                            atomic[q][b][at] && is_or[b][at]
+                        };
+                        flags[q][b][at] |= current[b][at];
+                    }
+                }
+            }
+        }
+        assert!(p.finish().unwrap().proven_or_views() > 0);
+    }
+    #[test]
+    fn proven_or_never_bypasses_clear_observation_or_a_non_atomic_alias() {
+        let rw = vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE;
+        let atomic = || Access {
+            buffer: 1,
+            first: 0,
+            bytes: 4,
+            flags: rw,
+            atomic_or: true,
+        };
+        let mut p = Recorder::new(11, 1 << 20).unwrap();
+        p.push(0, Some(&mut [a(1, 0, 4, vk::AccessFlags::TRANSFER_WRITE)]))
+            .unwrap();
+        p.push(0, Some(&mut [atomic()])).unwrap();
+        p.push(0, Some(&mut [atomic()])).unwrap();
+        p.push(0, Some(&mut [a(1, 0, 4, vk::AccessFlags::SHADER_READ)]))
+            .unwrap();
+        p.push(0, Some(&mut [atomic()])).unwrap();
+        p.push(
+            0,
+            Some(&mut [atomic(), a(1, 0, 4, vk::AccessFlags::SHADER_READ)]),
+        )
+        .unwrap();
+        p.push(0, Some(&mut [atomic()])).unwrap();
+        p.push(0, Some(&mut [atomic()])).unwrap();
+        p.push(1, None).unwrap();
+        p.push(0, Some(&mut [a(1, 0, 4, vk::AccessFlags::SHADER_WRITE)]))
+            .unwrap();
+        p.push(0, Some(&mut [atomic()])).unwrap();
+        let p = p.finish().unwrap();
+        assert_eq!(
+            (0..11)
+                .map(|n| p.node(n).unwrap().len())
+                .collect::<Vec<_>>(),
+            [0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1]
+        );
+        assert_eq!(p.candidates(), 9);
+        let mut invalid = atomic();
+        invalid.flags = vk::AccessFlags::SHADER_READ;
+        assert!(
+            Recorder::new(1, 1 << 20)
+                .unwrap()
+                .push(0, Some(&mut [invalid]))
+                .is_err()
+        );
+    }
+    #[test]
     fn interval_capacity_failure_cannot_reallocate_or_lose_the_previous_span() {
         let mut regions = Vec::with_capacity(1);
         regions.push(Region {
             first: 0,
             end: 8,
             flags: vk::AccessFlags::SHADER_READ,
+            atomic_or: false,
         });
         let pointer = regions.as_ptr();
         let mut total = 1;
@@ -519,7 +666,8 @@ mod tests {
                 Region {
                     first: 2,
                     end: 4,
-                    flags: writes()
+                    flags: writes(),
+                    atomic_or: false,
                 },
                 &mut total
             )

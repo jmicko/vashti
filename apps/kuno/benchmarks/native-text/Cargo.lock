@@ -1308,6 +1308,7 @@ dependencies = [
  "half",
  "kuno-text",
  "libc",
+ "rspirv",
  "serde",
  "serde_json",
  "sha2",

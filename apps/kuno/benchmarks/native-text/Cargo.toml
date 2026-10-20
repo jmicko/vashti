@@ -87,6 +87,7 @@ cpu-work-stealing = ["kuno-text/cpu-work-stealing-lab"]
 cpu-q8-two-pass = ["kuno-text/cpu-q8-two-pass"]
 
 [dev-dependencies]
+rspirv = "=0.12.0"
 tempfile = "3"
 
 [profile.release]

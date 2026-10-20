@@ -12,6 +12,8 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 use wgpu::naga;
+#[path = "strata_atomic_or.rs"]
+mod atomic_or;
 #[path = "strata_binding_owners.rs"]
 mod binding_owners;
 #[path = "strata_capture_buffers.rs"]
@@ -118,9 +120,9 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 3] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 3];
-pub fn native_strata_graph_compute_barrier_stats() -> [u64; 3] {
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 4] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 4];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 4] {
     std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
@@ -311,6 +313,7 @@ pub(crate) struct Program {
     words: Vec<u32>,
     bindings: Vec<vk::DescriptorType>,
     accesses: Vec<vk::AccessFlags>,
+    atomic_or: u32,
     entry: CString,
     required_subgroup: Option<u32>,
     shared_bytes: Option<u64>,
@@ -423,6 +426,19 @@ pub(crate) fn register_module(
     if required_subgroup != Some(32) {
         return Err(fault("native WGSL subgroup owner requirement"));
     }
+    let proven_or = atomic_or::mask(
+        &words,
+        bindings.iter().enumerate().fold(0u32, |mask, (index, b)| {
+            mask | if index < 32
+                && b.1 == vk::DescriptorType::STORAGE_BUFFER
+                && b.2 == (vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+            {
+                1u32 << index
+            } else {
+                0
+            }
+        }),
+    );
     let p = Arc::new(Program {
         name: "UnlabelledNativeOperator",
         words,
@@ -431,6 +447,7 @@ pub(crate) fn register_module(
         physical_reads: source.contains("STRATA_PHYSICAL_EXPERTS"),
         release_after: false,
         accesses: bindings.iter().map(|b| b.2).collect(),
+        atomic_or: proven_or,
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,
     });
@@ -511,11 +528,25 @@ pub(crate) fn register_spirv_module(
     if cooperative && required_subgroup != Some(16) {
         return Err(fault("native SPIRV cooperative subgroup geometry"));
     }
+    let proven_or = atomic_or::mask(
+        &words,
+        bindings.iter().enumerate().fold(0u32, |mask, (index, b)| {
+            mask | if index < 32
+                && *b == vk::DescriptorType::STORAGE_BUFFER
+                && accesses[index] == (vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+            {
+                1u32 << index
+            } else {
+                0
+            }
+        }),
+    );
     let program = Arc::new(Program {
         name: "UnlabelledNativeOperator",
         words,
         bindings,
         accesses,
+        atomic_or: proven_or,
         entry: CString::new(entry).map_err(|_| fault("native SPIRV entrypoint"))?,
         required_subgroup,
         shared_bytes: Some(
@@ -1374,29 +1405,34 @@ impl Graph {
     fn visit_node_bindings(
         &self,
         n: &Node,
-        mut visit: impl FnMut(&WgpuResource, vk::AccessFlags) -> Result<(), ServerError>,
+        mut visit: impl FnMut(&WgpuResource, vk::AccessFlags, bool) -> Result<(), ServerError>,
     ) -> Result<(), ServerError> {
         match n.dispatch {
             Dispatch::Copy => {
-                visit(&n.resources[0], vk::AccessFlags::TRANSFER_READ)?;
-                visit(&n.resources[1], vk::AccessFlags::TRANSFER_WRITE)?;
+                visit(&n.resources[0], vk::AccessFlags::TRANSFER_READ, false)?;
+                visit(&n.resources[1], vk::AccessFlags::TRANSFER_WRITE, false)?;
             }
-            Dispatch::Fill => visit(&n.resources[0], vk::AccessFlags::TRANSFER_WRITE)?,
+            Dispatch::Fill => visit(&n.resources[0], vk::AccessFlags::TRANSFER_WRITE, false)?,
             _ => {
                 let p = &self.pipelines[n
                     .pipeline
                     .as_ref()
                     .ok_or_else(|| fault("native graph compute identity"))?];
-                for (r, access) in n.resources.iter().zip(&p.program.accesses) {
+                for (index, (r, access)) in n.resources.iter().zip(&p.program.accesses).enumerate()
+                {
                     if !access.is_empty() {
-                        visit(r, *access)?;
+                        visit(
+                            r,
+                            *access,
+                            index < 32 && p.program.atomic_or & (1u32 << index) != 0,
+                        )?;
                     }
                 }
                 for r in &n.read_dependencies {
-                    visit(r, vk::AccessFlags::SHADER_READ)?;
+                    visit(r, vk::AccessFlags::SHADER_READ, false)?;
                 }
                 if let Dispatch::Indirect(r) = &n.dispatch {
-                    visit(r, vk::AccessFlags::INDIRECT_COMMAND_READ)?;
+                    visit(r, vk::AccessFlags::INDIRECT_COMMAND_READ, false)?;
                 }
             }
         }
@@ -1409,7 +1445,7 @@ impl Graph {
         native: &capture_buffers::Guarded<'_>,
     ) -> Result<(), ServerError> {
         accesses.clear();
-        self.visit_node_bindings(n, |r, access| {
+        self.visit_node_bindings(n, |r, access, _| {
             *accesses.entry(native.get(r)?).or_default() |= access;
             Ok(())
         })
@@ -1421,7 +1457,7 @@ impl Graph {
         native: Option<&capture_buffers::Guarded<'_>>,
     ) -> Result<(), ServerError> {
         accesses.clear();
-        self.visit_node_bindings(n, |r, access| {
+        self.visit_node_bindings(n, |r, access, _| {
             if r.size == 0
                 || r.offset
                     .checked_add(r.size)
@@ -1450,7 +1486,7 @@ impl Graph {
         native: &capture_buffers::Guarded<'_>,
     ) -> Result<(), ServerError> {
         accesses.clear();
-        self.visit_node_bindings(n, |r, flags| {
+        self.visit_node_bindings(n, |r, flags, atomic_or| {
             if r.size == 0
                 || r.offset
                     .checked_add(r.size)
@@ -1463,6 +1499,7 @@ impl Graph {
                 first: r.offset,
                 bytes: r.size,
                 flags,
+                atomic_or,
             });
             Ok(())
         })
@@ -3037,6 +3074,7 @@ impl Graph {
             self.nodes.len() - copy_count,
             compute.candidates(),
             compute.count(),
+            compute.proven_or_views(),
         ]) {
             total.fetch_add(amount as u64, std::sync::atomic::Ordering::Relaxed);
         }

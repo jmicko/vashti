@@ -75,6 +75,9 @@ mod strata_parameter_tests;
 #[cfg(test)]
 mod strata_capture_buffer_tests;
 #[cfg(test)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_atomic_or.rs"]
+mod strata_atomic_or_controls;
+#[cfg(test)]
 #[allow(dead_code)]
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_compute_barriers.rs"]
 mod strata_compute_barrier_controls;
