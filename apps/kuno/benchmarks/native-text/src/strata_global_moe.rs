@@ -558,7 +558,14 @@ impl Workspace {
                     crate::strata_prompt::groups::LOGICAL + count * 10,
                 )
             })?;
-            let map = crate::strata_prompt::groups::group(&raw, count)?;
+            let map = crate::strata_prompt::groups::group(&raw, count).map_err(|error| {
+                // Fixed compiled-public diagnostics only. No input, route,
+                // expert ID, tensor value or private-worker observation.
+                if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
+                    eprintln!("public_prefill_phase scratch_group_failure_layer_{layer}");
+                }
+                error
+            })?;
             let mut bytes = Zeroizing::new(Vec::with_capacity(
                 crate::strata_prompt::groups::MAP_WORDS * 4,
             ));

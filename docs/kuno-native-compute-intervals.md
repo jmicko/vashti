@@ -1031,3 +1031,21 @@ failed their existing scratch/profile expectations. They remain unchanged and
 the full failed log`native-expert-scratch-new-cpu-20261020.log` is retained.
 The117-control pass is an exact named set, NOT a whole-suite pass or a claim
 that those four unrelated configurations were fixed. No GPU acceptance yet.
+
+
+Frozen76836aa8 / SHA36efb2eb (`strata-parity-expert-scratch-20261020`)
+passes117 final-source CPU controls,408/208 offline and all129 original GPU
+controls. The first whole-model request FAILS the unchanged raw route-header
+guard in`strata_prompt_groups.rs:37`; no prompt timing or full producer
+acceptance exists. Do not install or remove that guard. The original wrapper
+records compute_passed=false and physical_recovery_passed=true. Actual
+19:08:55UTC recovery confirms Intel50,688,000B, NVIDIA compute0, driver faults0,
+all services200 and normal inactive/unpaused admission/waiting0. No GPU wedge.
+Swap0/core0 were checked from the actual wrapper cgroup/rlimit before any worker
+and recorded in`strata-parity-expert-scratch-20261020-protection.json`.
+
+Next diagnosis retains the ENTIRE scratch candidate and original numerical/
+header guards. A fixed-public-only static phase marker reports the failing
+model layer without copying tensor, route/expert IDs, request/response bytes or
+private state. No private worker selects this entry/diagnostic. This is a
+correctness investigation, not a speed result or partial feature rollback.

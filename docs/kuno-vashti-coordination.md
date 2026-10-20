@@ -36,6 +36,12 @@ Exact contract and pending gates:
 [disjoint expert scratch](kuno-native-compute-intervals.md#completed-uniform-attention-and-disjoint-expert-scratch-candidate).
 No API, protocol/configuration/model identity or Vashti change. Installed worker
 and gateway are unchanged; this is an explicit unselected backend candidate.
+First frozen76836aa8/SHA36efb2eb passes117 CPU,408/208 offline and129 original
+GPU controls but FAILS the first whole-model raw route-header guard. No timing
+or full producer acceptance; not installed. Actual19:08:55UTC recovery is clear
+and healthy. Retain every component/guard and diagnose the exact failing layer
+with compiled-public-only phase labels; no private content or GPU fault claim.
+
 
 **Active complete uniform-QK candidate (2026-10-20).**
 
