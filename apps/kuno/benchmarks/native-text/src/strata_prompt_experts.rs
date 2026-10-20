@@ -514,6 +514,88 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     .collect()
 }
 
+#[cfg(all(test, feature = "strata-intel-core"))]
+mod bulk_metadata_tests {
+    use super::*;
+    use cubecl_runtime::{
+        kernel::{CubeKernel, KernelDefinition, KernelTask},
+        server::native_expert_batch::native_strata_expert_operator,
+    };
+
+    fn boxed(op: Op) -> Box<dyn CubeTask<AutoCompiler>> {
+        Box::new(op)
+    }
+
+    #[test]
+    fn original_boxed_producer_metadata_passes_the_strict_six_operator_gate() {
+        for gu in [q::IQ2_S, q::IQ3_S, q::IQ3_XXS, q::IQ4_XS] {
+            for down in [q::IQ4_NL, q::Q2_0] {
+                for matrix in crate::strata_matrix::expert_metadata_test_names() {
+                    // These are the actual custom producers, behind the same
+                    // Box<dyn CubeTask> boundary consumed by WgpuServer.
+                    let gather = boxed(Op::Gather);
+                    let gu = boxed(Op::Dequant { dtype: gu, down: false });
+                    let down = boxed(Op::Dequant { dtype: down, down: true });
+                    let activate = boxed(Op::Activate);
+                    let sequence = [
+                        (gather.name(), gather.native_release_after()),
+                        (gu.name(), gu.native_release_after()),
+                        (down.name(), down.native_release_after()),
+                        (matrix, false),
+                        (activate.name(), activate.native_release_after()),
+                        (matrix, false),
+                    ];
+                    assert_eq!(sequence.map(|(_, release)| release), [false, false, true, false, false, false]);
+                    for (index, (name, release)) in sequence.into_iter().enumerate() {
+                        assert!(native_strata_expert_operator(name, release, index));
+                        assert!(native_strata_expert_operator(name, release, index + 6));
+                        assert!(!native_strata_expert_operator(name, !release, index));
+                        assert!(!native_strata_expert_operator("StrataPromptExpertGemm", release, index));
+                        let wrong = sequence[(index + 1) % 6];
+                        assert!(!native_strata_expert_operator(wrong.0, wrong.1, index));
+                    }
+                    let id = down.id().native_release_boundary(down.native_release_after());
+                    assert_eq!(id, down.as_ref().id().native_release_boundary(true));
+                    assert_ne!(id, down.id().native_release_boundary(false));
+                }
+            }
+        }
+    }
+
+    /// Exercise the real KernelTask adapter too, with original Op metadata.
+    /// Defining/compiling a GPU kernel is intentionally outside this CPU test.
+    struct SourceMetadata(Op);
+    impl KernelMetadata for SourceMetadata {
+        fn name(&self) -> &'static str { self.0.name() }
+        fn native_release_after(&self) -> bool { self.0.native_release_after() }
+        fn id(&self) -> KernelId { self.0.id() }
+        fn address_type(&self) -> StorageType { self.0.address_type() }
+    }
+    impl CubeKernel for SourceMetadata {
+        fn define(&self) -> KernelDefinition {
+            panic!("metadata forwarding must not compile a kernel")
+        }
+    }
+    #[test]
+    fn real_kernel_task_and_box_preserve_original_release_identity() {
+        for op in [
+            Op::Gather,
+            Op::Dequant { dtype: q::IQ3_S, down: false },
+            Op::Dequant { dtype: q::IQ4_NL, down: true },
+            Op::Activate,
+        ] {
+            let task = KernelTask::<AutoCompiler, _>::new(SourceMetadata(op));
+            assert_eq!(task.name(), op.name());
+            assert_eq!(task.native_release_after(), op.native_release_after());
+            let boxed: Box<dyn CubeTask<AutoCompiler>> = Box::new(task);
+            assert_eq!(boxed.name(), op.name());
+            assert_eq!(boxed.native_release_after(), op.native_release_after());
+            assert_eq!(boxed.id().native_release_boundary(boxed.native_release_after()),
+                op.id().native_release_boundary(op.native_release_after()));
+        }
+    }
+}
+
 #[cfg(test)]
 mod vector_dequant_tests {
     use super::*;

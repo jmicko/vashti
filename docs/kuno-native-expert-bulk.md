@@ -128,6 +128,25 @@ controls pass (32), including the connected parent reservation. The correspondin
 files are in the same isolated evidence directory. This repair still needs the
 complete real fresh/reuse model, physical cleanup and public-counter gates.
 
+The fresh-scope connected retry then reached the unchanged strict six-operator
+gate and rejected the final dequant release marker. The actual producer order
+was correct. `KernelMetadata for Box<dyn CubeTask>` forwarded name/ID/address
+metadata but omitted `native_release_after`, so calls on the box returned the
+default `false` rather than the original DOWN-dequant `true`. Both the Box and
+KernelTask adapters now forward that original flag. This also restores the
+intended release boundary/cache identity in the ordinary pipeline path; it does
+not relax the batch sequence or change expert arithmetic. The same exact
+six-slot predicate is shared with producer CPU coverage: boxed real Ops across
+all supported quant pairs and actual generated small/macro/narrow expert type
+identities, wrong release/adjacent-order/foreign-kernel negatives, and real
+KernelTask-to-Box propagation. No GPU is constructed by those controls.
+Both producer controls and the original release-cache identity control pass;
+the complete worker typechecks. Evidence files are
+`native-expert-box-metadata-controls.log`,
+`native-expert-box-original-release-controls.log` and
+`native-expert-box-metadata-check.log` in the same isolated directory. The
+corrected full pipeline still needs actual model/physical acceptance.
+
 Actual GPU arithmetic, full model execution, public selection counts, injected
 terminal recovery, clean timing, staged API/tool use, installation and physical
 recovery remain the integration task's acceptance gates. No GPU or service was

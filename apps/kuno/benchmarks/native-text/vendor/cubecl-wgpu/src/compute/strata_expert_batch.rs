@@ -6,6 +6,7 @@ use cubecl_runtime::server::{
     NativeStrataExpertCommand,
 };
 use hashbrown::HashMap as ExactMap;
+use cubecl_runtime::server::native_expert_batch::native_strata_expert_operator;
 
 const MAX_BINDINGS: usize = 4096;
 const MAX_PIPELINES: usize = 32;
@@ -22,21 +23,6 @@ fn key(binding: &Binding) -> Key {
 fn fault(reason: &'static str) -> ServerError {
     super::super::transient_io::fault(reason)
 }
-fn operator(name: &str, release: bool, index: usize) -> bool {
-    match index % 6 {
-        0 => name == "StrataPromptExpertGather" && !release,
-        1 => name == "StrataPromptExpertF16Image" && !release,
-        2 => name == "StrataPromptExpertF16Image" && release,
-        4 => name == "StrataPromptExpertF16Swiglu" && !release,
-        _ => {
-            (name.contains("::expert::Expert")
-                || name.contains("::expert_macro::ExpertMacro")
-                || name.contains("::expert_narrow::ExpertNarrow"))
-                && !release
-        }
-    }
-}
-
 impl WgpuServer {
     pub(super) fn native_expert_batch(
         &mut self,
@@ -178,7 +164,7 @@ impl WgpuServer {
                         let kernel = kernel
                             .take()
                             .ok_or_else(|| fault("native expert original kernel missing"))?;
-                        if !operator(kernel.name(), kernel.native_release_after(), launches) {
+                        if !native_strata_expert_operator(kernel.name(), kernel.native_release_after(), launches) {
                             return Err(fault("native expert original six-operator order"));
                         }
                         let mut id = kernel

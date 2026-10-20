@@ -17,6 +17,18 @@ mod numeric;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use numeric::cases as public_numeric;
 
+/// Actual generated producer types, without constructing a client/device. The
+/// generated KernelMetadata uses its type name; the batch gate checks exactly
+/// the same names after KernelTask/Box forwarding.
+#[cfg(all(test, feature = "strata-intel-core"))]
+pub(crate) fn expert_metadata_test_names() -> [&'static str; 3] {
+    [
+        core::any::type_name::<native::expert::Expert<WgpuRuntime>>(),
+        core::any::type_name::<native::expert_macro::ExpertMacro<WgpuRuntime>>(),
+        core::any::type_name::<native::expert_narrow::ExpertNarrow<WgpuRuntime>>(),
+    ]
+}
+
 #[cfg(feature = "strata-cubek-gemm")]
 pub(crate) fn public_expert_numeric(
     client: &ComputeClient<WgpuRuntime>,

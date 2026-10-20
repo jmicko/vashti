@@ -12,6 +12,25 @@ pub const NATIVE_EXPERT_BATCH_BYTES: usize = 8 * 1024 * 1024;
 /// The application must reserve this before collecting the first payload.
 pub const NATIVE_EXPERT_BATCH_HOST_BYTES: usize = 3 * NATIVE_EXPERT_BATCH_BYTES;
 
+/// The closed original six-operator family admitted by the native backend.
+/// HOST copies do not advance this compute-only index. Keep the actual final
+/// dequant release boundary; neither a missing release nor another kernel may
+/// stand in for the original producer's pipeline.
+pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
+    match index % 6 {
+        0 => name == "StrataPromptExpertGather" && !release,
+        1 => name == "StrataPromptExpertF16Image" && !release,
+        2 => name == "StrataPromptExpertF16Image" && release,
+        4 => name == "StrataPromptExpertF16Swiglu" && !release,
+        _ => {
+            (name.contains("::expert::Expert")
+                || name.contains("::expert_macro::ExpertMacro")
+                || name.contains("::expert_narrow::ExpertNarrow"))
+                && !release
+        }
+    }
+}
+
 /// Actual backend enqueue counts, never a GPU completion/acceptance receipt.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeStrataExpertBatchReceipt {

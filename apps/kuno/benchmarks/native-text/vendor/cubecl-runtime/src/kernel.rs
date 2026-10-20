@@ -207,6 +207,10 @@ impl<C: Compiler, K: CubeKernel> KernelMetadata for KernelTask<C, K> {
         self.kernel_definition.name()
     }
 
+    fn native_release_after(&self) -> bool {
+        self.kernel_definition.native_release_after()
+    }
+
     fn address_type(&self) -> StorageType {
         self.kernel_definition.address_type()
     }
@@ -221,6 +225,10 @@ impl<C: Compiler> KernelMetadata for Box<dyn CubeTask<C>> {
     // Deref and use existing name.
     fn name(&self) -> &'static str {
         self.as_ref().name()
+    }
+
+    fn native_release_after(&self) -> bool {
+        self.as_ref().native_release_after()
     }
 
     fn address_type(&self) -> StorageType {
