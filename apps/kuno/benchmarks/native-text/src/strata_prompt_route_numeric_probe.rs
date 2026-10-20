@@ -55,7 +55,15 @@ pub(crate) fn cases(
         if control == "bad_remap" {
             remap[layer * 512] = 512;
         }
-        let logit_id = arena.upload_f32(&source)?;
+        let logit_id = if control == "nan" {
+            // The ordinary float-upload admission correctly rejects NaNs.
+            // Only this compiled-public negative control supplies raw bits so
+            // the unchanged production GPU finite/fault guard is exercised.
+            let bits = Zeroizing::new(source.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+            arena.upload_u32(&bits)?
+        } else {
+            arena.upload_f32(&source)?
+        };
         let remap_id = arena.upload_u32(&remap)?;
         let map_id = arena.allocate_zeroed(groups::RAW_WORDS)?;
         let probability_id = arena.allocate_zeroed(groups::PROB_WORDS)?;
