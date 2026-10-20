@@ -172,37 +172,65 @@ mod native {
         k: usize,
         buffer: usize,
     ) {
-        let mut job = usize::cast_from(UNIT_POS);
-        while job < 256 {
-            // One8-half job is two legal four-element Vulkan vectors. Each
-            // row has eight jobs and each of64 lanes handles four A jobs.
-            let token = token_base + job / 8;
-            let col = k + (job % 8) * 8;
-            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
-            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
-            if token < count && col < columns {
-                // Host proves columns and weight_first multiples of4; kernel
-                // reduction dimensions are multiples of16. No partial vector.
-                lo = input[(token * columns + col) / 4];
-                hi = input[(token * columns + col) / 4 + 1];
+        // A full stage is uniform for the workgroup. Resolve that condition
+        // once, then expose the fixed per-lane jobs to the compiler. Publish
+        // each pair immediately; no register-first operand array stays live
+        // across the matrix products.
+        if token_base + 32 <= count && k + 64 <= columns {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let source = (token * columns + col) / 4;
+                a[buffer * 512 + job * 2] = input[source];
+                a[buffer * 512 + job * 2 + 1] = input[source + 1];
             }
-            a[buffer * 512 + job * 2] = lo;
-            a[buffer * 512 + job * 2 + 1] = hi;
-            job += 64;
+        } else {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+                let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+                if token < count && col < columns {
+                    // Genuine vector bindings and multiple-of16 reductions
+                    // guarantee both whole vectors are within the owner.
+                    let source = (token * columns + col) / 4;
+                    lo = input[source];
+                    hi = input[source + 1];
+                }
+                a[buffer * 512 + job * 2] = lo;
+                a[buffer * 512 + job * 2 + 1] = hi;
+            }
         }
-        job = usize::cast_from(UNIT_POS);
-        while job < 512 {
-            let row = row_base + job / 8;
-            let col = k + (job % 8) * 8;
-            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
-            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
-            if row < rows && col < columns {
-                lo = weight[(weight_first + row * columns + col) / 4];
-                hi = weight[(weight_first + row * columns + col) / 4 + 1];
+        if row_base + 64 <= rows && k + 64 <= columns {
+            #[unroll]
+            for round in 0..8usize {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let row = row_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let source = (weight_first + row * columns + col) / 4;
+                b[buffer * 1024 + job * 2] = weight[source];
+                b[buffer * 1024 + job * 2 + 1] = weight[source + 1];
             }
-            b[buffer * 1024 + job * 2] = lo;
-            b[buffer * 1024 + job * 2 + 1] = hi;
-            job += 64;
+        } else {
+            #[unroll]
+            for round in 0..8usize {
+                let job = usize::cast_from(UNIT_POS) + round * 64;
+                let row = row_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+                let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+                if row < rows && col < columns {
+                    let source = (weight_first + row * columns + col) / 4;
+                    lo = weight[source];
+                    hi = weight[source + 1];
+                }
+                b[buffer * 1024 + job * 2] = lo;
+                b[buffer * 1024 + job * 2 + 1] = hi;
+            }
         }
     }
 
@@ -338,8 +366,12 @@ mod native {
                     next,
                 );
             }
-            let mut inner = 0usize;
-            while inner < 64 {
+            // Expose all four ordered K16 groups together. This keeps the
+            // same four accumulators and exact reduction order, but avoids
+            // a runtime loop around the native matrix instructions.
+            #[unroll]
+            for step in 0..4usize {
+                let inner = step * 16;
                 if k + inner < columns {
                     let af = current * 512 + (subgroup / 2) * 256 + inner / 4;
                     let bf = current * 1024 + (subgroup % 2) * 512 + inner / 4;
@@ -355,7 +387,6 @@ mod native {
                     cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);
                     cmma::execute::<F, F, f32, f32>(&a1, &b1, &c3, &c3);
                 }
-                inner += 16;
             }
             // All old readers finish before either stage is reused. Every
             // next-stage write is visible before it becomes current. Loop
@@ -1019,6 +1050,9 @@ mod native {
                     let mut types = BTreeMap::new();
                     let mut pointers = BTreeMap::new();
                     let mut variables = BTreeMap::new();
+                    let mut function_variables = Vec::new();
+                    let mut loops = 0;
+                    let mut products = 0;
                     let mut bindings = BTreeMap::new();
                     let mut strides = BTreeMap::new();
                     let mut barriers = 0;
@@ -1038,6 +1072,9 @@ mod native {
                             }
                             59 => {
                                 variables.insert(args[1], args[0]);
+                                if args[2] == 7 {
+                                    function_variables.push(args[0]);
+                                }
                             }
                             71 if args.len() == 3 && args[1] == 33 => {
                                 bindings.insert(args[2], args[0]);
@@ -1046,6 +1083,8 @@ mod native {
                                 strides.insert(args[0], args[2]);
                             }
                             224 => barriers += 1,
+                            246 => loops += 1,
+                            4459 => products += 1,
                             _ => {}
                         }
                         at += count;
@@ -1064,10 +1103,19 @@ mod native {
                         assert_eq!(types[&element].0, 22);
                         assert_eq!(types[&element].1[0], 16);
                     }
-                    assert!(
-                        barriers >= 3,
+                    assert_eq!(
+                        barriers, 3,
                         "first-load, stage handoff and epilogue fences: {name}"
                     );
+                    assert_eq!(loops, 2, "only K64 and output loops: {name} mask{mask}");
+                    assert_eq!(products, 16, "four ordered K16 groups: {name} mask{mask}");
+                    for pointer in function_variables {
+                        let ty = pointers[&pointer];
+                        assert!(
+                            types.get(&ty).is_none_or(|(op, _)| !matches!(op, 28 | 29)),
+                            "no live register-first operand array: {name} mask{mask}"
+                        );
+                    }
                 }
             }
         }
@@ -1089,35 +1137,46 @@ mod native {
                                      b: &mut [Option<usize>]| {
                                         let mut writes_a = vec![0u8; 512];
                                         let mut writes_b = vec![0u8; 1024];
+                                        let full_a = token_base + 32 <= count && k + 64 <= columns;
+                                        let full_b = row_base + 64 <= rows && k + 64 <= columns;
                                         for lane in 0..64 {
-                                            for job in (lane..256).step_by(64) {
+                                            for round in 0..4 {
+                                                let job = lane + round * 64;
                                                 let t = token_base + job / 8;
                                                 let col = k + job % 8 * 8;
                                                 for half in 0..2 {
                                                     let i = job * 2 + half;
                                                     writes_a[i] += 1;
-                                                    a[buffer * 512 + i] =
-                                                        if t < count && col < columns {
-                                                            assert!(col + 7 < columns);
-                                                            Some((t * columns + col) / 4 + half)
-                                                        } else {
-                                                            None
-                                                        };
+                                                    a[buffer * 512 + i] = if full_a
+                                                        || (t < count && col < columns)
+                                                    {
+                                                        assert!(t < count && col + 7 < columns);
+                                                        let source = (t * columns + col) / 4 + half;
+                                                        assert!(source * 4 + 3 < count * columns);
+                                                        Some(source)
+                                                    } else {
+                                                        None
+                                                    };
                                                 }
                                             }
-                                            for job in (lane..512).step_by(64) {
+                                            for round in 0..8 {
+                                                let job = lane + round * 64;
                                                 let row = row_base + job / 8;
                                                 let col = k + job % 8 * 8;
                                                 for half in 0..2 {
                                                     let i = job * 2 + half;
                                                     writes_b[i] += 1;
-                                                    b[buffer * 1024 + i] =
-                                                        if row < rows && col < columns {
-                                                            assert!(col + 7 < columns);
-                                                            Some((row * columns + col) / 4 + half)
-                                                        } else {
-                                                            None
-                                                        };
+                                                    b[buffer * 1024 + i] = if full_b
+                                                        || (row < rows && col < columns)
+                                                    {
+                                                        assert!(row < rows && col + 7 < columns);
+                                                        let source =
+                                                            (row * columns + col) / 4 + half;
+                                                        assert!(source * 4 + 3 < rows * columns);
+                                                        Some(source)
+                                                    } else {
+                                                        None
+                                                    };
                                                 }
                                             }
                                         }

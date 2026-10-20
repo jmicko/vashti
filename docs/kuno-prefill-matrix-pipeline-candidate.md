@@ -88,3 +88,57 @@ coupled K64/vector/paired-shared-buffer implementation; it removes only the
 additional register-first successor. Numerical references, original owners,
 runtime guards, model/context and API remain unchanged. The exact recombined
 binary still needs its own complete acceptance before installation.
+
+
+## Fixed-stage unrolling and full-tile loads — 2026-10-20
+
+Candidate based on the installed selected K64 pipeline at032e2cdd. This keeps
+its complete32x64 tile, four ordered F32 accumulators per SIMD16 subgroup,
+paired operand stages,32KiB shared envelope, true vec4 FP16/BF16 bindings,
+original output layouts and all finite/fault/owner/status checks. It does not
+restore the slower register-first successor, alter the small-shape fallback,
+retain request content, or change any API or model representation.
+
+Pinned Strata calls the same logical expert products: gate/up
+`(ne,1280,2560)` and down `(ne,2560,640)` in
+`sycl/src/prefill/prefill.cpp:3978-3983`. Its oneMKL wrapper uses the original
+K-contiguous weights as transposed column-major A and K-contiguous input as
+nontransposed B (`sycl/src/prefill/gemm.dp.cpp:799-805`), with F32 accumulation.
+There is no missing caller-side transpose or different matrix size to copy.
+Kuno's down-status write already occurs only for output feature zero per route;
+it is not a whole-output duplicated store.
+
+The actual selected Kuno macro SPIR-V still contained seven runtime loops:
+initial A/B staging, next A/B staging, ordered K16 math, outer K64, and output.
+Only four static cooperative products appeared inside the K16 loop. The new
+coherent pipeline:
+
+- Statically expands the four A and eight B per-lane load/store jobs. Each pair
+  is published immediately to its original SLM stage; there are no extra local
+  arrays holding the next operands across matrix execution.
+- Selects full A/B stage bounds once with workgroup-uniform conditions. Full
+  stages use authentic unchecked-within-owner vector loads, while partial token,
+  feature and K tails retain the same initialized-zero masked fallback. Both
+  eight-half vectors are fully in bounds because reduction sizes are multiples
+  of16. No guard or binding extent is weakened.
+- Statically expands all four K16 groups in increasing order, exposing sixteen
+  matrix products together without adding accumulators or rearranging sums.
+  The original uniform barrier and ping-pong stage switch remain unchanged.
+
+Actual production-module CPU validation passes all64 small/macro,
+FP16/BF16/dense/expert device-layout variants, the pinned Vulkan SPIR-V validator,
+and the SIMD16 selector. The three focused tests pass; they additionally require
+exactly two remaining macro loops, sixteen static matrix products, exactly three
+workgroup barrier instructions, genuine8-byte vec4 storage, exactly32KiB shared
+allocation, no Function-storage operand arrays, and independent tail/ping-pong
+ownership plus full-vector bounds. Strict production-module Clippy passes.
+Scratch evidence: `/tmp/kuno-prefill-matrix-throughput-20261020/`.
+
+For mask0 FP16 dense, actual SPIR-V size grows8656 ->31632 bytes. More static
+instructions can increase instruction-cache/register pressure; the absence of
+Function arrays does not prove physical spill absence. This is a source-backed
+throughput candidate, not a claimed speedup. Root must validate original-weight
+numerics, representative expert products, whole prompts, actual erasure/close,
+physical recovery and matched performance before selecting or installing it.
+No GPU, sudo, service, shared-target build or root-checkout mutation occurred
+while preparing this candidate.
