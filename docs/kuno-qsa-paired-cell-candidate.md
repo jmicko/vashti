@@ -84,3 +84,29 @@ checks. Inspect actual generated ISA before judging speed: the extra live K
 fragment can increase pressure and spill despite halving query reuse work.
 Only then compare clean matched prompt timing. No performance gain is claimed
 from CPU validation or the compiler's estimated cycle counts.
+
+## Full-pair branch follow-up
+
+The parent-run combined paired/native32/bulk candidate sourcea3b36795, worker
+SHAd7965806, passes all103 unchanged actual GPU controls with physical recovery:
+`strata-parity-native-wide32-paired-bulk-20261020-operators/receipt.json`.
+This proves the paired arithmetic against the existing complete references; it
+does not establish a speed gain. Its compiler dump SHA256 is
+`6c23142b165e2d70db8e0d99962abae2b1eeefb7822e3c7a6e480a3fc815b475`.
+Paired non-fault/fault source hashes `aaf93c1872eb7b31`/`51576f4a58e9e873`
+report3075/3261 instructions,182 sends each and0:0 spills/fills. Each has157
+static `if(32)` statements versus89/98 in its scalar comparator. These are
+whole-program static counts, not dynamically executed branch counts or timings.
+
+The first paired generator repeats the same subgroup-uniform `valid0`/`valid1`
+checks inside every head. The bounded follow-up adds one `if valid0 && valid1`
+outside the twelve heads. Its full-pair body omits those per-cell validity
+branches, while its `else` uses the original guarded paired head body unchanged.
+The causal row and cache-load checks remain outside, before either branch; each
+score still performs its original finite check/status write. There are no new
+reads from the invalid/tail cells. All original query reuse, arithmetic order,
+owners, barriers and post-QK source remain unchanged. Static program size can
+grow because both paths exist: only actual path-specific ISA and the complete
+numerical/physical/request/profile gates can establish whether this improves
+execution. The ten CPU controls pass for this follow-up with feature on/off;
+its own GPU acceptance is pending.

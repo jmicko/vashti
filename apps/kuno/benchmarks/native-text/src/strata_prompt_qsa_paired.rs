@@ -53,36 +53,53 @@ pub(super) fn source(mut original: String) -> String {
         }
         paired.push_str("}\n");
     }
+    // Cell validity is identical across each logical32-lane subgroup: both
+    // indices, row IDs and causal bounds are subgroup-uniform. Hoist it once
+    // for the common full-pair case; the guarded body below remains the exact
+    // original paired tail/fault path, including each status publication.
+    paired.push_str("if valid0 && valid1 {\n");
+    paired.push_str(&heads(status, false));
+    paired.push_str("} else {\n");
+    paired.push_str(&heads(status, true));
+    paired.push_str("}\n}");
+    original.replace_range(first..last, &paired);
+    original
+}
+
+fn heads(status: bool, guarded: bool) -> String {
+    let mut body = String::new();
     for head in 0..12 {
-        paired.push_str(&format!(
+        body.push_str(&format!(
             "{{let h={head}u;let off=h*256u+lane*8u;\n\
              let qa=sq[off/4u];let qb=sq[off/4u+1u];\n"
         ));
         for cell in 0..2 {
-            paired.push_str(&format!("if valid{cell} {{var dot=k{cell}_0*qa.x;\n"));
+            if guarded {
+                body.push_str(&format!("if valid{cell} {{var dot=k{cell}_0*qa.x;\n"));
+            } else {
+                body.push_str(&format!("{{var dot=k{cell}_0*qa.x;\n"));
+            }
             for component in 1..8 {
                 let vector = if component < 4 { "qa" } else { "qb" };
                 let field = ["x", "y", "z", "w"][component % 4];
-                paired.push_str(&format!("dot+=k{cell}_{component}*{vector}.{field};\n"));
+                body.push_str(&format!("dot+=k{cell}_{component}*{vector}.{field};\n"));
             }
             for distance in [16, 8, 4, 2, 1] {
-                paired.push_str(&format!("dot+=subgroupShuffleXor(dot,{distance}u);\n"));
+                body.push_str(&format!("dot+=subgroupShuffleXor(dot,{distance}u);\n"));
             }
-            paired.push_str(&format!(
+            body.push_str(&format!(
                 "if lane==0u {{let score=dot/16.0;sp[h*64u+c{cell}]=score;\n"
             ));
             if status {
-                paired.push_str(&format!(
+                body.push_str(&format!(
                     "status[query_row*p.status_stride+(kvh*12u+h)*n+chunk*64u+c{cell}]=select(0u,1u,finite(score));\n"
                 ));
             }
-            paired.push_str("if !finite(score) {atomicOr(&broken,1u);}\n}\n}\n");
+            body.push_str("if !finite(score) {atomicOr(&broken,1u);}\n}\n}\n");
         }
-        paired.push_str("}\n");
+        body.push_str("}\n");
     }
-    paired.push_str("}");
-    original.replace_range(first..last, &paired);
-    original
+    body
 }
 
 #[cfg(test)]
@@ -201,11 +218,20 @@ mod tests {
             assert_eq!(
                 new.matches("let qa=sq[off/4u];let qb=sq[off/4u+1u];")
                     .count(),
-                12
+                24
             );
-            assert_eq!(new.matches("let score=dot/16.0;").count(), 24);
-            assert_eq!(new.matches("dot+=subgroupShuffleXor(dot,16u);").count(), 24);
-            assert_eq!(new.matches("if !finite(score)").count(), 24);
+            assert_eq!(new.matches("let score=dot/16.0;").count(), 48);
+            assert_eq!(new.matches("dot+=subgroupShuffleXor(dot,16u);").count(), 48);
+            assert_eq!(new.matches("if !finite(score)").count(), 48);
+            let full = super::heads(kernel == Kernel::PromptAttention, false);
+            let fallback = super::heads(kernel == Kernel::PromptAttention, true);
+            assert!(!full.contains("if valid"));
+            assert_eq!(fallback.matches("if valid0 {").count(), 12);
+            assert_eq!(fallback.matches("if valid1 {").count(), 12);
+            assert!(new.contains(&format!(
+                "if valid0 && valid1 {{\n{full}}} else {{\n{fallback}}}"
+            )));
+            assert_eq!(new.matches("if valid0 && valid1 {").count(), 1);
             for cell in 0..2 {
                 assert!(new.contains(&format!("if c{cell}<here {{token{cell}=row[c{cell}];")));
                 assert!(new.contains(&format!(
@@ -226,7 +252,7 @@ mod tests {
                 assert!(!new.contains("status["));
                 assert!(new.contains("if tid==0u{atomicOr(&fault[0],1u);}"));
             } else {
-                assert_eq!(new.matches("select(0u,1u,finite(score))").count(), 24);
+                assert_eq!(new.matches("select(0u,1u,finite(score))").count(), 48);
             }
             #[cfg(feature = "strata-qsa-paired")]
             assert_eq!(kernel.source(), new);
@@ -249,7 +275,7 @@ mod tests {
                 for distance in [16, 8, 4, 2, 1] {
                     dot.push_str(&format!("dot+=subgroupShuffleXor(dot,{distance}u);\n"));
                 }
-                assert_eq!(new.matches(&dot).count(), 12);
+                assert_eq!(new.matches(&dot).count(), 24);
             }
         }
     }
