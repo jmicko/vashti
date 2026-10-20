@@ -22,6 +22,40 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Latest Kuno checkpoint (2026-10-20 18:15UTC; installed native32 unchanged).**
+
+Completed canonical-source5b173ad8/SHA cc0aa6aa passes86 CPU,408/208 layouts,
+all129 original GPU controls, full real requests/all producer proofs and recovery.
+Capture CPU2.0168 ->1.3818s; clean repeat10.7871s versus installed11.1474s is
+a modest3.2% difference, still behind matched Strata5.3515s. Complete enqueue
+3b35ea10/SHA23747779 passes90 CPU and all GPU/full-request/producer/recovery
+gates, but profile11.0527s is unchanged. Neither is installed.
+
+New GDN source022d799b/SHAe3ba33c0 passes94 CPU,408/208 layouts, all129 original
+GPU controls, complete requests and all inherited producer/recovery gates.
+Native GDN is SIMD16 with zero spills/fills. Ordinary Wgpu remains SIMD32, so
+the NEW both-pipeline ISA assertion FAILED after those original gates passed.
+Keep that failure visible; do not claim complete producer acceptance. The
+owned public diagnostic explicitly records the limitation. Repeated profile
+11.0518s is unchanged; no clean/staged/terminal/sustained or install acceptance.
+Complete source remains retained opt-in. Actual correctness is not the blocker;
+this did not materially improve whole-model prompt speed.
+
+Next focus is actual selected Strata/Kuno attention compiler instructions. A
+CPU-only/device-free extraction of the SAME pinned AOT reference now handles
+its1429 concatenated ELF images and records selected-family static metadata.
+Default decode-attention INT8/GDN images are SIMD32/128GRFs; the first SIMD16
+images belong to opt-in XMX and are not evidence that the reference selected it.
+Exact receipts, source identities, limitations and next extraction recipe:
+[completed checkpoint](kuno-native-compute-intervals.md#completed-gdn-experiment-and-current-performance-checkpoint).
+
+Independent18:12:57UTC recovery: Intel50,688,000B, NVIDIA compute0, faults0,
+services200 and normal inactive/unpaused admission/waiting0. No GPU job remains.
+Installed worker/gateway SHAeac78ce0/d3ed07f4 are unchanged. The bounded owned
+sudo refresh64142 lasts until18:59UTC. Goal active/unmet. No API, KNT2/KNR2,
+configuration, model identity or Vashti consumer change. No frontend, version,
+package or release. Earlier checkpoints below retain chronological context.
+
 **Latest completed Kuno development (2026-10-20 16:53UTC; installed native32 unchanged).**
 
 Full capture/source candidate`bfbfc0c3d51d39409e364530fef44ad65d93495d`, worker

@@ -770,3 +770,80 @@ unchanged spirv-val gate after actual HAL normalization. The protected unit
 then full requests/all inherited producer proofs and actual compiler-scope
 selection/spill evidence. No actual GPU correctness/performance acceptance yet.
 Both tests and workers retain swap/core0 and real recovery checks.
+
+
+## Completed GDN experiment and current performance checkpoint
+
+Source022d799b / SHAe3ba33c0 passes all original129 numerical GPU controls,
+three full real public requests, every inherited full declaration/queue/source/
+miss-ring/push/canonical/admission producer proof, graceful exit and physical
+recovery18:07:51UTC. The new BOTH-pipeline ISA assertion then FAILS: ordinary
+Wgpu still compiles SIMD32 (26 spills/52 fills), while the actual retained
+native GDN pipeline is SIMD16 (1706 instructions, ZERO spills/fills). Original
+reference ordinary/native remain SIMD32 (26:52 and53:122). Do NOT suppress this
+assertion or describe both paths as selected16. Unknown ordinary-module proof
+correctly retains its original policy; the exact cause is not established.
+No unsafe subgroup bypass or weakened numerical tolerance was introduced.
+
+This is a numerically valid native-path experiment, not complete new producer
+acceptance or installation. The diagnostic is explicitly marked
+`new_both_pipeline_producer_proof_passed:false` in owned
+`strata-parity-gdn-subgroup16-v2-public-diagnostic-20261020.json`; the original
+failed wrapper log is retained unchanged. Root receipts remain under
+`strata-parity-gdn-subgroup16-v2-20261020-{operators,profile}`.
+Repeated profile11.051815s versus preceding11.052699s is unchanged. GDN
+recurrence/norm coarse interval0.436133 ->0.401232s, but QSA attention/merge
+1.467331s and the whole prompt do not materially improve. Do not spend the
+next pass tuning an unused ordinary fallback just to make this candidate
+look complete; native GDN spill elimination is NOT the main remaining cost.
+No clean/staged/terminal/sustained acceptance or install was attempted.
+
+Current run's real gain is canonical full-source capture2.016843 ->1.381753s,
+with clean repeated4245-token10.787071s versus installed11.147391s (3.2%).
+That still trails same-host matched Strata5.3515s; the parity goal remains active
+and unmet. All complete coupled changes remain retained as opt-in development,
+not reverted from small isolated speed outcomes. Installed worker3fffc266/
+SHAeac78ce0 and image-enabled gateway36626d30/SHAd3ed07f4 are unchanged.
+Independent18:12:57UTC check: Intel50,688,000B, NVIDIA compute0, faults0,
+all services200, admission inactive/unpaused/recoveryfalse/waiting0. No GPU
+job remains active. Owned bounded credential refresh64142 remains until18:59UTC.
+
+### Next focused work: actual attention compiler output
+
+The remaining QSA attention/merge costs roughly1.47s versus the reference's
+roughly0.68s instrumented interval. Compare actual selected kernel instructions
+and memory traffic, not another generic graph-lookup rewrite or Ollama baseline.
+Do not assume the reference has256 GRFs or uses its opt-in XMX path.
+
+A CPU-only, offline, device-free extraction now works against the SAME pinned
+AOT reference. Its61,501,536-byte `sycl-spir64_gen` bundle concatenates1429 ELF
+device images; treating it as one ELF or disassembling only the first image is
+wrong. The first images include opt-in XMX kernels and do not prove selection.
+`strata-public-aot-qsa-gdn-metadata-20261020.json` records29 matching kernel
+metadata rows. Actual `qsa_decode_attn_batch` default INT8 (`Li1`) images and
+`gdn_rec_cols_pipe_kernel` are SIMD32/128GRFs. XMX launch images are SIMD16,
+but pinned source says `STRATA_PROMPT_ATTN_XMX` defaults0; no such override was
+added to the accepted reference. Static metadata is NOT a new live selection or
+performance result. Next extract/disassemble the corresponding actual default
+INT8 image and compare to original Kuno public compiler code, including FMA,
+SLM/shared loads, sends and materialized products, before choosing a complete
+attention change. Retain original nine bitwise + independent F64 controls.
+
+Reproducible CPU-only extractor:
+`/media/jmicko/faststore/kuno-development/inspect-strata-public-aot-metadata-20261020.py`.
+Use retained image7b7f0a2a9c0d783fc3c1cb7250ac8ded9accea48f5bc54983cee8bbdbedfefc2,
+rootless Podman, no network/device/model mounts, read-only build mount and
+512MiB /tmp tmpfs,2 CPU/2GiB/no swap. Within it:
+`/opt/intel/oneapi/compiler/latest/bin/compiler/clang-offload-bundler --type=o --unbundle --targets=sycl-spir64_gen --input=/engine/strata --output=/tmp/strata-device`.
+The script walks complete ELF section tables and emits ONLY public static
+code metadata. No GPU was opened, no live request was run, and extracted
+device bytes stayed in deleted container tmpfs. Host logs
+`strata-public-aot-{tools-inventory,sections,metadata-extract,device-sections}-20261020.log`
+record tool/path preparation; first inventory's exit127 is missing `rg` INSIDE
+the image, not Podman or GPU failure. `ocloc disasm` is available in that image.
+
+The reference's larger stream-all ring is conditional: pinned
+`prefill.cpp::ring_slots` permits the default large ring only when nonresident
+pairs are below10%; otherwise it returns STAGE8. Do not infer that Kuno simply
+missed a384-slot default without inspecting actual placement and byte budgets.
+No API/KNT2/KNR2/configuration/model identity or Vashti consumer change.
