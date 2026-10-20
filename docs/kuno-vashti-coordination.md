@@ -22,7 +22,36 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-20 22:02UTC): complete QSA matrix candidate.**
+**Authoritative active handoff (2026-10-20 22:11UTC): corrected48KiB matrix attention.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. First XMX sourcee2935521/SHAa38e2801 passes144 CPU and
+all420 WGSL/216 matrix layouts but FAILS actual-path exercise: Vulkan on this
+B70 exposes49152B SLM, not the assumed>=58660B. Selector correctly refuses before
+XMX launches. No whole-model or speed run. Physical recovery passes. Preserve
+`strata-parity-qsa-xmx-first-failure-public-20261020.json`; no arithmetic failure
+or accepted XMX math claim is established by this unexercised run.
+
+Successor source3ac1f893 stages8 heads/two K scale groups/128 PV dimensions at a
+time using all8 subgroups. Full QK/softmax/PV remains connected; complete layout
+requires48420B within ACTUAL49152B. No guard, device limit or oracle is weakened.
+All144 actual CPU controls pass again. Frozen release build
+`strata-parity-qsa-xmx-slm48-20261020` is built,
+source3ac1f89318ffa263d030642a205f2034b9e409ae /
+SHAdcc438dea11fa6c0c825dcbad2dd668e2184367fc0c53bbf21bd9d64ba8aeb1f; exact-source420/216 offline,
+original171+7 actual XMX GPU, both requests/profile modes/actual launch counts and
+physical recovery remain required before clean speed acceptance. Do not overlap
+shared GPU/services during these tests, or install an unaccepted artifact.
+
+Installed3fffc266/SHAeac78ce0, gateway36626d30/SHAd3ed07f4 unchanged. Previous pool
+bundle repeat9.6808s improves13.16%, but FIRST13.2478s fails original at-EACH5%
+gate. Retain all components and original first-use timing/gates. Strata5.3515s
+still leads; goal ACTIVE/UNMET. No API/config/model/frontend/release change.
+Cached sudo refresh220143 ends22:38:06UTC; parent sharedshell3556 is NOT ours to
+kill. No GPU/device reset/reboot. Exact source/evidence/test contract:
+[matrix attention](kuno-native-compute-intervals.md#complete-matrix-attention-successor-under-implementation).
+
+**Previous handoff (2026-10-20 22:02UTC): complete QSA matrix candidate.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`. New sourcee2935521 implements the connected Rust
