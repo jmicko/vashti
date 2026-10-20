@@ -1,6 +1,8 @@
 //! Dependency-complete native primary/copy/shared submissions. No model content.
 use ash::vk;
 use std::collections::HashMap;
+#[path = "strata_submit.rs"]
+mod submit;
 
 /// Recording is optional for authentic uncaptured target/draft work. A named
 /// recording must belong to this request and an inference (not commit) family.
@@ -140,6 +142,7 @@ const MAX_REGIONS: usize = 262144;
 /// Actual descriptor/copy intervals, not invented narrower declarations.
 /// Segment0 releases Wgpu initialization before either queue's native work.
 pub const NATIVE_QUEUE_HOST_BYTES: usize = 144 * 1024 * 1024
+    + submit::HOST_BYTES
     + 2 * super::strata_info_transfer::HOST_BYTES
     + super::strata_io_reuse::HOST_BYTES
     + super::strata_allocator_scope::HOST_BYTES;
@@ -580,9 +583,14 @@ impl Commands {
         // Both native graph copies and the original adaptive worker submit
         // through the SAME actual adopted queue authority. Compute queues stay
         // on their original serialized engine thread; no cross-queue lock.
-        if queues[0] == queues[1]
+        if queues[0] == vk::Queue::null()
+            || queues[1] == vk::Queue::null()
+            || queues[0] == queues[1]
             || !copy_queue.is_original(self.device.handle(), queues[1])
-            || (self.plan.last_shared != 0 && (queues[2] == queues[0] || queues[2] == queues[1]))
+            || (self.plan.last_shared != 0
+                && (queues[2] == vk::Queue::null()
+                    || queues[2] == queues[0]
+                    || queues[2] == queues[1]))
         {
             return Err("native original copy submission authority");
         }
@@ -597,41 +605,30 @@ impl Commands {
         {
             return Err("native upload dependency requires original compute header");
         }
-        for (index, (segment, command)) in self.plan.segments.iter().zip(&self.commands).enumerate()
-        {
-            let own = segment.queue();
-            let signals = [self.timelines[own]];
-            let signal_values = [base + segment.signal];
-            // Actual INFO transfer completion precedes the original header;
-            // its timeline release carries that dependency to every segment.
-            let dependencies = incoming_dependencies(index, segment, self.timelines, base, uploads);
-            let mut waits = [vk::Semaphore::null(); 3];
-            let mut wait_values = [0; 3];
-            let mut wait_count = 0;
-            for dependency in dependencies.into_iter().flatten() {
-                waits[wait_count] = dependency.semaphore;
-                wait_values[wait_count] = dependency.value;
-                wait_count += 1;
-            }
-            let stages = [vk::PipelineStageFlags::ALL_COMMANDS; 3];
-            let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
-                .signal_semaphore_values(&signal_values)
-                .wait_semaphore_values(&wait_values[..wait_count]);
-            let submit = vk::SubmitInfo::default()
-                .command_buffers(std::slice::from_ref(command))
-                .signal_semaphores(&signals)
-                .wait_semaphores(&waits[..wait_count])
-                .wait_dst_stage_mask(&stages[..wait_count]);
-            let submit = submit.push_next(&mut timeline);
-            unsafe {
-                if segment.copy {
-                    copy_queue.submit(&[submit], vk::Fence::null())
-                } else {
-                    self.device
-                        .queue_submit(queues[own], &[submit], vk::Fence::null())
-                }
-            }
-            .map_err(|_| "native compute/copy submit")?;
+        let batches =
+            submit::Batches::new(&self.plan, &self.commands, self.timelines, base, uploads)?;
+        // These semaphores are created as TIMELINE above, never binary. Vulkan
+        // timeline waits may precede their signal submission on another queue.
+        // Group only by the actual queue; original per-queue command order,
+        // every signal/wait value and every segment command remain unchanged.
+        // A single call per queue avoids tens of thousands of driver entries.
+        // No host/device completion is granted here. On a partial submission
+        // failure the original recording/owners remain retained by the caller.
+        for (own, &queue) in queues.iter().enumerate() {
+            batches
+                .with_queue(own, |submits| {
+                    if submits.is_empty() {
+                        return Ok(());
+                    }
+                    unsafe {
+                        if own == 1 {
+                            copy_queue.submit(submits, vk::Fence::null())
+                        } else {
+                            self.device.queue_submit(queue, submits, vk::Fence::null())
+                        }
+                    }
+                })?
+                .map_err(|_| "native compute/copy batch submit")?;
         }
         // The original target fence owns all three queues, including peers
         // with no following compute consumer. Replays retain the same owners.
