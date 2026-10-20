@@ -56,6 +56,7 @@ strata-intel-core = ["strata-resident-240", "cubecl/wgpu-spirv", "cubecl-wgpu/ku
 # Explicit dense-projection candidate; original expert and fallback kernels remain.
 strata-cubek-gemm = ["strata-intel-core", "dep:cubek-matmul", "dep:cubek-std"]
 strata-cubek-tilewise = ["strata-cubek-gemm"]
+strata-cubek-m64 = ["strata-cubek-tilewise"]
 # Fixed public completion check; changes only the harness request, not the engine.
 strata-public-cap-check = ["strata-intel-core"]
 # Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.

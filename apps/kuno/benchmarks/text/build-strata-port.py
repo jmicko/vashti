@@ -5,15 +5,17 @@ root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
 options=set(sys.argv[2:])
-if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise'}:raise ValueError('build feature selector')
+if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64'}:raise ValueError('build feature selector')
 if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise ValueError('GPU route usage requires explicit Intel core selection')
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 if '--cubek-gemm' in options and '--intel-core' not in options:raise ValueError('CubeK candidate requires explicit Intel core')
 if '--cubek-tilewise' in options and not {'--intel-core','--cubek-gemm'} <= options:raise ValueError('CubeK tilewise candidate requires explicit Intel core and GEMM')
+if '--cubek-m64' in options and not {'--intel-core','--cubek-gemm','--cubek-tilewise'} <= options:raise ValueError('CubeK M64 candidate requires explicit complete Tilewise selection')
 features=['strata-rust-port']+(['strata-eight-window'] if '--eight' in options else [])+(['strata-resident-224'] if '--resident-224' in options else [])+(['strata-resident-240'] if '--resident-240' in options else [])+(['strata-intel-core'] if '--intel-core' in options else [])+(['strata-gpu-adaptive-usage'] if '--gpu-adaptive-usage' in options else [])
 features += ['strata-public-cap-check'] if '--capped-check' in options else []
 features += ['strata-cubek-gemm'] if '--cubek-gemm' in options else []
 features += ['strata-cubek-tilewise'] if '--cubek-tilewise' in options else []
+features += ['strata-cubek-m64'] if '--cubek-m64' in options else []
 source_paths=['apps/kuno/benchmarks/native-text','crates/kuno-text','apps/kuno/src/native_protocol.rs','apps/kuno/src/native_artifact.rs','apps/kuno/src/image_privacy.rs','apps/kuno/benchmarks/text/build-strata-port.py','apps/kuno/benchmarks/text/run-strata-port.py']
 subprocess.run(['git','diff','--quiet','HEAD','--',*source_paths],cwd=root,check=True)
 commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
