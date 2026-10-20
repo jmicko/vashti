@@ -39,7 +39,10 @@ the exact original lane-zero score before uniform sticky-fault checks outside
 the lane-zero store branch. No changed arithmetic or skipped failure/owner/
 queue/footprint/budget checks. All114 actual App CPU controls pass, including
 complete-source undo, real module topology and adversarial other-lane cases.
-Freeze/offline/original129/full request/actual compiler/recovery remain next.
+Frozen84316ccb/SHA7e6b0991
+(`strata-parity-qsa-uniform-20261020`) passes408/208 offline and all129 original
+GPU controls with physical recovery. Full requests/actual compiler/group-count/
+recovery/performance run in `kuno-native-qsa-uniform-connected-20261020`.
 Exact contract: [complete FMA and uniform successor](kuno-native-compute-intervals.md#complete-fma-result-and-coupled-uniform-qk-successor).
 No API/protocol/configuration/model identity or Vashti consumer change.
 

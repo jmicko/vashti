@@ -957,3 +957,14 @@ started18:39:26UTC, ends20:39:26UTC; log/PID/owner files
 `sudo-refresh-qsa-uniform-20261020.*`. Verified prior64142 loop was retired;
 the shared shell is untouched. Never kill its process group. No API/protocol/
 configuration/model identity or Vashti change.
+
+Frozen uniform-QK source84316ccb4d44a00b0530b2f5f2e6105cf4872baf / worker
+SHA7e6b09917b984857c48285d72a8cc773150e249662b1e2733f4055db880915d0,
+build`strata-parity-qsa-uniform-20261020`, passes114 App CPU and408/208
+offline layouts. All129 original numerical GPU controls have now passed with
+physical recovery; full model requests/producer/compiler/group-count/recovery
+and performance are running in `kuno-native-qsa-uniform-connected-20261020`.
+No performance/install acceptance yet. Every preceding exit and guarded QK
+decision is subgroup-uniform: the original full fixed32 groups keep lane zero
+active at every immutable-ID and original-score broadcast. No partial subgroup
+or arbitrarily chosen first-lane value is substituted.
