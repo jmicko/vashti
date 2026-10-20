@@ -70,3 +70,49 @@ and next-state owners/faults/tails, full request erasure/recovery, then matched
 public prompt measurements. Do not weaken original IEEE/denormal, numerical,
 fault, ownership or privacy constraints to select the candidate. No new decode
 throughput improvement is claimed.
+
+## Fixed-public real-arena primitive controls prepared
+
+`strata_prompt_gdn_numeric_probe.rs` exports
+`strata_gdn::prompt::public_recurrence_numeric(&mut arena)` for a separate
+numeric-only array in the existing compiled-public matrix entry. It does not
+change the existing matrix/router/dequant/attention case counts or expose a
+request/API option.
+
+The control compares the real original `Op::RecurrenceFault` CubeTask against
+a uniquely identified diagnostic task containing the unchanged generated scalar
+source. The ordinary production wrapper still requires a genuine PromptScope.
+This primitive control deliberately constructs no scope, accepted-prefix/model
+authority or receipt: it requires an explicitly public audited private arena,
+rejects any active PromptScope, validates each complete original role owner,
+all distinct/nonoverlapping allocations, exact logical/physical lengths,
+client/stream identity, fixed parameters and grid, then directly launches the
+same existing primitive task. That is a numerical control, not an admitted
+prompt execution or proof that the full production integration works.
+
+Ten fixed cases cover counts1/3/7/31/32/33/65, zero and nonzero prior-state
+fixtures, one/two/six/48 value heads with one/two/16 key heads, all four32-column
+tiles, and partial final token counts near context32768. Start metadata is
+preserved, but the primitive's recurrence consumes relative token rows and
+does not itself establish or reconstruct the historical prefix. Nonfinite
+old state at row65/column37 and a nonfinite mid-run gate test the original
+sticky fault and state-zeroing behavior. All unused logical H/control token
+rows are poisoned with NaN and must remain unread.
+
+The checker compares entire output, next-state and fault owners bit for bit,
+requires finite output/state payloads, zero inactive output rows and every
+physical owner tail, exact expected fault plus zero fault padding, and unchanged
+complete input owners. Reads use the existing actual owning-read helper,
+never a request logical-prefix read. Each attempt resets/wipes the arena before
+accepting its result; the existing outer explicit close/owned-zero audit remains
+the final authority.
+
+Two tests of the exact public fixture/checker plus static genuine-task,
+admission, complete-owner and reset call-site checks pass with:
+
+```sh
+python3 apps/kuno/benchmarks/text/test-prompt-gdn-numeric-controls.py
+```
+
+This is source/CPU evidence only. Full worker compilation, real B70 controls,
+model correctness/recovery and matched performance remain parent-owned gates.

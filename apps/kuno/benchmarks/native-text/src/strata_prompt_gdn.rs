@@ -3,8 +3,13 @@
 //! native FP16 norm output are selected together. Prompt, decode and repair
 //! share native row/value-head state. Split verifier replay remains separate.
 use super::*;
+#[cfg(feature = "strata-intel-core")]
+#[path = "strata_prompt_gdn_numeric_probe.rs"]
+mod numeric_probe;
 #[path = "strata_prompt_gdn_specialize.rs"]
 mod specialize;
+#[cfg(feature = "strata-intel-core")]
+pub(crate) use numeric_probe::cases as public_recurrence_numeric;
 pub(crate) const COMPATIBILITY_INFO_PER_STAGE: u64 = 2 * 2048;
 pub(crate) const INFO_BYTES: u64 = 36 * COMPATIBILITY_INFO_PER_STAGE;
 
