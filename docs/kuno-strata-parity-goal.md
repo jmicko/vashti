@@ -1,8 +1,9 @@
 # Strata parity goal — 2026-10-20
 
 The user explicitly requested a new goal to match Strata. Work remains Kuno-only
-on `codex/strata-rust-port`, using the agreed integration032e2cdd and the installed
-worker c8db19de / SHAfb31e124 as the accepted baseline. Preserve the canonical
+on `codex/strata-rust-port`, using the agreed integration032e2cdd and original installed
+worker c8db19de / SHAfb31e124 as the comparison baseline. Selected successor
+0771a726 / SHAccdaf886 is now installed and validated below. Preserve the canonical
 Vashti checkout and uncommitted coordination files. No API/frontend change,
 release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
@@ -26,7 +27,7 @@ Kuno code uses seed0, permits1024 outputs and produces501 rather than the previo
 bounds, **not a new matched sustained comparison**.
 
 The upstream B70 report's4095-token prefix980–1002 tokens/s (~4.1–4.2s) uses PLE
-RAM, different input/configuration and an earlier host. Kuno's current4245-token
+RAM, different input/configuration and an earlier host. Kuno's original baseline4245-token
 compiled-public check takes24.9658s, toolbox4207/4293 prefixes29.506/29.920s.
 Do not claim parity by comparing unlike workloads, truncating tools/history,
 changing the quant or reporting isolated first-token speed. Before declaring
@@ -36,11 +37,50 @@ load/first-use compilation, final erasure and whole-response time.
 
 ## Latest combined operator checkpoint
 
-The accepted installation remains workerc8db19de / SHAfb31e124 and unchanged
-image-enabled gateway36626d30 / SHAd3ed07f4. None of the candidates below is
-installed. All receipt paths are relative to
-`/media/jmicko/faststore/kuno-development`; they contain public numeric metadata,
-not request/response text or private expert routes.
+Selected default-native source0771a726 / SHA256
+`ccdaf8861819ec3dfb6e92208904dba5f989d79f49d176289f69e265be2e8057`
+is installed and backend-validated. Gateway source36626d30 / SHA256
+`d3ed07f473b28bbb46596a619349d933edd6c166b7af10dd42f9821e4ba3048c`
+is unchanged. Official backup/rollback:
+`/var/lib/kuno-strata-parity-native-20261020`, previous workerfb31e124.
+Complete configuration and original root-enrolled identities are preserved.
+All receipt paths below are relative to `/media/jmicko/faststore/kuno-development`;
+only public numeric metadata is retained, never request/response text or routes.
+
+The clean45/4245/4245 check completes with correct arithmetic, original close,
+physical recovery and zero new driver faults. Load102.3943s; first short prefix
+10.4072s includes first-use compilation. Long prefixes14.1743/12.4373s, the repeat
+50.2% shorter than the installed baseline24.9658s. Fresh upstream5.3515s remains
+well ahead; **the parity goal is not complete**.
+
+`strata-parity-native-rolling-20261020-terminal-negative` genuinely submits a
+prefix, fires the public injected error once, successfully waits two real
+recovery queues and records zero failed queues. Exit1 is intentional: no normal
+TEXT/DONE/CLOSED, owned-zero or reusable-session claim. Protected process exit
+physically releases GPU memory; the subsequent fresh clean worker succeeds.
+`strata-parity-native-rolling-20261020-staged-api` passes the ten-tool thinking/
+call/result round trip, exact64/65/66 thresholds,16 genuine MAX8 tail requests,
+complete identical501-token semantic repeats (155 cases each), zero writes,
+inspection denial, graceful unload, Ollama after native and actual recovery.
+Toolbox4207/4293 prefixes15.8214/14.7448s versus baseline29.506/29.920s.
+
+The official transaction and subsequent actual installed service check pass.
+`native-strata-parity-installed-public-check-20261020` confirms two complete,
+identical semantic answers through the real listener; cold load100.3023s,
+first35-token prefix9.9475s including JIT, repeated prefix1.1636s,501 outputs in
+15.2889s (~32.77 output tokens/s), total19.7015s. This is no new decode gain.
+`native-strata-parity-installed-final-check-20261020` confirms actual nonroot
+DynamicUser worker, original model mount, swap/core0, write_bytes0, denied
+unprivileged inspection, zero OOM/driver faults, HTTP200 and normal admission.
+
+The installation includes QSA/GDN specialization, genuine MAX8 headless known
+prefix, native narrow/macro matrices, rolling scheduling (ecfb12b9/881d5af3),
+explicit public terminal control9003819d/08f052e6, and checked borrowed-layer
+bindingsd54a60ab. The original operators, source ownership, error quarantine,
+private erasure and full thinking/tools/context contracts are preserved.
+No API/private-wire/configuration/model-name/Vashti change or release.
+
+### Earlier operator candidates and numerical comparison
 
 Sourcec6808efc / SHAd1100418 passes all97 actual GPU controls:30 original-weight
 matrix,39 router/dequant,6 causal-selector,12 QSA attention and10 GDN recurrence.
@@ -97,10 +137,8 @@ public profiling (`strata-parity-native-rolling-bundle-20261020-operators` and
 capture and3.6075s wait, with81 actual rolling recordings,1346 windows and24773
 segments. QSA1.8426s and GDN recurrence/norm0.4312s are essentially unchanged.
 A two-thread CPU shader-validation job overlapped this profile, so it is diagnostic
-evidence, not a clean A/B benchmark. Clean long requests, cancellation/terminal
-negative controls and the complete staged API gates are running separately;
-their final acceptance is pending. No API, protocol, model identity, consumer,
-installation or release change is claimed.
+evidence, not a clean A/B benchmark. The separate clean, actual terminal-error,
+staged API and installed acceptance above supersede the earlier pending gates.
 
 Earlier evidence is retained: sourcee9b6bd4c / SHAcf867264 completed a14.4597s
 profiled long prefix, then7ada5edd / SHAbba3d0f3 failed the newly added three
@@ -113,16 +151,23 @@ was confirmed after the failed trials as well.
 
 ## Connected high-potential work
 
-- Matrix: improve compiler-visible K64 vector/stage/MMA execution while retaining
-  the accepted paired32KiB shared operands. The prior register-first variant
-  materially regressed; do not confuse source prefetch intent with proven speed.
-- Native graph: investigate redundant global memory boundaries between command
-  segments while preserving original per-node physical-range hazards, crossqueue
-  timelines, external entrance/exit, host visibility and final actual join.
-- Short prefix: extend the existing genuine MAX3/64 path to connected MAX8,
-  no vocabulary head, original device residual ownership and exact known-input
-  MTP teaching. Preserve separate real nonce/purpose/capture identities, complete
-  target/draft cursors, erasure/rebind and the final ordinary count1 input.
+- The complete Tilewise balanced M64/Double candidatec5932d91 / SHA4f666ecf
+  passes111 GPU controls and full requests but regresses to33.9067s. Receipt
+  `strata-parity-balanced-m64-qsa-phases-20261020-profile`: GDN input5.7643s,
+  output2.2056s, QSA input1.6619s, experts17.2625s. Preserve it as an unselected
+  experimental pipeline; do not install it on source structure alone.
+- Public phase attribution now separates the full QSA family: producers76.3ms,
+  score/validate/select127.0ms, attention/merge1659.9ms, gate20.7ms in that run.
+  Reference QSA849ms includes input/output projections and producer work;
+  comparing Rust's whole1.885s family only to upstream680ms attention is invalid.
+  See the exact scopes in `kuno-prefill-qsa-family-profile.md`.
+- Complete library M128/N128/K32, eight real subgroups, actual36,864B shared and
+  matched original-weight GPU cases are being tested separately. Larger native
+  full-tile staging with fewer accumulators per subgroup is the next bounded
+  Rust candidate. Neither is an accepted installation or a speed claim.
+- Root owns shared GPU execution and installation; isolated agents own native
+  matrix preparation and read-only compiler/source comparisons. Original
+  metadata caps, real device topology, ownership and numerical gates remain.
 
 Only compiled-public profiling may retain aggregate expert-member histograms
 and arithmetic-work estimates; no identities, routes, text, hashes of content
@@ -131,10 +176,6 @@ Use the real GPU numerical controls before accepting complete generation, then
 matched speed, thinking/tools/semantic repeat/privacy, actual unload and physical
 recovery. Source isolation does not isolate GPUs: only the root runs shared tests.
 
-Current review ownership: matrix agent603a1de7 owns strata_matrix.rs; runtime
-agent owns strata_graph.rs; short agent owns controller/target/MTP/IO plus one
-immutable known-input headless recording identity in server/base.rs. Root owns
-integration, public profiling geometry, GPU testing and installation.
 
 ## First protected measurements in this goal
 

@@ -1,39 +1,52 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno-only goal: match Strata (2026-10-20; candidate work in progress).**
+**Active Kuno-only goal: match Strata (2026-10-20; improved native worker installed).**
 See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).
-The accepted installation remains workerc8db19de / SHAfb31e124 and unchanged
-image-enabled gateway36626d30 / SHAd3ed07f4 below; no successor is installed.
+Selected worker source0771a726 / SHAccdaf886 is installed through unchanged
+image-enabled gateway36626d30 / SHAd3ed07f4. The official transaction preserves
+the entire configuration and root-enrolled identities. Backup/rollback:
+`/var/lib/kuno-strata-parity-native-20261020` (previous workerfb31e124).
 
-Sourcec6808efc / SHAd1100418 passes all97 actual GPU controls, complete public
-requests and protected staged thinking/ten-tool call/result,64/65/66 boundaries,
-MAX8 terminal counts1..8 in both directions, two identical complete code answers
-with155 semantic cases each, privacy/unload/Ollama and physical recovery. The
-original nine QSA bitwise gates remain strict; the three added non-dyadic cases
-now independently validate both GPU paths against operation-bounded F64 math,
-retaining bit-difference diagnostics and all owner/tail/fault gates. This explicit
-new-case criterion replaces the unsupported stronger bit-identity requirement,
-not the original numerical controls. Warm4245 profiled prefixes are14.1363/14.1994s.
-Matched seed424242/cap200 decode repeats are38.3116 code and31.5556 prose tokens/s;
-they reach the cap and do not claim EOS completion. Fresh unchanged MIT Strata
-reference measures5.3515s clean long prefix; explicit verifier4/MTP4/suffix3 decode
-repeats27.2472 code and36.1017 prose tokens/s. Long-prefix parity is not achieved.
+Matched clean4245-token repeated prefix **24.9658 ->12.4373s (50.2% shorter)**;
+first long14.1743s. Fresh same-host unchanged MIT Strata takes5.3515s, so the
+parity goal remains active. This selection connects complete QSA/GDN specialization,
+genuine MAX8 headless known-prefix processing, original native matrix arithmetic,
+rolling original-recording submission and borrowed immutable layer bindings.
+No prompt truncation, toolbox reduction, quant substitution or retained prefix
+cache. Original nine QSA bitwise gates remain strict; three added non-dyadic
+cases independently validate both GPU paths against operation-bounded F64 math.
 
-Complete opt-in CubeK Tilewise/rolling source881d5af3 / SHA528bc066 passes111
-actual controls, including actual dense/expert launches, but its profiled warm
-long prefix20.4503s regresses versus native14.1994s. It is retained as a separate
-candidate, not selected. Latest default-native plus rolling and checked borrowed
-layer bindings source0771a726 / SHAccdaf886 passes97 controls and complete public
-profiling, warm4245 prefixes13.2547/13.2952s. A two-thread CPU shader job overlapped
-that profile, so these are diagnostic times. Separate clean long, negative and
-staged API acceptance are pending; do not install from the profile alone.
+All97 actual GPU controls, complete clean requests, real injected-prefix terminal
+recovery and subsequent fresh success pass. Protected staged thinking/ten-tool
+call/result,64/65/66 boundaries, MAX8 terminal counts1..8 both directions, two
+identical complete501-token code answers with155 semantic cases each, privacy,
+unload/Ollama coexistence and actual physical recovery pass. Staged4207/4293-token
+toolbox prefixes15.8214/14.7448s versus previous29.506/29.920s. Installed public
+semantic repeats and actual DynamicUser/model-mount acceptance pass too: cold
+load100.302s, first short prefix9.948s including JIT; warm35-token prefix1.164s,
+501 outputs/15.289s (~32.77 output tokens/s). No decode gain is claimed. Worker
+write_bytes0, swap/core0, denied inspection, zero OOM/new GPU faults, services200
+and normal admission. Tests intentionally retain no request/response text.
 
-All retained receipts are metadata-only under the development artifact base.
-No API, KNT2/KNR2, configuration, model name, Vashti consumer or release change.
-Preserve original numerical/ownership/privacy gates and actual physical recovery.
-No new frontend handoff is required for this internal candidate checkpoint.
+Receipts under `/media/jmicko/faststore/kuno-development`:
+`strata-parity-native-rolling-bundle-20261020-operators`,
+`strata-parity-native-rolling-20261020-{terminal-negative,clean-long,staged-api}`,
+`native-strata-parity-installed-{public,final}-check-20261020`.
+Experimental library candidates remain separate: Tilewise881d5af3 passes111
+controls but regresses20.4503s; balanced M64/Doublec5932d91 passes111 controls
+and complete requests but regresses33.9067s. Neither is installed. A wider
+library pipeline and a bounded larger native dense tile are in development;
+CPU/source success does not establish their GPU correctness or performance.
 
-**Prior accepted Kuno-only Strata prompt optimization (2026-10-20; installed and backend-validated).**
+**No API, KNT2/KNR2, configuration, model name or Vashti consumer change.**
+Original DASLab IQ3_S plus Q2 MTP, context512..32768, thinking/tools, private
+content erasure and ordinary Ollama compatibility remain. No fresh Vashti
+browser/image QA, version bump, package or release is claimed. Backend-only
+internal work needs no frontend integration handoff. Root alone owns shared
+services/GPUs; inference may be temporarily paused for the active protected
+benchmarks. The user-authorized bounded sudo refresh remains active during work.
+
+**Prior accepted Kuno-only Strata prompt optimization (2026-10-20; superseded above).**
 Selected worker sourcec8db19de / SHAfb31e124 is installed through the unchanged
 image-enabled gateway36626d30 / SHAd3ed07f4. The official transaction preserves
 the complete configuration and root-enrolled model identities. Backup/rollback:

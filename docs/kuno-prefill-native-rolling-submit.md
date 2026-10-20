@@ -188,5 +188,11 @@ Receipts under `/media/jmicko/faststore/kuno-development`:
 `strata-parity-native-rolling-bundle-20261020-profile`,
 `strata-parity-native-rolling-20261020-terminal-negative` and
 `strata-parity-native-rolling-20261020-clean-long`.
-Full staged application/privacy/semantic acceptance and installation are still
-separate gates; the accepted system worker remainsfb31e124 at this checkpoint.
+Full staged application/privacy/semantic acceptance subsequently passes, including
+the ten-tool thinking/call/result,64/65/66 and16 MAX8 tail requests, complete
+semantic repeats, zero writes/inspection denial/unload/Ollama/physical recovery.
+This exact default-native artifact is now installed by the official transaction;
+backup `/var/lib/kuno-strata-parity-native-20261020`. Actual installed repeated
+semantic responses and DynamicUser/model-mount/privacy checks also pass. See
+the active coordination handoff for exact installed receipt paths. The optional
+slower library artifacts are not selected; the Strata parity goal remains active.
