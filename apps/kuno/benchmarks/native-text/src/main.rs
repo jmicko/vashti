@@ -56,6 +56,10 @@ mod strata_info_transfer;
 mod strata_intel_core;
 #[cfg(test)]
 mod strata_io_owner_tests;
+// Vendor queue/rolling modules are also included directly at the test crate
+// root. Reuse the same disabled-device fixture at their original sibling path.
+#[cfg(test)]
+use strata_io_owner_tests::strata_graph;
 #[cfg(test)]
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_io_reuse.rs"]
 mod strata_io_reuse;

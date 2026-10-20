@@ -6,7 +6,7 @@ use crate::{
     strata_info_transfer, strata_io_reuse, strata_readback_tests as strata_readback,
     strata_upload_tests as strata_upload,
 };
-mod strata_graph {
+pub(crate) mod strata_graph {
     pub(crate) fn enabled() -> bool {
         false
     }
