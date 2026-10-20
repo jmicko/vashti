@@ -24,6 +24,12 @@ is correct but offers no clear additional prefix gain. Its scheduling/branch
 follow-up and public CPU profiling are in progress. Parent-only public load
 markers locate98.159s of103.486s startup in original weight-store construction;
 no private content instrumentation or relaxed memory/hazard guards are added.
+Corrected public CPU sampling now passes and leaves services/admission normal,
+Intel50,688,000B, NVIDIA compute0 and zero driver faults. Full paired/bulk
+successor8c91e6ab remains correct but profiled11.7921s offers no clear extra
+prefix gain. Its sampled host costs are distributed across initialization,
+range planning, allocation/bindings and dispatch; source proposals for a larger
+coherent native group submission and bounded parallel loading are under review.
 
 **Prior Kuno-only checkpoint (2026-10-20; superseded by native32 above).**
 See [the source decisions, exact receipts and limitations](kuno-strata-parity-goal.md#latest-combined-operator-checkpoint).

@@ -90,6 +90,31 @@ CPU probe passes94 samples after the correction. The protected corrected retry
 Profiling retains only aggregate symbols, never stacks/registers/memory/raw
 samples or request/response text, and accepts results only after actual cleanup.
 
+The corrected `strata-native-fast-cpu-readyfix-20261020` now **passes** all three
+public requests, aggregate validation, temporary-data deletion and actual GPU/
+service recovery. Source8c91e6ab / SHA52717687 profile11.8742/11.7921s remains
+essentially the same as native32 alone; no additional speed gain or installation
+is claimed. Last experts7.3212s: enqueue1.5562/capture1.8676/wait3.7189; QSA
+attention/merge1.6466s. The complete coupled source is retained for further work.
+
+Flat user-CPU samples for the repeated prompt total3.2261s, including memset
+0.4020s, actual range planner0.1859s, vector collection0.1357s, memmove0.1005s,
+vector iteration0.0854s, WgpuStorage lookup0.0854s, WgpuServer launch0.0804s,
+malloc0.0754s and hashing0.0704s. These are sampled leaf estimates with some
+unresolved IPs, not exact per-call durations or inclusive stacks. There is no
+single demonstrated1.9s descriptor bottleneck. A larger coherent original-node/
+parameter/binding bulk entry is being investigated rather than claiming the
+small descriptor-call reduction solved host overhead.
+
+Weight-store startup's98s wall interval has only14.327s sampled USER CPU:
+memmove4.8844s, Host::load3.4774s and its closure2.7085s, memset2.4221s.
+Do not attribute the remaining wall time to pure CPU zeroing: kernel work, I/O
+and real queue waits are outside this event. Whole-worker Host::close_inner
+9.2814s is separately observed outside prompt processing; private erasure and
+full-span audits are preserved. The next source proposals compare bounded
+positional parallel reads/direct final HOST spans and real double-window upload
+with the actual selected Strata8-reader path. No loading change is accepted yet.
+
 The new fixed-public parent-only startup markers locate98.1591 of103.4862s
 inside `global_sources` before `shared_target_weights`. Target model1.6663s,
 shared head0.6375s and MTP2.5484s are smaller. These are pipe-arrival intervals,
