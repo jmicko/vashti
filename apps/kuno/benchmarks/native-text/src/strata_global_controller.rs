@@ -6,6 +6,12 @@ use super::{MAX_OUTPUTS, REQUEST_HOST_BYTES, VOCAB};
 use crate::{executor::GpuExecutor, resident_model::ResidentModel, resident_mtp};
 use std::{sync::atomic::AtomicBool, time::Instant};
 use zeroize::Zeroizing;
+#[path = "strata_short_prompt_plan.rs"]
+mod short_prompt;
+// One actual MAX3 host R copy coexists with the existing compact output packet.
+// Both fit in the existing charged request HOST envelope; no owner is added.
+const SHORT_CARRY_HOST_BYTES: usize =
+    short_prompt::WINDOW_ROWS * crate::resident_model::batch::target_rows::HC_WIDTH * 4;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn elapsed(start: Instant) -> Result<u64> {
     u64::try_from(start.elapsed().as_nanos()).map_err(Into::into)
@@ -24,7 +30,11 @@ impl Request<'_> {
     pub(super) fn validate(&self) -> Result<()> {
         self.sampling.validate()?;
         self.speculation.validate()?;
-        if crate::strata_speculation::HOST_BYTES + MAX_OUTPUTS * 4 + 64 * 1024 > REQUEST_HOST_BYTES
+        if crate::strata_speculation::HOST_BYTES
+            + MAX_OUTPUTS * 4
+            + 64 * 1024
+            + SHORT_CARRY_HOST_BYTES
+            > REQUEST_HOST_BYTES
         {
             return Err("global speculative host quote rejected".into());
         }
@@ -317,45 +327,94 @@ pub(super) fn run<'m, 'f>(
     let plan = PromptPlan::new(request.prompt.len())?;
     if plan.prefix() != 0 {
         phase("prompt_prefix");
-        target.with_prompt_ple_source(
-            executor,
-            &request.prompt[..plan.prefix()],
-            plan.chunk(),
-            cancel,
-            |target, executor| {
-                let loan = target.begin_prompt_cache_loan(executor)?;
-                let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    // The single lease spans all batched inputs and MTP
-                    // teaching, and ends BEFORE normal decode reads the cache.
-                    let _scope = target.prompt_scope(loan.as_ref())?;
-                    for chunk in plan.chunks() {
-                        let end = chunk.end;
-                        let (inputs, teacher) = plan.inputs(request.prompt, chunk)?;
-                        phase("prompt_chunk");
-                        target.prefill_prompt_chunk(
-                            executor,
-                            inputs,
-                            teacher,
-                            draft.as_deref_mut(),
-                            cancel,
-                        )?;
-                        if target.completed_target_rows_cursor(executor)? != end {
-                            return Err(kuno_text::Error::InvalidFormat(
-                                "global committed prompt prefix cursor",
-                            ));
-                        }
-                    }
-                    Ok(())
-                }));
-                target.finish_prompt_cache_loan(executor, loan)?;
-                match attempted {
-                    Ok(result) => result,
-                    Err(_) => Err(kuno_text::Error::InvalidFormat(
-                        "global prompt prefix execution unwound",
-                    )),
+        if let Some(short) = short_prompt::Plan::new(request.prompt.len()) {
+            // Upstream serving chooses quantized verification for<=64 fresh
+            // prefix inputs. This bounded first step deliberately reuses the
+            // existing MAX3 full-commit/host-R path: no nonce/prediction grant
+            // is repurposed, and no prompt scratch/cache slots are borrowed.
+            for chunk in short.chunks() {
+                crate::resident_util::cancel(cancel)?;
+                let start = chunk.start;
+                let end = chunk.end;
+                let (inputs, teacher) = short.inputs(request.prompt, chunk)?;
+                if target.completed_target_rows_cursor(executor)? != start
+                    || draft.as_ref().is_some_and(|d| d.position() != start)
+                {
+                    return Err("global short prompt entry cursor rejected".into());
                 }
-            },
-        )?;
+                phase("short_prompt_chunk");
+                let rows = target.prefill_chunk_with_carry(executor, inputs, cancel)?;
+                if rows.start() != start
+                    || rows.count() != inputs.len()
+                    || target.completed_target_rows_cursor(executor)? != end
+                {
+                    return Err("global short prompt completed rows rejected".into());
+                }
+                if let Some(draft) = draft.as_deref_mut() {
+                    let mut carries = Zeroizing::new(Vec::with_capacity(
+                        inputs.len() * crate::resident_model::batch::target_rows::HC_WIDTH,
+                    ));
+                    for row in 0..inputs.len() {
+                        if rows.position(row)? != start + row {
+                            return Err("global short prompt row identity rejected".into());
+                        }
+                        carries.extend_from_slice(rows.hidden(row)?);
+                    }
+                    // Release the original output-host lease BEFORE further
+                    // model work. This is a fenced, wiping copy of actual R;
+                    // teacher tokens are exact NEXT INPUTS, never greedy picks.
+                    drop(rows);
+                    draft.append_kv_group(teacher, &carries, cancel)?;
+                } else {
+                    drop(rows);
+                }
+                if target.completed_target_rows_cursor(executor)? != end
+                    || draft.as_ref().is_some_and(|d| d.position() != end)
+                {
+                    return Err("global short prompt teacher cursor rejected".into());
+                }
+            }
+        } else {
+            target.with_prompt_ple_source(
+                executor,
+                &request.prompt[..plan.prefix()],
+                plan.chunk(),
+                cancel,
+                |target, executor| {
+                    let loan = target.begin_prompt_cache_loan(executor)?;
+                    let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        // The single lease spans all batched inputs and MTP
+                        // teaching, and ends BEFORE normal decode reads the cache.
+                        let _scope = target.prompt_scope(loan.as_ref())?;
+                        for chunk in plan.chunks() {
+                            let end = chunk.end;
+                            let (inputs, teacher) = plan.inputs(request.prompt, chunk)?;
+                            phase("prompt_chunk");
+                            target.prefill_prompt_chunk(
+                                executor,
+                                inputs,
+                                teacher,
+                                draft.as_deref_mut(),
+                                cancel,
+                            )?;
+                            if target.completed_target_rows_cursor(executor)? != end {
+                                return Err(kuno_text::Error::InvalidFormat(
+                                    "global committed prompt prefix cursor",
+                                ));
+                            }
+                        }
+                        Ok(())
+                    }));
+                    target.finish_prompt_cache_loan(executor, loan)?;
+                    match attempted {
+                        Ok(result) => result,
+                        Err(_) => Err(kuno_text::Error::InvalidFormat(
+                            "global prompt prefix execution unwound",
+                        )),
+                    }
+                },
+            )?;
+        }
     }
     if crate::strata_prompt::active()
         || target.completed_target_rows_cursor(executor)? != plan.prefix()
