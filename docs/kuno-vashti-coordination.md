@@ -1,6 +1,19 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno-only Strata prefill gap pass (2026-10-19, CPU candidate; NOT installed).**
+**Active Kuno-only Strata prefill gap pass (2026-10-19; NOT installed).**
+The user is home and has authorized protected GPU testing. The original coupled
+candidate5fbc3ca5 / SHAb45446bc passes all fourteen actual FP16/BF16 matrix cases
+with the unchanged oracle and all three complete public profile requests,
+real request erasure, close, physical recovery and zero driver-fault changes.
+Matched warm profiled4245-token prefix43.4647 ->34.9928s (19.5% shorter).
+This remains well behind upstream Strata's reported4K result; it is not a clean
+HTTP or new local Strata comparison.39 added actual router/dequant operator cases
+are built at9a18f1f5 / SHA493bf946 but GPU acceptance is pending. Staged
+thinking/tool/API checks and a coherent native submission-batching candidate
+are in progress. No installation, API change or Vashti consumer work yet.
+See [current receipts and remaining gates](kuno-prefill-strata-gap-investigation.md#protected-gpu-continuation-2026-10-19-local-time).
+
+**Prior CPU preparation checkpoint (superseded by GPU continuation above).**
 The user authorized investigation and implementation preparation while away and
 without sudo. See [full source comparison, candidate and protected next steps](kuno-prefill-strata-gap-investigation.md).
 Source5fbc3ca5 combines genuine missing token-level prompt router parallelism,

@@ -1,9 +1,11 @@
 # Native prompt processing investigation — 2026-10-19
 
-**Next CPU-only candidate:** [Strata gap investigation](kuno-prefill-strata-gap-investigation.md)
+**Next candidate:** [Strata gap investigation](kuno-prefill-strata-gap-investigation.md)
 records the parallel router, vector dequantization, macro matrix and subgroup
-contract repairs at5fbc3ca5. It is NOT installed or hardware-validated. The accepted
-installed results below remain the live baseline.
+contract repairs at5fbc3ca5. Actual matrix and complete public-profile checks now
+pass, with matched warm profiled4245-token time43.4647 ->34.9928s. Additional
+operator/API gates and queue-submission work are in progress. It is NOT installed;
+the accepted installed results below remain the live baseline.
 
 
 This is Kuno backend work in `codex/strata-rust-port`. No Vashti source or API

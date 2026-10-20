@@ -12,9 +12,55 @@ Canonical Vashti source and its coordination notes are untouched.
 image-enabled gateway36626d30 / SHAd3ed07f4. Its matched4,245-token warm prompt
 is43.205s; API/tool/privacy/recovery acceptance is recorded in
 [kuno-prompt-processing-profile.md](kuno-prompt-processing-profile.md).
-The new coupled candidate below is NOT installed, hardware-validated or timed.
-No GPU inference, unload, sudo, driver/service change or authentication workaround
-is performed in this investigation. No API or Vashti consumer change.
+The new coupled candidate below is NOT installed. The user subsequently authorized
+protected GPU validation at home; actual matrix and complete public-request checks
+now pass, with preliminary profiled timings below. API acceptance and further
+queue-submission work are in progress. No API or Vashti consumer change.
+
+## Protected GPU continuation (2026-10-19 local time)
+
+All paths below are under `/media/jmicko/faststore/kuno-development`.
+Original coupled source5fbc3ca5 / worker SHAb45446bc passes the real B70 matrix
+mode: fourteen FP16/BF16 original-weight cases, counts/rows1/33,8/33,35/33,
+257/33,16/64,64/64,65/65 in each format. Unchanged IEEE oracle/tolerance,
+maximum absolute error4.2915344e-6, no mismatches, complete owner/tail audit and
+real close. Receipt: `prefill-coupled-matrix-numeric-20261019/receipt.json`.
+
+Same-source complete public profile passes all three45/4245/4245-token requests,
+correct answer, actual per-request erasure and Session close. Repeated warm prompt
+**43.4647 ->34.9928s (19.5% shorter)** versus the matched installed profiled
+baseline. This is fenced diagnostic time, not a clean HTTP benchmark or a local
+Strata A/B. Cold load102.722s. Receipt:
+`prefill-coupled-profile-20261019/receipt.json`.
+
+Repeated4245-token diagnostic: expert interval21.4586s, expert enqueue1.8476s,
+attention about10.13s, QSA core3.0004s, GDN projections3.2864/1.3344s,
+QSA projections0.9563/0.4475s, GR input1.2487s/router1.2175s,
+GDN recurrence0.8885s. Nested categories overlap. Warm request rebind4.7/7.7ms
+and preflight55–60ms do not explain the multi-second prompt gap.
+
+Actual aggregate counters:26,673 expert groups;262,206,259,200 bytes of local
+FP16 image writes;39,834 submitted HOST copy segments /27,315,942,400 source
+bytes. These are not all PCIe writes. Enqueue timing ends before `client.sync`;
+native graph recording/individual `vkQueueSubmit` calls inside sync can therefore
+contribute to the completed expert interval. It is not established pure device
+math time. A coherent per-physical-queue submission-batching candidate is under
+implementation with original waits/signals/final join retained.
+
+Both completed protected runs restore Intel device usage50,688,000 bytes,
+NVIDIA compute processes0, normal admission, all services200 and unchanged zero
+driver-fault counts. Compiled-public text/replies stay in RAM; swap/core disabled.
+
+Public-only probe commitsfd6ad094/6e82bcbd/9a18f1f5 add actual production router
+and vector-eight dequant checks, independent canonical references and reachable
+negative controls (9 router,30 dequant cases) to the existing matrix mode.
+Production WGSL, matrix and quantization math are unchanged from5fbc3ca5.
+Audited probe artifact `strata-prefill-coupled-operators-audited-20261019`, source
+9a18f1f5, SHA256
+`493bf946a58fdae4c4b382102dfe116c9a313f2b485e3ad73df1c10694e148f3`.
+Build passes; actual39-case GPU acceptance remains pending at this checkpoint.
+The frozen original candidate's isolated staged thinking/tool/API test is running.
+No installation or new live Vashti/browser/image acceptance is claimed.
 
 ## Comparison evidence
 
