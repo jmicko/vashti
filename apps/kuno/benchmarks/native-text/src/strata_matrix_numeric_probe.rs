@@ -21,7 +21,14 @@ pub(crate) fn cases(
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
 ) -> ProbeResult<Vec<serde_json::Value>> {
-    let (max_rows, columns) = (65usize, 10240usize);
+    let (max_rows, columns) = (
+        if cfg!(feature = "strata-cubek-wide") {
+            128usize
+        } else {
+            65usize
+        },
+        10240usize,
+    );
     let tensor = file
         .tensor("blk.0.hc_attn_down.weight")
         .ok_or("public matrix original weight")?;
@@ -44,7 +51,7 @@ pub(crate) fn cases(
         let public = client.create_from_slice(u32::as_bytes(&packed));
         // Existing independent IEEE cases plus exact/full macro tiles and
         // both token/feature tails. The same checked primitive is selected.
-        for (count, rows) in [
+        let original_shapes = [
             (1, 33),
             (8, 33),
             (35, 33),
@@ -65,7 +72,13 @@ pub(crate) fn cases(
             // non-tile-aligned M as well, including a multi-stage long tail.
             (35, 64),
             (257, 64),
-        ] {
+        ];
+        let wide_shapes: &[(usize, usize)] = if cfg!(feature = "strata-cubek-wide") {
+            &[(512, 128), (513, 128)]
+        } else {
+            &[]
+        };
+        for &(count, rows) in original_shapes.iter().chain(wide_shapes) {
             let mut inputs = Zeroizing::new(vec![0.; count * columns]);
             let mut image = Zeroizing::new(vec![0u32; inputs.len() / 2]);
             for (i, v) in inputs.iter_mut().enumerate() {
@@ -101,6 +114,14 @@ pub(crate) fn cases(
             let actual_cubek_launch = false;
             if !actual_cubek_launch {
                 native::run_dense(client, handles, count, columns, rows, 0, 0, rows, bfloat)?;
+            }
+            #[cfg(feature = "strata-cubek-wide")]
+            let actual_cubek_wide_launch =
+                actual_cubek_launch && super::cubek::public_dense_uses_wide(client, count);
+            #[cfg(not(feature = "strata-cubek-wide"))]
+            let actual_cubek_wide_launch = false;
+            if count >= 512 && !actual_cubek_wide_launch {
+                return Err("public wide matrix actual selection rejected".into());
             }
             let actual = probe::read_native_public(arena, output)?;
             if probe::read_native_public(arena, fault)?
@@ -161,6 +182,7 @@ pub(crate) fn cases(
                 "count":count,"rows":rows,"columns":columns,"mismatches":mismatches,
                 "max_abs":max_abs,"ftz_oracle_mismatches":ftz_mismatches,"ftz_max_abs":ftz_max_abs,
                 "actual_cubek_launch":actual_cubek_launch,
+                "actual_cubek_wide_launch":actual_cubek_wide_launch,
                 "ftz_is_additional_diagnosis_only":true,"actual_native_kernels":true,"full_owner_and_tail_checked":true}),
             );
             arena.reset()?;

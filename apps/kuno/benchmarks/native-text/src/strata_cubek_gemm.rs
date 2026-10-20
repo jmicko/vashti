@@ -152,6 +152,17 @@ fn dense_plan(
     }
 }
 
+#[cfg(feature = "strata-cubek-wide")]
+pub(super) fn public_dense_uses_wide(client: &ComputeClient<WgpuRuntime>, count: usize) -> bool {
+    let hw = &client.properties().hardware;
+    dense_plan(
+        count,
+        hw.max_shared_memory_size,
+        hw.max_units_per_cube,
+        hw.max_cube_dim,
+    ) == DensePlan::Wide
+}
+
 #[path = "strata_cubek_expert.rs"]
 mod routed_expert;
 #[allow(unused_imports)]
