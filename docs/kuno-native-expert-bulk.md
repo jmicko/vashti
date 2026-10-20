@@ -62,7 +62,9 @@ original nonce check and metadata ceiling also remain mandatory.
 
 ## Bounds and diagnostics
 
-The tape admits at most 4,608 original compute/copy nodes and 8MiB of actual
+The complete wide-expert wave admits at most 5,632 original compute/copy nodes
+(512 groups times eight physical compute pieces plus three HOST copies), and
+8MiB of actual
 command/argument metadata. Its whole command capacity is allocated before the
 first insertion, so populated private command storage is not reallocated.
 Deferred HOST-copy and INFO allocations have full-capacity wiping owners.
@@ -83,10 +85,74 @@ The existing compiled-public profile receives backend-returned enqueue counts:
 `expert_native_bulk_copy_segments`. These are actual entry/command counts, never
 completion receipts. Ordinary private workers have no additional persistent
 counters/logging. Whole-model acceptance must establish one batch per expert
-phase, six launches per original group and identical original HOST copy counts.
+phase, six logical phases per original group and identical original HOST copy
+counts. The wide wave reports its additional real matrix pieces separately.
 Per-group `expert_cpu_*` measurements now cover collection; backend work remains
 inside the enclosing expert enqueue timer. They must not independently be
 presented as a reduction in complete expert work.
+
+## Complete wide-prefix/tail grammar
+
+The original path still has six logical phases and six real compute launches.
+The wide wave keeps Gather, GU-dequant, DOWN-dequant (original release point),
+GU product, activation and DOWN product. Each product is one original full-range
+dispatch or one exact full 128-member prefix followed by its required authentic
+tail. A role-bearing wide/tail entry cannot enter another phase, and no copy or
+other kernel can split an incomplete pair. All phases must close before INFO
+upload or native node admission. Pipeline preparation grants no acceptance.
+
+The validator reads the original 72-byte legacy or 80-byte new generated INFO,
+including real scalar padding and all six array buffer/logical lengths. The
+seven new U32 values are columns, rows, routed-member count, weight first,
+group, member base and piece members. The original Gather carries the *full
+prompt* count; its real grid has exactly five workgroups per routed member, so
+the validator derives routed count from that grid and preserves the prompt
+header bound. Wide prefix is exactly `count /128 *128` starting at zero; a tail
+is exactly the remaining 1..127 members. Its input retains the same allocator,
+stream and root, with start increased by `prefix *columns *2` and excluded end
+increased by `original_used -count *columns *2`. The other five views remain
+identical. Full map/status/fault/output extents, real direct grids and original
+legacy small/narrow/macro fallbacks remain checked.
+
+Original vector ArrayArgs pass a vector count, and KernelLauncher subsequently
+divides logical length by vec4 vectorization. The validator preserves the real
+serialized buffer length (`used /8`) versus logical length (`used /32`), rather
+than silently changing this existing argument behavior. The existing pure
+`KernelLauncher::into_bindings` serializer is now public so CPU controls can
+register genuine ArrayArg/scalar types without constructing a client/device;
+the method body, INFO lease wiping and launch authority are unchanged.
+
+The returned receipt reports actual physical `launches`, plus `logical_phases`,
+`matrix_pieces`, `wide_prefixes`, `wide_blocks` and `tail_pieces`. Public totals
+use the corresponding `expert_native_bulk_*` names. For G groups and T actual
+tail launches, require logical phases=6G, matrix pieces=2G+T, and real launches
+=6G+T. This never describes seven/eight launches as six. Original copy totals
+must still match. Counters become available only after the complete original
+batch has actually enqueued and its closing scope checks pass.
+
+The authentic host-inventory control uses the original group builder/validator
+on 4,096 prompt rows: 158 groups with 257 members and 354 with one member, exactly
+40,960 routes. It includes all 85 possible GPU/HOST/shadow source views, actual
+typed boxed kernel commands and original live Vec capacities. The fixed tape
+has 5,632 slots, but this route-conserving maximum needs 3,900 entries and 4,924
+physical nodes. The actual command size is 208 bytes; actual command/argument
+inventory is 7,695,200 bytes, 693,408 below the unchanged 8MiB ceiling. Its
+conservative backend charge is 10,256,352 bytes within the unchanged 24MiB parent
+quote. Node overflow and oversized retained-capacity negatives still reject.
+The 4,096-view, 32-pipeline, 64MiB Graph and actual reuse-scope limits are unchanged.
+
+Source-only acceptance for this wave: the actual collector/grammar driver passes
+six controls, including original seal/panic/capacity tests and exact complete,
+missing-tail, wrong-role, wrong-schema/grid/member interval and all-six-owner
+negative controls. Two App controls pass: actual typed ArrayArg/KernelLauncher
+registration through scalar-small, narrow, macro and split-wide grammar, and the
+original group-validator maximum-inventory proof above. The complete worker
+typechecks with the original Intel/native32/paired/bulk feature set. Logs are
+`native-expert-piece-grammar-controls.log`,
+`native-expert-piece-budget-controls.log` and `native-expert-piece-check.log` in
+the isolated evidence directory below. New generated kernel arithmetic, full
+real-request logical/physical counts and recovery remain root integration gates;
+no GPU, installed service or shared Cargo target was used from this worktree.
 
 ## Validation boundary
 

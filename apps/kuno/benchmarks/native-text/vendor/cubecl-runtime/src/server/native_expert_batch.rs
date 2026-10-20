@@ -5,7 +5,10 @@ use crate::public_external::PublicHostCopy;
 use alloc::vec::Vec;
 use cubecl_common::backtrace::BackTrace;
 
-pub const NATIVE_EXPERT_BATCH_COMMANDS: usize = 4608;
+// At most512 original groups, each with up to8 physical compute pieces (six
+// logical phases, split GU/DOWN) and3 checked HOST copies. The actual8MiB tape
+// inventory and24MiB parent reservation remain independent hard bounds.
+pub const NATIVE_EXPERT_BATCH_COMMANDS: usize = 512 * (8 + 3);
 pub const NATIVE_EXPERT_BATCH_BYTES: usize = 8 * 1024 * 1024;
 /// Complete one-active-batch host reservation, including the original command
 /// tape/arguments and simultaneously live native backend owner/INFO tables.
@@ -36,6 +39,11 @@ pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) ->
 pub struct NativeStrataExpertBatchReceipt {
     pub launches: usize,
     pub copy_segments: usize,
+    pub logical_phases: usize,
+    pub matrix_pieces: usize,
+    pub wide_prefixes: usize,
+    pub wide_blocks: usize,
+    pub tail_pieces: usize,
 }
 
 pub enum NativeStrataExpertCommand<K> {

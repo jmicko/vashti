@@ -6,7 +6,7 @@ use cubecl_runtime::server::{
     NativeStrataExpertCommand,
 };
 use hashbrown::HashMap as ExactMap;
-use cubecl_runtime::server::native_expert_batch::native_strata_expert_operator;
+use cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar;
 
 const MAX_BINDINGS: usize = 4096;
 const MAX_PIPELINES: usize = 32;
@@ -155,18 +155,16 @@ impl WgpuServer {
             {
                 return Err(fault("native expert actual pipeline/INFO capacity"));
             }
-            let mut launches = 0;
+            let mut grammar = NativeStrataExpertGrammar::default();
             for command in &mut batch.commands {
                 match command {
                     NativeStrataExpertCommand::Launch {
-                        kernel, args, mode, ..
+                        kernel, args, mode, count,
                     } => {
                         let kernel = kernel
                             .take()
                             .ok_or_else(|| fault("native expert original kernel missing"))?;
-                        if !native_strata_expert_operator(kernel.name(), kernel.native_release_after(), launches) {
-                            return Err(fault("native expert original six-operator order"));
-                        }
+                        grammar.launch(kernel.name(), kernel.native_release_after(), count, args)?;
                         let mut id = kernel
                             .id()
                             .native_release_boundary(kernel.native_release_after());
@@ -188,14 +186,14 @@ impl WgpuServer {
                         };
                         pipelines.push(Some(pipeline));
                         records.push(core::mem::take(&mut args.info));
-                        launches += 1;
                     }
-                    NativeStrataExpertCommand::HostCopies(_) => pipelines.push(None),
+                    NativeStrataExpertCommand::HostCopies(_) => {
+                        grammar.host_copies()?;
+                        pipelines.push(None);
+                    }
                 }
             }
-            if launches == 0 || launches % 6 != 0 {
-                return Err(fault("native expert incomplete six-operator pipeline"));
-            }
+            let logical = grammar.finish()?;
             let info = self
                 .scheduler
                 .stream(&stream_id)
@@ -251,9 +249,14 @@ impl WgpuServer {
                     }
                 }
             }
-            if next_info != info.len() {
+            if next_info != info.len() || receipt.launches != logical.launches {
                 return Err(fault("native expert original INFO inventory"));
             }
+            receipt.logical_phases = logical.logical_phases;
+            receipt.matrix_pieces = logical.matrix_pieces;
+            receipt.wide_prefixes = logical.wide_prefixes;
+            receipt.wide_blocks = logical.wide_blocks;
+            receipt.tail_pieces = logical.tail_pieces;
             Ok(receipt)
         })();
         let finished = self.scheduler.stream(&stream_id).end_native_expert_batch(

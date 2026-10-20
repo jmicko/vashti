@@ -115,7 +115,11 @@ impl<R: Runtime> KernelLauncher<R> {
     ///
     /// Also returns an ordered list of constant bindings. The ordering between constants and tensors
     /// is up to the runtime.
-    fn into_bindings(mut self) -> KernelArguments {
+    /// Serialize the originally registered arguments without launching a
+    /// kernel or creating a device/client. This preserves original binding
+    /// owners and INFO-lease wiping; it grants no resource-validation,
+    /// execution, completion or erasure authority.
+    pub fn into_bindings(mut self) -> KernelArguments {
         let mut bindings = KernelArguments::new();
         let address_type = self.address_type;
         let info = self.with_info(|info| info.finish(address_type));

@@ -9,6 +9,10 @@ use kuno_text::model::BoundGraph;
 mod public_numeric;
 pub(crate) use public_numeric::cases as public_dequant_numeric;
 
+#[cfg(all(test, feature = "strata-native-expert-bulk"))]
+#[path = "strata_expert_bulk_budget_tests.rs"]
+mod bulk_budget_tests;
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Op {
     Gather,
@@ -260,6 +264,15 @@ pub(crate) fn enqueue(
                     "expert_native_bulk_copy_segments",
                     receipt.copy_segments as u64,
                 );
+                for (name, value) in [
+                    ("expert_native_bulk_logical_phases", receipt.logical_phases),
+                    ("expert_native_bulk_matrix_pieces", receipt.matrix_pieces),
+                    ("expert_native_bulk_wide_prefixes", receipt.wide_prefixes),
+                    ("expert_native_bulk_wide_blocks", receipt.wide_blocks),
+                    ("expert_native_bulk_tail_pieces", receipt.tail_pieces),
+                ] {
+                    crate::strata_prefill_profile::count(name, value as u64);
+                }
                 Ok(())
             }
             Err(error) => Err(error),
