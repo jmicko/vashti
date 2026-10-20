@@ -52,6 +52,15 @@ pub(crate) fn cases(
             (16, 64),
             (64, 64),
             (65, 65),
+            // Additional full IEEE checks for both narrow staged shapes and
+            // their boundary/tail owners. Keep all seven original cases above
+            // and the original reference/tolerance unchanged.
+            (3, 33),
+            (7, 33),
+            (9, 64),
+            (16, 33),
+            (17, 65),
+            (31, 64),
         ] {
             let mut inputs = Zeroizing::new(vec![0.; count * columns]);
             let mut image = Zeroizing::new(vec![0u32; inputs.len() / 2]);
