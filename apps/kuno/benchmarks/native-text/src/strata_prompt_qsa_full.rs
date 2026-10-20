@@ -116,6 +116,7 @@ pub(crate) fn run(
     ] {
         span(&q[i], n)?;
     }
+    let mut family_timing = crate::strata_prefill_profile::Timer::for_public_arena(arena)?;
     launch(
         arena,
         Op::Positions,
@@ -236,6 +237,7 @@ pub(crate) fn run(
         1,
         (start + count) / 4 - start / 4,
     )?;
+    family_timing.mark("qsa_family_producers")?;
     // Exactly the upstream256-query score/selection loop, including C-1's
     // last-query active grid clamp. Omitted score slots are never consumed:
     // selection validates its reach and reads only each query's causal blocks.
@@ -282,6 +284,7 @@ pub(crate) fn run(
             active_blocks,
         )?;
     }
+    family_timing.mark("qsa_family_score_select")?;
     for first in (0..count).step_by(32) {
         let rows = (count - first).min(32);
         let mut ap = p;
@@ -310,6 +313,7 @@ pub(crate) fn run(
             ap,
         )?;
     }
+    family_timing.mark("qsa_family_attention_merge")?;
     let packed = crate::strata_prompt::activation_stage()?;
     span(&packed, count * 3072)?;
     launch(
@@ -318,7 +322,8 @@ pub(crate) fn run(
         [3072 / 128, count, 1],
         vec![q[0].clone(), q[9].clone(), packed, fault],
         p,
-    )
+    )?;
+    family_timing.mark("qsa_family_gate")
 }
 fn join_flags(
     arena: &PrivateArena,

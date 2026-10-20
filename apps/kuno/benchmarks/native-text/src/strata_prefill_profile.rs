@@ -293,6 +293,18 @@ fn native_backend_counts() -> [u64; 5] {
 }
 pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 5])>);
 impl Timer {
+    // PUBLIC_QSA_TIMER_ADMISSION_BEGIN
+    /// No private client lookup, enqueue, flush or synchronization is added.
+    /// Only the existing compiled-public collector may create this sub-timer.
+    pub(crate) fn for_public_arena(
+        arena: &crate::private_arena::PrivateArena,
+    ) -> kuno_text::Result<Self> {
+        if !ENABLED.load(Ordering::Acquire) {
+            return Ok(Self(None));
+        }
+        Self::new(arena.client().map_err(crate::resident_util::fault)?)
+    }
+    // PUBLIC_QSA_TIMER_ADMISSION_END
     pub(crate) fn new(client: &ComputeClient<WgpuRuntime>) -> kuno_text::Result<Self> {
         if !ENABLED.load(Ordering::Acquire) {
             return Ok(Self(None));
