@@ -294,15 +294,6 @@ async fn serve(
             crate::strata_prompt::experts::public_dequant_numeric(&client, &mut arena, &file)
                 .map_err(|_| "public_prompt_dequant_numeric_failed")?,
         );
-        let qsa_math_checks =
-            crate::strata_qsa::public_attention_numeric(&mut arena).map_err(|error| {
-                eprintln!("public_attention_math_numeric_error {error}");
-                "public_prompt_attention_math_numeric_failed"
-            })?;
-        eprintln!(
-            "public_attention_math_controls_complete {}",
-            qsa_math_checks.len()
-        );
         let attention_checks =
             crate::strata_qsa::selection::public_numeric(&mut arena).map_err(|error| {
                 // This branch accepts only compiled public diagnostic inputs.
@@ -314,6 +305,15 @@ async fn serve(
                 eprintln!("public_gdn_math_numeric_error {error}");
                 "public_prompt_gdn_math_numeric_failed"
             })?;
+        let qsa_math_checks =
+            crate::strata_qsa::public_attention_numeric(&mut arena).map_err(|error| {
+                eprintln!("public_attention_math_numeric_error {error}");
+                "public_prompt_attention_math_numeric_failed"
+            })?;
+        eprintln!(
+            "public_attention_math_controls_complete {}",
+            qsa_math_checks.len()
+        );
         arena.close().map_err(|_| "public_matrix_close_failed")?;
         if arena.owned_zero_audit_receipt().is_none() {
             return Err("public_matrix_erasure_unconfirmed");
