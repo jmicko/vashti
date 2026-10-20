@@ -1,5 +1,33 @@
 # Strata short prompt path and bounded Rust implementation — 2026-10-19
 
+## Prepared whole-request terminal-count coverage — 2026-10-20
+
+`apps/kuno/benchmarks/text/public_short_tail_cases.py` is a fixed-public helper
+for the protected staged acceptance client. It makes only ordinary `/api/chat`
+requests through that client's existing `doc` callback and verifies its actual
+selected-worker PID with the client's `pid` callback. Call
+`run_public_short_tail_cases(doc, pid, first)` after preloading the native worker.
+There is no worker, inference, API, policy, capture or authority modification.
+
+The first fixed arithmetic prompt is calibrated to exactly50 total input tokens
+in at most three requests. Single-word filler increments must then produce exact
+totals50..57. Excluding the final ordinary count1 input gives prefixes49..56:
+six full MAX8 windows followed by each terminal count1..8. The helper repeats
+57..50 in reverse on the same loaded worker to exercise retained rebind and
+changed capture shapes. Every request must finish normally below the32-output
+cap, return exactly323, retain the original PID and report zero load duration.
+Failure to obtain adjacent exact token counts rejects the fixture; no token
+array, prompt, reply or content hash is returned or logged.
+
+Only numeric request metadata is returned. Its explicit
+`request_checks_passed_before_session_close` flag is not whole-session acceptance:
+the parent staged client still has to check actual erasure/close, worker writes,
+driver events and physical GPU/admission recovery. Existing total64/65/66
+threshold cases, tools and semantic-code checks remain separate and unchanged.
+Four CPU protocol/schedule tests pass, including bounded calibration, every tail,
+reverse reuse, wrong arithmetic, truncation, reload/replaced PID and token-count
+rejection. No GPU or live API execution is claimed by this preparation.
+
 ## MAX8 projection-authority repair — 2026-10-20
 
 The first protected MAX8/no-head/device-carry request correctly rejected an
