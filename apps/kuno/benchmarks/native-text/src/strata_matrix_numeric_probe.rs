@@ -61,6 +61,10 @@ pub(crate) fn cases(
             (16, 33),
             (17, 65),
             (31, 64),
+            // Keep the prior26 controls and exercise aligned output rows with
+            // non-tile-aligned M as well, including a multi-stage long tail.
+            (35, 64),
+            (257, 64),
         ] {
             let mut inputs = Zeroizing::new(vec![0.; count * columns]);
             let mut image = Zeroizing::new(vec![0u32; inputs.len() / 2]);
