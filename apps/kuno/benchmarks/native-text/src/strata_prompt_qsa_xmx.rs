@@ -43,11 +43,60 @@ fn scale(cache: &Array<u32>, token: usize, offset: usize) -> f32 {
     value
 }
 
+/// Exact IEEE binary16 RTE, returned as binary32 bits. Integer operations
+/// make the high-part rounding observable BEFORE residual subtraction; an
+/// over-precise F16 register cannot turn the residual into x-x.
 #[cube]
-fn stage_split(hi: &mut SharedMemory<f16>, lo: &mut SharedMemory<f16>, i: usize, x: f32) {
+fn rounded_half_bits(bits: u32) -> u32 {
+    let sign = bits & 0x80000000u32;
+    let mag = bits & 0x7fffffffu32;
+    let e = mag >> 23;
+    let fraction = mag & 0x7fffffu32;
+    let mut rounded = mag;
+    if mag >= 0x7f800000u32 {
+        rounded = mag;
+        if fraction != 0 {
+            rounded = (mag | 0x400000u32) & 0x7fffe000u32;
+        }
+    } else if mag >= 0x477ff000u32 {
+        rounded = 0x7f800000u32;
+    } else if mag >= 0x38800000u32 {
+        rounded = (mag + 0xfffu32 + ((mag >> 13) & 1)) & 0xffffe000u32;
+    } else {
+        rounded = 0;
+        if e >= 102 {
+            let shift = 126 - e;
+            let mantissa = 0x800000u32 | fraction;
+            let mut q = mantissa >> shift;
+            let remainder = mantissa & ((1u32 << shift) - 1);
+            let halfway = 1u32 << (shift - 1);
+            if remainder > halfway || (remainder == halfway && (q & 1) != 0) {
+                q += 1;
+            }
+            if q > 0 {
+                let mut n = q;
+                let mut leading = 0u32;
+                while n > 1 {
+                    n >>= 1;
+                    leading += 1;
+                }
+                rounded = ((leading + 103) << 23) | ((q - (1u32 << leading)) << (23 - leading));
+            }
+        }
+    }
+    sign | rounded
+}
+#[cube]
+fn stage_split_raw(hi: &mut SharedMemory<f16>, lo: &mut SharedMemory<f16>, i: usize, x: f32) {
     let h = f16::cast_from(x);
     hi[i] = h;
     lo[i] = f16::cast_from(x - f32::cast_from(h));
+}
+#[cube]
+fn stage_split(hi: &mut SharedMemory<f16>, lo: &mut SharedMemory<f16>, i: usize, x: f32) {
+    let rounded = f32::reinterpret(rounded_half_bits(u32::reinterpret(x)));
+    hi[i] = f16::cast_from(rounded);
+    lo[i] = f16::cast_from(x - rounded);
 }
 #[path = "strata_qsa_xmx_stage_probe.rs"]
 mod stage_probe;
@@ -520,7 +569,7 @@ mod tests {
         options.vulkan.max_spirv_version = (1, 6);
         let AutoRepresentation::SpirV(kernel) = Compiler::compile(
             &mut AutoCompiler::SpirV(Default::default()),
-            definition(),
+            stage_definition(true),
             &options,
             cubecl::server::ExecutionMode::Unchecked,
             StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
@@ -555,9 +604,38 @@ mod tests {
             at += n;
         }
         assert_eq!(
-            pairs, 2,
-            "both Q and probability residuals need actual half rounding"
+            pairs, 1,
+            "original raw stage retains its half conversion chain before GPU lowering"
         );
+    }
+    #[test]
+    fn integer_rounding_matches_independent_half_reference_at_all_half_boundaries() {
+        for bits in 0..=65535u16 {
+            let x = f16::from_bits(bits).to_f32();
+            if !x.is_finite() {
+                continue;
+            }
+            let f = x.to_bits();
+            for candidate in [
+                f,
+                f.wrapping_add(1),
+                f.wrapping_sub(1),
+                f.wrapping_add(0xfff),
+                f.wrapping_add(0x1000),
+                f.wrapping_add(0x1001),
+                f.wrapping_sub(0x1000),
+            ] {
+                let value = f32::from_bits(candidate);
+                if !value.is_finite() {
+                    continue;
+                }
+                assert_eq!(
+                    rounded_half_bits(candidate),
+                    f16::from_f32(value).to_f32().to_bits(),
+                    "input bits {candidate:08x}"
+                );
+            }
+        }
     }
     #[test]
     fn every_cooperative_tile_has_exact_one_writer_and_stays_inside_original_slots() {

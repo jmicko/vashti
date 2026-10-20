@@ -2397,7 +2397,11 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 ),
                 (
                     "qsa_xmx_stage",
-                    crate::strata_qsa::prompt_xmx::stage_definition(),
+                    crate::strata_qsa::prompt_xmx::stage_definition(false),
+                ),
+                (
+                    "qsa_xmx_stage_raw",
+                    crate::strata_qsa::prompt_xmx::stage_definition(true),
                 ),
             ]);
             for (name, definition) in definitions {
@@ -2442,7 +2446,7 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 #[cfg(feature = "strata-qsa-xmx")]
                 let expected_shared = if name == "qsa_xmx_attention" {
                     Some(crate::strata_qsa::prompt_xmx::SHARED_BYTES)
-                } else if name == "qsa_xmx_stage" {
+                } else if name.starts_with("qsa_xmx_stage") {
                     Some(1536)
                 } else {
                     expected_shared

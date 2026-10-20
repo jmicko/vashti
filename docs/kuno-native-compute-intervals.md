@@ -1809,3 +1809,34 @@ private worker cannot select it. This targeted numerical control does not replac
 original171+7 GPU, full count/profile/recovery or unchanged clean/staged gates.
 The new probe's real SPIRV is added to all8 device-layout offline validations.
 No API/protocol/config/model identity/frontend/install/release change.
+
+
+### Observed dynamic residual failure and explicit rounding correction
+
+Stage source20630c01b26eb7d3a7cc66763c6d73edc21bdb88 /
+SHA83bdd69786f1d579d54526fe15a2f0399bd20dc35ef799b6e3ced2135645e792
+passes145 CPU/420 WGSL/224 matrix variants. Protected fixed-public stage control
+executes and recovers: high mismatches0/1024, low mismatches1023/1024, identity
+product mismatches1023/1024, max_abs[0,3.96484375,3.96484375], nonfinite0, full
+padding/fault zero. No full-model/speed run. This directly locates a problem in
+the shared dynamic stage, not merely an inferred overall matrix precision issue.
+It does not identify a particular Mesa optimization without more evidence.
+
+The correction makes IEEE binary16 round-to-nearest-even explicit with shared
+CPU/GPU integer bit operations, returning exact binary32 bits BEFORE subtraction.
+The high half is stored from that exactly representable value; the low half is
+stored from x-rounded_high. No new SLM, buffer, copy, barrier, input restriction
+or mathematical tolerance. The complete kernel/layout/guards remain selected.
+Independent half-crate CPU reference agrees at every finite half boundary,
+neighbor/tie and both signs; all146 selected CPU controls pass. The original
+cast-chain SPIRV control now compiles the preserved RAW diagnostic stage (one
+actual call/roundtrip), while the fixed producer uses explicit integer rounding.
+This is a diagnostic adaptation, not weakening of any original numerical oracle.
+
+The next GPU control runs BOTH original raw and fixed stages on identical static
+public inputs and genuine separate output/fault owners, reporting actual/expected
+low zero counts, identity-equals-high counts and all original comparisons. The
+raw path is a compiled-public comparison only; private production uses fixed.
+Offline validation adds all8 layouts for both stage variants (232 matrix layouts,
+420 WGSL unchanged). The fixed stage must pass exactly, then original171+7 GPU/
+full profiles/counts, physical recovery and original clean/staged gates follow.
