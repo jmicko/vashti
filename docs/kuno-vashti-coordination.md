@@ -4,13 +4,14 @@
 The user explicitly requested a new parity goal. See
 [reference scope, source decisions and protected receipts](kuno-strata-parity-goal.md).
 The accepted installation remains workerc8db19de / SHAfb31e124 and unchanged
-gateway36626d30 / SHAd3ed07f4 below. New matrix/graph candidates pass the
-original53 GPU controls and reduce a profiled warm4245-token prefix to23.869s,
-but this is not Strata parity or a new installation. The MAX8 headless candidate
-currently fails an unchanged QSA guard; recovery is confirmed and that artifact
-must not be installed. Further narrow matrix and active-prefix attention work
-is being developed together with an isolated, matched upstream reference.
-No API, KNT2/KNR2, configuration, model name or Vashti consumer change. Do not
+gateway36626d30 / SHAd3ed07f4 below. New candidates pass65 GPU matrix/router/dequant controls and complete cold45 plus
+warm4245/4245 requests; the MAX8 projection authority gap is fixed with genuine
+nonce-bound request scope, preserving generation policy. Unprofiled warm4245
+prefix15.136s versus installed24.966s. A fresh pinned upstream Strata run uses the
+same long prompt and takes5.352s, so parity is not achieved. Candidatef4ee071e /
+SHA62f088fc is not installed; final thinking/tools/semantic and new71-control
+acceptance remain. GPU recovery and zero new driver faults are confirmed. Further
+fixed-inner attention work is in progress. No API, KNT2/KNR2, configuration, model name or Vashti consumer change. Do not
 release or consume this checkpoint as an accepted worker. Preserve full original
 numerical, ownership, privacy, thinking/tool and physical recovery gates.
 

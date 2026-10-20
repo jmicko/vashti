@@ -137,3 +137,72 @@ warmup is73 public tokens (two reference lines); the following two measured
 from the separate failing cold45 short-path test. The short correctness check
 keeps all three original45-token inputs and must pass before installation.
 No production fallback, request truncation or admission relaxation is introduced.
+
+## Fresh same-host upstream reference and complete candidate
+
+The standalone reference is now actually rebuilt and run; it is not a published
+claim. Artifact directory `strata-parity-reference-build-20261020` contains the
+unchanged pinned MIT sourcefb58e0db and ggml3cf03257, image provenance and public
+transient client. AOTbmg-g31 binary SHA256
+`16a6ed700650b61675ac9ae8f8fc3e1c803b566b120f70495b599b07ff7095b3`.
+Only the1,538,035,200-byte target dense pack is regenerated; original83.62GB
+shards and existing Q2 MTP runtime are reused read-only. No duplicated expert
+pack, new host runtime installation or upstream source change.
+
+`strata-matched-reference-20261020` passes3 requests, zero reused/read-skipped
+prompt tokens, noncancelled clean exit, actual delegated cgroup containment,
+swap/core0 and physical GPU recovery. Same rendered45/4245/4245 public prompts,
+seed0/temperature0/cap32/context32768/int8KV/PLEdirect/prefill4096. Warm long
+prefixes **5.5006/5.3515s**; first4096-token chunk4.127/3.987s. First45 prefix
+0.9581s, observed startup34.412s. All three happen to finish at4 outputs; do not
+use these short responses as sustained decode rates.
+
+Exact long fixture is26,610UTF8 bytes, rendered SHA256
+`8338444d3a49e2e35b3c34393f44fa7f3198845e780e6c537c8e2f7ef6e9e384`,
+u32le-token SHA256
+`c5e2b138597af3389ccd4b18638e76bf6fce41209f0069f95e933d45f667cfbd`.
+These are identities of compiled PUBLIC fixtures, never private content hashes.
+Tokenization occurs once on already-rendered input with special parsing; no
+second chat template. Upstream reports11,608 expert slots/22,556MiB cache,
+47,962MiB arena and2,383MiB free VRAM. Backend allocation/weight-row-cache history
+can differ. Input45 warmup differs from the separate instrumented73 warmup.
+
+Important decode bound: upstream `--spec4 --suffix-draft3` automatically sets
+MTPcap4 but verifier6 (generate.cpp2218–2220); INFO truthfully reports spec6.
+Kuno Config::native(4) is not the same verifier configuration. Prefix batching
+is independent of this S and ends before first verification, so the prompt
+comparison is useful; a fully matched sustained decode arm still needs explicit
+`--mtp-max-t4` upstream with verifier4. Do not label decode parity from this arm.
+
+Sourcef4ee071e / SHA62f088fc (`strata-parity-max8-scope-slm-20261020`) fixes the
+real MAX8 projection scope using a live ShortPrefix-derived opaque window bound
+to the original admission ledger, model binding and nonzero request nonce. Its
+scope checks each count and restores on error/unwind. Original generation flags,
+GDN/PLE policy and Verify4 counters are not changed or credited. Original
+Verify8 kernels, span/finite/fault checks and complete receipts stay authoritative.
+
+It also reuses operand shared memory only after the final actual workgroup
+handoff barrier. All128 actual shader variants plus CFG/lifetime and negative
+stripped-barrier CPU controls pass in the preparation. Real f4ee GPU matrix26
+plus original39 controls pass, then the previously failing cold45 request and
+two4245 requests all answer correctly with original erase/close/recovery.
+`strata-parity-max8-slm-complete-20261020` reports load100.556s, cold45 prefix
+10.385s (includes first-use compilation), unprofiled long **17.0194/15.1360s**.
+This is progress from the installed24.9658s, still about2.83× the fresh upstream
+warm long prefix. This artifact is not installed; tools/semantic repeats,
+warm-short/tail coverage and final full combined controls remain acceptance work.
+
+The earlier instrumented0a6c58d2 sample reports warm4245 prefix17.3564s,
+experts9.2190s and attention6.3144s. Native timestamps for one real4096-token
+expert layer cover2,955 calls: matrix58.682ms, dequant19.806ms, ordered copies
+29.202ms, gather3.517ms, activation2.761ms. Diagnostic serial recording excludes
+preceding barrier gaps and cannot replace complete performance. The active QSA
+score-grid bound has little measured family-level speed effect so far; do not
+call fewer empty CTAs a proportional speedup. A fresh upstream phase-timing arm
+and connected fixed-inner QSA specialization are now being prepared.
+
+Source75211452 / SHA6321485d adds six original GPU QSA selection controls in a
+separate `attention_checks` inventory (full26+39 unchanged). It builds; actual
+71-control hardware acceptance is pending. See
+`kuno-strata-attention-numeric-controls.md`. No private API/protocol/configuration
+or frontend consumer changed. The accepted installation is stillfb31e124.
