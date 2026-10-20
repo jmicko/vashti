@@ -263,9 +263,18 @@ impl Drop for NativeExpertLayer {
 pub(crate) fn report() {
     if ENABLED.load(Ordering::Acquire) {
         TOTALS.with(|v| {
+            let mut report = v.borrow().clone();
+            let process = cubecl::wgpu::native_strata_graph_compute_barrier_stats();
+            for (name, index) in [
+                ("public_worker_total_idle_pool_retirements", 28),
+                ("public_worker_total_idle_pool_adoptions", 29),
+                ("public_worker_total_original_recording_retirements", 30),
+            ] {
+                report.insert(name, (process[index], 0, 0));
+            }
             eprintln!(
                 "public_prefill_profile {}",
-                serde_json::to_string(&*v.borrow()).unwrap()
+                serde_json::to_string(&report).unwrap()
             )
         });
     }

@@ -2207,7 +2207,7 @@ impl Graph {
             && r.profile.is_none()
             && r.push_only
             && r.family == self.compute_queues[0].family
-            && r.compute_count >= 1024
+            && (r.compute_count >= 1024 || r.work.spare_commands_count() > 0)
             && r.work.commands.first().copied() == Some(r.command)
             && self
                 .idle_pools
@@ -3421,7 +3421,12 @@ impl Graph {
                 })
             })
             .flatten();
-        let idle_reuse = if reusable_class && reuse.is_none() {
+        let idle_reuse_class = fresh_recording_pool
+            && push_only
+            && key.is_none()
+            && !profiling
+            && self.compute_lane == 0;
+        let idle_reuse = if idle_reuse_class && reuse.is_none() {
             self.idle_pools.as_ref().and_then(|p| {
                 p.prepare(
                     &self.device,

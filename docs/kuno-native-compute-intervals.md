@@ -1615,3 +1615,16 @@ A source-edit helper initially missed a formatted marker and a closing helper
 brace; corrected before the successful build. No partial/failed build ran on GPU.
 Freeze,420/208 offline,171 actual GPU/full request and actual retirement/adoption
 proofs follow. Numerical fallback success never substitutes for cache execution.
+
+
+The ebd753ed exact coupled source was frozen and built before extending adoption
+across small unkeyed MAIN captures; no GPU run of that intermediate freeze is
+claimed. A large reset pool must service small captures too to remove their
+repeated pool/semaphore setup; its inactive original handles then keep that pool
+eligible for retirement again. Named, sampled or different-family work retains
+original paths. All new plans, source/owner/descriptor/hazard checks remain full.
+Public reports add clearly named PROCESS TOTAL retirement/adoption counters,
+since I/O cleanup can retire pools between expert timer intervals. Private calls
+never enable that report. Per-expert counters retain their original delta scope.
+The same136 controls and full exact-source GPU/retirement/adoption proofs are
+required on the final combined source before clean performance acceptance.
