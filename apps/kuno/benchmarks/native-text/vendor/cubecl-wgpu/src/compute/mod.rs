@@ -18,6 +18,7 @@ mod strata_schedule;
 mod strata_upload;
 pub use strata_graph::{
     arm_native_strata_public_rolling_failure, native_strata_graph_copy_barrier_stats,
+    native_strata_graph_compute_barrier_stats,
     native_strata_graph_execution_stats, native_strata_graph_rolling_stats,
     native_strata_graph_stats, native_strata_operator_profile,
     native_strata_public_rolling_failure_stats, set_native_strata_profile_active,

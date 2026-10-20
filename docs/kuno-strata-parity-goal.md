@@ -737,3 +737,13 @@ lookup recovery pass. Release/offline/all numerical/full model/clean gates are
 pending. Original installed3fffc266/SHAeac78ce0 stays selected; goal5.3515s
 matched repeated prefix and sustained parity remains active. No API, model,
 configuration, consumer, package or release change.
+
+The scoped-buffer source45795611 / SHA8944b257 now passes408/208 offline,
+all129 GPU controls, full public requests/counts and physical recovery. Repeat
+11.5435s and capture1.9271s are essentially unchanged from11.5581/1.9539s;
+this is not an installation win. The next complete-view compute interval
+candidate retains actual full buffer declarations and every original queue
+Plan/release/wait while avoiding false same-queue dependencies. Its55 actual
+CPU controls pass; see [the exact synchronization contract and gates](kuno-native-compute-intervals.md).
+Release/GPU/full-model acceptance is pending. All complete preceding components
+stay; installed3fffc266/SHAeac78ce0 remains selected, parity goal unmet.

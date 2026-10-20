@@ -75,8 +75,14 @@ removed and physical recovery; repeated prompt samples3.2513s of distributed
 CPU costs. The next coherent candidate is capture-local actual buffer lookup
 under a single real Wgpu destruction guard per phase, preserving every original
 view, INFO, owner, planner and recording lifetime. See the exact scoped guard
-contract in [native buffer capture](kuno-native-buffer-capture.md). No new
-installation claim. See
+contract in [native buffer capture](kuno-native-buffer-capture.md). Frozen45795611 /
+SHA8944b257 passes408/208 offline, all129 original GPU controls and complete
+requests/counts/recovery, but repeat11.5435s is unchanged from11.5581s. It stays
+unselected and uninstalled. The next connected implementation replaces false
+same-queue whole-buffer hazards with COMPLETE original-view intervals; actual
+queue Plan/waits/releases and owners stay. See
+[the conservative synchronization contract](kuno-native-compute-intervals.md).
+No new installation claim. See
 [the exact implementation and gates](kuno-native-miss-ring.md).
 All actual views/owner bindings, original raw-buffer checks and signatures stay.
 See [the exact contract and current gates](kuno-native-capture-attention.md).

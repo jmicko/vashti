@@ -18,6 +18,8 @@ mod binding_owners;
 mod capture_buffers;
 #[path = "strata_capture_scratch.rs"]
 mod capture_scratch;
+#[path = "strata_compute_barriers.rs"]
+mod compute_barriers;
 #[path = "strata_descriptors.rs"]
 mod descriptors;
 #[path = "strata_transfer_barriers.rs"]
@@ -116,6 +118,11 @@ static WAIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 // profiling collector publishes deltas, after its real original sync.
 static COPY_BARRIERS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+static COMPUTE_BARRIERS: [std::sync::atomic::AtomicU64; 3] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+pub fn native_strata_graph_compute_barrier_stats() -> [u64; 3] {
+    std::array::from_fn(|i| COMPUTE_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
+}
 pub fn native_strata_graph_copy_barrier_stats() -> [u64; 2] {
     std::array::from_fn(|i| COPY_BARRIERS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -1436,6 +1443,30 @@ impl Graph {
             Ok(())
         })
     }
+    fn fill_compute_ranges(
+        &self,
+        n: &Node,
+        accesses: &mut Vec<compute_barriers::Access>,
+        native: &capture_buffers::Guarded<'_>,
+    ) -> Result<(), ServerError> {
+        accesses.clear();
+        self.visit_node_bindings(n, |r, flags| {
+            if r.size == 0
+                || r.offset
+                    .checked_add(r.size)
+                    .is_none_or(|end| end > r.buffer.size())
+            {
+                return Err(fault("native compute barrier actual owner interval"));
+            }
+            accesses.push(compute_barriers::Access {
+                buffer: native.get(r)?.as_raw(),
+                first: r.offset,
+                bytes: r.size,
+                flags,
+            });
+            Ok(())
+        })
+    }
     fn node_ranges(&self, n: &Node) -> Result<Vec<strata_schedule::Access>, ServerError> {
         let mut accesses = Vec::new();
         self.fill_node_ranges(n, &mut accesses, None)?;
@@ -2565,10 +2596,23 @@ impl Graph {
             .max()
             .unwrap_or(0);
         let mut scratch = capture_scratch::Scratch::new(largest_access_count).map_err(fault)?;
+        let mut compute_ranges = Vec::<compute_barriers::Access>::new();
+        compute_ranges
+            .try_reserve_exact(largest_access_count)
+            .map_err(|_| fault("native compute barrier scratch allocation"))?;
+        let compute_scratch_bytes = compute_ranges
+            .capacity()
+            .checked_mul(size_of::<compute_barriers::Access>())
+            .and_then(|n| n.checked_add(size_of_val(&compute_ranges)))
+            .ok_or_else(|| fault("native compute barrier scratch metadata overflow"))?;
+        if compute_scratch_bytes > 1024 * 1024 {
+            return Err(fault("native compute barrier scratch capacity"));
+        }
         let scratch_bytes = scratch
             .metadata_bytes()
             .map_err(fault)?
             .checked_add(keys.metadata_bytes())
+            .and_then(|n| n.checked_add(compute_scratch_bytes))
             .ok_or_else(|| fault("native capture guarded metadata overflow"))?;
         let native = keys.acquire()?;
         let preparation_used = self
@@ -2653,6 +2697,22 @@ impl Graph {
                 .map_err(fault)?;
         }
         let transfers = transfers.finish().map_err(fault)?;
+        let compute_budget = transfer_budget
+            .checked_sub(transfers.metadata_bytes().map_err(fault)?)
+            .ok_or_else(|| fault("native compute barrier retained metadata capacity"))?;
+        let mut compute =
+            compute_barriers::Recorder::new(self.nodes.len(), compute_budget).map_err(fault)?;
+        for (index, node) in self.nodes.iter().enumerate() {
+            let segment = &plan.segments[plan.node_segments[index]];
+            let ranges = if segment.copy {
+                None
+            } else {
+                self.fill_compute_ranges(node, &mut compute_ranges, &native)?;
+                Some(compute_ranges.as_mut_slice())
+            };
+            compute.push(segment.queue(), ranges).map_err(fault)?;
+        }
+        let compute = compute.finish().map_err(fault)?;
         let transfer_bytes = transfers
             .metadata_bytes()
             .map_err(fault)?
@@ -2660,6 +2720,7 @@ impl Graph {
             .ok_or_else(|| fault("native transfer visibility retained metadata overflow"))?;
         let scratch_bytes = scratch_bytes
             .checked_add(transfer_bytes)
+            .and_then(|n| n.checked_add(compute.metadata_bytes().ok()?))
             .ok_or_else(|| fault("native transfer capture metadata overflow"))?;
 
         let other_metadata = signature
@@ -2794,7 +2855,6 @@ impl Graph {
                 );
             }
         }
-        let mut previous: [HashMap<vk::Buffer, vk::AccessFlags>; 3] = Default::default();
         let mut segment = 0usize;
         let mut fresh_descriptors = None;
         for (index, n) in self.nodes.iter().enumerate() {
@@ -2824,7 +2884,6 @@ impl Graph {
                 )?);
             }
             let copy = work.plan.segments[segment].copy;
-            let previous = &mut previous[work.plan.segments[segment].queue()];
             let supported_stages = if copy {
                 vk::PipelineStageFlags::TRANSFER
             } else {
@@ -2852,31 +2911,17 @@ impl Graph {
                 if !transfers.node(index).map_err(fault)?.is_empty() {
                     return Err(fault("native transfer barrier physical queue identity"));
                 }
-                self.fill_node_accesses(n, &mut scratch.accesses, &native)?;
-                for (&buffer, &access) in &scratch.accesses {
-                    if let Some(before) = previous.get(&buffer).copied() {
-                        if before.intersects(
-                            vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
-                        ) || access.intersects(
-                            vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
-                        ) {
-                            scratch.barriers.push(
-                                vk::BufferMemoryBarrier::default()
-                                    .src_access_mask(before)
-                                    .dst_access_mask(access)
-                                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                                    .buffer(buffer)
-                                    .offset(0)
-                                    .size(vk::WHOLE_SIZE),
-                            );
-                            previous.insert(buffer, access);
-                        } else {
-                            previous.insert(buffer, before | access);
-                        }
-                    } else {
-                        previous.insert(buffer, access);
-                    }
+                for dependency in compute.node(index).map_err(fault)? {
+                    scratch.barriers.push(
+                        vk::BufferMemoryBarrier::default()
+                            .src_access_mask(dependency.before)
+                            .dst_access_mask(compute_barriers::all_accesses())
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .buffer(vk::Buffer::from_raw(dependency.buffer))
+                            .offset(0)
+                            .size(vk::WHOLE_SIZE),
+                    );
                 }
             }
             if !scratch.barriers.is_empty() {
@@ -2988,6 +3033,13 @@ impl Graph {
             transfers.dependency_count() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
+        for (total, amount) in COMPUTE_BARRIERS.iter().zip([
+            self.nodes.len() - copy_count,
+            compute.candidates(),
+            compute.count(),
+        ]) {
+            total.fetch_add(amount as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         self.recordings.last_mut().unwrap().ready = true;
         if let Some(rolling) = &mut rolling {
             rolling

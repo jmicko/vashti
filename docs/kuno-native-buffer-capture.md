@@ -86,3 +86,28 @@ vendored package: wgpu API/backend wrappers and core guard/export. No other
 upstream crate code is changed. Release/offline/full numerical/request gates
 remain next. Current source is development only; no measured speed or
 installation acceptance.
+
+## Frozen full-model result (45795611)
+
+Source `45795611f2cc22adb687c1240b0c45f6b117a95b`, worker SHA256
+`8944b257fc3fca0f2ad342377b7a861e7797d9948e7b771084f92f79d2509677`,
+build `strata-parity-buffer-capture-20261020`, passes release compilation,
+408/208 offline layouts, all129 original GPU numerical controls, all three
+complete requests with original bulk/wide/tail/miss-ring counts and graceful
+exit, and physical recovery. No old arithmetic, precision, source, ownership
+or memory gate was weakened.
+
+Load80.86085s, first/repeated4245 prefix12.35443/11.54345s. Repeated capture
+1.92706s versus preceding1.95395s and prompt11.55808s: effectively unchanged.
+The lookup work is now scoped correctly but is not the dominant remaining wall
+cost. No clean repeat, full staged/terminal acceptance, sustained gain or new
+installation is claimed. Installed3fffc266 remains selected.
+
+Receipts: `strata-parity-buffer-capture-20261020-{operators,profile}`,
+profile `miss-ring-validation.json`, owned
+`strata-parity-buffer-capture-public-summary-20261020.json`. Actual recovery at
+14:32:17UTC: Intel50,688,000B, NVIDIA compute0, all kernel fault counters0,
+all three service endpoints200, admission inactive/unpaused/no recovery/waiting0.
+The next connected lead is [complete-view compute synchronization](kuno-native-compute-intervals.md);
+the original encoder still issues false whole-buffer dependencies for disjoint
+views. Preserve this entire bundle while addressing that remaining difference.

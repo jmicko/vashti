@@ -74,6 +74,10 @@ mod strata_packet;
 mod strata_parameter_tests;
 #[cfg(test)]
 mod strata_capture_buffer_tests;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_compute_barriers.rs"]
+mod strata_compute_barrier_controls;
 mod strata_ple;
 mod strata_ple_reader;
 mod strata_port;
