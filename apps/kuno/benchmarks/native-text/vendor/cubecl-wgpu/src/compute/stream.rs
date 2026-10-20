@@ -891,7 +891,7 @@ impl WgpuStream {
     pub(crate) fn begin_native_expert_batch(
         &mut self,
         metadata: usize,
-    ) -> Result<u64, ServerError> {
+    ) -> Result<super::transient_io::NativeExpertBatchScope, ServerError> {
         self.private_io_active()?;
         if self.strata_graph.is_none() {
             return Err(super::transient_io::fault("native expert graph required"));
@@ -903,23 +903,30 @@ impl WgpuStream {
     }
     pub(crate) fn end_native_expert_batch(
         &mut self,
-        nonce: u64,
+        scope: super::transient_io::NativeExpertBatchScope,
         scopes: super::transient_io::IoScopes,
         success: bool,
     ) -> Result<(), ServerError> {
         let io = self.transient_io.as_mut().unwrap();
         scopes.finish(io);
-        io.end_native_expert_batch(nonce, success)
+        io.end_native_expert_batch(scope, success)
+    }
+    pub(crate) fn check_native_expert_batch(
+        &self,
+        scope: &super::transient_io::NativeExpertBatchScope,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        self.transient_io.as_ref().unwrap().check_native_expert_batch(scope)
     }
     pub(crate) fn native_expert_uniforms(
         &mut self,
         records: &[cubecl_runtime::server::MetadataBindingInfo],
-        nonce: u64,
+        scope: &super::transient_io::NativeExpertBatchScope,
     ) -> Result<Vec<WgpuResource>, ServerError> {
         self.transient_io
             .as_mut()
             .unwrap()
-            .native_expert_uniforms(records, nonce)
+            .native_expert_uniforms(records, scope)
     }
     pub(crate) fn enqueue_native_expert_owned(
         &mut self,
@@ -928,10 +935,9 @@ impl WgpuStream {
         reads: Vec<WgpuResource>,
         count: &CubeCount,
         owners: Arc<Vec<cubecl_runtime::server::Binding>>,
-        nonce: u64,
+        scope: &super::transient_io::NativeExpertBatchScope,
     ) -> Result<(), ServerError> {
-        self.private_io_active()?;
-        self.transient_io.as_ref().unwrap().check_reuse(nonce)?;
+        self.check_native_expert_batch(scope)?;
         // Keep ordinary root initialization (and its WGPU identity checks),
         // before any original native command may consume these real buffers.
         for resource in &resources {

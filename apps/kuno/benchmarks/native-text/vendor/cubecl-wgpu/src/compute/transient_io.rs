@@ -1418,6 +1418,113 @@ impl ReuseScope {
         Ok(())
     }
 }
+
+/// Authority for one closed expert batch inside the ACTUAL original private
+/// owner. Fresh I/O is deliberately distinct from a reuse lease: this token
+/// never grants allocation reuse, completion, readiness or erase credit.
+pub(crate) struct NativeExpertBatchScope {
+    owner: Arc<LeaseTracker>,
+    identity: NativeExpertBatchIdentity,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeExpertBatchIdentity {
+    epoch: u64,
+    generation: u64,
+    reuse: Option<u64>,
+}
+#[derive(Default)]
+struct NativeExpertBatchState {
+    generation: u64,
+    active: Option<NativeExpertBatchIdentity>,
+}
+impl NativeExpertBatchState {
+    fn begin(
+        &mut self,
+        owner: &Arc<LeaseTracker>,
+        epoch: u64,
+        reuse: Option<u64>,
+    ) -> Result<NativeExpertBatchScope, ServerError> {
+        if self.active.is_some() || owner.retired.load(Ordering::Acquire)
+            || epoch == 0 || reuse == Some(0) {
+            return Err(fault("native expert batch original owner unavailable"));
+        }
+        let generation = self.generation.checked_add(1)
+            .ok_or_else(|| fault("native expert batch generation exhausted"))?;
+        let identity = NativeExpertBatchIdentity { epoch, generation, reuse };
+        self.generation = generation;
+        self.active = Some(identity);
+        Ok(NativeExpertBatchScope { owner: Arc::clone(owner), identity })
+    }
+    fn check(
+        &self,
+        scope: &NativeExpertBatchScope,
+        owner: &Arc<LeaseTracker>,
+        epoch: u64,
+        reuse: Option<u64>,
+    ) -> Result<(), ServerError> {
+        if owner.retired.load(Ordering::Acquire)
+            || !Arc::ptr_eq(&scope.owner, owner)
+            || self.active != Some(scope.identity)
+            || scope.identity.epoch != epoch
+            || scope.identity.reuse != reuse
+        {
+            return Err(fault("native expert batch original scope changed"));
+        }
+        Ok(())
+    }
+    fn finish(
+        &mut self,
+        scope: &NativeExpertBatchScope,
+        owner: &Arc<LeaseTracker>,
+        epoch: u64,
+        reuse: Option<u64>,
+    ) -> Result<(), ServerError> {
+        self.check(scope, owner, epoch, reuse)?;
+        self.active = None;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod native_expert_scope_tests {
+    use super::*;
+    #[test]
+    fn actual_fresh_and_reuse_scopes_reject_foreign_stale_and_changed_owners() {
+        for reuse in [None, Some(7)] {
+            let owner = Arc::new(LeaseTracker::default());
+            let foreign = Arc::new(LeaseTracker::default());
+            let mut state = NativeExpertBatchState::default();
+            let scope = state.begin(&owner, 3, reuse).unwrap();
+            state.check(&scope, &owner, 3, reuse).unwrap();
+            assert!(state.begin(&owner, 3, reuse).is_err());
+            assert!(state.check(&scope, &foreign, 3, reuse).is_err());
+            assert!(state.check(&scope, &owner, 4, reuse).is_err());
+            assert!(state.check(&scope, &owner, 3, Some(8)).is_err());
+            if reuse.is_some() {
+                assert!(state.check(&scope, &owner, 3, None).is_err());
+            }
+            state.finish(&scope, &owner, 3, reuse).unwrap();
+            assert!(state.check(&scope, &owner, 3, reuse).is_err());
+            assert!(state.finish(&scope, &owner, 3, reuse).is_err());
+            let next = state.begin(&owner, 3, reuse).unwrap();
+            assert!(state.check(&scope, &owner, 3, reuse).is_err());
+            state.check(&next, &owner, 3, reuse).unwrap();
+            owner.retired.store(true, Ordering::Release);
+            assert!(state.check(&next, &owner, 3, reuse).is_err());
+            assert!(state.finish(&next, &owner, 3, reuse).is_err());
+        }
+    }
+    #[test]
+    fn scope_generation_cannot_wrap_or_accept_zero_epoch_or_nonce() {
+        let owner = Arc::new(LeaseTracker::default());
+        let mut state = NativeExpertBatchState::default();
+        assert!(state.begin(&owner, 0, None).is_err());
+        assert!(state.begin(&owner, 1, Some(0)).is_err());
+        state.generation = u64::MAX;
+        assert!(state.begin(&owner, 1, None).is_err());
+        assert!(state.active.is_none());
+    }
+}
 /// Accept-only checkpoints cannot publish readiness: they have no mutable
 /// buffer/index/ledger access. Only the caller's completed-error drain runs.
 fn accept_only_checkpoint(
@@ -1883,6 +1990,7 @@ pub(crate) struct TransientIo {
     info_cache: Option<InfoCache>,
     binding_cache: Option<NativeBindingCache>,
     native_expert_extra_metadata: usize,
+    native_expert_scope: NativeExpertBatchState,
     leases: Arc<LeaseTracker>,
     errors: Vec<ErrorFuture>,
     info_policy: Option<InfoPolicy>,
@@ -2792,6 +2900,7 @@ impl TransientIo {
                 info_cache: None,
                 binding_cache: None,
                 native_expert_extra_metadata: 0,
+                native_expert_scope: NativeExpertBatchState::default(),
                 leases: Arc::default(),
                 errors: Vec::new(),
                 info_policy,
@@ -2839,6 +2948,7 @@ impl TransientIo {
                 info_cache: None,
                 binding_cache: None,
                 native_expert_extra_metadata: 0,
+                native_expert_scope: NativeExpertBatchState::default(),
                 leases: Arc::default(),
                 errors: Vec::new(),
                 info_policy: Some(info_policy),
@@ -3622,39 +3732,67 @@ impl TransientIo {
     pub(crate) fn begin_native_expert_batch(
         &mut self,
         metadata: usize,
-    ) -> Result<u64, ServerError> {
+    ) -> Result<NativeExpertBatchScope, ServerError> {
         self.active()?;
         if self.native_expert_extra_metadata != 0
             || !self.info_batch
             || !super::strata_graph::enabled()
             || self.branch_parameters.active()
             || metadata == 0
-            || metadata > cubecl_runtime::server::native_expert_batch::NATIVE_EXPERT_BATCH_BYTES * 3
+            || metadata > cubecl_runtime::server::native_expert_batch::NATIVE_EXPERT_BATCH_HOST_BYTES
         {
             return Err(fault("native expert batch original I/O scope"));
         }
-        let nonce = self
-            .reuse_scope
-            .nonce
-            .ok_or_else(|| fault("native expert batch requires actual reuse"))?;
-        self.check_reuse(nonce)?;
-        self.native_expert_extra_metadata = metadata;
-        if let Err(error) = self.check_branch_metadata() {
-            self.native_expert_extra_metadata = 0;
-            return Err(error);
+        let reuse = self.reuse_scope.nonce;
+        if let Some(nonce) = reuse {
+            self.check_reuse(nonce)?;
         }
-        Ok(nonce)
+        self.native_expert_extra_metadata = metadata;
+        // The original reusable-cache/owner cap applies only to an ACTUAL
+        // reuse scope. Fresh I/O has no such lease/cache; its closed transient
+        // batch scratch is bounded above, while every new page remains in the
+        // original full-span ledger and terminal erasure/audit.
+        if reuse.is_some() {
+            if let Err(error) = self.check_branch_metadata() {
+                self.native_expert_extra_metadata = 0;
+                return Err(error);
+            }
+        }
+        let result = self.native_expert_scope.begin(&self.leases, self.ledger.epoch, reuse);
+        if result.is_err() {
+            self.native_expert_extra_metadata = 0;
+        }
+        result
+    }
+    pub(crate) fn check_native_expert_batch(
+        &self,
+        scope: &NativeExpertBatchScope,
+    ) -> Result<(), ServerError> {
+        self.active()?;
+        self.native_expert_scope.check(
+            scope, &self.leases, self.ledger.epoch, self.reuse_scope.nonce,
+        )?;
+        if self.native_expert_extra_metadata == 0 || self.branch_parameters.active() {
+            return Err(fault("native expert batch original scope changed"));
+        }
+        if let Some(nonce) = scope.identity.reuse {
+            self.check_reuse(nonce)?;
+        }
+        Ok(())
     }
     pub(crate) fn end_native_expert_batch(
         &mut self,
-        nonce: u64,
+        scope: NativeExpertBatchScope,
         success: bool,
     ) -> Result<(), ServerError> {
-        let valid = self.check_reuse(nonce);
-        if self.native_expert_extra_metadata == 0 || valid.is_err() {
+        let valid = self.check_native_expert_batch(&scope);
+        if valid.is_err() {
             self.retire();
             return Err(fault("native expert batch original scope changed"));
         }
+        self.native_expert_scope.finish(
+            &scope, &self.leases, self.ledger.epoch, self.reuse_scope.nonce,
+        )?;
         self.native_expert_extra_metadata = 0;
         if !success {
             self.retire();
@@ -3669,10 +3807,9 @@ impl TransientIo {
     pub(crate) fn native_expert_uniforms(
         &mut self,
         records: &[cubecl_runtime::server::MetadataBindingInfo],
-        nonce: u64,
+        scope: &NativeExpertBatchScope,
     ) -> Result<Vec<WgpuResource>, ServerError> {
-        self.active()?;
-        self.check_reuse(nonce)?;
+        self.check_native_expert_batch(scope)?;
         if self.native_expert_extra_metadata == 0
             || self.branch_parameters.active()
             || records.is_empty()
@@ -3710,7 +3847,7 @@ impl TransientIo {
             }
             first += page.layouts.data.len();
         }
-        self.check_reuse(nonce)?;
+        self.check_native_expert_batch(scope)?;
         Ok(result)
     }
 

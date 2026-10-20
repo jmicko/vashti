@@ -7,6 +7,10 @@ use cubecl_common::backtrace::BackTrace;
 
 pub const NATIVE_EXPERT_BATCH_COMMANDS: usize = 4608;
 pub const NATIVE_EXPERT_BATCH_BYTES: usize = 8 * 1024 * 1024;
+/// Complete one-active-batch host reservation, including the original command
+/// tape/arguments and simultaneously live native backend owner/INFO tables.
+/// The application must reserve this before collecting the first payload.
+pub const NATIVE_EXPERT_BATCH_HOST_BYTES: usize = 3 * NATIVE_EXPERT_BATCH_BYTES;
 
 /// Actual backend enqueue counts, never a GPU completion/acceptance receipt.
 #[derive(Clone, Copy, Debug, Default)]

@@ -73,7 +73,7 @@ impl WgpuServer {
             .and_then(|n| n.checked_add(batch.commands.len() * per_command))
             .and_then(|n| n.checked_add(MAX_PIPELINES * 512 + 32768))
             .ok_or_else(|| fault("native expert batch metadata overflow"))?;
-        let nonce = self
+        let scope = self
             .scheduler
             .stream(&stream_id)
             .begin_native_expert_batch(metadata)?;
@@ -213,7 +213,7 @@ impl WgpuServer {
             let info = self
                 .scheduler
                 .stream(&stream_id)
-                .native_expert_uniforms(&records, nonce)?;
+                .native_expert_uniforms(&records, &scope)?;
             let mut next_info = 0;
             let mut receipt = NativeStrataExpertBatchReceipt::default();
             for (index, command) in batch.commands.iter_mut().enumerate() {
@@ -238,11 +238,14 @@ impl WgpuServer {
                                 reads,
                                 count,
                                 owners.clone(),
-                                nonce,
+                                &scope,
                             )?;
                         receipt.launches += 1;
                     }
                     NativeStrataExpertCommand::HostCopies(copies) => {
+                        self.scheduler
+                            .stream(&stream_id)
+                            .check_native_expert_batch(&scope)?;
                         let mut actual = Vec::with_capacity(copies.0.len());
                         for copy in &copies.0 {
                             let source = resources[indices[&key(&copy.source)]].clone();
@@ -268,7 +271,7 @@ impl WgpuServer {
             Ok(receipt)
         })();
         let finished = self.scheduler.stream(&stream_id).end_native_expert_batch(
-            nonce,
+            scope,
             scopes,
             result.is_ok(),
         );

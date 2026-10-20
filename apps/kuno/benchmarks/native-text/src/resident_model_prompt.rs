@@ -8,7 +8,15 @@ use cubecl::server::Handle;
 // all-family tickets and bounded argument tables coexist during acceptance.
 // Native recordings retain dual-queue plans across prompt and decode. Reserve
 // their bounded cache/temporary metadata in this same core lifetime quote.
-pub(super) const HOST_BYTES: usize = 128 * 1024 * 1024 + cubecl::wgpu::NATIVE_QUEUE_HOST_BYTES;
+pub(super) const HOST_BYTES: usize = 128 * 1024 * 1024
+    + cubecl::wgpu::NATIVE_QUEUE_HOST_BYTES
+    + if cfg!(feature = "strata-native-expert-bulk") {
+        // One serialized complete expert batch; charged in PROMPT_SOURCE_HOST
+        // and the parent host-reservation quote before model/payload creation.
+        cubecl_runtime::server::native_expert_batch::NATIVE_EXPERT_BATCH_HOST_BYTES
+    } else {
+        0
+    };
 pub(super) const RUNTIME_BYTES: u64 = 128 * 1024 * 1024;
 /// Constructed here only after real completed model/fault/I/O proofs. The
 /// MAX8 workspace can record that boundary without fabricating issued rows.

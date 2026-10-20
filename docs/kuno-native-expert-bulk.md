@@ -35,7 +35,7 @@ execution mode, release boundary and PUBLIC external-read mask. Every original
 physical read dependency is retained. It admits the same six-operator sequence
 and interleaved copy order into the existing native graph.
 
-Original current reuse nonce, private mutation guard, error scopes, root
+Original private-I/O scope, actual reuse nonce when present, private mutation guard, error scopes, root
 initialization, descriptor extents, graph admission/draft/range checks, planner,
 hazards, queues, rolling recording and actual completion fences remain. The
 same `Arc<Vec<Binding>>` accompanies both compute and transfer nodes and every
@@ -51,6 +51,15 @@ length. Original full page owners, mapped-source sealing, initialization, nonce,
 epoch, copy-before-use and terminal erasure/audit remain. No prompt/model cache
 or byte content survives the existing request lifetime.
 
+Large prompt prefixes legitimately use fresh private I/O, with no reuse nonce.
+The batch's private token binds the actual I/O owner `Arc`, current ledger
+epoch, checked per-owner active batch generation and exact `Option` of the
+original reuse nonce. INFO packing, every compute/copy enqueue and closing
+check that identity; foreign owners, post-erasure epochs, closed/older batches,
+retired owners and fresh/reuse transitions reject. A fresh token grants no reuse,
+readiness, completion or erasure credit. When an actual reuse lease exists, its
+original nonce check and metadata ceiling also remain mandatory.
+
 ## Bounds and diagnostics
 
 The tape admits at most 4,608 original compute/copy nodes and 8MiB of actual
@@ -58,8 +67,15 @@ command/argument metadata. Its whole command capacity is allocated before the
 first insertion, so populated private command storage is not reallocated.
 Deferred HOST-copy and INFO allocations have full-capacity wiping owners.
 Backend tables admit at most 4,096 distinct original binding views and 32 exact
-pipelines. Conservative simultaneous table/INFO scratch is charged to the
-original I/O metadata ceiling before allocation; actual capacities are checked.
+pipelines. The public `NATIVE_EXPERT_BATCH_HOST_BYTES` constant reserves 24MiB
+for one active batch, including the original tape/arguments and simultaneous
+backend owner/INFO tables. The feature adds that quote to the original prompt
+`HOST_BYTES`, through `PROMPT_SOURCE_HOST` and the parent's original host
+reservation, before model/payload allocation. Backend scratch must fit that
+same bound before allocation; actual capacities are checked. Actual reuse also
+charges scratch to its unchanged reusable-owner metadata ceiling. Fresh I/O
+uses its own precharged closed-batch envelope and original fresh page ledger,
+without borrowing a reuse lease or enlarging a reusable-cache ceiling.
 Original graph retained metadata remains subject to its unchanged 64MiB ceiling.
 
 The existing compiled-public profile receives backend-returned enqueue counts:
@@ -97,6 +113,20 @@ All evidence is under
 `native-expert-bulk-collector-controls.log`. Full-worker tests used
 `--features strata-intel-core,strata-gpu-adaptive-usage,strata-native-wide32,strata-qsa-paired,strata-native-expert-bulk`
 with the isolated target and two compilation jobs.
+
+The first connected 9-feature GPU build passed the existing 103 arithmetic
+controls and recovery, then correctly rejected the first full-model prefix:
+the initial implementation incorrectly required a reuse nonce for fresh I/O.
+That failed attempt establishes no completed-request performance result.
+The explicit owner/epoch/generation/fresh-or-reuse repair typechecks. Its actual
+scope controls reject foreign/stale/closed/retired owners, epoch changes,
+fresh/reuse transitions and generation overflow. The unchanged owner controls
+plus page and scope controls pass (124), original queue controls pass (33),
+recording binding-owner controls pass (2), and original model-budget/admission
+controls pass (32), including the connected parent reservation. The corresponding
+`native-expert-fresh-scope-{check,owner-controls,queue-controls,retained-owner-controls,model-budget-controls}.log`
+files are in the same isolated evidence directory. This repair still needs the
+complete real fresh/reuse model, physical cleanup and public-counter gates.
 
 Actual GPU arithmetic, full model execution, public selection counts, injected
 terminal recovery, clean timing, staged API/tool use, installation and physical
