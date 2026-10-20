@@ -192,14 +192,30 @@ was confirmed after the failed trials as well.
   K32 iteration. Static instruction counts are not measured cycles. Receipts:
   `strata-parity-native-wide32-20261020-{operators,profile}`; see the
   [exact ISA evidence](kuno-prefill-native-isa-admission.md).
-  Full clean/private staged acceptance is running; it is not installed yet.
+  Full negative/fresh clean/private staged acceptance now passes too:
+  `strata-parity-native-wide32-20261020-{terminal-negative,clean-long,staged-api}`.
+  Clean firstlong12.9623/repeat11.1474s versus selected14.1743/12.4373s;
+  corresponding gains8.55%/10.37%. First-long includes genuine first-use large
+  shape compilation and is compared with the original first-long position.
+  Full ten-tool thinking/call/result,64/65/66,16 actual MAX8 tails, two identical
+  complete501-token code answers with155 semantic cases each, write_bytes0,
+  inspection denial, ordinary Ollama and actual physical recovery pass. A root
+  build overlapped part of staged execution; do not claim a decode speed gain
+  from those timings. An exact-hash official installer is prepared and separately
+  reviewed, but this artifact is not installed yet.
 - Opt-in paired-cell QK attentiona814962d reuses the same query vectors across
   two original selected cells. Ten actual source/Naga/SPIR-V CPU controls pass
   both enabled and disabled; original scalar/math oracles remain unchanged.
   GPU numerical and whole-request evidence is still pending. A complete
-  bounded descriptor-batch candidate is also in isolated development to reduce
-  measured native capture overhead while preserving every fresh original set,
-  queue hazard, flight and recovery owner. Neither is a speed claim.
+  bounded descriptor-batch candidatea3b36795 reduces per-node Vulkan allocate/
+  update calls to128-original-node batches while preserving every fresh set,
+  queue hazard, flight and recovery owner. Four actual-helper CPU cases, full
+  production typecheck and154 original queue/ownership cases pass; actual worst
+  temporary metadata387,072B is charged to the original64MiB cap. The complete
+  combined artifact sourcea3b36795 / SHAd7965806 includes native32, paired QK
+  and descriptor batches;402/144 offline shader layouts pass. Original103 GPU
+  controls and whole-request profiling are running before any speed decision.
+  No combined speed or installation is claimed yet.
 - Actual loaded capacity is11,998 resident expert pairs/24,445,798,400B versus
   the fresh reference11,608 pairs, so lower resident capacity is not the cause
   of the gap. The immutable host complement is registered/pinned and copied

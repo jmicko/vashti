@@ -41,9 +41,12 @@ unselected. Original-native wide9cf2236b passes103 controls and complete prefixe
 compiler ISA revealed hot-loop register spills. Complete32-subgroup successor
 3fffc266 / SHAeac78ce0 removes them and passes103 GPU controls, full public
 requests/recovery and402/144 offline shader layouts; profiled long prefixes
-11.7837/11.8168s. Its full clean/private staged checks are running; it remains
-uninstalled. Opt-in paired-cell attention and bounded descriptor batching are
-next combined candidates, without a GPU speed claim yet. See the parity guide
+11.7837/11.8168s. Full clean/private staged acceptance passes too: matched
+clean first/repeat12.9623/11.1474s, all tools, MAX8 tails, semantic repeats,
+privacy and physical recovery. It remains uninstalled while combined candidate
+a3b36795 / SHAd7965806 (native32 + paired-cell QK + descriptor batches) runs
+original GPU controls and full profiling. Its402/144 offline layouts pass;
+no combined GPU speed claim yet. See the parity guide
 for exact artifact receipts and capacity/ISA evidence.
 
 **No API, KNT2/KNR2, configuration, model name or Vashti consumer change.**
