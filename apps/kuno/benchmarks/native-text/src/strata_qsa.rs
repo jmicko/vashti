@@ -22,6 +22,9 @@ use kuno_text::{Error, Result};
 mod attention_numeric_probe;
 #[path = "strata_prompt_qsa.rs"]
 pub(crate) mod prompt;
+#[cfg(any(test, feature = "strata-qsa-paired"))]
+#[path = "strata_prompt_qsa_paired.rs"]
+mod prompt_paired;
 #[path = "strata_prompt_qsa_specialize.rs"]
 mod prompt_specialize;
 #[path = "strata_qsa_select.rs"]
@@ -103,7 +106,10 @@ impl Kernel {
     fn source(self) -> String {
         let scalar = self.scalar_source();
         if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
-            prompt_specialize::source(scalar)
+            let specialized = prompt_specialize::source(scalar);
+            #[cfg(feature = "strata-qsa-paired")]
+            let specialized = prompt_paired::source(specialized);
+            specialized
         } else {
             scalar
         }

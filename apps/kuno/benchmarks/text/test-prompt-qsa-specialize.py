@@ -11,6 +11,7 @@ import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--deps-dir', required=True, type=Path)
+parser.add_argument('--paired', action='store_true', help='also select the opt-in actual paired prompt hook')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[4]
 native = root / 'apps/kuno/benchmarks/native-text/src'
@@ -29,6 +30,7 @@ mod strata_qsa {
 const WINDOW_SCORE_GRID: [usize; 3] = [256, 1, 1];
 '''
 header += f'#[path="{native / "strata_prompt_qsa_specialize.rs"}"] mod prompt_specialize;\n'
+header += f'#[path="{native / "strata_prompt_qsa_paired.rs"}"] mod prompt_paired;\n'
 libraries = {}
 for name in ['wgpu', 'half', 'cubecl']:
     matches = list(args.deps_dir.glob(f'lib{name}-*.rlib'))
@@ -42,6 +44,8 @@ with tempfile.TemporaryDirectory(prefix='kuno-prompt-qsa-specialize-') as direct
     source.write_text(header + code + '}\n')
     command = ['rustc', '--edition=2024', '--test', '-D', 'warnings', str(source),
                '-L', f'dependency={args.deps_dir}']
+    if args.paired:
+        command.extend(['--cfg', 'feature="strata-qsa-paired"'])
     for name, library in libraries.items():
         command.extend(['--extern', f'{name}={library}'])
     command.extend(['-o', str(output)])

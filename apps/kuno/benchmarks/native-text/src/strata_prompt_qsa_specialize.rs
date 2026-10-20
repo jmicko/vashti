@@ -157,10 +157,10 @@ pub(super) fn source(mut scalar: String) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::super::Kernel;
 
-    fn compiled(source: &str) -> (wgpu::naga::Module, Vec<u32>) {
+    pub(crate) fn compiled(source: &str) -> (wgpu::naga::Module, Vec<u32>) {
         use wgpu::naga as n;
         let module = n::front::wgsl::parse_str(source)
             .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
@@ -236,7 +236,7 @@ mod tests {
         use std::collections::HashSet;
         for kernel in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
             assert!(!kernel.scalar_source().contains("STRATA_ROUND_PRODUCTS"));
-            let source = kernel.source();
+            let source = super::source(kernel.scalar_source());
             assert!(source.contains("STRATA_ROUND_PRODUCTS"));
             let (_, words) = compiled(&source);
             let mut cursor = 5;
@@ -278,7 +278,7 @@ mod tests {
     fn real_lowered_prompt_has_no_function_arrays_or_fixed_extent_loops() {
         for kernel in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
             let (old, old_spv) = compiled(&kernel.scalar_source());
-            let (new, new_spv) = compiled(&kernel.source());
+            let (new, new_spv) = compiled(&super::source(kernel.scalar_source()));
             assert_eq!(function_array_count(&old), 2);
             assert_eq!(function_array_count(&new), 0);
             // OpLoopMerge: cell/Q-softmax/PV loops remain dynamic, plus the
@@ -305,7 +305,7 @@ mod tests {
     fn prompt_expansion_keeps_closing_contract_and_arithmetic_order() {
         for kernel in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
             let scalar = kernel.scalar_source();
-            let expanded = kernel.source();
+            let expanded = super::source(kernel.scalar_source());
             assert_eq!(scalar.matches("workgroupBarrier();").count(), 4);
             assert_eq!(expanded.matches("workgroupBarrier();").count(), 4);
             assert_eq!(expanded.matches("let kword0=cache[").count(), 1);
@@ -368,7 +368,7 @@ mod tests {
             }
         }
         for kernel in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
-            let (module, _) = compiled(&kernel.source());
+            let (module, _) = compiled(&super::source(kernel.scalar_source()));
             let query = module
                 .global_variables
                 .iter()
