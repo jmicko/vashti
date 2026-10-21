@@ -9,22 +9,25 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
-## Authoritative checkpoint (2026-10-21 00:48UTC)
+## Authoritative paused checkpoint (2026-10-21 01:34UTC)
 
-The[coordination guide's first authoritative handoff](kuno-vashti-coordination.md)
-and[complete direct GU receipt](kuno-native-direct-gu-publication.md#complete-accepted-numericalprofile-outcome-2026-10-21-0048utc)
-supersede the historical snapshots below. Current coupled sourcebb6c6534/
-SHA59e76f48 passes all original171 GPU controls,18 new exact paired cases,147 CPU,
-11 runtime,421/216 offline and BOTH full profiles/recovery proofs. It is correct
-but neutral: normal first/repeat11.7288/10.1259s. No clean/staged/install acceptance
-was run. Installed worker3fffc266/gateway36626d30 remain. Strata5.3515s still leads;
-goal ACTIVE/UNMET. No GPU job remains; actual services/GPU recovery passes.
-Actual compiled GU diagnostic now proves declared mutable status has zero
-function references, with64 DOWN references as negative control. Next implement
-the bounded exact-program proof while retaining full admission/owners; no
-production access inventory was narrowed and no speed gain is claimed. No API/model/
-configuration/frontend/release change. Detailed source/artifacts/limits/next guards
-are in the authoritative handoff, not inferred from old snapshot headings.
+User requested a breaking point and end of day; goal PAUSE requested/UNMET.
+The [coordination guide](kuno-vashti-coordination.md) and
+[complete exact-source receipt](kuno-native-unused-descriptors.md#complete-outcome-and-user-requested-pause-2026-10-21-0134utc)
+supersede historical snapshots below. Complete sourcee454c594/SHAeae4c199
+passes154 CPU,11 runtime,421/216 offline,189 GPU and BOTH full original profiles
+with actual unused-view/FMA counts and original ownership/recovery proofs.
+Normal first/repeat11.7827/10.1892s is effectively neutral versus predecessor
+11.7288/10.1259s. Same-host Strata5.3515s still leads. No new clean/staged/install
+acceptance; installed worker3fffc266/gateway36626d30 unchanged. All complete
+components remain; no numerical or ownership gates relaxed.
+
+No live test/build/worker remains. Fresh physical GPU/services/admission recovery
+passes; owned sudo refresh stopped. No reset/reboot/frontend/API/config/release
+change. Resume only on user request. Larger enqueue/recording and selected QSA
+costs warrant evidence-led investigation; current coarse host-wall/queue marks
+must not be treated as isolated CPU or GPU times. Full artifacts and limitations
+are in the authoritative receipt above.
 
 ## Historical matrix-attention checkpoint (2026-10-20 22:26UTC)
 

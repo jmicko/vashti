@@ -1,10 +1,10 @@
 # Exact unused native descriptor proof
 
 Coherent backend-only candidate after direct GU sourcebb6c6534; implemented,
-CPU-accepted, release/GPU/speed acceptance PENDING. Actual
+CPU/release/GPU accepted; complete profiles show no useful speed gain. Actual
 compiled-module CPU inspection proves both GU variants declare status binding4
 ReadWrite but have zero function references to its variable; DOWN has64. This
-is not yet an accepted execution inventory or a measured bottleneck.
+is now an accepted execution inventory, but not a demonstrated speed bottleneck.
 
 ## Connected contract
 
@@ -112,3 +112,56 @@ Evidence`native-unused-descriptors-{complete-cpu-final,runtime-cpu,cpu-selection
 under existing artifact base. Release/offline189 GPU/full both profiles and
 original clean/staged/install gates remain PENDING. Installed binaries unchanged;
 no API/model/config/frontend/release/reset/reboot change.
+
+
+## Complete outcome and user-requested pause (2026-10-21 01:34UTC)
+
+Frozen source `e454c594adf2dad011cd401dcafe04195d0ae990`, worker SHA256
+`eae4c199843c33de3abd3d39b5e77a35d5e74b28c06de92665caf0c9b7c6ff42`,
+build `strata-parity-unused-descriptors-20261021`, passes all154 selected CPU,
+11 runtime grammar/capture,421 WGSL/216 matrix layouts, original129 operator+
+42 exact-role image+18 paired GPU controls, and BOTH complete original
+73/4245/4245 profiles with original compiler/count/pool/scratch/source/owner/
+erasure/recovery proofs. Actual unused views7663/28996/28996 and original FMA
+populations7663/26673/26673 agree in both modes. Swap/core limits were verified0.
+No arithmetic bounds, original retained footprint, ownership or capacities relaxed.
+
+| Mode | Direct-GU predecessor first/repeat (s) | New first/repeat (s) |
+| --- | --- | --- |
+| Profile | 11.675534147 / 10.268863056 | 11.657418593 / 10.266698324 |
+| Normal | 11.728765729 / 10.125904949 | 11.782711649 / 10.189230061 |
+
+This is correct but effectively neutral/slightly slower. Keep the complete
+component; do not install it or claim a gain from one favorable number. No new
+terminal/fresh-clean/staged/install acceptance was run for this arm. Installed
+worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 remain independently
+rehashed unchanged. Same-host Strata repeat5.3515s still leads; parity is unmet.
+
+Normal repeat expert interval5.938923292s includes enqueue1.504303750s;
+native capture0.755013666s and native wait3.531452244s are host-wall/queue
+intervals, not isolated thread-CPU or GPU measurements. Double visitation adds
+only about24ms capture versus predecessor; it cannot explain the remaining gap.
+Nested/coarse marks must not be added as independent exclusive costs. Potential
+next investigation: actual backend bulk enqueue/recording subphases and selected
+QSA path versus the existing matched Strata phase receipt. No additional change
+is implemented or prescribed by this pause. Preserve full closed-batch/source/
+ownership validation; do not infer a bottleneck from coarse timer labels.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`native-unused-descriptors-{release-build,offline,connected}-20261021.log`,
+`strata-parity-unused-descriptors-20261021-unused-descriptors-public-summary.json`,
+`strata-parity-unused-descriptors-20261021-outcome-public.json`, and
+`native-unused-descriptors-final-state-20261021.json`. CPU artifacts above and
+all intermediate failing fixture/setup receipts remain. Public exports contain
+only fixed-public aggregate evidence, no private content.
+
+User requested a breaking point and end of day. No build/test/worker remains;
+unit `kuno-native-unused-descriptors-20261021.service` is inactive/dead. Fresh
+01:34:11UTC state: Intel50,688,000B, NVIDIA compute0 with748MiB desktop,
+all reported driver fault counters0; Kuno/Ollama/Vashti HTTP200; admission
+inactive/unpaused/recoveryfalse/waiting0. Boot unchanged. No reset/reboot or
+service/config change. Verified owned sudo refresh375934 was stopped without
+terminating shared shell3556 or revoking the user's normal sudo cache.
+Goal PAUSE requested, objective UNMET. No API/KNT2/KNR2/model/config/frontend/
+release change; required Vashti changes: none. Canonical uncommitted coordination
+files and inherited untracked cache are preserved.

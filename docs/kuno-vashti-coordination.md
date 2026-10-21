@@ -1,6 +1,6 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno-only goal: match Strata (2026-10-20; native32 installed).**
+**Paused Kuno-only goal: match Strata (2026-10-21; native32 installed).**
 See [the exact accepted backend and remaining work](kuno-strata-parity-goal.md#accepted-native32-installation).
 Selected worker source3fffc266 / SHAeac78ce0 is installed with unchanged
 image-enabled gateway36626d30 / SHAd3ed07f4. Official backup/rollback:
@@ -22,42 +22,38 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active handoff (2026-10-21 01:14UTC): exact native memory access plus full declared footprint, CPU accepted; GPU pending.**
+**Authoritative paused handoff (2026-10-21 01:34UTC): complete unused-descriptor candidate correct, speed neutral; system ready for user.**
 
-Goal ACTIVE/UNMET. Same isolated Kuno worktree/branch; installed worker3fffc266/
-SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 unchanged. No GPU job has run for this
-candidate. Read[the complete unused-descriptor contract and checkpoint](kuno-native-unused-descriptors.md).
-The whole direct-GU predecessor remains correct/neutral, with its189 GPU proofs
-and failed setup receipt preserved below. No component is removed.
+User requested a breaking point and end of day. Goal PAUSE requested/UNMET;
+no further work should automatically start. Use ONLY isolated Kuno worktree
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Read the [complete exact-source outcome](kuno-native-unused-descriptors.md#complete-outcome-and-user-requested-pause-2026-10-21-0134utc).
 
-New opt-in`strata-native-unused-descriptors` /`--unused-descriptors` proves unused
-bindings from actual final SPIR-V, not names or guessed narrower views. Every
-actual8-layout GU/prefix/tail has only status bit4 unused; DOWN has none. Both
-live/captured memory visitors and queue waits use exact proof. ORIGINAL declared
-admission/source/draft/mutation checks, strict signatures/no-writer certificates,
-all original views/initialization/owner retention AND full Recording/reuse
-footprints remain. The latter needed a coupled planner change: same64B regions
-retain declared read/write provenance separately from real execution history.
-Bounded local signal metadata is ALWAYS masked before execution waits; it grants
-no GPU completion/readiness. No extra map/cache/owner or raised cap. Actual accepted
-batch enqueues report unused-view counts only through the fixed-public sink.
+Sourcee454c594 / SHAeae4c199 passes154 CPU,11 runtime,421/216 offline,
+original189 GPU controls and BOTH complete73/4245/4245 profiles/proof chains.
+Actual unused-view counts7663/28996/28996; original FMA populations preserved.
+Full original declared admission/owners/recording footprint remains separate
+from proven instruction-unused memory accesses. No arithmetic/guard/cap relaxed.
+Normal first/repeat11.782711649/10.189230061s versus predecessor
+11.728765729/10.125904949s: effectively neutral. Strata5.3515s still leads.
+No new terminal/clean/staged/install acceptance; installed worker3fffc266/
+SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 freshly rehashed unchanged.
+Keep complete correct components; do not cherry-pick a favorable timing.
 
-PASS:154 selected App CPU with exact release features,11 actual runtime capture/
-grammar controls,1024-node real-hazard byte oracle plus EXACT original retained
-footprints, declaration-only/used-alias/future-writer/header-wait negatives and
-actual original module/layout checks. Failed intermediate CPU fixtures remain;
-no threshold/arithmetic/guard was relaxed. Source/proof details and logs in linked
-spec. Next freeze release, offline421/216, original189 GPU and BOTH original full
-73/4245/4245 count/pool/source/owner/recovery profiles. Require actual unused-view
-counts and original FMA populations; only promising normal first/repeat proceeds
-to original terminal/fresh clean-at-EACH5%/staged quality/privacy/install gates.
-No speed gain/overlap/install claim yet. Compare direct-GU normal11.728765729/
-10.125904949s; Strata5.3515s still leads. Never reset/reboot GPUs.
+No build/test/worker remains; protected unit inactive/dead. Actual01:34:11UTC:
+Intel50,688,000B, NVIDIA compute0(748MiB desktop), reported driver faults0,
+all3 servicesHTTP200; admission inactive/unpaused/recoveryfalse/waiting0.
+Boot unchanged. Owned sudo refresh375934 STOPPED; shared shell3556 preserved.
+No reset/reboot/service/config change. Canonical uncommitted coordination work
+and inherited untracked cache preserved. No API/KNT2/KNR2/model/frontend/release
+change; required Vashti changes: none.
 
-No API/KNT2/KNR2/config/model/Vashti/frontend/release change. Canonical uncommitted
-coordination files and inherited cache preserved. Root owns GPU/service work.
-Owned cached sudo375934/sharedshell3556 ends02:05:20UTC; do not kill sharedshell.
-Last independent safe physical state remains00:47:37UTC below; only CPU since.
+Next run should locate larger actual backend enqueue/recording or selected QSA
+costs from the retained matched Strata receipt. Current host-wall/queue marks
+are not isolated thread-CPU/GPU attribution; tiny duplicate memory visitation
+cannot explain the gap. This is a future investigation, not pending live work.
+Full artifact names, precise timings, limits and acceptance gaps are in the
+linked spec. Resume only after the user requests it.
 
 **Previous checkpoint (superseded):**
 
