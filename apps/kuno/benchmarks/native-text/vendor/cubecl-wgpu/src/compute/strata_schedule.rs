@@ -8,6 +8,9 @@ mod idle_pools;
 pub(crate) use idle_pools::IdlePools;
 #[path = "strata_rolling.rs"]
 mod rolling;
+#[cfg(any(test, feature = "kuno-copy-cohorts"))]
+#[path = "strata_segment_compact.rs"]
+mod segment_compact;
 #[path = "strata_submit.rs"]
 mod submit;
 pub(crate) use rolling::{
@@ -97,6 +100,10 @@ pub(crate) struct Plan {
     accesses: Vec<Access>,
 }
 impl Plan {
+    #[cfg(any(test, feature = "kuno-copy-cohorts"))]
+    pub(crate) fn compact_segments(&mut self) -> Result<usize, &'static str> {
+        segment_compact::compact(self)
+    }
     pub fn accesses(&self) -> &[Access] {
         &self.accesses
     }

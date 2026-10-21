@@ -47,6 +47,7 @@ cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
+strata-copy-cohorts = ["strata-prefill-miss-ring", "strata-native-expert-bulk", "strata-public-host-clock", "cubecl-wgpu/kuno-copy-cohorts"]
 strata-route-registers = ["strata-intel-core"]
 # Compiled experiment; every invocation must explicitly select it in the runner.
 direct-device = ["cubecl-common/kuno-direct-device"]

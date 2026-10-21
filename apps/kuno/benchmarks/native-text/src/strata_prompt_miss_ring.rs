@@ -21,9 +21,15 @@ pub(super) struct Ring {
     live: usize,
     peak: usize,
     misses: usize,
+    batched: bool,
+    refill: usize,
+    cohorts: usize,
 }
 impl Ring {
     pub(super) fn new(streamed: &[bool]) -> Result<Self> {
+        Self::new_policy(streamed, cfg!(feature = "strata-copy-cohorts"))
+    }
+    fn new_policy(streamed: &[bool], batched: bool) -> Result<Self> {
         if streamed.is_empty() || streamed.len() > GROUPS {
             return Err(reject());
         }
@@ -59,6 +65,9 @@ impl Ring {
             live: 0,
             peak: 0,
             misses,
+            batched,
+            refill: SLOTS,
+            cohorts: usize::from(misses > 0),
         })
     }
     pub(super) fn issue_next(&mut self) -> Result<Option<(usize, Option<usize>)>> {
@@ -73,6 +82,16 @@ impl Ring {
             return Err(reject());
         }
         if raw != RESIDENT {
+            if self.batched {
+                if self.refill == 0 {
+                    if self.live > SLOTS / 2 {
+                        return Ok(None);
+                    }
+                    self.refill = SLOTS - self.live;
+                    self.cohorts += 1;
+                }
+                self.refill -= 1;
+            }
             self.live += 1;
             self.peak = self.peak.max(self.live);
         }
@@ -104,6 +123,9 @@ impl Ring {
             (self.slots.len() - self.misses) as u64,
         );
         crate::strata_prefill_profile::count("expert_raw_slots_peak_sum", self.peak as u64);
+        if self.batched {
+            crate::strata_prefill_profile::count("expert_raw_copy_cohorts", self.cohorts as u64);
+        }
         Ok(())
     }
     fn erase(&mut self) {
@@ -115,6 +137,9 @@ impl Ring {
         self.live.zeroize();
         self.peak.zeroize();
         self.misses.zeroize();
+        self.batched.zeroize();
+        self.refill.zeroize();
+        self.cohorts.zeroize();
     }
 }
 impl Drop for Ring {
@@ -128,7 +153,7 @@ mod tests {
     use super::*;
     #[test]
     fn live_owned_slot_capacity_and_scalar_state_are_erased_before_deallocation() {
-        let mut r = Ring::new(&[true, false, true, false, true]).unwrap();
+        let mut r = Ring::new_policy(&[true, false, true, false, true], false).unwrap();
         while r.issue_next().unwrap().is_some() {}
         let capacity = r.slots.capacity();
         assert!(r.slots.iter().any(|x| *x != 0));
@@ -154,7 +179,7 @@ mod tests {
                         _ => (i * 17 + pattern * 23) % pattern == 0,
                     })
                     .collect::<Vec<_>>();
-                let mut r = Ring::new(&mode).unwrap();
+                let mut r = Ring::new_policy(&mode, false).unwrap();
                 let mut occupants = [None; 8];
                 let mut rank = 0;
                 let mut issued = 0;
@@ -189,21 +214,87 @@ mod tests {
         }
     }
     #[test]
+    fn four_miss_cohorts_keep_the_same_eight_slots_routes_and_no_live_overwrite() {
+        for len in [1, 7, 8, 9, 31, 64, 512] {
+            for pattern in 0..12 {
+                let mode = (0..len)
+                    .map(|i| match pattern {
+                        0 => false,
+                        1 => true,
+                        _ => (i * 17 + pattern * 23) % pattern == 0,
+                    })
+                    .collect::<Vec<_>>();
+                let mut ring = Ring::new_policy(&mode, true).unwrap();
+                let mut live = [None; SLOTS];
+                let mut rank = 0;
+                let mut next = 0;
+                for group in 0..len {
+                    while let Some((issued, slot)) = ring.issue_next().unwrap() {
+                        assert_eq!(issued, next);
+                        next += 1;
+                        assert_eq!(slot.is_some(), mode[issued]);
+                        if let Some(slot) = slot {
+                            assert_eq!(slot, rank % SLOTS);
+                            rank += 1;
+                            assert!(live[slot].is_none());
+                            live[slot] = Some(issued);
+                        }
+                    }
+                    assert!(next == len || ring.live > SLOTS / 2);
+                    if let Some(slot) = ring.ready_slot(group).unwrap() {
+                        assert_eq!(live[slot], Some(group));
+                        live[slot] = None;
+                    }
+                    ring.consumed(group).unwrap();
+                }
+                ring.finish().unwrap();
+                assert!(live.iter().all(Option::is_none));
+                let misses = mode.iter().filter(|&&v| v).count();
+                assert_eq!(
+                    ring.cohorts,
+                    usize::from(misses > 0) + misses.saturating_sub(SLOTS).div_ceil(SLOTS / 2)
+                );
+                assert_eq!(ring.peak, misses.min(SLOTS));
+                ring.erase();
+                assert!(!ring.batched);
+                assert_eq!((ring.refill, ring.cohorts), (0, 0));
+            }
+        }
+    }
+    #[test]
+    fn cohort_policy_waits_for_four_original_enqueues_without_claiming_gpu_completion() {
+        let mut r = Ring::new_policy(&[true; 24], true).unwrap();
+        while r.issue_next().unwrap().is_some() {}
+        assert_eq!(r.issued, 8);
+        for i in 0..3 {
+            r.consumed(i).unwrap();
+            assert!(r.issue_next().unwrap().is_none());
+        }
+        r.consumed(3).unwrap();
+        while r.issue_next().unwrap().is_some() {}
+        assert_eq!(r.issued, 12);
+        assert_eq!(r.live, 8);
+        assert_eq!(r.cohorts, 2);
+        assert_eq!(r.ready_slot(4).unwrap(), Some(4));
+        assert!(r.ready_slot(8).is_err());
+        assert!(r.finish().is_err());
+    }
+    #[test]
     fn resident_groups_do_not_limit_lookahead_and_foreign_or_unissued_consumption_rejects() {
         let mut mode = vec![false; 512];
         for i in (0..512).step_by(32) {
             mode[i] = true;
         }
-        let mut r = Ring::new(&mode).unwrap();
+        let mut r = Ring::new_policy(&mode, false).unwrap();
         while r.issue_next().unwrap().is_some() {}
         assert_eq!(r.live, 8);
         assert_eq!(r.issued, 256); // first eight misses plus intervening residents
         assert!(r.ready_slot(1).is_err());
         assert!(r.consumed(256).is_err());
         assert!(r.finish().is_err());
-        assert!(Ring::new(&[]).is_err());
-        assert!(Ring::new(&[false; 513]).is_err());
-        let mut one = Ring::new(&[true]).unwrap();
+        assert!(Ring::new_policy(&[], false).is_err());
+        assert!(Ring::new_policy(&[false; 513], false).is_err());
+        let mut one = Ring::new_policy(&[true], false).unwrap();
         assert!(one.consumed(0).is_err());
         one.issue_next().unwrap();
         one.consumed(0).unwrap();

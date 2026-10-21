@@ -56,3 +56,6 @@ pub use transient_io::transient_unscoped_upload_transfer_stats;
 pub use transient_io::transient_upload_transfer_stats;
 
 pub use transient_io::transient_binding_cache_stats;
+
+#[cfg(feature = "kuno-copy-cohorts")]
+pub use strata_graph::native_strata_segment_compact_profile;

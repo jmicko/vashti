@@ -70,6 +70,13 @@ pub(super) fn host_profile_active() -> bool {
         std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("prefill-host-layer"),
     )
 }
+#[cfg(feature = "kuno-copy-cohorts")]
+static COMPACT_TOTALS: [std::sync::atomic::AtomicU64; 2] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+#[cfg(feature = "kuno-copy-cohorts")]
+pub fn native_strata_segment_compact_profile() -> [u64; 2] {
+    std::array::from_fn(|i| COMPACT_TOTALS[i].load(std::sync::atomic::Ordering::Relaxed))
+}
 type OperatorTotals = std::collections::BTreeMap<&'static str, (u64, u64)>;
 fn profile_totals() -> &'static Mutex<OperatorTotals> {
     static TOTALS: OnceLock<Mutex<OperatorTotals>> = OnceLock::new();
@@ -3305,7 +3312,20 @@ impl Graph {
                 classes = None;
             }
         }
-        let plan = planner.finish().map_err(fault)?;
+        #[allow(unused_mut)]
+        let mut plan = planner.finish().map_err(fault)?;
+        #[cfg(feature = "kuno-copy-cohorts")]
+        {
+            let original = plan.segments.len();
+            plan.compact_segments().map_err(fault)?;
+            if host_profile_active() {
+                COMPACT_TOTALS[0].fetch_add(original as u64, std::sync::atomic::Ordering::Relaxed);
+                COMPACT_TOTALS[1].fetch_add(
+                    plan.segments.len() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
+        }
         let classes = classes.and_then(|c| c.finish().ok());
         let class_bytes = classes
             .as_ref()

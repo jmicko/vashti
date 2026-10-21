@@ -165,6 +165,8 @@ pub(crate) struct NativeExpertLayer {
     host_before: [[u64; 4]; 8],
     #[cfg(feature = "strata-public-host-clock")]
     batch_before: [[u64; 4]; 6],
+    #[cfg(feature = "strata-copy-cohorts")]
+    compact_before: [u64; 2],
 }
 impl NativeExpertLayer {
     pub(crate) fn new(start: usize, count: usize, layer: usize) -> Self {
@@ -175,6 +177,8 @@ impl NativeExpertLayer {
                 host_before: [[0; 4]; 8],
                 #[cfg(feature = "strata-public-host-clock")]
                 batch_before: [[0; 4]; 6],
+                #[cfg(feature = "strata-copy-cohorts")]
+                compact_before: [0; 2],
             };
         }
         let selected = NativeSelection {
@@ -196,6 +200,8 @@ impl NativeExpertLayer {
                 host_before: [[0; 4]; 8],
                 #[cfg(feature = "strata-public-host-clock")]
                 batch_before: [[0; 4]; 6],
+                #[cfg(feature = "strata-copy-cohorts")]
+                compact_before: [0; 2],
             };
         }
         let before = native_totals();
@@ -206,6 +212,8 @@ impl NativeExpertLayer {
             host_before: cubecl::wgpu::native_strata_host_capture_profile(),
             #[cfg(feature = "strata-public-host-clock")]
             batch_before: cubecl::wgpu::native_strata_host_batch_profile(),
+            #[cfg(feature = "strata-copy-cohorts")]
+            compact_before: cubecl::wgpu::native_strata_segment_compact_profile(),
         }
     }
     pub(crate) fn finish(mut self) {
@@ -271,6 +279,14 @@ impl NativeExpertLayer {
                     std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref()
                         == Ok("prefill-host-layer")
                 );
+            }
+            #[cfg(feature = "strata-copy-cohorts")]
+            {
+                let after = cubecl::wgpu::native_strata_segment_compact_profile();
+                record["segment_compaction_original_retained"] =
+                    serde_json::json!(std::array::from_fn::<_, 2, _>(
+                        |i| after[i].saturating_sub(self.compact_before[i])
+                    ));
             }
             eprintln!("public_prefill_native_gpu_profile {}", record);
         }
