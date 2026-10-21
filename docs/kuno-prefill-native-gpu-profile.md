@@ -104,3 +104,34 @@ collector/backend return. They retain [calls,wall_ns,thread_cpu_ns], with explic
 collection creates no clock or new fence. Existing CpuTimer triples are unchanged.
 The readback phase includes GPU waits/recycling; thread CPU disambiguates it.
 No generation/API/private logging behavior changes, and no gain is claimed.
+
+## Boundary result and symbol investigation (2026-10-21)
+
+Source4836abf2 / SHA025a2738 completes original73/4245/4245 normal compute and
+physical recovery with unchanged counts; warm prompt10.3612s, expert6.0602s.
+Original readback/checkpoint costs639.8ms wall /498.2ms thread CPU over96 calls;
+host grouping14.4ms, map upload9.5ms; expert collector/backend905.4ms thread CPU.
+The sampled backend itself is about4.94ms, not the entire905ms. These totals
+identify CPU work worth investigating but do not yet name its hot function.
+
+A second original normal fixed-public run uses the SAME frozen4836abf2 artifact
+under flat `perf record -e cycles:u -F499`, enabled only from public third-request
+rebind to prompt completion. It samples instruction pointers ONLY: no stacks,
+registers, branch trace, payload, system-wide recording or private workload.
+The protected unit retains swap/core0; raw perf data stays in a root-only `/run`
+directory and is removed after static symbol report extraction. Actual interval
+control commands must match enable/disable before accepting the report. This is
+attribution, not clean throughput. Source and normal byte/count/erasure/recovery
+checks remain original; no deployed worker or settings are changed.
+
+An opt-in `strata-route-registers` candidate is prepared but NOT hardware-tested
+or selected: it expands only five original fixed16 router loops and replaces
+the dynamically indexed private candidate array with16 scalars, like the pinned
+SYCL `route_kernel<16>` unrolls. All arithmetic/rank/tie/remap/fault operations
+remain in original order. Two CPU controls compile actual source and prove zero
+private arrays, identical descriptor/address-space/workgroup inventory, exact
+ordered substitution outside the removed array and rejection of source drift.
+It is deferred because only about142ms of observed routing boundary is non-CPU;
+changing router GPU arithmetic cannot fix the larger CPU expense. No speed or
+numerical GPU acceptance claim for this optional candidate. Existing full route
+and189 operator checks remain required before selecting it.

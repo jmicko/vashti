@@ -27,6 +27,9 @@ use std::sync::atomic::AtomicBool;
 use zeroize::Zeroizing;
 #[path = "strata_prompt_route_numeric_probe.rs"]
 mod prompt_numeric;
+#[cfg(any(test, feature = "strata-route-registers"))]
+#[path = "strata_prompt_route_registers.rs"]
+mod route_registers;
 pub(crate) use prompt_numeric::cases as public_prompt_numeric;
 
 const ROOT_BYTES: [u64; 11] = [
@@ -92,8 +95,16 @@ impl Kernel {
             Self::Reduce => include_str!("strata_global_reduce.wgsl").into(),
             Self::SharedReduce => include_str!("strata_global_shared_reduce.wgsl").into(),
             Self::PromptRoute => {
-                crate::strata_prompt::groups::shader_prefix()
-                    + include_str!("strata_prompt_route.wgsl")
+                let source = crate::strata_prompt::groups::shader_prefix()
+                    + include_str!("strata_prompt_route.wgsl");
+                #[cfg(feature = "strata-route-registers")]
+                {
+                    return route_registers::source(source);
+                }
+                #[cfg(not(feature = "strata-route-registers"))]
+                {
+                    source
+                }
             }
             Self::PromptRouteFinalize => {
                 crate::strata_prompt::groups::shader_prefix()

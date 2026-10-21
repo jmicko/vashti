@@ -22,6 +22,25 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Manual work resumed (2026-10-21; supersedes paused operational state below).**
+
+User has made both GPUs available and refreshed sudo. Goal-controller toggle
+still paused; this authorized manual turn is investigating the largest cost.
+Installed binaries remain unchanged. See [new public CPU attribution](kuno-prefill-native-gpu-profile.md#boundary-result-and-symbol-investigation-2026-10-21).
+Source7a7cd5b0/SHA8ed3be10 and4836abf2/SHA025a2738 original normal profiles pass
+compute/count/physical recovery; timings remain about10.3s warm. Routing
+readback/checkpoint498ms thread CPU and expert collector/backend905ms require
+hot-function attribution, rather than guessing backend binding lookup dominates.
+Root owns active `kuno-prefill-flat-cpu-20261021.service`, using frozen4836abf2
+with fixed-public flat instruction-pointer-only sampling, no content/stack/
+register sampling, `/run` raw data, original privacy and recovery limits.
+Root-bound sudo refresh895579/shared shell3556 expires00:30:44UTC Oct22;
+never kill shared shell. Pending optional router scalarization passes two actual
+CPU source controls but is unselected/deferred; no speed/GPU acceptance claim.
+No API/frontend/model/config/release/installation/reset change.
+
+**Previous stopped checkpoint:**
+
 **Authoritative paused handoff (2026-10-21 01:34UTC): complete unused-descriptor candidate correct, speed neutral; system ready for user.**
 
 User requested a breaking point and end of day. Goal PAUSE requested/UNMET;

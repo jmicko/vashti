@@ -47,6 +47,7 @@ cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
+strata-route-registers = ["strata-intel-core"]
 # Compiled experiment; every invocation must explicitly select it in the runner.
 direct-device = ["cubecl-common/kuno-direct-device"]
 # Whole-model Strata precision/scheduling port; isolated from installed Kuno.
