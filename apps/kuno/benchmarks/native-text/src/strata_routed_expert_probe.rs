@@ -70,7 +70,10 @@ struct Fixture {
 }
 
 fn fixture(count: usize, down: bool, control: Control) -> ProbeResult<Fixture> {
-    if ![32, 33, 64, 256, 257, 287, 288, 383, 384].contains(&count) {
+    let original = [32, 33, 64, 256, 257, 287, 288, 383, 384].contains(&count);
+    let medium = cfg!(feature = "strata-native-expert-medium")
+        && [128, 129, 159, 160, 191, 192, 255].contains(&count);
+    if !original && !medium {
         return Err("public CubeK expert count".into());
     }
     let (columns, rows) = if down { (640, 2560) } else { (2560, 1280) };
@@ -388,6 +391,24 @@ pub(super) fn cases(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "strata-native-expert-medium")]
+    #[test]
+    fn medium_public_fixtures_use_original_validated_map_and_real_owned_images() {
+        for down in [false, true] {
+            for count in [128, 129, 159, 160, 191, 192, 255] {
+                let f = fixture(count, down, Control::Finite).unwrap();
+                assert_eq!(abi::validate(&f.map, TOTAL).unwrap(), 11);
+                assert_eq!(f.routes.len(), count);
+                assert!(f.routes.windows(2).all(|v| v[0] < v[1]));
+                assert!(f.routes.iter().all(|&r| r > 20479));
+                assert!(f.input.iter().all(|v| v.is_finite()));
+                assert!(f.weight.iter().all(|v| v.is_finite()));
+            }
+        }
+        for count in [0, 127, 130, 254, 385, 4096, usize::MAX] {
+            assert!(fixture(count, false, Control::Finite).is_err());
+        }
+    }
     #[test]
     fn read_windows_retain_actual_owner_offsets_and_reject_overflow() {
         let root = Handle::new(cubecl_common::stream_id::StreamId::current(), 4096)

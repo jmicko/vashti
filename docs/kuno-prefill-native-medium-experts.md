@@ -73,3 +73,19 @@ Artifacts under `/media/jmicko/faststore/kuno-development`:
 `check-native-medium-experts-connected-20261021.py`,
 `native-medium-experts-connected-20261021.log`. Original terminal/clean-at-EACH/
 staged/install gates remain required. GPU numerical/performance results pending.
+
+
+## First protected attempt: fixture allowlist rejected before new kernel
+
+Sourceda5aae36 worker exited1 with physical recovery PASS before invoking the
+first medium product: shared fixed-public fixture() only allowed its original
+nine counts. No matrix numerical or speed failure occurred. Preserve the failed
+receipt and compiler code (`native-medium-experts-connected-20261021.log`).
+Extend ONLY the compiled-public fixture allowlist to the seven explicit new
+counts when the feature is selected; keep original nine fixtures unchanged and
+all other counts rejected. New CPU control validates the real original route map,
+high sorted routes and finite owned images. Add static public error diagnostics
+so a fixture error cannot be obscured by a generic stage label. Engine arithmetic,
+selectors, header, grammar and all numerical thresholds remain unchanged.
+Repeat final172 CPU/offline/frozen233-GPU/full-profile proof on a new artifact;
+never reuse this incomplete attempt as an acceptance or performance receipt.

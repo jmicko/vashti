@@ -410,7 +410,10 @@ async fn serve(
         let native_expert_matrix_checks: Vec<serde_json::Value> = Vec::new();
         #[cfg(feature="strata-native-expert-medium")]
         let medium_expert_checks = crate::strata_matrix::public_native_medium_numeric(&client,&mut arena)
-            .map_err(|_| "public_native_medium_numeric_failed")?;
+            .map_err(|error| {
+                eprintln!("public_native_medium_numeric_error {error}");
+                "public_native_medium_numeric_failed"
+            })?;
         #[cfg(not(feature="strata-native-expert-medium"))]
         let medium_expert_checks:Vec<serde_json::Value>=Vec::new();
         #[cfg(feature = "strata-native-direct-gu")]
@@ -423,7 +426,10 @@ async fn serve(
         let direct_gu_checks: Vec<serde_json::Value> = Vec::new();
         #[cfg(feature="strata-native-expert-medium")]
         let medium_direct_gu_checks = crate::strata_matrix::public_medium_direct_gu_numeric(&client,&mut arena)
-            .map_err(|_| "public_native_medium_direct_gu_failed")?;
+            .map_err(|error| {
+                eprintln!("public_native_medium_direct_gu_error {error}");
+                "public_native_medium_direct_gu_failed"
+            })?;
         #[cfg(not(feature="strata-native-expert-medium"))]
         let medium_direct_gu_checks:Vec<serde_json::Value>=Vec::new();
         let qsa_math_checks =
