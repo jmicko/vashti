@@ -78,6 +78,9 @@ mod strata_capture_buffer_tests;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_atomic_or.rs"]
 mod strata_atomic_or_controls;
 #[cfg(test)]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_unused_descriptors.rs"]
+mod strata_unused_descriptor_controls;
+#[cfg(test)]
 #[allow(dead_code)]
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_push_descriptors.rs"]
 mod strata_push_descriptor_controls;

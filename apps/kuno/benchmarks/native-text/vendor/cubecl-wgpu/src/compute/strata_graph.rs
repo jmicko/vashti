@@ -32,6 +32,8 @@ mod push_descriptors;
 mod replay_signature;
 #[path = "strata_transfer_barriers.rs"]
 mod transfer_barriers;
+#[path = "strata_unused_descriptors.rs"]
+mod unused_descriptors;
 
 #[cfg(feature = "kuno-public-host-clock")]
 #[path = "strata_host_capture_profile.rs"]
@@ -338,11 +340,17 @@ pub(crate) struct Program {
     bindings: Vec<vk::DescriptorType>,
     accesses: Vec<vk::AccessFlags>,
     atomic_or: u32,
+    unused_bindings: u32,
     entry: CString,
     required_subgroup: Option<u32>,
     shared_bytes: Option<u64>,
     physical_reads: bool,
     release_after: bool,
+}
+impl Program {
+    fn execution_access(&self, index: usize) -> vk::AccessFlags {
+        unused_descriptors::execution_access(self.accesses[index], index, self.unused_bindings)
+    }
 }
 #[derive(Default)]
 struct Registry {
@@ -477,6 +485,7 @@ pub(crate) fn register_module(
         release_after: false,
         accesses: bindings.iter().map(|b| b.2).collect(),
         atomic_or: proven_or,
+        unused_bindings: 0,
         bindings: bindings.into_iter().map(|b| b.1).collect(),
         entry: CString::new(entry).map_err(|_| fault("native graph entrypoint"))?,
     });
@@ -573,12 +582,25 @@ pub(crate) fn register_spirv_module(
             }
         }),
     );
+    let unused_bindings = if cfg!(feature = "kuno-native-unused-descriptors") {
+        let storage = bindings.iter().enumerate().fold(0u32, |mask, (i, b)| {
+            mask | if i < 32 && *b == vk::DescriptorType::STORAGE_BUFFER {
+                1u32 << i
+            } else {
+                0
+            }
+        });
+        unused_descriptors::mask(&words, storage)
+    } else {
+        0
+    };
     let program = Arc::new(Program {
         name: "UnlabelledNativeOperator",
         words,
         bindings,
         accesses,
         atomic_or: proven_or,
+        unused_bindings,
         entry: CString::new(entry).map_err(|_| fault("native SPIRV entrypoint"))?,
         required_subgroup,
         shared_bytes: Some(
@@ -1273,6 +1295,19 @@ impl Graph {
             initialized: HashSet::new(),
         })
     }
+    /// Actual just-enqueued immutable program inventory, never completion.
+    pub(crate) fn last_unused_descriptor_views(&self) -> Result<usize, ServerError> {
+        let n = self
+            .nodes
+            .last()
+            .ok_or_else(|| fault("native unused inventory no enqueued node"))?;
+        let key = n
+            .pipeline
+            .as_ref()
+            .ok_or_else(|| fault("native unused inventory no original pipeline"))?;
+        let p = &self.pipelines[key].program;
+        Ok(p.unused_bindings.count_ones() as usize)
+    }
     pub(crate) fn initialize_resources(&mut self, resources: &[WgpuResource]) -> bool {
         let mut fresh = false;
         for r in resources {
@@ -1569,6 +1604,7 @@ impl Graph {
     fn visit_node_bindings(
         &self,
         n: &Node,
+        memory_only: bool,
         mut visit: impl FnMut(&WgpuResource, vk::AccessFlags, bool) -> Result<(), ServerError>,
     ) -> Result<(), ServerError> {
         match n.dispatch {
@@ -1584,10 +1620,15 @@ impl Graph {
                     .ok_or_else(|| fault("native graph compute identity"))?];
                 for (index, (r, access)) in n.resources.iter().zip(&p.program.accesses).enumerate()
                 {
+                    let access = if memory_only {
+                        p.program.execution_access(index)
+                    } else {
+                        *access
+                    };
                     if !access.is_empty() {
                         visit(
                             r,
-                            *access,
+                            access,
                             index < 32 && p.program.atomic_or & (1u32 << index) != 0,
                         )?;
                     }
@@ -1609,7 +1650,7 @@ impl Graph {
         native: &capture_buffers::Guarded<'_>,
     ) -> Result<(), ServerError> {
         accesses.clear();
-        self.visit_node_bindings(n, |r, access, _| {
+        self.visit_node_bindings(n, false, |r, access, _| {
             *accesses.entry(native.get(r)?).or_default() |= access;
             Ok(())
         })
@@ -1621,7 +1662,7 @@ impl Graph {
         native: Option<&capture_buffers::Guarded<'_>>,
     ) -> Result<(), ServerError> {
         accesses.clear();
-        self.visit_node_bindings(n, |r, access, _| {
+        self.visit_node_bindings(n, false, |r, access, _| {
             if r.size == 0
                 || r.offset
                     .checked_add(r.size)
@@ -1647,6 +1688,7 @@ impl Graph {
         &self,
         n: &Node,
         captured: &replay_signature::Node<'_>,
+        memory_only: bool,
         mut visit: impl FnMut(capture_inventory::View, vk::AccessFlags, bool) -> Result<(), ServerError>,
     ) -> Result<(), ServerError> {
         let tag = match n.dispatch {
@@ -1684,11 +1726,16 @@ impl Graph {
                     .pipeline
                     .as_ref()
                     .ok_or_else(|| fault("native capture original compute identity"))?];
-                for (i, flags) in p.program.accesses.iter().enumerate() {
+                for i in 0..p.program.accesses.len() {
+                    let flags = if memory_only {
+                        p.program.execution_access(i)
+                    } else {
+                        p.program.accesses[i]
+                    };
                     if !flags.is_empty() {
                         visit(
                             captured.descriptor(i).map_err(fault)?,
-                            *flags,
+                            flags,
                             i < 32 && p.program.atomic_or & (1u32 << i) != 0,
                         )?;
                     }
@@ -1711,50 +1758,18 @@ impl Graph {
         }
         Ok(())
     }
-    fn fill_compute_ranges(
+    fn visit_compute_views(
         &self,
         n: &Node,
-        accesses: &mut Vec<compute_barriers::Access>,
         native: &capture_buffers::Guarded<'_>,
-        mut planning: Option<&mut Vec<strata_schedule::Access>>,
         captured: Option<(&capture_buffers::Captured<'_, '_>, usize)>,
+        memory_only: bool,
+        mut visit: impl FnMut(capture_inventory::View, vk::AccessFlags, bool) -> Result<(), ServerError>,
     ) -> Result<(), ServerError> {
-        accesses.clear();
-        if let Some(ranges) = &mut planning {
-            ranges.clear();
-        }
-        let mut append = |v: capture_inventory::View, flags: vk::AccessFlags, atomic_or: bool| {
-            let buffer = v.raw;
-            if captured.is_some_and(|(c, _)| c.readonly_contains(buffer)) {
-                if flags.intersects(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
-                {
-                    return Err(fault("native readonly proof unexpected original writer"));
-                }
-                return Ok(());
-            }
-            if let Some(ranges) = &mut planning {
-                ranges.push(strata_schedule::Access {
-                    buffer,
-                    first: v.first,
-                    bytes: v.bytes,
-                    write: flags.intersects(
-                        vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
-                    ),
-                });
-            }
-            accesses.push(compute_barriers::Access {
-                buffer,
-                first: v.first,
-                bytes: v.bytes,
-                flags,
-                atomic_or,
-            });
-            Ok(())
-        };
         if let Some((captured, index)) = captured {
-            self.visit_captured_bindings(n, &captured.node(index)?, append)
+            self.visit_captured_bindings(n, &captured.node(index)?, memory_only, visit)
         } else {
-            self.visit_node_bindings(n, |r, flags, atomic_or| {
+            self.visit_node_bindings(n, memory_only, |r, flags, atomic_or| {
                 if r.size == 0
                     || r.offset
                         .checked_add(r.size)
@@ -1762,7 +1777,7 @@ impl Graph {
                 {
                     return Err(fault("native compute barrier actual owner interval"));
                 }
-                append(
+                visit(
                     capture_inventory::View {
                         raw: native.get(r)?.as_raw(),
                         first: r.offset,
@@ -1773,6 +1788,58 @@ impl Graph {
                 )
             })
         }
+    }
+    fn fill_compute_ranges(
+        &self,
+        n: &Node,
+        accesses: &mut Vec<compute_barriers::Access>,
+        native: &capture_buffers::Guarded<'_>,
+        mut planning: Option<&mut Vec<strata_schedule::Access>>,
+        captured: Option<(&capture_buffers::Captured<'_, '_>, usize)>,
+    ) -> Result<(), ServerError> {
+        accesses.clear();
+        let readonly = |v: capture_inventory::View,
+                        flags: vk::AccessFlags|
+         -> Result<bool, ServerError> {
+            if captured.is_some_and(|(c, _)| c.readonly_contains(v.raw)) {
+                if flags.intersects(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
+                {
+                    return Err(fault("native readonly proof unexpected original writer"));
+                }
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        };
+        if let Some(ranges) = &mut planning {
+            ranges.clear();
+            // Admission, reuse and Recording footprints remain FULL declarations.
+            self.visit_compute_views(n, native, captured, false, |v, flags, _| {
+                if !readonly(v, flags)? {
+                    ranges.push(strata_schedule::Access {
+                        buffer: v.raw,
+                        first: v.first,
+                        bytes: v.bytes,
+                        write: flags.intersects(
+                            vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                        ),
+                    });
+                }
+                Ok(())
+            })?;
+        }
+        self.visit_compute_views(n, native, captured, true, |v, flags, atomic_or| {
+            if !readonly(v, flags)? {
+                accesses.push(compute_barriers::Access {
+                    buffer: v.raw,
+                    first: v.first,
+                    bytes: v.bytes,
+                    flags,
+                    atomic_or,
+                });
+            }
+            Ok(())
+        })
     }
     fn node_ranges(&self, n: &Node) -> Result<Vec<strata_schedule::Access>, ServerError> {
         let mut accesses = Vec::new();
@@ -3196,7 +3263,7 @@ impl Graph {
                 planned_cache.as_ref().map(|c| (c, index)),
             )?;
             planner
-                .push_accesses(
+                .push_accesses_with_memory(
                     matches!(node.dispatch, Dispatch::Copy | Dispatch::Fill),
                     node.shared,
                     node.release_after
@@ -3205,6 +3272,16 @@ impl Graph {
                             .as_ref()
                             .is_some_and(|p| self.pipelines[p].program.release_after),
                     &scratch.ranges,
+                    |a| {
+                        compute_ranges.iter().any(|m| {
+                            m.buffer == a.buffer
+                                && m.first == a.first
+                                && m.bytes == a.bytes
+                                && m.flags.intersects(
+                                    vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE,
+                                ) == a.write
+                        })
+                    },
                 )
                 .map_err(fault)?;
             let segment = planner.last_segment().map_err(fault)?;

@@ -194,7 +194,11 @@ fn update_regions(
     own: usize,
     signal: u64,
     total: &mut usize,
+    executes: bool,
 ) -> Result<[u64; 3], &'static str> {
+    if signal == 0 || signal > 32769 {
+        return Err("native local signal exceeds original node bound");
+    }
     let end = access
         .first
         .checked_add(access.bytes)
@@ -221,18 +225,28 @@ fn update_regions(
         }
         let cell = &mut regions[i];
         let h = &mut cell.hazard;
-        for peer in 0..3 {
-            if peer != own {
-                wait[peer] = wait[peer].max(h.writers[peer]);
-                if access.write {
-                    wait[peer] = wait[peer].max(h.readers[peer]);
+        // Local signals are <=32769, before any Vulkan epoch base is added.
+        // High bits retain ORIGINAL declared footprint only; NEVER wait credit.
+        const DECLARED: u64 = 1u64 << 63;
+        if access.write {
+            h.writers[0] |= DECLARED;
+        } else {
+            h.readers[0] |= DECLARED;
+        }
+        if executes {
+            for peer in 0..3 {
+                if peer != own {
+                    wait[peer] = wait[peer].max(h.writers[peer] & !DECLARED);
+                    if access.write {
+                        wait[peer] = wait[peer].max(h.readers[peer] & !DECLARED);
+                    }
                 }
             }
-        }
-        if access.write {
-            h.writers[own] = signal;
-        } else {
-            h.readers[own] = signal;
+            if access.write {
+                h.writers[own] = (h.writers[own] & DECLARED) | signal;
+            } else {
+                h.readers[own] = (h.readers[own] & DECLARED) | signal;
+            }
         }
         cursor = cell.end;
         i += 1;
@@ -345,6 +359,18 @@ impl Planner {
         release_after: bool,
         accesses: &[Access],
     ) -> Result<(), &'static str> {
+        self.push_accesses_with_memory(node_copy, node_shared, release_after, accesses, |_| true)
+    }
+    /// The same original regions retain the full declared footprint. Only real
+    /// instruction accesses update execution hazards; no extra region map/cache.
+    pub fn push_accesses_with_memory(
+        &mut self,
+        node_copy: bool,
+        node_shared: bool,
+        release_after: bool,
+        accesses: &[Access],
+        mut executes: impl FnMut(&Access) -> bool,
+    ) -> Result<(), &'static str> {
         // This selects only the queue. The original node still carries its
         // COPY/FILL dispatch and TRANSFER accesses in Graph's actual encoder.
         let shared = node_shared;
@@ -399,7 +425,14 @@ impl Planner {
             }
             let regions = self.hazards.entry(access.buffer).or_default();
             let previous_capacity = regions.capacity();
-            let waits = update_regions(regions, access, own, segment.signal, &mut self.regions)?;
+            let waits = update_regions(
+                regions,
+                access,
+                own,
+                segment.signal,
+                &mut self.regions,
+                executes(access),
+            )?;
             for (old, new) in segment.waits.iter_mut().zip(waits) {
                 *old = (*old).max(new);
             }
@@ -2118,5 +2151,164 @@ mod shared_lane_tests {
         )
         .unwrap();
         assert!(freed.is_empty()); // Successful Recording retains the whole original MAIN pool.
+    }
+}
+
+#[cfg(test)]
+mod exact_memory_footprint_tests {
+    use super::*;
+    #[test]
+    fn declaration_only_regions_keep_full_original_reuse_conflicts_without_timeline_credit() {
+        let mut p = Planner::new(3, false).unwrap();
+        p.push_accesses_with_memory(
+            false,
+            true,
+            false,
+            &[Access {
+                buffer: 7,
+                first: 3,
+                bytes: 21,
+                write: true,
+            }],
+            |_| false,
+        )
+        .unwrap();
+        p.push_accesses_with_memory(
+            true,
+            false,
+            false,
+            &[Access {
+                buffer: 8,
+                first: 1,
+                bytes: 31,
+                write: false,
+            }],
+            |_| false,
+        )
+        .unwrap();
+        p.push_accesses(
+            false,
+            false,
+            false,
+            &[Access {
+                buffer: 9,
+                first: 0,
+                bytes: 8,
+                write: true,
+            }],
+        )
+        .unwrap();
+        let p = p.finish().unwrap();
+        assert!(
+            p.segments
+                .iter()
+                .all(|s| s.waits == [u64::from(s.copy || s.shared), 0, 0]
+                    && s.wait == u64::from(s.copy || s.shared)
+                    && s.signal <= 4)
+        );
+        assert_eq!(
+            p.accesses()
+                .iter()
+                .map(|a| (a.buffer, a.first, a.bytes, a.write))
+                .collect::<Vec<_>>(),
+            vec![(7, 3, 21, true), (8, 1, 31, false), (9, 0, 8, true)]
+        );
+        assert!(
+            p.conflicts(&[Access {
+                buffer: 7,
+                first: 3,
+                bytes: 1,
+                write: false
+            }])
+            .unwrap()
+        );
+        assert!(
+            p.conflicts(&[Access {
+                buffer: 8,
+                first: 1,
+                bytes: 1,
+                write: true
+            }])
+            .unwrap()
+        );
+        assert!(
+            !p.conflicts(&[Access {
+                buffer: 8,
+                first: 1,
+                bytes: 1,
+                write: false
+            }])
+            .unwrap()
+        );
+    }
+    #[test]
+    fn mixed_execution_matches_pairwise_byte_hazards_and_original_declared_footprint() {
+        let mut random = 0x61827abc_u64;
+        let mut next = || {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            random
+        };
+        let mut p = Planner::new(1024, false).unwrap();
+        let mut original = Planner::new(1024, false).unwrap();
+        let mut nodes = Vec::new();
+        for _ in 0..1024 {
+            let queue = (next() % 3) as usize;
+            let executes = next() % 4 != 0;
+            let accesses = (0..(next() % 4 + 1))
+                .map(|_| Access {
+                    buffer: next() % 9 + 1,
+                    first: next() % 64,
+                    bytes: next() % 16 + 1,
+                    write: next() % 2 == 0,
+                })
+                .collect::<Vec<_>>();
+            p.push_accesses_with_memory(queue == 1, queue == 2, false, &accesses, |_| executes)
+                .unwrap();
+            original
+                .push_accesses(queue == 1, queue == 2, false, &accesses)
+                .unwrap();
+            nodes.push((queue, executes, accesses));
+        }
+        let p = p.finish().unwrap();
+        let original = original.finish().unwrap();
+        assert_eq!(
+            p.accesses()
+                .iter()
+                .map(|a| (a.buffer, a.first, a.bytes, a.write))
+                .collect::<Vec<_>>(),
+            original
+                .accesses()
+                .iter()
+                .map(|a| (a.buffer, a.first, a.bytes, a.write))
+                .collect::<Vec<_>>()
+        );
+        for (i, (q, executes, accesses)) in nodes.iter().enumerate() {
+            let current = &p.segments[p.node_segments[i]];
+            assert!(current.waits.iter().all(|&w| w <= 1025));
+            if !executes {
+                continue;
+            }
+            for (j, (peer, active, earlier)) in nodes[..i].iter().enumerate() {
+                if !active || peer == q {
+                    continue;
+                }
+                if accesses.iter().any(|a| {
+                    earlier.iter().any(|b| {
+                        a.buffer == b.buffer
+                            && a.first < b.first + b.bytes
+                            && b.first < a.first + a.bytes
+                            && (a.write || b.write)
+                    })
+                }) {
+                    assert!(
+                        current.waits[*peer] >= p.segments[p.node_segments[j]].signal,
+                        "real hazard {j}->{i}"
+                    );
+                }
+            }
+        }
+        assert_eq!(std::mem::size_of::<Region>(), 64);
     }
 }

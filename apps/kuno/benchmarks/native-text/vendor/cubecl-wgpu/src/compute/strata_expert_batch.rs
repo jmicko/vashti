@@ -232,7 +232,8 @@ impl WgpuServer {
                                     .ok_or("native source original resource missing")
                             })
                             .map_err(fault)?;
-                        self.scheduler
+                        let unused = self
+                            .scheduler
                             .stream(&stream_id)
                             .enqueue_native_expert_owned(
                                 pipelines[index].as_ref().unwrap().clone(),
@@ -242,6 +243,7 @@ impl WgpuServer {
                                 owners.clone(),
                                 &scope,
                             )?;
+                        receipt.unused_descriptor_views += unused;
                         receipt.launches += 1;
                     }
                     NativeStrataExpertCommand::HostCopies(copies) => {
@@ -273,8 +275,8 @@ impl WgpuServer {
             receipt.logical_phases = logical.logical_phases;
             receipt.matrix_pieces = logical.matrix_pieces;
             receipt.wide_prefixes = logical.wide_prefixes;
-            receipt.direct_gu_prefixes=logical.direct_gu_prefixes;
-            receipt.gu_checks=logical.gu_checks;
+            receipt.direct_gu_prefixes = logical.direct_gu_prefixes;
+            receipt.gu_checks = logical.gu_checks;
             receipt.wide_blocks = logical.wide_blocks;
             receipt.tail_pieces = logical.tail_pieces;
             Ok(receipt)

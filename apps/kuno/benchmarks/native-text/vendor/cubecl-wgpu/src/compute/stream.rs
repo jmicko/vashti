@@ -916,7 +916,10 @@ impl WgpuStream {
         scope: &super::transient_io::NativeExpertBatchScope,
     ) -> Result<(), ServerError> {
         self.private_io_active()?;
-        self.transient_io.as_ref().unwrap().check_native_expert_batch(scope)
+        self.transient_io
+            .as_ref()
+            .unwrap()
+            .check_native_expert_batch(scope)
     }
     pub(crate) fn native_expert_uniforms(
         &mut self,
@@ -936,7 +939,7 @@ impl WgpuStream {
         count: &CubeCount,
         owners: Arc<Vec<cubecl_runtime::server::Binding>>,
         scope: &super::transient_io::NativeExpertBatchScope,
-    ) -> Result<(), ServerError> {
+    ) -> Result<usize, ServerError> {
         self.check_native_expert_batch(scope)?;
         // Keep ordinary root initialization (and its WGPU identity checks),
         // before any original native command may consume these real buffers.
@@ -958,9 +961,14 @@ impl WgpuStream {
             actual,
             Some(owners),
         )?;
+        let unused = self
+            .strata_graph
+            .as_ref()
+            .unwrap()
+            .last_unused_descriptor_views()?;
         self.tasks_count += 1;
         self.flush_if_needed();
-        Ok(())
+        Ok(unused)
     }
 
     pub(crate) fn begin_transient_io_reuse(&mut self) -> Result<u64, ServerError> {

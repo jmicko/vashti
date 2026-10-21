@@ -5,7 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
 options=set(sys.argv[2:])
-if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu'}:raise ValueError('build feature selector')
+if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu','--unused-descriptors'}:raise ValueError('build feature selector')
 if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise ValueError('GPU route usage requires explicit Intel core selection')
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 if '--cubek-gemm' in options and '--intel-core' not in options:raise ValueError('CubeK candidate requires explicit Intel core')
@@ -33,6 +33,8 @@ if '--subgroup-publish' in options and '--native-expert-wide' not in options:rai
 features += ['strata-native-subgroup-publish'] if '--subgroup-publish' in options else []
 if '--direct-gu' in options and not {'--subgroup-publish','--native-expert-bulk','--expert-scratch-ring'} <= options:raise ValueError('direct GU requires complete publication, bulk and role scratch bundle')
 features += ['strata-native-direct-gu'] if '--direct-gu' in options else []
+if '--unused-descriptors' in options and '--direct-gu' not in options:raise ValueError('unused descriptor proof requires complete direct GU bundle')
+features += ['strata-native-unused-descriptors'] if '--unused-descriptors' in options else []
 features += ['strata-qsa-paired'] if '--qsa-paired' in options else []
 features += ['strata-qsa-pv-gather'] if '--qsa-pv-gather' in options else []
 features += ['strata-qsa-local-fault'] if '--qsa-local-fault' in options else []

@@ -1586,6 +1586,12 @@ mod tests {
             let out = child.wait_with_output().unwrap();
             assert!(out.status.success());
             let assembly = String::from_utf8(out.stdout).unwrap();
+            let mask = crate::strata_unused_descriptor_controls::mask(&w, 0x3f);
+            assert_eq!(
+                mask,
+                if down { 0 } else { 1 << 4 },
+                "actual down={down} direct={direct}"
+            );
             let status = assembly
                 .lines()
                 .find_map(|line| {
@@ -2053,6 +2059,12 @@ mod tests {
                 assert_eq!(
                     wgpu::hal::vulkan::kuno_cooperative_subgroup(&words),
                     Some(16)
+                );
+                let unused = crate::strata_unused_descriptor_controls::mask(&words, 0x3f);
+                assert_eq!(
+                    unused,
+                    if name.ends_with("_gu") { 1 << 4 } else { 0 },
+                    "actual descriptor proof {name}/{mask}"
                 );
                 let mut at = 5;
                 let mut local = None;

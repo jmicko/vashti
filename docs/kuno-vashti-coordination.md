@@ -22,6 +22,45 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Authoritative active handoff (2026-10-21 01:14UTC): exact native memory access plus full declared footprint, CPU accepted; GPU pending.**
+
+Goal ACTIVE/UNMET. Same isolated Kuno worktree/branch; installed worker3fffc266/
+SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 unchanged. No GPU job has run for this
+candidate. Read[the complete unused-descriptor contract and checkpoint](kuno-native-unused-descriptors.md).
+The whole direct-GU predecessor remains correct/neutral, with its189 GPU proofs
+and failed setup receipt preserved below. No component is removed.
+
+New opt-in`strata-native-unused-descriptors` /`--unused-descriptors` proves unused
+bindings from actual final SPIR-V, not names or guessed narrower views. Every
+actual8-layout GU/prefix/tail has only status bit4 unused; DOWN has none. Both
+live/captured memory visitors and queue waits use exact proof. ORIGINAL declared
+admission/source/draft/mutation checks, strict signatures/no-writer certificates,
+all original views/initialization/owner retention AND full Recording/reuse
+footprints remain. The latter needed a coupled planner change: same64B regions
+retain declared read/write provenance separately from real execution history.
+Bounded local signal metadata is ALWAYS masked before execution waits; it grants
+no GPU completion/readiness. No extra map/cache/owner or raised cap. Actual accepted
+batch enqueues report unused-view counts only through the fixed-public sink.
+
+PASS:154 selected App CPU with exact release features,11 actual runtime capture/
+grammar controls,1024-node real-hazard byte oracle plus EXACT original retained
+footprints, declaration-only/used-alias/future-writer/header-wait negatives and
+actual original module/layout checks. Failed intermediate CPU fixtures remain;
+no threshold/arithmetic/guard was relaxed. Source/proof details and logs in linked
+spec. Next freeze release, offline421/216, original189 GPU and BOTH original full
+73/4245/4245 count/pool/source/owner/recovery profiles. Require actual unused-view
+counts and original FMA populations; only promising normal first/repeat proceeds
+to original terminal/fresh clean-at-EACH5%/staged quality/privacy/install gates.
+No speed gain/overlap/install claim yet. Compare direct-GU normal11.728765729/
+10.125904949s; Strata5.3515s still leads. Never reset/reboot GPUs.
+
+No API/KNT2/KNR2/config/model/Vashti/frontend/release change. Canonical uncommitted
+coordination files and inherited cache preserved. Root owns GPU/service work.
+Owned cached sudo375934/sharedshell3556 ends02:05:20UTC; do not kill sharedshell.
+Last independent safe physical state remains00:47:37UTC below; only CPU since.
+
+**Previous checkpoint (superseded):**
+
 **Authoritative active handoff (2026-10-21 00:48UTC): direct GU fully correct, speed neutral; system recovered.**
 
 Goal ACTIVE/UNMET. Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,

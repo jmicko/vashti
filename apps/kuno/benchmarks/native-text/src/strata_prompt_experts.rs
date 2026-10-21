@@ -450,6 +450,10 @@ pub(crate) fn enqueue(
                         receipt.direct_gu_prefixes,
                     ),
                     ("expert_native_gu_checks", receipt.gu_checks),
+                    (
+                        "expert_native_unused_descriptor_views",
+                        receipt.unused_descriptor_views,
+                    ),
                 ] {
                     crate::strata_prefill_profile::count(name, value as u64);
                 }

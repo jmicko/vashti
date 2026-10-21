@@ -61,6 +61,7 @@ pub struct NativeStrataExpertBatchReceipt {
     pub tail_pieces: usize,
     pub direct_gu_prefixes: usize,
     pub gu_checks: usize,
+    pub unused_descriptor_views: usize,
 }
 
 pub enum NativeStrataExpertCommand<K> {

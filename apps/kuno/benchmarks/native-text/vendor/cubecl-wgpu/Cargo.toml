@@ -35,6 +35,7 @@ resolver = "2"
 
 [features]
 kuno-strata-shared = []
+kuno-native-unused-descriptors = []
 kuno-public-host-clock = ["dep:libc"]
 default = [
     "cubecl-runtime/default",

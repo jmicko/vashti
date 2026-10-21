@@ -67,6 +67,7 @@ strata-native-wide32 = ["strata-native-wide"]
 strata-native-expert-wide = ["strata-native-wide32"]
 strata-native-subgroup-publish = ["strata-native-expert-wide"]
 strata-native-direct-gu = ["strata-native-subgroup-publish", "strata-native-expert-bulk", "strata-expert-scratch-ring"]
+strata-native-unused-descriptors = ["strata-native-direct-gu", "cubecl-wgpu/kuno-native-unused-descriptors"]
 # Explicit paired-cell prompt QK candidate; original scalar oracle is unchanged.
 strata-qsa-paired = ["strata-intel-core"]
 # Coherent experiments remain explicit until full runtime acceptance.
