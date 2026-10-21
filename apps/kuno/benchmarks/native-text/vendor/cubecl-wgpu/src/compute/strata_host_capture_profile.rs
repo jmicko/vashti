@@ -26,7 +26,7 @@ static BATCH_TOTALS: [[AtomicU64; 4]; 6] = [const { [const { AtomicU64::new(0) }
 pub fn batch_totals() -> [[u64; 4]; 6] {
     std::array::from_fn(|i| std::array::from_fn(|j| BATCH_TOTALS[i][j].load(Relaxed)))
 }
-pub(super) struct BatchTimer(Timer);
+pub(crate) struct BatchTimer(Timer);
 impl BatchTimer {
     pub fn new(public_active: bool) -> Self {
         Self(Timer::new(public_active))
