@@ -21,6 +21,10 @@ enum Control {
     Causal,
     FutureSelection,
     NonfiniteQuery,
+    InfiniteScale,
+    NegativeInfiniteScale,
+    NanScale,
+    ZeroTimesInfiniteScale,
 }
 impl Control {
     fn label(self) -> &'static str {
@@ -28,6 +32,10 @@ impl Control {
             Self::Causal => "causal",
             Self::FutureSelection => "future_selection",
             Self::NonfiniteQuery => "nonfinite_query",
+            Self::InfiniteScale => "infinite_scale",
+            Self::NegativeInfiniteScale => "negative_infinite_scale",
+            Self::NanScale => "nan_scale",
+            Self::ZeroTimesInfiniteScale => "zero_times_infinite_scale",
         }
     }
     fn fault(self) -> u32 {
@@ -476,6 +484,22 @@ fn check_impl(
                 scales[(token + word * 2) % 4] | (scales[(token + word * 2 + 1) % 4] << 16);
         }
     }
+    // Extra packed-cache controls ONLY. Original twelve fixtures and their
+    // independent references/bounds remain byte-for-byte unchanged.
+    let poison_scale = match control {
+        Control::InfiniteScale | Control::ZeroTimesInfiniteScale => Some(0x7c00u32),
+        Control::NegativeInfiniteScale => Some(0xfc00u32),
+        Control::NanScale => Some(0x7e01u32),
+        _ => None,
+    };
+    if let Some(scale) = poison_scale {
+        // Token0 is genuinely selected by these short causal fixtures. Poison
+        // BOTH scale lanes, so every signed-byte lane must detect the fault.
+        for word in 256..260 { cache[word] = scale | (scale << 16); }
+        if control == Control::ZeroTimesInfiniteScale {
+            cache[..128].fill(0); // K bytes only; V and remaining owner stay real.
+        }
+    }
     let f64_reference = if nondyadic && control == Control::Causal {
         let mut partial = Zeroizing::new(vec![0.0; owned_rows * PARTIAL_ROW]);
         let mut stats = Zeroizing::new(vec![0.0; owned_rows * STATS_ROW]);
@@ -702,6 +726,20 @@ fn check_impl(
         serde_json::json!({"family":"prompt-qsa-attention-scalar-parity","control":control.label(),"start":start,"count":count,"capacity":capacity,"query_offset":query_offset,"nondyadic_operands":nondyadic,"fault":control.fault(),"bit_exact_partial_and_stats":bit_exact,"original_bitwise_required":!nondyadic && !large,"actual_large_xmx_kernel":large,"negative_fault_control_only":large && control != Control::Causal,"independent_f64":f64_metadata,"numerical_acceptance_passed":accepted,"full_owner_and_tail_checked":true,"actual_prompt_attention_fault_kernel":true,"unchanged_scalar_shader_reference":true,"unique_reference_kernel_identity":true,"original_host_launch_validation":true,"fabricated_prompt_scope":false}),
         accepted,
     ))
+}
+
+#[cfg(feature = "strata-qsa-packed-cache")]
+pub(crate) fn packed_cache_cases(arena: &mut PrivateArena) -> ProbeResult<Vec<serde_json::Value>> {
+    let mut reports = Vec::new();
+    for control in [Control::InfiniteScale, Control::NegativeInfiniteScale,
+        Control::NanScale, Control::ZeroTimesInfiniteScale] {
+        let attempt = check(arena, 3, 3, 4096, control, 0, false);
+        arena.reset()?;
+        let (report, accepted) = attempt?;
+        if !accepted { return Err("packed-cache poison original exact-bit parity failed".into()); }
+        reports.push(report);
+    }
+    Ok(reports)
 }
 
 pub(crate) fn cases(arena: &mut PrivateArena) -> ProbeResult<Vec<serde_json::Value>> {

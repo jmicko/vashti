@@ -9,6 +9,17 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
+## Authorized manual checkpoint (2026-10-21 23:28UTC)
+
+Controller remains paused; user explicitly authorized continued manual work.
+[Copy cohorts](kuno-prefill-copy-cohorts.md) source661ddad3/SHA09f39612 passes all
+original GPU/full-profile/recovery checks with166 CPU/11 runtime and421/216 offline.
+Normal long prompts improve~6% each; clean unprofiled first12.7915/repeat9.2446s
+versus installed12.9623/11.1474s. Original5%-at-EACH selection FAILS firstlong;
+no staged/install acceptance. Keep complete correct component, investigate actual
+attention cache/dequantization bottleneck. Same-host Strata5.3515s still leads.
+Installed3fffc266/gateway36626d30 and all contracts remain unchanged.
+
 ## Authoritative paused checkpoint (2026-10-21 01:34UTC)
 
 User requested a breaking point and end of day; goal PAUSE requested/UNMET.

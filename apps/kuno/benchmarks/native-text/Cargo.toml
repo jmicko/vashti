@@ -88,6 +88,8 @@ strata-qsa-fma = ["strata-intel-core"]
 strata-qsa-uniform = ["strata-qsa-fma", "strata-qsa-paired", "strata-qsa-pv-gather", "strata-qsa-local-fault"]
 # Retain paired/uniform/FMA QK in its exact single guarded body.
 strata-qsa-compact = ["strata-qsa-uniform"]
+# Original QK bytes/scales read in pairs; equivalent finite checks factored.
+strata-qsa-packed-cache = ["strata-qsa-compact"]
 # Complete full-batch QK/softmax/PV cooperative-matrix attention.
 strata-qsa-xmx = ["strata-qsa-compact"]
 # Fixed-public timing diagnosis only; never enabled by deployed worker policy.

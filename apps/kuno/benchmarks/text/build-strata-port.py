@@ -5,7 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
 options=set(sys.argv[2:])
-if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu','--unused-descriptors','--route-registers','--copy-cohorts'}:raise ValueError('build feature selector')
+if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu','--unused-descriptors','--route-registers','--copy-cohorts','--qsa-packed-cache'}:raise ValueError('build feature selector')
 if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise ValueError('GPU route usage requires explicit Intel core selection')
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 if '--cubek-gemm' in options and '--intel-core' not in options:raise ValueError('CubeK candidate requires explicit Intel core')
@@ -51,6 +51,9 @@ features += ['strata-qsa-fma'] if '--qsa-fma' in options else []
 features += ['strata-qsa-uniform'] if '--qsa-uniform' in options else []
 if '--qsa-compact' in options and '--qsa-uniform' not in options:raise ValueError('compact QK requires explicit complete uniform/FMA/paired/gather/fault bundle')
 features += ['strata-qsa-compact'] if '--qsa-compact' in options else []
+if {'--qsa-packed-cache','--qsa-xmx'} <= options:raise ValueError('packed-cache and matrix QSA are separate complete candidates')
+if '--qsa-packed-cache' in options and '--qsa-compact' not in options:raise ValueError('packed QK cache requires complete compact attention bundle')
+features += ['strata-qsa-packed-cache'] if '--qsa-packed-cache' in options else []
 if '--qsa-xmx' in options and '--qsa-compact' not in options:raise ValueError('matrix attention requires explicit complete compact attention bundle')
 features += ['strata-qsa-xmx'] if '--qsa-xmx' in options else []
 features += ['strata-public-host-clock'] if '--public-host-clock' in options else []

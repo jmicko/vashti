@@ -31,6 +31,9 @@ mod prompt_fma;
 #[cfg(any(test, feature = "strata-qsa-local-fault"))]
 #[path = "strata_prompt_qsa_local_fault.rs"]
 mod prompt_local_fault;
+#[cfg(any(test, feature = "strata-qsa-packed-cache"))]
+#[path = "strata_prompt_qsa_packed_cache.rs"]
+mod prompt_packed_cache;
 #[cfg(any(test, feature = "strata-qsa-paired"))]
 #[path = "strata_prompt_qsa_paired.rs"]
 mod prompt_paired;
@@ -46,6 +49,8 @@ mod prompt_uniform;
 pub(crate) mod selection;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use attention_numeric_probe::cases as public_attention_numeric;
+#[cfg(feature = "strata-qsa-packed-cache")]
+pub(crate) use attention_numeric_probe::packed_cache_cases as public_packed_cache_numeric;
 #[cfg(feature="strata-qsa-xmx")]
 pub(crate) use attention_numeric_probe::large_cases as public_attention_xmx_numeric;
 
@@ -154,6 +159,12 @@ impl Kernel {
         #[cfg(feature = "strata-qsa-compact")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_compact::source(source)
+        } else {
+            source
+        };
+        #[cfg(feature = "strata-qsa-packed-cache")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_packed_cache::source(source)
         } else {
             source
         };

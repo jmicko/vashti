@@ -1,6 +1,7 @@
 # Coupled prefill copy cohorts and segment compaction
 
-Backend-only candidate, not installed or accepted yet. Keep original arithmetic,
+Backend-only candidate, GPU-correct and faster when warm; clean first-use
+selection still fails, so it is not installed. Keep original arithmetic,
 eight raw slots/32MiB root, miss-only ownership, current source checks, full
 physical views, all hazard/flight/erasure/capacity checks and original controls.
 No API/model/config/frontend change. Retain every preceding component.
@@ -83,5 +84,27 @@ Evidence under `/media/jmicko/faststore/kuno-development`:
 The source-pinned protected wrapper `check-native-copy-cohorts-connected-20261021.py`
 keeps original189 GPU checks and both full count/pool/source/owner/recovery chains,
 then requires real cohort counts and actual original/compacted segment counts.
-Root owns unit `kuno-copy-cohorts-20261021.service`; GPU acceptance and speed are
-PENDING. No new installed selection, API/frontend/config/model/release or reset.
+The original189 GPU controls and BOTH complete73/4245/4245 profiles/proof
+chains PASS, including actual FMA populations, original pool/source/owner/erasure
+and physical recovery. Sampled segments shrink318->119 (GPU sampler) and318->168
+(normal host profile); actual long-request copy cohorts3276/3259 for13347/13273
+misses. Original copy/FMA work remains. Normal first/repeat11.146964481/9.741252502s
+versus immediate boundary-profile baseline11.859337808/10.361236802s (~6% each).
+Warm experts6.060241849->5.515412380s. Exact public summary:
+`strata-parity-copy-cohorts-20261021-copy-cohorts-public-summary.json`.
+
+Original terminal-negative and fresh clean45/4245/4245 requests/recovery PASS.
+Clean unprofiled first/repeat12.791548881/9.244574900s versus installed native32
+12.962279132/11.147390805s. Warm repeat improves17.07%, FIRST improves only1.32%:
+the unchanged5%-at-EACH-position selection FAILS. No staged/API acceptance or
+installation was attempted. Keep the complete correct coupled component; do not
+relax the selection or claim Strata parity (reference repeat5.3515s). Evidence:
+`native-copy-cohorts-acceptance-20261021.log` and
+`strata-parity-copy-cohorts-acceptance-20261021-clean-selection-public-summary.json`.
+Both protected units finished and actual physical recovery passed. Installed
+worker3fffc266/gateway36626d30 unchanged; no API/frontend/config/model/release/reset.
+
+Next coherent candidate targets actual attention cache loads/dequantization and
+repeated equivalent finite checks. Preserve original scalar/F64 references,
+full resource views, barriers, causal/poison/fault checks and original math order.
+No speed conclusion until actual selected compiler/GPU/whole-model evidence.

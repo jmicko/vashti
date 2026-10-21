@@ -150,8 +150,10 @@ mod tests {
                     .count()
             };
             assert_eq!(shared(&before), shared(&after));
-            #[cfg(feature = "strata-qsa-compact")]
+            #[cfg(all(feature = "strata-qsa-compact", not(feature = "strata-qsa-packed-cache")))]
             assert_eq!(k.source(), new);
+            // The packed-cache suite separately checks the complete selected
+            // composition. Keep this original compact-only inverse unchanged.
         }
     }
 }
