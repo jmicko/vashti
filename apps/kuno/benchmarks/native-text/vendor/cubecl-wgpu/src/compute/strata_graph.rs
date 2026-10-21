@@ -37,11 +37,15 @@ mod unused_descriptors;
 
 #[cfg(feature = "kuno-public-host-clock")]
 #[path = "strata_host_capture_profile.rs"]
-mod host_capture_profile;
+pub(super) mod host_capture_profile;
 #[cfg(feature = "kuno-public-host-clock")]
 pub use host_capture_profile::LABELS as NATIVE_CAPTURE_CPU_LABELS;
 #[cfg(feature = "kuno-public-host-clock")]
 pub use host_capture_profile::totals as native_strata_host_capture_profile;
+#[cfg(feature = "kuno-public-host-clock")]
+pub use host_capture_profile::{
+    BATCH_LABELS as NATIVE_BATCH_CPU_LABELS, batch_totals as native_strata_host_batch_profile,
+};
 
 static PROFILE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub fn set_native_strata_profile_active(active: bool) {
@@ -57,7 +61,7 @@ fn profile_active() -> bool {
         && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
 }
 #[cfg(feature = "kuno-public-host-clock")]
-fn host_profile_active() -> bool {
+pub(super) fn host_profile_active() -> bool {
     host_capture_profile::selected(
         profile_active(),
         enabled(),

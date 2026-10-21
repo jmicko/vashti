@@ -16,15 +16,17 @@ mod strata_physical;
 mod strata_readback;
 mod strata_schedule;
 mod strata_upload;
+#[cfg(feature = "kuno-public-host-clock")]
 pub use strata_graph::{
-    arm_native_strata_public_rolling_failure, native_strata_graph_copy_barrier_stats,
-    native_strata_graph_compute_barrier_stats,
-    native_strata_graph_execution_stats, native_strata_graph_rolling_stats,
-    native_strata_graph_stats, native_strata_operator_profile,
+    NATIVE_BATCH_CPU_LABELS, NATIVE_CAPTURE_CPU_LABELS, native_strata_host_batch_profile,
+    native_strata_host_capture_profile,
+};
+pub use strata_graph::{
+    arm_native_strata_public_rolling_failure, native_strata_graph_compute_barrier_stats,
+    native_strata_graph_copy_barrier_stats, native_strata_graph_execution_stats,
+    native_strata_graph_rolling_stats, native_strata_graph_stats, native_strata_operator_profile,
     native_strata_public_rolling_failure_stats, set_native_strata_profile_active,
 };
-#[cfg(feature = "kuno-public-host-clock")]
-pub use strata_graph::{NATIVE_CAPTURE_CPU_LABELS, native_strata_host_capture_profile};
 pub use strata_physical::{native_expert_shader_words, preserve_native_product_rounding};
 pub use strata_schedule::NATIVE_QUEUE_HOST_BYTES;
 mod binding_cache;

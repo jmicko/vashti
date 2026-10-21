@@ -163,6 +163,8 @@ pub(crate) struct NativeExpertLayer {
     before: Option<[(u64, u64); NATIVE_CLASSES.len()]>,
     #[cfg(feature = "strata-public-host-clock")]
     host_before: [[u64; 4]; 8],
+    #[cfg(feature = "strata-public-host-clock")]
+    batch_before: [[u64; 4]; 6],
 }
 impl NativeExpertLayer {
     pub(crate) fn new(start: usize, count: usize, layer: usize) -> Self {
@@ -171,6 +173,8 @@ impl NativeExpertLayer {
                 before: None,
                 #[cfg(feature = "strata-public-host-clock")]
                 host_before: [[0; 4]; 8],
+                #[cfg(feature = "strata-public-host-clock")]
+                batch_before: [[0; 4]; 6],
             };
         }
         let selected = NativeSelection {
@@ -190,6 +194,8 @@ impl NativeExpertLayer {
                 before: None,
                 #[cfg(feature = "strata-public-host-clock")]
                 host_before: [[0; 4]; 8],
+                #[cfg(feature = "strata-public-host-clock")]
+                batch_before: [[0; 4]; 6],
             };
         }
         let before = native_totals();
@@ -198,6 +204,8 @@ impl NativeExpertLayer {
             before: Some(before),
             #[cfg(feature = "strata-public-host-clock")]
             host_before: cubecl::wgpu::native_strata_host_capture_profile(),
+            #[cfg(feature = "strata-public-host-clock")]
+            batch_before: cubecl::wgpu::native_strata_host_batch_profile(),
         }
     }
     pub(crate) fn finish(mut self) {
@@ -245,6 +253,20 @@ impl NativeExpertLayer {
                     "cpu_clock_unavailable"
                 ]);
                 record["host_capture"] = serde_json::json!(host);
+                let batch_after = cubecl::wgpu::native_strata_host_batch_profile();
+                let batch: BTreeMap<_, _> = cubecl::wgpu::NATIVE_BATCH_CPU_LABELS
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, label)| {
+                        (
+                            label,
+                            std::array::from_fn::<_, 4, _>(|j| {
+                                batch_after[i][j].saturating_sub(self.batch_before[i][j])
+                            }),
+                        )
+                    })
+                    .collect();
+                record["host_batch"] = serde_json::json!(batch);
                 record["host_only_normal_schedule"] = serde_json::json!(
                     std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref()
                         == Ok("prefill-host-layer")

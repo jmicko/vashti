@@ -70,3 +70,23 @@ unchanged native query caps/no-replay/fence collection, and microtiming close/au
 Rustfmt and diff checks pass. No full Cargo build, GPU, sudo, services, installation
 or hardware result was performed while preparing this change. Root must build and
 validate actual query sampling plus ordinary numerical/privacy/recovery gates.
+
+
+## Expert-batch host breakdown (2026-10-21)
+
+The same original fixed-public request3/layer24 guard also samples six consecutive
+backend expert-batch intervals, returned as `host_batch` alongside `host_capture`
+in the existing diagnostic JSON (never the inference API). Columns remain calls,
+wall_ns, actual CLOCK_THREAD_CPUTIME_ID ns, cpu_clock_unavailable. Labels cover
+scheduler drain/admission, exact binding inventory, pipeline/grammar, uniform+
+source scratch setup, actual node enqueue, and finishing the original I/O scopes.
+Private/disabled calls retain no clock, counter or content. Sampling adds no GPU
+command/fence, changes no batch/source/owner proof, and uses the existing public
+host-clock feature. Normal rolling issuance is unchanged. Nested node costs are
+included in batch enqueue; do not sum these into the parent expert interval.
+
+Purpose: distinguish backend CPU work from queue waits before selecting the next
+large performance change. This source-only checkpoint has no new hardware result,
+speed gain, API/config/frontend/release change or installation claim. Preserve
+original154 CPU/11 runtime/189 GPU controls and complete both-mode acceptance;
+these diagnostic fields cannot authorize narrower sources or relaxed limits.

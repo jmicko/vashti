@@ -14,6 +14,27 @@ pub const LABELS: [&str; 8] = [
     "command_encoding",
     "finalize",
 ];
+pub const BATCH_LABELS: [&str; 6] = [
+    "batch_drain_admission",
+    "batch_binding_inventory",
+    "batch_pipeline_grammar",
+    "batch_uniforms_sources",
+    "batch_node_enqueue",
+    "batch_finish",
+];
+static BATCH_TOTALS: [[AtomicU64; 4]; 6] = [const { [const { AtomicU64::new(0) }; 4] }; 6];
+pub fn batch_totals() -> [[u64; 4]; 6] {
+    std::array::from_fn(|i| std::array::from_fn(|j| BATCH_TOTALS[i][j].load(Relaxed)))
+}
+pub(super) struct BatchTimer(Timer);
+impl BatchTimer {
+    pub fn new(public_active: bool) -> Self {
+        Self(Timer::new(public_active))
+    }
+    pub fn mark(&mut self, phase: usize) {
+        self.0.mark_into(&BATCH_TOTALS[phase]);
+    }
+}
 static TOTALS: [[AtomicU64; 4]; 8] = [const { [const { AtomicU64::new(0) }; 4] }; 8];
 pub(super) fn selected(
     gpu_active: bool,
@@ -56,6 +77,9 @@ impl Timer {
         Self(public_active.then(|| (Instant::now(), cpu_ns())))
     }
     pub fn mark(&mut self, phase: usize) {
+        self.mark_into(&TOTALS[phase]);
+    }
+    fn mark_into(&mut self, counters: &[AtomicU64; 4]) {
         if let Some((wall, cpu)) = &mut self.0 {
             let now_wall = Instant::now();
             let now_cpu = cpu_ns();
@@ -66,12 +90,11 @@ impl Timer {
             let thread = cpu.and_then(|before| now_cpu.and_then(|after| after.checked_sub(before)));
             // Fixed labels and anonymous durations only. Unavailable CPU time
             // is explicitly counted and cannot masquerade as zero CPU work.
-            for (counter, value) in TOTALS[phase].iter().zip([
-                1,
-                elapsed,
-                thread.unwrap_or(0),
-                u64::from(thread.is_none()),
-            ]) {
+            for (counter, value) in
+                counters
+                    .iter()
+                    .zip([1, elapsed, thread.unwrap_or(0), u64::from(thread.is_none())])
+            {
                 counter.fetch_add(value, Relaxed);
             }
             *wall = now_wall;
@@ -115,6 +138,16 @@ mod tests {
         t.mark(7);
         assert_eq!(totals()[7], before);
         assert!(t.0.is_none());
+    }
+    #[test]
+    fn disabled_batch_timer_samples_nothing_and_retains_no_clock() {
+        let before = batch_totals();
+        let mut timer = BatchTimer::new(false);
+        for phase in 0..BATCH_LABELS.len() {
+            timer.mark(phase);
+        }
+        assert_eq!(batch_totals(), before);
+        assert!(timer.0.0.is_none());
     }
     #[test]
     fn real_thread_and_wall_clocks_have_distinct_explicit_availability() {

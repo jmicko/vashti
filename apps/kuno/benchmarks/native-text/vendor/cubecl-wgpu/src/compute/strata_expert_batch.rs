@@ -31,6 +31,10 @@ impl WgpuServer {
         mut batch: NativeStrataExpertBatch<<Self as ComputeServer>::Kernel>,
         stream_id: StreamId,
     ) -> Result<NativeStrataExpertBatchReceipt, ServerError> {
+        #[cfg(feature = "kuno-public-host-clock")]
+        let mut clock = super::super::strata_graph::host_capture_profile::BatchTimer::new(
+            super::super::strata_graph::host_profile_active(),
+        );
         if self.backend != wgpu::Backend::Vulkan
             || !super::super::strata_graph::enabled()
             || self.public_external_stream != Some(stream_id)
@@ -58,6 +62,8 @@ impl WgpuServer {
             .begin_native_expert_batch(metadata)?;
         let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
         let scopes = super::super::transient_io::IoScopes::new(&self.device);
+        #[cfg(feature = "kuno-public-host-clock")]
+        clock.mark(0);
         let result = (|| {
             // Memory bindings AND resources coexist. No raw VkBuffer/resource
             // clone substitutes allocator ownership during deferred execution.
@@ -127,6 +133,8 @@ impl WgpuServer {
                     }
                 }
             }
+            #[cfg(feature = "kuno-public-host-clock")]
+            clock.mark(1);
             // This same immutable bundle enters EACH original recording that
             // references it, including split/rolling and quarantine paths.
             let owners = Arc::new(bindings);
@@ -194,6 +202,8 @@ impl WgpuServer {
                     }
                 }
             }
+            #[cfg(feature = "kuno-public-host-clock")]
+            clock.mark(2);
             let logical = grammar.finish()?;
             let info = self
                 .scheduler
@@ -207,6 +217,8 @@ impl WgpuServer {
             if read_indices.capacity() > MAX_BINDINGS {
                 return Err(fault("native source index actual scratch capacity"));
             }
+            #[cfg(feature = "kuno-public-host-clock")]
+            clock.mark(3);
             let mut next_info = 0;
             let mut receipt = NativeStrataExpertBatchReceipt::default();
             for (index, command) in batch.commands.iter_mut().enumerate() {
@@ -269,6 +281,8 @@ impl WgpuServer {
                     }
                 }
             }
+            #[cfg(feature = "kuno-public-host-clock")]
+            clock.mark(4);
             if next_info != info.len() || receipt.launches != logical.launches {
                 return Err(fault("native expert original INFO inventory"));
             }
@@ -291,6 +305,8 @@ impl WgpuServer {
                 mutation.accept();
             }
         }
+        #[cfg(feature = "kuno-public-host-clock")]
+        clock.mark(5);
         finished?;
         result
     }
