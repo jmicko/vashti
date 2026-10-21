@@ -167,3 +167,20 @@ production prompt or batch authority. Production whole-model accepted-command
 counters are separately required. Offline release, original171 GPU controls,
 new18 pair cases, BOTH full profiles/recovery and original clean/staged/install
 gates remain pending. No speed result, reduced SLM/occupancy or install claim.
+
+
+### Preserved first GPU diagnostic setup failure
+
+Frozen2babfde3/SHA6fe832e2 passes421 WGSL/216 matrix layouts. The protected
+operator run exits1 in the NEW pair harness: the activation helper called the
+production dispatch wrapper, which requires a genuine parent STAGES scope.
+The standalone public-audit pair has no such scope; `invalid buffer length`
+therefore correctly stopped it before any timing. The run recovered physically
+and resumed admission; no reset/installation occurred. Evidence
+`native-direct-gu-connected-20261021.log` and
+`native-direct-gu-public-failure-20261021.json`. This does not prove the new pair's
+numerical acceptance. The diagnostic helper now validates exact actual public
+owner sizes/grid and launches its original activation directly, like the other
+standalone controls, without inventing a production prompt scope. Production
+parent dispatch and the real closed-batch selection are unchanged. Rebuild and
+repeat numerical acceptance before profiling.

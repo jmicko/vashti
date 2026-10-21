@@ -349,17 +349,46 @@ pub(crate) fn public_gu_activation(
     words[1] = 2560;
     words[2] = 1280;
     words[4] = group as u32;
-    dispatch(
-        arena.client().map_err(crate::resident_util::fault)?,
-        if check {
-            Op::ActivateCheckGu
-        } else {
-            Op::Activate
-        },
-        [grid, 1, 1],
-        KernelArguments::new().with_buffers(handles),
-        words,
-    )
+    if group >= 512 || grid > 65535 {
+        return Err(crate::strata_prompt::invalid_buffer_length());
+    }
+    for (id, expected) in ids.into_iter().zip([
+        groups::MAP_WORDS,
+        groups::GU_BYTES as usize / 4,
+        members * 1280,
+        groups::STATUS_WORDS,
+        1,
+    ]) {
+        if crate::resident_util::words(arena, id)? != expected {
+            return Err(crate::strata_prompt::invalid_buffer_length());
+        }
+    }
+    let args = KernelArguments::new()
+        .with_buffers(handles)
+        .with_info(MetadataBindingInfo::custom(
+            words
+                .chunks_exact(2)
+                .map(|v| v[0] as u64 | ((v[1] as u64) << 32))
+                .collect(),
+        ));
+    // SAFETY: genuine fixed-public audit owners and exact logical sizes above;
+    // the original shader's header/route bounds remain. Do not manufacture a
+    // parent STAGES/request scope merely to use production's dispatch wrapper.
+    unsafe {
+        arena
+            .client()
+            .map_err(crate::resident_util::fault)?
+            .launch_unchecked(
+                Box::new(if check {
+                    Op::ActivateCheckGu
+                } else {
+                    Op::Activate
+                }),
+                CubeCount::Static(grid as u32, 1, 1),
+                args,
+            );
+    }
+    Ok(())
 }
 
 fn member_dispatches(members: usize, count: usize) -> Result<[usize; 2]> {

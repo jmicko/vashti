@@ -22,6 +22,28 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Authoritative active handoff (2026-10-21 00:37UTC): direct GU GPU diagnostic setup corrected; rebuild pending.**
+
+The complete candidate below remains, with all147 CPU controls passing again
+in`native-direct-gu-public-launch-complete-cpu-20261021.log`. First frozen
+2babfde3/SHA6fe832e2 passed421 WGSL/216 matrix layouts, then its NEW standalone
+pair harness correctly failed because it used the production activation launcher
+without a parent prompt scope. No speed run occurred. Root's actual operator
+receipt confirms physical recovery and admission resumed; no reset/install.
+Preserve`native-direct-gu-connected-20261021.log` and
+`native-direct-gu-public-failure-20261021.json` with the failure.
+
+The public-audit diagnostic now checks exact logical owner sizes/grid and launches
+the original activation directly. It does not fabricate STAGES/prompt/batch
+scope. Production dispatch and closed collector are unchanged. Rebuild a new
+frozen artifact, repeat original171+new18 numerical controls, then BOTH whole
+profiles/actual pair counts/recovery before considering speed. Original failure
+is setup evidence, not numerical acceptance or kernel failure. Same worktree,
+goal, installed identities, sudo owner, limits and no frontend/API/release scope
+as the detailed checkpoint below.
+
+**Previous detailed implementation checkpoint:**
+
 **Authoritative active handoff (2026-10-21 00:31UTC): coupled direct GU candidate CPU-complete; GPU acceptance pending.**
 
 Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
