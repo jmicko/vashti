@@ -22,22 +22,40 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Manual work resumed (2026-10-21; supersedes paused operational state below).**
+**Authoritative active manual handoff (2026-10-21): coupled copy cohorts/segment compaction CPU-complete; GPU acceptance running.**
 
 User has made both GPUs available and refreshed sudo. Goal-controller toggle
-still paused; this authorized manual turn is investigating the largest cost.
-Installed binaries remain unchanged. See [new public CPU attribution](kuno-prefill-native-gpu-profile.md#boundary-result-and-symbol-investigation-2026-10-21).
-Source7a7cd5b0/SHA8ed3be10 and4836abf2/SHA025a2738 original normal profiles pass
-compute/count/physical recovery; timings remain about10.3s warm. Routing
-readback/checkpoint498ms thread CPU and expert collector/backend905ms require
-hot-function attribution, rather than guessing backend binding lookup dominates.
-Root owns active `kuno-prefill-flat-cpu-20261021.service`, using frozen4836abf2
-with fixed-public flat instruction-pointer-only sampling, no content/stack/
-register sampling, `/run` raw data, original privacy and recovery limits.
-Root-bound sudo refresh895579/shared shell3556 expires00:30:44UTC Oct22;
-never kill shared shell. Pending optional router scalarization passes two actual
-CPU source controls but is unselected/deferred; no speed/GPU acceptance claim.
-No API/frontend/model/config/release/installation/reset change.
+still paused; this authorized manual turn continues. Same isolated Kuno checkout
+and branch. Installed worker3fffc266/gateway36626d30 remain unchanged. Read
+[the exact coupled contract and frozen checkpoint](kuno-prefill-copy-cohorts.md).
+Frozen source661ddad3 / SHA09f39612, build`strata-parity-copy-cohorts-20261021`,
+keeps all previous components and adds BOTH four-miss refills within original
+eight slots and compaction of only unobserved same-queue release boundaries.
+All original views/hazards/early releases/owners/erasure/caps remain. No extra GPU
+allocation or heap mapping;4KiB worker-stack reference bitmap is fully wiped.
+
+PASS:166 App CPU controls (original154 plus real eager/cohort/planner tests),11
+unchanged-source runtime controls,421 WGSL/216 matrix layouts with original
+pinned validator2026.1. Initial system-validator BF16 rejection is preserved and
+explained in spec; no test/reference/threshold was relaxed. Optional register
+router passes two CPU controls but remains unselected/deferred.
+
+Actual prompt-only fixed-public profiling found16.61% user-cycle samples in
+memset; caller-only static report points into Intel Vulkan command-state handling
+(relative0x744c0 clears0xf538 bytes). Driver internal names are stripped; exact
+routine naming is inference. Original expert37959 segments/40107 reencoded
+commands motivated the coupled change. First wide-interval CPU sample included
+erasure and is explicitly rejected as prompt-only evidence. Corrected boundaries
+match KNR2 prompt_ns. All raw public callchain data stayed in protected root-only
+`/run` and was removed; only static symbols/counters exported. No private traffic.
+
+Root owns active `kuno-copy-cohorts-20261021.service`, original189 GPU controls and
+BOTH73/4245/4245 profiles/proofs, log`native-copy-cohorts-connected-20261021.log`.
+Require real cohort/compaction exercise before speed conclusions. CPU preparation
+is not numerical GPU or performance acceptance. No install/clean/staged claim.
+Owned sudo refresh895579/shared shell3556 ends00:30:44UTC Oct22; do not kill shared
+shell. No API/KNT2/KNR2/frontend/model/config/release/reset change; required Vashti
+changes:none. Canonical uncommitted coordination work and inherited cache remain.
 
 **Previous stopped checkpoint:**
 

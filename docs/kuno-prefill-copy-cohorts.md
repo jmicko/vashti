@@ -52,3 +52,36 @@ while original copy/FMA/source/owner/erasure/recovery populations remain intact.
 Compare whole first/repeat, then original terminal/clean/staged/install gates if
 promising. No speed claim from CPU preparation or isolated timing. Do not reset
 or reboot either GPU. Installed worker3fffc266/gateway36626d30 stays unchanged.
+
+## Frozen CPU/release checkpoint (2026-10-21)
+
+Source661ddad3e8c3d7673f61acd2e1984bbbc9f6b591, worker SHA256
+09f396123ec441a96e1c948bcf3f8f36e37a76583129ed0bc27f688c4e77d511,
+build `strata-parity-copy-cohorts-20261021`. Both feature halves are selected;
+optional router-register kernel is NOT selected. Original shader arithmetic and
+421 WGSL/216 matrix layout inventories remain unchanged and pass offline.
+
+166 selected actual App CPU controls pass (original154 retained), including the
+original eager eight-slot policy, separate cohort mixed/tail/error/zeroization
+controls, actual Plan/Planner tests over160 mixed96-node graphs, an independent
+node-order reachability oracle, identical complete retained footprints, actual
+peer-observed releases, stronger waits, malformed preflight/no mutation, maximum
+32769-segment capacity, idempotence and full4KiB volatile bitmap erasure.
+The11 original runtime capture/grammar controls are rerun and pass; their entire
+source tree is byte-unchanged from accepted e454c594. No numerical threshold or
+reference is relaxed. Requested CPU/release feature sets match exactly (Cargo
+feature order is not semantic; duplicates are rejected).
+
+Initial166 suite had165 passes and one unchanged BF16 shader-validator failure:
+the system `/usr/bin/spirv-val`2025.1 rejects capability5116. Its diagnostic and
+failed suite are preserved. Repeating with the ORIGINAL pinned validator2026.1
+fbe4f3a (SHA5878b623d8855fdabdd7074349cb9aa734f06ac32bf63617a12df3afbea628fe)
+passes all166; no source/test change or validator-rule relaxation was used.
+
+Evidence under `/media/jmicko/faststore/kuno-development`:
+`native-copy-cohorts-{cpu-selection,cpu-features,runtime-cpu,cpu-pinned-final,offline,release-build}-20261021*`.
+The source-pinned protected wrapper `check-native-copy-cohorts-connected-20261021.py`
+keeps original189 GPU checks and both full count/pool/source/owner/recovery chains,
+then requires real cohort counts and actual original/compacted segment counts.
+Root owns unit `kuno-copy-cohorts-20261021.service`; GPU acceptance and speed are
+PENDING. No new installed selection, API/frontend/config/model/release or reset.
