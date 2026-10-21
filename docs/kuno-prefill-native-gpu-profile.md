@@ -135,3 +135,25 @@ It is deferred because only about142ms of observed routing boundary is non-CPU;
 changing router GPU arithmetic cannot fix the larger CPU expense. No speed or
 numerical GPU acceptance claim for this optional candidate. Existing full route
 and189 operator checks remain required before selecting it.
+
+The first flat capture incorrectly used `public_prefill_profile` as its disable
+marker; that report follows generation and request erasure. Its original artifact
+is preserved with `flat-cpu-interval-correction-20261021.json`; it is NOT accepted
+as prompt-only attribution. The corrected capture disables on the real
+`public_prefill_phase_time last_prompt_input` callback used by KNR2 prompt_ns.
+Artifact `strata-parity-exact-prompt-flat-cpu-20261021-cpu-symbol-report.txt`
+shows no lost samples and about16.61% user-cycle samples in libc memset; original
+full-span zero audit is only0.48% in this corrected interval. Neither percentages
+nor flat memcpy/memset symbols identify their caller by themselves.
+
+Root is now performing one additional FIXED-PUBLIC-ONLY caller capture on the
+same frozen4836abf2 binary: DWARF callchains at199Hz with4096-byte unwind samples,
+enabled/disabled at the same actual prompt boundaries. Unlike the flat captures,
+this temporarily reads stack/register samples; they are confined to root-only
+`/run` tmpfs under verified swap/core0 and a strict allowlist worker environment.
+No private inference is admitted. Only static memset caller names and counters
+are exported; raw samples are deleted before accepting recovery. This is an
+explicit public diagnostic, not a new engine/private flag or logging path.
+The purpose is to identify unnecessary initialization/allocation while keeping
+original full-owner erasure, padding, owner/source checks and numerical bounds.
+No initialization or erasure has yet been removed and no gain is claimed.
