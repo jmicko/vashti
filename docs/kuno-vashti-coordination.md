@@ -22,36 +22,73 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Live active handoff (2026-10-20 23:58UTC): subgroup publication frozen;171 GPU controls pass; full run ACTIVE.**
+**Authoritative active handoff (2026-10-21 00:12UTC): subgroup publication accepted, speed unchanged; next coupled GU proposal.**
 
-Use ONLY the same Kuno worktree/branch below. Frozen source
-3228cd9e7596b6c0ba6dd3935a44f834b2dba691 / worker SHA
-0e45b16ae74b01e7ff2d5c9e3aa19d1f4d11451fccffaa967577da1ba2f16deb,
-build`strata-parity-subgroup-publish-20261020`, passes145 actual selected CPU,
-420 WGSL/208 matrix layouts and original129+42 real GPU numerical controls,
-with close/physical recovery. Both actual compiler paths apply required SG
-memory fences; no precision/owner/source/erasure guard changed. XMX stays as
-complete optional source; this build selects the matched scalar QSA path.
+Goal ACTIVE/UNMET. Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
+branch`codex/strata-rust-port`. No test/build/GPU unit remains. Installed worker
+3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 freshly rehashed unchanged.
+No clean/staged/install or new terminal-negative run was performed for this arm.
+Do not install it on the strength of profile timings alone.
 
-Protected unit`kuno-native-subgroup-publish-connected-20261020` is ACTIVE,
-loading/running original73/4245/4245 full profile, then original normal-profile
-and original compiler/count/scratch/pool/source/recovery chain. DO NOT launch
-another GPU job or heavy CPU task, reset hardware, install or assume completion.
-Root helper`check-native-subgroup-publish-connected-20261020.py` pins source,
-worker SHA and exact CPU/release feature equality,145 selected controls and all
-original full proofs. Live log`strata-parity-subgroup-publish-connected-20261020.log`
-under existing artifact base. A timeout observing this unit is not a stopped job.
+Frozen complete source3228cd9e7596b6c0ba6dd3935a44f834b2dba691 /
+SHA0e45b16ae74b01e7ff2d5c9e3aa19d1f4d11451fccffaa967577da1ba2f16deb,
+build`strata-parity-subgroup-publish-20261020`, passes145 selected CPU,
+420 WGSL/208 matrix layouts, original129+42 GPU numerical controls, BOTH complete
+original73/4245/4245 profiles, exact original FMA group counts7663/26673/26673,
+compiler/actual pool/scratch/source/owner/erasure/recovery proofs. Scalar QSA
+matches the reference selection; the complete optional XMX code remains intact.
+SG publication retains all original math and finite/output/status/fault guards;
+input barriers remain workgroup scoped and actual ordinary+native compiler paths
+supply required AcquireRelease|WorkgroupMemory to subgroup publication barriers.
 
-Exact scalar/pool predecessor865a9c16 profile first/repeat11.6322/10.2892s,
-normal11.6086/10.1288s. Compare this arm when attributing publication changes;
-keep original installed clean12.9623/11.1474s and Strata5.3515s for selection and
-goal. No speed claim yet. Prepared`check-native-subgroup-publish-acceptance-20261020.py`
-is UNEXECUTED: requires full connected proof, preserves terminal-negative,
-FRESH clean45/4245/4245 at-EACH5% and staged quality/API/privacy gates.
-Installed worker/gateway unchanged; goal ACTIVE/UNMET. Bounded sudo297061 /
-sharedshell3556 still valid, ends00:17:49UTC Oct21. Never kill sharedshell.
-No API/configuration/model/frontend/release change. Contract and source rationale
-remain in the next checkpoint's linked specification.
+Full profile first/repeat11.718102135/10.321304380s;
+normal11.645375742/10.189380043s. SAME scalar/pool predecessor865a9c16:
+profile11.632181168/10.289150836s; normal11.608595581/10.128802681s.
+These differences show NO measurable speed gain. Keep this correct component;
+do not claim that switching off optional XMX is a publication improvement.
+Current normal expert interval5.945952864s(enqueue1.525212104s), QSA attention/
+merge1.507134167s. Sampled layer24 GPU class intervals are not isolated kernel
+costs and must not be added as causal whole-request totals. Installed clean
+12.962279132/11.147390805s and same-host Strata5.3515s still govern selection/goal.
+
+Exact evidence under`/media/jmicko/faststore/kuno-development`:
+- `native-subgroup-publish-complete-cpu-20261020.log` and selection JSON;
+- `strata-parity-subgroup-publish-offline-20261020.log`;
+- `strata-parity-subgroup-publish-20261020-subgroup-publish-public-summary.json`;
+- `strata-parity-subgroup-publish-20261020-outcome-public.json` exports fixed-public
+  aggregate metrics/profiles only; actual root-only receipts retain protection
+  and full before/after recovery evidence;
+- `check-native-subgroup-publish-connected-20261020.py` pins exact artifact,
+  CPU/release feature equality, original wrapper chain and both final proofs;
+- `check-native-subgroup-publish-acceptance-20261020.py` is prepared UNEXECUTED,
+  preserves original terminal/FRESH clean-at-EACH5%/staged quality/API/privacy gates.
+No repeated unchanged test or fresh baseline is needed.
+
+NEXT: implement the full paired direct GU store + validating activation proposal
+in[docs/kuno-native-direct-gu-publication.md](kuno-native-direct-gu-publication.md).
+It is NOT implemented yet. GU is contiguous, so an actual cooperative global
+store could remove its SLM publication round trip. It MUST be paired with the
+original per-value finite sanitization moved into the consuming activation,
+including positive-zero stores/fault128 and unchanged activation hf_sat/status
+behavior. Keep immediate checked primitives for standalone callers; bind a new
+role-bearing direct GU only to a genuine closed original batch requiring its
+checker before any GPU submission. No unchecked shortcut or fabricated authority.
+The collector, shader write inventory, exact GU read/write view, bounds/capacities,
+public genuine pair numerical negatives and actual production path counts must
+change together. Preserve the existing SG component for DOWN/dense publication,
+all old controls and complete optional XMX source. No speed/occupancy claim from
+nominal scratch subtraction. Read that complete contract before editing.
+
+Independent00:11:35UTC: Intel50,688,000B; NVIDIA compute0(738MiB desktop), all
+kernel faults0, Kuno/Ollama/Vashti200, admission inactive/unpaused/recoveryfalse/
+waiting0; no lab worker remains. Bootunchanged. State receipt:
+`strata-native-subgroup-publish-final-state-20261021.json`.
+Current bounded cached sudo375934 / sharedshell3556 starts00:05:20UTC and ends
+02:05:20UTC Oct21; first refresh succeeded and process verified live. Owner/log:
+`sudo-refresh-native-publication-20261021-{owner.json,log}`. Old owned297061 was
+verified and stopped ONLY after replacement succeeded; old PID now absent.
+Never kill sharedshell3556 or reset/reboot GPUs. No API/KNT2/KNR2/configuration/
+model/frontend/release change. Worktree has only inherited`__pycache__` untracked.
 
 **Previous checkpoint (2026-10-20 23:52UTC): coherent native subgroup publication candidate,145 CPU pass.**
 

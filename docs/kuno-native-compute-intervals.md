@@ -2052,3 +2052,25 @@ normal first/repeat11.608595581/10.128802681s is the causal comparison; do not
 attribute the known XMX-versus-scalar attention difference to publication.
 Original installed clean first12.962279132/repeat11.147390805s and5%-each gate
 remain unchanged. Same-source acceptance helper is prepared, not executed.
+
+
+### Subgroup publication completed profile outcome
+
+Source3228cd9e/SHA0e45b16a completes145 CPU,420 WGSL/208 matrix offline,
+original171 GPU numeric controls and BOTH full request/compiler/count/scratch/
+pool/source/owner/recovery chains. Exact original FMA groups7663/26673/26673.
+Profile first/repeat11.718102135/10.321304380s; normal11.645375742/10.189380043s.
+Same scalar/pool predecessor normal11.608595581/10.128802681s: no measurable gain.
+The source remains an accepted numerical component, unselected/uninstalled.
+No clean/staged/new-terminal/install run is claimed for this arm.
+
+Normal expert5.945952864s(enqueue1.525212104s), QSA1.507134167s. Sampled layer24
+matrix30.805ms,dequant20.005ms,copy29.156ms,other13.470ms,gather3.490ms,activate
+2.887ms retain queue/endpoint effects; they are not isolated kernels or additive
+causal wall-clock attribution. Next is the fully coupled
+[direct GU publication and activation checking proposal](kuno-native-direct-gu-publication.md),
+not removing finite guards or rolling back half the synchronization change.
+That proposal is NOT implemented. Original selected scalar reference and full
+optional XMX source remain. Original installed and Strata selection references,
+privacy/ownership guards and all old acceptance requirements remain unchanged.
+Exact latest safe state/source/helpers/cache ownership are in the active handoff.

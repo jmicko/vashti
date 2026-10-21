@@ -889,3 +889,19 @@ Exact latest direction, hashes, helpers and receipts are in the coordination
 guide. Keep the complete matrix work; investigate cold-first cost and actual
 selected scalar Strata path. Its measured reference did not enable XMX. Do not
 rerun unchanged baselines or relax the existing acceptance/erasure checks.
+
+
+## Subgroup publication checkpoint (2026-10-21)
+
+Source3228cd9e/SHA0e45b16a passes145 selected CPU,420/208 offline,171 original
+numerical GPU controls, both complete profile/count/compiler/pool/owner/recovery
+proofs. Normal first/repeat11.6454/10.1894s vs same scalar/pool predecessor
+11.6086/10.1288s shows no measurable gain. No new clean, staged, terminal or
+installation acceptance was run. All source is retained; selected worker and
+image-enabled gateway remain unchanged. Goal ACTIVE/UNMET; Strata5.3515s leads.
+Next complete candidate must couple direct contiguous GU cooperative stores
+with its mandatory validating activation, as specified in
+[kuno-native-direct-gu-publication.md](kuno-native-direct-gu-publication.md).
+It is a proposal, not implemented or a permission to skip finite/owner checks.
+Fresh recovery/services and current bounded sudo ownership are in the active
+coordination handoff. No GPU job remains and no API/frontend change is made.
