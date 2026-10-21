@@ -90,3 +90,17 @@ large performance change. This source-only checkpoint has no new hardware result
 speed gain, API/config/frontend/release change or installation claim. Preserve
 original154 CPU/11 runtime/189 GPU controls and complete both-mode acceptance;
 these diagnostic fields cannot authorize narrower sources or relaxed limits.
+
+
+The completed first normal run (source7a7cd5b0/SHA8ed3be10) passes compute and
+actual physical recovery. Sampled390-group layer batch costs total about4.6ms
+actual thread CPU (bindings0.816ms, grammar0.870ms, uniforms0.351ms, nodes2.110ms,
+drain0.318ms, finish0.130ms); whole warm expert interval6.0357s includes1.5703s
+before final sync. These are not proof that backend table lookup dominates.
+Next public-only `expert_boundary_*` labels split original owner reset, route
+enqueue, route readback+original checkpoint, host grouping, map upload and expert
+collector/backend return. They retain [calls,wall_ns,thread_cpu_ns], with explicit
+`expert_boundary_cpu_clock_unavailable` count when needed. Ordinary disabled
+collection creates no clock or new fence. Existing CpuTimer triples are unchanged.
+The readback phase includes GPU waits/recycling; thread CPU disambiguates it.
+No generation/API/private logging behavior changes, and no gain is claimed.

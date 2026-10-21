@@ -531,6 +531,58 @@ impl Timer {
     }
 }
 
+/// Public-only boundary wall/thread-CPU pair. No fences or payload samples.
+/// New boundary labels use [calls,wall_ns,thread_cpu_ns]; unavailable clocks
+/// add an explicit anonymous counter rather than masquerading as zero CPU.
+pub(crate) struct BoundaryTimer(Option<(Instant, Option<u64>)>);
+fn thread_cpu_ns() -> Option<u64> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: only this thread's clock is read, through an owned timespec.
+    if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) } != 0
+        || ts.tv_sec < 0
+        || !(0..1_000_000_000).contains(&ts.tv_nsec)
+    {
+        return None;
+    }
+    (ts.tv_sec as u64)
+        .checked_mul(1_000_000_000)?
+        .checked_add(ts.tv_nsec as u64)
+}
+impl BoundaryTimer {
+    pub(crate) fn new() -> Self {
+        Self(
+            ENABLED
+                .load(Ordering::Acquire)
+                .then(|| (Instant::now(), thread_cpu_ns())),
+        )
+    }
+    pub(crate) fn mark(&mut self, name: &'static str) {
+        if let Some((start, cpu)) = &mut self.0 {
+            let now = Instant::now();
+            let after = thread_cpu_ns();
+            let wall = now.duration_since(*start).as_nanos().min(u64::MAX as u128) as u64;
+            let thread = cpu.and_then(|before| after.and_then(|a| a.checked_sub(before)));
+            TOTALS.with(|v| {
+                let mut v = v.borrow_mut();
+                let t = v.entry(name).or_default();
+                t.0 += 1;
+                t.1 = t.1.saturating_add(wall);
+                t.2 = t.2.saturating_add(thread.unwrap_or(0));
+                if thread.is_none() {
+                    v.entry("expert_boundary_cpu_clock_unavailable")
+                        .or_default()
+                        .0 += 1;
+                }
+            });
+            *start = now;
+            *cpu = after;
+        }
+    }
+}
+
 /// CPU-side scheduling slices; no additional device fence or changed overlap.
 pub(crate) struct CpuTimer(Option<Instant>);
 impl CpuTimer {

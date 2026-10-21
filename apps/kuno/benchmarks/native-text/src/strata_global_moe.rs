@@ -418,6 +418,7 @@ impl Workspace {
         cancel: &AtomicBool,
         fork: Option<&mut dyn FnMut() -> Result<()>>,
     ) -> Result<()> {
+        let mut boundary = crate::strata_prefill_profile::BoundaryTimer::new();
         u::cancel(cancel)?;
         let active = self.active.as_ref().ok_or_else(reject)?;
         let count = active[0];
@@ -477,6 +478,7 @@ impl Workspace {
                 )
                 .map_err(Error::InvalidFormat)?;
         }
+        boundary.mark("expert_boundary_owner_reset");
         let route_args = || -> Result<KernelArguments> {
             Ok(KernelArguments::new()
                 .with_buffer(data[2].clone().binding())
@@ -548,6 +550,7 @@ impl Workspace {
                 );
             }
         }
+        boundary.mark("expert_boundary_route_enqueue");
         if prompt {
             // Intel prompt grouping is a single bounded router readback. No
             // activation readback or CPU expert contribution is scheduled.
@@ -558,6 +561,7 @@ impl Workspace {
                     crate::strata_prompt::groups::LOGICAL + count * 10,
                 )
             })?;
+            boundary.mark("expert_boundary_route_readback_checkpoint");
             let map = crate::strata_prompt::groups::group(&raw, count).map_err(|error| {
                 // Fixed compiled-public diagnostics only. No input, route,
                 // expert ID, tensor value or private-worker observation.
@@ -566,6 +570,7 @@ impl Workspace {
                 }
                 error
             })?;
+            boundary.mark("expert_boundary_host_group");
             let mut bytes = Zeroizing::new(Vec::with_capacity(
                 crate::strata_prompt::groups::MAP_WORDS * 4,
             ));
@@ -578,6 +583,7 @@ impl Workspace {
                 owners[0].clone(),
                 &bytes,
             )?;
+            boundary.mark("expert_boundary_map_upload");
             crate::strata_prompt::experts::enqueue(
                 client,
                 graph,
@@ -591,6 +597,7 @@ impl Workspace {
                 count,
                 &map,
             )?;
+            boundary.mark("expert_boundary_expert_collect_backend");
             self.layer_pending = true;
             return Ok(());
         }
