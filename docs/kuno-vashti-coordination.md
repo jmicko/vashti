@@ -52,13 +52,20 @@ Normal expert5.902606639s(collection1.492020708s). Do not install or claim a gai
 from one favorable repeat. Installed clean12.962279132/11.147390805s and same-host
 Strata5.3515s still govern selection/goal. Keep the correct complete component.
 
-NEXT is source investigation, NOT yet implemented: compare actual compiled GU
-status-buffer usage with retained SPIR-V's conservative declared ReadWrite access.
-WGSL already derives actual GlobalUse. An unused native status declaration might
-create false dependencies. PROVE actual modules first; do not merely narrow a
-scheduler flag or full owner view. The linked spec sets exact immutable-program,
-source/owner/mutation/hazard/queue/replay/capacity and malformed/pointer negatives
-required before any change. No production dependency is narrowed in this source.
+NEXT production change is NOT yet implemented. A new CPU-only actual-module
+diagnostic now PROVES both checked/direct GU declare status binding4 ReadWrite
+but never reference its variable ID in any function; DOWN has64 references.
+The real compiled/transformed words are inspected through pinned disassembly,
+not guessed from names. Test`actual_gu_status_is_declared_mutable_but_has_no_instruction_reference`
+passes; log`native-gu-status-declaration-diagnostic-cpu-20261021.log` (one new
+cfg(test)-only control after the147 selected suite; no production source change).
+Read the[exact next proof/admission requirements](kuno-native-direct-gu-publication.md#actual-descriptor-diagnostic-completed-2026-10-21-0051utc).
+Retained SPIR-V currently derives access from declared Visibility, whereas WGSL
+uses actual GlobalUse. Implement a bounded fail-closed actual-module proof and
+retain full resource/source/mutation/replay/owner admission independently of the
+memory-access mask. Do not simply narrow a scheduler flag or complete view.
+No production dependency has been narrowed and no overlap/speed gain is claimed.
+Actual false dependencies and any downstream genuine hazard must be measured.
 
 Public artifacts under existing base: `native-direct-gu-public-launch-*20261021*`,
 `strata-parity-direct-gu-public-launch-20261021-{direct-gu-public-summary,outcome-public}.json`

@@ -19,8 +19,10 @@ SHA59e76f48 passes all original171 GPU controls,18 new exact paired cases,147 CP
 but neutral: normal first/repeat11.7288/10.1259s. No clean/staged/install acceptance
 was run. Installed worker3fffc266/gateway36626d30 remain. Strata5.3515s still leads;
 goal ACTIVE/UNMET. No GPU job remains; actual services/GPU recovery passes.
-Next investigate actual native descriptor usage before asserting unnecessary
-status dependencies. No production access inventory was narrowed. No API/model/
+Actual compiled GU diagnostic now proves declared mutable status has zero
+function references, with64 DOWN references as negative control. Next implement
+the bounded exact-program proof while retaining full admission/owners; no
+production access inventory was narrowed and no speed gain is claimed. No API/model/
 configuration/frontend/release change. Detailed source/artifacts/limits/next guards
 are in the authoritative handoff, not inferred from old snapshot headings.
 

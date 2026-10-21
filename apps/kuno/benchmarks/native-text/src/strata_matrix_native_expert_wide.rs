@@ -1535,6 +1535,94 @@ mod tests {
             assert!(fault);
         }
     }
+    // Diagnostic only: inspect genuine final compiled modules, not a shader-name
+    // assumption. This test grants no narrower production hazard or authority.
+    #[test]
+    fn actual_gu_status_is_declared_mutable_but_has_no_instruction_reference() {
+        use cubecl::ir::{StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, WgpuCompilationOptions};
+        use std::io::Write;
+        for (down, direct) in [(false, false), (false, true), (true, false)] {
+            let mut options = WgpuCompilationOptions {
+                supports_vulkan: true,
+                ..Default::default()
+            };
+            options.vulkan.max_spirv_version = (1, 6);
+            let AutoRepresentation::SpirV(k) = Compiler::compile(
+                &mut AutoCompiler::SpirV(Default::default()),
+                definition_impl(down, 0, direct),
+                &options,
+                ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap() else {
+                panic!("actual compiled native module")
+            };
+            assert_eq!(k.bindings.len(), 6);
+            assert!(matches!(
+                k.bindings[4],
+                cubecl_runtime::kernel::Visibility::ReadWrite
+            ));
+            let w = wgpu::hal::vulkan::kuno_native_workgroup_layout(&k.assembled_module).unwrap();
+            let w = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&w)
+                .unwrap()
+                .unwrap_or(w);
+            let w = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&w)
+                .unwrap()
+                .unwrap_or(w);
+            let mut child = std::process::Command::new("spirv-dis")
+                .args(["--raw-id", "-"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(&w.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<_>>())
+                .unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success());
+            let assembly = String::from_utf8(out.stdout).unwrap();
+            let status = assembly
+                .lines()
+                .find_map(|line| {
+                    let v = line.split_whitespace().collect::<Vec<_>>();
+                    (v.len() == 4 && v[0] == "OpDecorate" && v[2] == "Binding" && v[3] == "4")
+                        .then(|| v[1].to_owned())
+                })
+                .expect("genuine status descriptor remains declared");
+            let mut body = false;
+            let mut references = 0;
+            for line in assembly.lines() {
+                let v = line
+                    .split(';')
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .collect::<Vec<_>>();
+                if v.contains(&"OpFunction") {
+                    body = true;
+                }
+                if body {
+                    references += v.iter().filter(|&&v| v == status).count();
+                }
+                if v.contains(&"OpFunctionEnd") {
+                    body = false;
+                }
+            }
+            if down {
+                assert!(references > 0, "real DOWN access negative control");
+            } else {
+                assert_eq!(references, 0, "GU status has no actual instruction use");
+            }
+            println!(
+                "native_status_descriptor_diagnostic down={down} direct={direct} declared_read_write=true actual_function_references={references}"
+            );
+        }
+    }
     #[test]
     fn selection_and_complete_prefix_tail_plan_preserve_all_original_members() {
         for count in 1..=abi::ROUTE_CAPACITY {

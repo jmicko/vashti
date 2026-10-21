@@ -256,3 +256,34 @@ Reject ambiguous/malformed/unsupported pointer uses; ordinary full access is the
 fallback. Preserve actual ordinary/native compilation and replay signatures.
 Prove live declared-unused accesses and false dependency counts before claiming
 queue overlap or speed. No production hazard has been narrowed at this checkpoint.
+
+
+### Actual descriptor diagnostic completed (2026-10-21 00:51UTC)
+
+A CPU-only control compiles the real checked GU, direct GU and DOWN definitions,
+applies the actual final workgroup/fence/FP16 transforms and disassembles those
+exact words with pinned `spirv-dis --raw-id`. All keep the genuine status
+binding4 and declare it ReadWrite. Its actual variable ID appears in ZERO
+function operands for both GU modules; DOWN has64 references, a real negative
+control. No shader name or guessed source substring supplies this result.
+`actual_gu_status_is_declared_mutable_but_has_no_instruction_reference` passes;
+log`native-gu-status-declaration-diagnostic-cpu-20261021.log`. This adds one actual
+module diagnostic to the prior147 selected CPU controls. It is not a general
+adversarial unused-descriptor proof and grants no changed production access.
+Production/source artifactbb6c6534/SHA59e76f48 and its full outcome stay valid;
+the only subsequent code change is cfg(test) inspection.
+
+Next implement a bounded, allocation-free conservative proof over the exact final
+SPIR-V and its original descriptor types, with fail-closed default full access.
+Bind every proven descriptor to genuine set/binding/variable/type and reject
+ambiguity, malformed instructions, aliases/escapes/unsupported use and physical
+addressing. Verify all original resource admission, private mutation/source checks,
+physical/indirect dependencies, allocator retention, replay signatures, views and
+full owner caps independently of the memory-access mask: an unused instruction
+operand cannot mean an unowned/unvalidated resource. Same-source actual program
+proof may remove an access that does not exist; a scheduler-only guessed flag
+may not. Keep actual WGSL accesses unchanged. No extra descriptor cache, model
+state, GPU allocation or host reservation. Require actual GU/DOWN compiler
+controls, original three-queue/byte/hazard/admission negatives and actual use/count
+proofs before whole-model speed/selection. Whether this materially improves queue
+execution is still unmeasured; downstream genuine hazards may dominate it.
