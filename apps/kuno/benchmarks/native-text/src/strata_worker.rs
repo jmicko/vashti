@@ -408,6 +408,11 @@ async fn serve(
         })?;
         #[cfg(not(feature = "strata-native-expert-wide"))]
         let native_expert_matrix_checks: Vec<serde_json::Value> = Vec::new();
+        #[cfg(feature="strata-native-expert-medium")]
+        let medium_expert_checks = crate::strata_matrix::public_native_medium_numeric(&client,&mut arena)
+            .map_err(|_| "public_native_medium_numeric_failed")?;
+        #[cfg(not(feature="strata-native-expert-medium"))]
+        let medium_expert_checks:Vec<serde_json::Value>=Vec::new();
         #[cfg(feature = "strata-native-direct-gu")]
         let direct_gu_checks = crate::strata_matrix::public_direct_gu_numeric(&client, &mut arena)
             .map_err(|error| {
@@ -447,7 +452,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }

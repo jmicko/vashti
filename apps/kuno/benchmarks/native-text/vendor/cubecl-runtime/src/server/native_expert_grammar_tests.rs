@@ -611,3 +611,47 @@ fn validating_activation_also_accepts_original_checked_small_group_without_chang
         assert_eq!(r.logical_phases, 6);
     }
 }
+
+#[cfg(feature = "kuno-native-expert-medium")]
+#[test]
+fn medium_exact_prefix_and_real_tail_keep_original_six_phase_grammar() {
+    for members in [128, 129, 135, 136, 137, 159, 160, 191, 192, 255] {
+        let h = owners();
+        let mut grammar = begin(&h, members);
+        product(&mut grammar, &h, members, false, true);
+        activate(&mut grammar);
+        product(&mut grammar, &h, members, true, true);
+        let report = grammar.finish().unwrap();
+        let tails = if members == 128 { 0 } else { 2 };
+        assert_eq!(report.logical_phases, 6);
+        assert_eq!(report.wide_prefixes, 2);
+        assert_eq!(report.wide_blocks, 2);
+        assert_eq!(report.tail_pieces, tails);
+        assert_eq!(report.launches, 6 + tails);
+    }
+}
+#[cfg(feature = "kuno-native-expert-medium")]
+#[test]
+fn medium_prefix_declines_incomplete_or_foreign_original_geometry() {
+    for members in [1, 32, 127, 128, 129, 255] {
+        for bad in 0..3 {
+            let h = owners();
+            let mut grammar = begin(&h, members);
+            let mut args = matrix_args(&h, members, false, true, false);
+            let rows = 1280;
+            let mut grid = CubeCount::Static(rows / 128, members / 128, 1);
+            match bad {
+                0 => {
+                    set_word(&mut args.info, 0, 0);
+                }
+                1 => {
+                    grid = CubeCount::Static(rows / 128, 0, 1);
+                }
+                _ => {
+                    args.buffers[0] = owners()[0].clone().binding();
+                }
+            }
+            assert!(grammar.launch(WIDE_GU, false, &grid, &args).is_err());
+        }
+    }
+}

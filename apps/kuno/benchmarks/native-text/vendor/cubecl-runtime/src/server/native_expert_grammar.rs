@@ -6,6 +6,11 @@ use crate::memory_management::ManagedMemoryId;
 use cubecl_common::stream_id::StreamId;
 
 const MAX_MEMBERS: u32 = 4096;
+const MIN_WIDE_MEMBERS: u32 = if cfg!(feature = "kuno-native-expert-medium") {
+    128
+} else {
+    256
+};
 const MAP_BYTES: u64 = 65536 * 4;
 const STATUS_BYTES: u64 = 131072 * 4;
 const GU_BYTES: u64 = 4096 * 1280 * 4;
@@ -366,7 +371,7 @@ impl NativeStrataExpertGrammar {
                     ));
                 }
                 let (params, views) = matrix(args, true, true, down, group)?;
-                if params.count < 256
+                if params.count < MIN_WIDE_MEMBERS
                     || params.count > MAX_MEMBERS
                     || params.base != 0
                     || params.piece != params.count / 128 * 128

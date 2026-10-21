@@ -24,7 +24,13 @@ fn launch(
         group,
         down,
     )?;
-    if count >= 256 {
+    if count
+        >= if cfg!(feature = "strata-native-expert-medium") {
+            128
+        } else {
+            256
+        }
+    {
         if !actual {
             return Err("public native expert wide path was not actually queued".into());
         }
@@ -84,3 +90,31 @@ pub(crate) fn cases(
 mod direct_pair;
 #[cfg(feature = "strata-native-direct-gu")]
 pub(crate) use direct_pair::cases as direct_gu_cases;
+
+#[cfg(feature = "strata-native-expert-medium")]
+pub(crate) fn medium_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut crate::private_arena::PrivateArena,
+) -> shared::ProbeResult<Vec<serde_json::Value>> {
+    use shared::Control::*;
+    shared::cases(
+        client,
+        arena,
+        "native-medium-routed-expert",
+        "actual_native_wide_launch",
+        &[
+            (128, Finite),
+            (129, Finite),
+            (159, Finite),
+            (160, Finite),
+            (191, Finite),
+            (192, Finite),
+            (255, Finite),
+            (129, NonfiniteFirst),
+            (129, NonfiniteOther),
+            (129, InvalidRoutePrefix),
+            (129, InvalidRoute),
+        ],
+        launch,
+    )
+}

@@ -18,6 +18,8 @@ mod native_expert_wide;
 mod native_wide;
 #[cfg(feature = "strata-native-expert-wide")]
 pub(crate) use native_expert_probe::cases as public_native_expert_numeric;
+#[cfg(feature="strata-native-expert-medium")]
+pub(crate) use native_expert_probe::medium_cases as public_native_medium_numeric;
 
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_numeric_probe.rs"]

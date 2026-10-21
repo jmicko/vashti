@@ -581,6 +581,10 @@ fn enqueue_original(
         // its routed members, not every token in the prompt. Keep p.count as
         // the full prompt geometry for all shader ownership/route checks.
         let members = map[516 + group] as usize;
+        #[cfg(feature = "strata-native-expert-medium")]
+        if (128..256).contains(&members) {
+            crate::strata_prefill_profile::count("expert_medium_groups", 1);
+        }
         let [gather_groups, activate_groups] = member_dispatches(members, count)?;
         #[cfg(not(feature = "strata-expert-scratch-ring"))]
         let dq = (group % DEQUANT_SLOTS) * DQ_WORDS;

@@ -10,6 +10,11 @@ use cubecl::{
 use half::f16;
 use kuno_text::{Error, Result};
 const BLOCK: usize = 128;
+const MIN_GROUP: usize = if cfg!(feature = "strata-native-expert-medium") {
+    128
+} else {
+    256
+};
 const THREADS: u32 = 512;
 const SUBGROUPS: usize = 32;
 const SUBGROUP_ROWS: usize = 16;
@@ -35,7 +40,7 @@ fn header_valid(map: &Array<u32>, count: usize, group: usize) -> bool {
             && usize::cast_from(map[3]) <= 512
             && usize::cast_from(map[4 + group]) < 512
             && usize::cast_from(map[516 + group]) == count
-            && count >= 256
+            && count >= comptime!(MIN_GROUP)
             && count <= total
             && offset <= total * 10
             && count <= total * 10 - offset;
@@ -910,7 +915,10 @@ struct Plan {
     tail_tile: usize,
 }
 fn plan(count: usize) -> Option<Plan> {
-    if !(256..=abi::ROUTE_CAPACITY).contains(&count) {
+    plan_at(count, MIN_GROUP)
+}
+fn plan_at(count: usize, minimum: usize) -> Option<Plan> {
+    if ![128, 256].contains(&minimum) || !(minimum..=abi::ROUTE_CAPACITY).contains(&count) {
         return None;
     }
     let prefix = count / BLOCK * BLOCK;
@@ -931,6 +939,32 @@ fn plan(count: usize) -> Option<Plan> {
     })
 }
 #[allow(clippy::too_many_arguments)]
+fn selected_at(
+    minimum: usize,
+    count: usize,
+    columns: usize,
+    rows: usize,
+    first: usize,
+    down: bool,
+    shared: usize,
+    units: u32,
+    dim: (u32, u32, u32),
+    pmin: u32,
+    pmax: u32,
+) -> bool {
+    plan_at(count, minimum).is_some()
+        && columns == if down { 640 } else { 2560 }
+        && rows == if down { 2560 } else { 1280 }
+        && first.is_multiple_of(4)
+        && shared >= SHARED_BYTES
+        && units >= THREADS
+        && dim.0 >= THREADS
+        && dim.1 >= 1
+        && dim.2 >= 1
+        && pmin <= 16
+        && pmax >= 16
+}
+#[allow(clippy::too_many_arguments)]
 fn selected(
     count: usize,
     columns: usize,
@@ -943,17 +977,9 @@ fn selected(
     pmin: u32,
     pmax: u32,
 ) -> bool {
-    plan(count).is_some()
-        && columns == if down { 640 } else { 2560 }
-        && rows == if down { 2560 } else { 1280 }
-        && first.is_multiple_of(4)
-        && shared >= SHARED_BYTES
-        && units >= THREADS
-        && dim.0 >= THREADS
-        && dim.1 >= 1
-        && dim.2 >= 1
-        && pmin <= 16
-        && pmax >= 16
+    selected_at(
+        MIN_GROUP, count, columns, rows, first, down, shared, units, dim, pmin, pmax,
+    )
 }
 fn vector_views(h: &[Handle; 6]) -> bool {
     h[..2].iter().all(|v| {
@@ -1441,6 +1467,62 @@ pub(super) fn entry_names() -> [&'static str; 4] {
 mod tests {
     use super::*;
     #[test]
+    fn actual_medium_selection_keeps_original_policy_and_complete_prefix_tail_bounds() {
+        for count in 0..=abi::ROUTE_CAPACITY + 1 {
+            assert_eq!(
+                plan_at(count, 256).is_some(),
+                (256..=abi::ROUTE_CAPACITY).contains(&count)
+            );
+            assert_eq!(
+                plan(count).is_some(),
+                (MIN_GROUP..=abi::ROUTE_CAPACITY).contains(&count)
+            );
+            if let Some(p) = plan(count) {
+                assert!(p.prefix >= 128 && p.prefix.is_multiple_of(128));
+                assert_eq!(p.prefix + p.tail, count);
+                assert!(p.tail < 128);
+            }
+        }
+        for down in [false, true] {
+            let (k, n) = if down { (640, 2560) } else { (2560, 1280) };
+            for count in 128..256 {
+                let selected =
+                    selected(count, k, n, 0, down, SHARED_BYTES, 512, (512, 1, 1), 16, 32);
+                assert_eq!(selected, cfg!(feature = "strata-native-expert-medium"));
+                assert!(!selected_at(
+                    256,
+                    count,
+                    k,
+                    n,
+                    0,
+                    down,
+                    SHARED_BYTES,
+                    512,
+                    (512, 1, 1),
+                    16,
+                    32
+                ));
+                for shared in [0, SHARED_BYTES - 1] {
+                    assert!(!selected_at(
+                        128,
+                        count,
+                        k,
+                        n,
+                        0,
+                        down,
+                        shared,
+                        512,
+                        (512, 1, 1),
+                        16,
+                        32
+                    ));
+                }
+            }
+        }
+        assert!(plan_at(128, 127).is_none());
+        assert!(plan_at(256, 0).is_none());
+    }
+    #[test]
     fn actual_direct_gu_has_global_stores_and_original_invalid_route_fallback_fences() {
         use cubecl::ir::{StorageType, UIntKind};
         use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
@@ -1632,7 +1714,7 @@ mod tests {
     #[test]
     fn selection_and_complete_prefix_tail_plan_preserve_all_original_members() {
         for count in 1..=abi::ROUTE_CAPACITY {
-            match plan(count) {
+            match plan_at(count, 256) {
                 None => assert!(count < 256),
                 Some(p) => {
                     assert!(p.prefix >= 256 && p.prefix.is_multiple_of(128));
@@ -1655,8 +1737,9 @@ mod tests {
         }
         for down in [false, true] {
             let (columns, rows) = if down { (640, 2560) } else { (2560, 1280) };
-            let yes =
-                |count, k, n, w, s, u, d, lo, hi| selected(count, k, n, w, down, s, u, d, lo, hi);
+            let yes = |count, k, n, w, s, u, d, lo, hi| {
+                selected_at(256, count, k, n, w, down, s, u, d, lo, hi)
+            };
             assert!(yes(
                 257,
                 columns,
