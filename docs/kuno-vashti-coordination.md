@@ -22,6 +22,55 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Authoritative active handoff (2026-10-21 00:48UTC): direct GU fully correct, speed neutral; system recovered.**
+
+Goal ACTIVE/UNMET. Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,
+branch`codex/strata-rust-port`. No build/test/GPU unit remains. Installed worker
+3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 freshly rehashed unchanged.
+No clean/staged/new-terminal/install run occurred for this arm. No API/KNT2/KNR2/
+config/model/Vashti/frontend/release change. Required Vashti changes: none.
+
+Read[the complete direct GU outcome and next hypothesis](kuno-native-direct-gu-publication.md#complete-accepted-numericalprofile-outcome-2026-10-21-0048utc).
+Source`bb6c65342751a33b968e6c7b18112934b52b441f` (runtime2babfde3+public-launch
+correctionbb6c6534), SHA`59e76f48ffed1f957c760ef248c6d0d439391ce6c046fd389619cf27bb0e9640`,
+build`strata-parity-direct-gu-public-launch-20261021`, passes147 selected CPU,
+11 runtime grammar/capture,421 WGSL/216 matrix layouts, ORIGINAL171 GPU plus18
+paired exact-bit cases, BOTH complete original73/4245/4245 modes and every original
+compiler/count/pool/scratch/source/owner/erasure/recovery proof. The first setup
+failure2babfde3/SHA6fe832e2 is preserved, not numerical acceptance.
+
+Production counts: short0 direct/0 wide/7663 checkers; EACH long2344 direct/4688
+wide/26673 checkers. Original FMA groups7663/26673/26673 remain. Actual direct
+stores retain invalid-route checked fallback and49152B; all finite/signed-zero/
+hf_sat/status/fault/view/epoch/lifetime/erasure/capacity contracts are preserved.
+No fabricated prompt/batch authority; genuine closed collector enforces pairing.
+Actual GU read/write hazards include checker writes. All old components remain.
+
+Profile first/repeat11.675534147/10.268863056s; normal11.728765729/10.125904949s.
+Same subgroup predecessor normal11.645375742/10.189380043s: effectively neutral.
+Normal expert5.902606639s(collection1.492020708s). Do not install or claim a gain
+from one favorable repeat. Installed clean12.962279132/11.147390805s and same-host
+Strata5.3515s still govern selection/goal. Keep the correct complete component.
+
+NEXT is source investigation, NOT yet implemented: compare actual compiled GU
+status-buffer usage with retained SPIR-V's conservative declared ReadWrite access.
+WGSL already derives actual GlobalUse. An unused native status declaration might
+create false dependencies. PROVE actual modules first; do not merely narrow a
+scheduler flag or full owner view. The linked spec sets exact immutable-program,
+source/owner/mutation/hazard/queue/replay/capacity and malformed/pointer negatives
+required before any change. No production dependency is narrowed in this source.
+
+Public artifacts under existing base: `native-direct-gu-public-launch-*20261021*`,
+`strata-parity-direct-gu-public-launch-20261021-{direct-gu-public-summary,outcome-public}.json`
+and exact source-pinned connected helper. Final independent00:47:37UTC state:
+Intel50,688,000B, NVIDIA compute0(720MiB desktop), faults0, all3 HTTP200, admission
+inactive/unpaused/recoveryfalse/waiting0, completed103; boot unchanged. Root state
+receipt`native-direct-gu-final-state-20261021.json`. Owned cached sudo375934 /
+sharedshell3556 remains bounded to02:05:20UTC; never kill sharedshell or reset GPUs.
+Canonical checkout's uncommitted coordination work and inherited cache preserved.
+
+**Previous checkpoint (superseded):**
+
 **Authoritative active handoff (2026-10-21 00:37UTC): direct GU GPU diagnostic setup corrected; rebuild pending.**
 
 The complete candidate below remains, with all147 CPU controls passing again

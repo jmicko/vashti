@@ -184,3 +184,75 @@ owner sizes/grid and launches its original activation directly, like the other
 standalone controls, without inventing a production prompt scope. Production
 parent dispatch and the real closed-batch selection are unchanged. Rebuild and
 repeat numerical acceptance before profiling.
+
+
+## Complete accepted numerical/profile outcome (2026-10-21 00:48UTC)
+
+Frozen source`bb6c65342751a33b968e6c7b18112934b52b441f`, worker
+SHA256`59e76f48ffed1f957c760ef248c6d0d439391ce6c046fd389619cf27bb0e9640`,
+build`strata-parity-direct-gu-public-launch-20261021` completes147 selected CPU,
+11 actual runtime grammar/capture controls,421 WGSL/216 actual matrix layouts,
+all ORIGINAL129+42 GPU controls and18 new paired GPU cases. Complete GU, hidden,
+status, fault, source and padding comparison has zero bit mismatches, including
+both gate/up NaN/+Inf/-Inf and invalid first/last routes across256/257 members.
+All original bounds/oracles and complete owned erasure remain. The first setup
+failure above is preserved separately.
+
+BOTH full original73/4245/4245 request/profile modes pass every original compiler,
+source/count/queue/pool/scratch/owner/erasure/recovery proof. Real accepted-command
+counts prove production used the pair: each long request has2344 direct GU
+prefixes,4688 total wide prefixes and26673 validating activations; short request
+has0/0/7663. Original FMA group populations7663/26673/26673 are unchanged. Actual
+unit properties AND wrapper checks establish swap/core0 before any worker.
+
+| Mode | First4245 prompt | Repeat4245 prompt |
+| --- | ---: | ---: |
+| Subgroup predecessor3228cd9e, profile |11.718102135s|10.321304380s|
+| Direct GU, profile |11.675534147s|10.268863056s|
+| Subgroup predecessor3228cd9e, normal |11.645375742s|10.189380043s|
+| Direct GU, normal |11.728765729s|10.125904949s|
+
+This is effectively neutral, not a demonstrated speed gain. Normal repeat expert
+interval5.902606639s versus5.945952864s; collection CPU1.492020708s. These coarse
+intervals are not isolated additive kernel costs. Keep the complete correct pair
+for further connected work. No fresh clean, staged, new terminal-negative or
+installation acceptance was run; no selection based on one favorable repeat.
+Installed worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 were freshly
+rehashed unchanged. Same-host Strata5.3515s still governs the unmet goal.
+
+Exact artifacts under`/media/jmicko/faststore/kuno-development`:
+- `native-direct-gu-public-launch-{release-build,offline,complete-cpu,connected}-20261021.log`;
+- `native-direct-gu-runtime-cpu-20261021.log` and original matching feature/selection JSON;
+- `check-native-direct-gu-public-launch-connected-20261021.py` pins exact source,
+  artifact, CPU/release features, original proof chain and real pair counts;
+- `strata-parity-direct-gu-public-launch-20261021-direct-gu-public-summary.json`;
+- `strata-parity-direct-gu-public-launch-20261021-outcome-public.json` exports ONLY
+  compiled-public aggregate metrics/profiles; root receipts retain full protections;
+- `native-direct-gu-final-state-20261021.json` confirms00:47:37UTC Intel50,688,000B,
+  NVIDIA compute0(720MiB desktop), faults0, all3 services200, admission inactive,
+  unpaused, no recovery, waiting0. No lab unit remains and boot is unchanged.
+
+No API/KNT2/KNR2/config/model/frontend/version/release change. Required Vashti
+changes: none. Ordinary checked primitives and all optional previous components
+remain. Keep the first failed artifact/receipt; do not overwrite it.
+
+## Next source investigation: declared versus actual descriptor use
+
+UNIMPLEMENTED hypothesis, not a speed explanation yet. The retained SPIR-V path
+in`cubecl-wgpu/src/compute/strata_graph.rs::register_spirv_module` derives memory
+accesses from declared `kernel.bindings` Visibility, treating every binding as a
+read and every ReadWrite as a write. Its WGSL path instead uses Naga's actual
+entry-point `GlobalUse`. GU's common matrix signature includes mutable status,
+although status operations are compile-time DOWN-only. Inspect the actual final
+compiled checked/direct GU modules before concluding status is unaccessed.
+
+If real modules prove an unused descriptor, a future coupled change must bind
+that fact to the exact immutable final program, original descriptor/set/index,
+compiled inventory and all graph consumers. A shader name, build feature,
+comment, assumed valid route or guessed narrower subview cannot grant it. Retain
+complete original views/owners, private mutation/source/epoch/batch checks and
+all physical address dependencies/indirect accesses, lifetimes and memory caps.
+Reject ambiguous/malformed/unsupported pointer uses; ordinary full access is the
+fallback. Preserve actual ordinary/native compilation and replay signatures.
+Prove live declared-unused accesses and false dependency counts before claiming
+queue overlap or speed. No production hazard has been narrowed at this checkpoint.

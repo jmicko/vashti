@@ -9,7 +9,22 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
-## Active matrix-attention checkpoint (2026-10-20 22:26UTC)
+## Authoritative checkpoint (2026-10-21 00:48UTC)
+
+The[coordination guide's first authoritative handoff](kuno-vashti-coordination.md)
+and[complete direct GU receipt](kuno-native-direct-gu-publication.md#complete-accepted-numericalprofile-outcome-2026-10-21-0048utc)
+supersede the historical snapshots below. Current coupled sourcebb6c6534/
+SHA59e76f48 passes all original171 GPU controls,18 new exact paired cases,147 CPU,
+11 runtime,421/216 offline and BOTH full profiles/recovery proofs. It is correct
+but neutral: normal first/repeat11.7288/10.1259s. No clean/staged/install acceptance
+was run. Installed worker3fffc266/gateway36626d30 remain. Strata5.3515s still leads;
+goal ACTIVE/UNMET. No GPU job remains; actual services/GPU recovery passes.
+Next investigate actual native descriptor usage before asserting unnecessary
+status dependencies. No production access inventory was narrowed. No API/model/
+configuration/frontend/release change. Detailed source/artifacts/limits/next guards
+are in the authoritative handoff, not inferred from old snapshot headings.
+
+## Historical matrix-attention checkpoint (2026-10-20 22:26UTC)
 
 Complete Rust QK/softmax/PV source585dc471/SHAfd43c5cb is implemented and frozen.
 It fits the ACTUAL Vulkan48KiB envelope (48420B scratch), retains all previous
