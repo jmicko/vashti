@@ -46,10 +46,14 @@ separate unchanged CPU coverage; new actual-policy and grammar controls added.
 Original189+four poison +22 new actual-GPU routed-product controls required;
 actual prefix delta must equal new medium groups. Source was prepared during the
 frozen previous run; compilation began ONLY AFTER its complete recovery proof.
-App171/runtime13 validation and next release/offline/GPU gates pending. Do not
-install or claim speed from CPU selection alone.
+Final sourceda5aae36/SHA61f89376 passes171 App/13 runtime/421 WGSL/216 layouts.
+Protected `kuno-medium-experts-20261021.service` is running original189+four poison
++22 medium routed-product+18 medium Direct-GU exact-pair controls (233 total),
+then BOTH full original profiles/proofs/recovery. Require exact actual native
+prefix increases matching new medium groups. GPU correctness and performance
+pending. No installation or numerical relaxation claim.
 
-Both prior GPU units finished/recovered. No live GPU job during current CPU build.
+Both prior GPU units finished/recovered. Only root owns the current medium GPU unit.
 Owned sudo refresh895579/shared shell3556 ends00:30:44UTC Oct22; never kill shared
 shell. No API/KNT2/KNR2/frontend/model/config/release/reset change; required Vashti
 changes:none. Preserve canonical uncommitted coordination work and inherited cache.

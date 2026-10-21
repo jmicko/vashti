@@ -48,3 +48,28 @@ medium policy),13 runtime controls (all original11 +two medium grammar tests).
 Final source adds ONLY the corresponding exact Direct-GU paired GPU controls;
 repeat exact-source CPU/release/offline before the full GPU chain. No new speed,
 installation or source/ownership/numerical relaxation claim.
+
+
+## Frozen final CPU/offline checkpoint (2026-10-21 23:54UTC)
+
+Final sourceda5aae3627905fa858fc96e0200f95e187d498a2 / worker SHA256
+`61f89376ff5273bd88ad697b9ef3ae7658db8fb0538b2231605ac8727faebe6d`,
+build `strata-parity-medium-experts-20261021`. Exact selected171 App controls
+PASS again. Runtime13 PASS; entire runtime tree unchanged from the initialffa
+CPU proof, verified by empty diff. Frozen421 WGSL/216 matrix layouts PASS with
+original pinned2026.1 validator. No reference/tolerance/cap/owner guard weakened.
+
+Protected `kuno-medium-experts-20261021.service` now runs all original189 controls,
+four cache-poison,22 medium routed-product and18 medium exact Direct-GU paired
+controls, followed by BOTH full original profile/proof/recovery chains. New
+public aggregate `expert_medium_groups` is collected only in existing fixed-public
+profiles; ordinary private workers retain no counter/history. Acceptance demands
+actual wide-prefix delta equals2*medium groups and direct-GU delta equals medium
+groups against the exact preceding packed-cache receipt. No invented path credit.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`native-medium-experts-{cpu-selection,cpu-features,cpu-final,runtime-cpu,offline,release-build}-20261021*`,
+`native-medium-final-runtime-unchanged-20261021.log`,
+`check-native-medium-experts-connected-20261021.py`,
+`native-medium-experts-connected-20261021.log`. Original terminal/clean-at-EACH/
+staged/install gates remain required. GPU numerical/performance results pending.
