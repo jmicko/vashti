@@ -1,6 +1,6 @@
 # Coupled GU publication and activation checks
 
-Proposed next backend change; **not implemented or validated**. Keep the complete
+Implementation in progress; **not yet validated or selected**. Keep the complete
 matrix-attention and subgroup-publication work. Do not remove finite checks to
 make cooperative stores appear faster.
 
@@ -119,3 +119,51 @@ promising complete result proceeds to original terminal-negative, fresh clean
 official reversible installation. Preserve all failures. Do not change warmup,
 exclude cold compilation, select repeat alone or replace original scalar/F64
 oracles. Installed worker3fffc266/SHAeac78ce0 stays until acceptance.
+
+## Route-preservation implementation correction (2026-10-21)
+
+Code review found that a raw cooperative global store would overwrite GU for an
+invalid mapped route. The original checked kernel leaves that member's GU bytes
+untouched and sets fault128. The coupled activation cannot restore overwritten
+bytes, so direct publication now checks the eight fragment routes with a genuine
+subgroup vote. All lanes take a uniform branch: valid fragments store directly;
+otherwise the unchanged checked publication handles the fragment, preserving
+both valid rows and untouched invalid rows. Original shared scratch therefore
+remains49152B. No reduced-memory/occupancy claim is made. The objective remains
+eliminating the publication round trip on valid fragments, with unchanged guards.
+Both real compiler paths still apply original subgroup shared-memory semantics.
+
+## Coherent CPU implementation checkpoint (2026-10-21 00:31UTC)
+
+`strata-native-direct-gu` / builder `--direct-gu` requires the complete native32,
+subgroup-publication, scoped bulk and scratch-ring feature bundle. Production
+selection queries the genuine scoped client; a closed/foreign/failed collector
+rejects rather than executing immediately. The original standalone GU remains
+checked. The closed six-phase grammar requires exact generated direct GU role,
+its original adjacent tail and `StrataPromptExpertF16SwigluCheckGu` with original
+map/GU/input/status/fault views, metadata and member grid. Actual accepted-command
+receipts report direct prefixes and validating activations through the existing
+fixed-public-only profile sink. No private content counters or persistence.
+
+147 selected CPU controls pass with the exact release feature list, preserving
+all145 subgroup controls and adding real direct-module/global-store provenance
+and activation source/usage controls. All8 layouts retain49152B, original input
+and subgroup fallback fences,8 matrix products,4 global GU cooperative stores
+plus4 original scratch fallback stores. Original full/tail numerical controls
+are unchanged. Naga's actual activation use inventory is READ|WRITE for GU;
+retained graph registration derives its exact hazard access from that inventory.
+The matrix's actual compiled output visibility is also ReadWrite. Original math,
+hf_sat/status tail is byte-identical after the fused per-component sanitization.
+11 controls over actual runtime grammar/capture sources pass, including sealing
+on success/error/panic and paired role/view/INFO/grid/order/tail negatives.
+Artifacts `native-direct-gu-{complete-cpu,cpu-selection,cpu-features,runtime-cpu}-20261021*`
+live under the existing artifact base; all are CPU/compiler evidence only.
+
+New fixed-public GPU controls are prepared, NOT yet executed. They compare full
+GU/hidden/status/fault/source owners and padding for256/257 members across finite,
+both gate/up NaN/+Inf/-Inf and invalid first/last routes, then reset/verify owned
+erasure. They use the existing explicit public-audit arena; they do not fabricate
+production prompt or batch authority. Production whole-model accepted-command
+counters are separately required. Offline release, original171 GPU controls,
+new18 pair cases, BOTH full profiles/recovery and original clean/staged/install
+gates remain pending. No speed result, reduced SLM/occupancy or install claim.

@@ -1324,6 +1324,19 @@ impl<R: Runtime> ComputeClient<R> {
         }
     }
 
+    /// An open collector still grants no submission or completion authority.
+    /// Launches on this scoped client are sealed again by the actual sink;
+    /// escaped/closed clones never fall back to ordinary immediate execution.
+    #[cfg(feature = "std")]
+    pub fn native_strata_expert_capture_open(&self) -> Result<bool, ServerError> {
+        let Some(capture) = &self.native_expert_capture else {
+            return Ok(false);
+        };
+        let capture = capture.lock().unwrap_or_else(|p| p.into_inner());
+        capture.require_open(self.stream_id())?;
+        Ok(true)
+    }
+
     /// Launches the `kernel` with the given `bindings`.
     /// Collect the unchanged six native expert operators through an explicit
     /// scoped client. Escaped clones are sealed on every return/panic; ordinary

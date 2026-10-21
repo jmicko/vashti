@@ -57,7 +57,7 @@ fn native_class(name: &str) -> usize {
         | "StrataPromptExpertResidentDownImage" => 0,
         "StrataPromptExpertGemm" => 1,
         "StrataPromptExpertGather" => 2,
-        "StrataPromptExpertF16Swiglu" => 3,
+        "StrataPromptExpertF16Swiglu" | "StrataPromptExpertF16SwigluCheckGu" => 3,
         "OrderedCopy" => 4,
         "OrderedFill" => 5,
         _ if name.contains("::expert::Expert")
@@ -128,6 +128,7 @@ mod native_sample_tests {
             ),
             ("StrataPromptExpertGather", 2),
             ("StrataPromptExpertF16Swiglu", 3),
+            ("StrataPromptExpertF16SwigluCheckGu", 3),
             ("OrderedCopy", 4),
             ("OrderedFill", 5),
             ("UnlabelledNativeOperator", 6),

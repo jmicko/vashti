@@ -34,7 +34,12 @@ pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) ->
             (name == "StrataPromptExpertF16Image" && release)
                 || (name == "StrataPromptExpertResidentDownImage" && !release)
         }
-        4 => name == "StrataPromptExpertF16Swiglu" && !release,
+        4 => {
+            matches!(
+                name,
+                "StrataPromptExpertF16Swiglu" | "StrataPromptExpertF16SwigluCheckGu"
+            ) && !release
+        }
         _ => {
             (name.contains("::expert::Expert")
                 || name.contains("::expert_macro::ExpertMacro")
@@ -54,6 +59,8 @@ pub struct NativeStrataExpertBatchReceipt {
     pub wide_prefixes: usize,
     pub wide_blocks: usize,
     pub tail_pieces: usize,
+    pub direct_gu_prefixes: usize,
+    pub gu_checks: usize,
 }
 
 pub enum NativeStrataExpertCommand<K> {
@@ -250,6 +257,15 @@ pub(crate) struct Capture<K> {
 }
 #[cfg(feature = "std")]
 impl<K> Capture<K> {
+    pub fn require_open(
+        &self,
+        stream: cubecl_common::stream_id::StreamId,
+    ) -> Result<(), ServerError> {
+        if stream != self.stream || self.error.is_some() || self.batch.is_none() {
+            return Err(batch_fault("native expert batch sink sealed"));
+        }
+        Ok(())
+    }
     pub fn push(
         &mut self,
         command: NativeStrataExpertCommand<K>,
@@ -321,6 +337,44 @@ mod tests {
                 .with_info(MetadataBindingInfo::custom(vec![0x1234, 0x5678])),
             mode: ExecutionMode::Unchecked,
         }
+    }
+    #[test]
+    fn direct_selection_requires_real_open_scope_and_closes_on_take_error_drop_and_panic() {
+        let stream = StreamId::current();
+        let scope = CaptureScope::<()>::new(stream);
+        let escaped = scope.capture.clone();
+        assert!(escaped.lock().unwrap().require_open(stream).is_ok());
+        assert!(
+            escaped
+                .lock()
+                .unwrap()
+                .require_open(StreamId {
+                    value: stream.value.wrapping_add(1)
+                })
+                .is_err()
+        );
+        // A foreign query cannot itself mint authority or invalidate the owner.
+        assert!(escaped.lock().unwrap().require_open(stream).is_ok());
+        let batch = scope.take().unwrap();
+        assert!(escaped.lock().unwrap().require_open(stream).is_err());
+        drop(batch);
+        drop(scope);
+        assert!(escaped.lock().unwrap().require_open(stream).is_err());
+        let scope = CaptureScope::<()>::new(stream);
+        let escaped = scope.capture.clone();
+        escaped.lock().unwrap().error = Some(batch_fault("fixed public failure"));
+        assert!(escaped.lock().unwrap().require_open(stream).is_err());
+        assert!(scope.take().is_err());
+        drop(scope);
+        assert!(escaped.lock().unwrap().require_open(stream).is_err());
+        let scope = CaptureScope::<()>::new(stream);
+        let escaped = scope.capture.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _scope = scope;
+            panic!("fixed public panic");
+        }));
+        assert!(result.is_err());
+        assert!(escaped.lock().unwrap().require_open(stream).is_err());
     }
     #[test]
     fn escaped_sink_seals_and_releases_original_bindings_after_panic() {

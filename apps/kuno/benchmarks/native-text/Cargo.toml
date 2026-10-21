@@ -66,6 +66,7 @@ strata-native-wide32 = ["strata-native-wide"]
 # Routed wide prefix and authentic original tails are a separate coherent candidate.
 strata-native-expert-wide = ["strata-native-wide32"]
 strata-native-subgroup-publish = ["strata-native-expert-wide"]
+strata-native-direct-gu = ["strata-native-subgroup-publish", "strata-native-expert-bulk", "strata-expert-scratch-ring"]
 # Explicit paired-cell prompt QK candidate; original scalar oracle is unchanged.
 strata-qsa-paired = ["strata-intel-core"]
 # Coherent experiments remain explicit until full runtime acceptance.

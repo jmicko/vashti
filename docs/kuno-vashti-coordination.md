@@ -22,6 +22,44 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Authoritative active handoff (2026-10-21 00:31UTC): coupled direct GU candidate CPU-complete; GPU acceptance pending.**
+
+Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Goal ACTIVE/UNMET; installed worker3fffc266/SHAeac78ce0
+and gateway36626d30/SHAd3ed07f4 unchanged. Read the complete
+[direct GU paired contract and checkpoint](kuno-native-direct-gu-publication.md).
+New opt-in direct global GU + mandatory validating activation + exact closed
+collector checks are implemented together, with147 actual selected CPU controls
+and11 actual runtime grammar/capture controls passing. Original145 controls and
+all math/status/hf_sat/source/owner/epoch/retirement/erasure/capacity checks remain.
+
+A source review caught invalid-route overwrite: a subgroup-uniform eight-route
+vote selects direct publication for valid fragments, otherwise unchanged checked
+publication preserves valid rows AND untouched invalid GU bytes. Shared49152B
+therefore remains; no reduced-memory/occupancy claim. Actual8-layout compilation
+proves4 global GU stores,4 original scratch fallback stores,8 products and original
+fences. Actual checker use inventory is GU READ|WRITE, so original graph hazards
+include the new writes. Direct production selection requires a genuine open
+collector; closed/escaped clones cannot fall back to ordinary immediate execution.
+
+Release/offline/GPU/full-model and speed gates are PENDING. New18 genuine paired
+public numerical cases cover256/257, gate/up NaN/+Inf/-Inf and first/last invalid
+routes, complete owners/padding, and actual erasure. They synthesize no production
+authority. Original171 GPU cases remain required. BOTH full profile modes must
+prove actual checker count=groups and direct-prefix count*2=wide-prefix count,
+original FMA populations and all original pool/count/source/recovery checks.
+Only a promising full result proceeds to original terminal, fresh clean-at-EACH5%,
+staged tools/thinking/MAX8/semantic/privacy and reversible installation gates.
+
+Current safe physical state00:31UTC: Intel50,688,000B; NVIDIA compute0; all kernel
+faults0; admission inactive/unpaused/recoveryfalse/waiting0. Owned bounded sudo
+375934/sharedshell3556 ends02:05:20UTC; keep it cached and never kill sharedshell.
+No GPU reset/reboot. No API/KNT2/KNR2/config/model/Vashti/frontend/release changes.
+Exact CPU artifacts `native-direct-gu-*20261021*` under existing artifact base.
+Canonical checkout's coordination work and inherited untracked cache preserved.
+
+**Previous authoritative handoff (superseded):**
+
 **Authoritative active handoff (2026-10-21 00:12UTC): subgroup publication accepted, speed unchanged; next coupled GU proposal.**
 
 Goal ACTIVE/UNMET. Use ONLY `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`,

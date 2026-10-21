@@ -2432,7 +2432,9 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     expected_shared
                 };
                 #[cfg(feature = "strata-native-expert-wide")]
-                let expected_shared = if name.starts_with("expert_wide32_") {
+                let expected_shared = if name == "expert_direct_gu" {
+                    Some(native_expert_wide::DIRECT_GU_SHARED_BYTES)
+                } else if name.starts_with("expert_wide32_") {
                     Some(native_expert_wide::SHARED_BYTES)
                 } else if name.starts_with("expert_tail32_") {
                     native::compiled_shared_bytes("expert_macro", layout_mask & 4 != 0)
@@ -2879,3 +2881,6 @@ mod tests {
         assert_eq!(matrix.kuno_required_subgroup_size(), Some(16));
     }
 }
+
+#[cfg(feature = "strata-native-direct-gu")]
+pub(crate) use native_expert_probe::direct_gu_cases as public_direct_gu_numeric;

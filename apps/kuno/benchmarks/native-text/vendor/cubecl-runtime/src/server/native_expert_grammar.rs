@@ -43,6 +43,7 @@ impl View {
 struct Group {
     index: u32,
     members: u32,
+    prompt: u32,
     input: View,
     map: View,
     fault: View,
@@ -73,6 +74,8 @@ pub struct NativeStrataExpertGrammarCounts {
     pub wide_prefixes: usize,
     pub wide_blocks: usize,
     pub tail_pieces: usize,
+    pub direct_gu_prefixes: usize,
+    pub gu_checks: usize,
 }
 #[derive(Default)]
 pub struct NativeStrataExpertGrammar {
@@ -81,6 +84,8 @@ pub struct NativeStrataExpertGrammar {
     group: Option<Group>,
     pending: Option<Pending>,
     resident_images: Option<bool>,
+    gu_views: Option<[View; 6]>,
+    gu_deferred: bool,
     counts: NativeStrataExpertGrammarCounts,
 }
 fn word(info: &MetadataBindingInfo, index: usize) -> Result<u32, ServerError> {
@@ -115,6 +120,9 @@ fn is_wide(name: &str, down: bool) -> bool {
     } else {
         generated(name, "expert_wide_gu", "ExpertWideGu")
     }
+}
+fn is_direct_gu(name: &str) -> bool {
+    generated(name, "expert_wide_gu_direct", "ExpertWideGuDirect")
 }
 fn is_tail(name: &str, down: bool) -> bool {
     if down {
@@ -224,7 +232,43 @@ impl NativeStrataExpertGrammar {
             self.groups += 1;
             self.group = None;
             self.resident_images = None;
+            self.gu_views = None;
+            self.gu_deferred = false;
         }
+    }
+    fn check_gu_activation(
+        &self,
+        count: &CubeCount,
+        args: &KernelArguments,
+    ) -> Result<(), ServerError> {
+        let g = self
+            .group
+            .ok_or_else(|| batch_fault("GU checker group missing"))?;
+        let gu = self
+            .gu_views
+            .ok_or_else(|| batch_fault("GU checker original product missing"))?;
+        if args.buffers.len() != 5
+            || args.info.data.len() != 8
+            || args.info.dynamic_metadata_offset != 0
+            || !args.info.native_parameters.is_empty()
+            || !args.read_dependencies.is_empty()
+            || !args.tensor_maps.is_empty()
+            || !grid(count, (g.members * 5).div_ceil(4), 1)
+            || word(&args.info, 0)? != g.prompt
+            || word(&args.info, 1)? != 2560
+            || word(&args.info, 2)? != 1280
+            || word(&args.info, 4)? != g.index
+            || word(&args.info, 5)? != 0
+        {
+            return Err(batch_fault("GU checker exact original schema/grid"));
+        }
+        let expected = [g.map, gu[2], g.input, gu[4], g.fault];
+        for (actual, expected) in args.buffers.iter().zip(expected) {
+            if View::new(actual)? != expected {
+                return Err(batch_fault("GU checker exact original owners"));
+            }
+        }
+        Ok(())
     }
     /// HOST copies never count as logical compute phases and may not split the
     /// coupled prefix/tail pair. Existing physical ownership checks still run.
@@ -310,10 +354,13 @@ impl NativeStrataExpertGrammar {
                 if !grid(count, params.rows.div_ceil(n), params.count.div_ceil(tile)) {
                     return Err(batch_fault("native expert grammar original full dispatch"));
                 }
+                if !down {
+                    self.gu_views = Some(views);
+                }
                 self.counts.matrix_pieces += 1;
                 self.advance();
             } else {
-                if release || !is_wide(name, down) {
+                if release || !(is_wide(name, down) || (!down && is_direct_gu(name))) {
                     return Err(batch_fault(
                         "native expert grammar original matrix role/order",
                     ));
@@ -329,6 +376,11 @@ impl NativeStrataExpertGrammar {
                 {
                     return Err(batch_fault("native expert grammar exact wide prefix"));
                 }
+                if !down {
+                    self.gu_views = Some(views);
+                    self.gu_deferred = is_direct_gu(name);
+                    self.counts.direct_gu_prefixes += usize::from(self.gu_deferred);
+                }
                 self.counts.wide_prefixes += 1;
                 self.counts.wide_blocks += (params.piece / 128) as usize;
                 self.counts.matrix_pieces += 1;
@@ -339,6 +391,15 @@ impl NativeStrataExpertGrammar {
                 }
             }
         } else {
+            if self.phase == 4 && (self.gu_deferred || name == "StrataPromptExpertF16SwigluCheckGu")
+            {
+                if release || name != "StrataPromptExpertF16SwigluCheckGu" {
+                    return Err(batch_fault("direct GU requires validating activation"));
+                }
+                self.check_gu_activation(count, args)?;
+                self.counts.gu_checks += 1;
+                self.gu_deferred = false;
+            }
             if !native_strata_expert_operator(name, release, self.phase) {
                 return Err(batch_fault(
                     "native expert original six-logical-phase order",
@@ -357,6 +418,7 @@ impl NativeStrataExpertGrammar {
             if self.phase == 0 {
                 if args.buffers.len() != 4
                     || args.info.data.len() != 8
+                    || args.info.dynamic_metadata_offset != 0
                     || word(&args.info, 1)? != 2560
                     || word(&args.info, 2)? != 1280
                     || word(&args.info, 4)? != self.groups as u32
@@ -374,6 +436,7 @@ impl NativeStrataExpertGrammar {
                 self.group = Some(Group {
                     index: self.groups as u32,
                     members,
+                    prompt,
                     input: View::new(&args.buffers[2])?,
                     map: View::new(&args.buffers[0])?,
                     fault: View::new(&args.buffers[3])?,
@@ -387,6 +450,7 @@ impl NativeStrataExpertGrammar {
     pub fn finish(&self) -> Result<NativeStrataExpertGrammarCounts, ServerError> {
         if self.phase != 0
             || self.pending.is_some()
+            || self.gu_deferred
             || self.groups == 0
             || self.counts.logical_phases != self.groups * 6
             || self.counts.matrix_pieces != self.groups * 2 + self.counts.tail_pieces

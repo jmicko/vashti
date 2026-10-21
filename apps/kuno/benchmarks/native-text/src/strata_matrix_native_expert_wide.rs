@@ -17,6 +17,8 @@ const M_FRAGMENTS: usize = 2;
 const STAGE_ROUNDS: usize = 1;
 const STAGE_THREADS: usize = 512;
 pub(super) const SHARED_BYTES: usize = 49152;
+// Invalid-route fragments retain the exact original checked publication.
+pub(super) const DIRECT_GU_SHARED_BYTES: usize = SHARED_BYTES;
 
 #[cube]
 fn header_valid(map: &Array<u32>, count: usize, group: usize) -> bool {
@@ -166,6 +168,48 @@ fn publish_routed(
 
 #[cube]
 #[allow(clippy::too_many_arguments)]
+fn publish_direct_gu(
+    acc: &cmma::Matrix<f32>,
+    scratch: &mut SharedMemory<f32>,
+    output: &mut Array<f32>,
+    map: &Array<u32>,
+    status: &mut Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+    token_base: usize,
+    row_base: usize,
+    group: usize,
+    #[comptime] tile_m: usize,
+    #[comptime] tile_n: usize,
+) {
+    let sg = usize::cast_from(PLANE_POS);
+    let lane = usize::cast_from(UNIT_POS_PLANE);
+    let member0 = token_base + (sg / 4) * 16 + comptime!(tile_m * 8);
+    // All lanes take the same branch, including the cooperative store/fences.
+    // A bad route must leave its old GU bytes untouched, just as standalone GU.
+    let mut route_good = true;
+    if lane < 8 {
+        let route =
+            usize::cast_from(map[1540 + usize::cast_from(map[1028 + group]) + member0 + lane]);
+        route_good = route < usize::cast_from(map[0]) * 10;
+    }
+    if plane_all(route_good) {
+        let first = member0 * 1280 + row_base + (sg % 4) * 32 + comptime!(tile_n * 16);
+        cmma::store(
+            &mut output.slice_mut(first, output.len()),
+            acc,
+            1280,
+            cmma::MatrixLayout::RowMajor,
+        );
+    } else {
+        publish_routed(
+            acc, scratch, output, map, status, fault, token_base, row_base, group, false, tile_m,
+            tile_n,
+        );
+    }
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
 fn wide(
     input: &Array<Vector<f16, Const<4>>>,
     weight: &Array<Vector<f16, Const<4>>>,
@@ -181,6 +225,7 @@ fn wide(
     member_base: u32,
     piece_members: u32,
     #[comptime] down: bool,
+    #[comptime] direct_gu: bool,
 ) {
     let columns = usize::cast_from(columns);
     let rows = usize::cast_from(rows);
@@ -417,65 +462,62 @@ fn wide(
         current = next;
         k += 32;
     }
-    publish_routed(
-        &c0,
-        &mut scratch,
-        output,
-        map,
-        status,
-        fault,
-        token_base,
-        row_base,
-        group,
-        down,
-        0usize,
-        0usize,
-    );
-    publish_routed(
-        &c1,
-        &mut scratch,
-        output,
-        map,
-        status,
-        fault,
-        token_base,
-        row_base,
-        group,
-        down,
-        0usize,
-        1usize,
-    );
-    publish_routed(
-        &c2,
-        &mut scratch,
-        output,
-        map,
-        status,
-        fault,
-        token_base,
-        row_base,
-        group,
-        down,
-        1usize,
-        0usize,
-    );
-    publish_routed(
-        &c3,
-        &mut scratch,
-        output,
-        map,
-        status,
-        fault,
-        token_base,
-        row_base,
-        group,
-        down,
-        1usize,
-        1usize,
-    );
-    if comptime!(M_FRAGMENTS == 4) {
+    if comptime!(direct_gu) {
+        publish_direct_gu(
+            &c0,
+            &mut scratch,
+            output,
+            map,
+            status,
+            fault,
+            token_base,
+            row_base,
+            group,
+            0usize,
+            0usize,
+        );
+        publish_direct_gu(
+            &c1,
+            &mut scratch,
+            output,
+            map,
+            status,
+            fault,
+            token_base,
+            row_base,
+            group,
+            0usize,
+            1usize,
+        );
+        publish_direct_gu(
+            &c2,
+            &mut scratch,
+            output,
+            map,
+            status,
+            fault,
+            token_base,
+            row_base,
+            group,
+            1usize,
+            0usize,
+        );
+        publish_direct_gu(
+            &c3,
+            &mut scratch,
+            output,
+            map,
+            status,
+            fault,
+            token_base,
+            row_base,
+            group,
+            1usize,
+            1usize,
+        );
+    } else {
         publish_routed(
-            &c4,
+            &c0,
             &mut scratch,
             output,
             map,
@@ -485,11 +527,11 @@ fn wide(
             row_base,
             group,
             down,
-            2usize,
+            0usize,
             0usize,
         );
         publish_routed(
-            &c5,
+            &c1,
             &mut scratch,
             output,
             map,
@@ -499,11 +541,11 @@ fn wide(
             row_base,
             group,
             down,
-            2usize,
+            0usize,
             1usize,
         );
         publish_routed(
-            &c6,
+            &c2,
             &mut scratch,
             output,
             map,
@@ -513,11 +555,11 @@ fn wide(
             row_base,
             group,
             down,
-            3usize,
+            1usize,
             0usize,
         );
         publish_routed(
-            &c7,
+            &c3,
             &mut scratch,
             output,
             map,
@@ -527,9 +569,67 @@ fn wide(
             row_base,
             group,
             down,
-            3usize,
+            1usize,
             1usize,
         );
+        if comptime!(M_FRAGMENTS == 4) {
+            publish_routed(
+                &c4,
+                &mut scratch,
+                output,
+                map,
+                status,
+                fault,
+                token_base,
+                row_base,
+                group,
+                down,
+                2usize,
+                0usize,
+            );
+            publish_routed(
+                &c5,
+                &mut scratch,
+                output,
+                map,
+                status,
+                fault,
+                token_base,
+                row_base,
+                group,
+                down,
+                2usize,
+                1usize,
+            );
+            publish_routed(
+                &c6,
+                &mut scratch,
+                output,
+                map,
+                status,
+                fault,
+                token_base,
+                row_base,
+                group,
+                down,
+                3usize,
+                0usize,
+            );
+            publish_routed(
+                &c7,
+                &mut scratch,
+                output,
+                map,
+                status,
+                fault,
+                token_base,
+                row_base,
+                group,
+                down,
+                3usize,
+                1usize,
+            );
+        }
     }
 }
 
@@ -653,6 +753,43 @@ pub fn expert_wide_gu(
         member_base,
         piece_members,
         false,
+        false,
+    );
+}
+
+// Literal role is authenticated by the actual generated entry identity.
+#[cube(launch_unchecked)]
+pub fn expert_wide_gu_direct(
+    input: &Array<Vector<f16, Const<4>>>,
+    weight: &Array<Vector<f16, Const<4>>>,
+    output: &mut Array<f32>,
+    map: &Array<u32>,
+    status: &mut Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+    columns: u32,
+    rows: u32,
+    count: u32,
+    weight_first: u32,
+    group: u32,
+    member_base: u32,
+    piece_members: u32,
+) {
+    wide(
+        input,
+        weight,
+        output,
+        map,
+        status,
+        fault,
+        columns,
+        rows,
+        count,
+        weight_first,
+        group,
+        member_base,
+        piece_members,
+        false,
+        true,
     );
 }
 
@@ -688,6 +825,7 @@ pub fn expert_wide_down(
         member_base,
         piece_members,
         true,
+        false,
     );
 }
 
@@ -925,6 +1063,35 @@ pub(super) fn try_expert(
     group: usize,
     down: bool,
 ) -> Result<bool> {
+    let direct = cfg!(feature = "strata-native-direct-gu")
+        && !down
+        && client
+            .native_strata_expert_capture_open()
+            .map_err(crate::resident_util::fault)?;
+    try_expert_mode(
+        client,
+        h,
+        count,
+        columns,
+        rows,
+        weight_first,
+        group,
+        down,
+        direct,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn try_expert_mode(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+    direct: bool,
+) -> Result<bool> {
     let hw = &client.properties().hardware;
     if !selected(
         count,
@@ -1036,6 +1203,25 @@ pub(super) fn try_expert(
                 0,
                 p.prefix as u32,
             );
+        } else if direct {
+            expert_wide_gu_direct::launch_unchecked::<WgpuRuntime>(
+                client,
+                CubeCount::Static(grids[0].0 as u32, grids[0].1 as u32, 1),
+                CubeDim::new_1d(THREADS),
+                ia,
+                wa,
+                oa,
+                ma,
+                sa,
+                fa,
+                columns,
+                rows,
+                count,
+                weight_first,
+                group,
+                0,
+                p.prefix as u32,
+            );
         } else {
             expert_wide_gu::launch_unchecked::<WgpuRuntime>(
                 client,
@@ -1104,6 +1290,9 @@ pub(super) fn try_expert(
 }
 
 fn definition(down: bool, tile: usize) -> KernelDefinition {
+    definition_impl(down, tile, false)
+}
+fn definition_impl(down: bool, tile: usize, direct_gu: bool) -> KernelDefinition {
     let mut b = KernelBuilder::default();
     cubecl::ir::AddressType::U32.register(&mut b.scope);
     let input = b.input_array(Vector::<f16, Const<4>>::as_type(&b.scope));
@@ -1117,7 +1306,24 @@ fn definition(down: bool, tile: usize) -> KernelDefinition {
     let a: [cubecl::ir::ManagedVariable; 7] =
         std::array::from_fn(|_| b.scalar(u32::as_type(&b.scope).storage_type()));
     if tile == 0 {
-        if down {
+        if direct_gu {
+            expert_wide_gu_direct::expand(
+                &mut b.scope,
+                input.into(),
+                weight.into(),
+                output.into(),
+                map.into(),
+                status.into(),
+                fault.into(),
+                a[0].clone().into(),
+                a[1].clone().into(),
+                a[2].clone().into(),
+                a[3].clone().into(),
+                a[4].clone().into(),
+                a[5].clone().into(),
+                a[6].clone().into(),
+            );
+        } else if down {
             expert_wide_down::expand(
                 &mut b.scope,
                 input.into(),
@@ -1215,6 +1421,9 @@ pub(super) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
             out.push((name, definition(down, tile)));
         }
     }
+    if cfg!(feature = "strata-native-direct-gu") {
+        out.push(("expert_direct_gu", definition_impl(false, 0, true)));
+    }
     out
 }
 
@@ -1231,6 +1440,101 @@ pub(super) fn entry_names() -> [&'static str; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_direct_gu_has_global_stores_and_original_invalid_route_fallback_fences() {
+        use cubecl::ir::{StorageType, UIntKind};
+        use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+        use cubecl::{Compiler, WgpuCompilationOptions};
+        for mask in 0..8u8 {
+            let mut options = WgpuCompilationOptions {
+                supports_vulkan: true,
+                ..Default::default()
+            };
+            options.vulkan.max_spirv_version = (1, 6);
+            options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+            options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+            options.vulkan.supports_explicit_smem = mask & 4 != 0;
+            let AutoRepresentation::SpirV(k) = Compiler::compile(
+                &mut AutoCompiler::SpirV(Default::default()),
+                definition_impl(false, 0, true),
+                &options,
+                cubecl::server::ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap() else {
+                panic!("actual direct GU SPIRV")
+            };
+            assert_eq!(k.shared_size, DIRECT_GU_SHARED_BYTES, "layout{mask}");
+            assert!(matches!(
+                k.bindings[2],
+                cubecl_runtime::kernel::Visibility::ReadWrite
+            ));
+            let w = wgpu::hal::vulkan::kuno_native_workgroup_layout(&k.assembled_module).unwrap();
+            super::super::native_wide::tests::assert_publication_scope_contract(&w);
+            // Follow actual access chains back to the real descriptor variable.
+            // An SLM cooperative store with the same opcode is insufficient.
+            let mut roots = std::collections::HashMap::new();
+            let mut storage = std::collections::HashMap::new();
+            let mut bindings = std::collections::HashMap::new();
+            let mut global_stores = 0;
+            let mut scratch_stores = 0;
+            let mut pos = 5;
+            while pos < w.len() {
+                let n = (w[pos] >> 16) as usize;
+                let a = &w[pos + 1..pos + n];
+                match w[pos] & 65535 {
+                    59 => {
+                        roots.insert(a[1], a[1]);
+                        storage.insert(a[1], a[2]);
+                    }
+                    71 if a.len() == 3 && a[1] == 33 => {
+                        bindings.insert(a[0], a[2]);
+                    }
+                    65 | 66 | 67 | 70 => {
+                        let root = *roots.get(&a[2]).expect("actual pointer root");
+                        roots.insert(a[1], root);
+                    }
+                    83 if roots.contains_key(&a[2]) => {
+                        roots.insert(a[1], roots[&a[2]]);
+                    }
+                    4458 => {
+                        let root = roots[&a[0]];
+                        if storage[&root] == 12 {
+                            global_stores += 1;
+                            assert_eq!(bindings[&root], 2, "GU output descriptor");
+                        } else {
+                            scratch_stores += 1;
+                            assert_eq!(storage[&root], 4, "original Workgroup fallback");
+                        }
+                    }
+                    _ => {}
+                }
+                pos += n;
+            }
+            assert_eq!(global_stores, 4);
+            assert_eq!(scratch_stores, 4);
+            let mut stores = 0;
+            let mut barriers = 0;
+            let mut products = 0;
+            let mut fault = false;
+            let mut at = 5;
+            while at < w.len() {
+                let n = (w[at] >> 16) as usize;
+                match w[at] & 65535 {
+                    4458 => stores += 1,
+                    4459 => products += 1,
+                    224 => barriers += 1,
+                    241 => fault = true,
+                    _ => {}
+                };
+                at += n;
+            }
+            assert_eq!(stores, 8);
+            assert_eq!(products, 8);
+            assert_eq!(barriers, 10);
+            assert!(fault);
+        }
+    }
     #[test]
     fn selection_and_complete_prefix_tail_plan_preserve_all_original_members() {
         for count in 1..=abi::ROUTE_CAPACITY {
@@ -1621,7 +1925,8 @@ mod tests {
                 .unwrap() else {
                     panic!("actual SPIRV required")
                 };
-                let wide = name.starts_with("expert_wide32_");
+                let direct = name == "expert_direct_gu";
+                let wide = direct || name.starts_with("expert_wide32_");
                 let family = if wide {
                     ""
                 } else if name.contains("tail8") {
@@ -1631,7 +1936,9 @@ mod tests {
                 } else {
                     "expert_macro"
                 };
-                let shared = if wide {
+                let shared = if direct {
+                    DIRECT_GU_SHARED_BYTES
+                } else if wide {
                     SHARED_BYTES
                 } else {
                     super::super::native::compiled_shared_bytes(family, mask & 4 != 0).unwrap()
@@ -1681,7 +1988,7 @@ mod tests {
                 assert!(products > 0 && stores > 0 && fault);
                 if wide {
                     assert_eq!(products, 8);
-                    assert_eq!(stores, 4);
+                    assert_eq!(stores, if direct { 8 } else { 4 });
                 }
                 let mut command = std::process::Command::new("spirv-val");
                 command.args(["--target-env", "vulkan1.3"]);

@@ -427,3 +427,187 @@ fn scalar_schema_coverage_grid_and_every_original_tail_owner_are_checked() {
         );
     }
 }
+
+const DIRECT_GU: &str =
+    "probe::strata_matrix::native_expert_wide::expert_wide_gu_direct::ExpertWideGuDirect<Runtime>";
+fn direct_gu(h: &[Handle; 7], members: u32, tail: bool) -> NativeStrataExpertGrammar {
+    let mut g = begin_images(h, members, true);
+    g.launch(
+        DIRECT_GU,
+        false,
+        &CubeCount::Static(10, members / 128, 1),
+        &matrix_args(h, members, false, true, false),
+    )
+    .unwrap();
+    if members % 128 != 0 && tail {
+        let remain = members % 128;
+        let tile = if remain <= 8 {
+            8
+        } else if remain < 32 {
+            16
+        } else {
+            32
+        };
+        g.launch(
+            TAIL_GU,
+            false,
+            &CubeCount::Static(20, remain.div_ceil(tile), 1),
+            &matrix_args(h, members, false, true, true),
+        )
+        .unwrap();
+    }
+    g
+}
+fn checker(h: &[Handle; 7], members: u32) -> KernelArguments {
+    let mut words = [0u32; 16];
+    words[..3].copy_from_slice(&[members, 2560, 1280]);
+    KernelArguments::new()
+        .with_buffers(
+            [
+                h[3].clone(),
+                h[2].clone(),
+                h[0].clone(),
+                h[4].clone(),
+                h[5].clone(),
+            ]
+            .into_iter()
+            .map(Handle::binding)
+            .collect(),
+        )
+        .with_info(MetadataBindingInfo::custom(packed(&words)))
+}
+#[test]
+fn direct_gu_requires_exact_checker_and_original_tail_before_any_complete_batch() {
+    for members in [256, 257, 264, 383, 384, 513, 4096] {
+        let h = owners();
+        let mut g = direct_gu(&h, members, true);
+        assert!(g.finish().is_err());
+        g.launch(
+            "StrataPromptExpertF16SwigluCheckGu",
+            false,
+            &CubeCount::Static((members * 5).div_ceil(4), 1, 1),
+            &checker(&h, members),
+        )
+        .unwrap();
+        product(&mut g, &h, members, true, true);
+        let r = g.finish().unwrap();
+        assert_eq!(r.direct_gu_prefixes, 1);
+        assert_eq!(r.gu_checks, 1);
+        assert_eq!(r.logical_phases, 6);
+    }
+    let h = owners();
+    let mut g = direct_gu(&h, 257, false);
+    assert!(
+        g.launch(
+            "StrataPromptExpertF16SwigluCheckGu",
+            false,
+            &CubeCount::Static(322, 1, 1),
+            &checker(&h, 257)
+        )
+        .is_err()
+    );
+}
+#[test]
+fn direct_gu_rejects_plain_checker_owner_info_grid_release_and_order_substitution() {
+    let h = owners();
+    let mut g = direct_gu(&h, 257, true);
+    assert!(
+        g.launch(
+            "StrataPromptExpertF16Swiglu",
+            false,
+            &CubeCount::Static(322, 1, 1),
+            &checker(&h, 257)
+        )
+        .is_err()
+    );
+    for i in 0..5 {
+        let mut g = direct_gu(&h, 257, true);
+        let mut a = checker(&h, 257);
+        a.buffers[i] = Handle::new(StreamId::current(), a.buffers[i].size).binding();
+        assert!(
+            g.launch(
+                "StrataPromptExpertF16SwigluCheckGu",
+                false,
+                &CubeCount::Static(322, 1, 1),
+                &a
+            )
+            .is_err()
+        );
+    }
+    for index in [0, 1, 2, 4, 5] {
+        let mut g = direct_gu(&h, 257, true);
+        let mut a = checker(&h, 257);
+        set_word(&mut a.info, index, 99);
+        assert!(
+            g.launch(
+                "StrataPromptExpertF16SwigluCheckGu",
+                false,
+                &CubeCount::Static(322, 1, 1),
+                &a
+            )
+            .is_err()
+        );
+    }
+    for (release, grid) in [
+        (true, CubeCount::Static(322, 1, 1)),
+        (false, CubeCount::Static(321, 1, 1)),
+    ] {
+        let mut g = direct_gu(&h, 257, true);
+        assert!(
+            g.launch(
+                "StrataPromptExpertF16SwigluCheckGu",
+                release,
+                &grid,
+                &checker(&h, 257)
+            )
+            .is_err()
+        );
+    }
+    let mut g = begin_images(&h, 257, true);
+    assert!(
+        g.launch(
+            "StrataPromptExpertF16SwigluCheckGu",
+            false,
+            &CubeCount::Static(322, 1, 1),
+            &checker(&h, 257)
+        )
+        .is_err()
+    );
+    let mut g = direct_gu(&h, 256, true);
+    g.launch(
+        "StrataPromptExpertF16SwigluCheckGu",
+        false,
+        &CubeCount::Static(320, 1, 1),
+        &checker(&h, 256),
+    )
+    .unwrap();
+    assert!(
+        g.launch(
+            "StrataPromptExpertF16SwigluCheckGu",
+            false,
+            &CubeCount::Static(320, 1, 1),
+            &checker(&h, 256)
+        )
+        .is_err()
+    );
+}
+#[test]
+fn validating_activation_also_accepts_original_checked_small_group_without_changing_six_phases() {
+    for members in [1, 7, 8, 16, 32, 255] {
+        let h = owners();
+        let mut g = begin_images(&h, members, true);
+        product(&mut g, &h, members, false, false);
+        g.launch(
+            "StrataPromptExpertF16SwigluCheckGu",
+            false,
+            &CubeCount::Static((members * 5).div_ceil(4), 1, 1),
+            &checker(&h, members),
+        )
+        .unwrap();
+        product(&mut g, &h, members, true, false);
+        let r = g.finish().unwrap();
+        assert_eq!(r.direct_gu_prefixes, 0);
+        assert_eq!(r.gu_checks, 1);
+        assert_eq!(r.logical_phases, 6);
+    }
+}

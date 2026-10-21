@@ -78,3 +78,9 @@ pub(crate) fn cases(
         launch,
     )
 }
+
+#[cfg(feature = "strata-native-direct-gu")]
+#[path = "strata_direct_gu_pair_probe.rs"]
+mod direct_pair;
+#[cfg(feature = "strata-native-direct-gu")]
+pub(crate) use direct_pair::cases as direct_gu_cases;

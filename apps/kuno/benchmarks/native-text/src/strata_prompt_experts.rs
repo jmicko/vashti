@@ -36,6 +36,7 @@ enum Op {
     },
     Gemm,
     Activate,
+    ActivateCheckGu,
 }
 impl Op {
     fn lanes(self) -> u32 {
@@ -140,8 +141,26 @@ impl Op {
                 "DEQUANT"
             }
             Self::Gemm => "GEMM",
-            Self::Activate => "ACTIVATE",
+            Self::Activate | Self::ActivateCheckGu => "ACTIVATE",
         }));
+        if self == Self::ActivateCheckGu {
+            let binding = "var<storage,read> gu:array<f32>;";
+            assert_eq!(s.matches(binding).count(), 1);
+            s = s.replace(binding, "var<storage,read_write> gu:array<f32>;");
+            let original =
+                "let g=vec2<f32>(gu[base],gu[base+2u]);let u=vec2<f32>(gu[base+1u],gu[base+3u]);";
+            assert_eq!(s.matches(original).count(), 1);
+            s = s.replace(
+                original,
+                r#"
+    var g=vec2<f32>(gu[base],gu[base+2u]);var u=vec2<f32>(gu[base+1u],gu[base+3u]);
+    if !finite(g.x) {g.x=0.0;gu[base]=0.0;atomicOr(&fault[0],128u);}
+    if !finite(g.y) {g.y=0.0;gu[base+2u]=0.0;atomicOr(&fault[0],128u);}
+    if !finite(u.x) {u.x=0.0;gu[base+1u]=0.0;atomicOr(&fault[0],128u);}
+    if !finite(u.y) {u.y=0.0;gu[base+3u]=0.0;atomicOr(&fault[0],128u);}
+"#,
+            );
+        }
         s
     }
 }
@@ -178,6 +197,7 @@ impl KernelMetadata for Op {
             } => "StrataPromptExpertResidentDownImage",
             Self::Gemm => "StrataPromptExpertGemm",
             Self::Activate => "StrataPromptExpertF16Swiglu",
+            Self::ActivateCheckGu => "StrataPromptExpertF16SwigluCheckGu",
         }
     }
     fn id(&self) -> KernelId {
@@ -305,6 +325,43 @@ fn resident_raw_slot(root: &Handle, roles: [usize; 3]) -> Result<Handle> {
         .offset_start((bytes * RAW_SLOTS) as u64)
         .offset_end(root_bytes - end))
 }
+/// Fixed-public paired numerical diagnostic only. No request/batch authority is
+/// synthesized; production selection remains the real sealed collector.
+#[cfg(feature = "strata-native-direct-gu")]
+pub(crate) fn public_gu_activation(
+    arena: &crate::private_arena::PrivateArena,
+    ids: [crate::private_arena::BufferId; 5],
+    prompt: usize,
+    members: usize,
+    group: usize,
+    check: bool,
+) -> Result<()> {
+    if !arena.public_owned_zero_audit_enabled() {
+        return Err(crate::strata_prompt::invalid_buffer_length());
+    }
+    let [_, grid] = member_dispatches(members, prompt)?;
+    let mut handles = Vec::new();
+    for id in ids {
+        handles.push(crate::resident_util::handle(arena, id)?.binding());
+    }
+    let mut words = [0; 16];
+    words[0] = prompt as u32;
+    words[1] = 2560;
+    words[2] = 1280;
+    words[4] = group as u32;
+    dispatch(
+        arena.client().map_err(crate::resident_util::fault)?,
+        if check {
+            Op::ActivateCheckGu
+        } else {
+            Op::Activate
+        },
+        [grid, 1, 1],
+        KernelArguments::new().with_buffers(handles),
+        words,
+    )
+}
+
 fn member_dispatches(members: usize, count: usize) -> Result<[usize; 2]> {
     if !(1..=groups::ROUTE_CAPACITY).contains(&count) || !(1..=count).contains(&members) {
         return Err(crate::strata_prompt::invalid_buffer_length());
@@ -359,6 +416,11 @@ pub(crate) fn enqueue(
                     ("expert_native_bulk_wide_prefixes", receipt.wide_prefixes),
                     ("expert_native_bulk_wide_blocks", receipt.wide_blocks),
                     ("expert_native_bulk_tail_pieces", receipt.tail_pieces),
+                    (
+                        "expert_native_direct_gu_prefixes",
+                        receipt.direct_gu_prefixes,
+                    ),
+                    ("expert_native_gu_checks", receipt.gu_checks),
                 ] {
                     crate::strata_prefill_profile::count(name, value as u64);
                 }
@@ -643,7 +705,16 @@ fn enqueue_original(
             owners[6].clone().binding(),
             fault.clone().binding(),
         ]);
-        dispatch(client, Op::Activate, [activate_groups, 1, 1], args, base)?;
+        let activation = if cfg!(feature = "strata-native-direct-gu")
+            && client
+                .native_strata_expert_capture_open()
+                .map_err(crate::resident_util::fault)?
+        {
+            Op::ActivateCheckGu
+        } else {
+            Op::Activate
+        };
+        dispatch(client, activation, [activate_groups, 1, 1], args, base)?;
         timing.mark("expert_cpu_activate");
         crate::strata_matrix::expert(
             client,
@@ -704,6 +775,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         },
         Op::Gemm,
         Op::Activate,
+        Op::ActivateCheckGu,
         Op::ResidentDequant {
             dtype: q::IQ3_S,
             down: false,
@@ -731,6 +803,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     ]
     .into_iter()
     .chain(slot_operators())
+    .filter(|op| *op != Op::ActivateCheckGu || cfg!(feature = "strata-native-direct-gu"))
     .map(|op| {
         op.compile(
             &mut AutoCompiler::Wgsl(Default::default()),
@@ -1257,5 +1330,69 @@ mod member_dispatch_tests {
         for (members, count) in [(0, 1), (2, 1), (1, 0), (4097, 4096), (1, 4097)] {
             assert!(member_dispatches(members, count).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_gu_activation_tests {
+    use super::*;
+    #[test]
+    fn actual_checker_gu_is_read_write_and_original_activation_math_status_are_unchanged() {
+        let original = Op::Activate.source();
+        let checked = Op::ActivateCheckGu.source();
+        let module = wgpu::naga::front::wgsl::parse_str(&checked).unwrap();
+        let info = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        let (gu_id, gu) = module
+            .global_variables
+            .iter()
+            .find(|(_, v)| {
+                v.binding
+                    .as_ref()
+                    .is_some_and(|b| b.group == 0 && b.binding == 1)
+            })
+            .unwrap();
+        assert!(
+            info.get_entry_point(0)[gu_id]
+                .contains(wgpu::naga::valid::GlobalUse::READ | wgpu::naga::valid::GlobalUse::WRITE)
+        );
+        assert_eq!(
+            gu.space,
+            wgpu::naga::AddressSpace::Storage {
+                access: wgpu::naga::StorageAccess::LOAD | wgpu::naga::StorageAccess::STORE
+            }
+        );
+        let (_, refgu) = wgpu::naga::front::wgsl::parse_str(&original)
+            .unwrap()
+            .global_variables
+            .iter()
+            .find(|(_, v)| v.binding.as_ref().is_some_and(|b| b.binding == 1))
+            .map(|(h, v)| (h, v.clone()))
+            .unwrap();
+        assert_eq!(
+            refgu.space,
+            wgpu::naga::AddressSpace::Storage {
+                access: wgpu::naga::StorageAccess::LOAD
+            }
+        );
+        let original_math = original.split_once("    let y=").unwrap().1;
+        assert_eq!(checked.split_once("    let y=").unwrap().1, original_math);
+        for (part, index) in [
+            ("g.x", "base"),
+            ("g.y", "base+2u"),
+            ("u.x", "base+1u"),
+            ("u.y", "base+3u"),
+        ] {
+            assert_eq!(checked.matches(&format!("if !finite({part}) {{{part}=0.0;gu[{index}]=0.0;atomicOr(&fault[0],128u);}}")).count(),1);
+        }
+        assert_eq!(Op::Activate.name(), "StrataPromptExpertF16Swiglu");
+        assert_eq!(
+            Op::ActivateCheckGu.name(),
+            "StrataPromptExpertF16SwigluCheckGu"
+        );
     }
 }

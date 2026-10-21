@@ -178,7 +178,7 @@ fn read_window(root: &Handle, start: usize, len: usize) -> ProbeResult<Handle> {
         .offset_start(start as u64)
         .offset_end(used - end as u64))
 }
-fn scan(
+pub(super) fn scan(
     arena: &PrivateArena,
     id: BufferId,
     mut check: impl FnMut(usize, u32) -> ProbeResult<()>,

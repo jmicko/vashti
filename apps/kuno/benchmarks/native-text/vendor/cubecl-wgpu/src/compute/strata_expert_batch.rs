@@ -273,6 +273,8 @@ impl WgpuServer {
             receipt.logical_phases = logical.logical_phases;
             receipt.matrix_pieces = logical.matrix_pieces;
             receipt.wide_prefixes = logical.wide_prefixes;
+            receipt.direct_gu_prefixes=logical.direct_gu_prefixes;
+            receipt.gu_checks=logical.gu_checks;
             receipt.wide_blocks = logical.wide_blocks;
             receipt.tail_pieces = logical.tail_pieces;
             Ok(receipt)
