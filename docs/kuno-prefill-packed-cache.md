@@ -51,5 +51,22 @@ Original exact compiler/F64/status/fault/source/population/owner/budget/recovery
 proofs and BOTH complete73/4245/4245 modes remain mandatory. No fresh install
 unless original terminal/clean-at-EACH/staged/privacy/quality gates pass.
 
-Four new CPU controls pass on the first candidate build; the final exact-source
-170-control suite, release/offline and GPU validation remain pending. No speed claim.
+## Frozen CPU/offline checkpoint (2026-10-21 23:38UTC)
+
+Sourcefe57978532b7842dd2df5e77aa7018207df6fac0; worker SHA256
+`eaeb67cde05babda2cdc8ffd8e59cc9733272048dab9d74f2587ad5b01b9fc5e`,
+build `strata-parity-packed-cache-20261021`. Final exact-feature170 App controls
+PASS (original166 plus four new controls); original11 runtime controls rerun
+PASS with byte-unchanged entire runtime source. Frozen421 WGSL/216 matrix
+layouts PASS using original pinned2026.1 validator. No threshold/reference
+relaxed. Extra four cache-poison GPU controls stay separate from original129,
+plus original42 exact-role and18 direct-GU checks. Original full proof chain
+and both profiles retained. Root owns `kuno-packed-cache-20261021.service`;
+GPU correctness, actual compiler proof and whole-model speed pending.
+
+Evidence in `/media/jmicko/faststore/kuno-development`:
+`native-packed-cache-{cpu-selection,cpu-features,cpu-final,runtime-cpu,runtime-source-diff,offline,release-build}-20261021*`,
+`check-native-packed-cache-connected-20261021.py` and
+`native-packed-cache-connected-20261021.log`. The initial four-control diagnostic
+also passes; exact final source includes the additional real GPU poison cases.
+No install/API/frontend/config/release/reset or performance acceptance claim.

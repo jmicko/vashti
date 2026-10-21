@@ -37,7 +37,10 @@ installation attempted. Installed3fffc266/gateway36626d30 unchanged. Keep comple
 coupled change; Strata5.3515s still leads. Next investigate coherent attention
 cache loads/dequantization with original numerical/fault/owner checks intact.
 [Packed-cache contract](kuno-prefill-packed-cache.md) specifies the coupled next
-implementation; CPU/release/GPU validation pending, no performance claim.
+implementation sourcefe579785/SHAeaeb67cd:170 App/11 runtime/421 WGSL/216 layouts
+PASS; protected `kuno-packed-cache-20261021.service` running original189 +four
+new real cache-poison GPU controls and BOTH full profile proof chains. No gain
+or installation claim for this new attention candidate yet.
 Optional register router remains unselected. Driver caller attribution and raw
 public-only profiling limitations are in the profile guide. No private content.
 Owned sudo refresh895579/shared shell3556 ends00:30:44UTC Oct22; never kill shared

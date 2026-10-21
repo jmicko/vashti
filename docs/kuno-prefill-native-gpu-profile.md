@@ -157,3 +157,21 @@ explicit public diagnostic, not a new engine/private flag or logging path.
 The purpose is to identify unnecessary initialization/allocation while keeping
 original full-owner erasure, padding, owner/source checks and numerical bounds.
 No initialization or erasure has yet been removed and no gain is claimed.
+
+
+## Completed caller attribution and coupled result
+
+Caller capture completed and raw public-only unwind data was removed. Static
+caller/disassembly evidence points into installed Intel Vulkan DSO build-id
+9e30c0f3d8ad967dbeaecdb782a2f3f030cb05a1; relative0x744c0 clears0xf538 bytes
+(caller return0x744de, parent0x7498d). Names stripped; command-state reset is an
+inference, not a resolved internal symbol. Original erasure is not bypassed.
+[Copy cohorts plus precise segment compaction](kuno-prefill-copy-cohorts.md)
+then pass all189 GPU and both full profile/recovery chains: warm normal expert
+capture809.7->574.3ms, segments37959->10704, reencoded commands40107->11409,
+route readback/checkpoint CPU498.2->291.4ms. Warm whole normal10.3612->9.7413s.
+Fresh clean first/repeat12.7915/9.2446s fails original first-position5% gate,
+so no staged/install claim. Keep the complete correct coupled component.
+Next [paired cache attention](kuno-prefill-packed-cache.md) is frozen after170
+CPU/421 WGSL/216 layout validation and now under original GPU proof chain.
+No caller capture or private instrumentation remains running.
