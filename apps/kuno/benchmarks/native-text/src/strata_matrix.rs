@@ -2886,3 +2886,5 @@ mod tests {
 
 #[cfg(feature = "strata-native-direct-gu")]
 pub(crate) use native_expert_probe::direct_gu_cases as public_direct_gu_numeric;
+#[cfg(feature="strata-native-expert-medium")]
+pub(crate) use native_expert_probe::medium_direct_gu_cases as public_medium_direct_gu_numeric;

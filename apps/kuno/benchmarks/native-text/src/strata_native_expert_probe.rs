@@ -90,6 +90,8 @@ pub(crate) fn cases(
 mod direct_pair;
 #[cfg(feature = "strata-native-direct-gu")]
 pub(crate) use direct_pair::cases as direct_gu_cases;
+#[cfg(feature = "strata-native-expert-medium")]
+pub(crate) use direct_pair::medium_cases as medium_direct_gu_cases;
 
 #[cfg(feature = "strata-native-expert-medium")]
 pub(crate) fn medium_cases(

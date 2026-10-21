@@ -70,3 +70,20 @@ Evidence in `/media/jmicko/faststore/kuno-development`:
 `native-packed-cache-connected-20261021.log`. The initial four-control diagnostic
 also passes; exact final source includes the additional real GPU poison cases.
 No install/API/frontend/config/release/reset or performance acceptance claim.
+
+
+## Completed full-model result
+
+All original189 +four new cache-scale poison GPU controls PASS. Both original
+73/4245/4245 modes and exact compiler180 MAD/SIMD32/no-spill, original numerical/
+FMA counts/source/owner/capacity/erasure/recovery proof chains PASS. Actual four
+new poison cases preserve original exact partial/stats bits and sticky fault1.
+Normal first/repeat11.310636369/9.732715998s versus copy-cohort11.146964481/
+9.741252502s: effectively neutral. Attention/merge1.5246 vs1.5050s; no useful
+attention gain. Retain complete correct source; no terminal/clean/staged/install
+selection was started for this neutral intermediate. Same-host Strata5.3515s
+still leads. Public exact-source artifact:
+`strata-parity-packed-cache-20261021-packed-cache-public-summary.json`.
+Next [native32 medium experts](kuno-prefill-native-medium-experts.md) extends the
+existing actual128-member tile to128..255 groups with host/shader/backend grammar
+and original tail together. CPU preparation is separate from GPU acceptance.

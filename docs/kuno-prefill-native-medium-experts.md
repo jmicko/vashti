@@ -30,10 +30,21 @@ Add22 separate actual GPU routed-product controls (GU and DOWN): counts128,129,
 159,160,191,192,255; plus129-member nonfinite first/other and invalid prefix/tail
 routes. Use the original independent expected IEEE products/tolerance, complete
 output/status/fault/source/tail owner scans and authentic route builder. Original
-189 controls and four packed-cache poison cases remain. Actual full public
+189 controls and four packed-cache poison cases remain. Also add18 actual
+Direct-GU +validating-activation exact-pair controls for128/129 members, using
+all original nine finite/nonfinite/invalid-route variants, exact bits and full
+GU/hidden/status/fault/source/padding scans and owned erasure. Preserve original
+18 cases for256/257 unchanged. Total original+new GPU inventory233. Actual full public
 profiles must show increased native prefix dispatches exactly matching new
 128..255 group counts; no path credit from CPU selection or invented receipts.
 
 No compilation or GPU call until the frozen packed-cache full profiles finish,
 to avoid contaminating that timing. No install unless original terminal/clean
 5%-at-EACH/staged privacy/quality and physical recovery gates pass.
+
+
+Initial sourceffa332f8 passes171 selected App controls (all original170 +actual
+medium policy),13 runtime controls (all original11 +two medium grammar tests).
+Final source adds ONLY the corresponding exact Direct-GU paired GPU controls;
+repeat exact-source CPU/release/offline before the full GPU chain. No new speed,
+installation or source/ownership/numerical relaxation claim.

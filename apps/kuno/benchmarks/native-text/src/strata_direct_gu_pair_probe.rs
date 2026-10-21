@@ -114,6 +114,20 @@ pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
 ) -> ProbeResult<Vec<serde_json::Value>> {
+    cases_for_counts(client, arena, &[256, 257])
+}
+#[cfg(feature = "strata-native-expert-medium")]
+pub(crate) fn medium_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+) -> ProbeResult<Vec<serde_json::Value>> {
+    cases_for_counts(client, arena, &[128, 129])
+}
+fn cases_for_counts(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    counts: &[usize],
+) -> ProbeResult<Vec<serde_json::Value>> {
     if !arena.public_owned_zero_audit_enabled()
         || arena.buffer_count() != 0
         || !std::ptr::eq(client.info(), arena.client()?.info())
@@ -121,7 +135,7 @@ pub(crate) fn cases(
         return Err("direct GU requires original empty fixed-public audit arena".into());
     }
     let mut out = Vec::new();
-    for count in [256, 257] {
+    for &count in counts {
         for control in 0..9 {
             let result = one(client, arena, count, control);
             arena.reset()?;

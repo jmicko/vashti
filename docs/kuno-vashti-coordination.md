@@ -22,27 +22,34 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active manual handoff (2026-10-21 23:28UTC): copy cohorts correct; warm gain, FIRST selection fails.**
+**Authoritative active manual handoff (2026-10-21 23:47UTC): copy gain retained; packed attention correct/neutral; medium native experts compiling.**
 
-Authorized manual work continues; controller remains paused. Use only isolated
-Kuno checkout/branch above. Read [exact coupled outcome](kuno-prefill-copy-cohorts.md).
-Source661ddad3/SHA09f39612 passes166 CPU,11 runtime,421/216 offline,189 original
-GPU controls, BOTH complete73/4245/4245 profile/count/owner/erasure/recovery chains.
-Actual segment compaction318->119/168 and copy-cohort counts are exercised.
-Normal host-profile first/repeat11.1470/9.7413s (~6% each versus immediate baseline).
-Original terminal-negative and fresh clean requests/physical recovery PASS.
-Clean first12.791548881 vs12.962279132s (only1.32% faster); repeat9.244574900 vs
-11.147390805s (17.07% faster). Original5%-at-EACH selection FAILS; no staged API or
-installation attempted. Installed3fffc266/gateway36626d30 unchanged. Keep complete
-coupled change; Strata5.3515s still leads. Next investigate coherent attention
-cache loads/dequantization with original numerical/fault/owner checks intact.
-[Packed-cache contract](kuno-prefill-packed-cache.md) specifies the coupled next
-implementation sourcefe579785/SHAeaeb67cd:170 App/11 runtime/421 WGSL/216 layouts
-PASS; protected `kuno-packed-cache-20261021.service` running original189 +four
-new real cache-poison GPU controls and BOTH full profile proof chains. No gain
-or installation claim for this new attention candidate yet.
-Optional register router remains unselected. Driver caller attribution and raw
-public-only profiling limitations are in the profile guide. No private content.
+User authorized continued manual work with both GPUs/sudo; controller paused.
+Use ONLY isolated Kuno worktree/branch above. Installed3fffc266/gateway36626d30
+unchanged. [Copy cohorts](kuno-prefill-copy-cohorts.md) source661ddad3/SHA09f39612
+passes166 CPU/11 runtime/421 WGSL/216 layouts/189 GPU and both full profile/recovery
+chains. Normal first/repeat improves~6% each. Clean first12.791548881 vs12.962279132s
+fails original5%-at-EACH selection, despite repeat9.244574900 vs11.147390805s.
+No staged/install acceptance. Keep complete component; Strata5.3515s still leads.
+
+[Packed attention](kuno-prefill-packed-cache.md) sourcefe579785/SHAeaeb67cd passes
+170 CPU/11 runtime/421 WGSL/216 layouts, original189 +four new cache-poison GPU
+controls and BOTH full profile/compiler/owner/erasure/recovery chains. Exact
+original poison bits/fault preserved. Normal11.3106/9.7327s effectively neutral
+versus copy11.1470/9.7413s; no new clean/install claim. Keep complete correct source.
+
+Next [medium native32 experts](kuno-prefill-native-medium-experts.md), source
+ffa332f8, implements host plan, actual shader header and six-phase runtime grammar
+for128..255-member groups together. Original exact128-member prefix +checked tail,
+full owners/IEEE bounds/routes/49152B scratch/caps remain. Original256 policy has
+separate unchanged CPU coverage; new actual-policy and grammar controls added.
+Original189+four poison +22 new actual-GPU routed-product controls required;
+actual prefix delta must equal new medium groups. Source was prepared during the
+frozen previous run; compilation began ONLY AFTER its complete recovery proof.
+App171/runtime13 validation and next release/offline/GPU gates pending. Do not
+install or claim speed from CPU selection alone.
+
+Both prior GPU units finished/recovered. No live GPU job during current CPU build.
 Owned sudo refresh895579/shared shell3556 ends00:30:44UTC Oct22; never kill shared
 shell. No API/KNT2/KNR2/frontend/model/config/release/reset change; required Vashti
 changes:none. Preserve canonical uncommitted coordination work and inherited cache.
