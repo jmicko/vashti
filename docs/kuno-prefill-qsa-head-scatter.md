@@ -157,3 +157,33 @@ Artifact prefix strata-parity-head-frontier-gap-fixed-20261022. Hardware and
 whole-model timing pending at this checkpoint. No CPU compilation during it.
 Do not claim the previous spill-heavy8.598s profile as accepted or infer zero
 spills from a4-value symbolic frontier. Installed301f1fd1 remains unchanged.
+
+## Full frontier hardware PASS — 2026-10-22
+
+Sourcea761763e / worker89a27c5b passes all253 selected App CPU/15 actual runtime/
+429 WGSL/296 matrix layouts, ALL350 GPU controls and BOTH original18-script
+normal/profile/source/compiler/owner/erasure/recovery chains. Original exact
+bitwise/F64/spill/fault/source limits remain. Complete public receipt
+strata-parity-head-frontier-gap-fixed-20261022-expert-cohorts-public-summary.json
+SHA2562f3d11dc5c7ff4f5f4e18e328054595ef649f706d9d9b0142f90e515e4a73d8b.
+Native QSA1898instructions/108sends/SIMD32/128GRF/zero spills/fills; optimized
+complete-ISA SHA256f49c30e1542a178c4710a738175fcf3e8c3181ef4de87bc666d68a57f8a63c8a.
+Original reference assembly remains1814b26ac88692e20d3714abd88ea2e303455f1a7569f32fc4b2927bc8710ba7.
+
+Normal first/repeat9.654518545/8.354937695s; profile9.655510196/8.510095030s.
+Normal repeat is8.60% shorter than the pre-pass9.141123116s; no clean Strata
+parity or production selection inferred. Full profiled attention interval
+2.669424715->2.071036176s. Its QSA attention/merge subinterval
+1.338678668->0.736759082s, near Strata's earlier instrumented0.680s, with
+different diagnostic conventions. Expert interval remains5.170808941s, and
+GR attention input/router together0.907856499s; next source research can
+target these rather than assume QSA still dominates.
+
+ONE original uninstrumented45/4245/4245 run now underway in protected unit
+kuno-head-frontier-gap-fixed-clean-20261022. Exact unchanged original helper
+SHA256a0b1b40e5b9ebf00721604c5a2cc1cf6090890a390ff1512e343fdde391f4914.
+Compare BOTH long positions to installed301f1fd1 clean10.897223643/8.712129955s
+with the existing5% at EACH position criterion. No perf/PMU/compiler debug,
+profiling or CPU compilation during clean timing. No favorable repeat if the
+comparison fails. This run alone does not claim terminal/staged/API/install
+acceptance. Source/interface/model/settings/installed binaries unchanged.

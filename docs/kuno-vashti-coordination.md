@@ -1,25 +1,25 @@
 # Kuno and Vashti Coordination
 
-**Current Kuno continuation (2026-10-22): complete frontier GPU gate underway.**
+**Current Kuno checkpoint (2026-10-22): ordered frontier full hardware PASS.**
 
-Read [the exact implementation, failed gates and active handoff](kuno-prefill-qsa-head-scatter.md).
-Full query/GDN8a49206b/worker dc3084dc passes245CPU/15runtime/429WGSL/296layouts/
-all350GPU and BOTH chains. Normal first/repeat10.301409836/9.011673934s,
-profile10.331076692/9.090600187s. Gain chiefly GDN; QSA merge unchanged.
-Ordered-head90ce0c9e/worker6084555c passes249CPU/15runtime/offline429/296,
-original operator/profile computation and recovery; actual28spills/90fills
-FAILS unchanged compiler gate before normal/outer acceptance. Profile
-9.765336101/8.598320364s diagnostic only. Complete algorithm retained.
+Read [the complete source/acceptance/active handoff](kuno-prefill-qsa-head-scatter.md).
+Complete a761763e/worker89a27c5b passes253AppCPU/15runtime/429WGSL/296layouts,
+ALL350GPU and BOTH original18-script chains with physical recovery. Actual
+QSA1898instructions/108sends/SIMD32/128GRF/zero spills/fills; original scalar
+ISA unchanged. Every original numerical/compiler/fault/owner bound retained.
+Normal first/repeat9.654518545/8.354937695s (repeat8.60% shorter than pre-pass
+9.141123116s); profile9.655510196/8.510095030s. QSA attention/merge736.759ms
+versus preceding1338.679ms and prior instrumented Strata680ms. Diagnostic
+comparisons are not whole-model clean parity. Expert interval5.171s remains.
 
-Depth-first frontiera761763e/worker89a27c5b retains all preceding features and
-passes253App/15runtime/429WGSL/296layouts. Same42 exchanges/168 dot FMAs,
-original operands/guards/owners; symbolic live frontier12->4 per cell.
-Protected unit kuno-head-frontier-gap-fixed-20261022 now runs350GPU/BOTH
-original18-script chains. Actual zero-spill ISA and recovery pending; no CPU
-compilation during GPU timing. Latest recovered snapshot22:29:26UTC:
-Intel50,688,000B,NVIDIA compute0,faults0,services200,admission normal.
-Installed accepted worker/gateway unchanged; no API/model/config/context/
-frontend/release/reset/reboot change; Vashti:none. Parity remains UNMET.
+ONE original clean45/4245/4245 comparison runs now in protected unit
+kuno-head-frontier-gap-fixed-clean-20261022, against installed301f1fd1 clean
+10.897223643/8.712129955s at original5% EACH threshold. No CPU compilation
+during it; no favorable repeat if it fails. Terminal/staged/install acceptance
+not claimed by this clean run. Installed worker/gateway unchanged; no API/
+model/context/config/frontend/release/reset/reboot change; Vashti:none.
+Earlier spill-heavy90ce0c9e and source-only snapshots below are historical.
+Whole-model Strata parity remains UNMET.
 
 **PAUSED for user machine update (2026-10-22 21:32UTC).**
 
