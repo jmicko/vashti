@@ -1,5 +1,25 @@
 # Kuno and Vashti Coordination
 
+**Active installed Kuno checkpoint (2026-10-22): native-prepared selected.**
+
+Goal ACTIVE/UNMET versus Strata5.3515s. Full staged quality/privacy/API passes,
+clean first10.8972/repeat8.7121s is15.93%/21.85% shorter than installed native32.
+Native worker301f1fd1/SHA0e226827 is now installed via official transaction;
+unchanged gateway36626d30/SHAd3ed07f4. Full config AND complete model settings/
+enrolled identities equality verified; official rollback
+`/var/lib/kuno-strata-parity-native-prepared-20261022`. Exact artifacts/gates/
+failed-harness preservation in [native-prepared spec](kuno-prefill-native-prepared.md).
+Actual installed-service semantic/privacy checks currently run in
+`kuno-native-prepared-installed-20261022.service`; post-install inference not
+yet claimed. Root owns GPUs; no simultaneous compilation.
+
+Small-expert cohorts are being implemented completely in separate
+`codex/expert-cohorts`, agreedbase31f6e54b, with independent structural/math
+audits and no hardware activity. Retain the full prior paths and unchanged
+numerical/owner/capacity/erasure controls. No API/KNT2/KNR2/frontend/model/release/
+reset/reboot change, required Vashti:none. Earlier unchanged-install snapshots
+below are historical. Owned refresher1145657 remains bounded to15:45:12UTC.
+
 **Active Kuno checkpoint (2026-10-22): native-prepared complete; clean selection running.**
 
 Goal ACTIVE/UNMET; user enabled Ultra and both GPUs/root remain authorized.

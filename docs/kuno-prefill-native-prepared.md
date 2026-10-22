@@ -206,3 +206,33 @@ checks into`strata-parity-native-prepared-private-stage-20261022`. Gateway
 HTTP200 and real frozen worker launch confirmed. No full staged/install claim
 until completion, nor Strata parity. Native-only artifacts and clean source
 remain unchanged.
+
+## Accepted installation
+
+The corrected private staged helper PASSES all original thinking/ten-tool
+streamed call/result, exact64/65/66 boundaries,16 MAX8 tails, two identical
+complete501-token code answers with155 semantic cases each, four matched200-token
+decode-cap requests, zero worker writes, denied inspection, graceful unload,
+ordinary Ollama-after-native and physical recovery. Evidence:
+`native-prepared-private-stage-20261022.log` and
+`strata-parity-native-prepared-private-stage-20261022/receipt.json`.
+Caps observed35.81/28.35/37.82/30.94 output tokens/s; these are not EOS-complete
+answers or a newly matched Strata decode comparison. No sustained gain claimed.
+
+Independent installer review retained every original gate and caught an
+inherited preservation gap: identity presence alone did not prove unchanged
+model settings. The installer now captures complete original settings JSON
+before mutation and compares exact semantic equality after candidate AND
+rollback transactions, alongside complete configuration equality.
+`install-native-strata-parity-native-prepared-20261022.py` SHA256
+1b3dcca026dd341387c035269b2ec7f1571482ba3e589396f43c31283ea98c09
+passes read-only preflight then the official reversible configure transaction.
+
+Installed native worker301f1fd1/SHA0e226827 now replaces3fffc266/SHAeac78ce0.
+Gateway36626d30/SHAd3ed07f4 unchanged. Official rollback snapshot:
+`/var/lib/kuno-strata-parity-native-prepared-20261022` (previous native32).
+Whole configuration, complete model settings and enrolled identities verified
+preserved. The transaction briefly restarted inference services as authorized;
+startup checks pass. Actual installed-service public semantic/privacy checks
+are now running, so no completed post-install inference acceptance is claimed
+yet. No API/KNT2/KNR2/model/config/frontend/release/reset/reboot change.

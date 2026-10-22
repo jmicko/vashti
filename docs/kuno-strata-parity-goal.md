@@ -11,6 +11,15 @@ stop protected execution at a safe checkpoint if the credential expires.
 
 ## Active overnight checkpoint (2026-10-22)
 
+Selected native-prepared301f1fd1/SHA0e226827 is now installed with unchanged
+gateway36626d30/SHAd3ed07f4. Clean first10.8972/repeat8.7121s passes original
+selection; full original staged quality/privacy/API and physical recovery PASS.
+Whole configuration AND complete model settings/identities equality checked.
+Rollback`/var/lib/kuno-strata-parity-native-prepared-20261022`. Actual installed
+semantic/privacy check still in progress. Same-host Strata5.3515s remains ahead,
+goal ACTIVE/UNMET. A complete optional small-expert cohort bundle is in isolated
+development; no partial speed rollback or changed acceptance thresholds.
+
 Latest completed successor: [native-prepared](kuno-prefill-native-prepared.md)
 301f1fd1/SHA0e226827 passes183 CPU/11 runtime/421 WGSL/248 matrix, original241
 GPU plus11 actual-device admission cases, BOTH complete original proof chains
