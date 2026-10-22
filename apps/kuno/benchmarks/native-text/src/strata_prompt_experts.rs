@@ -479,6 +479,7 @@ pub(crate) fn enqueue(
                     receipt.copy_segments as u64,
                 );
                 for (name, value) in [
+                    ("expert_native_unit_releases",receipt.unit_releases),
                     ("expert_native_cohort_groups",receipt.cohort_groups),
                     ("expert_native_cohort_launches",receipt.cohort_launches),
                     ("expert_native_cohort_batches",receipt.cohort_batches),
@@ -657,6 +658,7 @@ fn enqueue_original(
             if map[516+group]<32 {
                 let plan=raw_plan.as_mut().unwrap();
                 cohorts::enqueue_unit(client,geometry,owners,fault,count,map,stage,&layer_sources,unit.first,plan.slots(unit)?)?;
+                client.native_strata_expert_unit_end().map_err(crate::resident_util::fault)?;
                 plan.consumed(unit)?;
                 prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
                 group=unit.end;
@@ -913,6 +915,10 @@ fn enqueue_original(
         timing.mark("expert_cpu_down_product");
         #[cfg(feature = "strata-expert-cohorts")]
         if let Some(unit)=active_unit {
+            // This marks the actual final launch, including a genuine wide
+            // tail when present. A no-copy resident next unit still cuts MAIN
+            // before its DQ can import the other bank's pending COPY wait.
+            client.native_strata_expert_unit_end().map_err(crate::resident_util::fault)?;
             let plan=raw_plan.as_mut().unwrap();
             plan.consumed(unit)?;
             prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;

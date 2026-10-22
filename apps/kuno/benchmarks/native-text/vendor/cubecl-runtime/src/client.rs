@@ -1275,6 +1275,8 @@ impl<R: Runtime> ComputeClient<R> {
                     count,
                     args: bindings,
                     mode,
+                    #[cfg(feature = "kuno-expert-cohorts")]
+                    unit_end: false,
                 },
                 stream_id,
             );
@@ -1335,6 +1337,17 @@ impl<R: Runtime> ComputeClient<R> {
         let capture = capture.lock().unwrap_or_else(|p| p.into_inner());
         capture.require_open(self.stream_id())?;
         Ok(true)
+    }
+
+    /// Request a MAIN recording cut after the actual last captured native
+    /// expert launch. Only the backend's unchanged exact grammar can validate
+    /// that this is a completed unit; this is neither a flush nor completion.
+    #[cfg(all(feature = "std", feature = "kuno-expert-cohorts"))]
+    pub fn native_strata_expert_unit_end(&self) -> Result<(), ServerError> {
+        use crate::server::native_expert_batch::batch_fault;
+        let capture = self.native_expert_capture.as_ref()
+            .ok_or_else(|| batch_fault("native expert unit end requires an open collector"))?;
+        capture.lock().unwrap_or_else(|p| p.into_inner()).mark_unit_end(self.stream_id())
     }
 
     /// Launches the `kernel` with the given `bindings`.

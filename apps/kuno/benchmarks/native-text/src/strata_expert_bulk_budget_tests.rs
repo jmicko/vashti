@@ -288,6 +288,8 @@ fn command(
         count: CubeCount::Static(1, 1, 1),
         args,
         mode: ExecutionMode::Unchecked,
+        #[cfg(feature = "strata-expert-cohorts")]
+        unit_end: false,
     }
 }
 

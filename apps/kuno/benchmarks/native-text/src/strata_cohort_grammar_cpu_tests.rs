@@ -267,3 +267,59 @@ fn cohort_incomplete_grammar_never_accepts_or_reports_finished_logical_work() {
         assert!(grammar.finish().is_err());
     }
 }
+
+#[test]
+fn actual_unit_end_factory_requires_the_complete_cohort_and_forwards_original_task() {
+    use cubecl::ir::{ElemType, StorageType, UIntKind};
+    use cubecl_runtime::{
+        compiler::{CompilationError, Compiler, CubeTask},
+        id::KernelId,
+        kernel::{CompiledKernel, KernelMetadata},
+        server::{CubeDim, ExecutionMode, native_expert_batch::NativeStrataExpertUnitEnd},
+    };
+    // CPU metadata/forwarding fixture only. Its deterministic compilation result
+    // is checked through the real production wrapper; it grants no GPU proof.
+    struct OriginalTask(&'static str, bool);
+    impl KernelMetadata for OriginalTask {
+        fn name(&self)->&'static str {self.0}
+        fn id(&self)->KernelId {KernelId::new::<Self>()}
+        fn address_type(&self)->StorageType {StorageType::Scalar(ElemType::UInt(UIntKind::U32))}
+        fn native_release_after(&self)->bool {self.1}
+    }
+    impl CubeTask<AutoCompiler> for OriginalTask {
+        fn compile(&self,_compiler:&mut AutoCompiler,_options:&<AutoCompiler as Compiler>::CompilationOptions,
+            mode:ExecutionMode,address:StorageType)->std::result::Result<CompiledKernel<AutoCompiler>,CompilationError> {
+            assert!(matches!(mode,ExecutionMode::Unchecked));
+            assert_eq!(address,self.address_type());
+            Ok(CompiledKernel {entrypoint_name:"original_entry".into(),debug_name:Some(self.0),
+                source:"original compilation forwarded unchanged".into(),repr:None,
+                cube_dim:CubeDim::new_1d(256),debug_info:None})
+        }
+    }
+    let total=program().len();
+    for stop in 0..total {
+        let mut grammar=NativeStrataExpertGrammar::default();
+        for (i,e) in program().into_iter().enumerate() {
+            if i==stop {
+                let original=OriginalTask(e.name,e.release);
+                let id=original.id();let address=original.address_type();
+                let result=NativeStrataExpertUnitEnd::validate(Box::new(original),&mut grammar,&e.grid,&e.args);
+                if stop+1!=total {assert!(result.is_err(),"early physical launch {stop}");}
+                else {
+                    let task=result.unwrap();
+                    assert_eq!(task.name(),e.name);assert_eq!(task.id(),id);
+                    assert_eq!(task.address_type(),address);assert!(task.native_release_after());
+                    assert_ne!(task.id().native_release_boundary(true),id.native_release_boundary(false));
+                    let mut compiler=AutoCompiler::SpirV(Default::default());
+                    let actual=task.compile(&mut compiler,&Default::default(),ExecutionMode::Unchecked,address).unwrap();
+                    assert_eq!(actual.entrypoint_name,"original_entry");assert_eq!(actual.debug_name,Some(e.name));
+                    assert_eq!(actual.source,"original compilation forwarded unchanged");
+                    assert!(actual.repr.is_none());assert_eq!(actual.cube_dim,CubeDim::new_1d(256));
+                    assert_eq!(grammar.finish().unwrap().cohort_groups,2);
+                }
+                break;
+            }
+            grammar.launch(e.name,e.release,&e.grid,&e.args).unwrap();
+        }
+    }
+}

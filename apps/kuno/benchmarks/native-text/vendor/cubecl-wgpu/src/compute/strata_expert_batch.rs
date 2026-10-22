@@ -157,6 +157,8 @@ impl WgpuServer {
                 return Err(fault("native expert actual pipeline/INFO capacity"));
             }
             let mut grammar = NativeStrataExpertGrammar::default();
+            #[cfg(feature = "kuno-expert-cohorts")]
+            let mut unit_releases = 0usize;
             for command in &mut batch.commands {
                 match command {
                     NativeStrataExpertCommand::Launch {
@@ -164,16 +166,28 @@ impl WgpuServer {
                         args,
                         mode,
                         count,
+                        #[cfg(feature = "kuno-expert-cohorts")]
+                        unit_end,
                     } => {
                         let kernel = kernel
                             .take()
                             .ok_or_else(|| fault("native expert original kernel missing"))?;
-                        grammar.launch(
-                            kernel.name(),
-                            kernel.native_release_after(),
-                            count,
-                            args,
-                        )?;
+                        #[cfg(feature = "kuno-expert-cohorts")]
+                        let kernel = if *unit_end {
+                            // Validate the actual original task/INFO through
+                            // its final DOWN before adding scheduling metadata.
+                            // Original release=false matrix guards stay intact.
+                            let terminal = cubecl_runtime::server::native_expert_batch::NativeStrataExpertUnitEnd::validate(
+                                kernel, &mut grammar, count, args,
+                            )?;
+                            unit_releases += 1;
+                            Box::new(terminal) as <Self as ComputeServer>::Kernel
+                        } else {
+                            grammar.launch(kernel.name(), kernel.native_release_after(), count, args)?;
+                            kernel
+                        };
+                        #[cfg(not(feature = "kuno-expert-cohorts"))]
+                        grammar.launch(kernel.name(), kernel.native_release_after(), count, args)?;
                         let mut id = kernel
                             .id()
                             .native_release_boundary(kernel.native_release_after());
@@ -289,6 +303,8 @@ impl WgpuServer {
                 return Err(fault("native expert original INFO inventory"));
             }
             receipt.cohort_groups=logical.cohort_groups;
+            #[cfg(feature = "kuno-expert-cohorts")]
+            { receipt.unit_releases = unit_releases; }
             receipt.cohort_launches=logical.cohort_launches;
             receipt.cohort_batches=logical.cohort_batches;
             receipt.logical_phases = logical.logical_phases;

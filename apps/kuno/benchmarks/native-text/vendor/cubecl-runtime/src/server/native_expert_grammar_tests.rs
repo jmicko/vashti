@@ -278,6 +278,76 @@ fn complete_original_or_exact_wide_tail_phases_report_real_launch_counts() {
         }
     }
 }
+
+#[cfg(feature = "kuno-expert-cohorts")]
+#[test]
+fn terminal_unit_metadata_requires_actual_original_down_or_complete_wide_tail() {
+    use alloc::boxed::Box;
+    use crate::{
+        compiler::{CompilationError, Compiler, CubeTask},
+        id::KernelId,
+        kernel::{CompiledKernel, KernelDefinition, KernelMetadata},
+        server::{CubeDim, ExecutionMode},
+    };
+    use super::super::native_expert_batch::NativeStrataExpertUnitEnd;
+    use cubecl_ir::{ElemType, StorageType, UIntKind};
+    #[derive(Clone,Debug)]
+    struct FixtureCompiler;
+    impl Compiler for FixtureCompiler {
+        type Representation=alloc::string::String;
+        type CompilationOptions=u8;
+        fn compile(&mut self,_kernel:KernelDefinition,_options:&u8,_mode:ExecutionMode,_address:StorageType)
+            ->Result<Self::Representation,CompilationError> {panic!("fixture task must be forwarded directly")}
+        fn elem_size(&self,_elem:ElemType)->usize {4}
+        fn extension(&self)->&'static str {"fixture"}
+    }
+    struct OriginalTask(&'static str);
+    impl KernelMetadata for OriginalTask {
+        fn name(&self)->&'static str {self.0}
+        fn id(&self)->KernelId {KernelId::new::<Self>()}
+        fn address_type(&self)->StorageType {StorageType::Scalar(ElemType::UInt(UIntKind::U32))}
+    }
+    impl CubeTask<FixtureCompiler> for OriginalTask {
+        fn compile(&self,_compiler:&mut FixtureCompiler,options:&u8,mode:ExecutionMode,address:StorageType)
+            ->Result<CompiledKernel<FixtureCompiler>,CompilationError> {
+            assert_eq!(*options,17);assert!(matches!(mode,ExecutionMode::Unchecked));
+            assert_eq!(address,self.address_type());
+            Ok(CompiledKernel {entrypoint_name:"original_down".into(),debug_name:Some(self.0),
+                source:"exact original down compilation".into(),repr:Some("original representation".into()),
+                cube_dim:CubeDim::new_1d(256),debug_info:None})
+        }
+    }
+    for members in [1,32,256,257,287,288,383,384,4096] {
+        for wide in [false,true] {
+            if wide && members<MIN_WIDE_MEMBERS {continue;}
+            let h=owners();let mut grammar=begin(&h,members);
+            product(&mut grammar,&h,members,false,wide);
+            activate(&mut grammar);
+            let prefix=members/128*128;
+            let args=matrix_args(&h,members,true,wide,false);
+            let grid=if wide {CubeCount::Static(2560/128,prefix/128,1)}
+                else {CubeCount::Static(2560/64,members.div_ceil(32),1)};
+            let name=if wide {WIDE_DOWN}else{ORIGINAL};
+            let first=NativeStrataExpertUnitEnd::validate(Box::new(OriginalTask(name)),&mut grammar,&grid,&args);
+            let (task,name)=if wide && prefix<members {
+                // A genuine wide prefix advances its original pending-tail
+                // state, but must never itself acquire terminal metadata.
+                assert!(first.is_err());
+                let tail=members-prefix;
+                let tile=if tail<=8 {8}else if tail<32 {16}else{32};
+                let task=NativeStrataExpertUnitEnd::validate(Box::new(OriginalTask(TAIL_DOWN)),&mut grammar,
+                    &CubeCount::Static(2560/64,tail.div_ceil(tile),1),&matrix_args(&h,members,true,true,true)).unwrap();
+                (task,TAIL_DOWN)
+            } else {(first.unwrap(),name)};
+            assert_eq!(task.name(),name);assert_eq!(task.id(),OriginalTask(name).id());
+            assert!(task.native_release_after());assert_eq!(grammar.finish().unwrap().logical_phases,6);
+            let actual=task.compile(&mut FixtureCompiler,&17,ExecutionMode::Unchecked,task.address_type()).unwrap();
+            assert_eq!(actual.entrypoint_name,"original_down");assert_eq!(actual.debug_name,Some(name));
+            assert_eq!(actual.source,"exact original down compilation");
+            assert_eq!(actual.repr.as_deref(),Some("original representation"));
+        }
+    }
+}
 #[test]
 fn missing_split_tail_cannot_be_counted_or_interleaved_or_replaced() {
     let h = owners();

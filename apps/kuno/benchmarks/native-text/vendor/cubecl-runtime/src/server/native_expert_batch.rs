@@ -52,6 +52,9 @@ pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) ->
 /// Actual backend enqueue counts, never a GPU completion/acceptance receipt.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeStrataExpertBatchReceipt {
+    /// Actual completed-unit tasks given terminal release metadata by the
+    /// original grammar, returned only after full successful batch enqueue.
+    pub unit_releases: usize,
     pub cohort_groups:usize,
     pub cohort_launches:usize,
     pub cohort_batches:usize,
@@ -73,6 +76,10 @@ pub enum NativeStrataExpertCommand<K> {
         count: CubeCount,
         args: KernelArguments,
         mode: ExecutionMode,
+        /// Scheduling intent only. The backend must validate the ORIGINAL
+        /// grammar through this exact launch before deriving release metadata.
+        #[cfg(feature = "kuno-expert-cohorts")]
+        unit_end: bool,
     },
     HostCopies(NativeStrataExpertCopies),
 }
@@ -288,6 +295,80 @@ impl<K> Capture<K> {
         }
         Ok(())
     }
+
+    /// Mark only the actual last launch of this still-open ordered collector.
+    /// This grants no phase/execution authority: the backend independently
+    /// validates its exact original kernel, arguments and completed grammar.
+    #[cfg(feature = "kuno-expert-cohorts")]
+    pub fn mark_unit_end(
+        &mut self,
+        stream: cubecl_common::stream_id::StreamId,
+    ) -> Result<(), ServerError> {
+        let result = (|| {
+            self.require_open(stream)?;
+            match self.batch.as_mut().unwrap().commands.last_mut() {
+                Some(NativeStrataExpertCommand::Launch { unit_end, kernel, .. })
+                    if !*unit_end && kernel.is_some() => {
+                        *unit_end = true;
+                        Ok(())
+                    }
+                _ => Err(batch_fault("native expert unit end requires a new last launch")),
+            }
+        })();
+        if let Err(error) = result {
+            self.error = Some(error);
+            return Err(batch_fault("native expert unit end collection failed"));
+        }
+        Ok(())
+    }
+}
+
+/// A scheduling-only wrapper around the actual original compilation task.
+/// Its only constructor advances the ORIGINAL grammar using that same task's
+/// metadata and actual packed arguments, and requires a complete unit there.
+/// No generated kernel/definition, arithmetic, binding or owner is replaced.
+#[cfg(feature = "kuno-expert-cohorts")]
+pub struct NativeStrataExpertUnitEnd<C: crate::compiler::Compiler> {
+    original: alloc::boxed::Box<dyn crate::compiler::CubeTask<C>>,
+}
+#[cfg(feature = "kuno-expert-cohorts")]
+impl<C: crate::compiler::Compiler> NativeStrataExpertUnitEnd<C> {
+    /// Validate this original task at the current grammar position and require
+    /// its completed six-phase unit before deriving the recording-only cut.
+    pub fn validate(
+        original: alloc::boxed::Box<dyn crate::compiler::CubeTask<C>>,
+        grammar: &mut super::native_expert_grammar::NativeStrataExpertGrammar,
+        count: &CubeCount,
+        args: &KernelArguments,
+    ) -> Result<Self, ServerError> {
+        grammar.launch(original.name(), original.native_release_after(), count, args)?;
+        grammar.finish()?;
+        // The existing grammar only closes after the actual final DOWN matrix.
+        // In particular its original streamed dequant release is never tagged.
+        if original.native_release_after() {
+            return Err(batch_fault("native expert unit end already releases"));
+        }
+        Ok(Self { original })
+    }
+}
+#[cfg(feature = "kuno-expert-cohorts")]
+impl<C: crate::compiler::Compiler> crate::kernel::KernelMetadata for NativeStrataExpertUnitEnd<C> {
+    fn name(&self) -> &'static str { self.original.name() }
+    fn id(&self) -> crate::id::KernelId { self.original.id() }
+    fn address_type(&self) -> cubecl_ir::StorageType { self.original.address_type() }
+    fn native_release_after(&self) -> bool { true }
+}
+#[cfg(feature = "kuno-expert-cohorts")]
+impl<C: crate::compiler::Compiler> crate::compiler::CubeTask<C> for NativeStrataExpertUnitEnd<C> {
+    fn compile(
+        &self,
+        compiler: &mut C,
+        options: &C::CompilationOptions,
+        mode: ExecutionMode,
+        address_type: cubecl_ir::StorageType,
+    ) -> Result<crate::kernel::CompiledKernel<C>, crate::compiler::CompilationError> {
+        self.original.compile(compiler, options, mode, address_type)
+    }
 }
 
 #[cfg(feature = "std")]
@@ -340,6 +421,8 @@ mod tests {
                 .with_buffer(handle.clone().binding())
                 .with_info(MetadataBindingInfo::custom(vec![0x1234, 0x5678])),
             mode: ExecutionMode::Unchecked,
+            #[cfg(feature = "kuno-expert-cohorts")]
+            unit_end: false,
         }
     }
     #[test]
@@ -468,5 +551,61 @@ mod tests {
                 .unwrap();
         }
         assert!(batch.metadata_bytes().is_err());
+    }
+
+    #[cfg(feature = "kuno-expert-cohorts")]
+    #[test]
+    fn unit_end_marks_only_the_actual_last_launch_of_a_current_open_collector() {
+        let stream = StreamId::current();
+        let handle = Handle::new(stream, 64);
+        let scope = CaptureScope::<()>::new(stream);
+        assert!(scope.capture.lock().unwrap().mark_unit_end(stream).is_err());
+        assert!(scope.take().is_err());
+        drop(scope);
+
+        let scope = CaptureScope::new(stream);
+        scope.capture.lock().unwrap().push(launch(&handle), stream).unwrap();
+        scope.capture.lock().unwrap().mark_unit_end(stream).unwrap();
+        let batch = scope.take().unwrap();
+        assert!(matches!(&batch.commands[0], NativeStrataExpertCommand::Launch { unit_end: true, .. }));
+        assert!(scope.capture.lock().unwrap().mark_unit_end(stream).is_err());
+        drop(batch);
+
+        let scope = CaptureScope::new(stream);
+        scope.capture.lock().unwrap().push(launch(&handle), stream).unwrap();
+        scope.capture.lock().unwrap().mark_unit_end(stream).unwrap();
+        assert!(scope.capture.lock().unwrap().mark_unit_end(stream).is_err());
+        assert!(scope.take().is_err());
+        drop(scope);
+
+        let scope = CaptureScope::new(stream);
+        scope.capture.lock().unwrap().push(launch(&handle), stream).unwrap();
+        assert!(scope.capture.lock().unwrap().mark_unit_end(StreamId { value:stream.value.wrapping_add(1) }).is_err());
+        assert!(scope.take().is_err());
+        drop(scope);
+
+        let scope = CaptureScope::new(stream);
+        scope.capture.lock().unwrap().push(launch(&handle), stream).unwrap();
+        scope.capture.lock().unwrap().push(NativeStrataExpertCommand::HostCopies(NativeStrataExpertCopies(vec![PublicHostCopy {
+            source:handle.clone().binding(), source_first:0,
+            destination:handle.clone().binding(), destination_first:0, bytes:16,
+        }])),stream).unwrap();
+        assert!(scope.capture.lock().unwrap().mark_unit_end(stream).is_err());
+        assert!(scope.take().is_err());
+        drop(scope);
+
+        let scope = CaptureScope::new(stream);
+        let escaped = scope.capture.clone();
+        escaped.lock().unwrap().push(launch(&handle), stream).unwrap();
+        escaped.lock().unwrap().mark_unit_end(stream).unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _scope=scope;
+            panic!("fixed public unit end panic");
+        }));
+        assert!(result.is_err());
+        assert!(escaped.lock().unwrap().mark_unit_end(stream).is_err());
+        // Every failed/successful/panic collector retains then drops original
+        // owners normally; the tape Drop also wipes the new terminal bit.
+        assert!(handle.memory.is_free());
     }
 }
