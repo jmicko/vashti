@@ -90,7 +90,8 @@ impl PromptLayer<'_, '_, '_> {
     ) -> Result<()> {
         // Keep every original per-slot guard: live attachment/graph identity,
         // current effective HOST/cache/shadow role, registry/plan instance,
-        // actual raw-ring owner/stream/bounds and checked backend copy enqueue.
+        // exact one-of-current raw-bank owner/stream/bounds and checked backend
+        // copy enqueue. Enrollment, never this borrower, admits the second root.
         self.sources.stage_prompt_group(
             self.graph,
             self.layer,

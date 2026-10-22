@@ -27,6 +27,79 @@ fn reject() -> Error {
     Error::InvalidFormat("Strata global source owner")
 }
 
+// Structural admission only. The factory below independently resolves every
+// owner through the ORIGINAL client and checks the actual full Vulkan buffers.
+fn validate_prompt_raw_bank_shapes(
+    primary: &Handle,
+    secondary: Option<&Handle>,
+    stream: cubecl_common::stream_id::StreamId,
+    loan_prepared: bool,
+) -> Result<()> {
+    crate::strata_prompt::allocation::whole_root_bytes(primary)?;
+    if primary.stream != stream {
+        return Err(reject());
+    }
+    if let Some(secondary) = secondary {
+        crate::strata_prompt::allocation::whole_root_bytes(secondary)?;
+        if !cfg!(feature = "strata-expert-cohorts")
+            || loan_prepared
+            || primary.size_in_used() != crate::strata_prompt::allocation::RAW_RING_BYTES
+            || secondary.size_in_used() != crate::strata_prompt::allocation::RAW_RING_BYTES
+            || secondary.stream != stream
+            || primary.clone().binding().memory.allocation_id()
+                == secondary.clone().binding().memory.allocation_id()
+        {
+            return Err(reject());
+        }
+    }
+    Ok(())
+}
+
+fn single_prompt_raw_bank_only(secondary: Option<&Handle>) -> Result<()> {
+    if secondary.is_some() {
+        return Err(reject());
+    }
+    Ok(())
+}
+
+fn enrolled_prompt_raw_bank<'a>(
+    primary: Option<&'a Handle>,
+    secondary: Option<&'a Handle>,
+    destination: &Handle,
+    loan_pending: bool,
+) -> Result<&'a Handle> {
+    let primary = primary.ok_or_else(reject)?;
+    if loan_pending {
+        single_prompt_raw_bank_only(secondary)?;
+    }
+    [Some(primary), secondary]
+        .into_iter()
+        .flatten()
+        .find(|root| {
+            destination.clone().binding().memory.allocation_id()
+                == (*root).clone().binding().memory.allocation_id()
+                && destination.stream == root.stream
+                && destination.size() == root.size()
+                && destination.size_in_used() == root.size_in_used()
+                && destination.offset_start.unwrap_or(0) == 0
+                && destination.offset_end.unwrap_or(0) == 0
+        })
+        .ok_or_else(reject)
+}
+
+fn release_prompt_raw_banks(
+    primary: &mut Option<Handle>,
+    secondary: &mut Option<Handle>,
+    quarantine: bool,
+) {
+    for root in [primary.take(), secondary.take()].into_iter().flatten() {
+        if quarantine {
+            // Unknown reader completion cannot release either actual root.
+            std::mem::forget(root);
+        }
+    }
+}
+
 /// One real completion gate for the source lending transaction. Prefix/tail
 /// mismatch, clear/restore errors and panics cannot reopen model consumers.
 fn finish_borrowed_roots(
@@ -55,6 +128,7 @@ pub(crate) struct Sources {
     host: Option<Host>,
     tables: Vec<Handle>,
     prompt_stage: Option<Handle>,
+    prompt_secondary_stage: Option<Handle>,
     reads: Vec<Vec<Handle>>,
     closed: bool,
     closing_failed: bool,
@@ -89,6 +163,17 @@ impl Sources {
             sum.checked_add(table.size_in_used())
                 .ok_or(Error::ArithmeticOverflow)
         })?;
+        // These are the actual roots admitted by attach_prompt_raw_banks,
+        // never an enqueue counter or a caller's requested number of banks.
+        let mut raw_banks = self
+            .prompt_stage
+            .iter()
+            .chain(self.prompt_secondary_stage.iter());
+        let raw_bank_roots = raw_banks.clone().count();
+        let raw_bank_total_bytes = raw_banks.try_fold(0u64, |sum, root| {
+            sum.checked_add(root.size_in_used())
+                .ok_or(Error::ArithmeticOverflow)
+        })?;
         Ok(serde_json::json!({
             "compiled_public_fixture_only":true,
             "content_saved":false,
@@ -103,6 +188,9 @@ impl Sources {
             "source_table_buffers":self.tables.len(),
             "source_table_bytes":source_table_bytes,
             "raw_ring_attached":self.prompt_stage.is_some(),
+            "raw_bank_roots":raw_bank_roots,
+            "raw_bank_total_bytes":raw_bank_total_bytes,
+            "secondary_raw_bank_attested":self.prompt_secondary_stage.is_some(),
             "prompt_loan_active":self.loan_pending,
             "host":host.compiled_public_capacity()?
         }))
@@ -142,6 +230,7 @@ impl Sources {
             host: None,
             tables: Vec::with_capacity(LAYERS),
             prompt_stage: None,
+            prompt_secondary_stage: None,
             reads: Vec::with_capacity(LAYERS),
             closed: false,
             closing_failed: false,
@@ -393,32 +482,63 @@ impl Sources {
     /// Attach the real separately priced native-owned prompt raw root. This
     /// retains its actual raw-root dependency independently of direct decode.
     pub(crate) fn attach_prompt_stage(&mut self, root: Handle) -> Result<()> {
+        self.attach_prompt_raw_banks(root, None)
+    }
+    /// Enroll separately priced whole raw owners atomically. A second bank is
+    /// never a view into the first or a lent model root. The existing arena
+    /// remains their allocation/erasure owner throughout actual queue closure.
+    pub(crate) fn attach_prompt_raw_banks(
+        &mut self,
+        primary: Handle,
+        secondary: Option<Handle>,
+    ) -> Result<()> {
         self.validate_attached()?;
-        if self.prompt_stage.is_some()
-            || root.stream != self.tables.first().ok_or_else(reject)?.stream
-            || root.offset_start.unwrap_or(0) != 0
-            || root.offset_end.unwrap_or(0) != 0
-        {
+        if self.prompt_stage.is_some() || self.prompt_secondary_stage.is_some() {
             return Err(reject());
         }
-        // This owner is now the raw DMA ring only. MoE scratch is in the
-        // separate phase overlay; it must not fabricate a larger raw parent.
-        crate::strata_prompt::allocation::whole_root_bytes(&root)?;
-        if root.size_in_used() < crate::strata_prompt::allocation::RAW_RING_BYTES {
-            return Err(reject());
-        }
+        validate_prompt_raw_bank_shapes(
+            &primary,
+            secondary.as_ref(),
+            self.tables.first().ok_or_else(reject)?.stream,
+            self.host
+                .as_ref()
+                .and_then(Host::loan_shadow_indices)
+                .is_some(),
+        )?;
+        let roots: Vec<_> = std::iter::once(primary.clone())
+            .chain(secondary.iter().cloned())
+            .collect();
         let resources = self
             .client
-            .retained_resource_metadata(vec![root.clone()])
+            .retained_resource_metadata(roots.clone())
             .map_err(crate::resident_util::fault)?;
-        if resources.len() != 1
-            || resources[0].resource().offset != 0
-            || resources[0].resource().size != root.size_in_used()
-            || resources[0].resource().buffer.size() != root.size_in_used()
-        {
+        if resources.len() != roots.len() {
             return Err(reject());
         }
-        self.prompt_stage = Some(root);
+        let mut physical = std::collections::HashSet::with_capacity(roots.len());
+        for (root, resource) in roots.iter().zip(&resources) {
+            let actual = resource.resource();
+            if actual.offset != 0
+                || actual.size != root.size_in_used()
+                || actual.buffer.size() != root.size_in_used()
+                || secondary.is_some()
+                    && !actual.buffer.usage().contains(
+                        wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_SRC
+                            | wgpu::BufferUsages::COPY_DST,
+                    )
+            {
+                return Err(reject());
+            }
+            let raw =
+                unsafe { actual.buffer.as_hal::<wgpu::hal::api::Vulkan>() }.ok_or_else(reject)?;
+            if !physical.insert(unsafe { raw.raw_buffer_handle() }) {
+                return Err(reject());
+            }
+        }
+        // Publish neither bank if any structural or physical attestation fails.
+        self.prompt_stage = Some(primary);
+        self.prompt_secondary_stage = secondary;
         Ok(())
     }
     /// Intel prefill's original HOST -> staging transfer. Resident cells remain
@@ -458,7 +578,12 @@ impl Sources {
             return Err(reject());
         }
         self.validate_prompt_ready(graph)?;
-        let original_stage = self.prompt_stage.as_ref().ok_or_else(reject)?;
+        let original_stage = enrolled_prompt_raw_bank(
+            self.prompt_stage.as_ref(),
+            self.prompt_secondary_stage.as_ref(),
+            destination,
+            self.loan_pending,
+        )?;
         if destination.clone().binding().memory.allocation_id()
             != original_stage.clone().binding().memory.allocation_id()
             || destination.stream != original_stage.stream
@@ -537,6 +662,7 @@ impl Sources {
         if !self.loan_pending {
             return self.validate_attached();
         }
+        single_prompt_raw_bank_only(self.prompt_secondary_stage.as_ref())?;
         if self.unavailable()
             || !self.loan_ready
             || !self.mutation_pending
@@ -842,7 +968,11 @@ impl Sources {
         // registered buffers before granting the HOST owner zero/free authority.
         self.tables.clear();
         self.reads.clear();
-        self.prompt_stage = None;
+        release_prompt_raw_banks(
+            &mut self.prompt_stage,
+            &mut self.prompt_secondary_stage,
+            false,
+        );
         self.exchange_inventory = None;
         if let Some(host) = self.host.take() {
             host.close()?;
@@ -859,9 +989,11 @@ impl Drop for Sources {
             // Failed queue completion grants no permission to release BDA roots.
             std::mem::forget(std::mem::take(&mut self.tables));
             std::mem::forget(std::mem::take(&mut self.reads));
-            if let Some(root) = self.prompt_stage.take() {
-                std::mem::forget(root);
-            }
+            release_prompt_raw_banks(
+                &mut self.prompt_stage,
+                &mut self.prompt_secondary_stage,
+                true,
+            );
             if let Some(inventory) = self.exchange_inventory.take() {
                 std::mem::forget(inventory);
             }
@@ -874,6 +1006,10 @@ impl Drop for Sources {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "strata_prompt_raw_bank_sources_tests.rs"]
+mod raw_bank_sources_tests;
 
 #[cfg(test)]
 mod native_shared_table_tests {

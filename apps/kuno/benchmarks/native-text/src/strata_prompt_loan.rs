@@ -43,6 +43,7 @@ impl Drop for BorrowedPrompt {
 impl Sources {
     pub(crate) fn prompt_loan_quote(&self, graph: BoundGraph<'_, '_>) -> Result<([usize; 3], u64)> {
         self.validate_graph_ready(graph)?;
+        single_prompt_raw_bank_only(self.prompt_secondary_stage.as_ref())?;
         let roots = self.gpu.as_ref().ok_or_else(reject)?.roots();
         // Native tail lending, skipping only an undersized physical final root.
         // Selection is based on real contiguous owners and actual carve checks.
@@ -71,6 +72,7 @@ impl Sources {
         reserved: u64,
     ) -> Result<()> {
         self.validate_graph_ready(graph)?;
+        single_prompt_raw_bank_only(self.prompt_secondary_stage.as_ref())?;
         let layout = Host::loan_shadow_layout(graph, &self.plan, indices)?;
         if reserved != layout.reservation()? {
             return Err(reject());
@@ -111,6 +113,7 @@ impl Sources {
         graph: BoundGraph<'_, '_>,
     ) -> Result<BorrowedPrompt> {
         self.validate_graph_ready(graph)?;
+        single_prompt_raw_bank_only(self.prompt_secondary_stage.as_ref())?;
         if crate::strata_prompt::active() {
             return Err(reject());
         }
