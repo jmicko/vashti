@@ -1475,9 +1475,19 @@ mod tests {
                 } else {
                     assert_eq!(next_read.waits[1], refill.signal);
                 }
-                assert!(p.accesses().iter().any(|a| {
-                    a.buffer == bank_b && a.first == 0 && a.bytes == RAW && !a.write
-                }));
+                let retained: Vec<_> = p.accesses().iter().filter(|a| a.buffer == bank_b).collect();
+                assert_eq!(retained.first().unwrap().first, 0);
+                assert_eq!(retained.iter().map(|a| a.bytes).sum::<u64>(), RAW);
+                assert_eq!(retained.last().unwrap().first + retained.last().unwrap().bytes, RAW);
+                for pair in retained.windows(2) {
+                    assert_eq!(pair[0].first + pair[0].bytes, pair[1].first);
+                }
+                assert!(p.conflicts(&[Access {
+                    buffer: bank_b,
+                    first: 0,
+                    bytes: RAW,
+                    write: true,
+                }]).unwrap());
             }
         }
     }
