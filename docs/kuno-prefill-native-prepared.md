@@ -236,3 +236,27 @@ preserved. The transaction briefly restarted inference services as authorized;
 startup checks pass. Actual installed-service public semantic/privacy checks
 are now running, so no completed post-install inference acceptance is claimed
 yet. No API/KNT2/KNR2/model/config/frontend/release/reset/reboot change.
+
+## Actual installed-service acceptance
+
+`native-prepared-installed-public-20261022.log` and
+`native-strata-parity-prepared-installed-{public,final}-check-20261022` PASS.
+The actual installed service returns two identical complete501-token code
+answers, both passing original155 semantic cases. Startup82.597896679s and
+first35-token prefix6.130721689s are separate; warm prefix1.174594577s and
+501 outputs/15.212422903s (~32.93 output tokens/s). These short-prefix timings
+do not replace the matched long clean selection or establish a decode gain.
+Actual installed DynamicUser/model mount, nonroot worker, swap/core0, zero
+worker write_bytes, denied inspection, zero OOM/driver faults, healthy services
+and normal admission all verified. The selected native worker remains301f1fd1/
+SHA0e226827, gateway36626d30/SHAd3ed07f4, official rollback as above.
+
+A separate fixed-public normal-schedule WARM flat CPU+Xe PMU diagnostic now runs
+in`kuno-native-prepared-warm-costs-20261022.service`. Helper
+`check-native-prepared-warm-costs-20261022.py` SHA256
+03a07af85c22d49a832ee662068196f883782825a07bc7513e2ac7427ad0722c
+samples only request3 rebind_begin through last_prompt_input, without GPU
+timestamp commands/serialization. Full source/proof and actual RCS activity
+are required. Root-only raw instruction-pointer samples/counters live in/run
+tmpfs and are removed; no stacks/registers/payloads. This is diagnostic, not a
+new clean speed result. No CPU compilation runs concurrently.

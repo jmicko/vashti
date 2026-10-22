@@ -9,14 +9,22 @@ unchanged gateway36626d30/SHAd3ed07f4. Full config AND complete model settings/
 enrolled identities equality verified; official rollback
 `/var/lib/kuno-strata-parity-native-prepared-20261022`. Exact artifacts/gates/
 failed-harness preservation in [native-prepared spec](kuno-prefill-native-prepared.md).
-Actual installed-service semantic/privacy checks currently run in
-`kuno-native-prepared-installed-20261022.service`; post-install inference not
-yet claimed. Root owns GPUs; no simultaneous compilation.
+Actual installed-service semantic/privacy checks PASS, including two complete
+identical501-token answers and155 semantic cases each, DynamicUser/model mount,
+swap/core0/write_bytes0/inspection denial/OOM-fault0/services/admission. Warm
+35-token prefix1.1746s does not replace long clean comparison or claim a new
+decode gain. Fixed-public warm flat CPU+PMU diagnostic currently runs in
+`kuno-native-prepared-warm-costs-20261022.service`; raw samples confined to/run
+and erased. Exact helper/hash and pending status in linked spec. Root owns GPUs;
+no simultaneous compilation.
 
 Small-expert cohorts are being implemented completely in separate
 `codex/expert-cohorts`, agreedbase31f6e54b, with independent structural/math
 audits and no hardware activity. Retain the full prior paths and unchanged
-numerical/owner/capacity/erasure controls. No API/KNT2/KNR2/frontend/model/release/
+numerical/owner/capacity/erasure controls. Coupled authentic cohort selection
+for original rolling/poolreuse/sampling is delegated separately at the same base
+to`codex/cohort-selection`; agree the sealed API before merging. No public
+contract change or fake logical-as-physical dispatch counts. No API/KNT2/KNR2/frontend/model/release/
 reset/reboot change, required Vashti:none. Earlier unchanged-install snapshots
 below are historical. Owned refresher1145657 remains bounded to15:45:12UTC.
 
