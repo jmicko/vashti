@@ -49,3 +49,23 @@ The compiled-public worker partitions the3 new GR cases into the separate
 cases, so the frozen18-script original harness remains byte-for-byte unchanged.
 The successor outer aggregate must verify all3 extra results, not infer their
 success from the original350. No private caller/API response is changed.
+
+
+## First protected attempt (2026-10-22)
+
+Source267bd558/workerb527cb6d passes final257CPU/15runtime/429WGSL/304layouts.
+Initial e8f8 CPU driver captured source before the subsequent separate report
+field fix; its mixed-source build receipt is NOT acceptance. Final exact-source
+receipt is gr-wide-tail-final-root-build-receipt-20261022.json.
+Initial outer preflight retained old39-feature filename and correctly stopped
+before dispatch. Fixed helper1fdead5635f88d6dc675f9fba13de8d3ac062f23a2701242a269df364b5b4467
+uses the actual40-feature list; original18-script harness unchanged.
+
+Protected operators pass the first18 original BF16 matrices, then the first
+new512x320 case stops before its report with public_matrix_numeric_failed.
+No model speed run or acceptance; original failed receipt/compiler code preserved
+under strata-parity-gr-wide-tail-20261022-operators; physical recovery passes.
+Do not infer arithmetic failure versus host validation from the broad label.
+A public-entry-only error diagnostic will expose the actual fixed failure label;
+private inference logging is unchanged. Continue the complete source, retaining
+all original bounds/tolerances/owner/finite/compiler/recovery gates.

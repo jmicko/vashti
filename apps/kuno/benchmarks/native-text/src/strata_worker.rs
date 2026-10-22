@@ -368,7 +368,7 @@ async fn serve(
         #[cfg(not(feature = "strata-native-prepared"))]
         let native_prepared_checks: Vec<serde_json::Value> = Vec::new();
         let cases = crate::strata_matrix::public_numeric(&client, &mut arena, &file)
-            .map_err(|_| "public_matrix_numeric_failed")?;
+            .map_err(|error| { eprintln!("public_native_matrix_numeric_error {error}"); "public_matrix_numeric_failed" })?;
         // The immutable original operator harness still sees exactly its
         // original36 cases. Additional actual GR-tail controls have a separate
         // population and must be checked by the successor's outer aggregate.
