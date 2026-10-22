@@ -356,20 +356,6 @@ pub(super) fn enqueue_small(
             &words,
         )?;
     }
-    // Both real image readers are now queued. This only advances enqueue
-    // bookkeeping; original graph hazards still wait for actual GPU reads.
-    for group in first..end {
-        ring.consumed(group)?;
-    }
-    while let Some((next, slot)) = ring.issue_next()? {
-        layer_sources.stage_group_on(
-            client,
-            map[4 + next] as usize,
-            roles,
-            &stage[2],
-            slot.unwrap_or(RAW_SLOTS) * stride,
-        )?;
-    }
     for down in [false, true] {
         words[1] = if down { 640 } else { 2560 };
         words[2] = if down { 2560 } else { 1280 };
@@ -418,6 +404,24 @@ pub(super) fn enqueue_small(
                 &words,
             )?;
         }
+    }
+    // Queue the complete math before refilling, as the original producer does.
+    // The real COPY queue cut then prevents the next cohort's whole-ring DQ
+    // wait from also delaying this cohort's already decoded GU/DOWN products.
+    // Both raw readers were queued above and DOWN-image retains its original
+    // release: physical copies may overlap these GEMMs while still waiting for
+    // actual raw reads. Consumption advances bookkeeping, never completion.
+    for group in first..end {
+        ring.consumed(group)?;
+    }
+    while let Some((next, slot)) = ring.issue_next()? {
+        layer_sources.stage_group_on(
+            client,
+            map[4 + next] as usize,
+            roles,
+            &stage[2],
+            slot.unwrap_or(RAW_SLOTS) * stride,
+        )?;
     }
     for (name, value) in [
         ("expert_cohort_groups", n as u64),
