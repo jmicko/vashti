@@ -260,3 +260,34 @@ timestamp commands/serialization. Full source/proof and actual RCS activity
 are required. Root-only raw instruction-pointer samples/counters live in/run
 tmpfs and are removed; no stacks/registers/payloads. This is diagnostic, not a
 new clean speed result. No CPU compilation runs concurrently.
+
+## Warm attribution complete
+
+`strata-parity-native-prepared-warm-costs-20261022-complete-public-summary.json`
+confirms original clean-mode45/4245/4245 public replies, controlled request3
+interval, zero lost flat CPU samples, raw/run erasure, unchanged boot, physical
+Intel50,688,000B/NVIDIA compute0, services200, fault counters0 and normal
+admission. Unit complete/inactive/dead. Only after this completion is the CPU
+target released for cohort compilation; no timed run overlaps compilation.
+
+Over8.6822s, actual RCS72.4488%, BCS22.7053%, CCS0% scheduled-active. These
+fractions may overlap and are NOT EU/FLOP/memory utilization. Unlike the earlier
+cold profile, this does not justify blaming a four-second warm GPU idle gap.
+Minimum neither-active fraction is only4.85%; exact overlap is unknown. PMU
+forcewake/instrumentation makes this diagnostic, not a replacement clean result.
+
+The full766-row flat report sums100.06% after rounding. Approximate DSO shares:
+application56.93%, libc24.48%, Intel driver15.10%, unknown3.55%. Largest named
+application weight is original Planner::push_accesses_with_memory4.91%,
+Handle::binding3.02%; libc memset12.53%. These are sampled CPU-cycle shares,
+not wall/CPU seconds. Exact already-verified driver/debug ELF identities resolve
+all115 anonymous driver rows with bounded nonzero function ranges: descriptor
+init2.32%, descriptor allocation2.00%, command-pool reset1.34%, buffer descriptor
+writes1.10%. No large warm shader-compiler hotspot identified. Full static
+attribution`strata-parity-native-prepared-warm-costs-20261022-symbol-attribution.json`
+retains exact offsets/function bounds; no private content or raw sample file.
+
+This supports the connected small-expert cohort candidate: fewer real dispatches
+reduce actual planner/descriptor/recording work AND let the tiny20/40-workgroup
+products expose more independent work. It does not prove that candidate's speed.
+All original alternatives remain. No new API/frontend/model/config/release change.

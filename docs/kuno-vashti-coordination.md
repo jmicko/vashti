@@ -18,6 +18,14 @@ decode gain. Fixed-public warm flat CPU+PMU diagnostic currently runs in
 and erased. Exact helper/hash and pending status in linked spec. Root owns GPUs;
 no simultaneous compilation.
 
+Warm diagnostic now complete/recovered: source-pinned full public summary,
+raw/run removal, unchanged boot, Intel50,688,000B/NVIDIA compute0, services200,
+all faults0/admission normal. RCS72.45%/BCS22.71%/CCS0% are scheduled-active,
+not EU utilization. Full flat CPU shows planner/descriptor/recording overhead;
+exact debug symbols resolve all115 driver rows. See linked spec; no new clean
+speed claim. CPU target released EXCLUSIVELY to the cohort port agent, with
+explicit handoff to selector agent for builds; root runs no GPU concurrently.
+
 Small-expert cohorts are being implemented completely in separate
 `codex/expert-cohorts`, agreedbase31f6e54b, with independent structural/math
 audits and no hardware activity. Retain the full prior paths and unchanged
