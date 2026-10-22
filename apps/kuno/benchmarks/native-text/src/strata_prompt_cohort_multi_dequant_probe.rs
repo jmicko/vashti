@@ -194,8 +194,12 @@ fn one(
             return Err("public cohort original public weight source changed".into());
         }
     }
-    let data = u::read_handle_prefix_u32(arena, u::handle(arena, fault)?, 1)?;
-    let zero = data[0] == 0;
+    let data = u::read_handle_prefix_u32(
+        arena,
+        arena.handle(fault)?.clone(),
+        arena.layout(fault)?.owned_bytes / 4,
+    )?;
+    let zero = data.iter().all(|word| *word == 0);
     drop(data);
     super::probe::sanitize(arena)?;
     if !zero {
