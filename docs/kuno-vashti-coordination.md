@@ -46,12 +46,15 @@ separate unchanged CPU coverage; new actual-policy and grammar controls added.
 Original189+four poison +22 new actual-GPU routed-product controls required;
 actual prefix delta must equal new medium groups. Source was prepared during the
 frozen previous run; compilation began ONLY AFTER its complete recovery proof.
-Final sourceda5aae36/SHA61f89376 passes171 App/13 runtime/421 WGSL/216 layouts.
-Protected `kuno-medium-experts-20261021.service` is running original189+four poison
-+22 medium routed-product+18 medium Direct-GU exact-pair controls (233 total),
-then BOTH full original profiles/proofs/recovery. Require exact actual native
-prefix increases matching new medium groups. GPU correctness and performance
-pending. No installation or numerical relaxation claim.
+Initial sourceda5aae36/SHA61f89376 passes171 App/13 runtime/421 WGSL/216 layouts,
+but first protected operator attempt exits before new kernel: original fixed-public
+fixture count allowlist omitted128. Physical recovery PASS; not a math/speed result.
+Final fixture-only fix source6720c6d2/SHA34b73687 passes172 App/13 unchanged-runtime/
+421 WGSL/216 layouts. New actual fixture test preserves authentic map/high routes/
+finite owned images; original nine fixture counts/IEEE bounds unchanged. Root owns
+`kuno-medium-fixed-20261022.service` with original189+four poison+22 medium products
++18 medium Direct-GU exact pairs (233), then BOTH full profiles and exact actual
+prefix deltas/owners/recovery. GPU/performance pending. No install.
 
 Both prior GPU units finished/recovered. Only root owns the current medium GPU unit.
 Owned sudo refresh895579/shared shell3556 ends00:30:44UTC Oct22; never kill shared

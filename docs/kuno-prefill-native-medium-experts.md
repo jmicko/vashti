@@ -89,3 +89,17 @@ so a fixture error cannot be obscured by a generic stage label. Engine arithmeti
 selectors, header, grammar and all numerical thresholds remain unchanged.
 Repeat final172 CPU/offline/frozen233-GPU/full-profile proof on a new artifact;
 never reuse this incomplete attempt as an acceptance or performance receipt.
+
+
+## Frozen fixture correction (2026-10-22 00:03UTC)
+
+Source6720c6d2d83f288e54a2ec7220296fb81a915d7b, worker SHA256
+`34b736876744aa3dbb6c17a8f59dcac8b7e64e0edc9437c811be2e9ea526f1f6`,
+build`strata-parity-medium-fixturefix-20261021`. All172 selected App controls PASS;
+runtime13 remains exact-source valid (entire runtime tree unchanged fromffa).
+Frozen421 WGSL/216 matrix layouts PASS with original pinned validator.
+Root unit`kuno-medium-fixed-20261022.service` repeats the full233-GPU/both-profile
+proof chain on this artifact. Exact proof scripts/logs:
+`check-native-medium-fixed-{connected,acceptance}-20261021.py`,
+`native-medium-fixed-{cpu-selection,cpu-features,cpu-final,offline,release-build,connected}-20261021*`.
+All prior failed receipts preserved. No new numerical or speed result yet.
