@@ -3006,6 +3006,7 @@ impl<'a> GpuExecutor<'a> {
         {
             private_owned
                 .checked_add(crate::strata_prompt::allocation::MAIN_BYTES)
+                .and_then(|n| n.checked_add(crate::strata_prompt::allocation::SECONDARY_RAW_BYTES))
                 .ok_or(Error::ArithmeticOverflow)?
         } else {
             private_owned

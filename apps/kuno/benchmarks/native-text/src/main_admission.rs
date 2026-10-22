@@ -307,14 +307,12 @@ mod tests {
             .requests();
         let mut ledger = MainAdmission::new(31 * 1024 * 1024 * 1024, 0).unwrap();
         if crate::strata_intel_core::enabled() {
-            assert_eq!(
-                ledger.precharge(&roots),
-                Ok(crate::strata_prompt::allocation::MAIN_BYTES)
-            );
-            assert_eq!(
-                ledger.upper_bytes(),
-                crate::strata_prompt::allocation::MAIN_BYTES
-            );
+            let base = crate::strata_prompt::allocation::MAIN_BYTES;
+            let extra = crate::strata_prompt::allocation::SECONDARY_RAW_BYTES;
+            assert_eq!(roots[..3].iter().sum::<u64>(), base);
+            assert_eq!(roots[3..].iter().sum::<u64>(), extra);
+            assert_eq!(ledger.precharge(&roots), Ok(base + extra));
+            assert_eq!(ledger.upper_bytes(), base + extra);
         } else {
             assert_eq!(MAX_PAGE_BYTES, 128 * 1024 * 1024);
             assert_eq!(
@@ -323,6 +321,30 @@ mod tests {
             );
             assert_eq!(ledger.upper_bytes(), 0);
         }
+    }
+    #[test]
+    fn selected_cohort_second_owner_is_charged_before_ranked_cache_placement() {
+        if !crate::strata_intel_core::enabled() {
+            return;
+        }
+        let roots = crate::strata_prompt::allocation::Plan::new(32768).unwrap().requests();
+        let base = crate::strata_prompt::allocation::MAIN_BYTES;
+        let extra = crate::strata_prompt::allocation::SECONDARY_RAW_BYTES;
+        let total = base + extra;
+        let limit = 31 * 1024 * 1024 * 1024;
+        let old_budget = shared_expert_capacity(limit, &roots[..3], limit).unwrap();
+        let actual_budget = shared_expert_capacity(limit, &roots, limit).unwrap();
+        assert_eq!(old_budget - actual_budget, extra);
+        assert_eq!(actual_budget + total, limit);
+        let mut short = MainAdmission::new(total - 1, 0).unwrap();
+        assert_eq!(short.precharge(&roots), Err(AdmissionError::LimitExceeded));
+        assert_eq!(short.upper_bytes(), 0); // Entire group rejects before any allocation.
+        let mut exact = MainAdmission::new(total, 0).unwrap();
+        assert_eq!(exact.precharge(&roots), Ok(total));
+        assert_eq!(exact.upper_bytes(), total);
+        let loan = crate::strata_prompt::allocation::Plan::new(32769).unwrap();
+        assert!(loan.requests().is_empty());
+        assert_eq!(loan.secondary_raw_bytes(), 0);
     }
     #[test]
     fn native_shared_capacity_accounts_for_peer_before_ranked_prefix() {
