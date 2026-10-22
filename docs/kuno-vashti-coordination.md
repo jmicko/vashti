@@ -1,26 +1,27 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno checkpoint (2026-10-22 11:20UTC): complete cohort retry after public fixture fix.**
+**Active Kuno checkpoint (2026-10-22 11:36UTC): full cohorts correct; hidden warm overhead diagnostic.**
 
 Goal ACTIVE/UNMET. Native-prepared301f1fd1/SHA0e226827 remains installed with
 unchanged gateway36626d30/SHAd3ed07f4 and accepted clean first10.8972/repeat8.7121s.
-The complete [cohort producer/matrix/grammar](kuno-prefill-expert-cohorts.md) and
-[sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) are rebuilt
-at a5d28335/workerSHAc01f0ee7. Exact root196 CPU+11 runtime, separate8 identical
-metadata controls and429 WGSL/280 matrix layouts PASS. Rejected a75/eb5561fd
-failed only at the new paired public fixture's two400MiB GPU outputs under the
-original768MiB budget; full receipt/recovery retained. Source786c381c/a5d28335
-changes only that fixture: oneGPUowner, boundedZeroizing host reference, actual
-full-span erasure+zero verification, unchanged full bitwise/status/fault/source/
-tail scans, public-only mismatch diagnosis. Production kernels unchanged.
-Protected root unit`kuno-expert-cohorts-pair-owned-20261022.service` now runs
-all326 GPU controls and both complete original chains, with actual selection
-counts. Helper`check-expert-cohorts-pair-owned-connected-20261022.py` SHA3a82e40d;
-artifact`strata-parity-expert-cohorts-pair-owned-20261022`. No full GPU/speed/
-installation result yet. No simultaneous CPU compilation. Root owns hardware.
+Complete [cohorts](kuno-prefill-expert-cohorts.md)/[sealed selection](kuno-prefill-cohort-selection.md)
+a5d28335/workerSHAc01f0ee7 PASS196 CPU+11 runtime+separate8 metadata controls,
+429 WGSL/280 matrix layouts, ALL326 GPU controls and BOTH complete original
+18-script proof/profile/recovery chains, actual normal rolling submission/pool
+adoption. Aggregate typo expected768MiB; real original512MiB limit is retained
+and met. Failed wrapper/log retained; strict attestation498e5611 rechecks same
+completed source-bound receipts and recovery, NO GPU rerun. Full exact evidence
+and corrected-source binding in linked spec. Actual first/repeat11.4293/10.4199s
+is ~13% slower than installed normal10.1166/9.2220, despite164,684→88,424 real
+launches, ~5% shorter sampled GPU work and faster actual CPU capture boundaries.
+KEEP complete path; investigate uncaptured frontend or lost overlap. No clean
+selection/staged/install run. Legacy expert_cpu_* excludes cohort frontend.
+Root normal warm flat CPU+Xe PMU now runs`kuno-expert-cohorts-warm-costs-20261022.service`,
+helper138ab652, samples only public request3, rawdata/run erased. Not clean speed.
+Root owns all hardware; no simultaneous CPU build. Two agents read source only.
 No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
 Bounded sudo refresher1145657 expires15:45:12UTC; never kill shared shell3556.
-Earlier active snapshots below are historical. Failed attempt recovered actual
+Earlier active snapshots are historical. Complete prior GPU/profile run recovered
 Intel50,688,000B/NVIDIA compute0, services200/fault0/normal admission/unchanged boot.
 
 **Active installed Kuno checkpoint (2026-10-22): native-prepared selected.**

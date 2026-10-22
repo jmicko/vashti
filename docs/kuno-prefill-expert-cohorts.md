@@ -143,7 +143,7 @@ suffix. Failure is a harness preflight, not a GPU/math/recovery result.
 
 First actual complete GPU attempt FAILED at the new paired8-group matrix
 fixture: `private arena budget exceeded`. Two400MiB DOWN outputs plus75MiB
-images exceed the original768MiB budget. No full GPU or speed result; failed
+images exceed the original512MiB budget. No full GPU or speed result; failed
 `strata-parity-expert-cohorts-20261022-operators` receipt/compiler diagnostics
 retained. Protected process exit and original recovery pass: unchanged boot,
 Intel50,688,000B/NVIDIA compute0, services200, all driver faults0, normal
@@ -162,7 +162,7 @@ and pinned-validator429 WGSL/280 matrix layouts PASS again; selector8 source
 files remain identical. Artifact `strata-parity-expert-cohorts-pair-owned-20261022`,
 frozen source `a5d28335264493980c0ed3be2b421814abb568aa`, worker SHA256
 `c01f0ee7cbd4391f9839302e42a7b62756b282a6877ec4e5f4a38c6042d0e3c8`.
-Actual fixture charged GPU maxima are below512MiB in the unchanged768MiB arena.
+Actual fixture charged GPU maxima are below512MiB in the unchanged512MiB arena.
 The <=400MiB Zeroizing reference is fixed-public host backing; each original
 readback is separately bounded16MiB, dropped, sanitized and receipt checked.
 
@@ -174,3 +174,48 @@ log `expert-cohorts-pair-owned-connected-20261022.log`. All18 frozen harness
 predecessors and original math/compiler/source/owner/erasure/recovery guards
 remain; new guards require actual one-owner/zero verification/host and GPU caps.
 No GPU success, speed or installation is claimed until completion and recovery.
+
+## Complete GPU and both-chain acceptance; retained complete candidate
+
+Frozen a5d28335/c01f0ee7 passes ALL326 GPU controls (original241+11 actual
+native-prepared admissions+74 cohort controls), both complete original18-script
+proof/profile/recovery chains, actual rolling submission and completed-pool
+adoption, native-prepared counts, unchanged math/compiler/owners/caps/erasure.
+The extra metadata-only selector8 controls remain explicitly separate.
+
+The new aggregate post-guard initially expected768MiB, an incorrect planning
+assumption. Actual unchanged `strata_worker.rs329` matrix arena is512MiB;
+GU fixture charges103,088,128B, DOWN500,760,576B, both fit. The original failed
+wrapper/log are preserved. A strict attestation-only helper rechecks the same
+completed326/operator/profile/normal receipts and their before/after recovery,
+source/worker/harness identities, exact original completed reencode/template
+proofs, source512MiB constructor unchanged from a75, all remaining outer guards,
+and corrected exact512MiB limit. No GPU or timing rerun occurs for this typo.
+Helper `check-expert-cohorts-pair-owned-attest-20261022.py` SHA256
+`498e5611167c4f10bdba7b5e98ba66033655b70c96464fec47edb24920a086d9`.
+Full public summary:
+`strata-parity-expert-cohorts-pair-owned-20261022-expert-cohorts-public-summary.json`.
+Its `post_guard_correction` pins failed wrapper/log and all completed receipt/
+recovery hashes. Original failed hardware-log SHA256
+`7259db489f9ced547df22397ea4179d25e37a0ed14825259a0d0b3bec857bc7a`.
+
+Complete candidate normal first11.429276201/repeat10.419853034s versus installed
+native-prepared normal10.116598360/9.222042861s is about13% slower. KEEP the
+complete coupled implementation; no clean selection, staged quality or install
+has run. Actual physical expert launches164,684 ->88,424, sampled GPU classes
+sum about90.55 ->86.32ms for the fixed layer; genuine CPU capture/recording
+boundaries also improve. Total wall regression lies outside those measured
+sections or in scheduling overlap; do not discard the complete implementation
+or claim measured GPU improvement proves end-to-end improvement. Current
+expert_cpu_* timers cover legacy branch only and exclude cohort frontend;
+those fields are not complete new-path CPU attribution.
+
+Normal-schedule fixed-public warm flat CPU+Xe PMU diagnostic now runs in
+`kuno-expert-cohorts-warm-costs-20261022.service`, helper
+`check-expert-cohorts-warm-costs-20261022.py` SHA256
+`138ab652ae23bc4cbbd9a3289703805ad3f805920f94235394f3a5dead389eb3`.
+Samples only request3 repeat-long rebind_begin→last_prompt_input; flatIP/counters
+only, no stack/register/content/system-wide sampling. Raw data stays in/run and
+is erased; no CPU build concurrent. This is diagnostic, NOT a clean speed
+selection rerun; PMU forcewake/CPU sampling can perturb timing. Root owns GPUs.
+No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
