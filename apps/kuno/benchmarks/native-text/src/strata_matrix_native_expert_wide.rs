@@ -1455,6 +1455,11 @@ pub(super) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
 }
 
 #[cfg(test)]
+pub(super) fn direct_entry_name() -> &'static str {
+    core::any::type_name::<expert_wide_gu_direct::ExpertWideGuDirect<WgpuRuntime>>()
+}
+
+#[cfg(test)]
 pub(super) fn entry_names() -> [&'static str; 4] {
     [
         core::any::type_name::<expert_wide_gu::ExpertWideGu<WgpuRuntime>>(),

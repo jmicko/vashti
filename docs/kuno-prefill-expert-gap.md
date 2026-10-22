@@ -106,3 +106,39 @@ file under the old `gdn/` directory. No original artifact is changed.
 `strata-attention-isa-identities-20261022.json` independently binds each symbol,
 metadata, full assembly SHA and actual SIMD/GRF/SLM values. AOT extraction order
 is not a semantic name. This correction does not change any benchmark result.
+
+
+## First expert-register run and complete next bundle
+
+Frozen8b7490a543408cfb1a343680c267c913d70718ef, workerSHA
+0d821b0b49e371f104a9276219d34d85b45335035eea9c66ce727139b7665ac7,
+artifact `strata-parity-expert-register-20261022`, passes222 selected CPU,
+runtime13,429 WGSL/280 matrix layouts, all326 GPU controls and the complete
+inner18-script chains. Both normal/profile receipts attest computation and
+physical recovery. Normal first10.591999060/repeat9.341873441s; profiled
+10.523338456/9.442025625s. Compared to preceding normal10.501310285/
+9.380901735s this is neutral, not a meaningful gain or clean selection.
+
+The OUTER aggregate fails a new profiling-only assertion: it expected ordinary
+wide_gu calls, but this complete serving bundle selects the distinct generated
+`expert_wide_gu_direct::ExpertWideGuDirect` program. It remained in `other`.
+Original numerical, source, owner, capacity, erasure and recovery checks passed;
+do not claim the outer wrapper or systemd unit succeeded. `--collect` removes
+failed units too: inactive/not-found with default ExecMainStatus0 does not prove
+exit0. Original failed wrapper/log/receipts are preserved. No repeat hardware
+run to hide that error.
+
+Actual partial corrected fixed layer has macro236calls/13.065ms,
+cohort278/10.814ms, tailGU48/3.452ms,tailDOWN48/1.389ms,wideDOWN49/2.895ms.
+Narrow0 and ordinarywideGU0 are legitimate absent paths;58 calls/5.449ms remain
+in other, which cannot be relabelled as measured directGU by inference.
+These are diagnostic one-layer timestamps, not full-prompt rates.
+
+The successor retains ALL expert and QSA prefetch code, adds native-XOR
+commita022e933, and explicitly classifies the direct-GU program with its
+genuine generated type. Its CPU fixture now verifies all five ordinary/direct
+wide/tail types (the four original names remain unchanged for old controls).
+Next frozen full225-CPU/13-runtime/429/280/326-GPU chain must also require each
+selected actual matrix family and exact per-family sums equals aggregate matrix.
+No uninstrumented/staged/install or Strata-parity claim. No service/settings
+change; accepted native-prepared worker and gateway remain installed.

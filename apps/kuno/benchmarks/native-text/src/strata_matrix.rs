@@ -49,8 +49,15 @@ pub(crate) fn expert_metadata_test_names() -> [&'static str; 3] {
     feature = "strata-intel-core",
     feature = "strata-native-expert-wide"
 ))]
-pub(crate) fn wide_expert_profile_names() -> [&'static str; 4] {
-    native_expert_wide::entry_names()
+pub(crate) fn wide_expert_profile_names() -> [&'static str; 5] {
+    let old = native_expert_wide::entry_names();
+    [
+        old[0],
+        old[1],
+        old[2],
+        old[3],
+        native_expert_wide::direct_entry_name(),
+    ]
 }
 
 #[cfg(feature = "strata-cubek-gemm")]

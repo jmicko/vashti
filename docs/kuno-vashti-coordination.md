@@ -1,5 +1,27 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno work (2026-10-22): complete expert-register + native-XOR continuation.**
+
+User authorizes the computer/GPUs for the next few hours and requests continued
+work until matching Strata. Goal remains UNMET (controller usageLimited).
+Read [the source comparison and active handoff](kuno-prefill-expert-gap.md).
+Expert-register8b7490a5/SHA0d821b0b passes222CPU/runtime13/offline429/280,
+all326 GPU and both original INNER chains with actual recovery. Normal
+first10.591999060/repeat9.341873441s is neutral. OUTER aggregate fails a new
+profiling-only selected-family assumption: real directGU uses a fifth generated
+type and was still other. Preserve failure; no clean/staged/install selection.
+Do not treat a collected failed unit's default ExecMainStatus0 as proof of success.
+
+Full next bundle keeps expert-register and attention prefetch, adds constant
+XOR reduction lowering (a022e933) and real direct-GU classification. Strata's
+actual constant butterflies use direct register permutations; Kuno indexed
+spelling has332 indirect moves. Source equivalence alone does not prove speed.
+No CPU compilation while the previous GPU run was active; it has now recovered.
+Next root225 CPU/offline/full326 +both chains +actual ISA precede selection.
+No API/KNT2/KNR2/config/model/context/frontend/reset/reboot/release change;
+Vashti:none. Installed native-prepared301f1fd1 remains. Earlier checkpoints
+below are historical. Root alone owns CPU target and hardware.
+
 **Current Kuno checkpoint (2026-10-22 17:30UTC): attention prefetch fully tested; no speed gain.**
 
 Full coupled QSA prefetch sourcec5a17af5 (merged ae24a145)/workerSHA78e7a60e

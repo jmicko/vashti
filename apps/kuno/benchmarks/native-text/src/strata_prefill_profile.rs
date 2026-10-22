@@ -45,7 +45,9 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
-    if name.contains("::expert_wide_gu::ExpertWideGu") {
+    if name.contains("::expert_wide_gu::ExpertWideGu")
+        || name.contains("::expert_wide_gu_direct::ExpertWideGuDirect")
+    {
         0
     } else if name.contains("::expert_wide_down::ExpertWideDown") {
         1
@@ -95,6 +97,7 @@ fn native_class(name: &str) -> usize {
         "OrderedCopy" => 4,
         "OrderedFill" => 5,
         _ if name.contains("::expert_wide_gu::ExpertWideGu")
+            || name.contains("::expert_wide_gu_direct::ExpertWideGuDirect")
             || name.contains("::expert_wide_down::ExpertWideDown")
             || name.contains("::expert_tail_gu::ExpertTailGu")
             || name.contains("::expert_tail_down::ExpertTailDown")
@@ -116,9 +119,9 @@ mod native_sample_tests {
     #[test]
     fn actual_generated_wide_and_tail_names_are_matrix_not_other() {
         #[cfg(all(feature = "strata-intel-core", feature = "strata-native-expert-wide"))]
-        for (family, name) in crate::strata_matrix::wide_expert_profile_names()
+        for (family, name) in [0, 1, 2, 3, 0]
             .into_iter()
-            .enumerate()
+            .zip(crate::strata_matrix::wide_expert_profile_names())
         {
             assert_eq!(native_class(name), 1);
             assert_eq!(matrix_family(name), family);
