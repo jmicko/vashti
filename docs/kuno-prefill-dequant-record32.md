@@ -37,3 +37,27 @@ Build on best complete copy-cohort bundle; later packed/medium/default-attention
 components remain optional rather than forcing neutral/slower selectors.
 No speed claim from preparation or microprobes. Preserve original first/repeat
 5%-at-EACH/terminal/staged/API/privacy/quality/install gates.
+
+
+## Frozen CPU and offline checkpoint
+
+Sourceaf4de6f0c62ad535b3a29dd9f6543f663368a799; artifact
+`strata-parity-record32-20261022`; worker SHA256
+`96b0c3b0938e98f8bf73850a979c7cf0aae9b0b5d3a68c26b697d98d81d37ccd`.
+All original166 selected CPU controls plus two actual record32 controls PASS168;
+unchanged original runtime grammar/tape controls PASS11, frozen421 WGSL and216
+matrix layouts PASS with original pinned2026.1 SPIR-V validator. No extra device
+feature or dependency. Physical preflight07:52:18UTC: Intel50,688,000B, NVIDIA
+compute0, reported driver fault counters0, all3 servicesHTTP200/admission normal.
+Initial17.67GB was the idle image worker; original native unload path evicted it
+and the actual physical check passed. No service restart or reset needed.
+
+Root-owned `kuno-record32-20261022.service` now executes original189 GPU controls
+and BOTH complete original profile/compiler/count/source/owner/erasure/recovery
+chains. Wrapper `check-native-record32-connected-20261022.py` SHA256
+7a5b732c8e95483e503751861d9d46cd4def0dad5b3a99951a772c24132412a8 pins artifact,
+exact CPU features/tests and full original proof chain, then requires real
+logical record counts equal groups*(2560*1280+640*2560)/32 in all requests.
+Evidence base `/media/jmicko/faststore/kuno-development`:
+`native-record32-{cpu-selection,cpu-features,cpu-final,runtime-cpu,offline,release-build,connected}-20261022*`.
+GPU correctness/performance pending; installed version unchanged.

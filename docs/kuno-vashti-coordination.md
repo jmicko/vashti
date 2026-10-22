@@ -31,7 +31,9 @@ Prepare each encoded32-value quant record once while preserving all four origina
 vector8 stores/rounding/fault checks, coupled with exact production/probe grids.
 Keep original physical source/owner/hazard/erasure/reference bounds. Build from
 best copy-cohort feature bundle; other complete components remain optional.
-CPU validation preparing; no hardware result/speed/install claim yet.
+Sourceaf4de6f0/SHA96b0c3b0 frozen after168 CPU/11 runtime/421 WGSL/216 matrix
+PASS. Root unit`kuno-record32-20261022.service` runs original189 GPU and BOTH full
+profiles/proofs/recovery. GPU result pending, no speed/install claim yet.
 Owned sudo refresher1145657/shared shell3556 bounded until15:45:12UTC; stop
 refresher on close, never shared shell. Initial state has17.67GB Intel cached
 model memory; protected helpers must unload and verify physical recovery before
