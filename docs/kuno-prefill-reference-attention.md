@@ -73,4 +73,29 @@ is pinned by the new connected wrapper. No numerical gate/reference changed.
 Evidence under `/media/jmicko/faststore/kuno-development`:
 `native-reference-fixed-{cpu-selection,cpu-features,cpu-final,offline,release-build,connected}-20261022*`,
 `check-native-reference-fixed-{connected,acceptance}-20261022.py`.
-GPU/performance and original terminal/clean/staged/install acceptance pending.
+GPU/performance completed below. Original terminal/clean/staged/install acceptance
+was not started for this neutral/slower candidate.
+
+
+## Complete outcome and user-requested close
+
+Protected `kuno-reference-attn-20261022.service` completed all233 GPU controls
+and BOTH original73/4245/4245 modes, including full compiler/count/source/owner/
+erasure/recovery chains. Exact artifact/source/hash above. Aggregate receipt:
+`strata-parity-reference-fixed-20261022-reference-attn-public-summary.json`.
+No numerical bounds, status/poison controls or owning guards relaxed.
+
+Normal first/repeat11.404259100/9.965325679s. Sampled-profile mode
+11.321599225/10.028465246s. Normal warm attention total3.055612906s, QSA
+attention/merge1.607492536s. Compared with packed11.3106/9.7327s, this complete
+default schedule yields no additional speed. Load times varied117.05s sampled
+and81.94s normal; do not mistake load variance for prompt gains. All correct
+components retained as optional; installed worker/gateway unchanged. No new
+terminal/clean/staged/install selection or decoder speed claim.
+
+User requested close. Fresh00:31:05UTC physical recovery receipt
+`native-prefill-final-state-20261022.json` confirms Intel50,688,000B, NVIDIA
+compute0/655MiB desktop, reported driver faults0, all services HTTP200 and normal
+admission. All owned test/build/worker jobs ended; bounded sudo refresher expired.
+Goal remains paused/unmet. See coordination guide for next investigation and
+full checkpoint. Required Vashti changes:none.

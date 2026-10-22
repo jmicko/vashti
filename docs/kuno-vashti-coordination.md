@@ -22,39 +22,53 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active manual handoff (2026-10-22 00:20UTC): copy gain retained; complete medium path correct/slower; exact reference attention testing.**
+**Authoritative stopped handoff (2026-10-22 00:31UTC): user requested close; GPUs and services ready.**
 
-User authorized manual work with both GPUs/sudo; controller remains paused.
-Use ONLY isolated Kuno checkout/branch above. Installed3fffc266/gateway36626d30
-unchanged. [Copy cohorts](kuno-prefill-copy-cohorts.md)661ddad3/SHA09f39612 passes
-all original proofs; clean first12.7915/repeat9.2446s misses original first5% gate.
-[Packed cache](kuno-prefill-packed-cache.md)fe579785/SHAeaeb67cd passes193 GPU/full
-proofs; normal9.7327s neutral. Keep complete correct components.
+Goal remains PAUSED/UNMET. No more live work should start without user resuming.
+Use ONLY isolated `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Canonical coordination work and inherited cache preserved.
+Installed worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 freshly
+rehashed unchanged. No new installation, API/KNT2/KNR2/model/config/frontend/
+release/reset/reboot change; required Vashti changes: none.
 
-[Medium experts](kuno-prefill-native-medium-experts.md)6720c6d2/SHA34b73687 passes
-172 App/13 runtime/421 WGSL/216 layouts,233 GPU and BOTH complete profile/count/
-compiler/source/owner/erasure/recovery chains. Exactly1576 added medium groups
-per long prompt, wide prefixes4688->7840 and Direct-GU2344->3920 in BOTH modes.
-Normal11.6871/10.0194s vs packed11.3106/9.7327s: modest slowdown. No clean/staged/
-install claim. Full component remains; original failed fixture receipt preserved.
+Best gain is [copy cohorts](kuno-prefill-copy-cohorts.md)661ddad3/SHA09f39612:
+all original proofs pass; clean first12.791548881/repeat9.244574900s versus installed
+12.962279132/11.147390805s. Repeat is17.07% faster, first only1.32%; original5%
+required at EACH position still fails. No staged/install acceptance. Same-host
+Strata repeated4245-token prompt5.3515s still leads. Keep the complete gain.
 
-[Exact selected Strata default attention](kuno-prefill-reference-attention.md)
-source180b91bd/SHAe3455e4c now frozen after175 App/13 unchanged-runtime/421 WGSL/
-216 layout PASS. Full single-cell/default shared PV/constant XOR +explicit FMA
-schedule implemented together; prior paired/gather/packed generators retained
-and independently tested. Original scalar/F64 references and bounds unchanged.
-New selected-source composition/compiler proof replaces incompatible old-mode
-composition assertions; no arithmetic tests removed. Actual compiler must show
-96 MADs for this explicit mode (same672 QK FMAs/chunk); paired modes still180.
-Exact extended compiler guard SHA31d3cf54 pinned in wrapper, old helper preserved.
-Earlier CPU inventory compared different existing fault closings and was corrected
-without engine changes; incomplete release322 refused on source-change detection.
+Later complete optional components remain, with no cherry-picked speed claim:
+[packed cache](kuno-prefill-packed-cache.md)fe579785/SHAeaeb67cd passes193 GPU,
+normal first11.3106/repeat9.7327s, neutral; [medium experts](kuno-prefill-native-medium-experts.md)
+6720c6d2/SHA34b73687 passes233 GPU, normal11.6871/10.0194s, modest slowdown.
+[Complete default Strata attention](kuno-prefill-reference-attention.md)
+180b91bd/SHAe3455e4c passes175 App/13 unchanged-runtime/421 WGSL/216 layouts,
+233 GPU controls and BOTH full original compiler/count/source/owner/erasure/
+recovery chains. Normal first11.404259100/repeat9.965325679s; no additional gain.
+Original arithmetic/status/poison/F64 bounds and owning memory guards retained.
+Its explicit96-MAD single-cell compiler inventory replaces180 only in this mode;
+paired modes still require180, subgroup32/no spills unchanged. Original helper
+snapshot preserved; selected helper SHA31d3cf54 pinned. Failed intermediate
+fixture/source-inventory controls and refused source-changing build retained.
+No new terminal/clean/staged/install acceptance for these later experiments.
 
-Root owns `kuno-reference-attn-20261022.service`, running233 GPU controls plus BOTH
-full original profiles/proofs/recovery. GPU/performance pending, no install. Prior
-GPU units recovered. Sudo refresh895579/shared shell3556 bounded until00:30:44UTC;
-never kill shared shell. No API/KNT2/KNR2/frontend/model/config/release/reset change;
-required Vashti changes:none. Preserve canonical coordination work/inherited cache.
+Evidence base `/media/jmicko/faststore/kuno-development`:
+`strata-parity-reference-fixed-20261022-reference-attn-public-summary.json`,
+`native-reference-fixed-connected-20261022.log`; other complete artifact names,
+source hashes and tests are in linked specifications. Latest whole-model run is
+complete; all owned test units inactive/dead, no owned build/worker remains.
+Bounded sudo refresher895579 expired naturally; shared shell3556 preserved.
+Fresh `native-prefill-final-state-20261022.json` at00:31:05UTC proves Intel
+50,688,000B, NVIDIA compute0 (655MiB desktop), reported driver fault counters0,
+all three servicesHTTP200; admission inactive/unpaused/recoveryfalse/waiting0.
+Boot unchanged. No GPU reset or reboot attempted.
+
+Next resume: profile normal-schedule expert staging/compute and queue gaps before
+more attention variants. Rare groups1..7 are12221/26673 groups in the retained
+public packed profile; streamed host-stage bytes27,307,776,000 per long prompt.
+This makes rare-expert execution/overlap a candidate, not a proven attribution.
+Sampled serialized GPU timings are not normal-queue utilization. No new profiling
+monitor was started; no further experiment or installation is pending live.
 
 **Previous stopped checkpoint:**
 

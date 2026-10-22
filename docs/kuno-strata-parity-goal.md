@@ -9,20 +9,27 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
-## Authorized manual checkpoint (2026-10-22 00:03UTC)
+## Authoritative stopped checkpoint (2026-10-22 00:31UTC)
 
-Controller remains paused; user explicitly authorized continued manual work.
-[Copy cohorts](kuno-prefill-copy-cohorts.md) source661ddad3/SHA09f39612 passes all
-original GPU/full-profile/recovery checks; clean first12.7915/repeat9.2446s misses
-original first-position5% gate. [Packed cache](kuno-prefill-packed-cache.md)
-sourcefe579785/SHAeaeb67cd passes193 GPU/full proofs, timing neutral (normal9.7327s).
-Keep BOTH complete components. [Medium native experts](kuno-prefill-native-medium-experts.md)
-now extends actual128-token native32 tiles to128..255 groups coherently across
-host/shader/grammar. First attempt stopped at old public fixture allowlist, not
-GPU math; physically recovered. Frozen corrected source6720c6d2/SHA34b73687 passes
-172 App/13 runtime/421 WGSL/216 layouts; protected233-GPU/both-profile run active.
-All original numerical/owner/source/cap/erasure checks remain. No new install;
-installed3fffc266/gateway36626d30 unchanged. Strata5.3515s still leads; goal UNMET.
+User requested close; controller remains PAUSED and parity goal UNMET. No active
+build/test/worker or sudo refresher remains. Fresh physical recovery confirms
+both GPUs available, all services HTTP200 and admission normal; installed
+worker3fffc266/gateway36626d30 freshly rehashed unchanged. No installation.
+
+[Copy cohorts](kuno-prefill-copy-cohorts.md)661ddad3 improves clean repeat
+11.147390805->9.244574900s (17.07%), first12.962279132->12.791548881s (1.32%).
+Original5% at EACH position fails; do not install from repeat alone. Later packed
+cache, medium experts and exact default attention all pass complete correctness
+and recovery but provide no additional speed. Latest reference180b91bd passes
+175 App/13 runtime/421 WGSL/216 layouts/233 GPU and BOTH complete profile proof
+chains; normal first11.404259100/repeat9.965325679s. Same-host Strata5.3515s leads.
+
+Exact source/artifacts/tests/limitations and stopped system receipt are in the
+[authoritative coordination handoff](kuno-vashti-coordination.md) and
+[reference attention outcome](kuno-prefill-reference-attention.md#complete-outcome-and-user-requested-close).
+Keep complete components; no API/frontend/model/config/release change. Future
+normal-schedule rare-expert staging/compute/queue profiling is a hypothesis-led
+next step, not live work. Resume only on user request.
 
 ## Authoritative paused checkpoint (2026-10-21 01:34UTC)
 
