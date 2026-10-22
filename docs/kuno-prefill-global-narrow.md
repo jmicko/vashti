@@ -63,3 +63,34 @@ for this explicit native candidate. No GPU/performance acceptance yet.
 Legacy `expert_native_capture_cpu`/`expert_native_wait_cpu` fields are WALL times
 from Instant, despite their names. Only explicit CLOCK_THREAD_CPUTIME_ID fields
 measure thread CPU. Source comment/docs are corrected, field names preserved.
+
+
+## Frozen protected checkpoint
+
+Sourcee6d04fbcf9aea760e039139d3d989d3c6bcdf4f2, artifact
+`strata-parity-narrow-global-20261022`, worker SHA256
+`0cba555ef108ae6943562673537bdb23d005fc59570107edd961aa7df21c9ac0`.
+Exact committed-source171 CPU PASS again; frozen421 WGSL/248 matrix layouts PASS
+with original pinned2026.1 validator. Original216 layouts retained +32 new global
+layouts. Runtime tree byte-unchanged from accepted record32 (empty diff receipt),
+so original11 runtime controls remain exact-source valid. New compiler controls
+prove selected global modules' exact2/4KiB SLM, one publication barrier, two/three
+loads and one/two DPAS operations per chronological K16 loop. Original staged
+lifetime/alias controls continue on all original staged modules separately.
+
+Protected root unit`kuno-narrow-global-20261022.service` runs original189 GPU
+controls plus18 actual old/new producer and34 original-oracle routed controls,
+then BOTH complete73/4245/4245 mode/compiler/count/owner/source/erasure/recovery
+chains. Same public fixture/seed/model/context and original numerical thresholds.
+Wrapper`check-native-narrow-global-connected-20261022.py` SHA256
+`d0ef4b45d93ddb1e5969eacd4887c766a6c79794075d3eb250e2f4e10ce67b90`
+pins source/artifact/CPU features/tests/offline inventory; actual global groups
+must equal all real1..7 +8..15 +16..31 histogram groups in each request. This
+proof is for the explicit native bundle excluding CubeK; no alternate-feature
+fallback path credit. No fake runtime request/batch or scheduler owner is added.
+
+Evidence base `/media/jmicko/faststore/kuno-development`:
+`native-narrow-global-{cpu-selection,cpu-features,cpu-exact-final,cpu-exact-build,offline,release-build,connected}-20261022*`,
+`native-narrow-global-runtime-unchanged-20261022.diff`. Earlier compile-only
+errors retained as`native-narrow-global-cpu-build-attempt1-20261022*`.
+GPU/performance/terminal/clean/staged/install pending; installed binaries unchanged.

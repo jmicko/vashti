@@ -38,8 +38,12 @@ original grids/count/routes/publication/status/fault/source/cap/erasure guards;
 dense and wide-tail staged modules retained. Independent source audit confirms
 addresses/strides and both producer coupling; GPU acceptance still pending.
 Selected native-only bundle excludes CubeK and coherently requires native-wide.
-New full-control producer/routed probes and actual compiler/coverage controls
-are preparing; no speed claim yet. Source not yet frozen until CPU gates pass.
+Sourcee6d04fbc/SHA0cba555e frozen,171 CPU/11 unchanged-runtime/421 WGSL/248
+matrix layouts PASS. Root`kuno-narrow-global-20261022.service` runs original189
+GPU +18 old/new actual producer +34 original-oracle routed controls and BOTH
+complete profile/count/compiler/source/owner/erasure/recovery chains. Exact
+wrapper/artifact/logs in linked spec; GPU/performance pending, no speed/install
+claim. This is complete producer+matrix wiring, not isolated kernel selection.
 
 Two historical *_cpu diagnostic fields actually use Instant wall elapsed time;
 source/docs corrected without renaming fields. Actual thread-CPU evidence is
