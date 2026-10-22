@@ -728,7 +728,7 @@ fn check_impl(
     ))
 }
 
-#[cfg(feature = "strata-qsa-packed-cache")]
+#[cfg(any(feature = "strata-qsa-packed-cache", feature = "strata-qsa-scale-finite"))]
 pub(crate) fn packed_cache_cases(arena: &mut PrivateArena) -> ProbeResult<Vec<serde_json::Value>> {
     let mut reports = Vec::new();
     for control in [Control::InfiniteScale, Control::NegativeInfiniteScale,

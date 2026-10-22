@@ -142,3 +142,38 @@ Next frozen full225-CPU/13-runtime/429/280/326-GPU chain must also require each
 selected actual matrix family and exact per-family sums equals aggregate matrix.
 No uninstrumented/staged/install or Strata-parity claim. No service/settings
 change; accepted native-prepared worker and gateway remain installed.
+
+
+## Next coupled Q8 finite-predicate candidate
+
+The actual native-XOR175b1c2f public numerical/operator run passes; its scoped
+native code still has332 indirect register moves (3097 instructions/130 sends/
+SIMD32/128GRFs/zero spills), so the SPIR-V XOR spelling alone does NOT make
+Mesa emit Strata's cheap permutations. Keep it as a semantic operation for
+further lowering; never claim the expected assembly improvement happened.
+Whole timing/aggregate results are pending separately.
+
+Strata omits many checks that Kuno must retain. One exact simplification is
+available without weakening them: every signed8-bit code times an FP16 scale
+is finite iff the scale is finite. Max finite magnitude is128*65504, far below
+F32 overflow. NaN/positive and negative infinity, including zero*infinity,
+remain failures. Half subnormals become normal representable F32 values.
+Replace16 repeated K-product finite predicates with the two equivalent scale
+predicates, keeping ALL16 original multiplications and subsequent FMAs,
+queries, scores, access/causal/status checks and sticky fault semantics.
+
+Explicit `--qsa-scale-finite` / `strata-qsa-scale-finite` requires the whole
+native-XOR/prefetch bundle. Refuse any drift in the exact finite function,
+signed-byte decoder, FP16 unpack/selection or all16 original product expressions.
+CPU validation exhausts all65536 half encodings ×256 signed bytes, verifies
+whole-source inverse, unchanged actual ABI/SLM/geometry/barriers/products/
+subgroup instructions and full selected source composition.
+
+Reuse the FOUR existing independent scalar-GPU poison controls (positive/negative
+infinity, NaN, zero*infinity) on this ordinary-layout path as ADDITIONAL controls.
+Original twelve attention controls and every original326 GPU case remain;
+the complete inventory becomes330. Existing `packed_cache_checks` is only the
+legacy fixed-public receipt field name; this option does not select packed cache.
+No original tolerance, owner/fault/readback/erasure or numerical reference is
+changed. No new device capability, allocation, API or persistence. Source-only
+until complete228CPU/runtime13/offline429/280/full330 and recovery pass.

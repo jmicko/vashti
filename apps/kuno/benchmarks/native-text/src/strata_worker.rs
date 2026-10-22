@@ -476,13 +476,13 @@ async fn serve(
             "public_attention_math_controls_complete {}",
             qsa_math_checks.len()
         );
-        #[cfg(feature = "strata-qsa-packed-cache")]
+        #[cfg(any(feature = "strata-qsa-packed-cache", feature = "strata-qsa-scale-finite"))]
         let packed_cache_checks = crate::strata_qsa::public_packed_cache_numeric(&mut arena)
             .map_err(|error| {
                 eprintln!("public_packed_cache_numeric_error {error}");
                 "public_packed_cache_numeric_failed"
             })?;
-        #[cfg(not(feature = "strata-qsa-packed-cache"))]
+        #[cfg(not(any(feature = "strata-qsa-packed-cache", feature = "strata-qsa-scale-finite")))]
         let packed_cache_checks: Vec<serde_json::Value> = Vec::new();
         #[cfg(feature = "strata-qsa-xmx")]
         let qsa_xmx_checks =

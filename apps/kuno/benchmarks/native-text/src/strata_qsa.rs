@@ -31,6 +31,9 @@ mod prompt_native_xor;
 #[cfg(any(test, feature = "strata-qsa-prefetch"))]
 #[path = "strata_prompt_qsa_prefetch.rs"]
 mod prompt_prefetch;
+#[cfg(any(test, feature = "strata-qsa-scale-finite"))]
+#[path = "strata_prompt_qsa_scale_finite.rs"]
+mod prompt_scale_finite;
 #[cfg(all(
     feature = "strata-qsa-prefetch",
     any(
@@ -69,7 +72,10 @@ pub(crate) mod selection;
 pub(crate) use attention_numeric_probe::cases as public_attention_numeric;
 #[cfg(feature = "strata-qsa-xmx")]
 pub(crate) use attention_numeric_probe::large_cases as public_attention_xmx_numeric;
-#[cfg(feature = "strata-qsa-packed-cache")]
+#[cfg(any(
+    feature = "strata-qsa-packed-cache",
+    feature = "strata-qsa-scale-finite"
+))]
 pub(crate) use attention_numeric_probe::packed_cache_cases as public_packed_cache_numeric;
 
 #[cfg(feature = "strata-qsa-xmx")]
@@ -193,6 +199,12 @@ impl Kernel {
         #[cfg(feature = "strata-qsa-native-xor")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_native_xor::source(source)
+        } else {
+            source
+        };
+        #[cfg(feature = "strata-qsa-scale-finite")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_scale_finite::source(source)
         } else {
             source
         };
