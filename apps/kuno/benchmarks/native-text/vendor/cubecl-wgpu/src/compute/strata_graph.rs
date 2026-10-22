@@ -1344,10 +1344,10 @@ impl Graph {
     #[cfg(feature = "kuno-expert-cohorts")]
     pub(crate) fn begin_expert_cohort(
         &mut self,
-        scope: &super::transient_io::NativeExpertBatchScope,
+        stamp: super::transient_io::NativeExpertCohortStamp,
         grammar: &cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar,
     ) -> Result<(), ServerError> {
-        self.cohort_selection.begin(scope, grammar, self.identity, self.nodes.len())
+        self.cohort_selection.begin(stamp, grammar, self.identity, self.nodes.len())
     }
     #[cfg(feature = "kuno-expert-cohorts")]
     pub(crate) fn cohort_submission_pending(&self) -> bool { self.cohort_selection.pending_first().is_some() }

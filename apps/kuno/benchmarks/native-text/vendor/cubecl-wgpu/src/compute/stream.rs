@@ -928,7 +928,8 @@ impl WgpuStream {
         grammar: &cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar,
     ) -> Result<(), ServerError> {
         self.check_native_expert_batch(scope)?;
-        self.strata_graph.as_mut().unwrap().begin_expert_cohort(scope, grammar)
+        let stamp = self.transient_io.as_ref().unwrap().checked_cohort_stamp(scope)?;
+        self.strata_graph.as_mut().unwrap().begin_expert_cohort(stamp, grammar)
     }
     pub(crate) fn check_native_expert_batch(
         &self,

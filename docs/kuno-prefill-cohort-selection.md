@@ -45,7 +45,7 @@ and recording caps; no new allocation or cap increase. Scope identities and
 numeric proof fields are erased on destruction. Pending/closed evidence clears
 at actual submission, and no proof/log/content is persisted.
 
-Six focused CPU controls cover empty/incomplete grammar, exact actual scoped
+Five focused CPU controls cover empty/incomplete grammar, exact actual scoped
 population, foreign/stale owner and generations, changed Graph/node/range
 counts, recording ID/family binding, forbidden queue/named/profile selection,
 failure cleanup, bounded metadata and in-place erasure. Original threshold

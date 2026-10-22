@@ -88,14 +88,14 @@ impl Witness {
 impl Book {
     pub(super) const fn metadata_bytes() -> usize {
         core::mem::size_of::<Self>()
-            + core::mem::size_of::<Witness>()
+            + core::mem::size_of::<Option<Witness>>()
             + core::mem::size_of::<Option<RecordingAdmission>>()
     }
     /// Only the original grammar can provide these counts. The caller must
     /// first validate this exact scope against its real active TransientIo.
     pub(super) fn begin(
         &mut self,
-        scope: &NativeExpertBatchScope,
+        stamp: NativeExpertCohortStamp,
         grammar: &NativeStrataExpertGrammar,
         graph: u64,
         first: usize,
@@ -107,7 +107,6 @@ impl Book {
             }
             return Ok(());
         }
-        let stamp = scope.cohort_stamp();
         if self.pending.is_some()
             || graph == 0
             || first > 32768
@@ -278,14 +277,14 @@ impl Drop for RecordingAdmission {
 
 #[cfg(test)]
 mod tests {
-    use super::super::transient_io::cohort_scope_test_pair;
+    use super::super::transient_io::{cohort_scope_test_pair, cohort_stamp_test};
     use super::*;
     fn pending(scope: &NativeExpertBatchScope) -> Book {
         // Only exercise the private span state machine here. Production begin
         // additionally requires genuine grammar.finish and active IO admission.
         Book {
             pending: Some(Pending {
-                stamp: scope.cohort_stamp(),
+                stamp: cohort_stamp_test(scope),
                 graph: 17,
                 first: 3,
                 launches: 6,
@@ -299,7 +298,7 @@ mod tests {
         let mut book = Book::default();
         assert!(book.witness(17, 3, 2, 0).unwrap().is_none());
         assert!(
-            book.begin(&scope, &NativeStrataExpertGrammar::default(), 17, 3)
+            book.begin(cohort_stamp_test(&scope), &NativeStrataExpertGrammar::default(), 17, 3)
                 .is_err()
         );
         assert!(pending(&scope).witness(17, 12, 8, 6).is_err());
@@ -374,7 +373,7 @@ mod tests {
     fn numeric_evidence_is_erased_in_place_and_reservation_is_bounded() {
         let (_, scope) = cohort_scope_test_pair();
         let mut p = Pending {
-            stamp: scope.cohort_stamp(),
+            stamp: cohort_stamp_test(&scope),
             graph: 17,
             first: 3,
             launches: 6,

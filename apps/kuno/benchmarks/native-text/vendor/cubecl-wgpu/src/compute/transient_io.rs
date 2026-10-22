@@ -1507,7 +1507,7 @@ pub(crate) struct NativeExpertCohortStamp {
 }
 #[cfg(feature = "kuno-expert-cohorts")]
 impl NativeExpertBatchScope {
-    pub(crate) fn cohort_stamp(&self) -> NativeExpertCohortStamp {
+    fn cohort_stamp(&self) -> NativeExpertCohortStamp {
         NativeExpertCohortStamp { owner: Arc::clone(&self.owner), identity: self.identity }
     }
 }
@@ -1524,6 +1524,8 @@ impl NativeExpertCohortStamp {
     }
     pub(crate) fn live(&self) -> bool { !self.owner.retired.load(Ordering::Acquire) }
 }
+#[cfg(all(test, feature = "kuno-expert-cohorts"))]
+pub(crate) fn cohort_stamp_test(scope: &NativeExpertBatchScope) -> NativeExpertCohortStamp { scope.cohort_stamp() }
 #[cfg(feature = "kuno-expert-cohorts")]
 impl Drop for NativeExpertCohortStamp {
     fn drop(&mut self) {
@@ -3915,6 +3917,13 @@ impl TransientIo {
             self.check_reuse(nonce)?;
         }
         Ok(())
+    }
+    /// Only production factory for opaque selection provenance. A stale
+    /// scope's still-live owner cannot mint active-batch attestation.
+    #[cfg(feature = "kuno-expert-cohorts")]
+    pub(crate) fn checked_cohort_stamp(&self, scope: &NativeExpertBatchScope) -> Result<NativeExpertCohortStamp, ServerError> {
+        self.check_native_expert_batch(scope)?;
+        Ok(scope.cohort_stamp())
     }
     pub(crate) fn end_native_expert_batch(
         &mut self,
