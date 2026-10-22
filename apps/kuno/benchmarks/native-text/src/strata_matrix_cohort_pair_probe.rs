@@ -138,11 +138,20 @@ fn compare_reference(arena: &PrivateArena, id: BufferId, reference: &[u32]) -> C
     for start in (0..words).step_by(WINDOW_WORDS) {
         let (view, count) = window(arena, id, start)?;
         let actual = u::read_handle_prefix_u32(arena, view, count)?;
-        let equal = actual.as_slice() == &reference[start..start + count];
+        let expected = &reference[start..start + count];
+        let mismatch = if actual.as_slice() == expected {
+            None
+        } else {
+            actual
+                .iter()
+                .zip(expected)
+                .enumerate()
+                .find_map(|(i, (got, want))| (got != want).then_some((start + i, *want, *got)))
+        };
         drop(actual);
         sanitize(arena)?;
-        if !equal {
-            return Err("public cohort exact original matrix/owner/status mismatch".into());
+        if let Some((word, original, selected)) = mismatch {
+            return Err(format!("public cohort exact original matrix/owner/status mismatch word={word} original_bits={original:08x} cohort_bits={selected:08x}").into());
         }
     }
     Ok(words)
@@ -335,7 +344,10 @@ pub(crate) fn cases(
     let mut reports = Vec::new();
     for down in [false, true] {
         for poison in [false, true] {
-            let result = one(client, arena, down, poison);
+            let result =
+                one(client, arena, down, poison).map_err(|error| -> Box<dyn std::error::Error> {
+                    format!("public cohort paired down={down} poison={poison}: {error}").into()
+                });
             arena.reset()?;
             reports.push(result?);
         }
