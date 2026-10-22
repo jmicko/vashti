@@ -8,6 +8,11 @@ use crate::{
 };
 use zeroize::Zeroizing;
 type Checked<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+const WINDOW_WORDS: usize = 4 * 1024 * 1024;
+// A public oracle only: never attached to a private inference request. The
+// largest original DOWN owner is400MiB. Keep its reference in scrubbed host
+// memory rather than charging a second400MiB GPU owner to the original arena.
+const REFERENCE_BYTES: usize = 400 * 1024 * 1024;
 fn sanitize(arena: &PrivateArena) -> Checked<()> {
     let receipt = cubecl::future::block_on(arena.client()?.sanitize_transient_io_audited())?;
     let bytes = receipt
@@ -25,9 +30,8 @@ fn compare(arena: &PrivateArena, a: BufferId, b: BufferId) -> Checked<usize> {
     if arena.layout(b)?.owned_bytes / 4 != words {
         return Err("public cohort paired whole-owner extent".into());
     }
-    const WINDOW: usize = 4 * 1024 * 1024;
-    for start in (0..words).step_by(WINDOW) {
-        let count = WINDOW.min(words - start);
+    for start in (0..words).step_by(WINDOW_WORDS) {
+        let count = WINDOW_WORDS.min(words - start);
         let view = |id| -> Checked<Handle> {
             Ok(arena
                 .handle(id)?
@@ -40,6 +44,102 @@ fn compare(arena: &PrivateArena, a: BufferId, b: BufferId) -> Checked<usize> {
         let equal = *x == *y;
         drop(x);
         drop(y);
+        sanitize(arena)?;
+        if !equal {
+            return Err("public cohort exact original matrix/owner/status mismatch".into());
+        }
+    }
+    Ok(words)
+}
+fn window(arena: &PrivateArena, id: BufferId, start: usize) -> Checked<(Handle, usize)> {
+    let words = arena.layout(id)?.owned_words;
+    if start >= words {
+        return Err("public cohort pair full-owner window".into());
+    }
+    let count = WINDOW_WORDS.min(words - start);
+    let view = arena
+        .handle(id)?
+        .clone()
+        .offset_start((start * 4) as u64)
+        .offset_end(((words - start - count) * 4) as u64);
+    Ok((view, count))
+}
+fn snapshot(arena: &PrivateArena, id: BufferId) -> Checked<Zeroizing<Vec<u32>>> {
+    let words = arena.layout(id)?.owned_words;
+    if words
+        .checked_mul(4)
+        .is_none_or(|bytes| bytes > REFERENCE_BYTES)
+    {
+        return Err("public cohort pair bounded host reference".into());
+    }
+    let mut reference = Zeroizing::new(Vec::new());
+    reference.try_reserve_exact(words)?;
+    if reference
+        .capacity()
+        .checked_mul(4)
+        .is_none_or(|bytes| bytes > REFERENCE_BYTES)
+    {
+        return Err("public cohort pair bounded host reference capacity".into());
+    }
+    reference.resize(words, 0);
+    for start in (0..words).step_by(WINDOW_WORDS) {
+        let (view, count) = window(arena, id, start)?;
+        let data = u::read_handle_prefix_u32(arena, view, count)?;
+        reference[start..start + count].copy_from_slice(&data);
+        drop(data);
+        sanitize(arena)?;
+    }
+    Ok(reference)
+}
+fn erase_output(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &PrivateArena,
+    id: BufferId,
+) -> Checked<()> {
+    let layout = arena.layout(id)?;
+    let owner = arena.handle(id)?.clone();
+    if owner.offset_start.unwrap_or(0) != 0
+        || owner.offset_end.unwrap_or(0) != 0
+        || owner.size_in_used() != layout.owned_bytes as u64
+        || owner.size() != layout.owned_bytes as u64
+    {
+        return Err("public cohort pair exact output owner erase".into());
+    }
+    // This is the unchanged original arena eraser and its exact full-span
+    // launch geometry. Ownership stays with the arena until reset completes.
+    crate::private_arena::erase_full_span::launch::<WgpuRuntime>(
+        client,
+        CubeCount::Static(layout.workgroups_x, layout.workgroups_y, 1),
+        CubeDim::new_1d(64),
+        unsafe { ArrayArg::from_raw_parts(owner, layout.owned_words) },
+    );
+    cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+    for start in (0..layout.owned_words).step_by(WINDOW_WORDS) {
+        let (view, count) = window(arena, id, start)?;
+        let data = u::read_handle_prefix_u32(arena, view, count)?;
+        let zero = data.iter().all(|word| *word == 0);
+        drop(data);
+        sanitize(arena)?;
+        if !zero {
+            return Err("public cohort pair output owner not completely zero".into());
+        }
+    }
+    Ok(())
+}
+fn compare_reference(arena: &PrivateArena, id: BufferId, reference: &[u32]) -> Checked<usize> {
+    let words = arena.layout(id)?.owned_words;
+    if words != reference.len()
+        || words
+            .checked_mul(4)
+            .is_none_or(|bytes| bytes > REFERENCE_BYTES)
+    {
+        return Err("public cohort paired reference whole-owner extent".into());
+    }
+    for start in (0..words).step_by(WINDOW_WORDS) {
+        let (view, count) = window(arena, id, start)?;
+        let actual = u::read_handle_prefix_u32(arena, view, count)?;
+        let equal = actual.as_slice() == &reference[start..start + count];
+        drop(actual);
         sanitize(arena)?;
         if !equal {
             return Err("public cohort exact original matrix/owner/status mismatch".into());
@@ -135,7 +235,6 @@ fn one(
     let map_id = arena.upload_u32(&map)?;
     let output_bytes = if down { g::PART_BYTES } else { g::GU_BYTES };
     let a = arena.allocate_zeroed(output_bytes as usize / 4)?;
-    let b = arena.allocate_zeroed(output_bytes as usize / 4)?;
     let status = Zeroizing::new(vec![1u32; g::STATUS_WORDS]);
     let sa = arena.upload_u32(&status)?;
     let sb = arena.upload_u32(&status)?;
@@ -175,6 +274,9 @@ fn one(
             down,
         )?;
     }
+    cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+    let reference = snapshot(arena, a)?;
+    erase_output(client, arena, a)?;
     for tile in [8usize, 16] {
         words[11] = tile as u32;
         launch(
@@ -182,7 +284,7 @@ fn one(
             [
                 u::handle(arena, src)?,
                 u::handle(arena, weight)?,
-                u::handle(arena, b)?,
+                u::handle(arena, a)?,
                 u::handle(arena, map_id)?,
                 u::handle(arena, sb)?,
                 u::handle(arena, fb)?,
@@ -193,7 +295,9 @@ fn one(
         )?;
     }
     cubecl::future::block_on(client.sync()).map_err(u::fault)?;
-    let checked = compare(arena, a, b)?;
+    let checked = compare_reference(arena, a, &reference)?;
+    let reference_bytes = reference.capacity() * 4;
+    drop(reference);
     compare(arena, sa, sb)?;
     compare(arena, fa, fb)?;
     for (id, expected) in [(src, &*input), (weight, &*image), (map_id, &*map)] {
@@ -206,19 +310,19 @@ fn one(
                 .offset_start((start * 4) as u64)
                 .offset_end(((owned - start - n) * 4) as u64);
             let actual = u::read_handle_prefix_u32(arena, view, n)?;
-            if actual
+            let unchanged = !actual
                 .iter()
                 .enumerate()
-                .any(|(i, v)| *v != expected.get(start + i).copied().unwrap_or(0))
-            {
-                return Err("public cohort paired original source owner changed".into());
-            }
+                .any(|(i, v)| *v != expected.get(start + i).copied().unwrap_or(0));
             drop(actual);
             sanitize(arena)?;
+            if !unchanged {
+                return Err("public cohort paired original source owner changed".into());
+            }
         }
     }
     Ok(
-        serde_json::json!({"family":"cohort-paired-original-matrix","down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,"actual_original_and_cohort_gpu_programs":true,"original_map_builder_and_validator":true,"nonzero_group_prefix_and_image_slot7":true,"bit_mismatches":0,"full_output_words_checked":checked,"full_owner_status_fault_sources_and_tail_checked":true}),
+        serde_json::json!({"family":"cohort-paired-original-matrix","down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,"actual_original_and_cohort_gpu_programs":true,"original_map_builder_and_validator":true,"nonzero_group_prefix_and_image_slot7":true,"bit_mismatches":0,"full_output_words_checked":checked,"full_owner_status_fault_sources_and_tail_checked":true,"single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,"zeroizing_host_reference_bytes":reference_bytes,"host_reference_limit_bytes":REFERENCE_BYTES,"readback_window_bytes":WINDOW_WORDS*4,"original_arena_budget_bytes":arena.budget_bytes(),"actual_arena_charged_bytes":arena.charged_bytes()}),
     )
 }
 pub(crate) fn cases(
