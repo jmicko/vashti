@@ -91,6 +91,7 @@ strata-qsa-uniform = ["strata-qsa-fma", "strata-qsa-paired", "strata-qsa-pv-gath
 strata-qsa-compact = ["strata-qsa-uniform"]
 # Original QK bytes/scales read in pairs; equivalent finite checks factored.
 strata-qsa-packed-cache = ["strata-qsa-compact"]
+strata-qsa-reference-schedule = ["strata-qsa-fma", "strata-qsa-local-fault"]
 # Complete full-batch QK/softmax/PV cooperative-matrix attention.
 strata-qsa-xmx = ["strata-qsa-compact"]
 # Fixed-public timing diagnosis only; never enabled by deployed worker policy.

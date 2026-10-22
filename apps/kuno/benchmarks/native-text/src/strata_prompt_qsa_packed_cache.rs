@@ -238,7 +238,7 @@ mod tests {
             // Existing compact source proof still proves 180 original FMAs.
             assert_eq!(new.matches("dot=fma(").count(), 168);
             assert_eq!(new.matches("if !finite(kscale)").count(), 2);
-            #[cfg(feature = "strata-qsa-packed-cache")]
+            #[cfg(all(feature = "strata-qsa-packed-cache", not(feature="strata-qsa-reference-schedule")))]
             assert_eq!(k.source(), finish(new));
         }
     }

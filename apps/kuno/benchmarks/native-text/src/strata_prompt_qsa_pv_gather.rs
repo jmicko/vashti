@@ -170,6 +170,7 @@ mod tests {
                 let base = prompt_specialize::source(kernel.scalar_source());
                 #[cfg(feature = "strata-qsa-paired")]
                 let base = prompt_paired::source(base);
+                #[cfg(not(feature="strata-qsa-reference-schedule"))]
                 assert_eq!(
                     kernel.source(),
                     kernel.finish_prompt_source(super::source(base))

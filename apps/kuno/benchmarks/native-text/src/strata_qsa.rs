@@ -34,6 +34,9 @@ mod prompt_local_fault;
 #[cfg(any(test, feature = "strata-qsa-packed-cache"))]
 #[path = "strata_prompt_qsa_packed_cache.rs"]
 mod prompt_packed_cache;
+#[cfg(any(test, feature = "strata-qsa-reference-schedule"))]
+#[path = "strata_prompt_qsa_reference_schedule.rs"]
+mod prompt_reference_schedule;
 #[cfg(any(test, feature = "strata-qsa-paired"))]
 #[path = "strata_prompt_qsa_paired.rs"]
 mod prompt_paired;
@@ -130,6 +133,10 @@ impl Kernel {
         }
     }
     fn source(self) -> String {
+        #[cfg(feature="strata-qsa-reference-schedule")]
+        if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            return prompt_reference_schedule::source(self);
+        }
         let scalar = self.scalar_source();
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             let specialized = prompt_specialize::source(scalar);

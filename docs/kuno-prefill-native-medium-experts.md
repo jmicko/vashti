@@ -103,3 +103,17 @@ proof chain on this artifact. Exact proof scripts/logs:
 `check-native-medium-fixed-{connected,acceptance}-20261021.py`,
 `native-medium-fixed-{cpu-selection,cpu-features,cpu-final,offline,release-build,connected}-20261021*`.
 All prior failed receipts preserved. No new numerical or speed result yet.
+
+
+## Complete corrected medium outcome
+
+Corrected6720c6d2/SHA34b73687 passes172 CPU/13 runtime/421 WGSL/216 layouts,
+all233 GPU controls and BOTH complete original compiler/count/source/owner/
+erasure/recovery chains. Actual medium groups1576 in each long request;
+wide prefixes4688->7840 and Direct-GU2344->3920 exactly match the new groups.
+Normal first/repeat11.687094050/10.019380576s versus packed11.310636369/
+9.732715998s: a small slowdown. Keep the complete correct optional component;
+no clean/staged/install selection attempted. Public exact-source result:
+`strata-parity-medium-fixturefix-20261021-medium-public-summary.json`.
+Next compare [actual default reference attention](kuno-prefill-reference-attention.md),
+retaining expert changes. Same-host Strata5.3515s still leads.
