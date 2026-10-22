@@ -39,6 +39,13 @@ enum Op {
     ActivateCheckGu,
 }
 impl Op {
+    fn dequant_values() -> usize {
+        if cfg!(feature = "strata-dequant-record32") {
+            32
+        } else {
+            8
+        }
+    }
     fn lanes(self) -> u32 {
         if self == Self::Gemm { 64 } else { 256 }
     }
@@ -132,6 +139,10 @@ impl Op {
                 let guard = slot_image_guard(down);
                 assert_eq!(s.matches(old).count(), 1);
                 s = s.replace(old, &guard);
+            }
+            #[cfg(feature = "strata-dequant-record32")]
+            {
+                s = record32::source(s, down);
             }
             return s;
         }
@@ -270,6 +281,10 @@ fn slot_image_guard(down: bool) -> String {
 #[cfg(any(test, feature = "strata-expert-scratch-ring"))]
 #[path = "strata_prompt_expert_scratch.rs"]
 mod scratch_ring;
+
+#[cfg(any(test, feature = "strata-dequant-record32"))]
+#[path = "strata_prompt_dequant_record32.rs"]
+mod record32;
 
 /// Actual descriptor view of one raw transfer slot. All source role spans are
 /// original-format bytes; no scheduler-only narrowed declaration is accepted.
@@ -708,7 +723,7 @@ fn enqueue_original(
                     }
                 },
                 [
-                    (words[1] as usize * words[2] as usize / 8).div_ceil(256),
+                    (words[1] as usize * words[2] as usize / Op::dequant_values()).div_ceil(256),
                     1,
                     1,
                 ],
@@ -716,6 +731,11 @@ fn enqueue_original(
                 words,
             )?;
         }
+        #[cfg(feature = "strata-dequant-record32")]
+        crate::strata_prefill_profile::count(
+            "expert_dequant_record32_records",
+            ((2560 * 1280 + 640 * 2560) / 32) as u64,
+        );
         timing.mark("expert_cpu_dequant");
         crate::strata_matrix::expert(
             client,

@@ -309,7 +309,11 @@ fn cases_with_views(
             unsafe {
                 client.launch_unchecked(
                     Box::new(op),
-                    CubeCount::Static((output_rows * columns / 8).div_ceil(256) as u32, 1, 1),
+                    CubeCount::Static(
+                        (output_rows * columns / Op::dequant_values()).div_ceil(256) as u32,
+                        1,
+                        1,
+                    ),
                     args()?,
                 );
             }
@@ -326,7 +330,7 @@ fn cases_with_views(
                         client.launch_unchecked(
                             Box::new(op),
                             CubeCount::Static(
-                                (output_rows * columns / 8).div_ceil(256) as u32,
+                                (output_rows * columns / Op::dequant_values()).div_ceil(256) as u32,
                                 1,
                                 1,
                             ),
@@ -348,7 +352,7 @@ fn cases_with_views(
                         client.launch_unchecked(
                             Box::new(op),
                             CubeCount::Static(
-                                (output_rows * columns / 8).div_ceil(256) as u32,
+                                (output_rows * columns / Op::dequant_values()).div_ceil(256) as u32,
                                 1,
                                 1,
                             ),

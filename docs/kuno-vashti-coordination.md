@@ -22,6 +22,22 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
+**Active manual resume (2026-10-22 07:45UTC): shared-record dequantization.**
+
+User authorized overnight work, both GPUs and cached sudo. Controller remains
+paused; manual work only. Same isolated checkout/branch, installed binaries
+unchanged. Read [record32 specification](kuno-prefill-dequant-record32.md).
+Prepare each encoded32-value quant record once while preserving all four original
+vector8 stores/rounding/fault checks, coupled with exact production/probe grids.
+Keep original physical source/owner/hazard/erasure/reference bounds. Build from
+best copy-cohort feature bundle; other complete components remain optional.
+CPU validation preparing; no hardware result/speed/install claim yet.
+Owned sudo refresher1145657/shared shell3556 bounded until15:45:12UTC; stop
+refresher on close, never shared shell. Initial state has17.67GB Intel cached
+model memory; protected helpers must unload and verify physical recovery before
+testing. Services healthy, reported driver faults0. No reset/reboot or frontend.
+Required Vashti changes:none. Previous stopped checkpoint below is historical.
+
 **Authoritative stopped handoff (2026-10-22 00:31UTC): user requested close; GPUs and services ready.**
 
 Goal remains PAUSED/UNMET. No more live work should start without user resuming.
