@@ -1422,6 +1422,66 @@ mod tests {
         assert!(!p.segments[1].copy && !p.segments[2].copy);
     }
     #[test]
+    fn whole_actual_raw_banks_overlap_refill_without_forgiving_same_owner_hazards() {
+        const RAW: u64 = 32 * 1024 * 1024;
+        for distinct in [false, true] {
+            for compact in [false, true] {
+                let bank_b = if distinct { 2 } else { 1 };
+                let mut dq_a = range_node(false, 1, 0, RAW, false);
+                dq_a.accesses.push(Access {
+                    buffer: 3,
+                    first: 0,
+                    bytes: 75 * 1024 * 1024,
+                    write: true,
+                });
+                dq_a.release_after = true;
+                let mut dq_b = range_node(false, bank_b, 0, RAW, false);
+                dq_b.accesses.push(Access {
+                    buffer: 3,
+                    first: 0,
+                    bytes: 75 * 1024 * 1024,
+                    write: true,
+                });
+                dq_b.release_after = true;
+                let mut p = plan(
+                    &[
+                        range_node(true, 1, 0, 4 * 1024 * 1024, true),
+                        range_node(true, bank_b, 0, 4 * 1024 * 1024, true),
+                        dq_a,
+                        range_node(false, 3, 0, 75 * 1024 * 1024, false),
+                        // Actual next-unit upload touches a different slot,
+                        // but it still conflicts with a WHOLE-root DQ read.
+                        range_node(true, 1, 4 * 1024 * 1024, 4 * 1024 * 1024, true),
+                        dq_b,
+                        range_node(false, 3, 0, 75 * 1024 * 1024, false),
+                    ],
+                    false,
+                )
+                .unwrap();
+                if compact {
+                    p.compact_segments().unwrap();
+                }
+                let first_read = p.segments[p.node_segments[2]];
+                let first_math = p.segments[p.node_segments[3]];
+                let refill = p.segments[p.node_segments[4]];
+                let next_read = p.segments[p.node_segments[5]];
+                assert_eq!(refill.waits[0], first_read.signal);
+                assert!(refill.waits[0] < first_math.signal);
+                assert!(next_read.signal > refill.signal);
+                if distinct {
+                    // The SAME original full-root planner proves no future
+                    // COPY wait. No subrange or resident predicate excuses it.
+                    assert!(next_read.waits[1] < refill.signal);
+                } else {
+                    assert_eq!(next_read.waits[1], refill.signal);
+                }
+                assert!(p.accesses().iter().any(|a| {
+                    a.buffer == bank_b && a.first == 0 && a.bytes == RAW && !a.write
+                }));
+            }
+        }
+    }
+    #[test]
     fn partial_updates_keep_untouched_prefixes_gaps_and_suffixes() {
         let p = plan(
             &[
