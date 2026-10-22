@@ -139,3 +139,21 @@ constructor refuses a missing terminal blank line in its reconstructed prior
 source. The compact guarded body retains a newline and its outer paired
 loop contributes another. Restore BOTH in the reconstructed old region; do
 not relax source-drift equality. Initial failed log preserved, no GPU dispatch.
+
+## Frontier source and protected hardware gate
+
+Corrected sourcea761763e14404eac91c01784d3b1abee3117daf2 / worker SHA256
+89a27c5b9014e970c680b4fdfb33e1ce4b169aa3c70908a0aa3e5261f40df299
+passes ALL253 selected App controls,15 actual runtime controls,429 WGSL and
+296 matrix layouts. This includes exact old-region reconstruction and every
+original constructor, tree/IEEE, complete native Quad inverse and numerical
+source invariant. No original control removed or bound relaxed.
+
+Protected unit kuno-head-frontier-gap-fixed-20261022 starts all350GPU controls
+and BOTH original18-script chains, with MemorySwapMax0/LimitCORE0. Wrapper
+SHA256f299d7e7e1be898c5dbcdae323a3f25774ad0c5e1216f147f7bbebfe0ee2271c;
+frozen original harness manifest8d9832244829e90ebdafc57ab1fdcd447acc2329323a769d89b7f4f5e100fdd6.
+Artifact prefix strata-parity-head-frontier-gap-fixed-20261022. Hardware and
+whole-model timing pending at this checkpoint. No CPU compilation during it.
+Do not claim the previous spill-heavy8.598s profile as accepted or infer zero
+spills from a4-value symbolic frontier. Installed301f1fd1 remains unchanged.

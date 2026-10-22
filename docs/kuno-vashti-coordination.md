@@ -1,24 +1,25 @@
 # Kuno and Vashti Coordination
 
-**Current Kuno continuation (2026-10-22): ordered-head register frontier.**
+**Current Kuno continuation (2026-10-22): complete frontier GPU gate underway.**
 
-Read [the complete source and tested checkpoints](kuno-prefill-qsa-head-scatter.md).
+Read [the exact implementation, failed gates and active handoff](kuno-prefill-qsa-head-scatter.md).
 Full query/GDN8a49206b/worker dc3084dc passes245CPU/15runtime/429WGSL/296layouts/
 all350GPU and BOTH chains. Normal first/repeat10.301409836/9.011673934s,
-profile10.331076692/9.090600187s. Improvement is chiefly GDN; QSA merge unchanged.
+profile10.331076692/9.090600187s. Gain chiefly GDN; QSA merge unchanged.
 Ordered-head90ce0c9e/worker6084555c passes249CPU/15runtime/offline429/296,
-original operator worker/profile computation and recovery, but actual28spills/
-90fills FAILS unchanged zero-spill gate before normal/outer acceptance.
-Profile9.765336101/8.598320364s diagnostic only; keep complete algorithm.
+original operator/profile computation and recovery; actual28spills/90fills
+FAILS unchanged compiler gate before normal/outer acceptance. Profile
+9.765336101/8.598320364s diagnostic only. Complete algorithm retained.
 
-Complete next frontier source retains every coupled feature and schedules the
-same ordered tree depth-first to reduce live sums12->4 per cell, preserving
-all Q addresses/prefetch/dot FMAs/valid predicates/faults/owners. Source only,
-not compiled or GPU tested. Intended253App/15runtime/429WGSL/296layouts/350GPU/
-BOTH original chains and zero-spill ISA/recovery precede claims. Actual latest
-recovery22:29:26UTC: Intel50,688,000B,NVIDIA compute0,faults0,services200,
-admission normal. Installed worker/gateway unchanged; no API/config/model/
-context/frontend/release/reset/reboot change; Vashti:none. Parity UNMET.
+Depth-first frontiera761763e/worker89a27c5b retains all preceding features and
+passes253App/15runtime/429WGSL/296layouts. Same42 exchanges/168 dot FMAs,
+original operands/guards/owners; symbolic live frontier12->4 per cell.
+Protected unit kuno-head-frontier-gap-fixed-20261022 now runs350GPU/BOTH
+original18-script chains. Actual zero-spill ISA and recovery pending; no CPU
+compilation during GPU timing. Latest recovered snapshot22:29:26UTC:
+Intel50,688,000B,NVIDIA compute0,faults0,services200,admission normal.
+Installed accepted worker/gateway unchanged; no API/model/config/context/
+frontend/release/reset/reboot change; Vashti:none. Parity remains UNMET.
 
 **PAUSED for user machine update (2026-10-22 21:32UTC).**
 
