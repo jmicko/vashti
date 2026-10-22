@@ -1,25 +1,24 @@
 # Kuno and Vashti Coordination
 
-**Current Kuno checkpoint (2026-10-22): ordered frontier full hardware PASS.**
+**Current Kuno continuation (2026-10-22): fixed-role macro64 source.**
 
-Read [the complete source/acceptance/active handoff](kuno-prefill-qsa-head-scatter.md).
-Complete a761763e/worker89a27c5b passes253AppCPU/15runtime/429WGSL/296layouts,
-ALL350GPU and BOTH original18-script chains with physical recovery. Actual
-QSA1898instructions/108sends/SIMD32/128GRF/zero spills/fills; original scalar
-ISA unchanged. Every original numerical/compiler/fault/owner bound retained.
-Normal first/repeat9.654518545/8.354937695s (repeat8.60% shorter than pre-pass
-9.141123116s); profile9.655510196/8.510095030s. QSA attention/merge736.759ms
-versus preceding1338.679ms and prior instrumented Strata680ms. Diagnostic
-comparisons are not whole-model clean parity. Expert interval5.171s remains.
+Read [the source/clean/CPU-profile handoff](kuno-prefill-macro64-static.md).
+Complete frontiera761763e/worker89a27c5b passes253CPU/15runtime/429WGSL/296layouts/
+ALL350GPU and BOTH original chains, zero spills and physical recovery.
+Normal first/repeat9.654518545/8.354937695s. ONE clean gives
+11.053525683/7.924977071s: repeat9.03% faster than installed8.712129955s,
+but FIRST fails original5% selection against10.897223643s. No install and
+no favorable clean rerun. Separate first-long CPU/PMU diagnostic is explicitly
+NOT a clean selection and samples no content/stack/register/branch data.
 
-ONE original clean45/4245/4245 comparison runs now in protected unit
-kuno-head-frontier-gap-fixed-clean-20261022, against installed301f1fd1 clean
-10.897223643/8.712129955s at original5% EACH threshold. No CPU compilation
-during it; no favorable repeat if it fails. Terminal/staged/install acceptance
-not claimed by this clean run. Installed worker/gateway unchanged; no API/
-model/context/config/frontend/release/reset/reboot change; Vashti:none.
-Earlier spill-heavy90ce0c9e and source-only snapshots below are historical.
-Whole-model Strata parity remains UNMET.
+Complete next source keeps all prior optimizations and specializes only the
+authenticated64-row GU/DOWN stage strides/full weight geometry. Preserve
+header/map/role checks, add surplus-X early close, keep masked input tails,
+original dynamic K loop and chronological products/barriers/owners/faults.
+Intended255CPU/15runtime/429WGSL/296layouts/350GPU/BOTH original chains and
+actual compiler/recovery before claims. Source not built/tested yet. Installed
+worker/gateway unchanged; no API/model/context/config/frontend/release/reset/
+reboot change; Vashti:none. Whole-model Strata parity remains UNMET.
 
 **PAUSED for user machine update (2026-10-22 21:32UTC).**
 

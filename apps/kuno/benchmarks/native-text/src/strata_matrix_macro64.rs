@@ -15,40 +15,36 @@ fn macro64_stage<F: Float>(
     k: usize,
     buffer: usize,
 ) {
-    // A full stage is uniform for the workgroup. Resolve that condition
-    // once, then expose the fixed per-lane jobs to the compiler. Publish
-    // each pair immediately; no register-first operand array stays live
-    // across the matrix products.
-    if token_base + 64 <= count && k + 64 <= columns {
-        #[unroll]
-        for round in 0..4usize {
-            let job = usize::cast_from(UNIT_POS) + round * 128;
-            let token = token_base + job / 8;
-            let col = k + (job % 8) * 8;
-            let source = (token * columns + col) / 4;
-            a[buffer * 1024 + job * 2] = input[source];
-            a[buffer * 1024 + job * 2 + 1] = input[source + 1];
-        }
-    } else {
-        #[unroll]
-        for round in 0..4usize {
-            let job = usize::cast_from(UNIT_POS) + round * 128;
-            let token = token_base + job / 8;
-            let col = k + (job % 8) * 8;
-            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
-            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
-            if token < count && col < columns {
-                // Genuine vector bindings and multiple-of16 reductions
-                // guarantee both whole vectors are within the owner.
+    if comptime!(cfg!(feature = "strata-macro64-static-geometry")) {
+        // The authenticated entry has fixed complete64-wide N/K axes and
+        // rejects out-of-grid X before any stage. Preserve the M tail.
+        if token_base + 64 <= count {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 128;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
                 let source = (token * columns + col) / 4;
-                lo = input[source];
-                hi = input[source + 1];
+                a[buffer * 1024 + job * 2] = input[source];
+                a[buffer * 1024 + job * 2 + 1] = input[source + 1];
             }
-            a[buffer * 1024 + job * 2] = lo;
-            a[buffer * 1024 + job * 2 + 1] = hi;
+        } else {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 128;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+                let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+                if token < count {
+                    let source = (token * columns + col) / 4;
+                    lo = input[source];
+                    hi = input[source + 1];
+                }
+                a[buffer * 1024 + job * 2] = lo;
+                a[buffer * 1024 + job * 2 + 1] = hi;
+            }
         }
-    }
-    if row_base + 64 <= rows && k + 64 <= columns {
         #[unroll]
         for round in 0..4usize {
             let job = usize::cast_from(UNIT_POS) + round * 128;
@@ -59,20 +55,65 @@ fn macro64_stage<F: Float>(
             b[buffer * 1024 + job * 2 + 1] = weight[source + 1];
         }
     } else {
-        #[unroll]
-        for round in 0..4usize {
-            let job = usize::cast_from(UNIT_POS) + round * 128;
-            let row = row_base + job / 8;
-            let col = k + (job % 8) * 8;
-            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
-            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
-            if row < rows && col < columns {
-                let source = (weight_first + row * columns + col) / 4;
-                lo = weight[source];
-                hi = weight[source + 1];
+        // A full stage is uniform for the workgroup. Resolve that condition
+        // once, then expose the fixed per-lane jobs to the compiler. Publish
+        // each pair immediately; no register-first operand array stays live
+        // across the matrix products.
+        if token_base + 64 <= count && k + 64 <= columns {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 128;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let source = (token * columns + col) / 4;
+                a[buffer * 1024 + job * 2] = input[source];
+                a[buffer * 1024 + job * 2 + 1] = input[source + 1];
             }
-            b[buffer * 1024 + job * 2] = lo;
-            b[buffer * 1024 + job * 2 + 1] = hi;
+        } else {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 128;
+                let token = token_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+                let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+                if token < count && col < columns {
+                    // Genuine vector bindings and multiple-of16 reductions
+                    // guarantee both whole vectors are within the owner.
+                    let source = (token * columns + col) / 4;
+                    lo = input[source];
+                    hi = input[source + 1];
+                }
+                a[buffer * 1024 + job * 2] = lo;
+                a[buffer * 1024 + job * 2 + 1] = hi;
+            }
+        }
+        if row_base + 64 <= rows && k + 64 <= columns {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 128;
+                let row = row_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let source = (weight_first + row * columns + col) / 4;
+                b[buffer * 1024 + job * 2] = weight[source];
+                b[buffer * 1024 + job * 2 + 1] = weight[source + 1];
+            }
+        } else {
+            #[unroll]
+            for round in 0..4usize {
+                let job = usize::cast_from(UNIT_POS) + round * 128;
+                let row = row_base + job / 8;
+                let col = k + (job % 8) * 8;
+                let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+                let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+                if row < rows && col < columns {
+                    let source = (weight_first + row * columns + col) / 4;
+                    lo = weight[source];
+                    hi = weight[source + 1];
+                }
+                b[buffer * 1024 + job * 2] = lo;
+                b[buffer * 1024 + job * 2 + 1] = hi;
+            }
         }
     }
 }
@@ -85,6 +126,7 @@ pub(super) fn macro64_product<F: Float>(
     rows: usize,
     count: usize,
     weight_first: usize,
+    #[comptime] down: bool,
 ) -> SharedMemory<f32> {
     let mut a = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
     let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
@@ -163,6 +205,16 @@ pub(super) fn macro64_product<F: Float>(
     let subgroup = usize::cast_from(UNIT_POS) / 16;
     let token_base = usize::cast_from(CUBE_POS_Y) * 64;
     let row_base = usize::cast_from(CUBE_POS_X) * 64;
+    let stage_columns = if comptime!(cfg!(feature = "strata-macro64-static-geometry")) {
+        comptime!(if down { 640usize } else { 2560usize })
+    } else {
+        columns
+    };
+    let stage_rows = if comptime!(cfg!(feature = "strata-macro64-static-geometry")) {
+        comptime!(if down { 2560usize } else { 1280usize })
+    } else {
+        rows
+    };
     // Buffer0 is fully initialized, including every masked tail, before
     // any subgroup reads it. Each lane copies eight consecutive half
     // values as two genuine vec4 loads/stores without float conversion.
@@ -171,8 +223,8 @@ pub(super) fn macro64_product<F: Float>(
         weight,
         &mut a,
         &mut b,
-        columns,
-        rows,
+        stage_columns,
+        stage_rows,
         count,
         weight_first,
         token_base,
@@ -194,8 +246,8 @@ pub(super) fn macro64_product<F: Float>(
                 weight,
                 &mut a,
                 &mut b,
-                columns,
-                rows,
+                stage_columns,
+                stage_rows,
                 count,
                 weight_first,
                 token_base,
@@ -313,7 +365,14 @@ pub fn expert_macro64(
         }
         terminate!();
     }
-    let values = macro64_product::<f16>(input, weight, columns, rows, count, weight_first);
+    if comptime!(cfg!(feature = "strata-macro64-static-geometry")) {
+        // Header/role validation above still fires first. A surplus X tile
+        // originally performed no output stores; close it before fixed loads.
+        if usize::cast_from(CUBE_POS_X) >= rows / 64 {
+            terminate!();
+        }
+    }
+    let values = macro64_product::<f16>(input, weight, columns, rows, count, weight_first, down);
     let subgroup = usize::cast_from(UNIT_POS) / 16;
     let mut i = usize::cast_from(UNIT_POS) % 16;
     while i < 512 {
@@ -389,6 +448,75 @@ fn definition_expert_macro64(down: bool) -> KernelDefinition {
 #[cfg(test)]
 mod macro64_tests {
     use super::*;
+    #[test]
+    fn authenticated_fixed_axes_cover_every_full_weight_vector_and_reject_surplus_x() {
+        for (cols, rows) in [(2560usize, 1280usize), (640, 2560)] {
+            assert_eq!(cols % 64, 0);
+            assert_eq!(rows % 64, 0);
+            for x in 0..rows / 64 + 2 {
+                for k in (0..cols).step_by(64) {
+                    let admitted = x < rows / 64;
+                    assert_eq!(admitted, x * 64 + 64 <= rows && k + 64 <= cols);
+                    if !admitted {
+                        continue;
+                    }
+                    for first in [0usize, 4, 128] {
+                        for tid in 0..128 {
+                            for round in 0..4 {
+                                for vector in 0..2 {
+                                    let job = tid + 128 * round;
+                                    let row = x * 64 + job / 8;
+                                    let col = k + (job % 8) * 8 + vector * 4;
+                                    let original = (first + row * cols + col) / 4;
+                                    assert!(
+                                        original * 4 >= first
+                                            && original * 4 + 4 <= first + rows * cols
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let text = include_str!("strata_matrix_macro64.rs");
+        let entry = text.find("    if !header_good").unwrap();
+        let clip = text
+            .find("if usize::cast_from(CUBE_POS_X) >= rows / 64")
+            .unwrap();
+        let product = text.find("    let values = macro64_product").unwrap();
+        assert!(entry < clip && clip < product);
+        assert!(text[entry..clip].contains("columns != comptime!(if down { 640 } else { 2560 })"));
+        assert!(text[entry..clip].contains("rows != comptime!(if down { 2560 } else { 1280 })"));
+    }
+    #[test]
+    fn fixed_k_tiles_preserve_every_masked_input_member_and_original_prefetch_boundary() {
+        for cols in [640usize, 2560] {
+            for k in (0..cols).step_by(64) {
+                assert!(k + 64 <= cols);
+                if k + 64 < cols {
+                    assert!(k + 128 <= cols);
+                }
+                for count in 64usize..256 {
+                    for base in (0..count).step_by(64) {
+                        assert_eq!(base + 64 <= count && k + 64 <= cols, base + 64 <= count);
+                        for job in 0..512 {
+                            for vector in 0..2 {
+                                let token = base + job / 8;
+                                let col = k + (job % 8) * 8 + vector * 4;
+                                assert_eq!(token < count && col < cols, token < count);
+                                if token < count {
+                                    let at = (token * cols + col) / 4;
+                                    assert!(at * 4 + 4 <= count * cols);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn genuine_shape_binding_and_full_shared_memory_admission() {
         let bindings = [(80 * 1024 * 1024, 256); 2];
