@@ -41,3 +41,11 @@ Retain all172 CPU controls +three new, runtime13,421 WGSL/216 layouts and all233
 GPU controls, original F64/status/poison checks and both whole-model profile/
 count/source/owner/erasure/recovery chains. No speed conclusion from source fact.
 Original terminal/clean5%-at-EACH/staged quality/privacy gates precede install.
+
+
+Initial175 suite has174 passes; the new source-inventory control compared local
+fault closing against the old shared-atomic closing. Compare the SAME already-
+accepted local closing on both sides. All original172 controls pass, and the
+new cell inventory/composition controls pass. This corrects only a CPU reference
+scope; no engine/shader/number/bound is changed. Preserve initial failure log.
+Repeat complete175 exact-source CPU/offline/GPU gates on a new artifact.

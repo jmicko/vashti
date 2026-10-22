@@ -22,7 +22,15 @@ mod tests {
         for k in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
             let s = source(k);
             let (m, w) = prompt_specialize::tests::compiled(&s);
-            let (base, _) = prompt_specialize::tests::compiled(&k.scalar_source());
+            let base = k.scalar_source();
+            // Compare the SAME pre-existing closing policy. Local-fault mode
+            // already removed the workgroup atomic before this schedule work.
+            let base = if k == Kernel::PromptAttentionFault {
+                prompt_local_fault::source(k, base)
+            } else {
+                base
+            };
+            let (base, _) = prompt_specialize::tests::compiled(&base);
             let globals = |m: &wgpu::naga::Module| {
                 m.global_variables
                     .iter()
