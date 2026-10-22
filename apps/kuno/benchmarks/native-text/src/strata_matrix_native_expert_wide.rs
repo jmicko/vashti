@@ -694,6 +694,7 @@ fn tail(
             piece_members,
             weight_first,
             tile,
+            false,
         )
     };
     let subgroup = usize::cast_from(UNIT_POS) / 16;
@@ -2107,9 +2108,9 @@ mod tests {
                 let family = if wide {
                     ""
                 } else if name.contains("tail8") {
-                    "expert_narrow8"
+                    "staged_narrow8"
                 } else if name.contains("tail16") {
-                    "expert_narrow16"
+                    "staged_narrow16"
                 } else {
                     "expert_macro"
                 };

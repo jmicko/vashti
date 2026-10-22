@@ -25,15 +25,18 @@ No expert IDs, route values, tensor names, tokens or request content are emitted
 The same public coarse `experts` interval also reports two existing backend
 host counters: `expert_native_capture_cpu` and `expert_native_wait_cpu`.
 Each retains the collector's numeric triple format `[calls,total_ns,total_ns]`;
-the third field deliberately repeats this CPU counter rather than representing
-an enqueue slice. Deltas cover the interval through its existing real sync,
+the third field deliberately repeats the host elapsed counter rather than an
+enqueue slice. Despite the legacy `_cpu` names these use `Instant`: they are WALL
+intervals, not thread CPU utilization. Actual thread CPU is reported separately
+by `host_capture`, `host_batch` and `expert_boundary_*` CLOCK_THREAD_CPUTIME_ID.
+Deltas cover the interval through its existing real sync,
 with no new fence, timestamp pool or private profiling switch. These are
 process-global native counters, so the protected public worker must remain the
 sole workload. Capture includes native planning/descriptor/command recording and host queue
 submission calls; with rolling submission, its later portion overlaps already
 submitted GPU work. Wait includes actual native fence wait calls. Neither
 is a GPU kernel duration. The old `experts` enqueue field ends before native
-recording in sync and therefore does not include capture CPU work.
+recording in sync and therefore does not include the later capture interval.
 
 The same public `experts` interval reports anonymous actual rolling issuance
 counters as `[count,0,0]`: `expert_native_rolling_recordings`,
@@ -168,7 +171,7 @@ caller/disassembly evidence points into installed Intel Vulkan DSO build-id
 inference, not a resolved internal symbol. Original erasure is not bypassed.
 [Copy cohorts plus precise segment compaction](kuno-prefill-copy-cohorts.md)
 then pass all189 GPU and both full profile/recovery chains: warm normal expert
-capture809.7->574.3ms, segments37959->10704, reencoded commands40107->11409,
+capture host-wall809.7->574.3ms, segments37959->10704, reencoded commands40107->11409,
 route readback/checkpoint CPU498.2->291.4ms. Warm whole normal10.3612->9.7413s.
 Fresh clean first/repeat12.7915/9.2446s fails original first-position5% gate,
 so no staged/install claim. Keep the complete correct coupled component.

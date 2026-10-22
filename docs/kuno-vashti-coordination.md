@@ -22,23 +22,37 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Active manual resume (2026-10-22 07:45UTC): shared-record dequantization.**
+**Active Kuno goal (2026-10-22): complete small-expert global-load candidate.**
 
-User authorized overnight work, both GPUs and cached sudo. Controller remains
-paused; manual work only. Same isolated checkout/branch, installed binaries
-unchanged. Read [record32 specification](kuno-prefill-dequant-record32.md).
-Prepare each encoded32-value quant record once while preserving all four original
-vector8 stores/rounding/fault checks, coupled with exact production/probe grids.
-Keep original physical source/owner/hazard/erasure/reference bounds. Build from
-best copy-cohort feature bundle; other complete components remain optional.
-Sourceaf4de6f0/SHA96b0c3b0 frozen after168 CPU/11 runtime/421 WGSL/216 matrix
-PASS. Root unit`kuno-record32-20261022.service` runs original189 GPU and BOTH full
-profiles/proofs/recovery. GPU result pending, no speed/install claim yet.
+User authorized overnight work, both GPUs and refreshed sudo, then enabled Ultra.
+Controller now ACTIVE/UNMET. Same isolated checkout/branch; installed worker/
+gateway unchanged. [Shared-record decoder](kuno-prefill-dequant-record32.md)
+af4de6f0/SHA96b0c3b0 passes168 CPU/11 runtime/421 WGSL/216 matrices, original189
+GPU and BOTH full original proof/recovery chains. Normal first10.9980/repeat9.4991s
+versus copy11.1470/9.7413s, modest1.34%/2.49%; no new clean/staged/install claim.
+
+Read [complete global-narrow bundle](kuno-prefill-global-narrow.md) before next
+change. Gather AND activation zero original tile padding, real small-expert
+matrix products load A/B directly from authentic global owners. Same K16 math,
+original grids/count/routes/publication/status/fault/source/cap/erasure guards;
+dense and wide-tail staged modules retained. Independent source audit confirms
+addresses/strides and both producer coupling; GPU acceptance still pending.
+Selected native-only bundle excludes CubeK and coherently requires native-wide.
+New full-control producer/routed probes and actual compiler/coverage controls
+are preparing; no speed claim yet. Source not yet frozen until CPU gates pass.
+
+Two historical *_cpu diagnostic fields actually use Instant wall elapsed time;
+source/docs corrected without renaming fields. Actual thread-CPU evidence is
+CLOCK_THREAD_CPUTIME_ID in host/boundary collectors. Never label capture/wait
+wall as CPU utilization or sampled serialized kernel sums as normal idle.
+
 Owned sudo refresher1145657/shared shell3556 bounded until15:45:12UTC; stop
-refresher on close, never shared shell. Initial state has17.67GB Intel cached
-model memory; protected helpers must unload and verify physical recovery before
-testing. Services healthy, reported driver faults0. No reset/reboot or frontend.
-Required Vashti changes:none. Previous stopped checkpoint below is historical.
+refresher on close, never shared shell. Initial17.67GB idle image residency was
+evicted through original native unload path; physical preflight Intel50,688,000B,
+NVIDIA compute0, services healthy, reported driver faults0. Previous protected
+unit complete/recovered. No API/KNT2/KNR2/frontend/model/config/release/reset/
+reboot change. Required Vashti changes:none. Preserve canonical coordination and
+inherited untracked cache. Historical stopped checkpoint follows.
 
 **Authoritative stopped handoff (2026-10-22 00:31UTC): user requested close; GPUs and services ready.**
 

@@ -476,8 +476,8 @@ impl Timer {
                 t.2 = t.2.saturating_add(enqueue_ns);
                 if name == "experts" {
                     // The enqueue slice ends BEFORE sync records native Vulkan
-                    // descriptors/commands. Report that CPU cost separately;
-                    // it must not be mistaken for GPU kernel time. The public
+                    // descriptors/commands. Report that host elapsed time separately;
+                    // Legacy *_cpu labels are Instant wall deltas, not thread CPU or GPU time. The public
                     // protected unit is the sole process/device workload.
                     for (index, name) in ["expert_native_capture_cpu", "expert_native_wait_cpu"]
                         .into_iter()

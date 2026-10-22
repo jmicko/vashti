@@ -73,7 +73,9 @@ fn fixture(count: usize, down: bool, control: Control) -> ProbeResult<Fixture> {
     let original = [32, 33, 64, 256, 257, 287, 288, 383, 384].contains(&count);
     let medium = cfg!(feature = "strata-native-expert-medium")
         && [128, 129, 159, 160, 191, 192, 255].contains(&count);
-    if !original && !medium {
+    let narrow =
+        cfg!(feature = "strata-narrow-global") && [1, 3, 7, 8, 9, 15, 16, 17, 31].contains(&count);
+    if !original && !medium && !narrow {
         return Err("public CubeK expert count".into());
     }
     let (columns, rows) = if down { (640, 2560) } else { (2560, 1280) };
@@ -234,7 +236,13 @@ fn one(
     launch: Launcher,
 ) -> ProbeResult<serde_json::Value> {
     let f = fixture(count, down, control)?;
-    let input = arena.upload_u32(&f.input_image)?;
+    let mut image = f.input_image.clone();
+    #[cfg(feature = "strata-narrow-global")]
+    if count < 32 {
+        let tile = if count <= 8 { 8 } else { 16 };
+        image.resize(count.div_ceil(tile) * tile * f.columns / 2, 0);
+    }
+    let input = arena.upload_u32(&image)?;
     let weight = arena.upload_u32(&f.weight_image)?;
     let output =
         arena.allocate_zeroed((if down { abi::PART_BYTES } else { abi::GU_BYTES }) as usize / 4)?;
@@ -325,11 +333,7 @@ fn one(
         }
         Ok(())
     })?;
-    for (id, image) in [
-        (input, &*f.input_image),
-        (weight, &*f.weight_image),
-        (map, &*f.map),
-    ] {
+    for (id, image) in [(input, &*image), (weight, &*f.weight_image), (map, &*f.map)] {
         scan(arena, id, |at, bits| {
             if bits != image.get(at).copied().unwrap_or(0) {
                 return Err("public CubeK expert original source/padding changed".into());

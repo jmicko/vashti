@@ -120,3 +120,53 @@ pub(crate) fn medium_cases(
         launch,
     )
 }
+
+#[cfg(feature = "strata-narrow-global")]
+pub(crate) fn narrow_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut crate::private_arena::PrivateArena,
+) -> shared::ProbeResult<Vec<serde_json::Value>> {
+    use shared::Control::*;
+    fn narrow_launch(
+        client: &ComputeClient<WgpuRuntime>,
+        h: [Handle; 6],
+        count: usize,
+        columns: usize,
+        rows: usize,
+        first: usize,
+        group: usize,
+        down: bool,
+    ) -> shared::ProbeResult<bool> {
+        if !(1..32).contains(&count) {
+            return Err("public narrow fixed geometry".into());
+        }
+        super::native::run_expert(client, h, count, columns, rows, first, group, down)?;
+        Ok(true)
+    }
+    shared::cases(
+        client,
+        arena,
+        "native-global-narrow-routed-expert",
+        "actual_native_global_narrow_launch",
+        &[
+            (1, Finite),
+            (3, Finite),
+            (7, Finite),
+            (8, Finite),
+            (9, Finite),
+            (15, Finite),
+            (16, Finite),
+            (17, Finite),
+            (31, Finite),
+            (3, NonfiniteFirst),
+            (3, NonfiniteOther),
+            (3, InvalidRoute),
+            (3, InvalidRoutePrefix),
+            (17, NonfiniteFirst),
+            (17, NonfiniteOther),
+            (17, InvalidRoute),
+            (17, InvalidRoutePrefix),
+        ],
+        narrow_launch,
+    )
+}

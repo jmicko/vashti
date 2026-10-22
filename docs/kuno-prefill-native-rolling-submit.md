@@ -7,7 +7,7 @@ descriptor updates and command recording for a whole expert layer before its
 first queue submission. The existing coarse `experts` enqueue field stops before
 native capture performed inside sync. Use the added public
 `expert_native_capture_cpu` and `expert_native_wait_cpu` counters to separate
-that CPU capture time from actual native fence wait time. Public count-only `expert_native_rolling_recordings`,
+that host elapsed capture time from actual native fence wait time. Public count-only `expert_native_rolling_recordings`,
 `expert_native_rolling_windows` and `expert_native_rolling_segments` additionally
 prove the intended path actually submitted original segments; they are credited
 only after final joined submission/flight acceptance, then published after the

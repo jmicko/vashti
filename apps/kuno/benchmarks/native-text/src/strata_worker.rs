@@ -379,6 +379,16 @@ async fn serve(
             .map_err(|_| "public_scratch_dequant_numeric_failed")?;
         #[cfg(not(feature = "strata-expert-scratch-ring"))]
         let expert_scratch_image_checks: Vec<serde_json::Value> = Vec::new();
+        #[cfg(feature = "strata-narrow-global")]
+        let narrow_padding_checks = crate::strata_prompt::experts::public_narrow_padding(&client,&mut arena)
+            .map_err(|e| {eprintln!("public_narrow_padding_error {e}");"public_narrow_padding_failed"})?;
+        #[cfg(not(feature = "strata-narrow-global"))]
+        let narrow_padding_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature = "strata-narrow-global")]
+        let narrow_expert_checks = crate::strata_matrix::public_native_narrow_numeric(&client,&mut arena)
+            .map_err(|e| {eprintln!("public_narrow_expert_error {e}");"public_narrow_expert_failed"})?;
+        #[cfg(not(feature = "strata-narrow-global"))]
+        let narrow_expert_checks:Vec<serde_json::Value>=Vec::new();
         let attention_checks =
             crate::strata_qsa::selection::public_numeric(&mut arena).map_err(|error| {
                 // This branch accepts only compiled public diagnostic inputs.
@@ -463,7 +473,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }

@@ -61,3 +61,19 @@ logical record counts equal groups*(2560*1280+640*2560)/32 in all requests.
 Evidence base `/media/jmicko/faststore/kuno-development`:
 `native-record32-{cpu-selection,cpu-features,cpu-final,runtime-cpu,offline,release-build,connected}-20261022*`.
 GPU correctness/performance pending; installed version unchanged.
+
+
+## Complete protected outcome
+
+Original189 GPU controls and BOTH complete73/4245/4245 profile/compiler/count/
+source/owner/erasure/recovery chains PASS. Real32-record counts match every
+request's exact original image population. Normal first/repeat
+10.998012681/9.499076228s versus copy11.146964481/9.741252502s: modest1.34%/2.49%
+improvement in these host-profile comparisons, not clean selection. Sampled
+mode11.034657443/9.596169985s. No terminal/clean/staged/install claim.
+`strata-parity-record32-20261022-record32-public-summary.json` retains full proof.
+A read-only independent review found no math/ownership/grid regression; it
+identified sparse quarter-store coalescing and possible SIMD32 row-boundary
+branch divergence as performance risks, not measured causes. Keep this complete
+optional component; next candidate removes small-expert operand SLM together
+with authentic padding in BOTH producers. Installed binaries unchanged.

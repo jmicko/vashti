@@ -18,8 +18,10 @@ mod native_expert_wide;
 mod native_wide;
 #[cfg(feature = "strata-native-expert-wide")]
 pub(crate) use native_expert_probe::cases as public_native_expert_numeric;
-#[cfg(feature="strata-native-expert-medium")]
+#[cfg(feature = "strata-native-expert-medium")]
 pub(crate) use native_expert_probe::medium_cases as public_native_medium_numeric;
+#[cfg(feature = "strata-narrow-global")]
+pub(crate) use native_expert_probe::narrow_cases as public_native_narrow_numeric;
 
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_numeric_probe.rs"]
@@ -663,9 +665,8 @@ mod native {
         count: usize,
         weight_first: usize,
         #[comptime] tile: usize,
+        #[comptime] direct: bool,
     ) -> SharedMemory<f32> {
-        let mut a = SharedMemory::<Vector<F, Const<4>>>::new(comptime!(tile * 32));
-        let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
         // SAFETY: the complete current operand stage is initialized before
         // every product, including zero-masked token/feature/reduction tails.
         let a0 = unsafe {
@@ -723,74 +724,108 @@ mod native {
         let subgroup = usize::cast_from(UNIT_POS) / 16;
         let token_base = usize::cast_from(CUBE_POS_Y) * tile;
         let row_base = usize::cast_from(CUBE_POS_X) * 64;
-        narrow_stage::<F>(
-            input,
-            weight,
-            &mut a,
-            &mut b,
-            columns,
-            rows,
-            count,
-            weight_first,
-            token_base,
-            row_base,
-            0,
-            0,
-            tile,
-        );
-        sync_cube();
-        let mut k = 0usize;
-        let mut current = 0usize;
-        while k < columns {
-            let next = 1usize - current;
-            if k + 64 < columns {
-                narrow_stage::<F>(
-                    input,
-                    weight,
-                    &mut a,
-                    &mut b,
-                    columns,
-                    rows,
-                    count,
-                    weight_first,
-                    token_base,
-                    row_base,
-                    k + 64,
-                    next,
-                    tile,
+        if comptime!(direct) {
+            // Authentic Gather AND activation zero every inactive row in the
+            // complete8/16-member tile. Global vector views retain full owners;
+            // both fixed expert feature axes are complete64-wide tiles.
+            let mut k = 0usize;
+            while k < columns {
+                let af = (token_base * columns + k) / 4;
+                let bf = (weight_first + (row_base + subgroup * 16) * columns + k) / 4;
+                cmma::load(
+                    &a0,
+                    &input.to_slice().slice(af, input.len()),
+                    u32::cast_from(columns),
                 );
+                cmma::load(
+                    &bm,
+                    &weight.to_slice().slice(bf, weight.len()),
+                    u32::cast_from(columns),
+                );
+                cmma::execute::<F, F, f32, f32>(&a0, &bm, &c0, &c0);
+                if comptime!(tile == 16) {
+                    let af1 = af + 8 * columns / 4;
+                    cmma::load(
+                        &a1,
+                        &input.to_slice().slice(af1, input.len()),
+                        u32::cast_from(columns),
+                    );
+                    cmma::execute::<F, F, f32, f32>(&a1, &bm, &c1, &c1);
+                }
+                k += 16;
             }
-            #[unroll]
-            for step in 0..4usize {
-                let inner = step * 16;
-                if k + inner < columns {
-                    let af = current * comptime!(tile * 16) + inner / 4;
-                    let bf = current * 1024 + subgroup * 256 + inner / 4;
-                    cmma::load(&a0, &a.to_slice().slice(af, a.len()), 64);
-                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 64);
-                    cmma::execute::<F, F, f32, f32>(&a0, &bm, &c0, &c0);
-                    if comptime!(tile == 16) {
-                        cmma::load(&a1, &a.to_slice().slice(af + 128, a.len()), 64);
-                        cmma::execute::<F, F, f32, f32>(&a1, &bm, &c1, &c1);
+        } else {
+            let mut a = SharedMemory::<Vector<F, Const<4>>>::new(comptime!(tile * 32));
+            let mut b = SharedMemory::<Vector<F, Const<4>>>::new(2048usize);
+            narrow_stage::<F>(
+                input,
+                weight,
+                &mut a,
+                &mut b,
+                columns,
+                rows,
+                count,
+                weight_first,
+                token_base,
+                row_base,
+                0,
+                0,
+                tile,
+            );
+            sync_cube();
+            let mut k = 0usize;
+            let mut current = 0usize;
+            while k < columns {
+                let next = 1usize - current;
+                if k + 64 < columns {
+                    narrow_stage::<F>(
+                        input,
+                        weight,
+                        &mut a,
+                        &mut b,
+                        columns,
+                        rows,
+                        count,
+                        weight_first,
+                        token_base,
+                        row_base,
+                        k + 64,
+                        next,
+                        tile,
+                    );
+                }
+                #[unroll]
+                for step in 0..4usize {
+                    let inner = step * 16;
+                    if k + inner < columns {
+                        let af = current * comptime!(tile * 16) + inner / 4;
+                        let bf = current * 1024 + subgroup * 256 + inner / 4;
+                        cmma::load(&a0, &a.to_slice().slice(af, a.len()), 64);
+                        cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 64);
+                        cmma::execute::<F, F, f32, f32>(&a0, &bm, &c0, &c0);
+                        if comptime!(tile == 16) {
+                            cmma::load(&a1, &a.to_slice().slice(af + 128, a.len()), 64);
+                            cmma::execute::<F, F, f32, f32>(&a1, &bm, &c1, &c1);
+                        }
                     }
                 }
+                // A single uniform handoff perK64 replaces the scalar partial
+                // path's two workgroup barriers perK16. Old readers finish before
+                // stage reuse; every next-stage store is visible before the switch.
+                sync_cube();
+                current = next;
+                k += 64;
             }
-            // A single uniform handoff perK64 replaces the scalar partial
-            // path's two workgroup barriers perK16. Old readers finish before
-            // stage reuse; every next-stage store is visible before the switch.
-            sync_cube();
-            current = next;
-            k += 64;
-        }
-        // Every lane has completed the final K64 handoff barrier, and no
-        // operand slice is used beyond this uniform loop exit. Matrix fragments
-        // retain their values in registers. End the authentic SLM lifetimes
-        // before allocating output; the compiler may reuse physical offsets
-        // only on devices supporting explicit workgroup memory layout.
-        // SAFETY: uniform control flow, no surviving operand-pointer uses.
-        unsafe {
-            a.free();
-            b.free();
+            // Every lane has completed the final K64 handoff barrier, and no
+            // operand slice is used beyond this uniform loop exit. Matrix fragments
+            // retain their values in registers. End the authentic SLM lifetimes
+            // before allocating output; the compiler may reuse physical offsets
+            // only on devices supporting explicit workgroup memory layout.
+            // SAFETY: uniform control flow, no surviving operand-pointer uses.
+            unsafe {
+                a.free();
+                b.free();
+            }
         }
         let mut out = SharedMemory::<f32>::new(comptime!(tile * 64));
         let first = subgroup * comptime!(tile * 16);
@@ -825,7 +860,16 @@ mod native {
         out_stride: usize,
         #[comptime] tile: usize,
     ) {
-        let values = narrow_product::<F>(input, weight, columns, rows, count, weight_first, tile);
+        let values = narrow_product::<F>(
+            input,
+            weight,
+            columns,
+            rows,
+            count,
+            weight_first,
+            tile,
+            false,
+        );
         let subgroup = usize::cast_from(UNIT_POS) / 16;
         let mut i = usize::cast_from(UNIT_POS) % 16;
         while i < comptime!(tile * 16) {
@@ -858,8 +902,18 @@ mod native {
         group: usize,
         #[comptime] down: bool,
         #[comptime] tile: usize,
+        #[comptime] direct: bool,
     ) {
-        let values = narrow_product::<f16>(input, weight, columns, rows, count, weight_first, tile);
+        let values = narrow_product::<f16>(
+            input,
+            weight,
+            columns,
+            rows,
+            count,
+            weight_first,
+            tile,
+            direct,
+        );
         let subgroup = usize::cast_from(UNIT_POS) / 16;
         let mut i = usize::cast_from(UNIT_POS) % 16;
         while i < comptime!(tile * 16) {
@@ -980,7 +1034,7 @@ mod native {
         }
     }
     pub(super) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
-        vec![
+        let mut out = vec![
             ("dense_fp16", definition_dense::<f16>()),
             ("dense_bf16", definition_dense::<bf16>()),
             ("expert_gu", definition_expert(false)),
@@ -997,7 +1051,27 @@ mod native {
             ("dense_narrow16_bf16", definition_dense_narrow::<bf16>(16)),
             ("expert_narrow16_gu", definition_expert_narrow(false, 16)),
             ("expert_narrow16_down", definition_expert_narrow(true, 16)),
-        ]
+        ];
+        #[cfg(feature = "strata-narrow-global")]
+        out.extend([
+            (
+                "expert_global_narrow8_gu",
+                definition_expert_narrow_at(false, 8, true),
+            ),
+            (
+                "expert_global_narrow8_down",
+                definition_expert_narrow_at(true, 8, true),
+            ),
+            (
+                "expert_global_narrow16_gu",
+                definition_expert_narrow_at(false, 16, true),
+            ),
+            (
+                "expert_global_narrow16_down",
+                definition_expert_narrow_at(true, 16, true),
+            ),
+        ]);
+        out
     }
     fn settings() -> KernelSettings {
         KernelSettings::default().cube_dim(CubeDim::new_1d(16))
@@ -1147,6 +1221,9 @@ mod native {
         b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
     }
     fn definition_expert_narrow(down: bool, tile: usize) -> KernelDefinition {
+        definition_expert_narrow_at(down, tile, false)
+    }
+    fn definition_expert_narrow_at(down: bool, tile: usize, direct: bool) -> KernelDefinition {
         let mut b = KernelBuilder::default();
         AddressType::U32.register(&mut b.scope);
         let t = Vector::<f16, Const<4>>::as_type(&b.scope);
@@ -1175,6 +1252,7 @@ mod native {
             args[4].clone().into(),
             down,
             tile,
+            direct,
         );
         b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
     }
@@ -1228,6 +1306,13 @@ mod native {
     const NARROW8_SHARED_BYTES: usize = 2 * (8 + 64) * 64 * 2 + 8 * 64 * 4;
     const NARROW16_SHARED_BYTES: usize = 2 * (16 + 64) * 64 * 2 + 16 * 64 * 4;
     pub(super) fn compiled_shared_bytes(name: &str, explicit: bool) -> Option<usize> {
+        if name.starts_with("expert_global_narrow") {
+            return Some(if name.contains("narrow8") {
+                8 * 64 * 4
+            } else {
+                16 * 64 * 4
+            });
+        }
         let (full, operands) = if name.contains("narrow8") {
             (NARROW8_SHARED_BYTES, NARROW8_SHARED_BYTES - 8 * 64 * 4)
         } else if name.contains("narrow16") {
@@ -1530,6 +1615,18 @@ mod native {
             return Ok(());
         }
         let [input, weight, output, map, status, fault] = h;
+        #[cfg(feature = "strata-narrow-global")]
+        if (1..32).contains(&count) {
+            let tile = if count <= 8 { 8 } else { 16 };
+            let padded = count.div_ceil(tile) * tile;
+            if rows != if down { 2560 } else { 1280 }
+                || columns != if down { 640 } else { 2560 }
+                || input.size_in_used() < (padded * columns * 2) as u64
+                || weight.size_in_used() < ((weight_first + rows * columns) * 2) as u64
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
         let use_macro =
             macro_compatible(client, &input, &weight, count, rows, columns, weight_first);
         let narrow = narrow_compatible(client, &input, &weight, count, rows, columns, weight_first);
@@ -1586,6 +1683,7 @@ mod native {
                     group,
                     down,
                     tile,
+                    cfg!(feature = "strata-narrow-global"),
                 );
             } else {
                 expert::launch_unchecked::<WgpuRuntime>(
@@ -1612,6 +1710,82 @@ mod native {
     #[cfg(test)]
     mod stage_tests {
         use super::*;
+        #[cfg(feature = "strata-narrow-global")]
+        #[test]
+        fn actual_global_narrow_compiler_keeps_only_output_slm_and_one_publication_barrier() {
+            use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+            use cubecl::{Compiler, WgpuCompilationOptions};
+            for mask in 0..8 {
+                for (name, definition) in definitions()
+                    .into_iter()
+                    .filter(|(n, _)| n.starts_with("expert_global_narrow"))
+                {
+                    let mut options = WgpuCompilationOptions {
+                        supports_vulkan: true,
+                        ..Default::default()
+                    };
+                    options.vulkan.max_spirv_version = (1, 6);
+                    options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
+                    options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
+                    options.vulkan.supports_explicit_smem = mask & 4 != 0;
+                    let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+                        &mut AutoCompiler::SpirV(Default::default()),
+                        definition,
+                        &options,
+                        ExecutionMode::Unchecked,
+                        StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)),
+                    )
+                    .unwrap() else {
+                        panic!("actual global matrix SPIRV required")
+                    };
+                    let tile = if name.contains("narrow8") { 8 } else { 16 };
+                    assert_eq!(kernel.shared_size, tile * 64 * 4, "{name} mask{mask}");
+                    let mut barriers = 0;
+                    let mut matrix_loads = 0;
+                    let mut products = 0;
+                    let mut at = 5;
+                    while at < kernel.assembled_module.len() {
+                        let words = &kernel.assembled_module;
+                        let n = (words[at] >> 16) as usize;
+                        assert!(n > 0 && at + n <= words.len());
+                        match words[at] & 65535 {
+                            224 => barriers += 1,
+                            4457 => matrix_loads += 1,
+                            4459 => products += 1,
+                            _ => {}
+                        }
+                        at += n;
+                    }
+                    assert_eq!(
+                        barriers, 1,
+                        "only original output publication fence remains"
+                    );
+                    assert_eq!(matrix_loads, if tile == 8 { 2 } else { 3 });
+                    assert_eq!(products, if tile == 8 { 1 } else { 2 });
+                }
+            }
+            // Exact scalar endpoints of every real complete cooperative load.
+            for count in 1usize..32 {
+                for columns in [640usize, 2560] {
+                    let tile = if count <= 8 { 8 } else { 16 };
+                    let padded = count.div_ceil(tile) * tile;
+                    for first in (0..padded).step_by(tile) {
+                        for k in (0..columns).step_by(16) {
+                            for subrow in (0..tile).step_by(8) {
+                                let af = ((first + subrow) * columns + k) / 4;
+                                let last = af + (7 * columns + 15) / 4;
+                                assert!(last < padded * columns / 4);
+                            }
+                            for sg in 0..4 {
+                                let bf = (sg * 16 * columns + k) / 4;
+                                assert!(bf + (15 * columns + 15) / 4 < 64 * columns / 4);
+                            }
+                        }
+                    }
+                    assert!(padded <= 32);
+                }
+            }
+        }
         #[test]
         fn narrow_selection_requires_original_vector_owners_and_actual_shape_shared_limit() {
             let actual = [(80 * 1024 * 1024, 0), (80 * 1024 * 1024, 256)];
@@ -1995,10 +2169,10 @@ mod native {
             use cubecl::{Compiler, WgpuCompilationOptions};
             use std::collections::BTreeMap;
             for mask in 0..8 {
-                for (name, definition) in definitions()
-                    .into_iter()
-                    .filter(|(name, _)| compiled_shared_bytes(name, false).is_some())
-                {
+                for (name, definition) in definitions().into_iter().filter(|(name, _)| {
+                    !name.starts_with("expert_global_narrow")
+                        && compiled_shared_bytes(name, false).is_some()
+                }) {
                     let mut options = WgpuCompilationOptions {
                         supports_vulkan: true,
                         ..Default::default()
@@ -2012,7 +2186,7 @@ mod native {
                         definition,
                         &options,
                         ExecutionMode::Unchecked,
-                        StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                        StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)),
                     )
                     .unwrap() else {
                         panic!("actual SPIRV required")
@@ -2441,9 +2615,9 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 } else if name.starts_with("expert_tail32_") {
                     native::compiled_shared_bytes("expert_macro", layout_mask & 4 != 0)
                 } else if name.starts_with("expert_tail8_") {
-                    native::compiled_shared_bytes("expert_narrow8", layout_mask & 4 != 0)
+                    native::compiled_shared_bytes("staged_narrow8", layout_mask & 4 != 0)
                 } else if name.starts_with("expert_tail16_") {
-                    native::compiled_shared_bytes("expert_narrow16", layout_mask & 4 != 0)
+                    native::compiled_shared_bytes("staged_narrow16", layout_mask & 4 != 0)
                 } else {
                     expected_shared
                 };
@@ -2886,5 +3060,5 @@ mod tests {
 
 #[cfg(feature = "strata-native-direct-gu")]
 pub(crate) use native_expert_probe::direct_gu_cases as public_direct_gu_numeric;
-#[cfg(feature="strata-native-expert-medium")]
+#[cfg(feature = "strata-native-expert-medium")]
 pub(crate) use native_expert_probe::medium_direct_gu_cases as public_medium_direct_gu_numeric;

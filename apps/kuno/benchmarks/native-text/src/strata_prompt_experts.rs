@@ -50,6 +50,14 @@ impl Op {
         if self == Self::Gemm { 64 } else { 256 }
     }
     fn source(self) -> String {
+        let source = self.source_unpadded();
+        #[cfg(feature = "strata-narrow-global")]
+        if matches!(self, Self::Gather | Self::Activate | Self::ActivateCheckGu) {
+            return narrow_padding::source(source, self != Self::Gather);
+        }
+        source
+    }
+    fn source_unpadded(self) -> String {
         let all = include_str!("strata_prompt_experts.wgsl");
         let section = |name: &str| {
             all.split_once(&format!("// {name}_BEGIN\n"))
@@ -282,9 +290,17 @@ fn slot_image_guard(down: bool) -> String {
 #[path = "strata_prompt_expert_scratch.rs"]
 mod scratch_ring;
 
+#[cfg(any(test, feature = "strata-narrow-global"))]
+#[path = "strata_prompt_narrow_padding.rs"]
+mod narrow_padding;
+#[cfg(feature = "strata-narrow-global")]
+#[path = "strata_prompt_narrow_padding_probe.rs"]
+mod narrow_padding_probe;
 #[cfg(any(test, feature = "strata-dequant-record32"))]
 #[path = "strata_prompt_dequant_record32.rs"]
 mod record32;
+#[cfg(feature = "strata-narrow-global")]
+pub(crate) use narrow_padding_probe::cases as public_narrow_padding;
 
 /// Actual descriptor view of one raw transfer slot. All source role spans are
 /// original-format bytes; no scheduler-only narrowed declaration is accepted.
@@ -599,6 +615,10 @@ fn enqueue_original(
         #[cfg(feature = "strata-native-expert-medium")]
         if (128..256).contains(&members) {
             crate::strata_prefill_profile::count("expert_medium_groups", 1);
+        }
+        #[cfg(feature = "strata-narrow-global")]
+        if members < 32 {
+            crate::strata_prefill_profile::count("expert_narrow_global_groups", 1);
         }
         let [gather_groups, activate_groups] = member_dispatches(members, count)?;
         #[cfg(not(feature = "strata-expert-scratch-ring"))]
