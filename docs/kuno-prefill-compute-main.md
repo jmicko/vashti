@@ -121,3 +121,30 @@ libc. No anonymous driver offset is labeled as JIT without symbols. Positively
 identified work includes original IR cloning and planner/binding; duplicate
 ordinary/native driver executable construction is proven separately in source.
 Earlier first helper failure and all optional paths/receipts remain intact.
+
+
+## Exact driver symbol attribution
+
+The anonymous driver offsets are now resolved from the exact published Kisak
+debug package, without system installation. Evidence directory:
+`/media/jmicko/faststore/kuno-development/intel-driver-symbols-20261022/`.
+Installed library SHA256cbbcd568c7b39fa2789463c8e2ef6414b023b1f86435f48baef705aabcfae1f2,
+ELF buildID9e30c0f3d8ad967dbeaecdb782a2f3f030cb05a1; debuglink CRC8cf845d5.
+All three identities match extracted debug SHA256
+99bfe5a6ad02b0adbb31a8ccf38d56b0bc6f38678f6de1be14daf69f45eee7f2.
+Package SHA2562c336ba4f97d089c75c5626e39d256bd6d3e72a0be68d61c17f026fb77fd2bb7
+was checked against the primary Kisak main/debug Packages.xz entry before use.
+See`provenance.json` for URLs, exact sizes and supplementary DWZ identities.
+
+Offsets8d0eb4/8d0a80/8d0ec9/8d12e7 are Intel compiler
+`propagate_block_scoreboards`;744c0 is`anv_cmd_state_init`,7498d its command-buffer
+reset caller. `flat-symbol-table-aggregate.json` independently resolves all887
+driver offsets through bounded exact ELF symbol ranges: already-rounded total
+56.50% driver,11.23% scoreboard propagation,5.29% live-variable computation,
+1.43% live-variable start/end. These are positively identified shader-compiler
+functions; do not call every other driver symbol JIT or these exact CPU seconds.
+GNU addr2line source-line lookup warned about an absolute supplementary DWZ
+path; matching supplementary debug was also extracted, never installed. Hot
+function identities are independently confirmed without any DWARF dependency.
+This supports the separate native-prepared duplicate-executable target, without
+claiming how much wall time that change will save before hardware measurement.
