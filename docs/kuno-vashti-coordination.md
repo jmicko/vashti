@@ -22,44 +22,39 @@ Root alone owns the shared GPUs/services. The original paired/bulk source and
 public CPU profiles are retained in the parity guide; no private content
 instrumentation or relaxed memory/hazard guards are added.
 
-**Authoritative active manual handoff (2026-10-21 23:47UTC): copy gain retained; packed attention correct/neutral; medium native experts compiling.**
+**Authoritative active manual handoff (2026-10-22 00:20UTC): copy gain retained; complete medium path correct/slower; exact reference attention testing.**
 
-User authorized continued manual work with both GPUs/sudo; controller paused.
-Use ONLY isolated Kuno worktree/branch above. Installed3fffc266/gateway36626d30
-unchanged. [Copy cohorts](kuno-prefill-copy-cohorts.md) source661ddad3/SHA09f39612
-passes166 CPU/11 runtime/421 WGSL/216 layouts/189 GPU and both full profile/recovery
-chains. Normal first/repeat improves~6% each. Clean first12.791548881 vs12.962279132s
-fails original5%-at-EACH selection, despite repeat9.244574900 vs11.147390805s.
-No staged/install acceptance. Keep complete component; Strata5.3515s still leads.
+User authorized manual work with both GPUs/sudo; controller remains paused.
+Use ONLY isolated Kuno checkout/branch above. Installed3fffc266/gateway36626d30
+unchanged. [Copy cohorts](kuno-prefill-copy-cohorts.md)661ddad3/SHA09f39612 passes
+all original proofs; clean first12.7915/repeat9.2446s misses original first5% gate.
+[Packed cache](kuno-prefill-packed-cache.md)fe579785/SHAeaeb67cd passes193 GPU/full
+proofs; normal9.7327s neutral. Keep complete correct components.
 
-[Packed attention](kuno-prefill-packed-cache.md) sourcefe579785/SHAeaeb67cd passes
-170 CPU/11 runtime/421 WGSL/216 layouts, original189 +four new cache-poison GPU
-controls and BOTH full profile/compiler/owner/erasure/recovery chains. Exact
-original poison bits/fault preserved. Normal11.3106/9.7327s effectively neutral
-versus copy11.1470/9.7413s; no new clean/install claim. Keep complete correct source.
+[Medium experts](kuno-prefill-native-medium-experts.md)6720c6d2/SHA34b73687 passes
+172 App/13 runtime/421 WGSL/216 layouts,233 GPU and BOTH complete profile/count/
+compiler/source/owner/erasure/recovery chains. Exactly1576 added medium groups
+per long prompt, wide prefixes4688->7840 and Direct-GU2344->3920 in BOTH modes.
+Normal11.6871/10.0194s vs packed11.3106/9.7327s: modest slowdown. No clean/staged/
+install claim. Full component remains; original failed fixture receipt preserved.
 
-Next [medium native32 experts](kuno-prefill-native-medium-experts.md), source
-ffa332f8, implements host plan, actual shader header and six-phase runtime grammar
-for128..255-member groups together. Original exact128-member prefix +checked tail,
-full owners/IEEE bounds/routes/49152B scratch/caps remain. Original256 policy has
-separate unchanged CPU coverage; new actual-policy and grammar controls added.
-Original189+four poison +22 new actual-GPU routed-product controls required;
-actual prefix delta must equal new medium groups. Source was prepared during the
-frozen previous run; compilation began ONLY AFTER its complete recovery proof.
-Initial sourceda5aae36/SHA61f89376 passes171 App/13 runtime/421 WGSL/216 layouts,
-but first protected operator attempt exits before new kernel: original fixed-public
-fixture count allowlist omitted128. Physical recovery PASS; not a math/speed result.
-Final fixture-only fix source6720c6d2/SHA34b73687 passes172 App/13 unchanged-runtime/
-421 WGSL/216 layouts. New actual fixture test preserves authentic map/high routes/
-finite owned images; original nine fixture counts/IEEE bounds unchanged. Root owns
-`kuno-medium-fixed-20261022.service` with original189+four poison+22 medium products
-+18 medium Direct-GU exact pairs (233), then BOTH full profiles and exact actual
-prefix deltas/owners/recovery. GPU/performance pending. No install.
+[Exact selected Strata default attention](kuno-prefill-reference-attention.md)
+source180b91bd/SHAe3455e4c now frozen after175 App/13 unchanged-runtime/421 WGSL/
+216 layout PASS. Full single-cell/default shared PV/constant XOR +explicit FMA
+schedule implemented together; prior paired/gather/packed generators retained
+and independently tested. Original scalar/F64 references and bounds unchanged.
+New selected-source composition/compiler proof replaces incompatible old-mode
+composition assertions; no arithmetic tests removed. Actual compiler must show
+96 MADs for this explicit mode (same672 QK FMAs/chunk); paired modes still180.
+Exact extended compiler guard SHA31d3cf54 pinned in wrapper, old helper preserved.
+Earlier CPU inventory compared different existing fault closings and was corrected
+without engine changes; incomplete release322 refused on source-change detection.
 
-Both prior GPU units finished/recovered. Only root owns the current medium GPU unit.
-Owned sudo refresh895579/shared shell3556 ends00:30:44UTC Oct22; never kill shared
-shell. No API/KNT2/KNR2/frontend/model/config/release/reset change; required Vashti
-changes:none. Preserve canonical uncommitted coordination work and inherited cache.
+Root owns `kuno-reference-attn-20261022.service`, running233 GPU controls plus BOTH
+full original profiles/proofs/recovery. GPU/performance pending, no install. Prior
+GPU units recovered. Sudo refresh895579/shared shell3556 bounded until00:30:44UTC;
+never kill shared shell. No API/KNT2/KNR2/frontend/model/config/release/reset change;
+required Vashti changes:none. Preserve canonical coordination work/inherited cache.
 
 **Previous stopped checkpoint:**
 

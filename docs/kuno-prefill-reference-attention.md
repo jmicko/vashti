@@ -49,3 +49,28 @@ accepted local closing on both sides. All original172 controls pass, and the
 new cell inventory/composition controls pass. This corrects only a CPU reference
 scope; no engine/shader/number/bound is changed. Preserve initial failure log.
 Repeat complete175 exact-source CPU/offline/GPU gates on a new artifact.
+
+
+## Frozen reference-schedule checkpoint (2026-10-22 00:20UTC)
+
+Source180b91bdd101395a83489e9e4ac954320d33e671; worker SHA256
+`e3455e4c95963b7484f957a1674560ac88f71eb86784925551a1ec0c643e8da1`,
+build`strata-parity-reference-fixed-20261022`. Final175 App controls PASS;
+runtime13 unchanged-source valid fromffa; frozen421 WGSL/216 matrix layouts
+PASS with original pinned validator. No source/math/owner/reference bound relaxed.
+Earlier release322 was correctly refused after HEAD changed during its build;
+no artifact from that incomplete build is accepted. Keep its diagnostic.
+
+Root unit`kuno-reference-attn-20261022.service` now runs original233 GPU controls
+and BOTH full profiles/compiler/source/count/owner/erasure/recovery chains.
+Exact legacy compact compiler guard was extended ONLY for explicit reference
+schedule: native96 MAD instead of180; subgroup32 and spills/fills0 remain exact.
+All previous modes still require180. Original helper snapshot preserved at
+`check-native-qsa-compact-before-reference-schedule-20261022.py`; new helper SHA
+31d3cf54ea49921a18c18d5dc979d66a99e9b445a83a99e505246e4dd0dfb42e
+is pinned by the new connected wrapper. No numerical gate/reference changed.
+
+Evidence under `/media/jmicko/faststore/kuno-development`:
+`native-reference-fixed-{cpu-selection,cpu-features,cpu-final,offline,release-build,connected}-20261022*`,
+`check-native-reference-fixed-{connected,acceptance}-20261022.py`.
+GPU/performance and original terminal/clean/staged/install acceptance pending.
