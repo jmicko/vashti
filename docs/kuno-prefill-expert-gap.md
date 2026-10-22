@@ -1,0 +1,75 @@
+# Expert execution gap versus the pinned Strata Intel path
+
+Research and complete candidate, 2026-10-22. Reference is MIT Strata
+fb58e0dbc8399662c0e47c76578c6e878b14f6cf under
+`/media/jmicko/faststore/kuno-development/strata-parity-reference-build-20261020/source`.
+No API, model, configuration, frontend or release change.
+
+## Measured evidence and scope
+
+Latest full candidate c5a17af5 repeat4245 prompt9.380901735s: expert interval
+5.145774869s, attention2.961908847s. Expert interval includes routing/readback,
+host enqueue and backend capture plus GPU execution/completion. Nested timings
+must not be summed into it again. Capture0.511086744s and native wait3.275145859s
+are host wall timers, not sampled CPU seconds or individual GPU kernel times.
+Fixed-public sampled layer24/start0/count4096 alone cannot be multiplied by96
+to claim a full-prompt breakdown: the second chunk has149 prompt inputs and
+different group sizes.
+
+The Strata *instrumented* repeat is6.2893s; the clean reference is5.3515s.
+Its event phases include endpoint/queue idle overhead. Expert-related phases
+sum4.679s (grouping617ms,gather97,copy wait87,dequant875,GU545,DOWN2358,combine100).
+They are not identical scopes to Kuno's expert interval. Its QSA attention/merge
+is680ms versus Kuno's fenced family1.500092289s, not a proven isolated kernel
+ratio. Both expert execution and attention remain substantial leads.
+
+## Actual selected source differences
+
+- Strata `sycl/src/prefill/gemm.dp.cpp:773` calls dpct BLAS, which resolves
+  half×half→float products through oneMKL in `sycl/include/dpct/blas_utils.hpp`.
+  This is Intel's tuned implementation. Kuno's Rust/CubeCL kernels use explicit
+  fixed8/16/32-row families and128-row prefixes. Merely lowering the prefix
+  threshold128 was already tested and was slower; do not repeat that as a new idea.
+- The Intel default uses ordinary FP16 dequantization plus GEMM, not CUDA fused
+  quantized MoE. `sycl/CMakeLists.txt:211` selects the fused stub. Do not
+  attribute the same-host reference to an inactive CUDA/MMQ optimization.
+- Strata's default `ring_slots` uses routed-only8 slots when nonresident share
+  exceeds10%; the reference holds11608 of24576 pairs, so cross-layer stream-all
+  is NOT selected. Kuno now has two real32MiB banks. Increasing slots blindly
+  is not a missing Strata default.
+- Strata uses direct pointer/queue operations. Kuno retains full source/owner
+  validation, planning and descriptors around authentic captured operations.
+  Earlier capture/cohort improvements already reduced this cost. Do not call
+  all remaining GPU-completion wait CPU overhead.
+- Current small native/cohort matrices load only one K16 operand set and
+  immediately consume it. The wide staged kernels already pipeline their
+  operands; this candidate targets the unpipelined direct-global small families.
+
+## Complete optional candidate
+
+`strata-expert-register-prefetch` / `--expert-register-prefetch` requires
+the complete original global-narrow/cohort bundle. The SAME helper is used by
+both original global8/global16 and cohort8/cohort16 paths. Read two independent
+K16 operand sets before consuming them, then update each original accumulator
+in chronological K16 order. Guard a final single K16 block before any next
+read. No new allocation, shared memory, binding, output, route/status/finite
+predicate, source extent, publication fence, dequantization or mathematical
+precision change. Old one-block path stays available. Source order alone does
+not prove native load overlap or speed.
+
+The fixed-public sampler previously misclassified generated wide/tail kernels
+as `other`. Correct that using their genuine generated program types, and emit
+eight static matrix-family count/ns buckets. Preserve original seven aggregate
+classes, their complete partition, sample authorization/coordinates, timing
+mode and private-disabled behavior. No raw program name or content is emitted.
+Old `matrix`/ `other` subsets are therefore NOT directly comparable to corrected
+subsets. Whole prompt metrics remain comparable within their diagnostic limits.
+
+Run all original220 selected CPU controls plus genuine program-classification
+and guarded chronological-walk controls, unchanged runtime13,429 WGSL/280
+layouts, all326 GPU controls and both complete source/owner/math/recovery chains.
+Only exact feature-specific static matrix load/product counts double; dynamic
+work and original arithmetic/owner/fault limits remain. No speed or installation
+claim at implementation time. Inspect corrected real matrix-family costs and
+retain the complete candidate while resolving errors. Clean selection/staged
+quality/install gates remain separate and unchanged.

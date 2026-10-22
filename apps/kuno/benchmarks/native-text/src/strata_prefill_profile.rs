@@ -33,6 +33,36 @@ const NATIVE_CLASSES: [&str; 7] = [
     "ordered_fill",
     "other",
 ];
+const MATRIX_FAMILIES: [&str; 8] = [
+    "wide_gu",
+    "wide_down",
+    "tail_gu",
+    "tail_down",
+    "macro",
+    "narrow",
+    "cohort",
+    "other_matrix",
+];
+const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
+fn matrix_family(name: &str) -> usize {
+    if name.contains("::expert_wide_gu::ExpertWideGu") {
+        0
+    } else if name.contains("::expert_wide_down::ExpertWideDown") {
+        1
+    } else if name.contains("::expert_tail_gu::ExpertTailGu") {
+        2
+    } else if name.contains("::expert_tail_down::ExpertTailDown") {
+        3
+    } else if name.contains("::expert_macro::ExpertMacro") {
+        4
+    } else if name.contains("::expert_narrow::ExpertNarrow") {
+        5
+    } else if name.contains("::cohorts::expert_cohort::ExpertCohort") {
+        6
+    } else {
+        7
+    }
+}
 #[derive(Clone, Copy)]
 struct NativeSelection {
     authorized: bool,
@@ -64,7 +94,11 @@ fn native_class(name: &str) -> usize {
         | "StrataExpertCohortActivate" => 3,
         "OrderedCopy" => 4,
         "OrderedFill" => 5,
-        _ if name.contains("::cohorts::expert_cohort::ExpertCohort")
+        _ if name.contains("::expert_wide_gu::ExpertWideGu")
+            || name.contains("::expert_wide_down::ExpertWideDown")
+            || name.contains("::expert_tail_gu::ExpertTailGu")
+            || name.contains("::expert_tail_down::ExpertTailDown")
+            || name.contains("::cohorts::expert_cohort::ExpertCohort")
             || name.contains("::expert::Expert")
             || name.contains("::expert_macro::ExpertMacro")
             || name.contains("::expert_narrow::ExpertNarrow")
@@ -79,6 +113,27 @@ fn native_class(name: &str) -> usize {
 #[cfg(test)]
 mod native_sample_tests {
     use super::*;
+    #[test]
+    fn actual_generated_wide_and_tail_names_are_matrix_not_other() {
+        #[cfg(all(feature = "strata-intel-core", feature = "strata-native-expert-wide"))]
+        for (family, name) in crate::strata_matrix::wide_expert_profile_names()
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(native_class(name), 1);
+            assert_eq!(matrix_family(name), family);
+        }
+        for (name, family) in [
+            ("x::expert_macro::ExpertMacro<T>", 4),
+            ("x::expert_narrow::ExpertNarrow<T>", 5),
+            ("x::cohorts::expert_cohort::ExpertCohort<T>", 6),
+            ("StrataPromptExpertGemm", 7),
+        ] {
+            assert_eq!(native_class(name), 1);
+            assert_eq!(matrix_family(name), family);
+        }
+        assert_eq!(native_class("unknown private or dynamic label"), 6);
+    }
     #[test]
     fn cohort_real_program_names_retain_public_operator_classes() {
         for (name, class) in [
@@ -167,12 +222,18 @@ mod native_sample_tests {
 }
 // PUBLIC_PREFILL_NATIVE_SAMPLE_END
 
-fn native_totals() -> [(u64, u64); NATIVE_CLASSES.len()] {
-    let mut classes = [(0u64, 0u64); NATIVE_CLASSES.len()];
+fn native_totals() -> [(u64, u64); NATIVE_TOTALS] {
+    let mut classes = [(0u64, 0u64); NATIVE_TOTALS];
     for (name, calls, ns) in cubecl::wgpu::native_strata_operator_profile() {
-        let total = &mut classes[native_class(&name)];
+        let class = native_class(&name);
+        let total = &mut classes[class];
         total.0 = total.0.saturating_add(calls);
         total.1 = total.1.saturating_add(ns);
+        if class == 1 {
+            let family = &mut classes[NATIVE_CLASSES.len() + matrix_family(&name)];
+            family.0 = family.0.saturating_add(calls);
+            family.1 = family.1.saturating_add(ns);
+        }
     }
     classes
 }
@@ -180,7 +241,7 @@ fn native_totals() -> [(u64, u64); NATIVE_CLASSES.len()] {
 /// existing coarse Timer's real completion fence, not just enqueue_prompt().
 /// Drop on error disables sampling without publishing incomplete timestamps.
 pub(crate) struct NativeExpertLayer {
-    before: Option<[(u64, u64); NATIVE_CLASSES.len()]>,
+    before: Option<[(u64, u64); NATIVE_TOTALS]>,
     #[cfg(feature = "strata-public-host-clock")]
     host_before: [[u64; 4]; 8],
     #[cfg(feature = "strata-public-host-clock")]
@@ -267,6 +328,23 @@ impl NativeExpertLayer {
             // did not sample this interval; no cap or fence is relaxed.
             #[allow(unused_mut)]
             let mut record = serde_json::json!({"sampled_layers":1,"request_index":3,"start":0,"count":4096,"layer":24,"timestamp_calls":timestamp_calls,"classes":classes});
+            // Static family identifiers only, from the same completed fixed
+            // public samples. No raw program name or request label is emitted.
+            let matrix_families: BTreeMap<_, _> = MATRIX_FAMILIES
+                .into_iter()
+                .enumerate()
+                .map(|(j, name)| {
+                    let i = NATIVE_CLASSES.len() + j;
+                    (
+                        name,
+                        [
+                            after[i].0.saturating_sub(before[i].0),
+                            after[i].1.saturating_sub(before[i].1),
+                        ],
+                    )
+                })
+                .collect();
+            record["matrix_families"] = serde_json::json!(matrix_families);
             #[cfg(feature = "strata-public-host-clock")]
             {
                 let after = cubecl::wgpu::native_strata_host_capture_profile();

@@ -44,6 +44,15 @@ pub(crate) fn expert_metadata_test_names() -> [&'static str; 3] {
     ]
 }
 
+#[cfg(all(
+    test,
+    feature = "strata-intel-core",
+    feature = "strata-native-expert-wide"
+))]
+pub(crate) fn wide_expert_profile_names() -> [&'static str; 4] {
+    native_expert_wide::entry_names()
+}
+
 #[cfg(feature = "strata-cubek-gemm")]
 pub(crate) fn public_expert_numeric(
     client: &ComputeClient<WgpuRuntime>,
@@ -89,6 +98,10 @@ pub(crate) async fn request_device(
         Ok(adapter.request_device(descriptor).await?)
     }
 }
+#[cfg(feature = "strata-intel-core")]
+#[path = "strata_matrix_register_prefetch.rs"]
+mod register_prefetch;
+
 #[cfg(feature = "strata-intel-core")]
 mod native {
     use super::*;
@@ -731,31 +744,47 @@ mod native {
             // Authentic Gather AND activation zero every inactive row in the
             // complete8/16-member tile. Global vector views retain full owners;
             // both fixed expert feature axes are complete64-wide tiles.
-            let mut k = 0usize;
-            while k < columns {
-                let af = (token_base * columns + k) / 4;
-                let bf = (weight_first + (row_base + subgroup * 16) * columns + k) / 4;
-                cmma::load(
+            if comptime!(cfg!(feature = "strata-expert-register-prefetch")) {
+                super::register_prefetch::accumulate::<F>(
+                    input,
+                    weight,
+                    columns,
+                    token_base * columns / 4,
+                    (weight_first + (row_base + subgroup * 16) * columns) / 4,
                     &a0,
-                    &input.to_slice().slice(af, input.len()),
-                    u32::cast_from(columns),
-                );
-                cmma::load(
+                    &a1,
                     &bm,
-                    &weight.to_slice().slice(bf, weight.len()),
-                    u32::cast_from(columns),
+                    &c0,
+                    &c1,
+                    tile,
                 );
-                cmma::execute::<F, F, f32, f32>(&a0, &bm, &c0, &c0);
-                if comptime!(tile == 16) {
-                    let af1 = af + 8 * columns / 4;
+            } else {
+                let mut k = 0usize;
+                while k < columns {
+                    let af = (token_base * columns + k) / 4;
+                    let bf = (weight_first + (row_base + subgroup * 16) * columns + k) / 4;
                     cmma::load(
-                        &a1,
-                        &input.to_slice().slice(af1, input.len()),
+                        &a0,
+                        &input.to_slice().slice(af, input.len()),
                         u32::cast_from(columns),
                     );
-                    cmma::execute::<F, F, f32, f32>(&a1, &bm, &c1, &c1);
+                    cmma::load(
+                        &bm,
+                        &weight.to_slice().slice(bf, weight.len()),
+                        u32::cast_from(columns),
+                    );
+                    cmma::execute::<F, F, f32, f32>(&a0, &bm, &c0, &c0);
+                    if comptime!(tile == 16) {
+                        let af1 = af + 8 * columns / 4;
+                        cmma::load(
+                            &a1,
+                            &input.to_slice().slice(af1, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<F, F, f32, f32>(&a1, &bm, &c1, &c1);
+                    }
+                    k += 16;
                 }
-                k += 16;
             }
         } else {
             let mut a = SharedMemory::<Vector<F, Const<4>>>::new(comptime!(tile * 32));
@@ -1763,8 +1792,15 @@ mod native {
                         barriers, 1,
                         "only original output publication fence remains"
                     );
-                    assert_eq!(matrix_loads, if tile == 8 { 2 } else { 3 });
-                    assert_eq!(products, if tile == 8 { 1 } else { 2 });
+                    // Two emitted chronological K16 bodies only for the explicit
+                    // register lookahead candidate; no dynamic extra products.
+                    let blocks = if cfg!(feature = "strata-expert-register-prefetch") {
+                        2
+                    } else {
+                        1
+                    };
+                    assert_eq!(matrix_loads, blocks * if tile == 8 { 2 } else { 3 });
+                    assert_eq!(products, blocks * if tile == 8 { 1 } else { 2 });
                 }
             }
             // Exact scalar endpoints of every real complete cooperative load.
@@ -2607,7 +2643,11 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 };
                 let expected_shared = native::compiled_shared_bytes(name, layout_mask & 4 != 0);
                 #[cfg(feature = "strata-expert-cohorts")]
-                let expected_shared = if name.starts_with("expert_cohort") {Some(if name.contains("cohort8") {2048}else{4096})}else{expected_shared};
+                let expected_shared = if name.starts_with("expert_cohort") {
+                    Some(if name.contains("cohort8") { 2048 } else { 4096 })
+                } else {
+                    expected_shared
+                };
                 #[cfg(feature = "strata-native-wide")]
                 let expected_shared = if name.starts_with("dense_wide_native_") {
                     Some(native_wide::SHARED_BYTES)

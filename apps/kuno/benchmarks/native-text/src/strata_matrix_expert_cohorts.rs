@@ -241,30 +241,46 @@ pub(crate) fn expert_cohort(
     } else {
         c0
     };
-    let mut k = 0usize;
-    while k < columns {
-        let af = ((prefix + token_base) * columns + k) / 4;
-        let bf = (weight_first + (row_base + subgroup * 16) * columns + k) / 4;
-        cmma::load(
+    if comptime!(cfg!(feature = "strata-expert-register-prefetch")) {
+        super::register_prefetch::accumulate::<f16>(
+            input,
+            weight,
+            columns,
+            (prefix + token_base) * columns / 4,
+            (weight_first + (row_base + subgroup * 16) * columns) / 4,
             &a0,
-            &input.to_slice().slice(af, input.len()),
-            u32::cast_from(columns),
-        );
-        cmma::load(
+            &a1,
             &bm,
-            &weight.to_slice().slice(bf, weight.len()),
-            u32::cast_from(columns),
+            &c0,
+            &c1,
+            tile,
         );
-        cmma::execute::<f16, f16, f32, f32>(&a0, &bm, &c0, &c0);
-        if comptime!(tile == 16) {
+    } else {
+        let mut k = 0usize;
+        while k < columns {
+            let af = ((prefix + token_base) * columns + k) / 4;
+            let bf = (weight_first + (row_base + subgroup * 16) * columns + k) / 4;
             cmma::load(
-                &a1,
-                &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                &a0,
+                &input.to_slice().slice(af, input.len()),
                 u32::cast_from(columns),
             );
-            cmma::execute::<f16, f16, f32, f32>(&a1, &bm, &c1, &c1);
+            cmma::load(
+                &bm,
+                &weight.to_slice().slice(bf, weight.len()),
+                u32::cast_from(columns),
+            );
+            cmma::execute::<f16, f16, f32, f32>(&a0, &bm, &c0, &c0);
+            if comptime!(tile == 16) {
+                cmma::load(
+                    &a1,
+                    &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                    u32::cast_from(columns),
+                );
+                cmma::execute::<f16, f16, f32, f32>(&a1, &bm, &c1, &c1);
+            }
+            k += 16;
         }
-        k += 16;
     }
     let mut out = SharedMemory::<f32>::new(comptime!(tile * 64));
     let first = subgroup * comptime!(tile * 16);

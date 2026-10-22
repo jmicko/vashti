@@ -48,6 +48,7 @@ cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
 strata-expert-cohorts = ["strata-narrow-global", "strata-dequant-record32", "cubecl-runtime/kuno-expert-cohorts", "cubecl-wgpu/kuno-expert-cohorts"]
+strata-expert-register-prefetch = ["strata-expert-cohorts"]
 strata-native-prepared = ["strata-intel-core", "cubecl-wgpu/kuno-native-prepared"]
 strata-compute-main = ["strata-intel-core", "cubecl-wgpu/kuno-compute-main"]
 strata-narrow-global = ["strata-native-expert-wide", "strata-native-expert-bulk", "strata-expert-scratch-ring", "strata-intel-core"]
