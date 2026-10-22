@@ -212,6 +212,10 @@ impl Kernel {
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_query_planes::source(source)
         } else {source};
+        #[cfg(feature = "strata-qsa-head-scatter")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_head_scatter::source(source)
+        } else {source};
         #[cfg(feature = "strata-qsa-packed-cache")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_packed_cache::source(source)
@@ -871,3 +875,7 @@ mod native_quad_tests;
 #[cfg(any(test, feature="strata-qsa-query-planes"))]
 #[path="strata_prompt_qsa_query_planes.rs"]
 mod prompt_query_planes;
+
+#[cfg(any(test, feature = "strata-qsa-head-scatter"))]
+#[path = "strata_prompt_qsa_head_scatter.rs"]
+mod prompt_head_scatter;

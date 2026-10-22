@@ -1,5 +1,24 @@
 # Kuno and Vashti Coordination
 
+**RESUMED (2026-10-22): coupled query/GDN GPU validation; ordered-head source.**
+
+User completed machine update and authorizes continuation. Fresh recovery
+22:04UTC: same boot/kernel,Intel50,688,000B,NVIDIA compute0,faults0,services200,
+admission normal. Source8a49206b/worker dc3084dc passes245 App CPU/15 runtime/
+429 WGSL/296 layouts; protected350-operator worker completed and recovered;
+full normal/profile original18-script chains underway. No speed claim yet.
+
+Read [the complete ordered-head source contract](kuno-prefill-qsa-head-scatter.md).
+Next optional source retains the full bundle and reduces twelve head trees
+using a Strata EXPERIMENTAL topology, preserving exact original lane-zero
+operand order, faults, FMAs and owners. Source only, not compiled/tested.
+Intended249 App/15runtime/429WGSL/296layouts/all350GPU/BOTH chains and actual
+zero-spill ISA/recovery precede claims. No CPU compilation during GPU timing.
+Installed accepted worker/gateway unchanged; no API/model/config/frontend/
+release/reset/reboot change; required Vashti:none. Goal parity remains UNMET.
+Earlier pause and active snapshots below are historical.
+
+
 **PAUSED for user machine update (2026-10-22 21:32UTC).**
 
 Read [the exact source-only checkpoint and completed run](kuno-prefill-qsa-query-planes.md#coupled-gdn-source-checkpoint-and-user-pause--2026-10-22).

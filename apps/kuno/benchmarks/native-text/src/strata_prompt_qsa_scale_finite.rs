@@ -152,6 +152,8 @@ mod tests {
             }
             #[cfg(feature = "strata-qsa-query-planes")]
             let new = super::super::prompt_query_planes::source(new);
+            #[cfg(feature = "strata-qsa-head-scatter")]
+            let new = super::super::prompt_head_scatter::source(new);
             #[cfg(feature = "strata-qsa-scale-finite")]
             assert_eq!(k.source(), finish(new));
         }

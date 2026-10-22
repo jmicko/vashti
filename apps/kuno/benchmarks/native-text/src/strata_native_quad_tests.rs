@@ -3,10 +3,15 @@ use super::{Kernel, prompt_specialize};
 use cubecl::wgpu::{lower_native_subgroup_quads, native_compute_quads_supported};
 use std::collections::BTreeMap;
 fn quad_sites() -> usize {
-    if cfg!(feature = "strata-subgroup-quad-vertical") {
-        26
+    let per_mask = if cfg!(feature = "strata-qsa-head-scatter") {
+        4
     } else {
-        52
+        26
+    };
+    if cfg!(feature = "strata-subgroup-quad-vertical") {
+        per_mask
+    } else {
+        2 * per_mask
     }
 }
 fn instructions(w: &[u32]) -> Vec<Vec<u32>> {
@@ -66,7 +71,11 @@ fn actual_selected_modules_only_replace_52_exact_f32_participants_and_preserve_e
         );
         assert_eq!(
             ins.iter().filter(|i| i[0] & 65535 == 346).count(),
-            130 - quad_sites()
+            (if cfg!(feature = "strata-qsa-head-scatter") {
+                42
+            } else {
+                130
+            }) - quad_sites()
         );
         assert_eq!(ins.iter().filter(|i| i[0] & 65535 == 345).count(), 48);
         let old = original(&selected);
