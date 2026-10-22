@@ -42,3 +42,10 @@ zero poison-output bits and original sticky fault, sources never saved.
 Both original full18-script chains, zero-spill/compiler and physical recovery
 must pass before a NEW-source clean comparison. No CPU compilation during GPU
 timing. No favorable rerun or staged/install claim from diagnostics.
+
+
+The compiled-public worker partitions the3 new GR cases into the separate
+`gr_wide_tail_checks` report. Its `cases` field retains exactly the36 original
+cases, so the frozen18-script original harness remains byte-for-byte unchanged.
+The successor outer aggregate must verify all3 extra results, not infer their
+success from the original350. No private caller/API response is changed.

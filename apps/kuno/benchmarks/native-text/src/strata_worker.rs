@@ -369,6 +369,12 @@ async fn serve(
         let native_prepared_checks: Vec<serde_json::Value> = Vec::new();
         let cases = crate::strata_matrix::public_numeric(&client, &mut arena, &file)
             .map_err(|_| "public_matrix_numeric_failed")?;
+        // The immutable original operator harness still sees exactly its
+        // original36 cases. Additional actual GR-tail controls have a separate
+        // population and must be checked by the successor's outer aggregate.
+        let (gr_wide_tail_checks, cases): (Vec<_>, Vec<_>) = cases
+            .into_iter()
+            .partition(|r| r.get("gr_wide_tail_case").and_then(serde_json::Value::as_bool) == Some(true));
         let mut operator_checks =
             crate::strata_global_moe::public_prompt_numeric(&client, &mut arena)
                 .map_err(|_| "public_prompt_route_numeric_failed")?;
@@ -503,7 +509,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"macro64_expert_checks":macro64_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"cohort_producer_checks":cohort_producer_checks,"cohort_dequant_checks":cohort_dequant_checks,"cohort_matrix_checks":cohort_matrix_checks,"cohort_matrix_pair_checks":cohort_matrix_pair_checks,"cohort_multi_dequant_checks":cohort_multi_dequant_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"gr_wide_tail_checks":gr_wide_tail_checks,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"macro64_expert_checks":macro64_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"cohort_producer_checks":cohort_producer_checks,"cohort_dequant_checks":cohort_dequant_checks,"cohort_matrix_checks":cohort_matrix_checks,"cohort_matrix_pair_checks":cohort_matrix_pair_checks,"cohort_multi_dequant_checks":cohort_multi_dequant_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }
