@@ -55,7 +55,7 @@ fn matrix_family(name: &str) -> usize {
         2
     } else if name.contains("::expert_tail_down::ExpertTailDown") {
         3
-    } else if name.contains("::expert_macro::ExpertMacro") {
+    } else if (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64")) {
         4
     } else if name.contains("::expert_narrow::ExpertNarrow") {
         5
@@ -103,7 +103,7 @@ fn native_class(name: &str) -> usize {
             || name.contains("::expert_tail_down::ExpertTailDown")
             || name.contains("::cohorts::expert_cohort::ExpertCohort")
             || name.contains("::expert::Expert")
-            || name.contains("::expert_macro::ExpertMacro")
+            || (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64"))
             || name.contains("::expert_narrow::ExpertNarrow")
             || name.contains("::library_dense::LibraryDense")
             || name.contains("::library_expert::LibraryExpert") =>

@@ -725,3 +725,36 @@ fn medium_prefix_declines_incomplete_or_foreign_original_geometry() {
         }
     }
 }
+
+const MACRO64: &str = "probe::strata_matrix::native::expert_macro64::ExpertMacro64<Runtime>";
+#[test]
+fn genuine_macro64_geometry_keeps_all_six_phases_and_original_owners() {
+    for members in [64u32,65,127,128,129,255] {
+        let h=owners();let mut grammar=begin(&h,members);
+        for down in [false,true] {
+            if down {activate(&mut grammar);}
+            grammar.launch(MACRO64,false,
+                &CubeCount::Static(if down{40}else{20},members.div_ceil(64),1),
+                &matrix_args(&h,members,down,false,false)).unwrap();
+        }
+        let counts=grammar.finish().unwrap();
+        assert_eq!((counts.launches,counts.logical_phases,counts.matrix_pieces),(6,6,2));
+        assert_eq!((counts.wide_prefixes,counts.tail_pieces),(0,0));
+    }
+}
+#[test]
+fn macro64_rejects_original_grid_small_or_wide_members_and_changed_owner() {
+    for members in [1u32,32,63,256,257,4096] {
+        let h=owners();let mut grammar=begin(&h,members);
+        assert!(grammar.launch(MACRO64,false,&CubeCount::Static(20,members.div_ceil(64),1),
+            &matrix_args(&h,members,false,false,false)).is_err());
+    }
+    for bad in 0..4 {
+        let h=owners();let mut grammar=begin(&h,129);
+        let mut args=matrix_args(&h,129,false,false,false);
+        if bad==0 {args.buffers[0]=owners()[0].clone().binding();}
+        let grid=match bad {1=>CubeCount::Static(20,129u32.div_ceil(32),1),
+            2=>CubeCount::Static(19,3,1),3=>CubeCount::Static(20,3,2),_=>CubeCount::Static(20,3,1)};
+        assert!(grammar.launch(MACRO64,false,&grid,&args).is_err());
+    }
+}

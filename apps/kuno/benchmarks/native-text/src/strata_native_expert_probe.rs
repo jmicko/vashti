@@ -170,3 +170,24 @@ pub(crate) fn narrow_cases(
         narrow_launch,
     )
 }
+
+#[cfg(feature = "strata-expert-macro64")]
+pub(crate) fn macro64_cases(client: &ComputeClient<WgpuRuntime>,
+    arena: &mut crate::private_arena::PrivateArena) -> shared::ProbeResult<Vec<serde_json::Value>> {
+    use shared::Control::*;
+    fn selected(client: &ComputeClient<WgpuRuntime>, handles: [Handle;6], count: usize,
+        columns: usize, rows: usize, first: usize, group: usize, down: bool) -> shared::ProbeResult<bool> {
+        if !super::native::macro64_geometry(count, rows, columns, first,
+            client.properties().hardware.max_shared_memory_size,
+            [&handles[0],&handles[1]].map(|h| (h.size_in_used(), h.offset_start.unwrap_or(0)))) {
+            return Err("actual macro64 dispatcher geometry not selected".into());
+        }
+        // Counts below256 cannot select the original wide prefix. These exact
+        // admitted operands select the new branch in the genuine dispatcher.
+        super::native::run_expert(client,handles,count,columns,rows,first,group,down)?;
+        Ok(true)
+    }
+    shared::cases(client,arena,"native-macro64-routed-expert","actual_macro64_launch",
+        &[(64,Finite),(65,Finite),(127,Finite),(128,Finite),(129,Finite),(255,Finite),
+          (65,NonfiniteFirst),(65,NonfiniteOther),(65,InvalidRoute),(65,InvalidRoutePrefix)],selected)
+}

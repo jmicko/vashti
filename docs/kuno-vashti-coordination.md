@@ -1,5 +1,26 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno continuation (2026-10-22 21:00UTC): medium expert + vertical Quad bundle.**
+
+Read [the complete candidate specification](kuno-prefill-expert-macro64.md).
+Full scale-finite3285f49c passes228CPU/runtime13/offline429/280/all330GPU
+and both original chains with recovery; normal10.600400443/9.422304546s is
+neutral. Full nativeQuad b7262ce6/worker9b4f090f passes232CPU/runtime13/offline
+429/280 and all330GPU math controls. Its sampled full prompt completes and
+recovers, but native35spills/81fills fails the original compiler gate. Failed
+chain preserved, no normal/clean/staged/install acceptance. Actual indirect
+moves332->212; this is compiler evidence, not a clean speed claim.
+
+Complete new source retains full Quad, adds explicit vertical-only mode and
+real64x64 expert products including staging/publication/dispatch/INFO/grammar/
+pricing/counters and additional independent controls. Intended237AppCPU,15real
+runtimeCPU,429WGSL/296layouts,350GPU and BOTH original chains precede claims.
+No original numerical/spill/owner/source/recovery bound relaxed. GPUs recovered;
+next compile/check this complete bundle, no CPU compilation during GPU timing.
+Installed accepted301f1fd1 remains. No API/model/context/config/frontend/
+release/reset/reboot change; Vashti:none. Goal UNMET; user requests continued work.
+
+
 **Active Kuno continuation (2026-10-22): native four-lane lowering.**
 
 Read [the detailed source handoff](kuno-prefill-expert-gap.md#native-four-lane-lowering-continuation-2026-10-22-source-only).

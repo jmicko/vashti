@@ -25,6 +25,8 @@ pub(crate) use native_expert_probe::cases as public_native_expert_numeric;
 pub(crate) use native_expert_probe::medium_cases as public_native_medium_numeric;
 #[cfg(feature = "strata-narrow-global")]
 pub(crate) use native_expert_probe::narrow_cases as public_native_narrow_numeric;
+#[cfg(feature = "strata-expert-macro64")]
+pub(crate) use native_expert_probe::macro64_cases as public_native_macro64_numeric;
 
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_numeric_probe.rs"]
@@ -225,8 +227,9 @@ mod native {
     }
     // Two K64 operand buffers: A[2][32][64] and B[2][64][64].
     // Half/BF16 vectors preserve their original bits; no F32 round trip.
+    #[cfg(feature = "strata-expert-macro64")]
+    include!("strata_matrix_macro64.rs");
     #[cube]
-    #[allow(clippy::too_many_arguments)]
     fn macro_stage<F: Float>(
         input: &Array<Vector<F, Const<4>>>,
         weight: &Array<Vector<F, Const<4>>>,
@@ -1091,6 +1094,9 @@ mod native {
             ("expert_narrow16_gu", definition_expert_narrow(false, 16)),
             ("expert_narrow16_down", definition_expert_narrow(true, 16)),
         ];
+        #[cfg(feature = "strata-expert-macro64")]
+        out.extend([("expert_macro64_gu", definition_expert_macro64(false)),
+                    ("expert_macro64_down", definition_expert_macro64(true))]);
         #[cfg(feature = "strata-narrow-global")]
         out.extend([
             (
@@ -1324,6 +1330,13 @@ mod native {
                 bytes != 0 && bytes.is_multiple_of(8) && offset.is_multiple_of(8)
             })
     }
+    #[cfg(feature = "strata-expert-macro64")]
+    pub(super) fn macro64_geometry(count: usize, rows: usize, columns: usize, weight_first: usize,
+        shared: usize, bindings: [(u64,u64);2]) -> bool {
+        (64..256).contains(&count) && [(1280,2560),(2560,640)].contains(&(rows,columns))
+            && macro_geometry(count, rows, columns, weight_first, shared, bindings)
+            && shared >= 49152
+    }
     fn macro_compatible(
         client: &ComputeClient<WgpuRuntime>,
         input: &Handle,
@@ -1356,6 +1369,8 @@ mod native {
             (NARROW8_SHARED_BYTES, NARROW8_SHARED_BYTES - 8 * 64 * 4)
         } else if name.contains("narrow16") {
             (NARROW16_SHARED_BYTES, NARROW16_SHARED_BYTES - 16 * 64 * 4)
+        } else if name.contains("macro64") {
+            (49152, 32768)
         } else if name.contains("macro") {
             (MACRO_SHARED_BYTES, MACRO_OPERAND_BYTES)
         } else {
@@ -1668,6 +1683,10 @@ mod native {
         }
         let use_macro =
             macro_compatible(client, &input, &weight, count, rows, columns, weight_first);
+        #[cfg(feature = "strata-expert-macro64")]
+        let macro64_selected = macro64_geometry(count, rows, columns, weight_first,
+            client.properties().hardware.max_shared_memory_size,
+            [&input, &weight].map(|h| (h.size_in_used(), h.offset_start.unwrap_or(0))));
         let narrow = narrow_compatible(client, &input, &weight, count, rows, columns, weight_first);
         let ia = if use_macro || narrow.is_some() {
             macro_half_arg(input)?
@@ -1686,6 +1705,15 @@ mod native {
         // SAFETY: the actual prompt grouping/row map and all physical packed
         // images were checked by the original-source expert caller.
         unsafe {
+            #[cfg(feature = "strata-expert-macro64")]
+            if use_macro && macro64_selected {
+                crate::strata_prefill_profile::count("expert_macro64_products", 1);
+                expert_macro64::launch_unchecked::<WgpuRuntime>(client,
+                    CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(64) as u32, 1),
+                    CubeDim::new_1d(128), ia, wa, oa, ma, sa, fa,
+                    columns, rows, count, weight_first, group, down);
+                return Ok(());
+            }
             if use_macro {
                 expert_macro::launch_unchecked::<WgpuRuntime>(
                     client,

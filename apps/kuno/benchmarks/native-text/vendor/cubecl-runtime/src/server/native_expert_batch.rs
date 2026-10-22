@@ -43,6 +43,8 @@ pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) ->
         _ => {
             (name.contains("::expert::Expert")
                 || name.contains("::expert_macro::ExpertMacro")
+                || name.split_once("::expert_macro64::ExpertMacro64")
+                    .is_some_and(|(_,suffix)| suffix.is_empty() || suffix.starts_with('<'))
                 || name.contains("::expert_narrow::ExpertNarrow"))
                 && !release
         }

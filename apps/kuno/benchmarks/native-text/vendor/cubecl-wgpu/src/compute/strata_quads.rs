@@ -79,6 +79,12 @@ pub fn lower_native_subgroup_quads(words: &[u32]) -> Result<Vec<u32>, ServerErro
         let Some(&(ty, mask)) = constants.get(mask) else {
             continue;
         };
+        // Horizontal lowering needs two strided temporaries in Mesa. Keep
+        // its complete implementation, with an explicit vertical-only mode
+        // for the measured register-pressure constraint on this device.
+        if cfg!(feature = "kuno-subgroup-quad-vertical") && mask == 1 {
+            continue;
+        }
         let direction = match mask {
             1 => 0,
             2 => 1,

@@ -371,7 +371,12 @@ impl NativeStrataExpertGrammar {
                         "native expert grammar original full member owner",
                     ));
                 }
-                let tile = if name.contains("::expert_macro::") {
+                let tile = if name.contains("::expert_macro64::") {
+                    if !(64..256).contains(&params.count) {
+                        return Err(batch_fault("native expert macro64 member geometry"));
+                    }
+                    64
+                } else if name.contains("::expert_macro::") {
                     32
                 } else if name.contains("::expert_narrow::") {
                     if params.count <= 8 { 8 } else { 16 }

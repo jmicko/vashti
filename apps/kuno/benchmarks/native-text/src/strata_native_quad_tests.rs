@@ -2,6 +2,13 @@
 use super::{Kernel, prompt_specialize};
 use cubecl::wgpu::{lower_native_subgroup_quads, native_compute_quads_supported};
 use std::collections::BTreeMap;
+fn quad_sites() -> usize {
+    if cfg!(feature = "strata-subgroup-quad-vertical") {
+        26
+    } else {
+        52
+    }
+}
 fn instructions(w: &[u32]) -> Vec<Vec<u32>> {
     let mut out = Vec::new();
     let mut at = 5;
@@ -53,8 +60,14 @@ fn actual_selected_modules_only_replace_52_exact_f32_participants_and_preserve_e
     for k in [Kernel::PromptAttention, Kernel::PromptAttentionFault] {
         let (_, selected) = prompt_specialize::tests::compiled(&k.source());
         let ins = instructions(&selected);
-        assert_eq!(ins.iter().filter(|i| i[0] & 65535 == 366).count(), 52);
-        assert_eq!(ins.iter().filter(|i| i[0] & 65535 == 346).count(), 78);
+        assert_eq!(
+            ins.iter().filter(|i| i[0] & 65535 == 366).count(),
+            quad_sites()
+        );
+        assert_eq!(
+            ins.iter().filter(|i| i[0] & 65535 == 346).count(),
+            130 - quad_sites()
+        );
         assert_eq!(ins.iter().filter(|i| i[0] & 65535 == 345).count(), 48);
         let old = original(&selected);
         assert_eq!(lower_native_subgroup_quads(&old).unwrap(), selected);
@@ -117,7 +130,10 @@ fn non_f32_wrong_scope_dynamic_and_larger_masks_are_left_exactly_unchanged() {
         let after = lower_native_subgroup_quads(&before).unwrap();
         let out = instructions(&after);
         assert!(out.iter().any(|i| i == &input[pos]));
-        assert_eq!(out.iter().filter(|i| i[0] & 65535 == 366).count(), 51);
+        assert_eq!(
+            out.iter().filter(|i| i[0] & 65535 == 366).count(),
+            quad_sites() - 1
+        );
         // Restore eligible sites only: the rejected instruction must remain byte exact.
         assert_eq!(original(&after), before);
     }
@@ -139,5 +155,27 @@ fn actual_device_selection_requires_compute_quad_and_all_stage_support() {
                 );
             }
         }
+    }
+}
+
+#[cfg(feature = "strata-subgroup-quad-vertical")]
+#[test]
+fn vertical_mode_keeps_all_26_horizontal_sites_and_exact_78_other_xor_sites() {
+    let (_, selected) = prompt_specialize::tests::compiled(&Kernel::PromptAttentionFault.source());
+    let ins = instructions(&selected);
+    let c = constants(&ins);
+    let values: BTreeMap<_, _> = c.iter().map(|(&(t, v), &id)| (id, (t, v))).collect();
+    let masks: Vec<_> = ins
+        .iter()
+        .filter(|i| i[0] & 65535 == 346)
+        .map(|i| values[&i[5]].1)
+        .collect();
+    assert_eq!(masks.iter().filter(|&&m| m == 1).count(), 26);
+    assert!(!masks.contains(&2));
+    for m in [4, 8, 16] {
+        assert_eq!(masks.iter().filter(|&&x| x == m).count(), 26);
+    }
+    for i in ins.iter().filter(|i| i[0] & 65535 == 366) {
+        assert_eq!(values[&i[5]].1, 1);
     }
 }

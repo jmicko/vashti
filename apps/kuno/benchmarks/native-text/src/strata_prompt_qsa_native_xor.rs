@@ -90,7 +90,9 @@ mod tests {
             assert_eq!(count(&aw, 346), 0);
             assert_eq!(
                 count(&bw, 346),
-                if cfg!(feature = "strata-subgroup-quad") {
+                if cfg!(feature = "strata-subgroup-quad-vertical") {
+                    104
+                } else if cfg!(feature = "strata-subgroup-quad") {
                     78
                 } else {
                     130
@@ -98,7 +100,9 @@ mod tests {
             );
             assert_eq!(
                 count(&bw, 366),
-                if cfg!(feature = "strata-subgroup-quad") {
+                if cfg!(feature = "strata-subgroup-quad-vertical") {
+                    26
+                } else if cfg!(feature = "strata-subgroup-quad") {
                     52
                 } else {
                     0
