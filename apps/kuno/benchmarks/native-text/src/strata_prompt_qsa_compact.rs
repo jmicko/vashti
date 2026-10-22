@@ -129,6 +129,8 @@ mod tests {
                     s
                 }
             };
+            #[cfg(feature = "strata-qsa-prefetch")]
+            let prefetched = finish(super::super::prompt_prefetch::source(new.clone()));
             let old = finish(old);
             let new = finish(new);
             let (before, old_words) = prompt_specialize::tests::compiled(&old);
@@ -150,8 +152,15 @@ mod tests {
                     .count()
             };
             assert_eq!(shared(&before), shared(&after));
-            #[cfg(all(feature = "strata-qsa-compact", not(feature = "strata-qsa-packed-cache")))]
-            assert_eq!(k.source(), new);
+            #[cfg(all(
+                feature = "strata-qsa-compact",
+                not(feature = "strata-qsa-packed-cache")
+            ))]
+            {
+                #[cfg(feature = "strata-qsa-prefetch")]
+                let new = prefetched;
+                assert_eq!(k.source(), new);
+            }
             // The packed-cache suite separately checks the complete selected
             // composition. Keep this original compact-only inverse unchanged.
         }

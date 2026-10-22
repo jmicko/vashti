@@ -25,6 +25,18 @@ pub(crate) mod prompt;
 #[cfg(any(test, feature = "strata-qsa-compact"))]
 #[path = "strata_prompt_qsa_compact.rs"]
 mod prompt_compact;
+#[cfg(any(test, feature = "strata-qsa-prefetch"))]
+#[path = "strata_prompt_qsa_prefetch.rs"]
+mod prompt_prefetch;
+#[cfg(all(
+    feature = "strata-qsa-prefetch",
+    any(
+        feature = "strata-qsa-packed-cache",
+        feature = "strata-qsa-reference-schedule",
+        feature = "strata-qsa-xmx"
+    )
+))]
+compile_error!("QSA prefetch requires the unchanged selected compact scalar source");
 #[cfg(any(test, feature = "strata-qsa-fma"))]
 #[path = "strata_prompt_qsa_fma.rs"]
 mod prompt_fma;
@@ -34,15 +46,15 @@ mod prompt_local_fault;
 #[cfg(any(test, feature = "strata-qsa-packed-cache"))]
 #[path = "strata_prompt_qsa_packed_cache.rs"]
 mod prompt_packed_cache;
-#[cfg(any(test, feature = "strata-qsa-reference-schedule"))]
-#[path = "strata_prompt_qsa_reference_schedule.rs"]
-mod prompt_reference_schedule;
 #[cfg(any(test, feature = "strata-qsa-paired"))]
 #[path = "strata_prompt_qsa_paired.rs"]
 mod prompt_paired;
 #[cfg(any(test, feature = "strata-qsa-pv-gather"))]
 #[path = "strata_prompt_qsa_pv_gather.rs"]
 mod prompt_pv_gather;
+#[cfg(any(test, feature = "strata-qsa-reference-schedule"))]
+#[path = "strata_prompt_qsa_reference_schedule.rs"]
+mod prompt_reference_schedule;
 #[path = "strata_prompt_qsa_specialize.rs"]
 mod prompt_specialize;
 #[cfg(any(test, feature = "strata-qsa-uniform"))]
@@ -52,10 +64,10 @@ mod prompt_uniform;
 pub(crate) mod selection;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use attention_numeric_probe::cases as public_attention_numeric;
+#[cfg(feature = "strata-qsa-xmx")]
+pub(crate) use attention_numeric_probe::large_cases as public_attention_xmx_numeric;
 #[cfg(feature = "strata-qsa-packed-cache")]
 pub(crate) use attention_numeric_probe::packed_cache_cases as public_packed_cache_numeric;
-#[cfg(feature="strata-qsa-xmx")]
-pub(crate) use attention_numeric_probe::large_cases as public_attention_xmx_numeric;
 
 #[cfg(feature = "strata-qsa-xmx")]
 #[path = "strata_prompt_qsa_xmx.rs"]
@@ -133,7 +145,7 @@ impl Kernel {
         }
     }
     fn source(self) -> String {
-        #[cfg(feature="strata-qsa-reference-schedule")]
+        #[cfg(feature = "strata-qsa-reference-schedule")]
         if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             return prompt_reference_schedule::source(self);
         }
@@ -166,6 +178,12 @@ impl Kernel {
         #[cfg(feature = "strata-qsa-compact")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_compact::source(source)
+        } else {
+            source
+        };
+        #[cfg(feature = "strata-qsa-prefetch")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_prefetch::source(source)
         } else {
             source
         };
