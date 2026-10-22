@@ -99,6 +99,7 @@ strata-qsa-compact = ["strata-qsa-uniform"]
 strata-qsa-prefetch = ["strata-qsa-compact"]
 strata-qsa-native-xor = ["strata-qsa-prefetch"]
 strata-qsa-scale-finite = ["strata-qsa-native-xor"]
+strata-subgroup-quad = ["strata-qsa-scale-finite", "cubecl-wgpu/kuno-subgroup-quad"]
 # Original QK bytes/scales read in pairs; equivalent finite checks factored.
 strata-qsa-packed-cache = ["strata-qsa-compact"]
 strata-qsa-reference-schedule = ["strata-qsa-fma", "strata-qsa-local-fault"]

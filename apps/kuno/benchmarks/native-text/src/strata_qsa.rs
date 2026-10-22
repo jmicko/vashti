@@ -859,3 +859,7 @@ mod native_indexer_tests;
 #[cfg(test)]
 #[path = "strata_qsa_score_tests.rs"]
 mod native_score_tests;
+
+#[cfg(all(test, feature = "strata-subgroup-quad"))]
+#[path = "strata_native_quad_tests.rs"]
+mod native_quad_tests;

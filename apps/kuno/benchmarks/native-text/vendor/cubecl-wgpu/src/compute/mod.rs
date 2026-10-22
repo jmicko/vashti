@@ -18,6 +18,10 @@ mod strata_info_transfer;
 mod strata_io_reuse;
 mod strata_parameters;
 mod strata_physical;
+#[cfg(feature = "kuno-strata-shared")]
+mod strata_quads;
+#[cfg(feature = "kuno-strata-shared")]
+pub use strata_quads::{lower_native_subgroup_quads, native_compute_quads_supported};
 mod strata_readback;
 mod strata_schedule;
 mod strata_upload;

@@ -88,7 +88,22 @@ mod tests {
             assert_eq!(count(&aw, 345), 178);
             assert_eq!(count(&bw, 345), 48);
             assert_eq!(count(&aw, 346), 0);
-            assert_eq!(count(&bw, 346), 130);
+            assert_eq!(
+                count(&bw, 346),
+                if cfg!(feature = "strata-subgroup-quad") {
+                    78
+                } else {
+                    130
+                }
+            );
+            assert_eq!(
+                count(&bw, 366),
+                if cfg!(feature = "strata-subgroup-quad") {
+                    52
+                } else {
+                    0
+                }
+            );
             assert_eq!(count(&aw, 338), count(&bw, 338));
             assert_eq!(count(&aw, 133), count(&bw, 133));
             // The exact inverse above retains all FMAs and precise product tags.

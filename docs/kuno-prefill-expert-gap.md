@@ -177,3 +177,55 @@ legacy fixed-public receipt field name; this option does not select packed cache
 No original tolerance, owner/fault/readback/erasure or numerical reference is
 changed. No new device capability, allocation, API or persistence. Source-only
 until complete228CPU/runtime13/offline429/280/full330 and recovery pass.
+
+## Native four-lane lowering continuation (2026-10-22, source only)
+
+The complete scale-finite bundle3285f49c has passed228 selected CPU controls,
+13 runtime controls and429 WGSL/280 matrix layouts. Its frozen worker is
+646da5017222bd754320fd93325f242208d879b06e7fddfba8fba5d3125cfc32.
+The protected full330-control/both-chain GPU run is underway; no timing or
+acceptance claim yet. Original326 controls are retained and four genuine Q8
+nonfinite-scale poison controls are added, with the original scalar oracle.
+
+Independent read-only Vulkan properties confirm Intel8086:e223 exposes
+COMPUTE-stage QUAD and quadOperationsInAllStages=true. No device/queue/dispatch
+was created by that inventory. See external `quad-properties-20261022.json`.
+
+Exact upstream Mesa26.2.5 source (archive SHA
+794b3d1729075dae7ebd47c7283b7ca0cdb5dec668f7f11cc0a5d82f6138a0a5)
+explains why the native-XOR candidate still emits332 indirect moves:
+`brw_nir.c` sets lower_relative_shuffle=true, and
+`nir_lower_subgroups.c` converts XOR/up/down to generic indexed lookup.
+Subgroup rotate also lowers to shuffle, so changing to rotate is no remedy.
+Quad swaps remain dedicated. `brw_lower_subgroup_ops.cpp` maps horizontal
+32-bit swaps to strided moves and vertical32-bit swaps to a quad swizzle.
+Vulkan specification Shaders/Quad defines consecutive subgroup indices in
+all quad scope instances: https://docs.vulkan.org/spec/latest/chapters/shaders.html
+(section Quad). The lane mapping is therefore not guessed from framebuffer or
+workgroup geometry. This is upstream compiler evidence; it does not prove the installed Kisak
+binary is byte-identical, nor that the new path is faster on this host.
+
+The complete optional `strata-subgroup-quad` / `--subgroup-quad` bundle preserves
+all prior features and explicitly requires scale-finite/XOR/prefetch. A native
+SPIR-V postpass replaces only scalar-F32, subgroup-scope, literal-u32 XOR1/2
+with QuadSwap horizontal/vertical, reusing existing constant IDs and preserving
+all other words/IDs/header/arithmetic/order/owners/status/fault policy. Missing
+constants, dynamic or larger masks, other types and scopes remain unchanged.
+An actual Vulkan property gate rejects unsupported devices before creation.
+The normal feature-off path stays unchanged. No driver or C++ runtime is built
+or installed. Actual native registration and offline inspection share the same
+postpass. The existing product-rounding pass still decorates every FMul.
+
+Four new CPU controls check complete selected modules (52 replacements,
+78 remaining XOR and48 original indexed gathers), independent exact inversion,
+idempotence, all other words, participant bit identities, rejected cases, and
+all combinations of the required device bits. Existing native-XOR opcode
+controls must count52 QuadSwap plus78 XOR under this explicit feature, with
+130 XOR/zero QuadSwap otherwise. Full original controls and precise numerical
+oracles remain mandatory. Next acceptance requires232CPU, runtime13,
+429/280, all330GPU, both full original chains, real native ISA and physical
+recovery. These are intended counts; none is claimed passed yet.
+
+No API/KNT2/KNR2/context/model/settings/frontend change. Required Vashti:none.
+Installed accepted301f1fd1 worker remains unchanged. No speed-based selection,
+staged quality or installation of these successors has occurred.

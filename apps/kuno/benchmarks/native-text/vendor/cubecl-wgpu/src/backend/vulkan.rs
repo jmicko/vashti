@@ -87,6 +87,21 @@ pub fn request_strata_device(
         {
             return None;
         }
+        #[cfg(feature = "kuno-subgroup-quad")]
+        {
+            let mut quads = ash::vk::PhysicalDeviceSubgroupProperties::default();
+            let mut actual = ash::vk::PhysicalDeviceProperties2::default().push_next(&mut quads);
+            instance
+                .raw_instance()
+                .get_physical_device_properties2(hal.raw_physical_device(), &mut actual);
+            if !crate::compute::native_compute_quads_supported(
+                quads.supported_stages.as_raw(),
+                quads.supported_operations.as_raw(),
+                quads.quad_operations_in_all_stages == ash::vk::TRUE,
+            ) {
+                return None;
+            }
+        }
         let (device, queue) = request_device(adapter, &hal, features, limits, true)?;
         // This original admitted device has not created any shader/pipeline.
         // Its HAL factory latches32 into WGSL modules, including delayed Naga

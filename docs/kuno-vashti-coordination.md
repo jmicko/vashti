@@ -1,5 +1,20 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno continuation (2026-10-22): native four-lane lowering.**
+
+Read [the detailed source handoff](kuno-prefill-expert-gap.md#native-four-lane-lowering-continuation-2026-10-22-source-only).
+Complete native-XOR175b1c2f passes225CPU/runtime13/offline429/280, all326GPU
+and both original chains with recovery; repeat9.372082925s is neutral. The
+scale-finite3285f49c worker646da501 passes228CPU/runtime13/offline429/280;
+its protected330GPU/both-chain run is underway, operators already pass. Next
+optional nativeQuad source is complete, not built/tested: actual hardware
+COMPUTE/QUAD/all-stages properties are true. Mesa source identifies a dedicated
+32-bit quad path absent from relative shuffles. Preserve all original guards;
+232CPU/330GPU/both chains/actual ISA/recovery remain before performance claims.
+No CPU compilation while full GPU chains run. No new installation; Vashti:none.
+Goal remains UNMET; user authorizes computer/GPUs for the next few hours.
+
+
 **Current Kuno work (2026-10-22): complete expert-register + native-XOR continuation.**
 
 User authorizes the computer/GPUs for the next few hours and requests continued

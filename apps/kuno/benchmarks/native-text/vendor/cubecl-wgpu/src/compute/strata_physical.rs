@@ -382,5 +382,10 @@ pub fn preserve_native_product_rounding(words: &[u32]) -> Result<Vec<u32>, Serve
     // rspirv assembly stamps its own generator ID. This annotation-only pass
     // retains the original complete header, including Naga's generator/bound.
     result[..5].copy_from_slice(&words[..5]);
+    #[cfg(feature = "kuno-subgroup-quad")]
+    {
+        return super::strata_quads::lower_native_subgroup_quads(&result);
+    }
+    #[cfg(not(feature = "kuno-subgroup-quad"))]
     Ok(result)
 }
