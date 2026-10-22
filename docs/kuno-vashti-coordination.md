@@ -1,5 +1,20 @@
 # Kuno and Vashti Coordination
 
+**PAUSED for user machine update (2026-10-22 21:32UTC).**
+
+Read [the exact source-only checkpoint and completed run](kuno-prefill-qsa-query-planes.md#coupled-gdn-source-checkpoint-and-user-pause--2026-10-22).
+Full ad3a8a53/worker488f34ed passed238 App CPU,15 runtime,429WGSL/296layouts,
+all350 GPU and BOTH original18-script chains. Normal4245 first/repeat
+10.411413116/9.141123116s (~3% shorter repeat than preceding9.422304546s).
+Diagnostic only; clean Strata5.3515s parity remains UNMET, no installation.
+Next complete query-plane + GDN local fault-mask source is saved but UNCOMPILED
+and UNTESTED (intended245 App controls). Do not resume automatically or start
+GPU work during the update. Actual fresh recovery21:31:40UTC: Intel50,688,000B,
+NVIDIA compute0, driver faults0, services200, admission normal. No API/config/
+model/context/frontend/release/reset/reboot change; required Vashti:none.
+Installed accepted worker/gateway unchanged. Earlier snapshots below are history.
+
+
 **Current source continuation (2026-10-22 21:18UTC): query-vector planes.**
 
 Read [the exact source contract](kuno-prefill-qsa-query-planes.md). It retains

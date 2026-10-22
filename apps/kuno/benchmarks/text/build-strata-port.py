@@ -5,7 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
 options=set(sys.argv[2:])
-if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu','--unused-descriptors','--route-registers','--copy-cohorts','--qsa-packed-cache','--expert-medium','--qsa-reference-schedule','--dequant-record32','--narrow-global','--compute-main','--expert-cohorts','--native-prepared','--qsa-prefetch','--expert-register-prefetch','--qsa-native-xor','--qsa-scale-finite','--subgroup-quad','--expert-macro64','--subgroup-quad-vertical','--qsa-query-planes'}:raise ValueError('build feature selector')
+if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu','--unused-descriptors','--route-registers','--copy-cohorts','--qsa-packed-cache','--expert-medium','--qsa-reference-schedule','--dequant-record32','--narrow-global','--compute-main','--expert-cohorts','--native-prepared','--qsa-prefetch','--expert-register-prefetch','--qsa-native-xor','--qsa-scale-finite','--subgroup-quad','--expert-macro64','--subgroup-quad-vertical','--qsa-query-planes','--gdn-coalesce-faults'}:raise ValueError('build feature selector')
 if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise ValueError('GPU route usage requires explicit Intel core selection')
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 if '--cubek-gemm' in options and '--intel-core' not in options:raise ValueError('CubeK candidate requires explicit Intel core')
@@ -82,6 +82,8 @@ if '--expert-macro64' in options and '--subgroup-quad-vertical' not in options:r
 features += ['strata-expert-macro64'] if '--expert-macro64' in options else []
 if '--qsa-query-planes' in options and '--expert-macro64' not in options:raise ValueError('query planes require explicit complete expert/vertical quad bundle')
 features += ['strata-qsa-query-planes'] if '--qsa-query-planes' in options else []
+if '--gdn-coalesce-faults' in options and '--qsa-query-planes' not in options:raise ValueError('GDN fault coalescing requires explicit complete query plane bundle')
+features += ['strata-gdn-coalesce-faults'] if '--gdn-coalesce-faults' in options else []
 
 if {'--qsa-packed-cache','--qsa-xmx'} <= options:raise ValueError('packed-cache and matrix QSA are separate complete candidates')
 if '--qsa-packed-cache' in options and '--qsa-compact' not in options:raise ValueError('packed QK cache requires complete compact attention bundle')

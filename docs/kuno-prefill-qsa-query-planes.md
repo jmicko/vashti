@@ -60,3 +60,46 @@ cases, all four scale poison cases and whole-model requests exercise it.
 Clean speed selection and full staged private-runtime/tool/thinking/MAX8/API/
 recovery acceptance still precede installation. Goal remains UNMET until a
 matched clean same-workload result establishes Strata parity.
+
+## Coupled GDN source checkpoint and user pause — 2026-10-22
+
+User requests a pause for machine updates. Query-plane source commit
+`c2ef292fd6f1bba9626638a6d439dd7f5f8d6746` has not been compiled or run.
+The queued CPU driver was stopped before compilation. The additional optional
+`strata-gdn-coalesce-faults` / `--gdn-coalesce-faults` requires query planes
+and retains all preceding coupled features. It changes only the two specialized
+GDN recurrence variants: each phase accumulates the same32 finite predicates
+in a local integer mask and conditionally writes the same sticky fault bit once
+instead of32 times. The write remains before its original whole-group barrier;
+there is no intervening fault read or barrier. Every floating operation, state
+load/store, chronology, owner and closing check remains. Good data does no atomic.
+
+Four additional CPU controls are written for exact source inversion, all state
+positions/IEEE classes/prior sticky bits, actual SPIR-V ABI/math/barrier and
+subgroup preservation, and selected-stage composition/rejection. They are
+UNCOMPILED AND UNTESTED. Intended combined App CPU count245, runtime15,
+429 WGSL/296 layouts,350 GPU controls and BOTH original complete chains.
+Do not treat source assertions or rustfmt as acceptance; preserve every original
+numerical/compiler/owner/status/recovery gate. No speed claim for either new
+source change. No installation, API/config/model/context/frontend change.
+
+The preceding complete medium-expert/vertical-Quad bundle DID finish:
+source `ad3a8a538e1352a96332c0a9b29f2383ab583909`, worker SHA256
+`488f34edebb995c5de4393cefedc4c71395bf2d9457c43cfba56bca68a753673`.
+All238 selected App CPU,15 actual runtime,429 WGSL/296 layouts,350 GPU
+controls and BOTH original18-script proof/profile/recovery chains pass.
+Artifact base `/media/jmicko/faststore/kuno-development`; public receipt
+`strata-parity-macro64-fixture-fixed-20261022-expert-cohorts-public-summary.json`.
+Normal first/repeated4245-token prompts10.411413116/9.141123116s; profile
+10.414083479/9.180948541s. Previous scale-finite normal repeat9.422304546s.
+This is an instrumented diagnostic, not matched clean Strata parity or
+installation acceptance. Strata clean repeat5.3515s still leads. Real production
+macro64 count6532 on each long request; no original guard relaxed. Native QSA
+2923 instructions/130 sends/SIMD32/128GRF/zero spills or fills.
+
+Fresh physical recovery at2026-10-22T21:31:40UTC: Intel50,688,000B,
+NVIDIA compute processes0 (741MiB desktop allocation), driver fault counts0,
+Kuno/Ollama/Vashti HTTP200, admission active=false/paused=false/
+recovery_required=false/waiting0. Receipt `pause-update-final-state-20261022.json`.
+Installed accepted worker/gateway unchanged. No goal exists in the controller
+at this checkpoint; do not create one merely to pause. User owns update/reboot.

@@ -8,6 +8,9 @@ use super::*;
 mod numeric_probe;
 #[path = "strata_prompt_gdn_specialize.rs"]
 mod specialize;
+#[cfg(any(test,feature="strata-gdn-coalesce-faults"))]
+#[path="strata_prompt_gdn_coalesced_faults.rs"]
+mod coalesced_faults;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use numeric_probe::cases as public_recurrence_numeric;
 pub(crate) const COMPATIBILITY_INFO_PER_STAGE: u64 = 2 * 2048;
@@ -32,7 +35,10 @@ impl Op {
     fn source(self) -> String {
         let scalar = self.scalar_source();
         if matches!(self, Self::Recurrence | Self::RecurrenceFault) {
-            specialize::source(scalar)
+            let source=specialize::source(scalar);
+            #[cfg(feature="strata-gdn-coalesce-faults")]
+            let source=coalesced_faults::source(source);
+            source
         } else {
             scalar
         }

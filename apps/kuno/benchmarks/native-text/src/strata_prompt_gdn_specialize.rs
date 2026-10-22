@@ -240,6 +240,8 @@ mod tests {
     fn expansion_preserves_ordered_rows_and_closing_faults() {
         for op in [Op::Recurrence, Op::RecurrenceFault] {
             let expanded = op.source();
+            #[cfg(feature="strata-gdn-coalesce-faults")]
+            let expanded=super::super::coalesced_faults::restore(expanded);
             assert!(!expanded.contains("state[r]"));
             assert!(!expanded.contains("for(var r="));
             assert_eq!(expanded.matches("for(var t=0u;t<p.count;t++)").count(), 1);
