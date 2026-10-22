@@ -1,5 +1,33 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno checkpoint (2026-10-22 17:30UTC): attention prefetch fully tested; no speed gain.**
+
+Full coupled QSA prefetch sourcec5a17af5 (merged ae24a145)/workerSHA78e7a60e
+passes220 selected App CPU controls (all original213 +new7),13 actual runtime
+controls,429 WGSL/280 matrix layouts,all326 GPU controls and BOTH complete
+original18-script proof/profile/recovery chains. Read
+[the tested attention handoff](kuno-prefill-qsa-prefetch.md#root-validation-checkpoint--2026-10-22)
+for exact frozen artifacts, guards, compiler evidence and limits. Public summary
+under artifact base SHA554375e5db922cb6c2f85ca0ef10f2508337ba5f3e3d42ec26618dba60bb11e1.
+
+Actual SIMD32/128GRF code retains K/Q/PV lookahead and has zero spills/fills,
+but2982 instructions/130 sends versus2654/112 before. Normal first4245-token
+prompt10.501310285/repeat9.380901735s versus bank/release10.424577118/
+9.283137399s:0.74%/1.05% slower; attention bucket essentially unchanged.
+Profile10.594575759/9.449852848s also shows no gain. These are instrumented
+diagnostics, not clean selection. Keep the COMPLETE optional implementation;
+no clean selection, staged quality or installation. Same-host Strata5.3515s
+still leads; goal UNMET/controller usageLimited. Do not falsely mark it achieved.
+
+Protected unit completed exit0/inactive/dead. Final actual recovery17:30:44UTC:
+unchanged boot,Intel50,688,000B,NVIDIA compute0,driver faults0,services200,
+admission normal. No test worker/compiler remains. Installed accepted301f1fd1/
+SHA0e226827 worker and36626d30/SHAd3ed07f4 gateway reverified unchanged.
+Bounded sudo refresherPID1456723 expires2026-10-23 01:17:20UTC; do not assume
+credentials persist beyond it. No API/KNT2/KNR2/model/context/config/frontend/
+release/reset/reboot change; required Vashti:none. Earlier checkpoints below
+are historical, including the former unmerged/source-only attention status.
+
 **Current Kuno checkpoint (2026-10-22): complete dual-bank/release validation PASS; no new speed selection.**
 
 Goal UNMET; controller currently usageLimited after the overnight usage limit.
