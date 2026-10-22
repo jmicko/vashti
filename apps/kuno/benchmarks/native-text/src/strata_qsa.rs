@@ -25,6 +25,9 @@ pub(crate) mod prompt;
 #[cfg(any(test, feature = "strata-qsa-compact"))]
 #[path = "strata_prompt_qsa_compact.rs"]
 mod prompt_compact;
+#[cfg(any(test, feature = "strata-qsa-native-xor"))]
+#[path = "strata_prompt_qsa_native_xor.rs"]
+mod prompt_native_xor;
 #[cfg(any(test, feature = "strata-qsa-prefetch"))]
 #[path = "strata_prompt_qsa_prefetch.rs"]
 mod prompt_prefetch;
@@ -184,6 +187,12 @@ impl Kernel {
         #[cfg(feature = "strata-qsa-prefetch")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_prefetch::source(source)
+        } else {
+            source
+        };
+        #[cfg(feature = "strata-qsa-native-xor")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_native_xor::source(source)
         } else {
             source
         };

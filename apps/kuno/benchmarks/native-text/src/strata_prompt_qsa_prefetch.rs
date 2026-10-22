@@ -455,6 +455,8 @@ mod tests {
                     s
                 }
             };
+            #[cfg(feature = "strata-qsa-native-xor")]
+            let new = super::super::prompt_native_xor::source(new);
             #[cfg(feature = "strata-qsa-prefetch")]
             assert_eq!(k.source(), finish(new));
             #[cfg(not(feature = "strata-qsa-prefetch"))]

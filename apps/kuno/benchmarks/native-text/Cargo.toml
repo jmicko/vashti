@@ -97,6 +97,7 @@ strata-qsa-uniform = ["strata-qsa-fma", "strata-qsa-paired", "strata-qsa-pv-gath
 strata-qsa-compact = ["strata-qsa-uniform"]
 # Bounded raw-pair/Q-head/four-cell lookahead; no precision or owner change.
 strata-qsa-prefetch = ["strata-qsa-compact"]
+strata-qsa-native-xor = ["strata-qsa-prefetch"]
 # Original QK bytes/scales read in pairs; equivalent finite checks factored.
 strata-qsa-packed-cache = ["strata-qsa-compact"]
 strata-qsa-reference-schedule = ["strata-qsa-fma", "strata-qsa-local-fault"]

@@ -73,3 +73,36 @@ work and original arithmetic/owner/fault limits remain. No speed or installation
 claim at implementation time. Inspect corrected real matrix-family costs and
 retain the complete candidate while resolving errors. Clean selection/staged
 quality/install gates remain separate and unchanged.
+
+
+## Coupled attention lowering lead
+
+Actual Strata QSA assembly has32 indirect register-move lines; current compact
+Kuno327 and prefetched Kuno332. Raw instruction counts are not latency and the
+paired Kuno loop executes fewer iterations. More importantly, exact reduction
+bodies show Strata's constant XOR8/4/2/1 become direct register permutations,
+while Kuno's `prompt_uniform` converted original XOR butterflies into indexed
+shuffles. That metadata optimization and indexed-lane spelling need not be
+coupled. Retain ALL uniform immutable IDs/lane-zero score/fault policy and the
+entire paired/compact/prefetch bundle; restore130 exact constant XOR operations
+in place of indexed lane lookups. Original130 reduction participant selections
+and chronological additions are identical. The48 remaining indexed PV gathers
+stay intact; no precision or fault-policy relaxation.
+
+Explicit option `--qsa-native-xor` / `strata-qsa-native-xor` requires the
+complete QSA prefetch bundle. Whole-source inverse, actual SPIR-V geometry/
+binding/SLM/barrier/operation inventories and fail-closed source-drift controls
+are separate from existing full bitwise/F64 GPU controls. Two existing selected
+source expectations compose the new hook without changing their independent
+original arithmetic tests. Native ISA must prove fewer indirect operations and
+zero spills; no speed claim at implementation time. Compose with expert-register
+candidate; no rollback of the preceding complete changes.
+
+The old external assembly directories were accidentally named in reversed order:
+`.../strata-public-attention-isa-20261020/gdn/` contains the actual QSA symbol,
+and `qsa/` contains GDN. Select by actual symbol + matching .ze_info, never the
+directory label. Existing QSA V-load evidence1550/1553 is indeed in the real QSA
+file under the old `gdn/` directory. No original artifact is changed.
+`strata-attention-isa-identities-20261022.json` independently binds each symbol,
+metadata, full assembly SHA and actual SIMD/GRF/SLM values. AOT extraction order
+is not a semantic name. This correction does not change any benchmark result.

@@ -130,7 +130,11 @@ mod tests {
                 }
             };
             #[cfg(feature = "strata-qsa-prefetch")]
-            let prefetched = finish(super::super::prompt_prefetch::source(new.clone()));
+            let prefetched = super::super::prompt_prefetch::source(new.clone());
+            #[cfg(feature = "strata-qsa-native-xor")]
+            let prefetched = super::super::prompt_native_xor::source(prefetched);
+            #[cfg(feature = "strata-qsa-prefetch")]
+            let prefetched = finish(prefetched);
             let old = finish(old);
             let new = finish(new);
             let (before, old_words) = prompt_specialize::tests::compiled(&old);
