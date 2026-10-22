@@ -25,6 +25,14 @@ pipeline executable creation, is being implemented in separate managed worktree
 root measurements; root alone owns GPUs. Preserve ALL original core+HAL
 validation, actual device/context provenance and native owners when skipping
 the unused ordinary driver executable. Render-primary remains next selection.
+The [complete native-prepared successor](kuno-prefill-native-prepared.md)
+301f1fd1/SHA0e226827 is now frozen on render-primary:183 exact-source CPU,
+421 WGSL/248 matrix PASS; original runtime tree unchanged. Root unit
+`kuno-native-prepared-20261022.service` runs original241 GPU plus11 actual-device
+admission checks and BOTH full original chains with actual no-ordinary-program
+counts. Frozen18-script harness preserves original math/owner/native compiler
+checks; selected compiler population is intentionally1 per scope instead of2.
+Exact manifest/helper hashes in linked spec. No GPU/speed/install claim yet.
 No API/KNT2/KNR2/config/model/
 frontend/release/reset/reboot change; required Vashti changes:none. Bounded sudo
 refresher1145657/shared shell3556 expires15:45:12UTC. Earlier handoffs follow.

@@ -106,3 +106,44 @@ original runtime, offline421 WGSL/248 matrix modules,241 operators, eleven new
 actual-device admission controls, complete owner/source/proof/recovery chains,
 terminal controls, clean selection and staged quality/API installation gates.
 The retained counters and public controls contain no user prompts or images.
+
+
+## Frozen root acceptance checkpoint
+
+Integrated source301f1fd16f02093be7882db066f276555bfe3245 (portbef9ef50), artifact
+`strata-parity-native-prepared-20261022`, SHA256
+0e22682700fcf269d5cd3df1b321622c2b62bc422bbda077b667d0c3443ce6de.
+Root exact-source183 CPU controls PASS again, original runtime tree unchanged,
+421 WGSL/248 matrix layouts PASS pinned2026.1 validator. Render-primary selected;
+complete compute-primary optional path remains. Two independent source reviews
+find no blocker; all private ownership and actual native program checks retained.
+
+Root protected unit`kuno-native-prepared-20261022.service` now runs original241
+GPU operators plus11 actual-device admission checks and BOTH original
+73/4245/4245 compiler/count/owner/source/capacity/erasure/recovery chains. No
+GPU/speed/terminal/clean/staged/install acceptance is claimed yet. No build or
+other GPU test runs concurrently. Installed worker/gateway unchanged.
+
+The original18-script proof chain is frozen separately without mutating prior
+helpers, under evidence base`native-prepared-original-harness-20261022/`.
+Each predecessor is preserved in`original/` with both source hashes in manifest.
+Two profile leaves ADD actual prepared/ordinary/native-key/original-key counter
+validation. One compiler inventory guard now requires exactlyONE program per
+QSA scope when native-prepared selected, originalTWO otherwise, because omission
+of the duplicate executable is the intended behavior. Every original actual
+native subgroup32/MAD180/no-spill check, original scalar/F64 references,
+numerical thresholds, real group/count/source/cap/owner/replay/erasure/recovery
+check remains. No synthetic ordinary executable is created to satisfy oldcounts.
+Native admission comparison pipelines run only in separate operator process,
+before scoped compiler controls, never in timed whole-model workers.
+
+Frozen manifest SHA256
+1f328ab33d36bd3006d2dc76c3d0362a42c72e8d0e111f50a7a580a4eed97f88.
+Connected wrapper`check-native-prepared-connected-20261022.py` SHA256
+d7ddeb8b57bde06dc00f3e50c34b331f3408800d1d8ac0c585fd9baef09c91c9
+pins exact original/new helpers, source/artifact/features/all183 CPU names,
+offline inventory and original11 runtime checks. It requires all11 exact
+admission cases, original241 operators and three actual selected-program counter
+rows in EACH full profile mode, with no ordinary inference executable or original
+Graph key. Genuine ordinary root initialization remains independently exercised
+by the original numerical/owner/erasure checks. Required Vashti changes:none.
