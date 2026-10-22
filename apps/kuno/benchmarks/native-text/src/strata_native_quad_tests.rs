@@ -29,7 +29,13 @@ fn constants(ins: &[Vec<u32>]) -> BTreeMap<(u32, u32), u32> {
 fn original(selected: &[u32]) -> Vec<u32> {
     let mut ins = instructions(selected);
     let c = constants(&ins);
-    let values: BTreeMap<_, _> = c.iter().map(|(&(t, v), &id)| (id, (t, v))).collect();
+    // Keep EVERY actual ID: Naga may use both literal zero and ConstantNull.
+    // A value->ID map alone loses the other zero's genuine identity.
+    let values: BTreeMap<_, _> = ins
+        .iter()
+        .filter(|i| (i[0] & 65535 == 43 && i.len() == 4) || (i[0] & 65535 == 46 && i.len() == 3))
+        .map(|i| (i[2], (i[1], if i.len() == 3 { 0 } else { i[3] })))
+        .collect();
     for i in &mut ins {
         if i[0] & 65535 == 366 {
             let (ty, dir) = values[&i[5]];

@@ -236,3 +236,10 @@ IdScope, not IdRef. Fix the grammar match and emitted scope accordingly;
 recognize genuine u32 ConstantNull as zero too. Keep original52/78/48 counts
 and every inverse/negative/device proof unchanged. Initial failure and build
 logs are retained; no GPU or speed test was attempted for this version.
+
+The corrected native postpass passes all228 original CPU controls, including
+the exact52 Quad/78 XOR inventory. New inverse control then detects its own
+value-to-ID map losing a genuine duplicate zero ID (literal plus ConstantNull).
+Keep every actual ID in the independent inverse decoder. Engine code/counts
+and all other exact-word/negative/participant/device checks are unchanged.
+Preserve both failed CPU logs; still no new GPU or performance claim.
