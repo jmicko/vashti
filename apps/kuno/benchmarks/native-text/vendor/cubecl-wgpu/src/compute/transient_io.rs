@@ -1553,6 +1553,8 @@ pub(crate) fn cohort_scope_test_pair() -> (NativeExpertBatchScope, NativeExpertB
     let old = state.begin(&owner, 3, Some(7)).unwrap();
     state.finish(&old, &owner, 3, Some(7)).unwrap();
     let current = state.begin(&owner, 3, Some(7)).unwrap();
+    state.check(&current, &owner, 3, Some(7)).unwrap();
+    assert!(state.check(&old, &owner, 3, Some(7)).is_err());
     (old, current)
 }
 impl NativeExpertBatchState {

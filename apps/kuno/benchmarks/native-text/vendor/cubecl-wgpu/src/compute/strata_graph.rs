@@ -71,6 +71,13 @@ pub(super) fn host_profile_active() -> bool {
         std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref() == Ok("prefill-host-layer"),
     )
 }
+#[cfg(feature = "kuno-expert-cohorts")]
+pub(super) fn cohort_public_profile_active() -> bool {
+    #[cfg(feature = "kuno-public-host-clock")]
+    { host_profile_active() }
+    #[cfg(not(feature = "kuno-public-host-clock"))]
+    { profile_active() }
+}
 #[cfg(feature = "kuno-copy-cohorts")]
 static COMPACT_TOTALS: [std::sync::atomic::AtomicU64; 2] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 2];
@@ -1359,7 +1366,11 @@ impl Graph {
     #[cfg(feature = "kuno-expert-cohorts")]
     fn cohort_witness(&self, compute: usize) -> Result<Option<super::strata_cohort_selection::Witness>, ServerError> {
         let actual = self.cohort_selection.closed_range().map_or(0, |range| self.nodes.get(range).map_or(usize::MAX, |nodes| nodes.iter().filter(|n| n.pipeline.is_some()).count()));
-        self.cohort_selection.witness(self.identity, self.nodes.len(), compute, actual)
+        let witness = self.cohort_selection.witness(self.identity, self.nodes.len(), compute, actual)?;
+        if witness.is_some() {
+            super::strata_cohort_selection::credit(&[(5, 1), (6, self.nodes.len() as u64), (7, compute as u64)]);
+        }
+        Ok(witness)
     }
     /// Actual just-enqueued immutable program inventory, never completion.
     pub(crate) fn last_unused_descriptor_views(&self) -> Result<usize, ServerError> {
@@ -2375,6 +2386,8 @@ impl Graph {
                 r.pool = vk::CommandPool::null(); // MAIN ownership transferred exactly once.
                 self.idle_pools = Some(pools);
                 COMPUTE_BARRIERS[28].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                #[cfg(feature = "kuno-expert-cohorts")]
+                if cohort_pool { super::strata_cohort_selection::credit(&[(16, 1), (17, r.compute_count as u64)]); }
             }
         }
         self.recordings.remove(index); // Original signature, plan and ALL owners.
@@ -3062,11 +3075,9 @@ impl Graph {
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
         #[cfg(feature = "kuno-expert-cohorts")]
         let cohort_witness = self.cohort_witness(compute_count)?;
+        let profiling = profile_active() && compute_count >= 2048;
         #[cfg(feature = "kuno-expert-cohorts")]
-        let cohort_profile = cohort_witness.is_some();
-        #[cfg(not(feature = "kuno-expert-cohorts"))]
-        let cohort_profile = false;
-        let profiling = profile_active() && (compute_count >= 2048 || cohort_profile);
+        let profiling = profiling || (profile_active() && cohort_witness.is_some());
         #[cfg(feature = "kuno-expert-cohorts")]
         let cohort_rolling = cohort_witness.as_ref().is_some_and(|w| w.rolling(self.compute_lane, key.is_some(), profiling, self.nodes.len(), compute_count));
         #[cfg(not(feature = "kuno-expert-cohorts"))]
@@ -3678,6 +3689,8 @@ impl Graph {
                 old.work.spare_commands_count() as u64,
                 std::sync::atomic::Ordering::Relaxed,
             );
+            #[cfg(feature = "kuno-expert-cohorts")]
+            if cohort_witness.is_some() { super::strata_cohort_selection::credit(&[(21, 1)]); }
             (old, metadata)
         } else if let Some(prepared) = idle_reuse {
             let metadata = capture_metadata
@@ -3731,6 +3744,8 @@ impl Graph {
                 recording.work.spare_commands_count() as u64,
                 std::sync::atomic::Ordering::Relaxed,
             );
+            #[cfg(feature = "kuno-expert-cohorts")]
+            if cohort_witness.is_some() { super::strata_cohort_selection::credit(&[(18, 1), (19, compute_count as u64), (20, u64::from(compute_count < 1024))]); }
             (recording, metadata)
         } else {
             let work = strata_schedule::Commands::new(
@@ -3834,6 +3849,10 @@ impl Graph {
         } else {
             None
         };
+        #[cfg(feature = "kuno-expert-cohorts")]
+        if cohort_rolling && rolling.is_some() {
+            super::strata_cohort_selection::credit(&[(8, 1), (9, self.nodes.len() as u64), (10, compute_count as u64), (11, u64::from(compute_count < 1024))]);
+        }
         #[cfg(feature = "kuno-public-host-clock")]
         host_clock.mark(5);
         let native = keys.acquire()?;
@@ -4190,8 +4209,14 @@ impl Graph {
         if let Some(rolling) = rolling {
             let id = self.recordings.last().unwrap().id;
             let [windows, segments] = rolling.submitted_counts();
+            #[cfg(feature = "kuno-expert-cohorts")]
+            let cohort_nodes = self.nodes.len();
             self.mark_last_submitted(id)?;
             rolling.accept().map_err(fault)?;
+            #[cfg(feature = "kuno-expert-cohorts")]
+            if cohort_rolling {
+                super::strata_cohort_selection::credit(&[(12, 1), (13, cohort_nodes as u64), (14, compute_count as u64), (15, u64::from(compute_count < 1024))]);
+            }
             for (total, amount) in ROLLING_TOTALS.iter().zip([1, windows, segments]) {
                 total.fetch_add(amount, std::sync::atomic::Ordering::Relaxed);
             }

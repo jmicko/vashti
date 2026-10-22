@@ -49,7 +49,37 @@ Five focused CPU controls cover empty/incomplete grammar, exact actual scoped
 population, foreign/stale owner and generations, changed Graph/node/range
 counts, recording ID/family binding, forbidden queue/named/profile selection,
 failure cleanup, bounded metadata and in-place erasure. Original threshold
-controls remain unchanged. At this source checkpoint the new module was parsed
+controls remain unchanged. The positive selection case constructs all six
+genuine grammar launches using actual Handle/Binding views and full physical
+array metadata, calls the original completed grammar through `Book::begin`,
+then closes and witnesses the actual appended span. Its metadata-only scope
+fixture passes the original owner/generation/epoch/reuse state check and rejects
+the stale generation before handing out the current scope. This does not replace
+the actual device-backed `TransientIo` factory and owning-Graph hardware proof.
+The original diagnostic profiling statement remains intact; authenticated
+cohort profiling extends it in a separately feature-gated shadow binding.
+
+For the existing authorized fixed-public layer profile, the feature exports
+`NATIVE_COHORT_SELECTION_LABELS` and
+`native_strata_cohort_selection_stats() -> [u64; 22]`. Collection is conditional
+on the unchanged existing public GPU/host profile authorization; no private
+request even contributes anonymous shape counts. The getter remains readable
+after that window closes so the original collector can publish numeric deltas.
+There is no new API, logging, persistence, route inventory or request identity.
+
+The fixed counters distinguish genuine grammar admissions and logical cohort
+groups/batches from their actual physical launches; complete Graph witnesses
+and actual node/compute populations; successful rolling preparation from
+successfully accepted rolling submissions; successful completed-pool retirement
+and actual pool adoption; and successful recording re-encoding. Separate
+below-1024 counters identify actual selection/submission/adoption under the
+original size threshold. Existing generic rolling/pool counters remain intact.
+Neither a witness nor rolling preparation claims completion. Retired-pool
+credits occur only after the original joined-flight/reset/metadata checks and
+successful pool ownership transfer; adoption credits occur only after the
+original pool objects have successfully transferred into the new Recording.
+
+At this source checkpoint the new module was parsed
 with rustfmt and diff checking passed; CPU compile/test execution is delegated
 to the cohort implementation task's exclusive build target. No GPU, service,
 installation, speed or release acceptance has occurred for this component.

@@ -7,6 +7,8 @@ mod storage;
 mod strata_allocator_scope;
 #[cfg(feature = "kuno-expert-cohorts")]
 mod strata_cohort_selection;
+#[cfg(feature = "kuno-expert-cohorts")]
+pub use strata_cohort_selection::{NATIVE_COHORT_SELECTION_LABELS, native_strata_cohort_selection_stats};
 mod strata_draft_scope;
 mod strata_flights;
 pub(crate) mod strata_graph;

@@ -4,6 +4,48 @@ use super::transient_io::{NativeExpertBatchScope, NativeExpertCohortStamp, fault
 use cubecl_core::server::ServerError;
 use cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar;
 
+/// Existing compiled-public fixed-layer profile only. These aggregate labels
+/// identify actual scoped grammar, recording and original driver-pool events.
+pub const NATIVE_COHORT_SELECTION_LABELS: [&str; 22] = [
+    "grammar_admissions",
+    "admitted_cohort_groups",
+    "admitted_cohort_batches",
+    "admitted_cohort_launches",
+    "admitted_physical_launches",
+    "witnessed_recordings",
+    "witnessed_nodes",
+    "witnessed_compute",
+    "selected_rolling_recordings",
+    "selected_rolling_nodes",
+    "selected_rolling_compute",
+    "selected_rolling_below1024",
+    "submitted_rolling_recordings",
+    "submitted_rolling_nodes",
+    "submitted_rolling_compute",
+    "submitted_rolling_below1024",
+    "retired_pool_recordings",
+    "retired_pool_compute",
+    "adopted_pool_recordings",
+    "adopted_pool_compute",
+    "adopted_pool_below1024",
+    "reused_recording_count",
+];
+static PUBLIC_TOTALS: [core::sync::atomic::AtomicU64; 22] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; 22];
+pub fn native_strata_cohort_selection_stats() -> [u64; 22] {
+    core::array::from_fn(|i| PUBLIC_TOTALS[i].load(core::sync::atomic::Ordering::Relaxed))
+}
+/// Never collect private request shapes. The getter remains readable after the
+/// original public sampler closes, so its existing collector can compute deltas.
+pub(super) fn credit(values: &[(usize, u64)]) {
+    if !super::strata_graph::cohort_public_profile_active() {
+        return;
+    }
+    for &(index, amount) in values {
+        PUBLIC_TOTALS[index].fetch_add(amount, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 struct Pending {
     stamp: NativeExpertCohortStamp,
     graph: u64,
@@ -135,6 +177,13 @@ impl Book {
             first,
             launches: counts.launches,
         });
+        credit(&[
+            (0, 1),
+            (1, counts.cohort_groups as u64),
+            (2, counts.cohort_batches as u64),
+            (3, counts.cohort_launches as u64),
+            (4, counts.launches as u64),
+        ]);
         Ok(())
     }
     pub(super) fn pending_first(&self) -> Option<usize> {
@@ -279,6 +328,173 @@ impl Drop for RecordingAdmission {
 mod tests {
     use super::super::transient_io::{cohort_scope_test_pair, cohort_stamp_test};
     use super::*;
+    /// Actual closed grammar and actual Handle/Binding views. This fixture is
+    /// metadata only: it never creates device, request or execution authority.
+    fn completed_cohort_grammar() -> NativeStrataExpertGrammar {
+        use cubecl_common::stream_id::StreamId;
+        use cubecl_runtime::server::{CubeCount, Handle, KernelArguments, MetadataBindingInfo};
+        fn arguments(h: Vec<Handle>, w: &[u32; 48], matrix: bool) -> KernelArguments {
+            let mut words = w.to_vec();
+            if matrix {
+                let lengths: Vec<u32> = h
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| (h.size_in_used() / if i < 2 { 8 } else { 4 }) as u32)
+                    .collect();
+                words.extend(&lengths);
+                words.extend(&lengths);
+            }
+            let packed = words
+                .chunks_exact(2)
+                .map(|v| {
+                    let mut bytes = [0; 8];
+                    bytes[..4].copy_from_slice(&v[0].to_ne_bytes());
+                    bytes[4..].copy_from_slice(&v[1].to_ne_bytes());
+                    u64::from_ne_bytes(bytes)
+                })
+                .collect();
+            KernelArguments::new()
+                .with_buffers(h.into_iter().map(Handle::binding).collect())
+                .with_info(MetadataBindingInfo::new(
+                    packed,
+                    if matrix { 30 } else { 0 },
+                ))
+        }
+        let owner = |n| Handle::new(StreamId::current(), n);
+        let working = 80 * 1024 * 1024;
+        let parent = owner(working);
+        let x = parent.clone().offset_end(working - 20 * 1024 * 1024);
+        let h = parent
+            .offset_start(20 * 1024 * 1024)
+            .offset_end(55 * 1024 * 1024);
+        let image = owner(working);
+        let raw = owner(32 * 1024 * 1024);
+        let map = owner(65536 * 4);
+        let input = owner(working);
+        let gu = owner(4096 * 1280 * 4);
+        let part = owner(4096 * 10 * 2560 * 4);
+        let status = owner(131072 * 4);
+        let fault = owner(4);
+        let gate = owner(400);
+        let up = owner(400);
+        let down = owner(400);
+        let table = owner(32768);
+        let addresses = owner(32768);
+        let mut w = [0; 48];
+        w[0] = 32;
+        w[1] = 2560;
+        w[2] = 1280;
+        w[6] = 100;
+        w[7] = 100;
+        w[8] = 300;
+        w[9] = 1;
+        w[10] = 3;
+        w[16..20].copy_from_slice(&[0, 3, 0, 8]);
+        let mut grammar = NativeStrataExpertGrammar::default();
+        grammar
+            .launch(
+                "StrataExpertCohortGather",
+                false,
+                &CubeCount::Static(15, 1, 1),
+                &arguments(
+                    vec![map.clone(), input, x.clone(), fault.clone()],
+                    &w,
+                    false,
+                ),
+            )
+            .unwrap();
+        for down_role in [false, true] {
+            w[1] = if down_role { 640 } else { 2560 };
+            w[2] = if down_role { 2560 } else { 1280 };
+            w[3] = 1;
+            w[5] = if down_role { 2 } else { 0 };
+            let mut owners = if down_role {
+                vec![down.clone()]
+            } else {
+                vec![gate.clone(), up.clone()]
+            };
+            owners.extend([
+                map.clone(),
+                raw.clone(),
+                image.clone(),
+                fault.clone(),
+                table.clone(),
+                addresses.clone(),
+            ]);
+            let mut args = arguments(owners, &w, false);
+            args.read_dependencies.push(gate.clone().binding());
+            grammar
+                .launch(
+                    if down_role {
+                        "StrataExpertCohortDownImage"
+                    } else {
+                        "StrataExpertCohortGuImage"
+                    },
+                    down_role,
+                    &CubeCount::Static(if down_role { 200 } else { 400 }, 1, 1),
+                    &args,
+                )
+                .unwrap();
+        }
+        for down_role in [false, true] {
+            w[1] = if down_role { 640 } else { 2560 };
+            w[2] = if down_role { 2560 } else { 1280 };
+            w[3] = 0;
+            w[5] = if down_role { 2 } else { 0 };
+            w[11] = 8;
+            grammar
+                .launch(
+                    "fixture::cohorts::expert_cohort::ExpertCohort<Runtime>",
+                    false,
+                    &CubeCount::Static(w[2] / 64, 1, 1),
+                    &arguments(
+                        vec![
+                            if down_role { h.clone() } else { x.clone() },
+                            image.clone(),
+                            if down_role { part.clone() } else { gu.clone() },
+                            map.clone(),
+                            status.clone(),
+                            fault.clone(),
+                        ],
+                        &w,
+                        true,
+                    ),
+                )
+                .unwrap();
+            if !down_role {
+                w[11] = 0;
+                grammar
+                    .launch(
+                        "StrataExpertCohortActivate",
+                        false,
+                        &CubeCount::Static(4, 1, 1),
+                        &arguments(
+                            vec![
+                                map.clone(),
+                                gu.clone(),
+                                h.clone(),
+                                status.clone(),
+                                fault.clone(),
+                            ],
+                            &w,
+                            false,
+                        ),
+                    )
+                    .unwrap();
+            }
+        }
+        let counts = grammar.finish().unwrap();
+        assert_eq!(
+            (
+                counts.launches,
+                counts.logical_phases,
+                counts.cohort_groups,
+                counts.cohort_batches
+            ),
+            (6, 6, 1, 1)
+        );
+        grammar
+    }
     fn pending(scope: &NativeExpertBatchScope) -> Book {
         // Only exercise the private span state machine here. Production begin
         // additionally requires genuine grammar.finish and active IO admission.
@@ -298,15 +514,24 @@ mod tests {
         let mut book = Book::default();
         assert!(book.witness(17, 3, 2, 0).unwrap().is_none());
         assert!(
-            book.begin(cohort_stamp_test(&scope), &NativeStrataExpertGrammar::default(), 17, 3)
-                .is_err()
+            book.begin(
+                cohort_stamp_test(&scope),
+                &NativeStrataExpertGrammar::default(),
+                17,
+                3
+            )
+            .is_err()
         );
         assert!(pending(&scope).witness(17, 12, 8, 6).is_err());
     }
     #[test]
     fn exact_scope_population_seals_and_binds_each_current_snapshot() {
         let (_, scope) = cohort_scope_test_pair();
-        let mut book = pending(&scope);
+        let grammar = completed_cohort_grammar();
+        let mut book = Book::default();
+        book.begin(cohort_stamp_test(&scope), &grammar, 17, 3)
+            .unwrap();
+        assert_eq!(book.pending_first(), Some(3));
         book.finish(&scope, 17, 12, 6, true).unwrap();
         assert_eq!(book.closed_range(), Some(3..12));
         // Original append-only commands may follow the authenticated batch;
