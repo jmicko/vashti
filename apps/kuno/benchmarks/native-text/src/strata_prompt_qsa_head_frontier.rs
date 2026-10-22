@@ -40,6 +40,9 @@ fn old_region(status: bool) -> String {
     for h in 0..12 {
         s.push_str(&head(h, if h + 1 < 12 { Some(h + 1) } else { None }));
     }
+    // The compact guarded branch retains its terminal newline, and the
+    // original paired loop contributes another before its closing brace.
+    s.push('\n');
     for c in 0..2 {
         s.push_str(&reduction(c, status));
     }

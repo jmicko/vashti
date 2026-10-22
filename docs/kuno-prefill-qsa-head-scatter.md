@@ -133,3 +133,9 @@ barrier/loop/shuffle inventories plus selected composition. All249 prior
 controls remain; intended253 App CPU, unchanged15 runtime/429 WGSL/296 layouts/
 350 GPU, BOTH original18-script chains and unchanged zero-spill/F64/bitwise/
 physical-recovery gates precede claims. No API/frontend or installation change.
+
+First frontier CPU source35daa044 compiles, but the exact whole-region
+constructor refuses a missing terminal blank line in its reconstructed prior
+source. The compact guarded body retains a newline and its outer paired
+loop contributes another. Restore BOTH in the reconstructed old region; do
+not relax source-drift equality. Initial failed log preserved, no GPU dispatch.
