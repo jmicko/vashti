@@ -86,7 +86,36 @@ pub(crate) fn cases(
         } else {
             &[]
         };
-        for &(count, rows) in original_shapes.iter().chain(wide_shapes) {
+        // Keep all36 original cases. These genuine model-shape cases use the
+        // unpadded320-row original BF16 tensor, including the missing64 rows.
+        let gr_shapes: &[(usize, usize)] = if bfloat && cfg!(feature = "strata-gr-wide-tail") {
+            &[(512, 320), (640, 320), (512, 320)]
+        } else {
+            &[]
+        };
+        for (case, &(count, rows)) in original_shapes
+            .iter()
+            .chain(wide_shapes)
+            .chain(gr_shapes)
+            .enumerate()
+        {
+            let gr_case = case >= original_shapes.len() + wide_shapes.len();
+            let poison = gr_case && case == original_shapes.len() + wide_shapes.len() + 2;
+            let mut case_weights = Zeroizing::new(weights.to_vec());
+            let mut case_packed = Zeroizing::new(packed.to_vec());
+            if poison {
+                for (at, bits) in [(0, 0x7fc1u16), (319 * columns, 0x7f80u16)] {
+                    case_weights[at] = half::bf16::from_bits(bits).to_f32();
+                    let shift = 16 * (at % 2);
+                    case_packed[at / 2] =
+                        (case_packed[at / 2] & !(0xffff << shift)) | (u32::from(bits) << shift);
+                }
+            }
+            let case_public = if poison {
+                client.create_from_slice(u32::as_bytes(&case_packed))
+            } else {
+                public.clone()
+            };
             let mut inputs = Zeroizing::new(vec![0.; count * columns]);
             let mut image = Zeroizing::new(vec![0u32; inputs.len() / 2]);
             for (i, v) in inputs.iter_mut().enumerate() {
@@ -96,13 +125,13 @@ pub(crate) fn cases(
                 image[i / 2] |= u32::from(bits) << (16 * (i % 2));
             }
             let input = arena.upload_u32(&image)?;
-            let output = arena.allocate_zeroed(count * rows)?;
+            let output = arena.allocate_zeroed(count * rows + if gr_case { 64 } else { 0 })?;
             let fault = arena.allocate_zeroed(1)?;
             // Same original compiled primitive, authentic checked arena roots.
             // No model recording or source ownership is manufactured here.
             let handles = [
                 u::handle(arena, input)?,
-                public.clone(),
+                case_public,
                 u::handle(arena, output)?,
                 u::handle(arena, fault)?,
             ];
@@ -147,14 +176,14 @@ pub(crate) fn cases(
             }
             if cfg!(feature = "strata-native-wide")
                 && actual_native_wide_launch
-                    != (count >= 512 && count % 128 == 0 && rows % 128 == 0)
+                    != (count >= 512 && count % 128 == 0 && (rows % 128 == 0 || gr_case))
             {
                 return Err("public native wide actual selection rejected".into());
             }
             let actual = probe::read_native_public(arena, output)?;
             if probe::read_native_public(arena, fault)?
                 .iter()
-                .any(|&v| v != 0)
+                .any(|&v| v != u32::from(poison))
             {
                 return Err("public matrix actual native fault".into());
             }
@@ -169,7 +198,7 @@ pub(crate) fn cases(
                     }
                     continue;
                 }
-                let w = &weights[i % rows * columns..][..columns];
+                let w = &case_weights[i % rows * columns..][..columns];
                 let x = &inputs[i / rows * columns..][..columns];
                 let reference = w
                     .iter()
@@ -177,6 +206,10 @@ pub(crate) fn cases(
                     .map(|(&w, &x)| f64::from(w) * f64::from(x))
                     .sum::<f64>() as f32;
                 let value = f32::from_bits(bits);
+                if poison && !reference.is_finite() {
+                    mismatches += usize::from(bits != 0);
+                    continue;
+                }
                 let error = (value - reference).abs();
                 mismatches +=
                     usize::from(!value.is_finite() || error > 1e-4 + 3e-4 * reference.abs());
@@ -212,6 +245,7 @@ pub(crate) fn cases(
                 "actual_cubek_launch":actual_cubek_launch,
                 "actual_cubek_wide_launch":actual_cubek_wide_launch,
                 "actual_native_wide_launch":actual_native_wide_launch,
+                "gr_wide_tail_case":gr_case,"nonfinite_weight_poison":poison,
                 "ftz_is_additional_diagnosis_only":true,"actual_native_kernels":true,"full_owner_and_tail_checked":true}),
             );
             arena.reset()?;

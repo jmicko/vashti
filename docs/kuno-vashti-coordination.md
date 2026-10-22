@@ -1,5 +1,20 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno continuation (2026-10-22 23:32UTC): bounded GR wide tail.**
+
+Read [the complete GR source contract](kuno-prefill-gr-wide-tail.md).
+Full6e1a6574/worker9ad49e55 passes255CPU/15runtime/429WGSL/296layouts/ALL350GPU
+and BOTH original chains, zero spills and physical recovery. ONE clean
+11.016428684/7.951516275s is neutral to frontier and FAILS original5% EACH
+selection; no install or favorable rerun. Installed301f1fd1/36626d30 unchanged.
+Next source retains everything and adds authentic BF16 HC down10240x320 wide
+selection with exact64-feature zero/read/write masks; original owners/precision/
+barriers/limits remain. Intended257CPU/15runtime/429WGSL/304layouts/353GPU/
+BOTH original chains precede performance claims. No CPU compile during GPU work.
+Latest recovery23:32:05UTC: Intel50,688,000B,NVIDIA compute0,faults0,HTTP200,
+admission normal. No API/config/frontend/release/reset/reboot; Vashti:none.
+Goal UNMET versus Strata5.3515s. Earlier checkpoints below are history.
+
 **Current Kuno continuation (2026-10-22): fixed-role macro64 source.**
 
 Read [the source/clean/CPU-profile handoff](kuno-prefill-macro64-static.md).

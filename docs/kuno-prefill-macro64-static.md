@@ -68,3 +68,38 @@ types in the stage-stride bindings. Explicit usize::cast_from lifts each fixed
 constant into the same CubeCL NativeExpand type as its original runtime arm.
 No hardware test ran; preserve initial compiler diagnostics and rerun255 CPU
 controls before worker/offline/GPU work.
+
+
+## Completed validation and one clean comparison (2026-10-22)
+
+Source6e1a65748d9b7cea5422be038b8c1bf078ec792c, workerSHA256
+9ad49e55d0fe04d5bfc01babf7818150fce33460add05a0c09acf808c8a0fa81 passes
+255 App CPU,15 actual runtime,429 WGSL/296 matrix layouts,ALL350 GPU controls
+and BOTH complete original18-script chains with physical recovery. Original
+numerical/bitwise/F64, source, zero-spill, ownership and erasure gates retained.
+Normal first/repeat9.728102987/8.416249946s; profile9.664732148/8.494557889s.
+ONE original clean comparison: first11.016428684/repeat7.951516275s; load
+77.544713441s and45-token warmup6.539775391s. This is neutral to the preceding
+frontier clean11.053525683/7.924977071s and still FAILS original5%-at-EACH
+selection against installed10.897223643/8.712129955s. No favorable rerun,
+installation, staged/private-runtime acceptance or Strata-parity claim.
+Keep the complete correct source rather than abandon coupled work.
+
+Evidence under /media/jmicko/faststore/kuno-development:
+- strata-parity-macro64-static-types-fixed-20261022-expert-cohorts-public-summary.json
+- strata-parity-macro64-static-types-fixed-clean-20261022-public-summary.json
+- macro64-static-types-fixed-complete-isa-export-20261022.json (QSA native
+  optimizedf49c30e1542a178c4710a738175fcf3e8c3181ef4de87bc666d68a57f8a63c8a,
+  unchanged reference1814b26ac88692e20d3714abd88ea2e303455f1a7569f32fc4b2927bc8710ba7,
+  both0spills/0fills)
+- macro64-static-clean-final-state-20261022.json:23:32:05UTC, same boot,
+  Intel50,688,000B,NVIDIA compute0,faults0,all HTTP200,admission normal.
+
+Separate bounded metadata-only resource counters show ~52GiB process read_bytes
+at loading, then essentially flat; systemMemAvailable~29GiB and workerVmSwap0.
+No prompt/stack/register/payload samples. This does not prove every page fault
+is a model weight read or account pinned/driver memory through processRSS.
+Extra16GB RAM is not indicated by this workload. No storage/cache/privacy
+contract change; installed worker301f1fd1/gateway36626d30 unchanged.
+
+Next optional connected source is described in [GR wide tail](kuno-prefill-gr-wide-tail.md).

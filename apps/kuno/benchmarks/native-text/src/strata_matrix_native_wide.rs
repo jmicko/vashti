@@ -34,6 +34,7 @@ fn stage<F: Float>(
     row_base: usize,
     k: usize,
     buffer: usize,
+    #[comptime] gr_down: bool,
 ) {
     // Full128x128x32 stages only. Two genuine vec4s per job preserve original
     // FP16/BF16 bits; every one of the1024 vectors per operand is written once.
@@ -46,8 +47,21 @@ fn stage<F: Float>(
         let source_b = (weight_first + (row_base + row) * columns + offset) / 4;
         a[buffer * 1024 + job * 2] = input[source_a];
         a[buffer * 1024 + job * 2 + 1] = input[source_a + 1];
-        b[buffer * 1024 + job * 2] = weight[source_b];
-        b[buffer * 1024 + job * 2 + 1] = weight[source_b + 1];
+        if comptime!(gr_down) {
+            // The sole extra shape is the authentic320-row GR down image.
+            // Do not read the missing last64 rows, even from a larger owner.
+            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+            if row_base + row < 320 {
+                lo = weight[source_b];
+                hi = weight[source_b + 1];
+            }
+            b[buffer * 1024 + job * 2] = lo;
+            b[buffer * 1024 + job * 2 + 1] = hi;
+        } else {
+            b[buffer * 1024 + job * 2] = weight[source_b];
+            b[buffer * 1024 + job * 2 + 1] = weight[source_b + 1];
+        }
     }
 }
 
@@ -75,6 +89,7 @@ fn publish(
     out_stride: usize,
     #[comptime] tile_m: usize,
     #[comptime] tile_n: usize,
+    #[comptime] gr_down: bool,
 ) {
     let subgroup = usize::cast_from(PLANE_POS);
     cmma::store(
@@ -91,12 +106,16 @@ fn publish(
         let token =
             token_base + (subgroup / 4) * comptime!(SUBGROUP_ROWS) + comptime!(tile_m * 8) + i / 16;
         let row = row_base + (subgroup % 4) * 32 + comptime!(tile_n * 16) + i % 16;
-        let value = scratch[subgroup * 128 + i];
-        if value.abs() <= f32::MAX {
-            output[out_first + token * out_stride + row] = value;
-        } else {
-            output[out_first + token * out_stride + row] = 0.0;
-            fault[0].fetch_or(1);
+        // Padded feature cells never publish or set a fault. The original
+        // finite/fault writer is unchanged for every authentic logical cell.
+        if !comptime!(gr_down) || row < 320 {
+            let value = scratch[subgroup * 128 + i];
+            if value.abs() <= f32::MAX {
+                output[out_first + token * out_stride + row] = value;
+            } else {
+                output[out_first + token * out_stride + row] = 0.0;
+                fault[0].fetch_or(1);
+            }
         }
     }
     // No subgroup may overwrite its shared fragment before all consumers finish.
@@ -115,6 +134,7 @@ fn dense_wide<F: Float>(
     weight_first: usize,
     out_first: usize,
     out_stride: usize,
+    #[comptime] gr_down: bool,
 ) {
     // Two typed stages per operand:2*128*32*2 bytes each. Scratch remains a
     // separate real8/16KiB allocation; admission never assumes lifetime aliasing.
@@ -283,6 +303,7 @@ fn dense_wide<F: Float>(
         row_base,
         0usize,
         0usize,
+        gr_down,
     );
     sync_cube();
     let mut k = 0usize;
@@ -303,6 +324,7 @@ fn dense_wide<F: Float>(
                 row_base,
                 k + 32,
                 next,
+                gr_down,
             );
         }
         #[unroll]
@@ -344,6 +366,7 @@ fn dense_wide<F: Float>(
         out_stride,
         0usize,
         0usize,
+        gr_down,
     );
     publish(
         &c1,
@@ -356,6 +379,7 @@ fn dense_wide<F: Float>(
         out_stride,
         0usize,
         1usize,
+        gr_down,
     );
     publish(
         &c2,
@@ -368,6 +392,7 @@ fn dense_wide<F: Float>(
         out_stride,
         1usize,
         0usize,
+        gr_down,
     );
     publish(
         &c3,
@@ -380,6 +405,7 @@ fn dense_wide<F: Float>(
         out_stride,
         1usize,
         1usize,
+        gr_down,
     );
     if comptime!(M_FRAGMENTS == 4) {
         publish(
@@ -393,6 +419,7 @@ fn dense_wide<F: Float>(
             out_stride,
             2usize,
             0usize,
+            gr_down,
         );
         publish(
             &c5,
@@ -405,6 +432,7 @@ fn dense_wide<F: Float>(
             out_stride,
             2usize,
             1usize,
+            gr_down,
         );
         publish(
             &c6,
@@ -417,6 +445,7 @@ fn dense_wide<F: Float>(
             out_stride,
             3usize,
             0usize,
+            gr_down,
         );
         publish(
             &c7,
@@ -429,6 +458,7 @@ fn dense_wide<F: Float>(
             out_stride,
             3usize,
             1usize,
+            gr_down,
         );
     }
 }
@@ -525,6 +555,22 @@ fn check_bounds(
     }
     Ok(())
 }
+fn gr_down_shape(
+    bfloat: bool,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    out_first: usize,
+    out_stride: usize,
+) -> bool {
+    cfg!(feature = "strata-gr-wide-tail")
+        && bfloat
+        && columns == 10240
+        && rows == 320
+        && weight_first == 0
+        && out_first == 0
+        && out_stride == 320
+}
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_dense(
     client: &ComputeClient<WgpuRuntime>,
@@ -537,11 +583,16 @@ pub(super) fn try_dense(
     out_stride: usize,
     bfloat: bool,
 ) -> Result<bool> {
+    let gr_down = gr_down_shape(bfloat, columns, rows, weight_first, out_first, out_stride);
     let hw = &client.properties().hardware;
     if !selected(
         count,
         columns,
-        rows,
+        if gr_down {
+            rows.div_ceil(BLOCK) * BLOCK
+        } else {
+            rows
+        },
         weight_first,
         hw.max_shared_memory_size,
         hw.max_units_per_cube,
@@ -586,7 +637,7 @@ pub(super) fn try_dense(
         out_first,
         out_stride,
     )?;
-    let gx = rows / BLOCK;
+    let gx = rows.div_ceil(BLOCK);
     let gy = count / BLOCK;
     if gx > hw.max_cube_count.0 as usize
         || gy > hw.max_cube_count.1 as usize
@@ -601,6 +652,9 @@ pub(super) fn try_dense(
         unsafe { ArrayArg::from_raw_parts(weight.clone(), weight.size_in_used() as usize / 8) };
     let oa = crate::resident_util::raw_arg(output.clone(), output.size_in_used() as usize / 4)?;
     let fa = crate::resident_util::raw_arg(fault, 1)?;
+    if gr_down {
+        crate::strata_prefill_profile::count("gr_wide_tail_products", 1);
+    }
     // SAFETY: complete original logical owners, all grid/offset/index limits,
     // actual sixteen/thirty-two-subgroup geometry and full tiles checked above.
     unsafe {
@@ -617,6 +671,7 @@ pub(super) fn try_dense(
                 weight_first,
                 out_first,
                 out_stride,
+                gr_down,
             );
         } else {
             dense_wide::launch_unchecked::<f16, WgpuRuntime>(
@@ -631,13 +686,14 @@ pub(super) fn try_dense(
                 weight_first,
                 out_first,
                 out_stride,
+                false,
             );
         }
     }
     Ok(true)
 }
 
-fn definition<F: Float>() -> KernelDefinition {
+fn definition<F: Float>(gr_down: bool) -> KernelDefinition {
     let mut b = KernelBuilder::default();
     cubecl::ir::AddressType::U32.register(&mut b.scope);
     let input = b.input_array(Vector::<F, Const<4>>::as_type(&b.scope));
@@ -658,16 +714,21 @@ fn definition<F: Float>() -> KernelDefinition {
         args[1].clone().into(),
         args[2].clone().into(),
         args[3].clone().into(),
+        gr_down,
     );
     let errors = b.scope.pop_errors();
     assert!(errors.is_empty(), "{errors:?}");
     b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(THREADS)))
 }
 pub(super) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
-    vec![
-        ("dense_wide_native_fp16", definition::<f16>()),
-        ("dense_wide_native_bf16", definition::<bf16>()),
-    ]
+    let mut out = vec![
+        ("dense_wide_native_fp16", definition::<f16>(false)),
+        ("dense_wide_native_bf16", definition::<bf16>(false)),
+    ];
+    if cfg!(feature = "strata-gr-wide-tail") {
+        out.push(("dense_wide_native_gr_down_bf16", definition::<bf16>(true)));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -916,6 +977,126 @@ pub(super) mod tests {
         ];
         assert!(check_bounds(&padded, 512, 32, 128, 4, 5, 131).is_ok());
     }
+    #[cfg(feature = "strata-gr-wide-tail")]
+    #[test]
+    fn gr_down_selection_retains_actual_hardware_and_unpadded_owner_bounds() {
+        assert!(gr_down_shape(true, 10240, 320, 0, 0, 320));
+        for (bf, k, n, w, o, st) in [
+            (false, 10240, 320, 0, 0, 320),
+            (true, 10236, 320, 0, 0, 320),
+            (true, 10240, 319, 0, 0, 320),
+            (true, 10240, 384, 0, 0, 384),
+            (true, 10240, 320, 4, 0, 320),
+            (true, 10240, 320, 0, 1, 320),
+            (true, 10240, 320, 0, 0, 321),
+        ] {
+            assert!(!gr_down_shape(bf, k, n, w, o, st));
+        }
+        for count in [512usize, 640, 4096] {
+            assert!(selected(
+                count,
+                10240,
+                384,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32
+            ));
+            let own = |n| Handle::new(cubecl_common::stream_id::StreamId::current(), n);
+            let h = [
+                own((count * 10240 * 2) as u64),
+                own(320 * 10240 * 2),
+                own((count * 320 * 4) as u64),
+                own(4),
+            ];
+            assert!(check_bounds(&h, count, 10240, 320, 0, 0, 320).is_ok());
+            assert!(check_bounds(&h, count, 10240, 384, 0, 0, 320).is_err());
+            for i in 0..4 {
+                let mut bad = h.clone();
+                bad[i] = own(h[i].size_in_used() - 1);
+                assert!(check_bounds(&bad, count, 10240, 320, 0, 0, 320).is_err());
+            }
+        }
+        for count in [0, 45, 149, 511, 513, 639, 4095] {
+            assert!(!selected(
+                count,
+                10240,
+                384,
+                0,
+                SHARED_BYTES,
+                THREADS,
+                (THREADS, 1, 1),
+                16,
+                32
+            ));
+        }
+        assert!(!selected(
+            512,
+            10240,
+            384,
+            0,
+            SHARED_BYTES - 1,
+            THREADS,
+            (THREADS, 1, 1),
+            16,
+            32
+        ));
+    }
+    #[cfg(feature = "strata-gr-wide-tail")]
+    #[test]
+    fn gr_down_last_tile_has_no_padded_weight_reads_or_output_writes() {
+        for k in (0..10240).step_by(32) {
+            let mut seen = vec![0u8; 320 * 8];
+            let mut padding = 0;
+            for base in [0usize, 128, 256] {
+                for lane in 0..THREADS as usize {
+                    for round in 0..STAGE_ROUNDS {
+                        let job = lane + round * THREADS as usize;
+                        let row = base + job / 4;
+                        let col = k + (job % 4) * 8;
+                        for v in 0..2 {
+                            if row < 320 {
+                                let source = (row * 10240 + col) / 4 + v;
+                                assert!(source < 320 * 10240 / 4);
+                                assert_eq!(source / (10240 / 4), row);
+                                seen[row * 8 + (col - k) / 4 + v] += 1;
+                            } else {
+                                padding += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(seen.iter().all(|&v| v == 1));
+            assert_eq!(padding, 64 * 8);
+        }
+        let mut out = vec![0u8; 128 * 320];
+        let mut masked = 0;
+        for base in [0usize, 128, 256] {
+            for sg in 0..SUBGROUPS {
+                for m in 0..M_FRAGMENTS {
+                    for n in 0..2 {
+                        for lane in 0..16 {
+                            for r in 0..8 {
+                                let i = lane + r * 16;
+                                let t = sg / 4 * SUBGROUP_ROWS + m * 8 + i / 16;
+                                let row = base + sg % 4 * 32 + n * 16 + i % 16;
+                                if row < 320 {
+                                    out[t * 320 + row] += 1;
+                                } else {
+                                    masked += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(out.iter().all(|&v| v == 1));
+        assert_eq!(masked, 128 * 64);
+    }
     pub(crate) fn assert_publication_scope_contract(words: &[u32]) {
         fn constants(words: &[u32]) -> std::collections::BTreeMap<u32, u32> {
             let mut values = std::collections::BTreeMap::new();
@@ -1016,8 +1197,8 @@ pub(super) mod tests {
         use std::io::Write;
         for mask in 0..8 {
             for (name, definition) in [
-                ("fp16", definition::<f16>()),
-                ("bf16", definition::<bf16>()),
+                ("fp16", definition::<f16>(false)),
+                ("bf16", definition::<bf16>(false)),
             ] {
                 let mut options = WgpuCompilationOptions {
                     supports_vulkan: true,
