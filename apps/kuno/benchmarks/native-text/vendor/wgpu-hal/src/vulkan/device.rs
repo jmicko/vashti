@@ -891,6 +891,37 @@ impl super::Device {
         })
     }
 
+    /// Kuno's native-only admission uses the exact original stage preparation,
+    /// including override/lowering/workaround/subgroup checks, while omitting
+    /// the unused ordinary executable. Actual native execution owns its own
+    /// shader and pipeline; this method publishes no raw resource or authority.
+    ///
+    /// # Safety
+    /// Every referenced stage/layout resource must belong to this live device,
+    /// as required by the ordinary create_compute_pipeline entry point.
+    pub unsafe fn kuno_prepare_compute_stage(
+        &self,
+        desc: &crate::ComputePipelineDescriptor<
+            super::PipelineLayout,
+            super::ShaderModule,
+            super::PipelineCache,
+        >,
+    ) -> Result<(), crate::PipelineError> {
+        // The original raw entry representation uses CString internally. Native
+        // preparation rejects malformed public API input as a typed error.
+        if desc.stage.entry_point.as_bytes().contains(&0) {
+            return Err(crate::PipelineError::EntryPoint(naga::ShaderStage::Compute));
+        }
+        let mut compiled = self.compile_stage(
+            &desc.stage,
+            naga::ShaderStage::Compute,
+            &desc.layout.binding_map,
+        )?;
+        if let Some(raw) = compiled.temp_raw_module.take() {
+            unsafe { self.shared.raw.destroy_shader_module(raw, None) };
+        }
+        Ok(())
+    }
     /// Returns the queue family index of the device's internal queue.
     ///
     /// This is useful for constructing memory barriers needed for queue family ownership transfer when

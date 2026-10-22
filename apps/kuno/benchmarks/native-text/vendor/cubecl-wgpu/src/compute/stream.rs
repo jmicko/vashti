@@ -18,7 +18,7 @@ use cubecl_runtime::{
     timestamp_profiler::TimestampProfiler,
 };
 use std::{future::Future, num::NonZero, pin::Pin, sync::Arc};
-use wgpu::ComputePipeline;
+use super::strata_pipeline::BackendPipeline as ComputePipeline;
 
 enum NativeReplay {
     Missing,
@@ -2287,6 +2287,12 @@ impl WgpuStream {
             self.flush_if_needed();
             return;
         }
+        // A sealed native-only admission is never an ordinary executable.
+        // Native graph failures returned above; they do not trigger fallback.
+        let pipeline = match pipeline.ordinary_pipeline() {
+            Ok(pipeline) => pipeline,
+            Err(error) => { self.error(error); return; }
+        };
         let cached = self
             .transient_io
             .as_ref()

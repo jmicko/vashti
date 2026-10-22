@@ -8,6 +8,7 @@ mod strata_allocator_scope;
 mod strata_draft_scope;
 mod strata_flights;
 pub(crate) mod strata_graph;
+pub(crate) mod strata_pipeline;
 mod strata_handoff;
 mod strata_info_transfer;
 mod strata_io_reuse;
@@ -59,3 +60,6 @@ pub use transient_io::transient_binding_cache_stats;
 
 #[cfg(feature = "kuno-copy-cohorts")]
 pub use strata_graph::native_strata_segment_compact_profile;
+
+#[cfg(feature = "kuno-native-prepared")]
+pub use strata_pipeline::native_strata_prepared_pipeline_stats;

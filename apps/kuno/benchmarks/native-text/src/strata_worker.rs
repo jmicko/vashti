@@ -362,6 +362,11 @@ async fn serve(
             );
             return Ok(());
         }
+        #[cfg(feature = "strata-native-prepared")]
+        let native_prepared_checks = crate::strata_native_prepared_probe::cases(&target_device)
+            .map_err(|_| "public_native_prepared_admission_failed")?;
+        #[cfg(not(feature = "strata-native-prepared"))]
+        let native_prepared_checks: Vec<serde_json::Value> = Vec::new();
         let cases = crate::strata_matrix::public_numeric(&client, &mut arena, &file)
             .map_err(|_| "public_matrix_numeric_failed")?;
         let mut operator_checks =
@@ -473,7 +478,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }
@@ -616,6 +621,16 @@ async fn serve(
                 });
             }
             let done = result.map_err(|_| "native_generation_failed")?;
+            #[cfg(feature = "strata-native-prepared")]
+            if public_check {
+                eprintln!("public_native_prepared_pipeline {}", serde_json::json!({
+                    "compiled_public_fixture_only":true,"content_saved":false,
+                    "prepared_ordinary_native_graph_original_graph":
+                        cubecl::wgpu::native_strata_prepared_pipeline_stats(),
+                    "ordinary_root_initialization_retained":true,
+                    "original_core_and_hal_stage_admission_retained":true,
+                }));
+            }
             crate::strata_prefill_profile::report();
             let total_ns = generation_ns.ok_or("native_generation_failed")?;
             let tail = Zeroizing::new(decoder.finish());

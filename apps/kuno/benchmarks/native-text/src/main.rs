@@ -66,6 +66,11 @@ use strata_io_owner_tests::strata_graph;
 #[path = "../vendor/cubecl-wgpu/src/compute/strata_io_reuse.rs"]
 mod strata_io_reuse;
 mod strata_matrix;
+#[cfg(feature = "strata-native-prepared")]
+mod strata_native_prepared_probe;
+#[cfg(all(test, feature = "strata-native-prepared"))]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_pipeline_identity.rs"]
+mod strata_native_pipeline_identity_controls;
 mod strata_mtp_front;
 mod strata_mtp_moe;
 mod strata_mtp_probability;

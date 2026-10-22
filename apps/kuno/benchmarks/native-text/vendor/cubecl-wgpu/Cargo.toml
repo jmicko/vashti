@@ -34,6 +34,7 @@ repository = "https://github.com/tracel-ai/cubecl/tree/main/crates/cubecl-wgpu"
 resolver = "2"
 
 [features]
+kuno-native-prepared = ["kuno-strata-shared"]
 kuno-compute-main = ["kuno-strata-shared"]
 kuno-copy-cohorts = ["kuno-public-host-clock"]
 kuno-strata-shared = []

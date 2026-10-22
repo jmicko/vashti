@@ -4,6 +4,7 @@
 //! Wgpu retains all buffer allocation, upload, readback and privacy ledgers.
 //! Only serialized fixed-public laboratory streams may select this backend.
 use super::{WgpuResource, strata_schedule, transient_io::fault};
+use super::strata_pipeline::{BackendPipeline, PipelineKey};
 use ash::{vk, vk::Handle as _};
 use cubecl_core::server::ServerError;
 use std::{
@@ -382,6 +383,10 @@ pub(crate) fn register_module(
         return Ok(());
     }
     let m = naga::front::wgsl::parse_str(source).map_err(|_| fault("native graph WGSL parse"))?;
+    #[cfg(feature = "kuno-native-prepared")]
+    if !m.overrides.is_empty() {
+        return Err(fault("native prepared WGSL overrides unsupported"));
+    }
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -657,6 +662,20 @@ pub(crate) fn register_pipeline(pipeline: &wgpu::ComputePipeline, module: &wgpu:
         r.pipelines.insert(pipeline.clone(), p);
     }
 }
+/// Original executable-key registration remains for the unselected path.
+pub(crate) fn original_program(pipeline: &wgpu::ComputePipeline) -> Result<Arc<Program>, ServerError> {
+    let program = registry().lock().map_err(|_| fault("native graph program registry"))?
+        .pipelines.get(pipeline).cloned().ok_or_else(|| fault("native graph program missing"))?;
+    Ok(program)
+}
+/// Consume only the exact module registered and labelled by the original
+/// compiler/reflection path. No same-byte/source-name substitute is admitted.
+#[cfg(feature = "kuno-native-prepared")]
+pub(crate) fn take_prepared_program(module: &wgpu::ShaderModule) -> Result<Arc<Program>, ServerError> {
+    registry().lock().map_err(|_| fault("native prepared program registry"))?
+        .modules.remove(module).ok_or_else(|| fault("native prepared original program missing"))
+}
+
 #[derive(Debug)]
 struct Pipeline {
     shader: vk::ShaderModule,
@@ -664,6 +683,8 @@ struct Pipeline {
     layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     program: Arc<Program>,
+    #[cfg(feature = "kuno-native-prepared")]
+    _admission_owner: Option<Arc<wgpu::KunoPreparedComputePipeline>>,
     push_descriptors: bool,
     push_template: Option<vk::DescriptorUpdateTemplate>,
 }
@@ -693,7 +714,7 @@ impl ReadDependencies {
 struct Node {
     shared: bool,
     release_after: bool,
-    pipeline: Option<wgpu::ComputePipeline>,
+    pipeline: Option<PipelineKey>,
     resources: Vec<WgpuResource>,
     read_dependencies: ReadDependencies,
     dispatch: Dispatch,
@@ -725,6 +746,7 @@ pub(crate) struct Graph {
     handoff: super::strata_handoff::Handoff,
     info_uploads: [super::strata_info_transfer::Uploads; 2],
     device: ash::Device,
+    owner_device: wgpu::Device,
     family: u32,
     queue: vk::Queue,
     copy_family: u32,
@@ -734,7 +756,7 @@ pub(crate) struct Graph {
     descriptors: vk::DescriptorPool,
     command: vk::CommandBuffer,
     fences: [vk::Fence; 2],
-    pipelines: HashMap<wgpu::ComputePipeline, Pipeline>,
+    pipelines: HashMap<PipelineKey, Pipeline>,
     nodes: Vec<Node>,
     flights: super::strata_flights::Book,
     draft_scope: super::strata_draft_scope::Book,
@@ -1282,6 +1304,7 @@ impl Graph {
             handoff,
             info_uploads,
             device: d,
+            owner_device: device.clone(),
             family: h.queue_family_index(),
             queue,
             copy_family,
@@ -1328,7 +1351,7 @@ impl Graph {
     }
     pub(crate) fn push(
         &mut self,
-        pipeline: &wgpu::ComputePipeline,
+        pipeline: &BackendPipeline,
         resources: Vec<WgpuResource>,
         read_dependencies: Vec<WgpuResource>,
         dispatch: Dispatch,
@@ -1337,7 +1360,7 @@ impl Graph {
     }
     pub(crate) fn push_owned(
         &mut self,
-        pipeline: &wgpu::ComputePipeline,
+        pipeline: &BackendPipeline,
         resources: Vec<WgpuResource>,
         read_dependencies: Vec<WgpuResource>,
         dispatch: Dispatch,
@@ -1353,7 +1376,7 @@ impl Graph {
     }
     pub(crate) fn push_shared_owned(
         &mut self,
-        pipeline: &wgpu::ComputePipeline,
+        pipeline: &BackendPipeline,
         resources: Vec<WgpuResource>,
         reads: Arc<Vec<WgpuResource>>,
         dispatch: Dispatch,
@@ -1369,7 +1392,7 @@ impl Graph {
     }
     fn push_dependencies(
         &mut self,
-        pipeline: &wgpu::ComputePipeline,
+        pipeline: &BackendPipeline,
         resources: Vec<WgpuResource>,
         read_dependencies: ReadDependencies,
         dispatch: Dispatch,
@@ -1378,14 +1401,9 @@ impl Graph {
         if self.nodes.len() >= 32768 {
             return Err(fault("native graph node capacity"));
         }
-        if !self.pipelines.contains_key(pipeline) {
-            let p = registry()
-                .lock()
-                .map_err(|_| fault("native graph program registry"))?
-                .pipelines
-                .get(pipeline)
-                .cloned()
-                .ok_or_else(|| fault("native graph program missing"))?;
+        let key = pipeline.key();
+        if !self.pipelines.contains_key(&key) {
+            let p = pipeline.native_program(&self.owner_device)?;
             self.program_limits
                 .validate(
                     &p.words,
@@ -1508,19 +1526,23 @@ impl Graph {
                 None
             };
             self.pipelines.insert(
-                pipeline.clone(),
+                key.clone(),
                 Pipeline {
                     shader,
                     set_layout,
                     layout,
                     pipeline: pipeline_native,
                     program: p,
+                    #[cfg(feature = "kuno-native-prepared")]
+                    _admission_owner: pipeline.admission_owner(),
                     push_descriptors: push,
                     push_template,
                 },
             );
+            #[cfg(feature = "kuno-native-prepared")]
+            super::strata_pipeline::graph_program_created(pipeline);
         }
-        let p = &self.pipelines[pipeline];
+        let p = &self.pipelines[&key];
         if resources.len() != p.program.bindings.len() {
             return Err(fault("native graph actual descriptor extent"));
         }
@@ -1549,7 +1571,7 @@ impl Graph {
         let node = Node {
             shared: self.shared_request.is_some(),
             release_after: false,
-            pipeline: Some(pipeline.clone()),
+            pipeline: Some(key),
             resources,
             read_dependencies,
             dispatch,

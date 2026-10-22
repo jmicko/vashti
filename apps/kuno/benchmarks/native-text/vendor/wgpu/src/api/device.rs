@@ -25,6 +25,41 @@ static_assertions::assert_impl_all!(Device: Send, Sync);
 
 crate::cmp::impl_eq_ord_hash_proxy!(Device => .inner);
 
+/// Opaque original compute admission for Kuno's native-only executable path.
+/// No bind-group/layout getter or ordinary command-encoder interface is exposed.
+/// Retaining the original API objects also keeps their core registry identities
+/// alive; the sealed core preparation owns the exact validated layout/module.
+#[cfg(wgpu_core)]
+pub struct KunoPreparedComputePipeline {
+    _prepared: Arc<wgc::pipeline::KunoPreparedComputePipeline>,
+    owner: Device,
+    module: ShaderModule,
+}
+#[cfg(wgpu_core)]
+impl fmt::Debug for KunoPreparedComputePipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("KunoPreparedComputePipeline")
+    }
+}
+#[cfg(wgpu_core)]
+impl KunoPreparedComputePipeline {
+    /// Require BOTH context identity and the exact device's original resource
+    /// identity; numeric IDs alone may collide between independent instances.
+    pub fn is_for_device(&self, device: &Device) -> bool {
+        match (self.owner.inner.as_core_opt(), device.inner.as_core_opt()) {
+            (Some(a), Some(b)) => a.context == b.context && a == b,
+            _ => false,
+        }
+    }
+    /// This token is bound to the very module whose original interface was
+    /// admitted, not merely matching shader bytes or a source-name shortcut.
+    pub fn is_for_module(&self, module: &ShaderModule) -> bool {
+        match (self.module.inner.as_core_opt(), module.inner.as_core_opt()) {
+            (Some(a), Some(b)) => a.context == b.context && a == b,
+            _ => false,
+        }
+    }
+}
 /// Describes a [`Device`].
 ///
 /// For use with [`Adapter::request_device`].
@@ -35,6 +70,33 @@ pub type DeviceDescriptor<'a> = wgt::DeviceDescriptor<Label<'a>>;
 static_assertions::assert_impl_all!(DeviceDescriptor<'_>: Send, Sync);
 
 impl Device {
+    /// Prepare original shader/interface/layout/device/stage admission without
+    /// creating an ordinary executable. Only the owning native Vulkan graph may
+    /// consume the sealed token; ordinary pipelines retain their original path.
+    #[cfg(wgpu_core)]
+    pub fn kuno_prepare_native_compute_pipeline(
+        &self,
+        desc: &ComputePipelineDescriptor<'_>,
+    ) -> Result<KunoPreparedComputePipeline, &'static str> {
+        #[cfg(vulkan)]
+        {
+            let owner = self
+                .inner
+                .as_core_opt()
+                .ok_or("native compute preparation requires core backend")?;
+            let prepared = owner.kuno_prepare_native_compute_pipeline(desc)?;
+            Ok(KunoPreparedComputePipeline {
+                _prepared: prepared,
+                owner: self.clone(),
+                module: desc.module.clone(),
+            })
+        }
+        #[cfg(not(vulkan))]
+        {
+            let _ = desc;
+            Err("native compute preparation requires Vulkan")
+        }
+    }
     #[cfg(custom)]
     /// Returns custom implementation of Device (if custom backend and is internally T)
     pub fn as_custom<T: custom::DeviceInterface>(&self) -> Option<&T> {

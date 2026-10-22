@@ -1622,6 +1622,60 @@ impl Global {
         }
     }
 
+    fn resolve_compute_pipeline_descriptor<'a>(
+        &self,
+        device_id: DeviceId,
+        desc: &pipeline::ComputePipelineDescriptor<'a>,
+    ) -> Result<
+        (Arc<super::Device>, ResolvedComputePipelineDescriptor<'a>),
+        pipeline::CreateComputePipelineError,
+    > {
+        let device = self.hub.devices.get(device_id);
+        device.check_is_valid()?;
+        let layout = desc
+            .layout
+            .map(|id| self.hub.pipeline_layouts.get(id).get())
+            .transpose()?;
+        let cache = desc
+            .cache
+            .map(|id| self.hub.pipeline_caches.get(id).get())
+            .transpose()?;
+        let module = self.hub.shader_modules.get(desc.stage.module).get()?;
+        if module.interface.is_none() && layout.is_none() {
+            return Err(pipeline::CreateComputePipelineError::Implicit(
+                pipeline::ImplicitLayoutError::Passthrough(wgt::ShaderStages::COMPUTE),
+            ));
+        }
+        let stage = ResolvedProgrammableStageDescriptor {
+            module,
+            entry_point: desc.stage.entry_point.clone(),
+            constants: desc.stage.constants.clone(),
+            zero_initialize_workgroup_memory: desc.stage.zero_initialize_workgroup_memory,
+        };
+        Ok((
+            device,
+            ResolvedComputePipelineDescriptor {
+                label: desc.label.clone(),
+                layout,
+                stage,
+                cache,
+            },
+        ))
+    }
+
+    /// Sealed native-only preparation: no compute-pipeline ID, executable,
+    /// tracker entry, automatic-layout getter or ordinary dispatch is published.
+    #[cfg(vulkan)]
+    pub fn kuno_prepare_native_compute_pipeline(
+        &self,
+        device_id: DeviceId,
+        desc: &pipeline::ComputePipelineDescriptor,
+    ) -> Result<Arc<pipeline::KunoPreparedComputePipeline>, pipeline::CreateComputePipelineError>
+    {
+        let (device, desc) = self.resolve_compute_pipeline_descriptor(device_id, desc)?;
+        device.kuno_prepare_native_compute_pipeline(desc)
+    }
+
     pub fn device_create_compute_pipeline(
         &self,
         device_id: DeviceId,
@@ -1638,52 +1692,9 @@ impl Global {
         let fid = hub.compute_pipelines.prepare(id_in);
 
         let error = 'error: {
-            let device = self.hub.devices.get(device_id);
-
-            if let Err(e) = device.check_is_valid() {
-                break 'error e.into();
-            }
-
-            let layout = desc
-                .layout
-                .map(|layout| hub.pipeline_layouts.get(layout).get())
-                .transpose();
-            let layout = match layout {
-                Ok(layout) => layout,
-                Err(e) => break 'error e.into(),
-            };
-
-            let cache = desc
-                .cache
-                .map(|cache| hub.pipeline_caches.get(cache).get())
-                .transpose();
-            let cache = match cache {
-                Ok(cache) => cache,
-                Err(e) => break 'error e.into(),
-            };
-
-            let module = hub.shader_modules.get(desc.stage.module).get();
-            let module = match module {
-                Ok(module) => module,
-                Err(e) => break 'error e.into(),
-            };
-            if module.interface.is_none() && layout.is_none() {
-                break 'error pipeline::CreateComputePipelineError::Implicit(
-                    pipeline::ImplicitLayoutError::Passthrough(wgt::ShaderStages::COMPUTE),
-                );
-            }
-            let stage = ResolvedProgrammableStageDescriptor {
-                module,
-                entry_point: desc.stage.entry_point.clone(),
-                constants: desc.stage.constants.clone(),
-                zero_initialize_workgroup_memory: desc.stage.zero_initialize_workgroup_memory,
-            };
-
-            let desc = ResolvedComputePipelineDescriptor {
-                label: desc.label.clone(),
-                layout,
-                stage,
-                cache,
+            let (device, desc) = match self.resolve_compute_pipeline_descriptor(device_id, desc) {
+                Ok(value) => value,
+                Err(error) => break 'error error,
             };
 
             #[cfg(feature = "trace")]
@@ -1714,7 +1725,6 @@ impl Global {
 
         (id, Some(error))
     }
-
     /// Get an ID of one of the bind group layouts. The ID adds a refcount,
     /// which needs to be released by calling `bind_group_layout_drop`.
     pub fn compute_pipeline_get_bind_group_layout(

@@ -238,6 +238,22 @@ pub struct ComputePipelineDescriptor<
 pub type ResolvedComputePipelineDescriptor<'a> =
     ComputePipelineDescriptor<'a, Arc<PipelineLayout>, Arc<ShaderModule>, Arc<PipelineCache>>;
 
+/// Complete original compute-pipeline admission, before creating an executable.
+/// Kuno holds this sealed object only for its independently owning native graph.
+/// No binding handles, INFO payloads, request contents or completion authority.
+#[derive(Debug)]
+pub struct KunoPreparedComputePipeline {
+    pub(crate) device: Arc<Device>,
+    pub(crate) shader_module: Arc<ShaderModule>,
+    pub(crate) layout: Arc<PipelineLayout>,
+    pub(crate) entry_point: String,
+    pub(crate) constants: naga::back::PipelineConstants,
+    pub(crate) zero_initialize_workgroup_memory: bool,
+    pub(crate) cache: Option<Arc<PipelineCache>>,
+    pub(crate) late_sized_buffer_groups: ArrayVec<LateSizedBufferGroup, { hal::MAX_BIND_GROUPS }>,
+    pub(crate) is_auto_layout: bool,
+    pub(crate) label: Label<'static>,
+}
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
 pub enum CreateComputePipelineError {

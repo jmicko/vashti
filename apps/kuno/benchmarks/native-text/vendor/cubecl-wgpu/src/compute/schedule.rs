@@ -23,7 +23,7 @@ pub enum ScheduleTask {
     /// Represents a task to execute a compute pipeline.
     Execute {
         /// The compute pipeline to execute.
-        pipeline: Arc<wgpu::ComputePipeline>,
+        pipeline: Arc<super::strata_pipeline::BackendPipeline>,
         /// The number of workgroups to dispatch.
         count: CubeCount,
         /// The resources (bindings) required for execution.

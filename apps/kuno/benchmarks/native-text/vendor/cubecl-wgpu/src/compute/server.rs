@@ -37,7 +37,7 @@ use cubecl_runtime::{
     validation::{validate_cube_dim, validate_units},
 };
 use hashbrown::HashMap;
-use wgpu::ComputePipeline;
+use super::strata_pipeline::BackendPipeline as ComputePipeline;
 #[path = "strata_expert_batch.rs"]
 mod expert_batch;
 
@@ -366,7 +366,7 @@ impl WgpuServer {
             if external_mask == 0 { repr } else { None },
             module,
             bindings,
-        );
+        )?;
         self.pipelines.insert(kernel_id.clone(), pipeline.clone());
         if external_mask != 0 {
             self.public_external_pipeline_count += 1;

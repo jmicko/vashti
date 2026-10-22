@@ -1040,6 +1040,72 @@ impl Drop for CoreAdapter {
     }
 }
 
+impl CoreDevice {
+    /// Resolve exact same-context original resources, then use shared original
+    /// core validation and original Vulkan stage preparation without executable.
+    #[cfg(vulkan)]
+    pub(crate) fn kuno_prepare_native_compute_pipeline(
+        &self,
+        desc: &crate::ComputePipelineDescriptor<'_>,
+    ) -> Result<Arc<wgc::pipeline::KunoPreparedComputePipeline>, &'static str> {
+        let module = desc
+            .module
+            .inner
+            .as_core_opt()
+            .ok_or("native shader requires core backend")?;
+        if module.context != self.context {
+            return Err("native shader context mismatch");
+        }
+        let layout = desc
+            .layout
+            .map(|value| {
+                let original = value
+                    .inner
+                    .as_core_opt()
+                    .ok_or("native layout requires core backend")?;
+                if original.context != self.context {
+                    return Err("native layout context mismatch");
+                }
+                Ok(original.id)
+            })
+            .transpose()?;
+        let cache = desc
+            .cache
+            .map(|value| {
+                let original = value
+                    .inner
+                    .as_core_opt()
+                    .ok_or("native cache requires core backend")?;
+                if original.context != self.context {
+                    return Err("native cache context mismatch");
+                }
+                Ok(original.id)
+            })
+            .transpose()?;
+        let descriptor = wgc::pipeline::ComputePipelineDescriptor {
+            label: desc.label.map(Borrowed),
+            layout,
+            stage: wgc::pipeline::ProgrammableStageDescriptor {
+                module: module.id,
+                entry_point: desc.entry_point.map(Borrowed),
+                constants: desc
+                    .compilation_options
+                    .constants
+                    .iter()
+                    .map(|&(key, value)| (String::from(key), value))
+                    .collect(),
+                zero_initialize_workgroup_memory: desc
+                    .compilation_options
+                    .zero_initialize_workgroup_memory,
+            },
+            cache,
+        };
+        self.context
+            .0
+            .kuno_prepare_native_compute_pipeline(self.id, &descriptor)
+            .map_err(|_| "native compute preparation rejected")
+    }
+}
 impl dispatch::DeviceInterface for CoreDevice {
     fn features(&self) -> crate::Features {
         self.context.0.device_features(self.id)

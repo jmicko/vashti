@@ -1,4 +1,5 @@
 use super::wgsl;
+use crate::compute::strata_pipeline::BackendPipeline as ComputePipeline;
 use crate::AutoRepresentationRef;
 use crate::WgpuServer;
 use cubecl_core::MemoryConfiguration;
@@ -10,7 +11,7 @@ use cubecl_runtime::{compiler::CompilationError, id::KernelId};
 use std::{borrow::Cow, sync::Arc};
 use wgpu::{
     Adapter, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferBindingType,
-    ComputePipeline, Device, PipelineLayoutDescriptor, Queue, ShaderModule, ShaderModuleDescriptor,
+    Device, PipelineLayoutDescriptor, Queue, ShaderModule, ShaderModuleDescriptor,
     ShaderStages,
 };
 
@@ -65,7 +66,7 @@ impl WgpuServer {
                     backtrace: cubecl_common::backtrace::BackTrace::capture(),
                 })?;
                 let pipeline =
-                    self.create_pipeline(&entry.entrypoint_name, Some(repr), module, bindings);
+                    self.create_pipeline(&entry.entrypoint_name, Some(repr), module, bindings)?;
                 Ok(Some(Ok(pipeline)))
             } else {
                 Ok(Some(Err(key)))
@@ -201,7 +202,7 @@ impl WgpuServer {
         repr: Option<AutoRepresentationRef<'_>>,
         module: ShaderModule,
         bindings: &KernelArguments,
-    ) -> Arc<ComputePipeline> {
+    ) -> Result<Arc<ComputePipeline>, CompilationError> {
         let bindings_info = match repr {
             Some(AutoRepresentationRef::Wgsl(repr)) => Some(wgsl::bindings(repr, bindings)),
             #[cfg(all(feature = "msl", target_os = "macos"))]
@@ -256,22 +257,40 @@ impl WgpuServer {
                 })
         });
 
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entrypoint_name),
-                layout: layout.as_ref(),
-                module: &module,
-                entry_point: Some(entrypoint_name),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    zero_initialize_workgroup_memory: false,
-                    ..Default::default()
-                },
-                cache: None,
-            });
+        let descriptor = wgpu::ComputePipelineDescriptor {
+            label: Some(entrypoint_name),
+            layout: layout.as_ref(),
+            module: &module,
+            entry_point: Some(entrypoint_name),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
+            cache: None,
+        };
+        #[cfg(feature = "kuno-native-prepared")]
+        if crate::compute::strata_graph::enabled() {
+            let admission = self
+                .device
+                .kuno_prepare_native_compute_pipeline(&descriptor)
+                .map_err(|reason| CompilationError::Generic {
+                    reason: reason.into(),
+                    backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                })?;
+            let pipeline =
+                ComputePipeline::prepared(&self.device, &module, admission).map_err(|_| {
+                    CompilationError::Generic {
+                        reason: "native pipeline exact prepared registration".into(),
+                        backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                    }
+                })?;
+            return Ok(Arc::new(pipeline));
+        }
+        let pipeline = self.device.create_compute_pipeline(&descriptor);
         crate::compute::strata_graph::register_pipeline(&pipeline, &module);
-        Arc::new(pipeline)
+        Ok(Arc::new(ComputePipeline::ordinary(pipeline)))
     }
+
 }
 
 pub async fn request_device(adapter: &Adapter) -> (Device, Queue) {

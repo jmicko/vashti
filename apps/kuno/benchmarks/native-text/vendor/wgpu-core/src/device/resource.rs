@@ -3826,10 +3826,10 @@ impl Device {
         Ok(layout)
     }
 
-    pub fn create_compute_pipeline(
+    fn prepare_compute_pipeline(
         self: &Arc<Self>,
         desc: pipeline::ResolvedComputePipelineDescriptor,
-    ) -> Result<Arc<pipeline::ComputePipeline>, pipeline::CreateComputePipelineError> {
+    ) -> Result<pipeline::KunoPreparedComputePipeline, pipeline::CreateComputePipelineError> {
         self.check_is_valid()?;
 
         self.require_downlevel_flags(wgt::DownlevelFlags::COMPUTE_SHADERS)?;
@@ -3895,37 +3895,135 @@ impl Device {
             None => None,
         };
 
+        Ok(pipeline::KunoPreparedComputePipeline {
+            device: self.clone(),
+            shader_module,
+            layout: pipeline_layout,
+            entry_point: final_entry_point_name,
+            constants: desc.stage.constants,
+            zero_initialize_workgroup_memory: desc.stage.zero_initialize_workgroup_memory,
+            cache,
+            late_sized_buffer_groups,
+            is_auto_layout,
+            label: desc.label.map(|label| Cow::Owned(label.into_owned())),
+        })
+    }
+
+    /// Original core admission AND exact original Vulkan stage preparation.
+    /// Only the unused ordinary vkCreateComputePipelines call is omitted.
+    #[cfg(vulkan)]
+    pub(crate) fn kuno_prepare_native_compute_pipeline(
+        self: &Arc<Self>,
+        desc: pipeline::ResolvedComputePipelineDescriptor,
+    ) -> Result<Arc<pipeline::KunoPreparedComputePipeline>, pipeline::CreateComputePipelineError>
+    {
+        let prepared = self.prepare_compute_pipeline(desc)?;
+        let raw_device = prepared
+            .device
+            .raw()
+            .as_any()
+            .downcast_ref::<hal::vulkan::Device>()
+            .ok_or_else(|| {
+                pipeline::CreateComputePipelineError::Internal(
+                    "native compute preparation requires Vulkan".into(),
+                )
+            })?;
+        let layout = prepared
+            .layout
+            .raw()
+            .as_any()
+            .downcast_ref::<hal::vulkan::PipelineLayout>()
+            .ok_or_else(|| {
+                pipeline::CreateComputePipelineError::Internal(
+                    "native compute layout backend".into(),
+                )
+            })?;
+        let module = prepared
+            .shader_module
+            .raw()
+            .as_any()
+            .downcast_ref::<hal::vulkan::ShaderModule>()
+            .ok_or_else(|| {
+                pipeline::CreateComputePipelineError::Internal(
+                    "native compute shader backend".into(),
+                )
+            })?;
+        // The native program owns no override/zero-initialization semantics.
+        // Current CubeCL launches supply exactly this original option bundle.
+        if !prepared.constants.is_empty() || prepared.zero_initialize_workgroup_memory {
+            return Err(pipeline::CreateComputePipelineError::Internal(
+                "native compute preparation unsupported stage options".into(),
+            ));
+        }
+        let descriptor = hal::ComputePipelineDescriptor {
+            label: prepared.label.to_hal(self.instance_flags),
+            layout,
+            stage: hal::ProgrammableStage {
+                module,
+                entry_point: &prepared.entry_point,
+                constants: &prepared.constants,
+                zero_initialize_workgroup_memory: prepared.zero_initialize_workgroup_memory,
+            },
+            cache: None,
+        };
+        // Includes original override processing, lowering, workarounds and
+        // shader-module/required-subgroup admission. Temporary modules are
+        // destroyed inside the HAL helper; no executable or queue is created.
+        unsafe { raw_device.kuno_prepare_compute_stage(&descriptor) }
+            .map_err(|error| self.compute_pipeline_error(error))?;
+        Ok(Arc::new(prepared))
+    }
+
+    fn compute_pipeline_error(
+        &self,
+        err: hal::PipelineError,
+    ) -> pipeline::CreateComputePipelineError {
+        match err {
+            hal::PipelineError::Device(error) => {
+                pipeline::CreateComputePipelineError::Device(self.handle_hal_error(error))
+            }
+            hal::PipelineError::Linkage(_stages, msg) => {
+                pipeline::CreateComputePipelineError::Internal(msg)
+            }
+            hal::PipelineError::EntryPoint(_stage) => {
+                pipeline::CreateComputePipelineError::Internal(ENTRYPOINT_FAILURE_ERROR.to_string())
+            }
+            hal::PipelineError::PipelineConstants(_stages, msg) => {
+                pipeline::CreateComputePipelineError::PipelineConstants(msg)
+            }
+        }
+    }
+
+    pub fn create_compute_pipeline(
+        self: &Arc<Self>,
+        desc: pipeline::ResolvedComputePipelineDescriptor,
+    ) -> Result<Arc<pipeline::ComputePipeline>, pipeline::CreateComputePipelineError> {
+        let pipeline::KunoPreparedComputePipeline {
+            device: _,
+            shader_module,
+            layout: pipeline_layout,
+            entry_point: final_entry_point_name,
+            constants,
+            zero_initialize_workgroup_memory,
+            cache,
+            late_sized_buffer_groups,
+            is_auto_layout,
+            label,
+        } = self.prepare_compute_pipeline(desc)?;
         let pipeline_desc = hal::ComputePipelineDescriptor {
-            label: desc.label.to_hal(self.instance_flags),
+            label: label.to_hal(self.instance_flags),
             layout: pipeline_layout.raw(),
             stage: hal::ProgrammableStage {
                 module: shader_module.raw(),
                 entry_point: final_entry_point_name.as_ref(),
-                constants: &desc.stage.constants,
-                zero_initialize_workgroup_memory: desc.stage.zero_initialize_workgroup_memory,
+                constants: &constants,
+                zero_initialize_workgroup_memory,
             },
             cache: cache.as_ref().map(|it| it.raw()),
         };
 
-        let raw =
-            unsafe { self.raw().create_compute_pipeline(&pipeline_desc) }.map_err(
-                |err| match err {
-                    hal::PipelineError::Device(error) => {
-                        pipeline::CreateComputePipelineError::Device(self.handle_hal_error(error))
-                    }
-                    hal::PipelineError::Linkage(_stages, msg) => {
-                        pipeline::CreateComputePipelineError::Internal(msg)
-                    }
-                    hal::PipelineError::EntryPoint(_stage) => {
-                        pipeline::CreateComputePipelineError::Internal(
-                            ENTRYPOINT_FAILURE_ERROR.to_string(),
-                        )
-                    }
-                    hal::PipelineError::PipelineConstants(_stages, msg) => {
-                        pipeline::CreateComputePipelineError::PipelineConstants(msg)
-                    }
-                },
-            )?;
+        let raw = unsafe { self.raw().create_compute_pipeline(&pipeline_desc) }
+            .map_err(|err| self.compute_pipeline_error(err))?;
 
         let pipeline = pipeline::ComputePipeline {
             raw: ManuallyDrop::new(raw),
@@ -3933,7 +4031,7 @@ impl Device {
             device: self.clone(),
             _shader_module: shader_module,
             late_sized_buffer_groups,
-            label: desc.label.to_string(),
+            label: label.to_string(),
             tracking_data: TrackingData::new(self.tracker_indices.compute_pipelines.clone()),
         };
 
@@ -3957,7 +4055,6 @@ impl Device {
 
         Ok(pipeline)
     }
-
     pub fn create_render_pipeline(
         self: &Arc<Self>,
         desc: pipeline::ResolvedGeneralRenderPipelineDescriptor,
