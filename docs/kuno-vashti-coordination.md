@@ -1,5 +1,18 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno checkpoint (2026-10-22): genuine dual raw-bank bundle under construction.**
+
+Read [the complete raw-bank design](kuno-prefill-raw-banks.md). Actual full-ring
+DQ reads cause head-of-line upload waits even with the corrected queue cut.
+Preserve those authentic full-root dependencies; add a separately priced actual
+second32MiB raw allocation, scope/source attestation and complete alternating
+execution-unit prefetch scheduler TOGETHER. <=32K owned only, old larger loan
+unchanged. Three isolated agent worktrees based4b48791e; root alone merges,
+compiles and uses hardware. No new speed/GPU/install claim. Existing326/both
+chains fully pass at42efd634 as recorded below; native-prepared remains installed.
+No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
+Goal ACTIVE/UNMET; sudo refresher1145657 expires15:45:12UTC.
+
 **Active Kuno checkpoint (2026-10-22 12:07UTC): complete cohort successor correct; scheduling attribution continues.**
 
 Goal ACTIVE/UNMET. Frozen42efd634/workerSHA6ba68800 passes198 CPU,
