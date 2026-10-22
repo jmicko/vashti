@@ -1,5 +1,21 @@
 # Kuno and Vashti Coordination
 
+**Current source continuation (2026-10-22 21:18UTC): query-vector planes.**
+
+Read [the exact source contract](kuno-prefill-qsa-query-planes.md). It retains
+the full medium-expert/vertical-Quad bundle and changes only the physical
+12KiB query SLM permutation:768 original vec4 stores,24 query read sites,
+all3072 bits/guards/barriers/math/owners unchanged. Intended241CPU/runtime15/
+429WGSL/296layouts/all350GPU/BOTH original chains +actual ISA/recovery.
+Source only; no build/performance/install claim. Root ad3a8a53/worker488f34ed
+passed238CPU/runtime15/offline429/296 and currently runs corrected350GPU
+controls and both chains. Earlier c8050a65 operator run correctly stopped on
+a missing public65-member fixture before dispatch; failed receipt preserved,
+physical recovery verified. New actual fixture CPU control covers all six sizes.
+No CPU compilation while GPU run active. No API/config/model/context/frontend/
+release/reset/reboot change; Vashti:none. Installed301f1fd1 remains; goal UNMET.
+
+
 **Active Kuno continuation (2026-10-22 21:00UTC): medium expert + vertical Quad bundle.**
 
 Read [the complete candidate specification](kuno-prefill-expert-macro64.md).

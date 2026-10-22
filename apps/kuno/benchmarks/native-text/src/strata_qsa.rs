@@ -208,6 +208,10 @@ impl Kernel {
         } else {
             source
         };
+        #[cfg(feature = "strata-qsa-query-planes")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_query_planes::source(source)
+        } else {source};
         #[cfg(feature = "strata-qsa-packed-cache")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_packed_cache::source(source)
@@ -863,3 +867,7 @@ mod native_score_tests;
 #[cfg(all(test, feature = "strata-subgroup-quad"))]
 #[path = "strata_native_quad_tests.rs"]
 mod native_quad_tests;
+
+#[cfg(any(test, feature="strata-qsa-query-planes"))]
+#[path="strata_prompt_qsa_query_planes.rs"]
+mod prompt_query_planes;

@@ -100,6 +100,7 @@ strata-qsa-prefetch = ["strata-qsa-compact"]
 strata-qsa-native-xor = ["strata-qsa-prefetch"]
 strata-qsa-scale-finite = ["strata-qsa-native-xor"]
 strata-subgroup-quad-vertical = ["strata-subgroup-quad", "cubecl-wgpu/kuno-subgroup-quad-vertical"]
+strata-qsa-query-planes = ["strata-expert-macro64"]
 strata-expert-macro64 = ["strata-subgroup-quad-vertical"]
 strata-subgroup-quad = ["strata-qsa-scale-finite", "cubecl-wgpu/kuno-subgroup-quad"]
 # Original QK bytes/scales read in pairs; equivalent finite checks factored.

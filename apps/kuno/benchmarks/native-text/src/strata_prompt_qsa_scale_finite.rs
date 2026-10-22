@@ -150,6 +150,8 @@ mod tests {
             for op in [224, 133, 345, 346, 338] {
                 assert_eq!(ops(&aw, op), ops(&bw, op));
             }
+            #[cfg(feature = "strata-qsa-query-planes")]
+            let new = super::super::prompt_query_planes::source(new);
             #[cfg(feature = "strata-qsa-scale-finite")]
             assert_eq!(k.source(), finish(new));
         }
