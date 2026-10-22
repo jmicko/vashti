@@ -42,8 +42,13 @@ Sourcee6d04fbc/SHA0cba555e frozen,171 CPU/11 unchanged-runtime/421 WGSL/248
 matrix layouts PASS. Root`kuno-narrow-global-20261022.service` runs original189
 GPU +18 old/new actual producer +34 original-oracle routed controls and BOTH
 complete profile/count/compiler/source/owner/erasure/recovery chains. Exact
-wrapper/artifact/logs in linked spec; GPU/performance pending, no speed/install
-claim. This is complete producer+matrix wiring, not isolated kernel selection.
+wrapper/artifact/logs in linked spec. All241 GPU controls and BOTH full original
+proof chains now PASS with actual18954 global groups/long request; normal
+first10.653114762/repeat9.164950382s versus record32 10.9980/9.4991s (~3.5% warm
+gain), sampled matrix18% faster. Strata5.3515s still leads. Root original
+terminal+fresh clean selection now runs`kuno-narrow-global-acceptance-20261022`;
+staged full quality/privacy/API follows ONLY if existing5%-at-EACH gate passes.
+No install yet. Complete producer+matrix wiring retained, no numerical relaxation.
 
 Two historical *_cpu diagnostic fields actually use Instant wall elapsed time;
 source/docs corrected without renaming fields. Actual thread-CPU evidence is

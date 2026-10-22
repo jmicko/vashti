@@ -94,3 +94,35 @@ Evidence base `/media/jmicko/faststore/kuno-development`:
 `native-narrow-global-runtime-unchanged-20261022.diff`. Earlier compile-only
 errors retained as`native-narrow-global-cpu-build-attempt1-20261022*`.
 GPU/performance/terminal/clean/staged/install pending; installed binaries unchanged.
+
+
+## Complete connected outcome
+
+All241 GPU controls PASS (original189 +18 actual old/new producer +34 routed
+small-expert). Both original73/4245/4245 schedules pass every compiler/FMA/group/
+source/owner/count/pool/erasure/recovery proof. Actual long global groups18954
+exactly equal12221 +3883 +2850 real histogram groups. All old routed groups and
+wide-prefix/Direct-GU counts remain unchanged; no arithmetic scope correction.
+
+Normal first/repeat10.653114762/9.164950382s versus record32
+10.998012681/9.499076228s (~3.14%/3.52% improvement). Combined since copy cohorts'
+11.146964481/9.741252502s is4.43%/5.92% faster in these same host-profile modes.
+Sampled matrix work30.887260->25.242100ms (~18.28% shorter) in the instrumented
+390-group layer; sampled dequant16.207658ms and copies29.046850ms. These samples
+serialize work, so they cannot establish normal compute/copy overlap or idle.
+Normal warm experts4.942176667s, attention2.953429977s; actual capture HOST WALL
+0.571665955s overlaps rolling GPU work and is not CPU utilization.
+
+Exact full proof `strata-parity-narrow-global-20261022-narrow-global-public-summary.json`;
+`native-narrow-global-connected-20261022.log`. Whole connected unit finished and
+physical recovery passed. Keep both complete components. No Strata parity,
+clean selection, staged quality/API, install or sustained decode gain yet.
+
+Original terminal/fresh45/4245/4245 clean selection is now running under
+`kuno-narrow-global-acceptance-20261022.service`; wrapper SHA256
+`0facb71267bb545798c6bcfbef0290cd34ec0727564be1fb9ab585b4d0374ea9`
+pins this same source/artifact/full proof and preserves existing5%-at-EACH gate
+against installed3fffc266. It starts original staged full tools/thinking/MAX8/
+semantic/privacy checks ONLY if both clean positions pass. Gateway/installed
+worker remain untouched during this staged test. No benchmark chosen by seed
+or result, and no new ordinary Ollama baseline is being run.

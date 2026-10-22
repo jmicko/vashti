@@ -9,6 +9,27 @@ release, reset/reboot, model/quant substitution or relaxed numerical/ownership
 checks is part of this goal. Current GPU permission and sudo apply to this run;
 stop protected execution at a safe checkpoint if the credential expires.
 
+## Active overnight checkpoint (2026-10-22)
+
+Controller ACTIVE; user authorized GPUs/sudo/overnight work and Ultra. Same isolated
+Kuno checkout. [Record32](kuno-prefill-dequant-record32.md)af4de6f0/SHA96b0c3b0
+passes full original proofs, normal repeat9.4991s. Complete producer+matrix
+[global narrow](kuno-prefill-global-narrow.md)e6d04fbc/SHA0cba555e passes171 CPU,
+11 unchanged-runtime,421 WGSL/248 matrix layouts,241 GPU controls and BOTH complete
+original73/4245/4245 compiler/FMA/count/source/owner/erasure/recovery chains.
+Same host-profile first10.6531/repeat9.1650s (~5.9% warm gain since copy cohorts).
+Sampled matrix work18% shorter; no isolated normal-GPU utilization attribution.
+Native-only selection retains old staged/dense/wide-tail programs and exact bounds.
+
+Goal UNMET (same-host Strata5.3515s still ahead). Installed3fffc266/gateway36626d30
+unchanged. Root original terminal/fresh clean45/4245/4245 selection is active;
+only after existing5%-at-EACH gate passes may original staged full thinking/tools/
+MAX8/semantic/privacy/API checks proceed. No new install or decode gain claimed.
+Exact artifacts/commands/limits in linked specifications and coordination handoff.
+Legacy *_cpu capture/wait diagnostic fields are Instant WALL counters; true CPU
+only from explicit CLOCK_THREAD_CPUTIME_ID collectors. No API/frontend/model/
+config/release/reset/reboot change. Original paused snapshots below are historical.
+
 ## Authoritative stopped checkpoint (2026-10-22 00:31UTC)
 
 User requested close; controller remains PAUSED and parity goal UNMET. No active
