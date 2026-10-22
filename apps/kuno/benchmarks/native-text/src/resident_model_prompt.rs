@@ -53,6 +53,15 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         if native.core_prompt_stages.is_some() {
             return Ok(None);
         }
+        if native
+            .global_moe
+            .as_ref()
+            .ok_or_else(error)?
+            .prompt_secondary_raw_id()
+            .is_some()
+        {
+            return Err(error());
+        }
         if self.poisoned || self.retired.load(Ordering::Acquire) || !self.admission.transient_io() {
             return Err(error());
         }
@@ -69,15 +78,17 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         &self,
         loan: Option<&crate::strata_global_sources::BorrowedPrompt>,
     ) -> Result<p::Scope> {
-        match (
-            self.native_batch
-                .as_ref()
-                .ok_or_else(error)?
-                .core_prompt_stages,
-            loan,
-        ) {
-            (Some(ids), None) => p::Scope::new(&self.arena, ids),
-            (None, Some(loan)) => loan.scope(),
+        let native = self.native_batch.as_ref().ok_or_else(error)?;
+        let secondary = native
+            .global_moe
+            .as_ref()
+            .ok_or_else(error)?
+            .prompt_secondary_raw_id();
+        match (native.core_prompt_stages, loan, secondary) {
+            (Some(ids), None, secondary) => {
+                p::Scope::new_with_secondary_raw_bank(&self.arena, ids, secondary)
+            }
+            (None, Some(loan), None) => loan.scope(),
             _ => Err(error()),
         }
     }

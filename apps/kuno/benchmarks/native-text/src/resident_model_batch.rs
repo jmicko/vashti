@@ -2852,14 +2852,15 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             client.properties().memory.alignment.max(256),
         )?;
         let reserved = crate::public_host_expert_mirror::strata_global::Host::reservation(&plan)?;
-        let prompt_stages = self
+        let prompt_workspace = self
             .native_batch
             .as_ref()
             .ok_or(chunk_error!())?
             .global_moe
             .as_ref()
-            .ok_or(chunk_error!())?
-            .prompt_stage_handles(&self.arena)?;
+            .ok_or(chunk_error!())?;
+        let prompt_stages = prompt_workspace.prompt_stage_handles(&self.arena)?;
+        let prompt_secondary_raw = prompt_workspace.prompt_secondary_raw_handle(&self.arena)?;
         unsafe {
             executor.prepare_strata_global_sources(self.graph, plan, device, reserved)?;
         }
@@ -2878,8 +2879,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             if prompt_host_grant != 0 {
                 return Err(chunk_error!());
             }
-            sources.attach_prompt_stage(prompt_stages[2].clone())?;
+            sources.attach_prompt_raw_banks(prompt_stages[2].clone(), prompt_secondary_raw)?;
         } else {
+            if prompt_secondary_raw.is_some() {
+                return Err(chunk_error!());
+            }
             let (indices, extra_host) = sources.prompt_loan_quote(self.graph)?;
             if extra_host != prompt_host_grant {
                 return Err(chunk_error!());

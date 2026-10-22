@@ -11,6 +11,7 @@ pub(crate) const HOST_BYTES: usize = 32 * 1024;
 pub(super) const WORKING_BYTES: u64 = layout::WORKING_BYTES;
 pub(crate) struct Storage {
     working: [Handle; 3],
+    secondary_raw: Option<Handle>,
     moe: groups::Views,
     gr: [Handle; 5], // packed BF16 norm, down, packed BF16 low, up, row scales
     mixed_images: [Handle; 2], // native BF16 and FP16 input images, persistent across each half
@@ -24,7 +25,20 @@ impl Storage {
     pub(crate) fn new(roots: [Handle; 3]) -> Result<Self> {
         Self::at_capacity(roots, groups::CAPACITY)
     }
+    pub(crate) fn new_with_secondary_raw_bank(
+        roots: [Handle; 3],
+        secondary_raw: Option<Handle>,
+    ) -> Result<Self> {
+        Self::at_capacity_with_secondary_raw_bank(roots, secondary_raw, groups::CAPACITY)
+    }
     fn at_capacity(roots: [Handle; 3], capacity: usize) -> Result<Self> {
+        Self::at_capacity_with_secondary_raw_bank(roots, None, capacity)
+    }
+    fn at_capacity_with_secondary_raw_bank(
+        roots: [Handle; 3],
+        secondary_raw: Option<Handle>,
+        capacity: usize,
+    ) -> Result<Self> {
         if capacity == 0 || capacity > allocation::DEFAULT_ROWS {
             return Err(crate::strata_prompt::invalid_buffer_length());
         }
@@ -42,6 +56,19 @@ impl Storage {
             })
         {
             return Err(crate::strata_prompt::invalid_buffer_length());
+        }
+        if let Some(raw) = &secondary_raw {
+            if !cfg!(feature = "strata-expert-cohorts")
+                || sizes[2] != allocation::RAW_RING_BYTES
+                || allocation::whole_root_bytes(raw)? != allocation::RAW_RING_BYTES
+                || raw.stream != roots[0].stream
+                || roots.iter().any(|root| {
+                    root.clone().binding().memory.allocation_id()
+                        == raw.clone().binding().memory.allocation_id()
+                })
+            {
+                return Err(crate::strata_prompt::invalid_buffer_length());
+            }
         }
         let carve = |root: &Handle, words: &[usize]| -> Result<Vec<Handle>> {
             let root_bytes = allocation::whole_root_bytes(root)?;
@@ -119,6 +146,7 @@ impl Storage {
         }
         Ok(Self {
             working,
+            secondary_raw,
             moe,
             gr,
             mixed_images,
@@ -134,6 +162,9 @@ impl Storage {
     }
     pub(crate) fn working(&self) -> [Handle; 3] {
         self.working.clone()
+    }
+    pub(crate) fn secondary_raw_bank(&self) -> Option<Handle> {
+        self.secondary_raw.clone()
     }
     pub(crate) fn gr(&self) -> [Handle; 5] {
         self.gr.clone()
@@ -239,6 +270,72 @@ pub(crate) fn overlaps(a: &Handle, b: &Handle) -> Result<bool> {
 mod owned_layout_tests {
     use super::*;
     use cubecl_common::stream_id::StreamId;
+    #[test]
+    fn independent_secondary_raw_owner_preserves_three_root_views_and_host_quote() {
+        let stream = StreamId { value: 429 };
+        let roots = allocation::ROOT_SIZES.map(|n| Handle::new(stream, n));
+        let raw = Handle::new(stream, allocation::RAW_RING_BYTES);
+        let original = Storage::new(roots.clone()).unwrap();
+        assert!(original.secondary_raw_bank().is_none());
+        // The original fixed quote covers the additional retained Handle too.
+        assert!(std::mem::size_of::<Storage>() + std::mem::size_of::<Handle>() * 64 < HOST_BYTES);
+        let result = Storage::new_with_secondary_raw_bank(roots.clone(), Some(raw.clone()));
+        if !cfg!(feature = "strata-expert-cohorts") {
+            assert!(result.is_err());
+            return;
+        }
+        let dual = result.unwrap();
+        assert!(same_view(&dual.secondary_raw_bank().unwrap(), &raw));
+        assert_eq!(raw.size_in_used(), allocation::RAW_RING_BYTES);
+        for (a, b) in dual.working().iter().zip(original.working()) {
+            assert!(same_view(a, &b));
+            assert!(!overlaps(a, &raw).unwrap());
+        }
+        for (a, b) in dual.outer().iter().zip(original.outer()) {
+            assert!(same_view(a, &b));
+        }
+        for h in dual.moe.handles() {
+            assert!(dual.output(h));
+            assert!(!overlaps(h, &raw).unwrap());
+        }
+        assert!(!dual.output(&raw));
+        assert_eq!(
+            roots.iter().map(Handle::size_in_used).sum::<u64>(),
+            allocation::MAIN_BYTES
+        );
+    }
+    #[test]
+    fn secondary_raw_owner_rejects_aliases_slices_foreign_stream_and_loan_roots() {
+        let stream = StreamId { value: 430 };
+        let make = || allocation::ROOT_SIZES.map(|n| Handle::new(stream, n));
+        for index in 0..3 {
+            let roots = make();
+            assert!(
+                Storage::new_with_secondary_raw_bank(roots.clone(), Some(roots[index].clone()))
+                    .is_err()
+            );
+        }
+        for raw in [
+            Handle::new(stream, allocation::RAW_RING_BYTES - 256),
+            Handle::new(stream, allocation::RAW_RING_BYTES + 256),
+            Handle::new(stream, 2 * allocation::RAW_RING_BYTES),
+            Handle::new(stream, allocation::RAW_RING_BYTES).offset_start(256),
+            Handle::new(stream, allocation::RAW_RING_BYTES).offset_end(256),
+            Handle::new(StreamId { value: 431 }, allocation::RAW_RING_BYTES),
+        ] {
+            assert!(Storage::new_with_secondary_raw_bank(make(), Some(raw)).is_err());
+        }
+        let mut loan = make();
+        loan[2] = Handle::new(stream, allocation::ROOT_BYTES);
+        assert!(Storage::new(loan.clone()).is_ok());
+        assert!(
+            Storage::new_with_secondary_raw_bank(
+                loan,
+                Some(Handle::new(stream, allocation::RAW_RING_BYTES)),
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn actual_non_power_of_two_parent_sizes_carve_without_virtual_tail_bytes() {
         let stream = StreamId { value: 97 };

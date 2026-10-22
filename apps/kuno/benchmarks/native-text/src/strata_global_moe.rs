@@ -58,7 +58,8 @@ pub(crate) const MAIN_BYTES: u64 = crate::strata_sampler::request::MAIN_BYTES
     + 131072
     + 1048576
     + crate::strata_dense::INPUT_BYTES
-    + crate::strata_prompt::allocation::MAIN_BYTES;
+    + crate::strata_prompt::allocation::MAIN_BYTES
+    + crate::strata_prompt::allocation::SECONDARY_RAW_BYTES;
 fn reject() -> Error {
     Error::InvalidFormat("Strata global routed family")
 }
@@ -176,6 +177,7 @@ pub(crate) struct Workspace {
     adaptive: Option<crate::strata_global_adapt::Cache>,
     dense_input: BufferId,
     prompt_stages: Option<[BufferId; 3]>,
+    prompt_secondary_raw: Option<BufferId>,
     epoch: u32,
     verified_window: bool, // window/job accounting, independent of GPU counter policy
     active: Option<Zeroizing<[usize; 3]>>, // active count, next layer, accepted flag
@@ -312,8 +314,12 @@ impl Workspace {
         let dense_input = arena
             .allocate_zeroed(crate::strata_dense::INPUT_WORDS)
             .map_err(u::fault)?;
-        let prompt_stages =
-            crate::strata_prompt::allocation::Plan::new(context)?.allocate(arena)?;
+        let prompt_plan = crate::strata_prompt::allocation::Plan::new(context)?;
+        let prompt_stages = prompt_plan.allocate(arena)?;
+        let prompt_secondary_raw = prompt_plan.allocate_secondary_raw_bank(arena)?;
+        if prompt_stages.is_none() && prompt_secondary_raw.is_some() {
+            return Err(reject());
+        }
         graph.verify_unchanged()?;
         Ok(Self {
             binding: graph.binding_id(),
@@ -323,6 +329,7 @@ impl Workspace {
             dense_input,
             sampler,
             prompt_stages,
+            prompt_secondary_raw,
             epoch: 0,
             verified_window: false,
             active: None,
@@ -331,6 +338,19 @@ impl Workspace {
     }
     pub(crate) fn prompt_stage_ids(&self) -> Option<[BufferId; 3]> {
         self.prompt_stages
+    }
+    pub(crate) fn prompt_secondary_raw_id(&self) -> Option<BufferId> {
+        self.prompt_secondary_raw
+    }
+    /// Resolve the admitted owner through the same live arena ledger as the
+    /// original roots. No synthetic or sliced Handle can supply this bank.
+    pub(crate) fn prompt_secondary_raw_handle(
+        &self,
+        arena: &PrivateArena,
+    ) -> Result<Option<Handle>> {
+        self.prompt_secondary_raw
+            .map(|id| u::handle(arena, id))
+            .transpose()
     }
     pub(crate) fn prompt_stage_handles(&self, arena: &PrivateArena) -> Result<Option<[Handle; 3]>> {
         let Some(ids) = self.prompt_stages else {
@@ -1028,15 +1048,18 @@ mod direct_quote_tests {
     #[test]
     fn direct_source_plan_prices_dense_planes_and_prompt_roots_without_decode_fetch_stages() {
         let requests = Workspace::requests_for_context(32768).unwrap();
-        assert_eq!(requests.len(), 22);
+        let secondary = crate::strata_prompt::allocation::SECONDARY_RAW_BYTES;
+        assert_eq!(requests.len(), 22 + usize::from(secondary != 0));
         assert_eq!(requests[18], 512 * 1024);
         assert_eq!(
-            &requests[19..],
+            &requests[19..22],
             &[756 * 1024 * 1024, 642 * 1024 * 1024, 32 * 1024 * 1024]
         );
         assert!(!requests.contains(&(128 * 1024 * 1024)));
-        assert_eq!(requests.iter().sum::<u64>(), 1_503_494_144);
-        assert_eq!(MAIN_BYTES, 1_503_494_144);
+        assert_eq!(requests[..22].iter().sum::<u64>(), 1_503_494_144);
+        assert_eq!(requests[22..].iter().sum::<u64>(), secondary);
+        assert_eq!(requests.iter().sum::<u64>(), 1_503_494_144 + secondary);
+        assert_eq!(MAIN_BYTES - secondary, 1_503_494_144);
         assert_eq!(
             3 * 128 * 1024 * 1024 - crate::strata_dense::INPUT_BYTES,
             402_128_896

@@ -48,10 +48,19 @@ pub(crate) fn invalid_buffer_length() -> Error {
 pub(crate) struct Scope;
 impl Scope {
     pub(crate) fn new(arena: &PrivateArena, ids: [BufferId; 3]) -> Result<Self> {
+        Self::new_with_secondary_raw_bank(arena, ids, None)
+    }
+    pub(crate) fn new_with_secondary_raw_bank(
+        arena: &PrivateArena,
+        ids: [BufferId; 3],
+        secondary: Option<BufferId>,
+    ) -> Result<Self> {
         if !crate::strata_intel_core::enabled()
             || ids[0] == ids[1]
             || ids[0] == ids[2]
             || ids[1] == ids[2]
+            || secondary.is_some_and(|id| ids.contains(&id))
+            || (secondary.is_some() && !cfg!(feature = "strata-expert-cohorts"))
         {
             return Err(crate::strata_prompt::invalid_buffer_length());
         }
@@ -66,12 +75,16 @@ impl Scope {
                 return Err(crate::strata_prompt::invalid_buffer_length());
             }
         }
+        // BufferId resolution proves the actual original arena, reset epoch
+        // and slot before Storage can publish a scoped whole-root Handle.
+        let secondary = secondary.map(|id| u::handle(arena, id)).transpose()?;
+        let storage = storage::Storage::new_with_secondary_raw_bank(handles, secondary)?;
         STAGES.with(|s| {
             let mut s = s.borrow_mut();
             if s.is_some() {
                 return Err(crate::strata_prompt::invalid_buffer_length());
             }
-            *s = Some(storage::Storage::new(handles)?);
+            *s = Some(storage);
             Ok(Self)
         })
     }
@@ -89,6 +102,16 @@ fn stages() -> Result<[Handle; 3]> {
         s.borrow()
             .as_ref()
             .map(storage::Storage::working)
+            .ok_or(Error::InvalidBufferLength)
+    })
+}
+/// Only the current genuine owned Scope can publish a second bank. Legacy
+/// scopes and cache loans keep None; dropping the Scope releases both banks.
+pub(crate) fn secondary_raw_bank() -> Result<Option<Handle>> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(storage::Storage::secondary_raw_bank)
             .ok_or(Error::InvalidBufferLength)
     })
 }
@@ -232,6 +255,38 @@ fn validate_staged_payload(owned: usize, target: u64, count: usize) -> Result<()
 #[cfg(test)]
 mod staged_private_tests {
     use super::*;
+    #[test]
+    fn secondary_raw_publication_ends_with_actual_scope_drop_and_unwind() {
+        use cubecl_common::stream_id::StreamId;
+        assert!(!active());
+        assert!(secondary_raw_bank().is_err());
+        let make = |secondary: bool| {
+            let stream = StreamId { value: 432 };
+            let roots = allocation::ROOT_SIZES.map(|n| Handle::new(stream, n));
+            let raw = secondary.then(|| Handle::new(stream, allocation::RAW_RING_BYTES));
+            storage::Storage::new_with_secondary_raw_bank(roots, raw).unwrap()
+        };
+        // CPU metadata only: exercise the real TLS accessor and real Scope
+        // destructor, without pretending synthetic Handles authorize execution.
+        for secondary in [false, cfg!(feature = "strata-expert-cohorts")] {
+            STAGES.with(|stages| *stages.borrow_mut() = Some(make(secondary)));
+            let scope = Scope;
+            assert!(active());
+            assert_eq!(secondary_raw_bank().unwrap().is_some(), secondary);
+            drop(scope);
+            assert!(!active());
+            assert!(secondary_raw_bank().is_err());
+        }
+        let unwound = std::panic::catch_unwind(|| {
+            STAGES.with(|stages| *stages.borrow_mut() = Some(make(false)));
+            let _scope = Scope;
+            assert!(active());
+            panic!("public scope cleanup fixture");
+        });
+        assert!(unwound.is_err());
+        assert!(!active());
+        assert!(secondary_raw_bank().is_err());
+    }
     #[test]
     fn native_shared_prompt_staging_is_bounded_and_preserves_partial_last_windows() {
         for owned in [32768, 1024 * 1024] {
