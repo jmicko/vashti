@@ -79,7 +79,17 @@ credits occur only after the original joined-flight/reset/metadata checks and
 successful pool ownership transfer; adoption credits occur only after the
 original pool objects have successfully transferred into the new Recording.
 
-At this source checkpoint the new module was parsed
-with rustfmt and diff checking passed; CPU compile/test execution is delegated
-to the cohort implementation task's exclusive build target. No GPU, service,
-installation, speed or release acceptance has occurred for this component.
+Exact-source CPU execution now passes8 controls:4 selector controls (including
+the genuine completed six-phase grammar positive),3 actual scope/state controls
+and the unchanged original rolling-selector control. The direct-rustc harness
+uses the real fully featured runtime grammar, verbatim original scope/state
+and rolling code, and the full production selector module. Only original
+public-profile/location observation wrappers are disabled. Source files match
+frozen root `a75df1fb`; exact hashes, command, binary and limitations are in
+`/media/jmicko/faststore/kuno-development/expert-cohort-selector-exact-cpu-20261022/`.
+The harness creates no real TransientIo/device/Graph and grants no GPU acceptance.
+Root full candidate passes196 App CPU/11 runtime and429 WGSL/280 offline layouts.
+Actual device selection evidence remains required in both full profile chains;
+zero below1024 observations may be legitimate and must not be fabricated.
+No GPU, service, installation, speed or release acceptance has occurred for
+this component at this checkpoint.

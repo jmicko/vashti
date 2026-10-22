@@ -94,6 +94,32 @@ receipts before reuse. All owning padding, status, fault and source spans count.
 CPU controls additionally cover actual launcher/grammar schemas, ordering,
 malformed/overflow metadata, aliases, scope/proof invalidation and erasure.
 
-Implementation and CPU/offline validation are in progress. No live GPU,
-whole-model correctness, performance, installation or release result is claimed
-for this candidate until recorded by the root task with exact source/artifact.
+## Frozen root checkpoint (2026-10-22)
+
+Complete production source is merged through64f5f44b; frozen build source is
+`a75df1fb435edbff24d988afcd7cd93ff28c9e86`, worker SHA256
+`eb5561fdd10c32e1ddd1cfde9f0f2b39722c74f12d7727fcaada5ae698921289`.
+Artifact directory: `/media/jmicko/faststore/kuno-development/strata-parity-expert-cohorts-20261022`.
+Root exact196 CPU controls (all183 originals +13 cohort controls), original11
+runtime controls with the new feature, and pinned-validator offline429 WGSL /
+280 matrix layouts PASS. Separate exact-source selector/scope/old rolling
+harness passes8 controls; production source hashes match frozen root. It is
+metadata-only, not actual device/Graph authority or GPU acceptance. Receipt:
+`expert-cohort-selector-exact-cpu-20261022/test-receipt.json` under the artifact
+base; root complete build receipt: `expert-cohorts-root-build-receipt-20261022.json`.
+Original failed CPU fixture attempts and unsupported dependency-test Cargo
+invocations remain preserved; no numerical guard was relaxed to correct them.
+
+The frozen18-script proof harness is `expert-cohorts-original-harness-20261022`,
+manifest SHA256 `84f333a9e20d06585a4b58343e3e2a91d7c2c631fd062581083ffc8315977eb4`.
+Original18 predecessors are retained byte-exact in `original/`; only declared
+physical-launch and used-layout populations change for authentic cohorts.
+All original math, native compiler, source, owner, capacity, erasure and recovery
+guards remain. Full GPU acceptance requires original241 operators plus11
+native-prepared admission controls and74 separate cohort controls (326 total),
+then both complete original profile/proof/recovery chains and actual scoped
+selection evidence. Root alone runs hardware; no concurrent compilation.
+
+No live GPU, whole-model correctness, performance, installation or release
+result is claimed for this candidate at this checkpoint. Native-prepared301f1fd1
+remains installed. No API/KNT2/KNR2/config/model/frontend change; Vashti:none.
