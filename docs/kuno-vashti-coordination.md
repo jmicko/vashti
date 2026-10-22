@@ -1,22 +1,24 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno checkpoint (2026-10-22 11:08UTC): complete frozen expert-cohort GPU acceptance running.**
+**Active Kuno checkpoint (2026-10-22 11:12UTC): complete cohorts; public paired fixture correction.**
 
 Goal ACTIVE/UNMET. Native-prepared301f1fd1/SHA0e226827 remains installed with
 unchanged gateway36626d30/SHAd3ed07f4 and accepted clean first10.8972/repeat8.7121s.
 The complete [cohort producer/matrix/grammar](kuno-prefill-expert-cohorts.md) and
-[sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) are frozen
-at a75df1fb/workerSHAeb5561fd. Root196 CPU +11 runtime +separate8 exact-source
-metadata controls and429 WGSL/280 matrix layouts PASS. Protected root unit
-`kuno-expert-cohorts-connected-20261022.service` now runs all original241 GPU
-plus11 native-admission checks and74 new cohort checks, both original full
-proof/profile/recovery chains and actual public selection counts. Exact helper
-`check-expert-cohorts-connected-20261022.py` SHA5102c256 under artifact base;
-log`expert-cohorts-connected-20261022.log`. No cohort GPU/speed/install success
-claimed yet. Root alone owns hardware; no simultaneous compilation. All
-logical-versus-physical counts remain distinct. No API/KNT2/KNR2/config/model/
-frontend/release/reset/reboot change; Vashti:none. Preflight Intel50,688,000B /
-NVIDIA compute0, services200/fault0/normal admission. Both GPUs authorized.
+[sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) frozen
+at a75df1fb/workerSHAeb5561fd pass root196 CPU+11 runtime+separate8 metadata
+controls and429 WGSL/280 matrix layouts. Initial protected root source read
+failed before GPU; scoped-only Git exception fixed the harness without global
+settings. Corrected full GPU attempt reached the new8-group paired comparison,
+then rejected its two400MiB DOWN outputs+75MiB images against original768MiB
+arena budget. FAILED receipt retained; no full GPU or speed acceptance.
+Protected worker exited normally, Intel50,688,000B/NVIDIA compute0, services200,
+fault0/normal admission, unchanged boot. Correct only new public fixture using
+one complete GPU output and a bounded Zeroizing host reference, retaining all
+bitwise/status/fault/source/tail/erasure scans and original arena budget.
+Port agent owns isolated source correction, no build/GPU; root owns target and
+all shared hardware. All326 controls and both original chains still required.
+No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
 Bounded sudo refresher1145657 expires15:45:12UTC; never kill shared shell3556.
 Earlier active snapshots below are historical; warm diagnostic has recovered.
 

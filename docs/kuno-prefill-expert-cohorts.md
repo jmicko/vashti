@@ -140,3 +140,15 @@ for the same source read; no persistent Git setting or validation changes.
 Corrected protected unit `kuno-expert-cohorts-trusted-source-20261022.service`
 now owns the same previously unused prefix; log has the same trusted-source
 suffix. Failure is a harness preflight, not a GPU/math/recovery result.
+
+First actual complete GPU attempt FAILED at the new paired8-group matrix
+fixture: `private arena budget exceeded`. Two400MiB DOWN outputs plus75MiB
+images exceed the original768MiB budget. No full GPU or speed result; failed
+`strata-parity-expert-cohorts-20261022-operators` receipt/compiler diagnostics
+retained. Protected process exit and original recovery pass: unchanged boot,
+Intel50,688,000B/NVIDIA compute0, services200, all driver faults0, normal
+admission. Public aggregate `expert-cohorts-first-failed-public-summary-20261022.json`.
+Correction is restricted to the new public fixture: one complete GPU owner,
+bounded <=400MiB Zeroizing host reference, original full-span erase/verification
+and audited readback windows. Original768MiB budget, full bitwise/math/status/
+fault/source/tail/erasure gates and production paths remain unchanged.
