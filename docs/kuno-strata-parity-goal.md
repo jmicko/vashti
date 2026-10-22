@@ -11,6 +11,17 @@ stop protected execution at a safe checkpoint if the credential expires.
 
 ## Active overnight checkpoint (2026-10-22)
 
+Latest completed successor: [native-prepared](kuno-prefill-native-prepared.md)
+301f1fd1/SHA0e226827 passes183 CPU/11 runtime/421 WGSL/248 matrix, original241
+GPU plus11 actual-device admission cases, BOTH complete original proof chains
+and physical recovery. Normal first/repeat10.116598360/9.222042861s. The unused
+ordinary executable really is absent (actual261/271/271 native programs in both
+modes, ordinary0); full original admission remains. First-use improves5.04%
+relative to global-narrow host-profile; warm effectively unchanged. Original
+terminal/clean selection and conditional staged acceptance now run; installation
+not yet accepted. Same-host Strata5.3515s still leads; goal ACTIVE/UNMET. Earlier
+implementation-in-progress and unselected CCS snapshots below are historical.
+
 Controller ACTIVE; user authorized GPUs/sudo/overnight work and Ultra. Same isolated
 Kuno checkout. [Record32](kuno-prefill-dequant-record32.md)af4de6f0/SHA96b0c3b0
 passes full original proofs, normal repeat9.4991s. Complete producer+matrix

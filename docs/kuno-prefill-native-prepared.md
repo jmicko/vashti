@@ -147,3 +147,33 @@ admission cases, original241 operators and three actual selected-program counter
 rows in EACH full profile mode, with no ordinary inference executable or original
 Graph key. Genuine ordinary root initialization remains independently exercised
 by the original numerical/owner/erasure checks. Required Vashti changes:none.
+
+## Complete connected outcome
+
+Frozen301f1fd1/SHA0e226827 passes all183 CPU, original11 unchanged-runtime,
+421 WGSL/248 matrix layouts, all241 original GPU operators and eleven new
+actual-device admission controls. BOTH complete original73/4245/4245 schedules
+pass all actual native compiler, FMA/group/count/source/owner/capacity/erasure/
+recovery checks. Exact full public proof:
+`strata-parity-native-prepared-20261022-native-prepared-public-summary.json`.
+Protected unit completed successfully/inactive/dead. No ordinary inference
+executable is created: both modes report261/271/271 prepared admissions and
+actual native Graph programs, with zero ordinary or original-key programs.
+Genuine ordinary root initialization remains. This count change is verified,
+not inferred from elapsed time or absence of errors.
+
+Normal first/repeat10.116598360/9.222042861s versus global-narrow
+10.653114762/9.164950382s: first5.04% shorter, repeat0.62% longer. Sampled
+first/repeat10.236566655/9.225692768s versus10.653008324/9.261120500s. This is a
+modest first-use improvement with effectively unchanged warm performance;
+Strata5.3515s remains faster. No sustained decode improvement is claimed.
+
+Original terminal-negative/fresh recovery and clean45/4245/4245 selection now
+run under`kuno-native-prepared-acceptance-20261022.service`. Wrapper
+`check-native-prepared-acceptance-20261022.py` SHA256
+08cd7e4585afc54986de7b1e302d393f8d7db95621180ea8454be8fa32fb2f07
+pins this exact artifact and complete proof, all11 admission cases and native
+program counts. Existing5%-at-EACH-position comparison against installed3fffc266
+is unchanged. Full staged tools/thinking/MAX8/semantic/privacy/API checks follow
+only if both clean positions pass. No staged/install acceptance is claimed yet.
+No API/frontend/config/model/release/reset/reboot change; required Vashti:none.

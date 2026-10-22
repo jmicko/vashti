@@ -1,5 +1,24 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno checkpoint (2026-10-22): native-prepared complete; clean selection running.**
+
+Goal ACTIVE/UNMET; user enabled Ultra and both GPUs/root remain authorized.
+Use ONLY isolated`codex/strata-rust-port`. [Native-prepared](kuno-prefill-native-prepared.md)
+301f1fd1/SHA0e226827 passes183 CPU/11 unchanged-runtime/421 WGSL/248 matrix,
+all241 original GPU plus11 new actual-device admission controls and BOTH full
+original proof/profile/recovery chains. Actual prepared/native Graph counts
+261/271/271, ordinary inference counts0 in each mode. Normal first10.116598360s
+versus global-narrow10.653114762s; repeat9.222042861s versus9.164950382s is
+essentially unchanged. No Strata parity or sustained decode gain claim.
+
+Original terminal/clean selection and conditional staged quality/API now run in
+`kuno-native-prepared-acceptance-20261022.service`; exact helper/hash in linked
+spec. Existing5% at EACH first/repeat gate retained. Installed3fffc266/gateway
+36626d30 unchanged; no installation yet. No API/KNT2/KNR2/config/model/frontend/
+release/reset/reboot change; required Vashti:none. Root alone owns hardware;
+read-only agents investigate the remaining expert/attention gap. Prior snapshots
+below are historical. Refresher1145657 expires15:45:12UTC; preserve shell3556.
+
 **Active Kuno checkpoint (2026-10-22 09:03UTC): first-use CPU/queue work.**
 
 Goal ACTIVE/UNMET, user enabled Ultra; both GPUs/root testing authorized. Use
