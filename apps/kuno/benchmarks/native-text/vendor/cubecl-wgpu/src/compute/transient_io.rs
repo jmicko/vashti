@@ -1497,6 +1497,40 @@ pub(crate) struct NativeExpertBatchScope {
     owner: Arc<LeaseTracker>,
     identity: NativeExpertBatchIdentity,
 }
+/// Opaque original private-owner/epoch binding, not an execution/reuse credit.
+/// Only a checked live expert scope may attach this to its graph population.
+#[cfg(feature = "kuno-expert-cohorts")]
+#[derive(Clone)]
+pub(crate) struct NativeExpertCohortStamp {
+    owner: Arc<LeaseTracker>,
+    identity: NativeExpertBatchIdentity,
+}
+#[cfg(feature = "kuno-expert-cohorts")]
+impl NativeExpertBatchScope {
+    pub(crate) fn cohort_stamp(&self) -> NativeExpertCohortStamp {
+        NativeExpertCohortStamp { owner: Arc::clone(&self.owner), identity: self.identity }
+    }
+}
+#[cfg(feature = "kuno-expert-cohorts")]
+impl NativeExpertCohortStamp {
+    pub(crate) fn matches(&self, scope: &NativeExpertBatchScope) -> bool {
+        Arc::ptr_eq(&self.owner, &scope.owner) && self.identity == scope.identity && self.live()
+    }
+    pub(crate) fn same_owner_epoch(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.owner, &other.owner)
+            && self.identity.epoch == other.identity.epoch
+            && self.identity.reuse == other.identity.reuse
+            && self.live() && other.live()
+    }
+    pub(crate) fn live(&self) -> bool { !self.owner.retired.load(Ordering::Acquire) }
+}
+#[cfg(feature = "kuno-expert-cohorts")]
+impl Drop for NativeExpertCohortStamp {
+    fn drop(&mut self) {
+        unsafe { core::ptr::write_volatile(&mut self.identity, NativeExpertBatchIdentity { epoch: 0, generation: 0, reuse: None }); }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeExpertBatchIdentity {
     epoch: u64,
@@ -1507,6 +1541,17 @@ struct NativeExpertBatchIdentity {
 struct NativeExpertBatchState {
     generation: u64,
     active: Option<NativeExpertBatchIdentity>,
+}
+#[cfg(all(test, feature = "kuno-expert-cohorts"))]
+pub(crate) fn cohort_scope_test_pair() -> (NativeExpertBatchScope, NativeExpertBatchScope) {
+    // Metadata-only fixture using the ACTUAL owner/generation state machine.
+    // It creates no active TransientIo, graph, request or execution authority.
+    let owner = Arc::new(LeaseTracker::default());
+    let mut state = NativeExpertBatchState::default();
+    let old = state.begin(&owner, 3, Some(7)).unwrap();
+    state.finish(&old, &owner, 3, Some(7)).unwrap();
+    let current = state.begin(&owner, 3, Some(7)).unwrap();
+    (old, current)
 }
 impl NativeExpertBatchState {
     fn begin(
@@ -1559,6 +1604,26 @@ impl NativeExpertBatchState {
 #[cfg(test)]
 mod native_expert_scope_tests {
     use super::*;
+    #[cfg(feature = "kuno-expert-cohorts")]
+    #[test]
+    fn cohort_stamp_retains_actual_owner_epoch_generation_and_retirement() {
+        let (old, current) = cohort_scope_test_pair();
+        let old_stamp = old.cohort_stamp();
+        let current_stamp = current.cohort_stamp();
+        assert!(current_stamp.matches(&current));
+        assert!(!old_stamp.matches(&current));
+        assert!(old_stamp.same_owner_epoch(&current_stamp));
+        let (_, foreign) = cohort_scope_test_pair();
+        assert!(!current_stamp.matches(&foreign));
+        assert!(!current_stamp.same_owner_epoch(&foreign.cohort_stamp()));
+        let mut altered = current.cohort_stamp();
+        altered.identity.epoch += 1;
+        assert!(!altered.matches(&current));
+        assert!(!altered.same_owner_epoch(&current_stamp));
+        current.owner.retired.store(true, Ordering::Release);
+        assert!(!current_stamp.live());
+        assert!(!current_stamp.matches(&current));
+    }
     #[test]
     fn actual_fresh_and_reuse_scopes_reject_foreign_stale_and_changed_owners() {
         for reuse in [None, Some(7)] {

@@ -758,6 +758,8 @@ pub(crate) struct Graph {
     fences: [vk::Fence; 2],
     pipelines: HashMap<PipelineKey, Pipeline>,
     nodes: Vec<Node>,
+    #[cfg(feature = "kuno-expert-cohorts")]
+    cohort_selection: super::strata_cohort_selection::Book,
     flights: super::strata_flights::Book,
     draft_scope: super::strata_draft_scope::Book,
     // Keep allocator binding as well as VkBuffer alive: a resource clone alone
@@ -781,6 +783,8 @@ struct Recording {
     ready: bool,
     push_only: bool,
     compute_count: usize,
+    #[cfg(feature = "kuno-expert-cohorts")]
+    cohort_admission: Option<super::strata_cohort_selection::RecordingAdmission>,
     work: strata_schedule::Commands,
     profile: Option<OperatorProfile>,
     device: ash::Device,
@@ -793,8 +797,13 @@ struct Recording {
 }
 impl Recording {
     fn metadata_bytes(&self) -> Option<usize> {
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let cohort_bytes = size_of::<Option<super::strata_cohort_selection::RecordingAdmission>>();
+        #[cfg(not(feature = "kuno-expert-cohorts"))]
+        let cohort_bytes = 0;
         self.work
             .metadata_bytes()
+            .checked_add(cohort_bytes)?
             .checked_add(size_of::<u64>())? // Conservative new push-only flag/padding.
             .checked_add(self.signature.metadata_bytes().ok()?)?
             .checked_add(
@@ -1316,6 +1325,8 @@ impl Graph {
             fences: [fence, draft_fence],
             pipelines: HashMap::new(),
             nodes: Vec::new(),
+            #[cfg(feature = "kuno-expert-cohorts")]
+            cohort_selection: super::strata_cohort_selection::Book::default(),
             flights: super::strata_flights::Book::default(),
             draft_scope: super::strata_draft_scope::Book::default(),
             draft_source: None,
@@ -1328,6 +1339,27 @@ impl Graph {
             replays: 0,
             initialized: HashSet::new(),
         })
+    }
+    /// Actual just-enqueued immutable program inventory, never completion.
+    #[cfg(feature = "kuno-expert-cohorts")]
+    pub(crate) fn begin_expert_cohort(
+        &mut self,
+        scope: &super::transient_io::NativeExpertBatchScope,
+        grammar: &cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar,
+    ) -> Result<(), ServerError> {
+        self.cohort_selection.begin(scope, grammar, self.identity, self.nodes.len())
+    }
+    #[cfg(feature = "kuno-expert-cohorts")]
+    pub(crate) fn cohort_submission_pending(&self) -> bool { self.cohort_selection.pending_first().is_some() }
+    #[cfg(feature = "kuno-expert-cohorts")]
+    pub(crate) fn finish_expert_cohort(&mut self, scope: &super::transient_io::NativeExpertBatchScope, success: bool) -> Result<(), ServerError> {
+        let actual = self.cohort_selection.pending_first().map_or(0, |first| self.nodes.get(first..).map_or(usize::MAX, |nodes| nodes.iter().filter(|n| n.pipeline.is_some()).count()));
+        self.cohort_selection.finish(scope, self.identity, self.nodes.len(), actual, success)
+    }
+    #[cfg(feature = "kuno-expert-cohorts")]
+    fn cohort_witness(&self, compute: usize) -> Result<Option<super::strata_cohort_selection::Witness>, ServerError> {
+        let actual = self.cohort_selection.closed_range().map_or(0, |range| self.nodes.get(range).map_or(usize::MAX, |nodes| nodes.iter().filter(|n| n.pipeline.is_some()).count()));
+        self.cohort_selection.witness(self.identity, self.nodes.len(), compute, actual)
     }
     /// Actual just-enqueued immutable program inventory, never completion.
     pub(crate) fn last_unused_descriptor_views(&self) -> Result<usize, ServerError> {
@@ -2305,12 +2337,16 @@ impl Graph {
         COMPUTE_BARRIERS[30].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let r = &self.recordings[index];
         let count = r.work.commands.len() + r.work.spare_commands_count();
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let cohort_pool = r.cohort_admission.as_ref().is_some_and(|admission| admission.matches(self.identity, r.id, r.family, r.work.plan.node_segments.len(), r.compute_count));
+        #[cfg(not(feature = "kuno-expert-cohorts"))]
+        let cohort_pool = false;
         let eligible = r.key.is_none()
             && r.ready
             && r.profile.is_none()
             && r.push_only
             && r.family == self.compute_queues[0].family
-            && (r.compute_count >= 1024 || r.work.spare_commands_count() > 0)
+            && (r.compute_count >= 1024 || r.work.spare_commands_count() > 0 || cohort_pool)
             && r.work.commands.first().copied() == Some(r.command)
             && self
                 .idle_pools
@@ -2603,6 +2639,8 @@ impl Graph {
         // The recording owns every original resource. Drop only duplicate
         // enqueue metadata so another lane can build its own subsequent work.
         self.nodes.clear();
+        #[cfg(feature = "kuno-expert-cohorts")]
+        self.cohort_selection.clear();
         Ok(())
     }
     fn submit_last_recording(
@@ -2850,12 +2888,18 @@ impl Graph {
         )
         .map_err(fault)?;
         let source_bytes = source_owners.metadata_bytes();
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let selection_bytes = super::strata_cohort_selection::Book::metadata_bytes();
+        #[cfg(not(feature = "kuno-expert-cohorts"))]
+        let selection_bytes = 0;
         let old_metadata = self
             .recordings
             .iter()
             .try_fold(
                 owners
                     .metadata_bytes()
+                    .checked_add(selection_bytes)
+                    .ok_or_else(|| fault("native cohort selection metadata overflow"))?
                     .checked_add(
                         self.idle_pool_metadata_bytes()
                             .ok_or_else(|| fault("native idle pool metadata overflow"))?,
@@ -3016,7 +3060,17 @@ impl Graph {
         host_clock.mark(0);
         drop(native); // No guard crosses recording eviction, replay or cleanup.
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
-        let profiling = profile_active() && compute_count >= 2048;
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let cohort_witness = self.cohort_witness(compute_count)?;
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let cohort_profile = cohort_witness.is_some();
+        #[cfg(not(feature = "kuno-expert-cohorts"))]
+        let cohort_profile = false;
+        let profiling = profile_active() && (compute_count >= 2048 || cohort_profile);
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let cohort_rolling = cohort_witness.as_ref().is_some_and(|w| w.rolling(self.compute_lane, key.is_some(), profiling, self.nodes.len(), compute_count));
+        #[cfg(not(feature = "kuno-expert-cohorts"))]
+        let cohort_rolling = false;
         if let Some(key) = key {
             if let Some(previous) = self.recordings.iter().find(|r| r.key == Some(key)) {
                 if !previous.ready
@@ -3460,6 +3514,7 @@ impl Graph {
                 )
             })
             .and_then(|n| n.checked_add(owners.metadata_bytes()))
+            .and_then(|n| n.checked_add(selection_bytes))
             .and_then(|n| n.checked_add(size_of::<u64>())) // New push-only flag/padding.
             .ok_or_else(|| fault("native queue metadata overflow"))?;
         let retained_metadata = self
@@ -3487,7 +3542,7 @@ impl Graph {
                 .is_none_or(|p| self.pipelines[p].push_descriptors)
         });
         let reusable_workload = push_only
-            && rolling_prefill_selected(
+            && (rolling_prefill_selected(
                 self.compute_lane,
                 key.is_some(),
                 profiling,
@@ -3503,7 +3558,7 @@ impl Graph {
                         )
                     })
                 }),
-            );
+            ) || cohort_rolling);
         COMPUTE_BARRIERS[25].fetch_add(
             u64::from(reusable_workload),
             std::sync::atomic::Ordering::Relaxed,
@@ -3569,6 +3624,8 @@ impl Graph {
             .next_recording
             .checked_add(1)
             .ok_or_else(|| fault("native recording identity exhausted"))?;
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let cohort_admission = cohort_witness.as_ref().map(|w| w.recording(next_recording, self.family));
         let (recording, metadata) = if let Some((index, prepared)) = reuse {
             // This is the SAME original completed-flight test used by idle
             // eviction. A merely ready/submitted recording cannot authorize it.
@@ -3595,6 +3652,8 @@ impl Graph {
             old.id = next_recording;
             old.key = key;
             old.compute_count = compute_count;
+            #[cfg(feature = "kuno-expert-cohorts")]
+            { old.cohort_admission = cohort_admission; }
             old.push_only = push_only;
             old.signature = signature;
             old._resources = resources;
@@ -3644,6 +3703,8 @@ impl Graph {
                 ready: false,
                 push_only,
                 compute_count,
+                #[cfg(feature = "kuno-expert-cohorts")]
+                cohort_admission,
                 work,
                 profile,
                 device: self.device.clone(),
@@ -3698,6 +3759,8 @@ impl Graph {
                     ready: false,
                     push_only,
                     compute_count,
+                    #[cfg(feature = "kuno-expert-cohorts")]
+                    cohort_admission,
                     work,
                     profile,
                     device: self.device.clone(),
@@ -3744,7 +3807,7 @@ impl Graph {
                     )
                 })
             }),
-        ) {
+        ) || cohort_rolling {
             // The complete original inventory, metadata caps, range hazards,
             // INFO epoch and recording-owned pools/resources were preflighted
             // above. Bind the ONE original flight before any prefix can run.

@@ -5,6 +5,8 @@ mod public_external;
 mod storage;
 
 mod strata_allocator_scope;
+#[cfg(feature = "kuno-expert-cohorts")]
+mod strata_cohort_selection;
 mod strata_draft_scope;
 mod strata_flights;
 pub(crate) mod strata_graph;

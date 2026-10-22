@@ -907,9 +907,28 @@ impl WgpuStream {
         scopes: super::transient_io::IoScopes,
         success: bool,
     ) -> Result<(), ServerError> {
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let selection = self.check_native_expert_batch(&scope).and_then(|()| self.strata_graph.as_mut().unwrap().finish_expert_cohort(&scope, success));
+        #[cfg(feature = "kuno-expert-cohorts")]
+        let success = success && selection.is_ok();
         let io = self.transient_io.as_mut().unwrap();
         scopes.finish(io);
-        io.end_native_expert_batch(scope, success)
+        let finished = io.end_native_expert_batch(scope, success);
+        #[cfg(feature = "kuno-expert-cohorts")]
+        { selection.and(finished) }
+        #[cfg(not(feature = "kuno-expert-cohorts"))]
+        { finished }
+    }
+    /// The complete original grammar is rechecked inside the sealed selector;
+    /// no public flag, model/kernel name or raw counter can mint this evidence.
+    #[cfg(feature = "kuno-expert-cohorts")]
+    pub(crate) fn admit_native_expert_cohorts(
+        &mut self,
+        scope: &super::transient_io::NativeExpertBatchScope,
+        grammar: &cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar,
+    ) -> Result<(), ServerError> {
+        self.check_native_expert_batch(scope)?;
+        self.strata_graph.as_mut().unwrap().begin_expert_cohort(scope, grammar)
     }
     pub(crate) fn check_native_expert_batch(
         &self,
@@ -1570,6 +1589,12 @@ impl WgpuStream {
         });
     }
     fn flush_if_needed(&mut self) {
+        // A genuine closed grammar has bounded the ENTIRE active cohort batch.
+        // Do not automatically split that authenticated population before its
+        // actual enqueue count can be sealed. Explicit flush still fails closed;
+        // all original graph/tape/private metadata caps remain unchanged.
+        #[cfg(feature = "kuno-expert-cohorts")]
+        if self.strata_graph.as_ref().is_some_and(|g| g.cohort_submission_pending()) { return; }
         // Flush when there are too many tasks, or when too many handles are locked.
         // Locked handles should only accumulate in rare circumstances (where uniforms
         // are being created but no work is submitted).
