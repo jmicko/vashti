@@ -1461,10 +1461,10 @@ mod tests {
                 if compact {
                     p.compact_segments().unwrap();
                 }
-                let first_read = p.segments[p.node_segments[2]];
-                let first_math = p.segments[p.node_segments[3]];
-                let refill = p.segments[p.node_segments[4]];
-                let next_read = p.segments[p.node_segments[5]];
+                let first_read = &p.segments[p.node_segments[2]];
+                let first_math = &p.segments[p.node_segments[3]];
+                let refill = &p.segments[p.node_segments[4]];
+                let next_read = &p.segments[p.node_segments[5]];
                 assert_eq!(refill.waits[0], first_read.signal);
                 assert!(refill.waits[0] < first_math.signal);
                 assert!(next_read.signal > refill.signal);
