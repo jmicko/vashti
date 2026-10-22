@@ -181,10 +181,18 @@ pub(crate) fn cases(
                 return Err("public native wide actual selection rejected".into());
             }
             let actual = probe::read_native_public(arena, output)?;
-            if probe::read_native_public(arena, fault)?
-                .iter()
-                .any(|&v| v != u32::from(poison))
-            {
+            let fault_words = probe::read_native_public(arena, fault)?;
+            let fault_matches =
+                fault_words[0] == u32::from(poison) && fault_words[1..].iter().all(|&v| v == 0);
+            if !fault_matches {
+                // Only this compiled-public math entry reports flag metadata.
+                // Never report weights, activations or ordinary caller input.
+                eprintln!(
+                    "public_native_matrix_fault bfloat={bfloat} count={count} rows={rows} gr_case={gr_case} poison={poison} head={} padding_nonzero={} output_tail_nonzero={}",
+                    fault_words[0],
+                    fault_words[1..].iter().filter(|&&v| v != 0).count(),
+                    actual[count * rows..].iter().filter(|&&v| v != 0).count()
+                );
                 return Err("public matrix actual native fault".into());
             }
             let mut mismatches = 0usize;
