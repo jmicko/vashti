@@ -17,8 +17,9 @@ SHA306d4618 passes179 CPU/11 runtime/421 WGSL/248 matrix, all241 GPU and BOTH
 original proof/profile chains with recovery. Normal first11.9705/repeat10.5335s
 is12.37%/14.93% slower than render-primary global-narrow. Keep complete optional
 path; do not select for install. Additional source-pinned cold flat CPU+PMU
-checks actual CCS activity, unit`kuno-compute-main-first-costs-20261022.service`;
-no clean-speed claim. Next concrete first-use target, duplicate ordinary/native
+PASSED: actual RCS0%/CCS56.02%/BCS14.93%, raw tmpfs removed, full flat
+CPU report and physical recovery. Unit completed/inactive/dead; no clean-speed
+claim. Next concrete first-use target, duplicate ordinary/native
 pipeline executable creation, is being implemented in separate managed worktree
 `kuno-native-prepared-pipeline` at agreedbase69c045a7. No concurrent builds during
 root measurements; root alone owns GPUs. Preserve ALL original core+HAL

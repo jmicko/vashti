@@ -101,3 +101,23 @@ Raw instruction pointers and counters stay in root-only/run tmpfs and are
 removed; no stack/register/payload samples. It cannot serve as a clean speed
 result. No GPU timestamp commands, schedule serialization or parallel builds.
 Installed worker/gateway remain unchanged. No GPU reset/reboot is permitted.
+
+
+## Actual compute-engine diagnostic completed
+
+`strata-parity-compute-main-first-costs-20261022-cpu-proof.json` confirms original
+three clean public replies/CLOSED, controlled interval, zero lost CPU samples,
+full symbol report, no added GPU timestamp or schedule serialization, raw tmpfs
+erasure and physical recovery. Unit completed/inactive/dead. First-long interval
+13.2836s: RCS0%, BCS14.9273%, CCS56.0231%. The actual engine changed as intended;
+at least29.05% had no counted compute/copy engine active. No gain from queue
+selection, and no clean-selection benchmark claim from instrumentation.
+
+Full flat report `strata-parity-compute-main-first-costs-20261022-cpu-symbol-report.txt`
+retains1601 symbol rows versus the earlier percent-cut report. Approximate rounded
+DSO shares sum101.75%, so do not present their sums as exact percentages. Roughly
+56% of displayed weight is anonymous Vulkan code,28% application/IR/runtime,16%
+libc. No anonymous driver offset is labeled as JIT without symbols. Positively
+identified work includes original IR cloning and planner/binding; duplicate
+ordinary/native driver executable construction is proven separately in source.
+Earlier first helper failure and all optional paths/receipts remain intact.
