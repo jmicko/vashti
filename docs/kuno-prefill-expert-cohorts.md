@@ -152,3 +152,25 @@ Correction is restricted to the new public fixture: one complete GPU owner,
 bounded <=400MiB Zeroizing host reference, original full-span erase/verification
 and audited readback windows. Original768MiB budget, full bitwise/math/status/
 fault/source/tail/erasure gates and production paths remain unchanged.
+
+## Corrected frozen public fixture (2026-10-22 11:20UTC)
+
+Root786c381c (portf24356fb) changes only the new paired public fixture; a5d28335
+adds fixed-public diagnostic context after original readback sanitization. No
+production kernel/grammar/owner/budget change. Root exact196 App CPU +11 runtime
+and pinned-validator429 WGSL/280 matrix layouts PASS again; selector8 source
+files remain identical. Artifact `strata-parity-expert-cohorts-pair-owned-20261022`,
+frozen source `a5d28335264493980c0ed3be2b421814abb568aa`, worker SHA256
+`c01f0ee7cbd4391f9839302e42a7b62756b282a6877ec4e5f4a38c6042d0e3c8`.
+Actual fixture charged GPU maxima are below512MiB in the unchanged768MiB arena.
+The <=400MiB Zeroizing reference is fixed-public host backing; each original
+readback is separately bounded16MiB, dropped, sanitized and receipt checked.
+
+Fresh full326-control and both-chain root run:
+`kuno-expert-cohorts-pair-owned-20261022.service`; exact external wrapper
+`check-expert-cohorts-pair-owned-connected-20261022.py` SHA256
+`3a82e40d353598c07999f84cc696c5dfff6ca7ba95d0053d4c40d90cfea6753b`;
+log `expert-cohorts-pair-owned-connected-20261022.log`. All18 frozen harness
+predecessors and original math/compiler/source/owner/erasure/recovery guards
+remain; new guards require actual one-owner/zero verification/host and GPU caps.
+No GPU success, speed or installation is claimed until completion and recovery.

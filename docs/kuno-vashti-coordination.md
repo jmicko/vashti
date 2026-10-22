@@ -1,26 +1,27 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno checkpoint (2026-10-22 11:12UTC): complete cohorts; public paired fixture correction.**
+**Active Kuno checkpoint (2026-10-22 11:20UTC): complete cohort retry after public fixture fix.**
 
 Goal ACTIVE/UNMET. Native-prepared301f1fd1/SHA0e226827 remains installed with
 unchanged gateway36626d30/SHAd3ed07f4 and accepted clean first10.8972/repeat8.7121s.
 The complete [cohort producer/matrix/grammar](kuno-prefill-expert-cohorts.md) and
-[sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) frozen
-at a75df1fb/workerSHAeb5561fd pass root196 CPU+11 runtime+separate8 metadata
-controls and429 WGSL/280 matrix layouts. Initial protected root source read
-failed before GPU; scoped-only Git exception fixed the harness without global
-settings. Corrected full GPU attempt reached the new8-group paired comparison,
-then rejected its two400MiB DOWN outputs+75MiB images against original768MiB
-arena budget. FAILED receipt retained; no full GPU or speed acceptance.
-Protected worker exited normally, Intel50,688,000B/NVIDIA compute0, services200,
-fault0/normal admission, unchanged boot. Correct only new public fixture using
-one complete GPU output and a bounded Zeroizing host reference, retaining all
-bitwise/status/fault/source/tail/erasure scans and original arena budget.
-Port agent owns isolated source correction, no build/GPU; root owns target and
-all shared hardware. All326 controls and both original chains still required.
+[sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) are rebuilt
+at a5d28335/workerSHAc01f0ee7. Exact root196 CPU+11 runtime, separate8 identical
+metadata controls and429 WGSL/280 matrix layouts PASS. Rejected a75/eb5561fd
+failed only at the new paired public fixture's two400MiB GPU outputs under the
+original768MiB budget; full receipt/recovery retained. Source786c381c/a5d28335
+changes only that fixture: oneGPUowner, boundedZeroizing host reference, actual
+full-span erasure+zero verification, unchanged full bitwise/status/fault/source/
+tail scans, public-only mismatch diagnosis. Production kernels unchanged.
+Protected root unit`kuno-expert-cohorts-pair-owned-20261022.service` now runs
+all326 GPU controls and both complete original chains, with actual selection
+counts. Helper`check-expert-cohorts-pair-owned-connected-20261022.py` SHA3a82e40d;
+artifact`strata-parity-expert-cohorts-pair-owned-20261022`. No full GPU/speed/
+installation result yet. No simultaneous CPU compilation. Root owns hardware.
 No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
 Bounded sudo refresher1145657 expires15:45:12UTC; never kill shared shell3556.
-Earlier active snapshots below are historical; warm diagnostic has recovered.
+Earlier active snapshots below are historical. Failed attempt recovered actual
+Intel50,688,000B/NVIDIA compute0, services200/fault0/normal admission/unchanged boot.
 
 **Active installed Kuno checkpoint (2026-10-22): native-prepared selected.**
 
