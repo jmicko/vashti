@@ -179,10 +179,15 @@ fn vertical_mode_keeps_all_26_horizontal_sites_and_exact_78_other_xor_sites() {
         .filter(|i| i[0] & 65535 == 346)
         .map(|i| values[&i[5]].1)
         .collect();
-    assert_eq!(masks.iter().filter(|&&m| m == 1).count(), 26);
+    assert_eq!(masks.iter().filter(|&&m| m == 1).count(), quad_sites());
     assert!(!masks.contains(&2));
     for m in [4, 8, 16] {
-        assert_eq!(masks.iter().filter(|&&x| x == m).count(), 26);
+        let expected = if cfg!(feature = "strata-qsa-head-scatter") {
+            2 * (m / 2 + 1) as usize
+        } else {
+            26
+        };
+        assert_eq!(masks.iter().filter(|&&x| x == m).count(), expected);
     }
     for i in ins.iter().filter(|i| i[0] & 65535 == 366) {
         assert_eq!(values[&i[5]].1, 1);

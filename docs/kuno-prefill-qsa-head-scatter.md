@@ -69,3 +69,26 @@ at this source checkpoint. Public artifact prefix: strata-parity-query-gdn-20261
 The initial CPU harness used a wrong new test namespace and correctly refused
 zero selected tests; failed log/selection are preserved with initial-harness-
 namespace suffix. Correct full245 selection then passed. No source gate removed.
+
+## First CPU build checkpoint
+
+Sourcee695691d compiles. All four NEW controls pass independently, including
+real SPIR-V and exact IEEE/symbolic ordered trees. The full original selection
+correctly stops at the separate original vertical-mask inventory, which still
+expects26 occurrences of each XOR mask. Complete new distribution is exactly
+XOR1=4, Quad(vertical)=4, XOR4=6, XOR8=10, XOR16=18, plus48 untouched gathers.
+Update that feature-specific exact inventory; retain the original26 counts
+when scatter is disabled. Original failure log is preserved, and full249 CPU
+checks must rerun before worker/offline/GPU acceptance. No GPU run for e695691d.
+
+The preceding query/GDN bundle completed BOTH full chains and all350GPU
+controls with recovery. Normal first/repeat10.301409836/9.011673934s; profile
+10.331076692/9.090600187s, versus earlier normal10.411413116/9.141123116s.
+Profiling points to GDN recurrence/norm392.155678->276.009677ms, while QSA
+attention/merge1336.786381->1338.678668ms is essentially unchanged. Do not
+attribute the gain to query planes from this combined diagnostic. Complete
+public receipt SHA2562d6fb304bf677e61c22e1fd66d03100bb134538405c1a3c029d57bc38a54066b.
+Actual QSA ISA2945instructions/130sends/SIMD32/128GRF/zero spills/fills;
+reference ISA unchanged1814b26ac88692e20d3714abd88ea2e303455f1a7569f32fc4b2927bc8710ba7.
+Actual recovery22:16:21UTC: Intel50,688,000B,NVIDIA compute0, faults0,
+services200, admission normal. No installation or Strata parity claim.
