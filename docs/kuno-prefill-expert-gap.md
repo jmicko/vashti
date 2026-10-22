@@ -229,3 +229,10 @@ recovery. These are intended counts; none is claimed passed yet.
 No API/KNT2/KNR2/context/model/settings/frontend change. Required Vashti:none.
 Installed accepted301f1fd1 worker remains unchanged. No speed-based selection,
 staged quality or installation of these successors has occurred.
+
+Initial Quad CPU build compiles, but the existing selected opcode control
+correctly rejects zero replacements. rspirv represents scope operands as
+IdScope, not IdRef. Fix the grammar match and emitted scope accordingly;
+recognize genuine u32 ConstantNull as zero too. Keep original52/78/48 counts
+and every inverse/negative/device proof unchanged. Initial failure and build
+logs are retained; no GPU or speed test was attempted for this version.

@@ -22,8 +22,8 @@ fn assemble(header: &[u32], ins: &[Vec<u32>]) -> Vec<u32> {
 }
 fn constants(ins: &[Vec<u32>]) -> BTreeMap<(u32, u32), u32> {
     ins.iter()
-        .filter(|i| i[0] & 65535 == 43 && i.len() == 4)
-        .map(|i| ((i[1], i[3]), i[2]))
+        .filter(|i| (i[0] & 65535 == 43 && i.len() == 4) || (i[0] & 65535 == 46 && i.len() == 3))
+        .map(|i| ((i[1], if i.len() == 3 { 0 } else { i[3] }), i[2]))
         .collect()
 }
 fn original(selected: &[u32]) -> Vec<u32> {

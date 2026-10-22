@@ -39,15 +39,20 @@ pub fn lower_native_subgroup_quads(words: &[u32]) -> Result<Vec<u32>, ServerErro
     let mut constants = HashMap::new();
     let mut by_value = HashMap::new();
     for i in &m.types_global_values {
-        if i.class.opcode == Op::Constant && i.result_type.is_some_and(|t| u32_types.contains(&t)) {
-            if let (Some(id), Some(ty), [Operand::LiteralBit32(value)]) =
-                (i.result_id, i.result_type, i.operands.as_slice())
-            {
-                constants.insert(id, (ty, *value));
-                by_value.entry((ty, *value)).or_insert(id);
-            }
+        if !i.result_type.is_some_and(|t| u32_types.contains(&t)) {
+            continue;
+        }
+        let value = match (i.class.opcode, i.operands.as_slice()) {
+            (Op::Constant, [Operand::LiteralBit32(v)]) => *v,
+            (Op::ConstantNull, []) => 0,
+            _ => continue,
+        };
+        if let (Some(id), Some(ty)) = (i.result_id, i.result_type) {
+            constants.insert(id, (ty, value));
+            by_value.entry((ty, value)).or_insert(id);
         }
     }
+
     let mut changed = false;
     for i in m
         .functions
@@ -61,7 +66,7 @@ pub fn lower_native_subgroup_quads(words: &[u32]) -> Result<Vec<u32>, ServerErro
             continue;
         }
         let [
-            Operand::IdRef(scope),
+            Operand::IdScope(scope),
             Operand::IdRef(value),
             Operand::IdRef(mask),
         ] = i.operands.as_slice()
@@ -87,7 +92,7 @@ pub fn lower_native_subgroup_quads(words: &[u32]) -> Result<Vec<u32>, ServerErro
             i.result_type,
             i.result_id,
             vec![
-                Operand::IdRef(*scope),
+                Operand::IdScope(*scope),
                 Operand::IdRef(*value),
                 Operand::IdRef(direction_id),
             ],
