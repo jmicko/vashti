@@ -19,6 +19,18 @@ release/reset/reboot change; required Vashti:none. Root alone owns hardware;
 read-only agents investigate the remaining expert/attention gap. Prior snapshots
 below are historical. Refresher1145657 expires15:45:12UTC; preserve shell3556.
 
+Update: clean first10.897223643/repeat8.712129955s PASSES original5%-at-EACH
+against installed12.962279132/11.147390805s (15.93%/21.85% shorter). Original
+stage startup failed on root-only test directory/config under strict UMask0077,
+BEFORE inference; failed receipt/recovery retained. Fixed private ownership
+helper retains all original quality checks, no world-readable config. Full stage
+now runs`kuno-native-prepared-stage-fixed-20261022.service`; exact helper/hash in
+native-prepared spec. No installation yet. Root alone owns GPU/services. A new
+isolated`codex/expert-cohorts` worktree at agreed31f6e54b implements the COMPLETE
+optional small-group cohort producer/matrix/grammar bundle; no concurrent builds
+during measurements. This is a new Vulkan-specific optimization, not a claim
+that matched Strata already batches its FP16 experts. All original paths remain.
+
 **Active Kuno checkpoint (2026-10-22 09:03UTC): first-use CPU/queue work.**
 
 Goal ACTIVE/UNMET, user enabled Ultra; both GPUs/root testing authorized. Use

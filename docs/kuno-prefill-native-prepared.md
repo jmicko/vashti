@@ -177,3 +177,32 @@ program counts. Existing5%-at-EACH-position comparison against installed3fffc266
 is unchanged. Full staged tools/thinking/MAX8/semantic/privacy/API checks follow
 only if both clean positions pass. No staged/install acceptance is claimed yet.
 No API/frontend/config/model/release/reset/reboot change; required Vashti:none.
+
+## Clean comparison passed; full staged checks in progress
+
+Original terminal-negative recovery PASS. Fresh clean45/4245/4245 yields
+first10.897223643/repeat8.712129955s versus installed12.962279132/11.147390805s:
+15.93%/21.85% shorter, satisfying the original5%-at-EACH gate. First short
+45-token input6.575669069s and startup81.838527466s are recorded separately,
+not hidden in the long-prompt claim. No prompt reuse or workload substitution.
+Exact selection receipt:
+`strata-parity-native-prepared-acceptance-20261022-clean-selection-public-summary.json`.
+
+The first full staged helper failed BEFORE inference because the outer strict
+UMask0077 created root-owned0700 test directory and0600 config, unreadable by
+the actual nonroot staged gateway. Gateway startup failed; original clean
+results are not rerun or replaced. Failed log/receipt remain. Physical recovery
+passed; independent state shows Intel50,688,000B, NVIDIA compute0, all reported
+faults0, all services200 and normal admission. No installation occurred.
+
+The replacement helper keeps every original tool/thinking/MAX8/semantic/privacy/
+API test and timeout unchanged, explicitly assigns ONLY the staged0700 directory
+and0600 config to the actual nonroot stage user. It does not make copied config
+world-readable or change installed config. Helper
+`check-native-parity-stage-quality-private-config-20261022.py` SHA256
+9f97cc84ffcb8d9d02a4ee6ded02623dd277cab9aacc6dd6c2ab9041b6734e1f;
+protected unit`kuno-native-prepared-stage-fixed-20261022.service` now runs full
+checks into`strata-parity-native-prepared-private-stage-20261022`. Gateway
+HTTP200 and real frozen worker launch confirmed. No full staged/install claim
+until completion, nor Strata parity. Native-only artifacts and clean source
+remain unchanged.
