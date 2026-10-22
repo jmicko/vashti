@@ -31,7 +31,10 @@ active. No added GPU timestamp/serialization; raw samples removed from tmpfs.
 
 [Complete compute-primary candidate](kuno-prefill-compute-main.md)69c045a7 /
 SHA306d4618 passes179 actual CPU/11 unchanged-runtime/421 WGSL/248 matrix checks;
-root complete241 GPU and BOTH original proof chains run now. Real physical
+all241 GPU and BOTH original proof chains PASS. Normal11.9705/10.5335s
+is slower than RCS10.6531/9.1650s; keep complete optional path but do not
+select for installation. Additional fixed-public cold CPU+PMU checks actual CCS;
+no clean-speed claim. Real physical
 main1/draft0/copy2 families plus HAL capability-correct shader barriers and all
 old memory accesses/owners. No GPU/performance claim until completed. Further
 concrete first-use duplication is ordinary+native executable compilation; a

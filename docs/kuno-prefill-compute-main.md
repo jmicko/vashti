@@ -73,3 +73,31 @@ retained-capacity/erasure/recovery proofs remain. Evidence in the usual base:
 and`native-compute-main-runtime-unchanged-20261022.diff`.
 GPU correctness/performance/terminal/clean/staged/install acceptance pending;
 installed worker/gateway unchanged, no Strata parity claim.
+
+
+## Complete connected outcome
+
+All original241 GPU controls and BOTH complete original73/4245/4245 profile/
+compiler/FMA/count/source/owner/retained-capacity/erasure/recovery chains PASS.
+Exact full proof `strata-parity-compute-main-20261022-compute-main-public-summary.json`;
+`native-compute-main-connected-20261022.log`. Original source/math/layouts and
+logical scheduler lanes remain. The protected unit completed/inactive/dead.
+
+Normal first/repeat11.970535604/10.533478310s versus RCS global-narrow
+10.653114762/9.164950382s:12.37%/14.93% slower. Sampled first/repeat
+11.967792619/10.585019376s also slower. Normal warm expert5.961181356s and
+attention3.300396782s versus4.942176667/2.953429977s; capture is0.605961328s
+HOST WALL, not CPU utilization. This is a complete correct optional path,
+not selected for installation. Retain it and use render-primary for the next
+independent native-prepared candidate. No terminal/clean/staged/install gate
+was run for this slower candidate; no speed/parity/decode gain is claimed.
+
+An additional normal-schedule fixed-public cold flat CPU+PMU diagnostic is
+running in`kuno-compute-main-first-costs-20261022.service`, using the complete
+source-pinned proof above. Helper SHA256
+a7818cd44d6485e78eb8726649d10f169ac9b35ae6104b8481755da181846944
+retains all flat symbols (no percent cutoff) and requires actual CCS activity.
+Raw instruction pointers and counters stay in root-only/run tmpfs and are
+removed; no stack/register/payload samples. It cannot serve as a clean speed
+result. No GPU timestamp commands, schedule serialization or parallel builds.
+Installed worker/gateway remain unchanged. No GPU reset/reboot is permitted.

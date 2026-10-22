@@ -12,13 +12,19 @@ CPU+PMU diagnostic passes recovery: RCS51.4135%, BCS16.1394%, CCS0%. These engin
 active fractions are NOT EU utilization; raw tmpfs samples removed. See exact
 receipts/limits in [global narrow](kuno-prefill-global-narrow.md).
 
-[Complete compute-primary candidate](kuno-prefill-compute-main.md) 69c045a7/SHA306d4618 passes179 CPU/11 runtime/421 WGSL/248 matrix controls;
-full241 GPU and BOTH original proof chains now run in protected root unit
-`kuno-compute-main-20261022.service`. It connects: real capability-based main/draft/copy selection plus
-HAL legal stage masks, full original access dependencies and concurrent owners.
-No GPU/performance claim yet. Second concrete first-use target is duplicate
-ordinary/native pipeline executable construction; preserve original full Wgpu
-validation when removing unused driver work. No API/KNT2/KNR2/config/model/
+[Complete compute-primary candidate](kuno-prefill-compute-main.md)69c045a7 /
+SHA306d4618 passes179 CPU/11 runtime/421 WGSL/248 matrix, all241 GPU and BOTH
+original proof/profile chains with recovery. Normal first11.9705/repeat10.5335s
+is12.37%/14.93% slower than render-primary global-narrow. Keep complete optional
+path; do not select for install. Additional source-pinned cold flat CPU+PMU
+checks actual CCS activity, unit`kuno-compute-main-first-costs-20261022.service`;
+no clean-speed claim. Next concrete first-use target, duplicate ordinary/native
+pipeline executable creation, is being implemented in separate managed worktree
+`kuno-native-prepared-pipeline` at agreedbase69c045a7. No concurrent builds during
+root measurements; root alone owns GPUs. Preserve ALL original core+HAL
+validation, actual device/context provenance and native owners when skipping
+the unused ordinary driver executable. Render-primary remains next selection.
+No API/KNT2/KNR2/config/model/
 frontend/release/reset/reboot change; required Vashti changes:none. Bounded sudo
 refresher1145657/shared shell3556 expires15:45:12UTC. Earlier handoffs follow.
 
