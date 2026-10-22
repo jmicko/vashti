@@ -92,3 +92,44 @@ Actual QSA ISA2945instructions/130sends/SIMD32/128GRF/zero spills/fills;
 reference ISA unchanged1814b26ac88692e20d3714abd88ea2e303455f1a7569f32fc4b2927bc8710ba7.
 Actual recovery22:16:21UTC: Intel50,688,000B,NVIDIA compute0, faults0,
 services200, admission normal. No installation or Strata parity claim.
+
+## Connected depth-first register frontier
+
+Source90ce0c9e/worker6084555c passes249 App CPU/15 runtime/429 WGSL/296 layouts.
+The protected original operator worker and full profile computation pass and
+physically recover. Actual QSA is2415instructions/108sends/SIMD32/128GRF, but
+28spills/90fills. The unchanged native zero-spill guard rejects the chain BEFORE
+normal scheduling/outer full aggregate. Preserve failed receipts; no complete
+350-control/both-chain/clean/staged/install acceptance for this source. Profile
+first/repeat9.765336101/8.598320364s is diagnostic only. Actual recovery
+22:29:26UTC: Intel50,688,000B,NVIDIA compute0, faults0,services200,admission normal.
+The reduction is retained; fix its live-value scheduling instead of abandoning
+the algorithm or relaxing the spill guard.
+
+New `strata-qsa-head-frontier` / `--qsa-head-frontier` requires the COMPLETE
+ordered-head bundle. It schedules the SAME15 internal ordered nodes per cell
+in depth-first order. Query head order0,8,4,2,10,6,1,9,5,3,11,7 replaces0..11.
+All24 immutable Q-vector addresses occur once, and the same next-head
+lookahead remains. The first head0 was already prefetched by the untouched
+outer raw-pair pipeline. Every per-head chronological seven-FMA dot and its
+original valid-cell predicate remains. Combine child sums immediately, then
+retire them. Symbolic frontier has at most4 nonzero subtree values per cell,
+versus12 simultaneous whole-head sums; actual registers/spills remain a GPU
+compiler acceptance question.
+
+Only register-only exchange nodes execute additionally for invalid cells, on
+the original initialized zero partials. They cannot read a cache address,
+write an owner or alter a fault. Every final score/status/fault remains behind
+the original valid-cell predicate; original sentinel and closing code remain.
+Same ordered operands,42 exchanges/48 gathers/168 dot FMAs, workgroup256,
+barriers, full source/owner budgets, backend postpass and precision policy.
+No new state allocation or array. Exact whole-region reconstruction rejects
+any unexpected preceding source drift before selection.
+
+Source only; four additional controls cover full-source inverse/drift refusal,
+all query addresses/unique heads/symbolic live frontier, all15 nodes/original
+dot members/valid predicates, and actual SPIR-V ABI/geometry/load/store/FMA/
+barrier/loop/shuffle inventories plus selected composition. All249 prior
+controls remain; intended253 App CPU, unchanged15 runtime/429 WGSL/296 layouts/
+350 GPU, BOTH original18-script chains and unchanged zero-spill/F64/bitwise/
+physical-recovery gates precede claims. No API/frontend or installation change.

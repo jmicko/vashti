@@ -169,7 +169,11 @@ mod tests {
             #[cfg(feature = "strata-qsa-query-planes")]
             {
                 #[cfg(feature = "strata-qsa-head-scatter")]
-                let expected=finish(super::super::prompt_head_scatter::source(source(before(k))));
+                let expected=super::super::prompt_head_scatter::source(source(before(k)));
+                #[cfg(feature="strata-qsa-head-frontier")]
+                let expected=super::super::prompt_head_scatter::frontier_source(expected);
+                #[cfg(feature="strata-qsa-head-scatter")]
+                let expected=finish(expected);
                 #[cfg(not(feature = "strata-qsa-head-scatter"))]
                 let expected=new.clone();
                 assert_eq!(k.source(), expected);

@@ -463,6 +463,8 @@ mod tests {
             let new = super::super::prompt_query_planes::source(new);
             #[cfg(feature = "strata-qsa-head-scatter")]
             let new = super::super::prompt_head_scatter::source(new);
+            #[cfg(feature = "strata-qsa-head-frontier")]
+            let new = super::super::prompt_head_scatter::frontier_source(new);
             #[cfg(feature = "strata-qsa-prefetch")]
             assert_eq!(k.source(), finish(new));
             #[cfg(not(feature = "strata-qsa-prefetch"))]

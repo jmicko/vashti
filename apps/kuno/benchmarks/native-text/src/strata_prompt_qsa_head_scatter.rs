@@ -114,7 +114,7 @@ mod tests {
         prompt_specialize, prompt_uniform,
     };
     use super::*;
-    fn before(k: Kernel) -> String {
+    pub(super) fn before(k: Kernel) -> String {
         let s = prompt_specialize::source(k.scalar_source());
         let s = prompt_paired::source(s);
         let s = prompt_pv_gather::source(s);
@@ -283,8 +283,18 @@ mod tests {
             assert_eq!(count(&aw, 338), count(&bw, 338) + 24);
             assert_eq!(count(&aw, 346) + count(&aw, 366), 130);
             assert_eq!(count(&bw, 346) + count(&bw, 366), 42);
+            #[cfg(feature = "strata-qsa-head-frontier")]
+            let new = super::frontier_source(new);
             #[cfg(feature = "strata-qsa-head-scatter")]
             assert_eq!(k.source(), finish(new));
         }
     }
+}
+
+#[cfg(any(test, feature = "strata-qsa-head-frontier"))]
+#[path = "strata_prompt_qsa_head_frontier.rs"]
+mod frontier;
+#[cfg(any(test, feature = "strata-qsa-head-frontier"))]
+pub(super) fn frontier_source(s: String) -> String {
+    frontier::source(s)
 }

@@ -139,6 +139,8 @@ mod tests {
             let prefetched = super::super::prompt_query_planes::source(prefetched);
             #[cfg(feature = "strata-qsa-head-scatter")]
             let prefetched = super::super::prompt_head_scatter::source(prefetched);
+            #[cfg(feature = "strata-qsa-head-frontier")]
+            let prefetched = super::super::prompt_head_scatter::frontier_source(prefetched);
             #[cfg(feature = "strata-qsa-prefetch")]
             let prefetched = finish(prefetched);
             let old = finish(old);

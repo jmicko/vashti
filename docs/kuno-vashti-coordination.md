@@ -1,23 +1,24 @@
 # Kuno and Vashti Coordination
 
-**RESUMED (2026-10-22): coupled query/GDN GPU validation; ordered-head source.**
+**Current Kuno continuation (2026-10-22): ordered-head register frontier.**
 
-User completed machine update and authorizes continuation. Fresh recovery
-22:04UTC: same boot/kernel,Intel50,688,000B,NVIDIA compute0,faults0,services200,
-admission normal. Source8a49206b/worker dc3084dc passes245 App CPU/15 runtime/
-429 WGSL/296 layouts; protected350-operator worker completed and recovered;
-full normal/profile original18-script chains underway. No speed claim yet.
+Read [the complete source and tested checkpoints](kuno-prefill-qsa-head-scatter.md).
+Full query/GDN8a49206b/worker dc3084dc passes245CPU/15runtime/429WGSL/296layouts/
+all350GPU and BOTH chains. Normal first/repeat10.301409836/9.011673934s,
+profile10.331076692/9.090600187s. Improvement is chiefly GDN; QSA merge unchanged.
+Ordered-head90ce0c9e/worker6084555c passes249CPU/15runtime/offline429/296,
+original operator worker/profile computation and recovery, but actual28spills/
+90fills FAILS unchanged zero-spill gate before normal/outer acceptance.
+Profile9.765336101/8.598320364s diagnostic only; keep complete algorithm.
 
-Read [the complete ordered-head source contract](kuno-prefill-qsa-head-scatter.md).
-Next optional source retains the full bundle and reduces twelve head trees
-using a Strata EXPERIMENTAL topology, preserving exact original lane-zero
-operand order, faults, FMAs and owners. Source only, not compiled/tested.
-Intended249 App/15runtime/429WGSL/296layouts/all350GPU/BOTH chains and actual
-zero-spill ISA/recovery precede claims. No CPU compilation during GPU timing.
-Installed accepted worker/gateway unchanged; no API/model/config/frontend/
-release/reset/reboot change; required Vashti:none. Goal parity remains UNMET.
-Earlier pause and active snapshots below are historical.
-
+Complete next frontier source retains every coupled feature and schedules the
+same ordered tree depth-first to reduce live sums12->4 per cell, preserving
+all Q addresses/prefetch/dot FMAs/valid predicates/faults/owners. Source only,
+not compiled or GPU tested. Intended253App/15runtime/429WGSL/296layouts/350GPU/
+BOTH original chains and zero-spill ISA/recovery precede claims. Actual latest
+recovery22:29:26UTC: Intel50,688,000B,NVIDIA compute0,faults0,services200,
+admission normal. Installed worker/gateway unchanged; no API/config/model/
+context/frontend/release/reset/reboot change; Vashti:none. Parity UNMET.
 
 **PAUSED for user machine update (2026-10-22 21:32UTC).**
 

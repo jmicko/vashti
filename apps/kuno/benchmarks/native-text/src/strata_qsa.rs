@@ -216,6 +216,10 @@ impl Kernel {
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_head_scatter::source(source)
         } else {source};
+        #[cfg(feature = "strata-qsa-head-frontier")]
+        let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
+            prompt_head_scatter::frontier_source(source)
+        } else {source};
         #[cfg(feature = "strata-qsa-packed-cache")]
         let source = if matches!(self, Self::PromptAttention | Self::PromptAttentionFault) {
             prompt_packed_cache::source(source)
