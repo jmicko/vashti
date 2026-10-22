@@ -1492,6 +1492,52 @@ mod tests {
         }
     }
     #[test]
+    fn unit_release_keeps_later_bank_upload_wait_out_of_resident_unit_math() {
+        const RAW: u64 = 32 * 1024 * 1024;
+        for release in [false, true] {
+            for compact in [false, true] {
+                // A/C are resident in bank0; prefetch B is the only COPY.
+                // With no C copy, an explicit authenticated unit-end release
+                // is needed to keep the later B wait out of matrix(A).
+                let mut dq_a = range_node(false, 1, 0, RAW, false);
+                dq_a.accesses.push(Access {
+                    buffer: 3,
+                    first: 0,
+                    bytes: 75 * 1024 * 1024,
+                    write: true,
+                });
+                dq_a.release_after = true;
+                let mut math_a = range_node(false, 3, 0, 75 * 1024 * 1024, false);
+                math_a.release_after = release;
+                let mut dq_b = range_node(false, 2, 0, RAW, false);
+                dq_b.accesses.push(Access {
+                    buffer: 3,
+                    first: 0,
+                    bytes: 75 * 1024 * 1024,
+                    write: true,
+                });
+                let mut p = plan(&[
+                    range_node(true, 2, 0, 4 * 1024 * 1024, true),
+                    dq_a,
+                    math_a,
+                    dq_b,
+                ], false).unwrap();
+                if compact { p.compact_segments().unwrap(); }
+                let upload = &p.segments[p.node_segments[0]];
+                let previous_math = &p.segments[p.node_segments[2]];
+                let next_read = &p.segments[p.node_segments[3]];
+                assert_eq!(next_read.waits[1], upload.signal);
+                if release {
+                    assert_eq!(previous_math.waits[1], 0);
+                    assert_ne!(p.node_segments[2], p.node_segments[3]);
+                } else {
+                    assert_eq!(previous_math.waits[1], upload.signal);
+                    assert_eq!(p.node_segments[2], p.node_segments[3]);
+                }
+            }
+        }
+    }
+    #[test]
     fn partial_updates_keep_untouched_prefixes_gaps_and_suffixes() {
         let p = plan(
             &[

@@ -75,3 +75,26 @@ allocation/Scope/model plumbing, Sources enrollment/lifecycle, and complete
 unit/cohort/legacy scheduling. Root alone merges, compiles and uses hardware.
 The complete bundle is composed before timing; partial regressions do not
 change direction. No browser/Vashti/release work or GPU reset/reboot.
+
+
+## Coupled unit-end release before first hardware comparison
+
+First frozen whole-bank sourceb37ec281/worker088c1a98 passes211 App CPU,
+originalruntime11 and offline429 WGSL/280 matrix layouts. No banked live GPU
+or performance test has run. Independent real-planner review finds one remaining
+coupling: resident A and C share bank0, while prefetched B in bank1 is streamed.
+C emits no actual COPY, so matrix(A) and DQ(B) can remain one MAIN segment;
+B's upload wait is pulled into earlier math despite genuinely independent banks.
+
+Compose an explicit terminal-unit marker on the existing actual captured final
+DOWN before any hardware timing. It grants no execution/source authority. The
+backend must first run the unchanged original kernel/INFO grammar and require
+its genuine `finish()` at THAT exact launch. Only then may an internal task
+wrapper forward the SAME compilation/name/address bindings with a release
+boundary. Old Ring and operator fixtures remain unmarked. Full batch/source/
+owner/replay admission still runs. Marker/error/drop metadata remains bounded
+and erased; stale/foreign/early/copy-last/closed marks fail before enqueue.
+Original compaction can merge a redundant boundary when all original waits
+permit it; it cannot import B's larger wait into A. Real Planner controls retain
+both same-owner hazards and this resident/no-copy counterexample before/after
+compaction. No original grammar predicate or physical hazard is relaxed.
