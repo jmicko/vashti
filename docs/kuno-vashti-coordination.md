@@ -1,5 +1,24 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno checkpoint (2026-10-22 10:59UTC): complete expert-cohort candidate merged.**
+
+Goal ACTIVE/UNMET. Native-prepared301f1fd1/SHA0e226827 remains installed with
+unchanged gateway36626d30/SHAd3ed07f4 and accepted clean first10.8972/repeat8.7121s.
+The complete optional [cohort producer/matrix/grammar](kuno-prefill-expert-cohorts.md)
+and [sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) are merged
+through64f5f44b. Port-source3efb93e3 passes all196 CPU controls (original183+13);
+root now owns the exclusive target for exact merged-source validation, frozen
+release and offline checks. Selector exact-source CPU controls are separate;
+no new cohort GPU, whole-model, speed, installation or release result yet.
+All original241 GPU plus11 native-admission checks and74 new cohort checks
+remain required, followed by both original proof/profile/recovery chains. Actual
+cohort physical launches and logical original work are distinguished. No API,
+KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti changes:none.
+Both GPUs/root are authorized and root alone owns services. Bounded sudo
+refresher1145657 expires15:45:12UTC; never kill shared shell3556. Earlier active
+snapshots below are historical; warm diagnostic has completed and recovered.
+
+
 **Active installed Kuno checkpoint (2026-10-22): native-prepared selected.**
 
 Goal ACTIVE/UNMET versus Strata5.3515s. Full staged quality/privacy/API passes,
