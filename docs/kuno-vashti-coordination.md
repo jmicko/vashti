@@ -12,8 +12,9 @@ CPU+PMU diagnostic passes recovery: RCS51.4135%, BCS16.1394%, CCS0%. These engin
 active fractions are NOT EU utilization; raw tmpfs samples removed. See exact
 receipts/limits in [global narrow](kuno-prefill-global-narrow.md).
 
-[Complete compute-primary candidate](kuno-prefill-compute-main.md) is now being
-implemented/CPU-checked: real capability-based main/draft/copy selection plus
+[Complete compute-primary candidate](kuno-prefill-compute-main.md) 69c045a7/SHA306d4618 passes179 CPU/11 runtime/421 WGSL/248 matrix controls;
+full241 GPU and BOTH original proof chains now run in protected root unit
+`kuno-compute-main-20261022.service`. It connects: real capability-based main/draft/copy selection plus
 HAL legal stage masks, full original access dependencies and concurrent owners.
 No GPU/performance claim yet. Second concrete first-use target is duplicate
 ordinary/native pipeline executable construction; preserve original full Wgpu

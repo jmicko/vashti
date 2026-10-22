@@ -22,10 +22,21 @@ Sampled matrix work18% shorter; no isolated normal-GPU utilization attribution.
 Native-only selection retains old staged/dense/wide-tail programs and exact bounds.
 
 Goal UNMET (same-host Strata5.3515s still ahead). Installed3fffc266/gateway36626d30
-unchanged. Root original terminal/fresh clean45/4245/4245 selection is active;
-only after existing5%-at-EACH gate passes may original staged full thinking/tools/
-MAX8/semantic/privacy/API checks proceed. No new install or decode gain claimed.
-Exact artifacts/commands/limits in linked specifications and coordination handoff.
+unchanged. Global-narrow original terminal/recovery passed; clean first12.320944936s
+is4.948% shorter and misses original5% gate by6.78ms. Repeat8.699633273s is21.96%
+shorter. Retain selection FAIL; no staged/API/install run. A separate first-use
+normal-schedule flat CPU+PMU diagnostic passes and reports RCS51.4135%, BCS16.1394%,
+CCS0% scheduled-active, not EU utilization. At least32.45% has no counted engine
+active. No added GPU timestamp/serialization; raw samples removed from tmpfs.
+
+[Complete compute-primary candidate](kuno-prefill-compute-main.md)69c045a7 /
+SHA306d4618 passes179 actual CPU/11 unchanged-runtime/421 WGSL/248 matrix checks;
+root complete241 GPU and BOTH original proof chains run now. Real physical
+main1/draft0/copy2 families plus HAL capability-correct shader barriers and all
+old memory accesses/owners. No GPU/performance claim until completed. Further
+concrete first-use duplication is ordinary+native executable compilation; a
+separate implementation worktree is preparing validation-only native handles,
+with all original validation retained and no concurrent compilation during timing.
 Legacy *_cpu capture/wait diagnostic fields are Instant WALL counters; true CPU
 only from explicit CLOCK_THREAD_CPUTIME_ID collectors. No API/frontend/model/
 config/release/reset/reboot change. Original paused snapshots below are historical.
