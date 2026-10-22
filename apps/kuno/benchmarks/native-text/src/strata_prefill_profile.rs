@@ -54,13 +54,18 @@ fn native_class(name: &str) -> usize {
     match name {
         "StrataPromptExpertF16Image"
         | "StrataPromptExpertResidentGuImage"
-        | "StrataPromptExpertResidentDownImage" => 0,
+        | "StrataPromptExpertResidentDownImage"
+        | "StrataExpertCohortGuImage"
+        | "StrataExpertCohortDownImage" => 0,
         "StrataPromptExpertGemm" => 1,
-        "StrataPromptExpertGather" => 2,
-        "StrataPromptExpertF16Swiglu" | "StrataPromptExpertF16SwigluCheckGu" => 3,
+        "StrataPromptExpertGather" | "StrataExpertCohortGather" => 2,
+        "StrataPromptExpertF16Swiglu"
+        | "StrataPromptExpertF16SwigluCheckGu"
+        | "StrataExpertCohortActivate" => 3,
         "OrderedCopy" => 4,
         "OrderedFill" => 5,
-        _ if name.contains("::expert::Expert")
+        _ if name.contains("::cohorts::expert_cohort::ExpertCohort")
+            || name.contains("::expert::Expert")
             || name.contains("::expert_macro::ExpertMacro")
             || name.contains("::expert_narrow::ExpertNarrow")
             || name.contains("::library_dense::LibraryDense")
@@ -74,6 +79,21 @@ fn native_class(name: &str) -> usize {
 #[cfg(test)]
 mod native_sample_tests {
     use super::*;
+    #[test]
+    fn cohort_real_program_names_retain_public_operator_classes() {
+        for (name, class) in [
+            ("StrataExpertCohortGather", 2),
+            ("StrataExpertCohortGuImage", 0),
+            ("StrataExpertCohortDownImage", 0),
+            ("StrataExpertCohortActivate", 3),
+            (
+                "x::strata_matrix::cohorts::expert_cohort::ExpertCohort<WgpuRuntime>",
+                1,
+            ),
+        ] {
+            assert_eq!(native_class(name), class);
+        }
+    }
     #[test]
     fn exactly_one_compiled_public_expert_interval_can_be_selected() {
         for authorized in [false, true] {
@@ -167,6 +187,8 @@ pub(crate) struct NativeExpertLayer {
     batch_before: [[u64; 4]; 6],
     #[cfg(feature = "strata-copy-cohorts")]
     compact_before: [u64; 2],
+    #[cfg(feature = "strata-expert-cohorts")]
+    cohort_before: [u64; 22],
 }
 impl NativeExpertLayer {
     pub(crate) fn new(start: usize, count: usize, layer: usize) -> Self {
@@ -179,6 +201,8 @@ impl NativeExpertLayer {
                 batch_before: [[0; 4]; 6],
                 #[cfg(feature = "strata-copy-cohorts")]
                 compact_before: [0; 2],
+                #[cfg(feature = "strata-expert-cohorts")]
+                cohort_before: [0; 22],
             };
         }
         let selected = NativeSelection {
@@ -202,6 +226,8 @@ impl NativeExpertLayer {
                 batch_before: [[0; 4]; 6],
                 #[cfg(feature = "strata-copy-cohorts")]
                 compact_before: [0; 2],
+                #[cfg(feature = "strata-expert-cohorts")]
+                cohort_before: [0; 22],
             };
         }
         let before = native_totals();
@@ -214,6 +240,8 @@ impl NativeExpertLayer {
             batch_before: cubecl::wgpu::native_strata_host_batch_profile(),
             #[cfg(feature = "strata-copy-cohorts")]
             compact_before: cubecl::wgpu::native_strata_segment_compact_profile(),
+            #[cfg(feature = "strata-expert-cohorts")]
+            cohort_before: cubecl::wgpu::native_strata_cohort_selection_stats(),
         }
     }
     pub(crate) fn finish(mut self) {
@@ -287,6 +315,16 @@ impl NativeExpertLayer {
                     serde_json::json!(std::array::from_fn::<_, 2, _>(
                         |i| after[i].saturating_sub(self.compact_before[i])
                     ));
+            }
+            #[cfg(feature = "strata-expert-cohorts")]
+            {
+                let after = cubecl::wgpu::native_strata_cohort_selection_stats();
+                let counters: BTreeMap<_, _> = cubecl::wgpu::NATIVE_COHORT_SELECTION_LABELS
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, name)| (name, after[i].saturating_sub(self.cohort_before[i])))
+                    .collect();
+                record["cohort_selection"] = serde_json::json!(counters);
             }
             eprintln!("public_prefill_native_gpu_profile {}", record);
         }

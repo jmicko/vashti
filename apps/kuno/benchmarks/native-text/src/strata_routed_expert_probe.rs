@@ -256,9 +256,67 @@ fn one(
     let handles: [Handle; 6] = handles
         .try_into()
         .map_err(|_| "public CubeK expert six owners")?;
-    let actual_launch = launch(
-        client, handles, count, f.columns, f.rows, PREFIX, f.group, down,
-    )?;
+    #[cfg(feature = "strata-expert-cohorts")]
+    let cohort = family == "native-cohort-routed-expert";
+    #[cfg(not(feature = "strata-expert-cohorts"))]
+    let cohort = false;
+    let actual_launch = if cohort {
+        #[cfg(feature = "strata-expert-cohorts")]
+        {
+            // Reuse THIS original fixture and unchanged independent F64 oracle.
+            // Only repack its authentic rounded weight image into the selected
+            // complete GU+DOWN image layout; every new owned byte is audited.
+            let mut packed = Zeroizing::new(vec![
+                0u32;
+                crate::strata_prompt::experts::cohorts::IMAGE_BYTES
+                    as usize
+                    / 4
+            ]);
+            let offset = if down { 1280 * 2560 / 2 } else { 0 };
+            packed[offset..offset + f.rows * f.columns / 2]
+                .copy_from_slice(&f.weight_image[PREFIX / 2..]);
+            let packed_id = arena.upload_u32(&packed)?;
+            let mut selected = handles.clone();
+            selected[1] = u::handle(arena, packed_id)?;
+            let mut words = Zeroizing::new([0u32; 48]);
+            words[0] = TOTAL as u32;
+            words[1] = f.columns as u32;
+            words[2] = f.rows as u32;
+            words[4] = f.group as u32;
+            words[5] = if down { 2 } else { 0 };
+            words[6] = 100;
+            words[7] = 100;
+            words[8] = 300;
+            words[9] = 1;
+            words[10] = count as u32;
+            words[11] = if count <= 8 { 8 } else { 16 };
+            words[16] = f.group as u32;
+            words[17] = count as u32;
+            words[19] = 8;
+            crate::strata_matrix::cohorts::launch(
+                client,
+                selected,
+                &words,
+                down,
+                words[11] as usize,
+            )?;
+            scan(arena, packed_id, |at, bits| {
+                if bits != packed.get(at).copied().unwrap_or(0) {
+                    return Err("public cohort original repacked image owner changed".into());
+                }
+                Ok(())
+            })?;
+            true
+        }
+        #[cfg(not(feature = "strata-expert-cohorts"))]
+        {
+            unreachable!()
+        }
+    } else {
+        launch(
+            client, handles, count, f.columns, f.rows, PREFIX, f.group, down,
+        )?
+    };
     // Independent full output oracle. Only public fixed arithmetic is computed;
     // original IEEE tolerance remains unchanged, including preserved subnormals.
     let mut expected = Zeroizing::new(vec![0f32; count * f.rows]);
@@ -351,6 +409,12 @@ fn one(
         "deliberately_mutated_after_original_validation":control.bad_member(count).is_some(),
         "noncontiguous_routes_above_20479":true,"real_weight_offset_half_elements":PREFIX});
     report[launch_field] = actual_launch.into();
+    if cohort {
+        report["original_fixture_prefix_repacked_half_elements"] = PREFIX.into();
+        report["real_weight_offset_half_elements"] = (if down {1280*2560}else{0}).into();
+        report["actual_cohort_image_weight_half_offset"] =
+            (if down { 1280 * 2560 } else { 0 }).into();
+    }
     Ok(report)
 }
 

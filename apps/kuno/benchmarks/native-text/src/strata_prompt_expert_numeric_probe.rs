@@ -11,7 +11,7 @@ fn fail(label: &'static str) -> Box<dyn std::error::Error> {
     label.into()
 }
 
-fn public(client: &ComputeClient<WgpuRuntime>, bytes: Vec<u8>) -> Result<Handle> {
+pub(super) fn public(client: &ComputeClient<WgpuRuntime>, bytes: Vec<u8>) -> Result<Handle> {
     let retired = std::sync::atomic::AtomicBool::new(false);
     crate::expert_banks::exact_persistent::persistent_scope(
         |mode| {
@@ -79,7 +79,7 @@ pub(crate) fn cases(
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
 ) -> ProbeResult<Vec<serde_json::Value>> {
-    cases_with_views(client, arena, file, false)
+    cases_with_views(client, arena, file, false, false)
 }
 #[cfg(feature = "strata-expert-scratch-ring")]
 pub(crate) fn slot_cases(
@@ -87,13 +87,18 @@ pub(crate) fn slot_cases(
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
 ) -> ProbeResult<Vec<serde_json::Value>> {
-    cases_with_views(client, arena, file, true)
+    cases_with_views(client, arena, file, true, false)
+}
+#[cfg(feature="strata-expert-cohorts")]
+pub(crate) fn cohort_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,file:&kuno_text::GgufFile)->ProbeResult<Vec<serde_json::Value>> {
+    cases_with_views(client,arena,file,false,true)
 }
 fn cases_with_views(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
     slot_view: bool,
+    cohort_view: bool,
 ) -> ProbeResult<Vec<serde_json::Value>> {
     let mut table = Vec::<u32>::new();
     for dtype in [q::IQ3_XXS, q::IQ3_S, q::IQ2_S] {
@@ -189,6 +194,7 @@ fn cases_with_views(
             (true, "bad_alignment"),
             (true, "nonfinite"),
         ];
+        if cohort_view {controls.retain(|(_,v)| *v!="bad_alignment");}
         if slot_view {
             controls.extend([(true, "bad_image_extent"), (true, "bad_image_offset")]);
         }
@@ -207,6 +213,12 @@ fn cases_with_views(
             if control == "nonfinite" {
                 let offset = if down { 2 * gu_bytes } else { 0 };
                 raw[offset..offset + 2].copy_from_slice(&half::f16::NAN.to_le_bytes());
+            }
+            let raw_count=raw.len()/4;
+            if cohort_view {
+                let original=raw.clone();let slot=if host{7}else{0};
+                raw.resize(allocation::RAW_RING_BYTES as usize,0);raw.fill(0);
+                raw[slot*original.len()..(slot+1)*original.len()].copy_from_slice(&original);
             }
             let raw_words = Zeroizing::new(
                 raw.chunks_exact(4)
@@ -239,7 +251,7 @@ fn cases_with_views(
             let map_id = arena.upload_u32(&map)?;
             let output_id = arena.allocate_zeroed((storage::WORKING_BYTES / 4) as usize)?;
             let fault_id = arena.allocate_zeroed(1)?;
-            let first = if slot_view { 256usize } else { 16usize };
+            let first = if cohort_view {if down {GU_WORDS}else{0}} else if slot_view { 256usize } else { 16usize };
             let first_param = if control == "bad_image_offset" {
                 4
             } else {
@@ -296,19 +308,28 @@ fn cases_with_views(
                     .with_buffer(table.clone().binding())
                     .with_buffer(addresses.clone().binding())
                     .with_read_dependencies(vec![gate.clone().binding(), up.clone().binding()])
-                    .with_info(MetadataBindingInfo::custom(
-                        words
-                            .chunks_exact(2)
-                            .map(|v| u64::from(v[0]) | (u64::from(v[1]) << 32))
-                            .collect(),
-                    )))
+                    .with_info({
+                        let mut info_words=Zeroizing::new(words.to_vec());
+                        if cohort_view {
+                            info_words=Zeroizing::new(vec![0u32;48]);
+                            info_words[0]=1;info_words[1]=columns as u32;info_words[2]=output_rows as u32;info_words[3]=row_bytes as u32;
+                            info_words[5]=if down{2}else{0};info_words[6]=(gu_bytes/4)as u32;info_words[7]=(gu_bytes/4)as u32;info_words[8]=raw_count as u32;
+                            info_words[9]=1;info_words[10]=1;info_words[17]=1;info_words[19]=if host{7}else{8};
+                        }
+                        MetadataBindingInfo::custom(info_words.chunks_exact(2).map(|v|u64::from(v[0])|(u64::from(v[1])<<32)).collect())
+                    }))
             };
             // SAFETY: authentic physical original public source roots, actual
             // table and distinct complete private owners. Invalid controls
             // fail the same production guards before unsafe source access.
             unsafe {
                 client.launch_unchecked(
-                    Box::new(op),
+                    {
+                        #[cfg(feature="strata-expert-cohorts")]
+                        if cohort_view {Box::new(cohorts::CohortOp::Image{dtype,down}) as Box<dyn CubeTask<AutoCompiler>>}else{Box::new(op)}
+                        #[cfg(not(feature="strata-expert-cohorts"))]
+                        {Box::new(op)}
+                    },
                     CubeCount::Static(
                         (output_rows * columns / Op::dequant_values()).div_ceil(256) as u32,
                         1,
@@ -320,7 +341,7 @@ fn cases_with_views(
             cubecl::future::block_on(client.sync()).map_err(u::fault)?;
             let mut warm_dispatch_ns = Vec::new();
             let mut batched_public_diagnostic = None;
-            if control == "valid" && !slot_view {
+            if control == "valid" && !slot_view && !cohort_view {
                 // First completed original dispatch above warms compilation.
                 // Fixed-public fenced wall times are diagnostic, not pure GPU
                 // timestamps or a private request profiling switch.
@@ -391,7 +412,7 @@ fn cases_with_views(
                 "public_prompt_dequant_numeric dtype={dtype} down={down} host={host} control={control} bit_mismatches={mismatches} warm_fenced_wall_ns={warm_dispatch_ns:?}"
             );
             reports.push(
-                serde_json::json!({"family":if slot_view {"prompt-slot-vector8-dequant"} else {"prompt-vector8-dequant"}, "dtype":dtype,
+                serde_json::json!({"family":if cohort_view {"cohort-original-record32-dequant"} else if slot_view {"prompt-slot-vector8-dequant"} else {"prompt-vector8-dequant"}, "dtype":dtype,
                 "requires_exact_role_view":slot_view,"requires_zero_relative_image_offsets":slot_view,
                 "down":down,"host_staged":host,"control":control,"bit_mismatches":mismatches,
                 "warm_fenced_wall_ns":warm_dispatch_ns,"image_bytes":output_words*4,

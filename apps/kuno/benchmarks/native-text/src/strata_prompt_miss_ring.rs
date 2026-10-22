@@ -99,6 +99,15 @@ impl Ring {
         self.issued += 1;
         Ok(Some((group, (raw != RESIDENT).then_some(raw))))
     }
+    /// Checked non-consuming view of already issued contiguous cohort entries.
+    /// Only consumed() advances retirement; physical hazards remain separate.
+    #[cfg(feature = "strata-expert-cohorts")]
+    pub(super) fn peek_slot(&self, group: usize) -> Result<Option<Option<usize>>> {
+        if group < self.consumed || group >= self.slots.len() { return Err(reject()); }
+        if group >= self.issued { return Ok(None); }
+        let slot = self.slots[group];
+        Ok(Some((slot != RESIDENT).then_some(slot)))
+    }
     pub(super) fn ready_slot(&self, group: usize) -> Result<Option<usize>> {
         if group != self.consumed || group >= self.issued {
             return Err(reject());
@@ -300,5 +309,27 @@ mod tests {
         one.consumed(0).unwrap();
         assert!(one.consumed(0).is_err());
         one.finish().unwrap();
+    }
+}
+
+#[cfg(all(test,feature="strata-expert-cohorts"))]
+mod cohort_tests {
+    use super::*;
+    #[test]
+    fn cohort_peek_never_consumes_and_refill_requires_actual_original_consumers() {
+        let input=[true,true,false,true,true,true,true,true,true,true,false,true,true];
+        let mut ring=Ring::new(&input).unwrap();
+        while ring.issue_next().unwrap().is_some(){}
+        let consumed=ring.consumed;let live=ring.live;
+        for i in 0..ring.issued {assert!(ring.peek_slot(i).unwrap().is_some());}
+        assert_eq!((ring.consumed,ring.live),(consumed,live));
+        assert!(ring.peek_slot(ring.issued).unwrap().is_none());
+        assert!(ring.issue_next().unwrap().is_none());
+        for group in 0..input.len(){
+            while ring.issue_next().unwrap().is_some(){}
+            let peek=ring.peek_slot(group).unwrap().unwrap();assert_eq!(peek,ring.ready_slot(group).unwrap());
+            ring.consumed(group).unwrap();assert!(ring.peek_slot(group).is_err());
+        }
+        ring.finish().unwrap();
     }
 }

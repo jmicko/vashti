@@ -14,6 +14,8 @@ use std::collections::HashMap;
 mod placement;
 #[path = "strata_prompt_layer_sources.rs"]
 mod prompt_layer;
+#[cfg(feature = "strata-expert-cohorts")]
+pub(crate) use prompt_layer::PromptLayer;
 #[path = "strata_prompt_loan.rs"]
 mod prompt_loan;
 pub(crate) use placement::Placement;

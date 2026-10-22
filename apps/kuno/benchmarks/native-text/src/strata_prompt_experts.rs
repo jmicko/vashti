@@ -11,6 +11,8 @@ mod miss_ring;
 #[path = "strata_prompt_expert_numeric_probe.rs"]
 mod public_numeric;
 pub(crate) use public_numeric::cases as public_dequant_numeric;
+#[cfg(feature="strata-expert-cohorts")]
+pub(crate) use public_numeric::cohort_cases as public_cohort_dequant_numeric;
 #[cfg(feature = "strata-expert-scratch-ring")]
 pub(crate) use public_numeric::slot_cases as public_scratch_dequant_numeric;
 
@@ -299,6 +301,9 @@ mod narrow_padding_probe;
 #[cfg(any(test, feature = "strata-dequant-record32"))]
 #[path = "strata_prompt_dequant_record32.rs"]
 mod record32;
+#[cfg(feature = "strata-expert-cohorts")]
+#[path = "strata_prompt_expert_cohorts.rs"]
+pub(crate) mod cohorts;
 #[cfg(feature = "strata-narrow-global")]
 pub(crate) use narrow_padding_probe::cases as public_narrow_padding;
 
@@ -471,6 +476,9 @@ pub(crate) fn enqueue(
                     receipt.copy_segments as u64,
                 );
                 for (name, value) in [
+                    ("expert_native_cohort_groups",receipt.cohort_groups),
+                    ("expert_native_cohort_launches",receipt.cohort_launches),
+                    ("expert_native_cohort_batches",receipt.cohort_batches),
                     ("expert_native_bulk_logical_phases", receipt.logical_phases),
                     ("expert_native_bulk_matrix_pieces", receipt.matrix_pieces),
                     ("expert_native_bulk_wide_prefixes", receipt.wide_prefixes),
@@ -582,7 +590,17 @@ fn enqueue_original(
     };
     #[cfg(not(feature = "strata-prefill-miss-ring"))]
     let mut issued = 0;
-    for group in 0..groups {
+    let mut group = 0;
+    let mut legacy_scratch_groups=0usize;
+    let mut legacy_scratch_slots=0u8;
+    while group < groups {
+        #[cfg(feature = "strata-expert-cohorts")]
+        if let Some(end) = cohorts::enqueue_small(client, graph, sources, layer, geometry, owners, fault, count, map, &stage, &layer_sources, &mut miss_ring, group, groups)? {
+            group = end;
+            continue;
+        }
+        legacy_scratch_groups+=1;
+        legacy_scratch_slots|=1u8<<(group%2);
         let mut timing = crate::strata_prefill_profile::CpuTimer::new();
         #[cfg(feature = "strata-prefill-miss-ring")]
         while let Some((next, slot)) = miss_ring.issue_next()? {
@@ -813,18 +831,21 @@ fn enqueue_original(
         timing.mark("expert_cpu_down_product");
         #[cfg(feature = "strata-prefill-miss-ring")]
         miss_ring.consumed(group)?;
+        group += 1;
     }
     #[cfg(feature = "strata-prefill-miss-ring")]
     miss_ring.finish()?;
     #[cfg(feature = "strata-expert-scratch-ring")]
     {
-        crate::strata_prefill_profile::count("expert_native_scratch_groups", groups as u64);
+        crate::strata_prefill_profile::count("expert_native_scratch_groups", legacy_scratch_groups as u64);
+        #[cfg(feature="strata-expert-cohorts")]
+        crate::strata_prefill_profile::count("expert_legacy_scratch_slots_used",legacy_scratch_slots.count_ones()as u64);
         crate::strata_prefill_profile::count("expert_native_scratch_slots", scratch.len() as u64);
     }
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    [
+    let original = [
         Op::Gather,
         Op::Dequant {
             dtype: q::IQ2_S,
@@ -890,7 +911,10 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
         )
         .unwrap()
     })
-    .collect()
+    .collect::<Vec<_>>();
+    #[cfg(feature = "strata-expert-cohorts")]
+    let original = original.into_iter().chain(cohorts::sources()).collect();
+    original
 }
 
 fn slot_operators() -> Vec<Op> {

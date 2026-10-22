@@ -394,6 +394,26 @@ async fn serve(
             .map_err(|e| {eprintln!("public_narrow_expert_error {e}");"public_narrow_expert_failed"})?;
         #[cfg(not(feature = "strata-narrow-global"))]
         let narrow_expert_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-expert-cohorts")]
+        let cohort_producer_checks=crate::strata_prompt::experts::cohorts::public_producers(&client,&mut arena).map_err(|e|{eprintln!("public_cohort_producer_error {e}");"public_cohort_producer_failed"})?;
+        #[cfg(not(feature="strata-expert-cohorts"))]
+        let cohort_producer_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-expert-cohorts")]
+        let cohort_dequant_checks=crate::strata_prompt::experts::public_cohort_dequant_numeric(&client,&mut arena,&file).map_err(|e|{eprintln!("public_cohort_dequant_error {e}");"public_cohort_dequant_failed"})?;
+        #[cfg(not(feature="strata-expert-cohorts"))]
+        let cohort_dequant_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-expert-cohorts")]
+        let cohort_matrix_checks=crate::strata_matrix::cohorts::public_numeric(&client,&mut arena).map_err(|e|{eprintln!("public_cohort_matrix_error {e}");"public_cohort_matrix_failed"})?;
+        #[cfg(not(feature="strata-expert-cohorts"))]
+        let cohort_matrix_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-expert-cohorts")]
+        let cohort_matrix_pair_checks=crate::strata_matrix::cohorts::public_pairs(&client,&mut arena).map_err(|e|{eprintln!("public_cohort_matrix_pair_error {e}");"public_cohort_matrix_pair_failed"})?;
+        #[cfg(not(feature="strata-expert-cohorts"))]
+        let cohort_matrix_pair_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-expert-cohorts")]
+        let cohort_multi_dequant_checks=crate::strata_prompt::experts::cohorts::public_multi_dequant(&client,&mut arena,&file).map_err(|e|{eprintln!("public_cohort_multi_dequant_error {e}");"public_cohort_multi_dequant_failed"})?;
+        #[cfg(not(feature="strata-expert-cohorts"))]
+        let cohort_multi_dequant_checks:Vec<serde_json::Value>=Vec::new();
         let attention_checks =
             crate::strata_qsa::selection::public_numeric(&mut arena).map_err(|error| {
                 // This branch accepts only compiled public diagnostic inputs.
@@ -478,7 +498,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"cohort_producer_checks":cohort_producer_checks,"cohort_dequant_checks":cohort_dequant_checks,"cohort_matrix_checks":cohort_matrix_checks,"cohort_matrix_pair_checks":cohort_matrix_pair_checks,"cohort_multi_dequant_checks":cohort_multi_dequant_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }

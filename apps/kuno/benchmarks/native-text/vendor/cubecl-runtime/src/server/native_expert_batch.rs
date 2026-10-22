@@ -52,6 +52,9 @@ pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) ->
 /// Actual backend enqueue counts, never a GPU completion/acceptance receipt.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeStrataExpertBatchReceipt {
+    pub cohort_groups:usize,
+    pub cohort_launches:usize,
+    pub cohort_batches:usize,
     pub launches: usize,
     pub copy_segments: usize,
     pub logical_phases: usize,

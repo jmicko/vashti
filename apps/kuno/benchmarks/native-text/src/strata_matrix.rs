@@ -2,6 +2,9 @@
 //! Data stays in the already admitted BF16/FP16 images and F32 result owners.
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
 use kuno_text::{Error, Result};
+#[cfg(feature = "strata-expert-cohorts")]
+#[path = "strata_matrix_expert_cohorts.rs"]
+pub(crate) mod cohorts;
 
 #[cfg(feature = "strata-cubek-gemm")]
 #[path = "strata_cubek_gemm.rs"]
@@ -1383,7 +1386,7 @@ mod native {
         // element. No scalar length or forged vector pointer is supplied.
         Ok(unsafe { ArrayArg::from_raw_parts(handle, vectors) })
     }
-    fn compatible(client: &ComputeClient<WgpuRuntime>, bfloat: bool) -> Result<()> {
+    pub(super) fn compatible(client: &ComputeClient<WgpuRuntime>, bfloat: bool) -> Result<()> {
         let kind = ElemType::Float(if bfloat {
             FloatKind::BF16
         } else {
@@ -2580,6 +2583,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     crate::strata_qsa::prompt_xmx::stage_definition(true),
                 ),
             ]);
+            #[cfg(feature = "strata-expert-cohorts")]
+            let definitions = definitions.into_iter().chain(cohorts::definitions());
             for (name, definition) in definitions {
                 let mut compiler = AutoCompiler::SpirV(Default::default());
                 let mut options = WgpuCompilationOptions {
@@ -2601,6 +2606,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     return Err("matrix compiler representation".into());
                 };
                 let expected_shared = native::compiled_shared_bytes(name, layout_mask & 4 != 0);
+                #[cfg(feature = "strata-expert-cohorts")]
+                let expected_shared = if name.starts_with("expert_cohort") {Some(if name.contains("cohort8") {2048}else{4096})}else{expected_shared};
                 #[cfg(feature = "strata-native-wide")]
                 let expected_shared = if name.starts_with("dense_wide_native_") {
                     Some(native_wide::SHARED_BYTES)

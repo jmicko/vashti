@@ -205,6 +205,8 @@ impl WgpuServer {
             #[cfg(feature = "kuno-public-host-clock")]
             clock.mark(2);
             let logical = grammar.finish()?;
+            #[cfg(feature="kuno-expert-cohorts")]
+            self.scheduler.stream(&stream_id).admit_native_expert_cohorts(&scope,&grammar)?;
             let info = self
                 .scheduler
                 .stream(&stream_id)
@@ -286,6 +288,9 @@ impl WgpuServer {
             if next_info != info.len() || receipt.launches != logical.launches {
                 return Err(fault("native expert original INFO inventory"));
             }
+            receipt.cohort_groups=logical.cohort_groups;
+            receipt.cohort_launches=logical.cohort_launches;
+            receipt.cohort_batches=logical.cohort_batches;
             receipt.logical_phases = logical.logical_phases;
             receipt.matrix_pieces = logical.matrix_pieces;
             receipt.wide_prefixes = logical.wide_prefixes;

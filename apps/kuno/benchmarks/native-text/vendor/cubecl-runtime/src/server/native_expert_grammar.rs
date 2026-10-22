@@ -4,6 +4,9 @@ use super::native_expert_batch::{batch_fault, native_strata_expert_operator};
 use super::{Binding, CubeCount, KernelArguments, MetadataBindingInfo, ServerError};
 use crate::memory_management::ManagedMemoryId;
 use cubecl_common::stream_id::StreamId;
+#[cfg(feature="kuno-expert-cohorts")]
+#[path="native_expert_cohort_grammar.rs"]
+mod cohort;
 
 const MAX_MEMBERS: u32 = 4096;
 const MIN_WIDE_MEMBERS: u32 = if cfg!(feature = "kuno-native-expert-medium") {
@@ -73,6 +76,9 @@ struct Pending {
 /// backend separately counts actual enqueues and must match these inventories.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeStrataExpertGrammarCounts {
+    pub cohort_groups:usize,
+    pub cohort_launches:usize,
+    pub cohort_batches:usize,
     pub launches: usize,
     pub logical_phases: usize,
     pub matrix_pieces: usize,
@@ -86,6 +92,8 @@ pub struct NativeStrataExpertGrammarCounts {
 pub struct NativeStrataExpertGrammar {
     phase: usize,
     groups: usize,
+    #[cfg(feature="kuno-expert-cohorts")]
+    cohort:Option<cohort::Cohort>,
     group: Option<Group>,
     pending: Option<Pending>,
     resident_images: Option<bool>,
@@ -291,6 +299,21 @@ impl NativeStrataExpertGrammar {
         count: &CubeCount,
         args: &KernelArguments,
     ) -> Result<(), ServerError> {
+        #[cfg(feature="kuno-expert-cohorts")]
+        if self.cohort.is_some() || name=="StrataExpertCohortGather" {
+            if self.phase!=0 || self.pending.is_some() || self.gu_deferred {return Err(batch_fault("native expert cohort interrupted original group"));}
+            if self.cohort.is_none(){self.cohort=Some(cohort::Cohort::start(self.groups,args)?);}
+            let cohort=self.cohort.as_mut().unwrap();
+            let done=cohort.launch(name,release,count,args)?;
+            self.counts.launches+=1;self.counts.cohort_launches+=1;
+            if done {
+                let groups=cohort.groups();
+                self.groups+=groups;self.counts.cohort_groups+=groups;self.counts.cohort_batches+=1;
+                self.counts.logical_phases+=groups*6;self.counts.matrix_pieces+=groups*2;self.counts.gu_checks+=groups;
+                self.cohort=None;
+            }
+            return Ok(());
+        }
         if self.groups >= 512 {
             return Err(batch_fault("native expert grammar group capacity"));
         }
@@ -453,13 +476,15 @@ impl NativeStrataExpertGrammar {
         Ok(())
     }
     pub fn finish(&self) -> Result<NativeStrataExpertGrammarCounts, ServerError> {
+        #[cfg(feature="kuno-expert-cohorts")]
+        if self.cohort.is_some(){return Err(batch_fault("native expert incomplete cohort"));}
         if self.phase != 0
             || self.pending.is_some()
             || self.gu_deferred
             || self.groups == 0
             || self.counts.logical_phases != self.groups * 6
             || self.counts.matrix_pieces != self.groups * 2 + self.counts.tail_pieces
-            || self.counts.launches != self.groups * 4 + self.counts.matrix_pieces
+            || self.counts.launches != (self.groups-self.counts.cohort_groups) * 4 + self.counts.matrix_pieces-self.counts.cohort_groups*2+self.counts.cohort_launches
         {
             return Err(batch_fault(
                 "native expert incomplete original matrix phase",
