@@ -150,7 +150,7 @@ Intel50,688,000B/NVIDIA compute0, services200, all driver faults0, normal
 admission. Public aggregate `expert-cohorts-first-failed-public-summary-20261022.json`.
 Correction is restricted to the new public fixture: one complete GPU owner,
 bounded <=400MiB Zeroizing host reference, original full-span erase/verification
-and audited readback windows. Original768MiB budget, full bitwise/math/status/
+and audited readback windows. Original512MiB budget, full bitwise/math/status/
 fault/source/tail/erasure gates and production paths remain unchanged.
 
 ## Corrected frozen public fixture (2026-10-22 11:20UTC)
@@ -271,3 +271,30 @@ helper`check-expert-cohorts-overlap-connected-20261022.py` SHA256
 Original512MiB fixture budget guard is correct before this invocation. All old
 math/compiler/source/owner/capacity/erasure/recovery and actual selector guards
 retained. No concurrent CPU compile; no new GPU or speed claim until complete.
+
+
+## Complete overlap/scalar validation result (2026-10-22 12:07UTC)
+
+Frozen42efd634/worker6ba68800 passes all326 GPU operators, BOTH original full
+18-script chains and actual authenticated rolling/pool selections, with physical
+recovery. Unit`kuno-expert-cohorts-overlap-20261022.service` completed exit0,
+inactive/dead. Public summary:
+`strata-parity-expert-cohorts-overlap-20261022-expert-cohorts-public-summary.json`.
+All original math/source/compiler/owner/capacity/erasure guards retained. No
+attestation repair was needed for this successor;512MiB guard was correct at start.
+
+Normal short3.686165769/firstlong11.156398257/repeat10.239178827s; profiled
+3.687095616/11.179881552/10.244760975s. Previous complete cohort normal
+11.429276201/10.419853034s becomes2.39%/1.73% shorter, but installed
+native-prepared normal10.116598360/9.222042861s still leads. Retain the complete
+bundle, not selected; no original clean/stage/install acceptance run.
+
+Warm expert wall5.986671009s versus prior6.202183162s and installed4.996488076s;
+actual thread CPU1.120419049s versus1.113646089s and1.350068342s. Capture
+wall0.383945918s versus0.367205963s and0.594979991s; original wait-wall
+4.360375233s versus4.605510701s and2.916264358s. These old *_cpu fields use
+wall Instant; only the separate explicit thread CPU columns prove CPU time.
+Physical cohort launches, logical work and copy bytes remain exact unchanged.
+No claim of Strata parity or new decode gain. Next investigate actual queue
+wait placement/rolling overlap and coarse cohort upload granularity. Do not
+repeat old correct-but-neutral attention/XMX paths or discard complete cohorts.

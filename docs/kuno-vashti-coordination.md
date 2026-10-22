@@ -1,5 +1,25 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno checkpoint (2026-10-22 12:07UTC): complete cohort successor correct; scheduling attribution continues.**
+
+Goal ACTIVE/UNMET. Frozen42efd634/workerSHA6ba68800 passes198 CPU,
+originalruntime11,429 WGSL/280 matrix layouts, all326 GPU operators and BOTH
+complete original18-script proof/profile/recovery chains. Exact public summary
+`strata-parity-expert-cohorts-overlap-20261022-expert-cohorts-public-summary.json`
+under artifact base `/media/jmicko/faststore/kuno-development`. Unit
+`kuno-expert-cohorts-overlap-20261022.service` completed/inactive/dead, exit0;
+actual memory recovery passed. Normal first11.156398257/repeat10.239178827s
+versus complete prior cohort11.429276201/10.419853034s:2.39%/1.73% shorter,
+but installed native-prepared normal10.116598360/9.222042861s remains faster.
+Keep the complete coupled implementation; no clean-selection/stage/install run
+on this successor. Sampled expert kernels and actual CPU capture improve;
+normal expert wait wall grows, so investigate transfer/compute scheduling and
+real rolling submission overlap rather than discard the bundle. Native-prepared
+301f1fd1/SHA0e226827 remains installed with unchanged36626d30 gateway.
+No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
+Root alone owns hardware. Bounded sudo refresher1145657 expires15:45:12UTC.
+Earlier active snapshots below are historical.
+
 **Active Kuno checkpoint (2026-10-22 11:53UTC): complete cohort overlap + scalar bundle GPU validation.**
 
 Goal ACTIVE/UNMET. Native-prepared301f1fd1/SHA0e226827 remains installed with
