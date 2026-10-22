@@ -1,28 +1,31 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno checkpoint (2026-10-22 11:36UTC): full cohorts correct; hidden warm overhead diagnostic.**
+**Active Kuno checkpoint (2026-10-22 11:53UTC): complete cohort overlap + scalar bundle GPU validation.**
 
 Goal ACTIVE/UNMET. Native-prepared301f1fd1/SHA0e226827 remains installed with
 unchanged gateway36626d30/SHAd3ed07f4 and accepted clean first10.8972/repeat8.7121s.
 Complete [cohorts](kuno-prefill-expert-cohorts.md)/[sealed selection](kuno-prefill-cohort-selection.md)
-a5d28335/workerSHAc01f0ee7 PASS196 CPU+11 runtime+separate8 metadata controls,
-429 WGSL/280 matrix layouts, ALL326 GPU controls and BOTH complete original
-18-script proof/profile/recovery chains, actual normal rolling submission/pool
-adoption. Aggregate typo expected768MiB; real original512MiB limit is retained
-and met. Failed wrapper/log retained; strict attestation498e5611 rechecks same
-completed source-bound receipts and recovery, NO GPU rerun. Full exact evidence
-and corrected-source binding in linked spec. Actual first/repeat11.4293/10.4199s
-is ~13% slower than installed normal10.1166/9.2220, despite164,684→88,424 real
-launches, ~5% shorter sampled GPU work and faster actual CPU capture boundaries.
-KEEP complete path; investigate uncaptured frontend or lost overlap. No clean
-selection/staged/install run. Legacy expert_cpu_* excludes cohort frontend.
-Root normal warm flat CPU+Xe PMU now runs`kuno-expert-cohorts-warm-costs-20261022.service`,
-helper138ab652, samples only public request3, rawdata/run erased. Not clean speed.
-Root owns all hardware; no simultaneous CPU build. Two agents read source only.
+a5/c01 passes all326 GPU/both full original chains+actualselection+recovery;
+normal11.4293/10.4199 slower than installed10.1166/9.2220 despite fasterGPU/CPU
+capture. Warm flat CPU+PMU complete/recovered/raw/run erased:6.646B cycles versus
+8.45B prior, RCS64.24%/BCS19.70%/CCS0 scheduled-active (notEUutilization). No
+clean/staged/install run. Keep complete path. Source found lost overlap: early
+raw refill made planner merge matrix(A) with DQ(B), importing the nextCOPYwait.
+Root7ae81bb8 moves unchanged consume/refill AFTERallmatrix enqueues, using
+original real queue cut and DOWN-image release; no ownership/hazard relaxation.
+Root42efd634 adds same-kernel bulk192-byte scalar registration (48 exact-growing
+allocations become1), same6 arrays/240-byte INFO/erasure; two real-byte/panic
+controls. Independent generated-macro/source/ownership audits find no blocker.
+Both changes are composed BEFORE timing. Frozen42efd634/workerSHA6ba68800 PASS
+198 CPU +originalruntime11 +429 WGSL/280 matrix layouts; separate8 metadata
+source hashes unchanged. Protected unit`kuno-expert-cohorts-overlap-20261022.service`
+now runs ALL326 GPU and BOTH original complete proof/profile/recovery chains.
+Helper`check-expert-cohorts-overlap-connected-20261022.py` SHA45440f41 under
+artifact base, log`expert-cohorts-overlap-connected-20261022.log`. No new GPU/
+speed/install success claimed yet. Root alone owns hardware; no CPU compile.
 No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
 Bounded sudo refresher1145657 expires15:45:12UTC; never kill shared shell3556.
-Earlier active snapshots are historical. Complete prior GPU/profile run recovered
-Intel50,688,000B/NVIDIA compute0, services200/fault0/normal admission/unchanged boot.
+Earlier active snapshots are historical; actual original matrix arena is512MiB.
 
 **Active installed Kuno checkpoint (2026-10-22): native-prepared selected.**
 

@@ -219,3 +219,55 @@ only, no stack/register/content/system-wide sampling. Raw data stays in/run and
 is erased; no CPU build concurrent. This is diagnostic, NOT a clean speed
 selection rerun; PMU forcewake/CPU sampling can perturb timing. Root owns GPUs.
 No API/KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti:none.
+
+## Coupled overlap and scalar-registration correction
+
+The warm diagnostic completes/recovered/rawtmpfs erased, with public receipt
+`strata-parity-expert-cohorts-warm-costs-20261022-complete-public-summary.json`.
+Approx CPU cycles6.646B versus8.45B prior; scheduled RCS64.24%/BCS19.70%/CCS0.
+These are not EU utilization and do not alone prove kernel overlap. Source
+analysis finds the actual dependency cause: refill before matrix(A) permits
+Planner to merge matrix(A) with next cohort DQ(B), pulling the future raw COPY
+wait into matrix(A)'s whole MAIN segment. Kernel durations and capture work
+can improve while elapsed time grows. Original source already has a real
+DOWN-image release that allows COPY to wait only for DQ(A).
+
+Root7ae81bb8 (portbb70714a) moves the SAME consume/refill block after ALL cohort
+GU/activation/DOWN enqueues, as the original producer does. The actual COPY
+queue change separates matrix(A) from DQ(B); DMA still overlaps matrix(A)
+because original DOWN-image release and exact full raw/image dependencies
+remain. Original real planner control
+`strata_queue_tests::tests::dequant_release_allows_raw_reuse_before_following_gemms_finish`
+is already among the198 selected CPU controls. No new dispatch, boundary API,
+source authority, narrowed owner/hazard, permutation, budget or math change.
+
+Root42efd634 (port956749cf) couples ABI-identical bulk scalar registration:
+same generated ExpertCohort constructor/kernelID/settings/device scope, SAME
+six real typed ArrayArg registrations, same48 u32 values/192 scalar bytes and
+240-byte complete INFO. Existing `register_scalar_raw` copies u32 CubeElement
+bytes once instead of48 exact-growing/wiped allocations. Caller metadata is
+borrowed without another byte-vector; original ScalarBuilder/InfoLease/full
+packed-capacity success+unwind erasure remains. Real original-vs-bulk registration
+CPU control covers all16 GU/DOWN/8/16/F32/F16/full/offset cases and exact30u64 INFO;
+separate panic/reuse control covers actual TLS lease cleanup. No shader math
+or offline definition changes. Independent actual-macro/source audit passes.
+
+Both complete fixes are merged BEFORE any next timing decision. Root CPU
+pipeline at42efd634 runs original196+new2=198, original runtime11, then frozen
+release and429 WGSL/280 matrix layouts. Artifact intended
+`strata-parity-expert-cohorts-overlap-20261022`. All326 GPU controls and BOTH
+original full proof/profile/recovery chains/actual selectors remain required.
+No new GPU, performance or installation acceptance yet for this successor.
+
+Frozen complete overlap/scalar candidate source
+`42efd6346dd2ff2d0f64d8b53d828a36ef8357e0`, worker SHA256
+`6ba6880027e23ec8d4106baaa9febc102ce7cab86ff4f61541d6619e28b80985`.
+Root198 CPU +originalruntime11 +offline429 WGSL/280 matrix layouts PASS;
+separate8 selector source files remain identical. Build receipt
+`expert-cohorts-overlap-root-build-receipt-20261022.json`. Protected full326 and
+both-chain run now active in`kuno-expert-cohorts-overlap-20261022.service`;
+helper`check-expert-cohorts-overlap-connected-20261022.py` SHA256
+`45440f416b2d2862f74b5023dc17d15fe65646655a4f1c4465ba735c53b99b0b`.
+Original512MiB fixture budget guard is correct before this invocation. All old
+math/compiler/source/owner/capacity/erasure/recovery and actual selector guards
+retained. No concurrent CPU compile; no new GPU or speed claim until complete.
