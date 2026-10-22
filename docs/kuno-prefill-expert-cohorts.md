@@ -130,3 +130,13 @@ build. Wrapper `check-expert-cohorts-connected-20261022.py` SHA256
 `5102c256d235dca614cac8a088c1fd49e34cc27eed8140cbc37c9bea14022948`;
 log `expert-cohorts-connected-20261022.log` under the same artifact base.
 Only completion plus full physical recovery can establish success.
+
+The initial root wrapper stopped BEFORE child/GPU inference: Git refused a
+user-owned checkout as dubious ownership. Original helper/log retained. Corrected
+helper `check-expert-cohorts-connected-trusted-source-20261022.py` SHA256
+`f031acf9e4d24c5f405b3fd3f24ad7c573dc9af4246b6e82cbcf4c40568c36b1`
+uses only a command-scoped `git -c safe.directory=<exact isolated checkout>`
+for the same source read; no persistent Git setting or validation changes.
+Corrected protected unit `kuno-expert-cohorts-trusted-source-20261022.service`
+now owns the same previously unused prefix; log has the same trusted-source
+suffix. Failure is a harness preflight, not a GPU/math/recovery result.
