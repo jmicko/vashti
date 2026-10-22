@@ -1,7 +1,10 @@
 //! Genuine cross-expert narrow CMMA. Each group's original8/16-row tile,
 //! chronologicalK16 arithmetic, FP16 inputs and routed publication are retained.
 use super::*;
-use cubecl::ir::{ElemType, UIntKind};
+use cubecl::{
+    compute::KernelLauncher,
+    ir::{ElemType, UIntKind},
+};
 use cubecl_runtime::kernel::KernelDefinition;
 use half::f16;
 #[cube(launch_unchecked)]
@@ -398,6 +401,40 @@ fn definition(down: bool, tile: usize) -> KernelDefinition {
     );
     b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
 }
+// Preserve the generated launcher's settings and six actual registration
+// types. Every array retains its original owner, scalar length and vec4 ABI.
+fn matrix_settings() -> KernelSettings {
+    KernelSettings::default()
+        .cube_dim(CubeDim::new_1d(64))
+        .address_type(AddressType::U32)
+}
+type ArrayCompilation = <Array<f32> as LaunchArg>::CompilationArg;
+fn register_arrays(
+    launcher: &mut KernelLauncher<WgpuRuntime>,
+    args: [ArrayArg<WgpuRuntime>; 6],
+) -> [ArrayCompilation; 6] {
+    let [input, weight, output, map, status, fault] = args;
+    [
+        <Array<Vector<f16, Const<4>>> as LaunchArg>::register(input, launcher),
+        <Array<Vector<f16, Const<4>>> as LaunchArg>::register(weight, launcher),
+        <Array<f32> as LaunchArg>::register(output, launcher),
+        <Array<u32> as LaunchArg>::register(map, launcher),
+        <Array<u32> as LaunchArg>::register(status, launcher),
+        <Array<Atomic<u32>> as LaunchArg>::register(fault, launcher),
+    ]
+}
+fn register_words(launcher: &mut KernelLauncher<WgpuRuntime>, words: &[u32; 48]) {
+    // CubeElement supplies the identical native-endian bytes and U32 scalar
+    // type used by each original scalar registration. Borrow the caller's
+    // existing wiped metadata directly, without a temporary byte-vector.
+    // The real ScalarBuilder owns this single192-byte copy and retains all of
+    // its original full-capacity success/error/panic erasure guards.
+    launcher.register_scalar_raw(
+        <u32 as cubecl::CubeElement>::as_bytes(words),
+        <u32 as cubecl::CubeElement>::cube_type(),
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn launch(
     client: &ComputeClient<WgpuRuntime>,
@@ -446,75 +483,91 @@ pub(crate) fn launch(
     let ma = crate::resident_util::raw_arg(map.clone(), map.size_in_used() as usize / 4)?;
     let sa = crate::resident_util::raw_arg(status.clone(), status.size_in_used() as usize / 4)?;
     let fa = crate::resident_util::raw_arg(fault, 1)?;
+    let settings = matrix_settings();
+    let mut launcher = KernelLauncher::<WgpuRuntime>::new(settings.clone());
+    launcher.with_scope(|scope| scope.device_properties(client.properties()));
+    let [ia, wa, oa, ma, sa, fa] = register_arrays(&mut launcher, [ia, wa, oa, ma, sa, fa]);
+    register_words(&mut launcher, words);
+    // The original generated kernel's runtime-u32 compilation argument is ().
+    // Construct that SAME kernel with the same authentic array compilation
+    // arguments and settings; only scalar serialization is performed in bulk.
+    let kernel = expert_cohort::ExpertCohort::<WgpuRuntime>::new(
+        settings,
+        client.clone(),
+        ia,
+        wa,
+        oa,
+        ma,
+        sa,
+        fa,
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        down,
+        tile,
+    );
     unsafe {
-        expert_cohort::launch_unchecked::<WgpuRuntime>(
-            client,
+        launcher.launch_unchecked(
             CubeCount::Static(
                 (if down { 2560usize } else { 1280usize } / 64) as u32,
                 if tile == 8 { 1 } else { 2 },
                 words[9],
             ),
-            CubeDim::new_1d(64),
-            ia,
-            wa,
-            oa,
-            ma,
-            sa,
-            fa,
-            words[0],
-            words[1],
-            words[2],
-            words[3],
-            words[4],
-            words[5],
-            words[6],
-            words[7],
-            words[8],
-            words[9],
-            words[10],
-            words[11],
-            words[12],
-            words[13],
-            words[14],
-            words[15],
-            words[16],
-            words[17],
-            words[18],
-            words[19],
-            words[20],
-            words[21],
-            words[22],
-            words[23],
-            words[24],
-            words[25],
-            words[26],
-            words[27],
-            words[28],
-            words[29],
-            words[30],
-            words[31],
-            words[32],
-            words[33],
-            words[34],
-            words[35],
-            words[36],
-            words[37],
-            words[38],
-            words[39],
-            words[40],
-            words[41],
-            words[42],
-            words[43],
-            words[44],
-            words[45],
-            words[46],
-            words[47],
-            down,
-            tile,
+            kernel,
+            client,
         );
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "strata_matrix_cohort_scalar_tests.rs"]
+mod scalar_tests;
 
 #[cfg(test)]
 mod tests {
