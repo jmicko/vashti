@@ -1,23 +1,24 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno checkpoint (2026-10-22 10:59UTC): complete expert-cohort candidate merged.**
+**Active Kuno checkpoint (2026-10-22 11:08UTC): complete frozen expert-cohort GPU acceptance running.**
 
 Goal ACTIVE/UNMET. Native-prepared301f1fd1/SHA0e226827 remains installed with
 unchanged gateway36626d30/SHAd3ed07f4 and accepted clean first10.8972/repeat8.7121s.
-The complete optional [cohort producer/matrix/grammar](kuno-prefill-expert-cohorts.md)
-and [sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) are merged
-through64f5f44b. Port-source3efb93e3 passes all196 CPU controls (original183+13);
-root now owns the exclusive target for exact merged-source validation, frozen
-release and offline checks. Selector exact-source CPU controls are separate;
-no new cohort GPU, whole-model, speed, installation or release result yet.
-All original241 GPU plus11 native-admission checks and74 new cohort checks
-remain required, followed by both original proof/profile/recovery chains. Actual
-cohort physical launches and logical original work are distinguished. No API,
-KNT2/KNR2/config/model/frontend/release/reset/reboot change; Vashti changes:none.
-Both GPUs/root are authorized and root alone owns services. Bounded sudo
-refresher1145657 expires15:45:12UTC; never kill shared shell3556. Earlier active
-snapshots below are historical; warm diagnostic has completed and recovered.
-
+The complete [cohort producer/matrix/grammar](kuno-prefill-expert-cohorts.md) and
+[sealed scheduler/pool selection](kuno-prefill-cohort-selection.md) are frozen
+at a75df1fb/workerSHAeb5561fd. Root196 CPU +11 runtime +separate8 exact-source
+metadata controls and429 WGSL/280 matrix layouts PASS. Protected root unit
+`kuno-expert-cohorts-connected-20261022.service` now runs all original241 GPU
+plus11 native-admission checks and74 new cohort checks, both original full
+proof/profile/recovery chains and actual public selection counts. Exact helper
+`check-expert-cohorts-connected-20261022.py` SHA5102c256 under artifact base;
+log`expert-cohorts-connected-20261022.log`. No cohort GPU/speed/install success
+claimed yet. Root alone owns hardware; no simultaneous compilation. All
+logical-versus-physical counts remain distinct. No API/KNT2/KNR2/config/model/
+frontend/release/reset/reboot change; Vashti:none. Preflight Intel50,688,000B /
+NVIDIA compute0, services200/fault0/normal admission. Both GPUs authorized.
+Bounded sudo refresher1145657 expires15:45:12UTC; never kill shared shell3556.
+Earlier active snapshots below are historical; warm diagnostic has recovered.
 
 **Active installed Kuno checkpoint (2026-10-22): native-prepared selected.**
 

@@ -123,3 +123,10 @@ selection evidence. Root alone runs hardware; no concurrent compilation.
 No live GPU, whole-model correctness, performance, installation or release
 result is claimed for this candidate at this checkpoint. Native-prepared301f1fd1
 remains installed. No API/KNT2/KNR2/config/model/frontend change; Vashti:none.
+
+Root protected live acceptance now runs in
+`kuno-expert-cohorts-connected-20261022.service`, swap/core0, no concurrent CPU
+build. Wrapper `check-expert-cohorts-connected-20261022.py` SHA256
+`5102c256d235dca614cac8a088c1fd49e34cc27eed8140cbc37c9bea14022948`;
+log `expert-cohorts-connected-20261022.log` under the same artifact base.
+Only completion plus full physical recovery can establish success.
