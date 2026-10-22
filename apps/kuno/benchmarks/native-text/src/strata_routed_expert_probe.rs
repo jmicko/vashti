@@ -75,7 +75,9 @@ fn fixture(count: usize, down: bool, control: Control) -> ProbeResult<Fixture> {
         && [128, 129, 159, 160, 191, 192, 255].contains(&count);
     let narrow =
         cfg!(feature = "strata-narrow-global") && [1, 3, 7, 8, 9, 15, 16, 17, 31].contains(&count);
-    if !original && !medium && !narrow {
+    let macro64 = cfg!(feature = "strata-expert-macro64")
+        && [64,65,127,128,129,255].contains(&count);
+    if !original && !medium && !narrow && !macro64 {
         return Err("public CubeK expert count".into());
     }
     let (columns, rows) = if down { (640, 2560) } else { (2560, 1280) };
@@ -557,4 +559,19 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(all(test,feature="strata-expert-macro64"))]
+#[test]
+fn all_macro64_public_sizes_have_authentic_original_maps_and_unchanged_role_extents() {
+    for count in [64,65,127,128,129,255] {for down in [false,true] {
+        let f=fixture(count,down,Control::Finite).unwrap();
+        assert_eq!(f.routes.len(),count);
+        assert_eq!(f.map[516+f.group] as usize,count);
+        assert_eq!((f.rows,f.columns),if down{(2560,640)}else{(1280,2560)});
+        assert_eq!(f.input.len(),count*f.columns);
+        assert_eq!(f.weight.len(),f.rows*f.columns);
+        assert_eq!(f.weight_image.len()*2,f.weight.len()+PREFIX);
+        assert!(f.routes.iter().all(|&r|r>20479&&r<TOTAL*10));
+    }}
 }

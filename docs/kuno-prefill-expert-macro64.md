@@ -83,3 +83,16 @@ normal/profile/compiler/source/count/owner/erasure/recovery chains and real ISA.
 No CPU compilation during GPU timing. Original terminal/clean5%-at-EACH/staged
 quality/private-runtime and physical recovery gates precede any installation.
 None of these new outcomes is claimed at source implementation time.
+
+
+First complete sourcec8050a65/worker568f25b6 passes237AppCPU/runtime15/offline
+429/296. Existing original matrix cases, including64-memberGU/DOWN, complete;
+new macro64 suite stops at its first65-member fixture BEFORE dispatch because
+the shared public fixture retained its old closed count whitelist. This is a
+fixture population omission, not a measured kernel failure or speed result.
+Extend that compiled-public whitelist only under this explicit feature with
+64/65/127/128/129/255, preserving every original allowed count. Add an actual
+host-fixture regression for all six sizes and both roles, original maps,
+noncontiguous routes above20479 and original input/weight extents. Intended
+238CPU, unchanged15runtime/429WGSL/296layouts/350GPU. Preserve initial failed
+log and receipt; actual physical recovery remains required before rerun.
