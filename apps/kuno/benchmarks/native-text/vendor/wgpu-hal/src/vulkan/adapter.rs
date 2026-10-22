@@ -2459,6 +2459,19 @@ impl super::Adapter {
         family_index: u32,
         queue_index: u32,
     ) -> Result<crate::OpenDevice<super::Api>, crate::DeviceError> {
+        let queue_properties = unsafe {
+            self.instance
+                .raw
+                .get_physical_device_queue_family_properties(self.raw)
+        };
+        let primary = queue_properties
+            .get(family_index as usize)
+            .expect("adopted Vulkan queue family must exist");
+        assert!(
+            queue_index < primary.queue_count,
+            "adopted Vulkan queue must exist"
+        );
+        let queue_flags = primary.queue_flags;
         let mem_properties = {
             profiling::scope!("vkGetPhysicalDeviceMemoryProperties");
             unsafe {
@@ -2759,6 +2772,7 @@ impl super::Adapter {
         let shared = Arc::new(super::DeviceShared {
             raw: raw_device,
             family_index,
+            queue_flags,
             kuno_transfer_family: core::sync::atomic::AtomicU32::new(u32::MAX),
             kuno_transfer_submission: Mutex::new(()),
             kuno_compute_family: core::sync::atomic::AtomicU32::new(u32::MAX),

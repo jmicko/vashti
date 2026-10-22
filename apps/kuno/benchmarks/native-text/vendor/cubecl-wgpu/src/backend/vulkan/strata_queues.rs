@@ -1,6 +1,36 @@
 //! Select real independent Intel queues; never infer queue1 in family0.
 use ash::vk;
 
+pub(super) fn supports_timestamps(properties: &[vk::QueueFamilyProperties], family: u32) -> bool {
+    properties
+        .get(family as usize)
+        .is_some_and(|q| q.queue_count > 0 && q.timestamp_valid_bits >= 36)
+}
+
+/// Select a real primary family, never a logical lane or a second queue in a
+/// one-queue family. The explicit compute candidate declines unsupported
+/// topologies instead of silently falling back to the render engine.
+pub(super) fn main_family(
+    properties: &[vk::QueueFamilyProperties],
+    compute_only: bool,
+) -> Option<u32> {
+    if !compute_only {
+        families(properties, 0)?;
+        return Some(0);
+    }
+    properties.iter().enumerate().find_map(|(i, q)| {
+        if q.queue_count == 0
+            || !q.queue_flags.contains(vk::QueueFlags::COMPUTE)
+            || q.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+        {
+            return None;
+        }
+        let main = u32::try_from(i).ok()?;
+        families(properties, main)?;
+        Some(main)
+    })
+}
+
 pub(super) fn families(properties: &[vk::QueueFamilyProperties], main: u32) -> Option<(u32, u32)> {
     let primary = properties.get(main as usize)?;
     if primary.queue_count == 0 || !primary.queue_flags.contains(vk::QueueFlags::COMPUTE) {
@@ -73,5 +103,65 @@ mod tests {
         let g = vk::QueueFlags::GRAPHICS;
         let topology = [q(c | g, 1), q(c | g, 1), q(t, 0), q(c, 1), q(t, 1)];
         assert_eq!(families(&topology, 0), Some((3, 4)));
+    }
+
+    #[test]
+    fn compute_primary_preserves_three_distinct_actual_queue_zero_roles() {
+        let c = vk::QueueFlags::COMPUTE;
+        let t = vk::QueueFlags::TRANSFER;
+        let g = vk::QueueFlags::GRAPHICS;
+        let topology = [q(g | c | t, 1), q(c | t, 1), q(t, 1)];
+        assert_eq!(main_family(&topology, false), Some(0));
+        let main = main_family(&topology, true).unwrap();
+        let (draft, copy) = families(&topology, main).unwrap();
+        assert_eq!([main, draft, copy], [1, 0, 2]);
+        assert_eq!(
+            [main, draft, copy].map(|i| topology[i as usize].queue_count),
+            [1; 3]
+        );
+    }
+
+    #[test]
+    fn compute_primary_is_capability_based_even_when_families_are_reordered() {
+        let c = vk::QueueFlags::COMPUTE;
+        let t = vk::QueueFlags::TRANSFER;
+        let g = vk::QueueFlags::GRAPHICS;
+        let topology = [q(t, 1), q(c, 0), q(g | c | t, 1), q(c | t, 1)];
+        assert_eq!(main_family(&topology, true), Some(3));
+        assert_eq!(families(&topology, 3), Some((2, 0)));
+    }
+
+    #[test]
+    fn compute_primary_refuses_missing_zero_count_or_aliased_roles() {
+        let c = vk::QueueFlags::COMPUTE;
+        let t = vk::QueueFlags::TRANSFER;
+        let g = vk::QueueFlags::GRAPHICS;
+        for topology in [
+            vec![],
+            vec![q(g | c, 1), q(t, 1)],
+            vec![q(g | c, 1), q(c, 0), q(t, 1)],
+            vec![q(c, 1), q(t, 1)],
+            vec![q(g | c, 1), q(c, 1), q(t, 0)],
+            vec![q(g | c, 1), q(c | t, 1)],
+        ] {
+            assert_eq!(main_family(&topology, true), None);
+        }
+    }
+
+    #[test]
+    fn timestamp_admission_checks_actual_selected_family_not_render_family_zero() {
+        let mut topology = [
+            q(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE, 1),
+            q(vk::QueueFlags::COMPUTE, 1),
+        ];
+        topology[0].timestamp_valid_bits = 64;
+        for bits in [0, 35, 36, 64] {
+            topology[1].timestamp_valid_bits = bits;
+            assert!(supports_timestamps(&topology, 0));
+            assert_eq!(supports_timestamps(&topology, 1), bits >= 36);
+        }
+        topology[1].queue_count = 0;
+        assert!(!supports_timestamps(&topology, 1));
+        assert!(!supports_timestamps(&topology, 9));
     }
 }

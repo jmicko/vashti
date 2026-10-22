@@ -1,5 +1,27 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno checkpoint (2026-10-22 09:03UTC): first-use CPU/queue work.**
+
+Goal ACTIVE/UNMET, user enabled Ultra; both GPUs/root testing authorized. Use
+ONLY isolated Kuno worktree `codex/strata-rust-port`. Installed worker/gateway
+identities below remain unchanged. Complete global-narrow clean first12.320945s
+missed original5% gate by6.78ms; repeat8.699633s is21.96% shorter. Retain FAIL
+receipt; no staged API/quality/install run. Full241 GPU and both profile proof
+chains already pass for frozene6d04fbc/SHA0cba555e. New normal-schedule cold flat
+CPU+PMU diagnostic passes recovery: RCS51.4135%, BCS16.1394%, CCS0%. These engine
+active fractions are NOT EU utilization; raw tmpfs samples removed. See exact
+receipts/limits in [global narrow](kuno-prefill-global-narrow.md).
+
+[Complete compute-primary candidate](kuno-prefill-compute-main.md) is now being
+implemented/CPU-checked: real capability-based main/draft/copy selection plus
+HAL legal stage masks, full original access dependencies and concurrent owners.
+No GPU/performance claim yet. Second concrete first-use target is duplicate
+ordinary/native pipeline executable construction; preserve original full Wgpu
+validation when removing unused driver work. No API/KNT2/KNR2/config/model/
+frontend/release/reset/reboot change; required Vashti changes:none. Bounded sudo
+refresher1145657/shared shell3556 expires15:45:12UTC. Earlier handoffs follow.
+
+
 **Paused Kuno-only goal: match Strata (2026-10-21; native32 installed).**
 See [the exact accepted backend and remaining work](kuno-strata-parity-goal.md#accepted-native32-installation).
 Selected worker source3fffc266 / SHAeac78ce0 is installed with unchanged

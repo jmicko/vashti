@@ -155,11 +155,25 @@ fn request_device(
             .get_physical_device_features(adapter.raw_physical_device())
     };
 
-    let family_index = 0;
     let queue_properties = unsafe {
         ash.raw_instance()
             .get_physical_device_queue_family_properties(adapter.raw_physical_device())
     };
+    let family_index = if preserve_limits {
+        strata_queues::main_family(&queue_properties, cfg!(feature = "kuno-compute-main"))?
+    } else {
+        0
+    };
+    if preserve_limits
+        && features.intersects(
+            Features::TIMESTAMP_QUERY
+                | Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+                | Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+        )
+        && !strata_queues::supports_timestamps(&queue_properties, family_index)
+    {
+        return None;
+    }
     let native_families = if preserve_limits {
         // Real separate compute and transfer families, each queue0 requested
         // below. B70 family0 has one queue; requesting queue1 would be invalid.

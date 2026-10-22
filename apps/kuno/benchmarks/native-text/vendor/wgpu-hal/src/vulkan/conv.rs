@@ -1,3 +1,4 @@
+pub use super::kuno_queue_barriers::{map_buffer_usage_to_barrier, map_texture_usage_to_barrier};
 use alloc::vec::Vec;
 
 use ash::vk;
@@ -266,69 +267,6 @@ pub fn map_texture_usage(usage: wgt::TextureUses) -> vk::ImageUsageFlags {
     flags
 }
 
-pub fn map_texture_usage_to_barrier(
-    usage: wgt::TextureUses,
-) -> (vk::PipelineStageFlags, vk::AccessFlags) {
-    let mut stages = vk::PipelineStageFlags::empty();
-    let mut access = vk::AccessFlags::empty();
-    let shader_stages = vk::PipelineStageFlags::VERTEX_SHADER
-        | vk::PipelineStageFlags::FRAGMENT_SHADER
-        | vk::PipelineStageFlags::COMPUTE_SHADER;
-
-    if usage.contains(wgt::TextureUses::COPY_SRC) {
-        stages |= vk::PipelineStageFlags::TRANSFER;
-        access |= vk::AccessFlags::TRANSFER_READ;
-    }
-    if usage.contains(wgt::TextureUses::COPY_DST) {
-        stages |= vk::PipelineStageFlags::TRANSFER;
-        access |= vk::AccessFlags::TRANSFER_WRITE;
-    }
-    if usage.contains(wgt::TextureUses::RESOURCE) {
-        stages |= shader_stages;
-        access |= vk::AccessFlags::SHADER_READ;
-    }
-    if usage.contains(wgt::TextureUses::COLOR_TARGET) {
-        stages |= vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
-        access |= vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE;
-    }
-    if usage.intersects(wgt::TextureUses::DEPTH_STENCIL_READ) {
-        stages |= vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-            | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS;
-        access |= vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ;
-    }
-    if usage.intersects(wgt::TextureUses::DEPTH_STENCIL_WRITE) {
-        stages |= vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-            | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS;
-        access |= vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE;
-    }
-    if usage.intersects(
-        wgt::TextureUses::STORAGE_READ_ONLY
-            | wgt::TextureUses::STORAGE_READ_WRITE
-            | wgt::TextureUses::STORAGE_ATOMIC,
-    ) {
-        stages |= shader_stages;
-        access |= vk::AccessFlags::SHADER_READ;
-    }
-    if usage.intersects(
-        wgt::TextureUses::STORAGE_WRITE_ONLY
-            | wgt::TextureUses::STORAGE_READ_WRITE
-            | wgt::TextureUses::STORAGE_ATOMIC,
-    ) {
-        stages |= shader_stages;
-        access |= vk::AccessFlags::SHADER_WRITE;
-    }
-
-    if usage == wgt::TextureUses::UNINITIALIZED || usage == wgt::TextureUses::PRESENT {
-        (
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::AccessFlags::empty(),
-        )
-    } else {
-        (stages, access)
-    }
-}
-
 pub fn map_vk_image_usage(usage: vk::ImageUsageFlags) -> wgt::TextureUses {
     let mut bits = wgt::TextureUses::empty();
     if usage.contains(vk::ImageUsageFlags::TRANSFER_SRC) {
@@ -568,73 +506,6 @@ pub fn map_buffer_usage(usage: wgt::BufferUses) -> vk::BufferUsageFlags {
         flags |= vk::BufferUsageFlags::TRANSFER_DST;
     }
     flags
-}
-
-pub fn map_buffer_usage_to_barrier(
-    usage: wgt::BufferUses,
-) -> (vk::PipelineStageFlags, vk::AccessFlags) {
-    let mut stages = vk::PipelineStageFlags::empty();
-    let mut access = vk::AccessFlags::empty();
-    let shader_stages = vk::PipelineStageFlags::VERTEX_SHADER
-        | vk::PipelineStageFlags::FRAGMENT_SHADER
-        | vk::PipelineStageFlags::COMPUTE_SHADER;
-
-    if usage.contains(wgt::BufferUses::MAP_READ) {
-        stages |= vk::PipelineStageFlags::HOST;
-        access |= vk::AccessFlags::HOST_READ;
-    }
-    if usage.contains(wgt::BufferUses::MAP_WRITE) {
-        stages |= vk::PipelineStageFlags::HOST;
-        access |= vk::AccessFlags::HOST_WRITE;
-    }
-    if usage.contains(wgt::BufferUses::COPY_SRC) {
-        stages |= vk::PipelineStageFlags::TRANSFER;
-        access |= vk::AccessFlags::TRANSFER_READ;
-    }
-    if usage.contains(wgt::BufferUses::COPY_DST) {
-        stages |= vk::PipelineStageFlags::TRANSFER;
-        access |= vk::AccessFlags::TRANSFER_WRITE;
-    }
-    if usage.contains(wgt::BufferUses::UNIFORM) {
-        stages |= shader_stages;
-        access |= vk::AccessFlags::UNIFORM_READ;
-    }
-    if usage.intersects(wgt::BufferUses::STORAGE_READ_ONLY) {
-        stages |= shader_stages;
-        access |= vk::AccessFlags::SHADER_READ;
-    }
-    if usage.intersects(wgt::BufferUses::STORAGE_READ_WRITE) {
-        stages |= shader_stages;
-        access |= vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE;
-    }
-    if usage.contains(wgt::BufferUses::INDEX) {
-        stages |= vk::PipelineStageFlags::VERTEX_INPUT;
-        access |= vk::AccessFlags::INDEX_READ;
-    }
-    if usage.contains(wgt::BufferUses::VERTEX) {
-        stages |= vk::PipelineStageFlags::VERTEX_INPUT;
-        access |= vk::AccessFlags::VERTEX_ATTRIBUTE_READ;
-    }
-    if usage.contains(wgt::BufferUses::INDIRECT) {
-        stages |= vk::PipelineStageFlags::DRAW_INDIRECT;
-        access |= vk::AccessFlags::INDIRECT_COMMAND_READ;
-    }
-    if usage.intersects(
-        wgt::BufferUses::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_INPUT
-            | wgt::BufferUses::TOP_LEVEL_ACCELERATION_STRUCTURE_INPUT
-            | wgt::BufferUses::ACCELERATION_STRUCTURE_SCRATCH,
-    ) {
-        stages |= vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR;
-        access |= vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR
-            | vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR
-            | vk::AccessFlags::SHADER_READ;
-    }
-    if usage.contains(wgt::BufferUses::ACCELERATION_STRUCTURE_QUERY) {
-        stages |= vk::PipelineStageFlags::TRANSFER;
-        access |= vk::AccessFlags::TRANSFER_WRITE;
-    }
-
-    (stages, access)
 }
 
 pub fn map_view_dimension(dim: wgt::TextureViewDimension) -> vk::ImageViewType {

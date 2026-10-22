@@ -152,6 +152,10 @@ mod strata_head;
 #[cfg(test)]
 #[path = "../vendor/cubecl-wgpu/src/backend/vulkan/strata_queues.rs"]
 mod strata_queue_topology_tests;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../vendor/wgpu-hal/src/vulkan/kuno_queue_barriers.rs"]
+mod strata_queue_barrier_controls;
 mod strata_sampler;
 mod strata_shared_embedding;
 mod strata_shared_weights;

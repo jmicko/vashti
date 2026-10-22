@@ -27,6 +27,7 @@ Otherwise, we manage a pool of `VkFence` objects behind each `hal::Fence`.
 mod adapter;
 mod command;
 pub mod conv;
+mod kuno_queue_barriers;
 mod device;
 pub use device::kuno_native_workgroup_layout;
 mod kuno_independent_subgroup;
@@ -478,6 +479,10 @@ struct RenderPassKey {
 struct DeviceShared {
     raw: ash::Device,
     family_index: u32,
+    // Immutable capabilities of the ACTUAL adopted primary command-pool
+    // family. Headless Kuno may use compute-only CCS, with graphics RCS as
+    // its distinct draft queue. Never infer these from logical MAIN0.
+    queue_flags: vk::QueueFlags,
     // Configured once, before allocation, only for a device that actually
     // requested this additional queue. No process-global queue inference.
     kuno_transfer_family: core::sync::atomic::AtomicU32,

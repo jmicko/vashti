@@ -47,6 +47,7 @@ cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
+strata-compute-main = ["strata-intel-core", "cubecl-wgpu/kuno-compute-main"]
 strata-narrow-global = ["strata-native-expert-wide", "strata-native-expert-bulk", "strata-expert-scratch-ring", "strata-intel-core"]
 strata-dequant-record32 = ["strata-intel-core"]
 strata-copy-cohorts = ["strata-prefill-miss-ring", "strata-native-expert-bulk", "strata-public-host-clock", "cubecl-wgpu/kuno-copy-cohorts"]
@@ -110,6 +111,7 @@ cpu-work-stealing = ["kuno-text/cpu-work-stealing-lab"]
 cpu-q8-two-pass = ["kuno-text/cpu-q8-two-pass"]
 
 [dev-dependencies]
+wgpu-types = "=29.0.4"
 rspirv = "=0.12.0"
 tempfile = "3"
 

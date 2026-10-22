@@ -5,7 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[4]
 out=pathlib.Path('/media/jmicko/faststore/kuno-development')/sys.argv[1]
 out.mkdir()
 options=set(sys.argv[2:])
-if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu','--unused-descriptors','--route-registers','--copy-cohorts','--qsa-packed-cache','--expert-medium','--qsa-reference-schedule','--dequant-record32','--narrow-global'}:raise ValueError('build feature selector')
+if options-{'--eight','--resident-224','--resident-240','--intel-core','--gpu-adaptive-usage','--capped-check','--cubek-gemm','--cubek-tilewise','--cubek-m64','--cubek-balanced','--cubek-wide','--native-wide','--native-wide32','--native-expert-wide','--qsa-paired','--qsa-pv-gather','--qsa-local-fault','--native-expert-bulk','--miss-ring','--parallel-loading','--push-descriptors','--gdn-subgroup16','--qsa-fma','--qsa-uniform','--expert-scratch-ring','--qsa-compact','--public-host-clock','--qsa-xmx','--subgroup-publish','--direct-gu','--unused-descriptors','--route-registers','--copy-cohorts','--qsa-packed-cache','--expert-medium','--qsa-reference-schedule','--dequant-record32','--narrow-global','--compute-main'}:raise ValueError('build feature selector')
 if '--gpu-adaptive-usage' in options and '--intel-core' not in options:raise ValueError('GPU route usage requires explicit Intel core selection')
 if '--capped-check' in options and '--intel-core' not in options:raise ValueError('fixed public cap requires explicit Intel core')
 if '--cubek-gemm' in options and '--intel-core' not in options:raise ValueError('CubeK candidate requires explicit Intel core')
@@ -43,6 +43,8 @@ if '--copy-cohorts' in options and not {'--native-expert-bulk','--miss-ring','--
 if '--dequant-record32' in options and '--intel-core' not in options:raise ValueError('record32 dequant requires Intel core')
 if '--narrow-global' in options and not {'--intel-core','--expert-scratch-ring','--native-expert-bulk','--native-expert-wide'} <= options:raise ValueError('global narrow requires complete padded producer, native matrix and bulk owner bundle')
 if '--narrow-global' in options and any(x.startswith('--cubek-') for x in options):raise ValueError('global narrow is a separate native matrix candidate')
+if '--compute-main' in options and '--intel-core' not in options:raise ValueError('compute primary requires explicit Intel core and authentic independent queues')
+features += ['strata-compute-main'] if '--compute-main' in options else []
 features += ['strata-narrow-global'] if '--narrow-global' in options else []
 features += ['strata-dequant-record32'] if '--dequant-record32' in options else []
 features += ['strata-copy-cohorts'] if '--copy-cohorts' in options else []

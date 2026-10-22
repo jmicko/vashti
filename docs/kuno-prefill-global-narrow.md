@@ -126,3 +126,45 @@ against installed3fffc266. It starts original staged full tools/thinking/MAX8/
 semantic/privacy checks ONLY if both clean positions pass. Gateway/installed
 worker remain untouched during this staged test. No benchmark chosen by seed
 or result, and no new ordinary Ollama baseline is being run.
+
+
+## Clean selection and normal-schedule first-use diagnostic
+
+The original terminal-negative/fresh-recovery chain passed. Clean45/4245/4245
+finished first12.320944936/repeat8.699633273s against installed
+12.962279132/11.147390805s. Repeat is21.96% shorter; first is4.948% shorter,
+missing the existing5% threshold by6.779761ms. The selection receipt FAILS;
+no staged quality/API run or installation was started. Keep the complete change,
+without changing the gate or choosing a favorable rerun.
+
+Evidence base remains `/media/jmicko/faststore/kuno-development`:
+`strata-parity-narrow-global-acceptance-20261022-clean-selection-public-summary.json`,
+`native-narrow-global-acceptance-20261022.log`. Wrapper SHA256
+0facb71267bb545798c6bcfbef0290cd34ec0727564be1fb9ab585b4d0374ea9.
+
+A separate clean-mode, fixed-public-only flat CPU+Xe PMU diagnostic keeps the
+normal queue schedule and adds no GPU timestamp command or serialization.
+Root-only instruction-pointer samples and perf counters lived only in/run tmpfs
+and were removed; no stack/register/payload samples. Counters enabled at the
+second request's original rebind_begin and disabled at its last_prompt_input.
+Three real replies45/4245/4245, control interval, zero lost samples, CLOSED and
+physical recovery all pass. It is NOT a clean speed/selection result. The first
+helper attempt failed a receipt assertion after completing/recovering because
+clean mode intentionally has no profile capacity row; that failure is retained.
+The corrected helper requires the row to be absent, not a fabricated proof.
+
+Accepted proof `strata-parity-clean-first-costs-fixed-20261022-cpu-proof.json`,
+flat report with >=0.3% symbols only (39.10% of samples, not a full aggregate)
+`strata-parity-clean-first-costs-fixed-20261022-cpu-symbol-report.txt`, and
+`native-clean-first-costs-fixed-20261022.log`. Helper SHA256
+9905fdeb405785c8555ae642a360b72e8b3ac2539a2b536a528abd1f1b990d09.
+
+Actual Xe engine active/total ticks over12.273s: RCS51.4135%, BCS16.1394%,
+CCS0%. At least32.45% of the interval has neither counted GPU engine active;
+unknown overlap means this is a lower bound. These are engine scheduled-active
+counters, NOT EU/FLOP/memory utilization. PMU forcewake may alter behavior;
+never treat this instrumented interval as a clean benchmark. Current native
+MAIN is physical family0 RCS. A complete compute-only primary candidate must
+also correct HAL buffer/texture shader stage masks and preserve actual copy/
+draft families, concurrent owners, logical lanes and recovery; see
+[kuno-prefill-compute-main.md](kuno-prefill-compute-main.md).
