@@ -1,5 +1,38 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno checkpoint (2026-10-22): complete dual-bank/release validation PASS; no new speed selection.**
+
+Goal UNMET; controller currently usageLimited after the overnight usage limit.
+Complete raw-bank/unit-release source3c90b3ee/worker7b07349b passes213 App CPU,
+13 actual runtime controls (all original11 retained),429 WGSL/280 matrix layouts,
+all326 GPU controls and BOTH full original18-script proof/profile/recovery
+chains. Actual2 separately attested32MiB owners and genuine terminal releases
+match every original execution unit. Protected unit completed exit0/inactive;
+physical GPU recovery passed. Public proof under artifact base:
+`strata-parity-expert-raw-banks-release-20261022-expert-cohorts-public-summary.json`,
+SHA256 0af7699f616d586a612510bcc7ebc0b57980c15205cd3ffa63ba3d42d9b680e1.
+Full details in [raw banks](kuno-prefill-raw-banks.md).
+
+Normal first10.424577118/repeat9.283137399s versus previous complete cohort
+11.156398257/10.239178827s:6.55%/9.34% shorter. Installed native-prepared
+normal10.116598360/9.222042861s still leads (new repeat essentially tied).
+Strata5.3515s remains faster. Keep complete bundle; no original clean selection,
+staged quality or installation of this successor. Previously accepted301f1fd1/
+0e226827 native-prepared worker and36626d30/d3ed07f4 gateway remain installed.
+
+Next optional QSA software pipeline is COMPLETE SOURCE ONLY on isolated
+`codex/qsa-prefetch`, commitae24a145fb86b5775d360be113e83b7ba771f8df,
+parent2cf3295a; not merged, compiled or GPU-tested. It combines guarded K/Q
+lookahead and four-cell V/probability prefetch; both independent static reviews
+find no blocker. Current exact native ISA proves serial sends/consumption;
+future native assembly must show real earlier sends without spills. Retain all
+original numerical/owner/status/fault gates; feature-specific static opcode
+counts change because of unrolling, not arithmetic relaxation. No API/KNT2/
+KNR2/config/model/frontend/release/reset/reboot change; required Vashti:none.
+Bounded sudo refresher expired15:45:12UTC; do not assume credentials remain.
+User requested a cost/status checkpoint before changing thinking mode; no new
+GPU test started. Earlier active snapshots below are historical.
+
 **Active Kuno checkpoint (2026-10-22): genuine dual raw-bank bundle under construction.**
 
 Read [the complete raw-bank design](kuno-prefill-raw-banks.md). Actual full-ring
