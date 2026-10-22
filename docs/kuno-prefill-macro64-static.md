@@ -62,3 +62,9 @@ and unchanged zero-spill/compiler/math/recovery gates precede performance.
 Actual6532 production products per long request still prove selection.
 No CPU compilation during hardware timing. One NEW-source clean comparison
 may follow completed correctness/recovery; prior failed comparison is retained.
+
+Initial source6e6dbb62 CPU compilation rejects mixed constant/runtime expand
+types in the stage-stride bindings. Explicit usize::cast_from lifts each fixed
+constant into the same CubeCL NativeExpand type as its original runtime arm.
+No hardware test ran; preserve initial compiler diagnostics and rerun255 CPU
+controls before worker/offline/GPU work.

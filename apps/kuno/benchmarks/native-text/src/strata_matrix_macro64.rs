@@ -206,12 +206,12 @@ pub(super) fn macro64_product<F: Float>(
     let token_base = usize::cast_from(CUBE_POS_Y) * 64;
     let row_base = usize::cast_from(CUBE_POS_X) * 64;
     let stage_columns = if comptime!(cfg!(feature = "strata-macro64-static-geometry")) {
-        comptime!(if down { 640usize } else { 2560usize })
+        usize::cast_from(comptime!(if down { 640usize } else { 2560usize }))
     } else {
         columns
     };
     let stage_rows = if comptime!(cfg!(feature = "strata-macro64-static-geometry")) {
-        comptime!(if down { 2560usize } else { 1280usize })
+        usize::cast_from(comptime!(if down { 2560usize } else { 1280usize }))
     } else {
         rows
     };
