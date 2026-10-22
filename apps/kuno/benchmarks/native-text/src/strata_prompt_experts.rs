@@ -8,6 +8,9 @@ use kuno_text::model::BoundGraph;
 #[cfg(any(test, feature = "strata-prefill-miss-ring"))]
 #[path = "strata_prompt_miss_ring.rs"]
 mod miss_ring;
+#[cfg(any(test, feature = "strata-expert-cohorts"))]
+#[path = "strata_prompt_raw_banks.rs"]
+mod raw_banks;
 #[path = "strata_prompt_expert_numeric_probe.rs"]
 mod public_numeric;
 pub(crate) use public_numeric::cases as public_dequant_numeric;
@@ -507,6 +510,24 @@ pub(crate) fn enqueue(
     )
 }
 
+#[cfg(feature = "strata-expert-cohorts")]
+fn prefetch_raw_units(
+    client: &ComputeClient<WgpuRuntime>,
+    plan: &mut raw_banks::Plan,
+    banks: &[Handle; 2],
+    layer_sources: &crate::strata_global_sources::PromptLayer<'_, '_, '_>,
+    map: &[u32], roles: [usize; 3],
+) -> Result<()> {
+    let stride=roles.iter().sum::<usize>();
+    while let Some(unit)=plan.issue_next()? {
+        for group in unit.first..unit.end {
+            let slot=plan.slot(unit,group)?.unwrap_or(RAW_SLOTS);
+            layer_sources.stage_group_on(client,map[4+group] as usize,roles,&banks[unit.bank],slot*stride)?;
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn enqueue_original(
     client: &ComputeClient<WgpuRuntime>,
@@ -576,6 +597,21 @@ fn enqueue_original(
     crate::strata_prefill_profile::expert_member_geometry(map, groups);
     crate::strata_prefill_profile::count("expert_group_count", groups as u64);
     crate::strata_prefill_profile::count("expert_fp16_image_bytes", (groups * DQ_WORDS * 4) as u64);
+    #[cfg(feature = "strata-expert-cohorts")]
+    let raw_banks = match crate::strata_prompt::secondary_raw_bank()? {
+        Some(secondary) => {
+            if stage[2].size_in_used()!=allocation::RAW_RING_BYTES || secondary.size_in_used()!=allocation::RAW_RING_BYTES
+                || secondary.size()!=allocation::RAW_RING_BYTES || secondary.offset_start.unwrap_or(0)!=0 || secondary.offset_end.unwrap_or(0)!=0
+                || secondary.stream!=stage[2].stream
+                || secondary.clone().binding().memory.allocation_id()==stage[2].clone().binding().memory.allocation_id() {
+                return Err(crate::strata_prompt::invalid_buffer_length());
+            }
+            Some([stage[2].clone(),secondary])
+        }
+        None => None,
+    };
+    #[cfg(feature = "strata-expert-cohorts")]
+    let mut raw_plan = None;
     #[cfg(feature = "strata-prefill-miss-ring")]
     let (resident_raw, mut miss_ring) = {
         let raw = resident_raw_slot(&stage[2], role_bytes)?;
@@ -586,8 +622,20 @@ fn enqueue_original(
         if modes.capacity() > 512 {
             return Err(crate::strata_prompt::invalid_buffer_length());
         }
-        (raw, miss_ring::Ring::new(&modes)?)
+        #[cfg(feature = "strata-expert-cohorts")]
+        if raw_banks.is_some() {
+            raw_plan=Some(raw_banks::Plan::new(&map[516..516+groups],&modes)?);
+            (raw,None)
+        } else {
+            (raw,Some(miss_ring::Ring::new(&modes)?))
+        }
+        #[cfg(not(feature = "strata-expert-cohorts"))]
+        { (raw,Some(miss_ring::Ring::new(&modes)?)) }
     };
+    #[cfg(feature = "strata-expert-cohorts")]
+    if let (Some(plan),Some(banks))=(raw_plan.as_mut(),raw_banks.as_ref()) {
+        prefetch_raw_units(client,plan,banks,&layer_sources,map,role_bytes)?;
+    }
     #[cfg(not(feature = "strata-prefill-miss-ring"))]
     let mut issued = 0;
     let mut group = 0;
@@ -595,25 +643,51 @@ fn enqueue_original(
     let mut legacy_scratch_slots=0u8;
     while group < groups {
         #[cfg(feature = "strata-expert-cohorts")]
-        if let Some(end) = cohorts::enqueue_small(client, graph, sources, layer, geometry, owners, fault, count, map, &stage, &layer_sources, &mut miss_ring, group, groups)? {
-            group = end;
-            continue;
+        let active_unit=raw_plan.as_ref().map(|plan|plan.current(group)).transpose()?;
+        #[cfg(feature = "strata-expert-cohorts")]
+        let banked_stage;
+        #[cfg(feature = "strata-expert-cohorts")]
+        let stage=if let Some(unit)=active_unit {
+            let banks=raw_banks.as_ref().ok_or(Error::InvalidBufferLength)?;
+            banked_stage=[stage[0].clone(),stage[1].clone(),banks[unit.bank].clone()];
+            &banked_stage
+        } else { &stage };
+        #[cfg(feature = "strata-expert-cohorts")]
+        if let Some(unit)=active_unit {
+            if map[516+group]<32 {
+                let plan=raw_plan.as_mut().unwrap();
+                cohorts::enqueue_unit(client,geometry,owners,fault,count,map,stage,&layer_sources,unit.first,plan.slots(unit)?)?;
+                plan.consumed(unit)?;
+                prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
+                group=unit.end;
+                continue;
+            }
+            if unit.end!=group+1 {return Err(Error::InvalidBufferLength);}
+        }
+        #[cfg(feature = "strata-expert-cohorts")]
+        if let Some(ring)=miss_ring.as_mut() {
+            if let Some(end) = cohorts::enqueue_small(client, graph, sources, layer, geometry, owners, fault, count, map, &stage, &layer_sources, ring, group, groups)? {
+                group = end;
+                continue;
+            }
         }
         legacy_scratch_groups+=1;
         legacy_scratch_slots|=1u8<<(group%2);
         let mut timing = crate::strata_prefill_profile::CpuTimer::new();
         #[cfg(feature = "strata-prefill-miss-ring")]
-        while let Some((next, slot)) = miss_ring.issue_next()? {
-            layer_sources.stage_group_on(
-                client,
-                map[4 + next] as usize,
-                role_bytes,
-                &stage[2],
-                slot.map_or(RAW_SLOTS, |s| s) * raw_stride,
-            )?;
+        if let Some(ring)=miss_ring.as_mut() {
+            while let Some((next, slot)) = ring.issue_next()? {
+                layer_sources.stage_group_on(client,map[4+next] as usize,role_bytes,&stage[2],slot.map_or(RAW_SLOTS,|s|s)*raw_stride)?;
+            }
         }
         #[cfg(feature = "strata-prefill-miss-ring")]
-        let current_raw = miss_ring.ready_slot(group)?;
+        let current_raw = {
+            #[cfg(feature = "strata-expert-cohorts")]
+            if let Some(unit)=active_unit { raw_plan.as_ref().unwrap().slot(unit,group)? }
+            else { miss_ring.as_ref().unwrap().ready_slot(group)? }
+            #[cfg(not(feature = "strata-expert-cohorts"))]
+            { miss_ring.as_ref().unwrap().ready_slot(group)? }
+        };
         #[cfg(not(feature = "strata-prefill-miss-ring"))]
         while issued < groups && issued < group + RAW_SLOTS {
             layer_sources.stage_group_on(
@@ -707,9 +781,17 @@ fn enqueue_original(
                 {
                     #[cfg(feature = "strata-prefill-miss-ring")]
                     {
-                        current_raw
-                            .map_or_else(|| resident_raw.clone(), |slot| raw_slots[slot].clone())
-                            .binding()
+                        #[cfg(feature = "strata-expert-cohorts")]
+                        if active_unit.is_some() {
+                            match current_raw {
+                                Some(slot)=>raw_slot(&stage[2],slot,role_bytes)?,
+                                None=>resident_raw_slot(&stage[2],role_bytes)?,
+                            }.binding()
+                        } else {
+                            current_raw.map_or_else(||resident_raw.clone(),|slot|raw_slots[slot].clone()).binding()
+                        }
+                        #[cfg(not(feature = "strata-expert-cohorts"))]
+                        { current_raw.map_or_else(||resident_raw.clone(),|slot|raw_slots[slot].clone()).binding() }
                     }
                     #[cfg(not(feature = "strata-prefill-miss-ring"))]
                     {
@@ -829,12 +911,28 @@ fn enqueue_original(
             true,
         )?;
         timing.mark("expert_cpu_down_product");
+        #[cfg(feature = "strata-expert-cohorts")]
+        if let Some(unit)=active_unit {
+            let plan=raw_plan.as_mut().unwrap();
+            plan.consumed(unit)?;
+            prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
+        }
         #[cfg(feature = "strata-prefill-miss-ring")]
-        miss_ring.consumed(group)?;
+        if let Some(ring)=miss_ring.as_mut() { ring.consumed(group)?; }
         group += 1;
     }
     #[cfg(feature = "strata-prefill-miss-ring")]
-    miss_ring.finish()?;
+    if let Some(ring)=miss_ring.as_ref() { ring.finish()?; }
+    #[cfg(feature = "strata-expert-cohorts")]
+    if let Some(plan)=raw_plan.as_ref() {
+        let (misses,resident,peak,cohorts)=plan.finish()?;
+        for (name,value) in [
+            ("expert_raw_bank_layers",1u64),("expert_raw_bank_roots",2),
+            ("expert_raw_bank_capacity_bytes",2*allocation::RAW_RING_BYTES),
+            ("expert_streamed_groups",misses as u64),("expert_resident_groups",resident as u64),
+            ("expert_raw_slots_peak_sum",peak as u64),("expert_raw_copy_cohorts",cohorts as u64),
+        ] { crate::strata_prefill_profile::count(name,value); }
+    }
     #[cfg(feature = "strata-expert-scratch-ring")]
     {
         crate::strata_prefill_profile::count("expert_native_scratch_groups", legacy_scratch_groups as u64);

@@ -258,6 +258,34 @@ pub(super) fn enqueue_small(
             slot.unwrap_or(RAW_SLOTS) * stride,
         )?;
     }
+    let mut slots = Zeroizing::new([8u8; MAX]);
+    let mut end = first;
+    while end < total && end < first + MAX && map[516 + end] < 32 && ring.peek_slot(end)?.is_some() {
+        slots[end-first] = ring.peek_slot(end)?.unwrap().unwrap_or(RAW_SLOTS) as u8;
+        end += 1;
+    }
+    enqueue_unit(client, geometry, owners, fault, count, map, stage, layer_sources, first, &slots[..end-first])?;
+    // Preserve the original fallback ring and the complete post-matrix COPY cut.
+    for group in first..end { ring.consumed(group)?; }
+    while let Some((next, slot)) = ring.issue_next()? {
+        layer_sources.stage_group_on(client, map[4+next] as usize, roles, &stage[2], slot.unwrap_or(RAW_SLOTS)*stride)?;
+    }
+    Ok(Some(end))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn enqueue_unit(
+    client: &ComputeClient<WgpuRuntime>,
+    geometry: q::grouped_moe::Geometry,
+    owners: &[Handle; 7], fault: &Handle, count: usize, map: &[u32],
+    stage: &[Handle; 3],
+    layer_sources: &crate::strata_global_sources::PromptLayer<'_, '_, '_>,
+    first: usize, slots: &[u8],
+) -> Result<()> {
+    if slots.is_empty() || slots.len()>MAX || first.checked_add(slots.len()).is_none_or(|n|n>512)
+        || stage[2].size_in_used()!=allocation::RAW_RING_BYTES { return Err(Error::InvalidBufferLength); }
+    let roles=geometry.projections().map(|p|p.expert_bytes());
+    let stride=roles.iter().sum::<usize>();
     let mut words = Zeroizing::new([0u32; WORDS]);
     words[0] = count as u32;
     words[1] = 2560;
@@ -268,32 +296,20 @@ pub(super) fn enqueue_small(
     words[8] = (stride / 4) as u32;
     let mixed = super::super::mixed_input_image(&owners[1], count, 0, 2560, false);
     words[12] = u32::from(mixed.is_some());
-    let mut end = first;
-    let mut rows = 0;
-    while end < total && end < first + MAX && map[516 + end] < 32 && ring.peek_slot(end)?.is_some()
-    {
-        let members = map[516 + end] as usize;
-        let tile = if members <= 8 { 8 } else { 16 };
-        let padded = members.div_ceil(tile) * tile;
-        if rows + padded > groups::CAPACITY {
-            break;
-        }
-        let slot = ring.peek_slot(end)?.unwrap();
-        words[16 + (end - first) * 4..20 + (end - first) * 4].copy_from_slice(&[
-            end as u32,
-            members as u32,
-            rows as u32,
-            slot.unwrap_or(RAW_SLOTS) as u32,
-        ]);
-        rows += padded;
-        words[10] = words[10].max(members as u32);
-        end += 1;
+    let n=slots.len();
+    let mut rows=0;
+    for (i,&slot) in slots.iter().enumerate() {
+        let group=first+i;
+        let members=map[516+group] as usize;
+        if members==0 || members>=32 { return Err(Error::InvalidBufferLength); }
+        let tile=if members<=8 {8}else{16};
+        let padded=members.div_ceil(tile)*tile;
+        if rows+padded>groups::CAPACITY { return Err(Error::InvalidBufferLength); }
+        words[16+i*4..20+i*4].copy_from_slice(&[group as u32,members as u32,rows as u32,u32::from(slot)]);
+        rows+=padded;
+        words[10]=words[10].max(members as u32);
     }
-    if end == first {
-        return Err(Error::InvalidBufferLength);
-    }
-    let n = end - first;
-    words[9] = n as u32;
+    words[9]=n as u32;
     validate_words(&words)?;
     crate::strata_prefill_profile::count("expert_narrow_global_groups", n as u64);
     crate::strata_prefill_profile::count(
@@ -405,24 +421,6 @@ pub(super) fn enqueue_small(
             )?;
         }
     }
-    // Queue the complete math before refilling, as the original producer does.
-    // The real COPY queue cut then prevents the next cohort's whole-ring DQ
-    // wait from also delaying this cohort's already decoded GU/DOWN products.
-    // Both raw readers were queued above and DOWN-image retains its original
-    // release: physical copies may overlap these GEMMs while still waiting for
-    // actual raw reads. Consumption advances bookkeeping, never completion.
-    for group in first..end {
-        ring.consumed(group)?;
-    }
-    while let Some((next, slot)) = ring.issue_next()? {
-        layer_sources.stage_group_on(
-            client,
-            map[4 + next] as usize,
-            roles,
-            &stage[2],
-            slot.unwrap_or(RAW_SLOTS) * stride,
-        )?;
-    }
     for (name, value) in [
         ("expert_cohort_groups", n as u64),
         ("expert_cohort_batches", 1),
@@ -439,7 +437,7 @@ pub(super) fn enqueue_small(
     ] {
         crate::strata_prefill_profile::count(name, value);
     }
-    Ok(Some(end))
+    Ok(())
 }
 
 #[cfg(test)]
