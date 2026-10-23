@@ -61,11 +61,67 @@ Initial outer preflight retained old39-feature filename and correctly stopped
 before dispatch. Fixed helper1fdead5635f88d6dc675f9fba13de8d3ac062f23a2701242a269df364b5b4467
 uses the actual40-feature list; original18-script harness unchanged.
 
-Protected operators pass the first18 original BF16 matrices, then the first
-new512x320 case stops before its report with public_matrix_numeric_failed.
+Protected operators pass all18 original BF16 matrices AND the new finite512x320
+and640x320 matrices with zero mismatches (maxAbs6.67572e-6). The poison case
+then stops with public_matrix_numeric_failed. The initial summary reader showed
+only the first18 log lines; that was a reporting truncation, not evidence the
+first new finite case failed.
 No model speed run or acceptance; original failed receipt/compiler code preserved
 under strata-parity-gr-wide-tail-20261022-operators; physical recovery passes.
 Do not infer arithmetic failure versus host validation from the broad label.
 A public-entry-only error diagnostic will expose the actual fixed failure label;
 private inference logging is unchanged. Continue the complete source, retaining
 all original bounds/tolerances/owner/finite/compiler/recovery gates.
+
+
+Public diagnostic de32afaa/worker53604e27 identifies the actual native-fault
+check. Inspection finds a NEW probe expectation error: it required every padded
+fault-owner word to equal1 in the poison case. The authentic shader writes only
+fault[0]; original padded owner must stay zero. Sourcefe5285ae fixes that by
+requiring head==expectedFlag and ALL remaining words zero, preserving original
+unpoisoned zero requirement. No shader/math/production/kernel/bound is changed.
+Compiled-public failure-only diagnostics report static geometry/flag counts;
+private logging unchanged. Protected operator-only diagnostic is underway at
+strata-parity-gr-wide-tail-fault-flags-20261022-operators; no speed test.
+
+
+## Final-source CPU and operator checkpoint (2026-10-23 00:00UTC)
+
+Sourcefe5285aef2f97507cfa87ba1e05e219831495643; frozen workerSHA256
+0e79dd6cb10555fce95b84a8cd582286c75291f82a39316d9298190d31150514 under
+strata-parity-gr-wide-tail-fault-flags-20261022. Final257 selected CPU tests
+(all original255 retained), unchanged15 actual runtime controls and actual frozen
+worker429WGSL/304 matrix layouts pass. Use ONLY final-source receipts:
+gr-wide-tail-flags-final-root-build-receipt-20261022.json,
+gr-wide-tail-flags-final-root-cpu-selection-20261022.json and corresponding
+-exact log/-offline log. Earlier mixed-source attribution is explicitly rejected.
+
+The separate protected operator-only run exits0, passes original36 matrix
+population and all3 extra authentic GR cases, then physical recovery. Both
+finite cases and the poison case have0 mismatches,maxAbs6.67572021484375e-6,
+original F64 tolerance/complete owners/fault-head-and-zero-padding retained.
+Its receipt is strata-parity-gr-wide-tail-fault-flags-20261022-operators/receipt.json.
+No speed measurement from that operator-only diagnostic.
+
+The complete BOTH-original18-script chain now runs in
+kuno-gr-wide-tail-flags-full-20261022.service, swap/core0, bounded1800s.
+Outer helper check-gr-wide-tail-flags-connected-20261022.py SHA256
+7a9a88c25103f49294d662f202010656f9f185a090af304d6b0c252c12d9e433.
+It retains the immutable original harness manifest8d9832244829e90ebdafc57ab1fdcd447acc2329323a769d89b7f4f5e100fdd6,
+adds exact verification of the3 extra GR controls and production product counts
+[0,96,96] for each original profile/normal arm. Full prefix
+strata-parity-gr-wide-tail-flags-full-20261022; expected aggregate353 GPU.
+Original operators have passed; full model profile/normal and complete outer
+aggregate are pending. No CPU compilation overlaps GPU timing. One NEW-source
+clean comparison may follow full acceptance, never a favorable old-source rerun.
+
+Existing same-host Strata phase receipt was re-read without running Strata.
+HC read185ms, GDN in158ms/conv+gates35ms/recur227ms/out96ms, QSAproj99ms/
+select70ms/attention680ms; expert-related phases still4.679s. Its GPU timeline
+6290ms and wall6288ms are instrumented; clean5.3515s remains the target.
+Scope mismatches prevent subtracting every bucket as identical kernels. The
+HC projection lead is grounded, not yet a measured whole-prompt gain.
+
+Installed worker301f1fd1/gateway36626d30 unchanged. No API/config/context/model/
+frontend/release/reset/reboot change. Vashti:none. Bounded sudo refresher1668570
+expires2026-10-23 06:04:15UTC; verify exact owned script before stopping it.

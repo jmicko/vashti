@@ -1,19 +1,24 @@
 # Kuno and Vashti Coordination
 
-**Current Kuno continuation (2026-10-22 23:32UTC): bounded GR wide tail.**
+**Current Kuno continuation (2026-10-23 00:00UTC): GR wide-tail full validation.**
 
-Read [the complete GR source contract](kuno-prefill-gr-wide-tail.md).
-Full6e1a6574/worker9ad49e55 passes255CPU/15runtime/429WGSL/296layouts/ALL350GPU
-and BOTH original chains, zero spills and physical recovery. ONE clean
-11.016428684/7.951516275s is neutral to frontier and FAILS original5% EACH
-selection; no install or favorable rerun. Installed301f1fd1/36626d30 unchanged.
-Next source retains everything and adds authentic BF16 HC down10240x320 wide
-selection with exact64-feature zero/read/write masks; original owners/precision/
-barriers/limits remain. Intended257CPU/15runtime/429WGSL/304layouts/353GPU/
-BOTH original chains precede performance claims. No CPU compile during GPU work.
-Latest recovery23:32:05UTC: Intel50,688,000B,NVIDIA compute0,faults0,HTTP200,
-admission normal. No API/config/frontend/release/reset/reboot; Vashti:none.
-Goal UNMET versus Strata5.3515s. Earlier checkpoints below are history.
+Read [the exact source, failures, correction and evidence](kuno-prefill-gr-wide-tail.md).
+Full optional bundle retains all prior optimizations and adds bounded BF16
+HC down10240x320 wide selection. Sourcefe5285ae/worker0e79dd6c passes final257
+AppCPU/15runtime/429WGSL/304layouts and separate protected operators/recovery,
+including3 new original-model F64/full-owner/NaN-Infinity cases with0 mismatches.
+A NEW probe fault-padding expectation caused prior failure; shader unchanged,
+original head flag plus zero padding now correctly checked. Earlier summary
+truncated at18 log lines; both new finite cases actually passed before failure.
+
+Unit kuno-gr-wide-tail-flags-full-20261022.service runs ALL353GPU and BOTH
+complete original18-script chains, swap/core0; original operator stage passed,
+normal/profile/full aggregate pending. Root alone owns hardware; no CPU compile.
+Next one new-source clean comparison only after complete acceptance/recovery.
+Previous static-geometry clean11.0164/7.9515s fails original5% EACH; no installation.
+Installed301f1fd1/36626d30 unchanged. Goal UNMET versus Strata clean5.3515s.
+No API/model/context/config/frontend/release/reset/reboot change; Vashti:none.
+Earlier checkpoints below are history. Refresher1668570 expires06:04:15UTC.
 
 **Current Kuno continuation (2026-10-22): fixed-role macro64 source.**
 
