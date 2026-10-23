@@ -115,6 +115,13 @@ fn quant_half_native_refuses_other_f16_width_and_does_not_touch_other_entry() {
         .unwrap();
     wrong_width[at + 3] = 4;
     assert!(wgpu::hal::vulkan::kuno_quant_half_pack(&wrong_width).is_err());
+    let mut missing_operand = original.clone();
+    let at = instructions(&original)
+        .into_iter()
+        .find_map(|(at, _, op)| (op == 115).then_some(at))
+        .unwrap();
+    missing_operand[at + 3] = original[3];
+    assert!(wgpu::hal::vulkan::kuno_quant_half_pack(&missing_operand).is_err());
     let mut unrelated = original.clone();
     let (at, _, _) = instructions(&original)
         .into_iter()

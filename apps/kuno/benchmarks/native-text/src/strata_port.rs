@@ -1199,6 +1199,8 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature="strata-small-quantized-matrix")]
     crate::strata_matrix::quant_cohort::validate_sources()?;
     #[cfg(feature="strata-small-quantized-matrix")]
+    crate::strata_matrix::quant_cohort::validate_half_sources()?;
+    #[cfg(feature="strata-small-quantized-matrix")]
     crate::strata_prompt::experts::cohorts::compact::validate_sources()?;
     #[cfg(feature="strata-dequant-quad32")]
     crate::strata_prompt::experts::validate_quad_sources()?;

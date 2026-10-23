@@ -1,6 +1,7 @@
 //! Original six integer decoders. Every eight-value run has the same separately
 //! rounded F32 factors, signed-byte values, RNE F16 bits and all-eight fault gate
-//! as the existing direct8 image producer. No floating-point narrowing cast.
+//! as the existing direct8 image producer. Typed pair casts are lowered to the
+//! original native pack/unpack operations before driver pipeline creation.
 use super::*;
 #[derive(CubeType, Clone)]
 pub(crate) struct Decoded {

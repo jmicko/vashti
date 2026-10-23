@@ -21,6 +21,14 @@ pub(crate) use probe::cases as public_numeric;
 #[cfg(test)]
 #[path = "strata_matrix_quant_cohort_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "strata_matrix_quant_half_tests.rs"]
+mod native_half_tests;
+#[path = "strata_matrix_quant_half_probe.rs"]
+pub(crate) mod half_probe;
+#[path = "strata_matrix_quant_half_validation.rs"]
+mod half_validation;
+pub(crate) use half_validation::validate as validate_half_sources;
 
 pub(crate) const fn supported(dtype: u32, down: bool) -> bool {
     if down {
