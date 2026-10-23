@@ -48,3 +48,9 @@ No speed/build/GPU/install claim for this new source.
 Initial ee76a55f CPU build reports only internal probe visibility errors E0364/
 E0603; change probe::cases to pub(crate),matching its internal worker re-export.
 No shader/math,API or GPU change. Failed build logs retained.
+
+abe19c73/worker83708a1c passes275CPU/15runtime/all429originalWGSL/320matrix+
+16raw+32compact+24padded/48realCFG checks plus2new norm modules. No GPU run.
+Next source gives each new kernel an exact static entrypoint name for actual
+compiler ISA/spill identification; Params/bindings and mathematical body unchanged.
+No inference endpoint or runtime content enters this identity.

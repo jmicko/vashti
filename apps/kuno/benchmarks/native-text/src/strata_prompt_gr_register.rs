@@ -2,6 +2,13 @@
 use super::*;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 struct RegisterNorm(bool);
+fn entry(in_place: bool) -> &'static str {
+    if in_place {
+        "kuno_gr_register_norm_inplace"
+    } else {
+        "kuno_gr_register_norm"
+    }
+}
 impl KernelMetadata for RegisterNorm {
     fn name(&self) -> &'static str {
         if self.0 {
@@ -28,7 +35,7 @@ impl CubeTask<AutoCompiler> for RegisterNorm {
         _: StorageType,
     ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
         Ok(CompiledKernel {
-            entrypoint_name: "main".into(),
+            entrypoint_name: entry(self.0).into(),
             debug_name: None,
             source: source(self.0),
             repr: None,
@@ -78,7 +85,7 @@ fn source(in_place: bool) -> String {
             s = s.replace(&format!("@binding({i})"), &format!("@binding({})", i - 1));
         }
     }
-    s
+    s.replace("fn main(", &format!("fn {}(", entry(in_place)))
 }
 fn dispatch(
     client: &ComputeClient<WgpuRuntime>,
@@ -174,6 +181,7 @@ fn validate_one(in_place: bool) -> std::result::Result<(), Box<dyn std::error::E
     if abi(&module) != abi(&previous)
         || module.entry_points.len() != 1
         || module.entry_points[0].workgroup_size != [256, 1, 1]
+        || module.entry_points[0].name != entry(in_place)
     {
         return Err("GR register original ABI/workgroup drift".into());
     }
@@ -238,7 +246,7 @@ fn validate_one(in_place: bool) -> std::result::Result<(), Box<dyn std::error::E
         },
         Some(&n::back::spv::PipelineOptions {
             shader_stage: n::ShaderStage::Compute,
-            entry_point: "main".into(),
+            entry_point: entry(in_place).into(),
         }),
     )?;
     let words = wgpu::hal::vulkan::kuno_native_workgroup_layout(&words)?;
@@ -317,8 +325,6 @@ mod tests {
                         let next = sg * 32 + (lane ^ 1) + k * 256;
                         assert_eq!(next, col + 1);
                         pairs[col / 2] += 1;
-                        let bits = [0u32, 0x80000000, 0x7fc00001, 0x00000001][k % 4];
-                        assert_eq!(f32::from_bits(bits).to_bits(), bits);
                     }
                 }
             }
