@@ -1,5 +1,29 @@
 # Fused quantized small-expert matrices
 
+## K128 panels with direct input loads (source proposal, 2026-10-23)
+
+The complete native-half bundle is numerically accepted but its sampled fused
+matrix phase remains expensive. Replace its K32 input/weight shared staging
+with K128 weight-only double banks and authentic global input matrix loads.
+Gather and activation already initialize every padded input row, including the
+unused members of the M8/M16/M32 tile. Existing narrow products use this same
+global-input cooperative-load contract.
+
+Each SG16 owns sixteen output rows. Its sixteen lanes decode contiguous
+eight-value runs spanning K128 of one row, then advance through sixteen rows.
+The four subgroup-private weight banks remain disjoint; each coefficient is
+decoded once, with the original native packing and all-eight finite gate.
+Two banks occupy 32768 bytes; publication scratch adds 2048 bytes, for a real
+34816-byte maximum in every tile/layout. No allocation lifetime reuse is needed.
+At each K128 stage, eight K16 products consume the existing accumulation order.
+Subgroup barriers protect bank handoffs exactly as before. Compact producers,
+RAW release, source ownership, padding, activation and ordered output do not
+change. Whole-owner comparison against the original decoded-image products
+must remain bit-exact across all six formats and all member boundaries.
+
+This is a complete staging/consumer change; no hardware or speed acceptance is
+claimed until the new compiled kernel and original complete pipeline run.
+
 This optional internal bundle removes full decoded FP16 weight images from
 groups with fewer than32 members. It changes no public API or model format.
 The active pinned Strata Intel reference still creates those images; this is

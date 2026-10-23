@@ -230,8 +230,9 @@ pub(crate) fn expert_quant_cohort(
     if comptime!(down) {
         source_first += usize::cast_from(h6 + h7) * 4;
     }
-    let mut a = SharedMemory::<Vector<f16, Const<4>>>::new(comptime!(4 * 2 * tile * 32 / 4));
-    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(4usize * 2 * 16 * 32 / 4);
+    // Gather/activation initialize every padded input row. Load A directly,
+    // as the accepted global narrow products do; only decoded weights need SLM.
+    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(4usize * 2 * 16 * 128 / 4);
     let am0 = unsafe {
         cmma::Matrix::<f16>::uninitialized(
             cmma::MatrixIdent::A,
@@ -309,30 +310,25 @@ pub(crate) fn expert_quant_cohort(
         cmma::MatrixLayout::Undefined,
         0.0,
     );
-    // One static decoder expansion retains the original lookahead trace:
-    // stage0/sync, stage32/product0/sync, ..., product_last/sync.
-    // The final iteration drains the previous bank without another stage.
+    // One K128 weight panel per bank. Direct input loads preserve original
+    // row strides and all eight chronological K16 products. The final
+    // iteration drains the last complete panel without staging another.
     let mut producer_k = 0usize;
     let mut producer_bank = 0usize;
     while producer_k <= columns {
         let previous_bank = 1usize - producer_bank;
         if producer_k < columns {
             crate::strata_matrix::quant_cohort::stage(
-                input,
                 packed,
                 strata_grid,
-                &mut a,
                 &mut b,
                 fault,
-                prefix,
-                members,
                 row_base,
                 source_first,
                 usize::cast_from(h6) * 4,
                 producer_k,
                 producer_bank,
                 down,
-                tile,
                 dtype,
             );
         }
@@ -340,20 +336,35 @@ pub(crate) fn expert_quant_cohort(
             sync_plane();
         } else {
             #[unroll]
-            for step in 0..2usize {
-                let af =
-                    (sg * 2 + previous_bank) * comptime!(tile * 8) + step * comptime!(tile * 4);
-                let bf = (sg * 2 + previous_bank) * 128 + step * 64;
-                cmma::load(&am0, &a.to_slice().slice(af, a.len()), 16);
+            for step in 0..8usize {
+                let af = (prefix * columns + producer_k - 128 + step * 16) / 4;
+                let bf = (sg * 2 + previous_bank) * 512 + step * 64;
+                cmma::load(
+                    &am0,
+                    &input.to_slice().slice(af, input.len()),
+                    u32::cast_from(columns),
+                );
                 cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
                 cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
                 if comptime!(tile >= 16) {
-                    cmma::load(&am1, &a.to_slice().slice(af + 32, a.len()), 16);
+                    cmma::load(
+                        &am1,
+                        &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                        u32::cast_from(columns),
+                    );
                     cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
                 }
                 if comptime!(tile == 32) {
-                    cmma::load(&am2, &a.to_slice().slice(af + 64, a.len()), 16);
-                    cmma::load(&am3, &a.to_slice().slice(af + 96, a.len()), 16);
+                    cmma::load(
+                        &am2,
+                        &input.to_slice().slice(af + 16 * columns / 4, input.len()),
+                        u32::cast_from(columns),
+                    );
+                    cmma::load(
+                        &am3,
+                        &input.to_slice().slice(af + 24 * columns / 4, input.len()),
+                        u32::cast_from(columns),
+                    );
                     cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
                     cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
                 }
@@ -361,7 +372,7 @@ pub(crate) fn expert_quant_cohort(
             sync_plane();
         }
         producer_bank = previous_bank;
-        producer_k += 32;
+        producer_k += 128;
     }
     let mut scratch = SharedMemory::<f32>::new(4usize * 128);
     crate::strata_matrix::small_direct::publish(
@@ -429,52 +440,26 @@ pub(crate) fn expert_quant_cohort(
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stage(
-    input: &Array<Vector<f16, Const<4>>>,
     packed: &Array<u32>,
     grid: &Array<u32>,
-    a: &mut SharedMemory<Vector<f16, Const<4>>>,
     b: &mut SharedMemory<Vector<f16, Const<4>>>,
     fault: &mut Array<Atomic<u32>>,
-    prefix: usize,
-    members: usize,
     row_base: usize,
     source_first: usize,
     up_offset: usize,
     k: usize,
     bank: usize,
     #[comptime] down: bool,
-    #[comptime] tile: usize,
     #[comptime] dtype: u32,
 ) {
     let sg = usize::cast_from(PLANE_POS);
     let lane = usize::cast_from(UNIT_POS_PLANE);
-    #[unroll]
-    for round in 0..comptime!(tile / 4) {
-        let job = lane + round * 16;
-        let member = job / 4;
-        let col = (job % 4) * 8;
-        let first = (sg * 2 + bank) * comptime!(tile * 8)
-            + (col / 16) * comptime!(tile * 4)
-            + member * 4
-            + (col % 16) / 4;
-        let mut lo = Vector::<f16, Const<4>>::new(f16::new(0.0));
-        let mut hi = Vector::<f16, Const<4>>::new(f16::new(0.0));
-        if member < members {
-            let at =
-                ((prefix + member) * comptime!(if down { 640usize } else { 2560usize }) + k + col)
-                    / 4;
-            lo = input[at];
-            hi = input[at + 1];
-        }
-        a[first] = lo;
-        a[first + 1] = hi;
-    }
-    // Keep one decoder/conversion body rather than four inlined row copies.
-    for round in 0..4usize {
-        let job = lane + round * 16;
-        let row = row_base + job / 4;
-        let col = job % 4 * 8;
-        let first = (sg * 2 + bank) * 128 + (col / 16) * 64 + (job / 4) * 4 + (col % 16) / 4;
+    // The whole subgroup reads contiguous K128 of one encoded row. Every
+    // eight-value group has exactly one writer; sixteen rows form its panel.
+    for round in 0..16usize {
+        let row = row_base + round;
+        let col = lane * 8;
+        let first = (sg * 2 + bank) * 512 + (col / 16) * 64 + round * 4 + (col % 16) / 4;
         let mut packed_row = source_first
             + row
                 * comptime!(crate::strata_matrix::quant_cohort::quant_row_bytes(

@@ -184,6 +184,69 @@ fn quant_cohort_panel_mapping_keeps_every_k16_chronological_and_sg_private_bank_
         }
     }
 }
+
+#[test]
+fn quant_cohort_k128_global_input_and_weight_banks_cover_original_operands_once() {
+    // Independent address oracle: original row-major global input and original
+    // chronological K16 products must be identical after removing A staging.
+    for columns in [640usize, 2560] {
+        for members in 1usize..32 {
+            let tile = if members <= 8 {
+                8
+            } else if members <= 16 {
+                16
+            } else {
+                32
+            };
+            for prefix in [0usize, 8, 80] {
+                let mut products = Vec::new();
+                for k in (0..columns).step_by(128) {
+                    for step in 0..8 {
+                        let reduction = k + step * 16;
+                        products.push(reduction);
+                        for fragment in 0..tile / 8 {
+                            let first =
+                                (prefix * columns + reduction) / 4 + fragment * 8 * columns / 4;
+                            for row in 0..8 {
+                                for col in 0..16 {
+                                    let word = first * 4 + row * columns + col;
+                                    assert_eq!(word / columns, prefix + fragment * 8 + row);
+                                    assert_eq!(word % columns, reduction + col);
+                                    assert!(word < (prefix + tile) * columns);
+                                }
+                            }
+                        }
+                    }
+                }
+                assert_eq!(products, (0..columns).step_by(16).collect::<Vec<_>>());
+            }
+        }
+    }
+    let mut written = vec![false; 4 * 2 * 16 * 128];
+    for sg in 0..4usize {
+        for bank in 0..2usize {
+            for row in 0..16usize {
+                for lane in 0..16usize {
+                    let col = lane * 8;
+                    let first =
+                        ((sg * 2 + bank) * 512 + col / 16 * 64 + row * 4 + col % 16 / 4) * 4;
+                    for j in 0..8 {
+                        assert!(!written[first + j]);
+                        written[first + j] = true;
+                        let local = first + j - (sg * 2 + bank) * 16 * 128;
+                        assert_eq!(
+                            (local / 256, local % 256 / 16, local % 16),
+                            ((col + j) / 16, row, (col + j) % 16)
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(written.into_iter().all(|v| v));
+    assert_eq!(4 * 2 * 16 * 128 * 2 + 4 * 128 * 4, 34816);
+    assert!(34816 < 49152);
+}
 #[test]
 fn quant_cohort_compact_shape_requires_real_six_format_role_bytes_and_distinct_tiles() {
     for gu in [18u32, 21, 22, 23] {

@@ -31,7 +31,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             else {
                 return Err("quant cohort actual SPIRV compiler".into());
             };
-            let expected = tile * 512 + 8192 + 2048;
+            let expected = 32768 + 2048;
             if kernel.shared_size != expected {
                 return Err(format!(
                     "quant cohort real SLM {name} mask{mask}: {} != {expected}",
@@ -62,6 +62,10 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             let mut glsl_sets = std::collections::HashSet::new();
             let mut native_pack = 0;
             let mut native_unpack = 0;
+            let mut pointer_storage = std::collections::HashMap::new();
+            let mut pointer_values = std::collections::HashMap::new();
+            let mut global_input_loads = 0;
+            let mut shared_weight_loads = 0;
             while at < words.len() {
                 let n = (words[at] >> 16) as usize;
                 let op = words[at] & 65535;
@@ -103,6 +107,25 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 if op == 23 && n == 4 && half_types.contains(&words[at + 2]) {
                     half_types.insert(words[at + 1]);
                 }
+                if op == 32 && n == 4 {
+                    pointer_storage.insert(words[at + 1], words[at + 2]);
+                }
+                if matches!(op, 59 | 61 | 65 | 66 | 67 | 70 | 83 | 124)
+                    && n >= 3
+                    && pointer_storage.contains_key(&words[at + 1])
+                {
+                    pointer_values.insert(words[at + 2], words[at + 1]);
+                }
+                if op == 4457 && n >= 6 {
+                    match pointer_values
+                        .get(&words[at + 3])
+                        .and_then(|ty| pointer_storage.get(ty))
+                    {
+                        Some(12) => global_input_loads += 1,
+                        Some(4) => shared_weight_loads += 1,
+                        _ => return Err("quant cohort unproved cooperative operand storage".into()),
+                    }
+                }
                 if op == 115 && n >= 4 && half_types.contains(&words[at + 1]) {
                     float_narrow = true;
                 }
@@ -132,7 +155,9 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 )
                 .into());
             }
-            if products != 2 * (tile / 8)
+            if products != 8 * (tile / 8)
+                || global_input_loads != 8 * (tile / 8)
+                || shared_weight_loads != 8
                 || !fault
                 || !subgroup_barrier
                 || !actual_wg64
@@ -172,6 +197,10 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             }
             println!(
                 "strata_quant_cohort_native_half_accepted name={name} layout={mask} pack_half_2x16={native_pack} unpack_half_2x16={native_unpack} raw_half_narrowing=0"
+            );
+            println!(
+                "strata_quant_cohort_k128_accepted name={name} layout={mask} shared_bytes={} global_input_loads={global_input_loads} shared_weight_loads={shared_weight_loads} products={products}",
+                kernel.shared_size
             );
         }
     }

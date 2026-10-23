@@ -1,5 +1,35 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): native half bundle accepted; larger fused panels next.**
+
+Frozen source `cbd8a5b98351ca057dba7d7ca5465628ae4ea975`, worker
+`df784f1ead35bd92c2172a714c29dabb82cd4635d3db813f4317734a7a411207`,
+passes all 720 GPU controls and both full-model diagnostic chains, including
+physical recovery. The protected unit exited 0 after 12m39.334s with zero swap.
+All 350 AppCPU, 18/47 runtime, 8+9 metadata and compiler controls remain accepted.
+Diagnostic first/repeated 4245-token times are 12.090085038/10.071408282s;
+host-profile times are 12.132022756/9.947339019s. These are not clean timings.
+Compared with the previous software conversion bundle, sampled cohort matrix
+time fell 87.376758 to 45.719463ms. Two of eighteen new quant programs still
+spill. Original eight wide programs remain spill-free and QSA ISA is unchanged.
+
+Actual pipeline clocks attribute 2.017392017s to first-long-request preparation
+and driver creation; repeated long requests create no pipelines. The repeated
+4096-token chunk takes 7.606289589s and the 148-token tail plus teacher/cleanup
+takes 2.406616230s. Larger fused panels with direct input-matrix loads are the
+next coherent source change: remove redundant per-subgroup input staging and
+reduce the number of weight-panel handoffs while preserving every K16 product
+and original compact-source/publication contracts. No new result is claimed.
+
+Evidence: `small-quant-slim-complete-isa-export-20261023.json`,
+`small-quant-slim-{profile,normal}-safe-phases-20261023.json`, and the original
+`strata-parity-small-quant-slim-20261023-expert-cohorts-public-summary.json`.
+Independent 17:45UTC state: all services HTTP200, admission normal, Intel
+50,688,000B, NVIDIA compute0, all five driver fault counts0. Installed binaries
+unchanged. Goal ACTIVE/UNMET; latest clean remains 12.471177197/8.394039699s
+versus Strata 5.5006/5.3515s. No API/Vashti changes or deployment authorization.
+
+## Previous checkpoint
 
 **Active Kuno handoff (2026-10-23): native half conversion bundle compiled; protected GPU validation running.**
 
