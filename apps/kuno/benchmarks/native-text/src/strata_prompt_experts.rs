@@ -947,13 +947,15 @@ fn enqueue_original(
             ("expert_raw_slots_peak_sum",peak as u64),("expert_raw_copy_cohorts",cohorts as u64),
         ] { crate::strata_prefill_profile::count(name,value); }
         #[cfg(feature = "strata-raw-lookahead")]
-        for (name,value) in [
-            "expert_raw_lookahead_legacy_units",
-            "expert_raw_lookahead_legacy_groups",
-            "expert_raw_lookahead_batched_units",
-            "expert_raw_lookahead_batched_groups",
-        ].into_iter().zip(plan.legacy_geometry()?) {
-            crate::strata_prefill_profile::count(name,value as u64);
+        if crate::strata_prefill_profile::compiled_public_enabled() {
+            for (name,value) in [
+                "expert_raw_lookahead_legacy_units",
+                "expert_raw_lookahead_legacy_groups",
+                "expert_raw_lookahead_batched_units",
+                "expert_raw_lookahead_batched_groups",
+            ].into_iter().zip(plan.legacy_geometry()?) {
+                crate::strata_prefill_profile::count(name,value as u64);
+            }
         }
     }
     #[cfg(feature = "strata-expert-scratch-ring")]
