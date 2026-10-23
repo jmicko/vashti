@@ -524,6 +524,12 @@ pub(crate) fn enqueue(
                     ("expert_native_cohort_groups",receipt.cohort_groups),
                     ("expert_native_cohort_launches",receipt.cohort_launches),
                     ("expert_native_cohort_batches",receipt.cohort_batches),
+                    #[cfg(feature="strata-small-quantized-matrix")]
+                    ("expert_native_quant_cohort_groups",receipt.quant_cohort_groups),
+                    #[cfg(feature="strata-small-quantized-matrix")]
+                    ("expert_native_quant_cohort_batches",receipt.quant_cohort_batches),
+                    #[cfg(feature="strata-small-quantized-matrix")]
+                    ("expert_native_quant_cohort_launches",receipt.quant_cohort_launches),
                     ("expert_native_bulk_logical_phases", receipt.logical_phases),
                     ("expert_native_bulk_matrix_pieces", receipt.matrix_pieces),
                     ("expert_native_bulk_wide_prefixes", receipt.wide_prefixes),

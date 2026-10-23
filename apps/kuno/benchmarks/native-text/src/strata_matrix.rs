@@ -9,6 +9,10 @@ mod wide_pipeline;
 #[path = "strata_matrix_expert_cohorts.rs"]
 pub(crate) mod cohorts;
 
+#[cfg(feature = "strata-small-quantized-matrix")]
+#[path = "strata_matrix_quant_cohort.rs"]
+pub(crate) mod quant_cohort;
+
 #[cfg(feature = "strata-cubek-gemm")]
 #[path = "strata_cubek_gemm.rs"]
 mod cubek;

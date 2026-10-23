@@ -1196,6 +1196,10 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     crate::strata_matrix::validate_shared_reuse_sources()?;
     #[cfg(feature="strata-small-direct-publish")]
     crate::strata_matrix::validate_small_direct_sources()?;
+    #[cfg(feature="strata-small-quantized-matrix")]
+    crate::strata_matrix::quant_cohort::validate_sources()?;
+    #[cfg(feature="strata-small-quantized-matrix")]
+    crate::strata_prompt::experts::cohorts::compact::validate_sources()?;
     #[cfg(feature="strata-dequant-quad32")]
     crate::strata_prompt::experts::validate_quad_sources()?;
     #[cfg(feature="strata-dequant-direct8")]
