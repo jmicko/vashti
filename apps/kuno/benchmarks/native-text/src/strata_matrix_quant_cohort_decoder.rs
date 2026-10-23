@@ -72,6 +72,24 @@ pub(crate) fn half_bits(value: f32) -> u32 {
     }
     sign | out
 }
+/// These typed two-lane casts are lowered by kuno_quant_half_pack to the
+/// exact original GLSL.std.450 operations before either native module path.
+/// The compiler proof rejects missing packing, unsupported widths or a raw
+/// narrowing FConvert. The independent software helpers above stay unchanged.
+#[cube]
+pub(crate) fn native_half_to_float(bits: u32) -> f32 {
+    let pair = Vector::<f16, Const<2>>::reinterpret(bits);
+    let widened = Vector::<f32, Const<2>>::cast_from(pair);
+    widened[0]
+}
+#[cube]
+pub(crate) fn native_pack_pair(x: f32, y: f32) -> u32 {
+    let mut pair = Vector::<f32, Const<2>>::empty();
+    pair[0] = x;
+    pair[1] = y;
+    let narrowed = Vector::<f16, Const<2>>::cast_from(pair);
+    u32::reinterpret(narrowed)
+}
 #[cube]
 pub(crate) fn signed_word(magnitude: u32, signs: u32) -> u32 {
     let mut out = 0u32;
@@ -143,7 +161,7 @@ pub(crate) fn decode8(
         let aux = crate::strata_matrix::quant_cohort::decoder::word(p, base + 66 + group * 4);
         let sc = (aux >> u32::cast_from(quarter * 7)) & 127;
         let signs = sc | ((sc.count_ones() & 1) << 7);
-        d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
+        d = crate::strata_matrix::quant_cohort::decoder::native_half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         ) * (0.5 + f32::cast_from(aux >> 28))
             * 0.5;
@@ -169,7 +187,7 @@ pub(crate) fn decode8(
         let scale = (crate::strata_matrix::quant_cohort::decoder::byte(p, base + 106 + group / 2)
             >> u32::cast_from(group % 2 * 4))
             & 15;
-        d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
+        d = crate::strata_matrix::quant_cohort::decoder::native_half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         ) * f32::cast_from(1 + 2 * scale);
         lo = crate::strata_matrix::quant_cohort::decoder::signed_word(
@@ -193,7 +211,7 @@ pub(crate) fn decode8(
         let scale = (crate::strata_matrix::quant_cohort::decoder::byte(p, base + 74 + group)
             >> u32::cast_from(quarter / 2 * 4))
             & 15;
-        d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
+        d = crate::strata_matrix::quant_cohort::decoder::native_half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         ) * (0.5 + f32::cast_from(scale))
             * 0.25;
@@ -213,7 +231,7 @@ pub(crate) fn decode8(
             & 15;
         let scale = low | (((header >> u32::cast_from(16 + group * 2)) & 3) << 4);
         let codes = base + 8 + group * 16 + quarter % 2 * 8;
-        d = crate::strata_matrix::quant_cohort::decoder::half_to_float(header & 65535)
+        d = crate::strata_matrix::quant_cohort::decoder::native_half_to_float(header & 65535)
             * f32::cast_from(i32::cast_from(scale) - 32);
         lo = crate::strata_matrix::quant_cohort::decoder::iq4_word(
             crate::strata_matrix::quant_cohort::decoder::word(p, codes),
@@ -226,7 +244,7 @@ pub(crate) fn decode8(
     } else if comptime!(dtype == 20) {
         let base = row + block * 18;
         let codes = base + 2 + quarter % 2 * 8;
-        d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
+        d = crate::strata_matrix::quant_cohort::decoder::native_half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         );
         lo = crate::strata_matrix::quant_cohort::decoder::iq4_word(
@@ -243,7 +261,7 @@ pub(crate) fn decode8(
             p,
             base + 2 + block % 2 * 8 + quarter * 2,
         );
-        d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
+        d = crate::strata_matrix::quant_cohort::decoder::native_half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         );
         lo = crate::strata_matrix::quant_cohort::decoder::q2_word(codes & 255);
@@ -291,8 +309,9 @@ pub(crate) fn store8(
         }
         let x = decoded.d * f32::cast_from(s0);
         let y = decoded.d * f32::cast_from(s1);
-        let hx = crate::strata_matrix::quant_cohort::decoder::half_bits(x);
-        let hy = crate::strata_matrix::quant_cohort::decoder::half_bits(y);
+        let rounded = crate::strata_matrix::quant_cohort::decoder::native_pack_pair(x, y);
+        let hx = rounded & 65535;
+        let hy = rounded >> 16;
         good = good
             && x.abs() <= f32::MAX
             && y.abs() <= f32::MAX

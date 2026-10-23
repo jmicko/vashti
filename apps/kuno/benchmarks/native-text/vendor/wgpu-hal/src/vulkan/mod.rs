@@ -36,6 +36,8 @@ mod kuno_cooperative;
 pub use kuno_cooperative::{kuno_cooperative_subgroup, kuno_cooperative_subgroup_shared_barriers};
 mod kuno_fp16;
 pub use kuno_fp16::kuno_cooperative_fp16_preserve;
+mod kuno_quant_half;
+pub use kuno_quant_half::kuno_quant_half_pack;
 mod drm;
 mod instance;
 mod sampler;

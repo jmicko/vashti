@@ -569,6 +569,12 @@ pub(crate) fn register_spirv_module(
     let words = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&words)
         .map_err(|_| fault("native SPIRV subgroup shared fence"))?
         .unwrap_or(words);
+    // Replay bypasses HAL shader creation, so it must execute the same exact
+    // checked native packing instructions as the already-validated module.
+    #[cfg(feature = "kuno-small-quantized-matrix")]
+    let words = wgpu::hal::vulkan::kuno_quant_half_pack(&words)
+        .map_err(fault)?
+        .unwrap_or(words);
     // create_module first creates the HAL ShaderModule, which verifies the
     // device's FloatControls properties. Native replay creates its own Vulkan
     // module from Program.words, so it must apply the identical FP16 controls.

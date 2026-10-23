@@ -42,6 +42,8 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             let words = wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)?;
             let words = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&words)?
                 .unwrap_or(words);
+            let words = wgpu::hal::vulkan::kuno_quant_half_pack(&words)?
+                .ok_or("quant cohort real native half conversion lowering")?;
             let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)?.unwrap_or(words);
             if wgpu::hal::vulkan::kuno_cooperative_subgroup(&words) != Some(16) {
                 return Err("quant cohort real SG16".into());
@@ -57,6 +59,9 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             let mut boolean_constants = std::collections::HashSet::new();
             let mut runtime_selections = Vec::new();
             let mut float_narrow = false;
+            let mut glsl_sets = std::collections::HashSet::new();
+            let mut native_pack = 0;
+            let mut native_unpack = 0;
             while at < words.len() {
                 let n = (words[at] >> 16) as usize;
                 let op = words[at] & 65535;
@@ -65,6 +70,20 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 }
                 if op == 16 && n == 6 && words[at + 2] == 17 {
                     actual_wg64 = words[at + 3..at + 6] == [64, 1, 1];
+                }
+                if op == 11 && n >= 3 {
+                    let name = words[at + 2..at + n]
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .take_while(|v| *v != 0)
+                        .collect::<Vec<_>>();
+                    if name == b"GLSL.std.450" {
+                        glsl_sets.insert(words[at + 1]);
+                    }
+                }
+                if op == 12 && n == 6 && glsl_sets.contains(&words[at + 3]) {
+                    native_pack += usize::from(words[at + 4] == 58);
+                    native_unpack += usize::from(words[at + 4] == 62);
                 }
                 if op == 22 && n == 3 && words[at + 2] == 16 {
                     half_types.insert(words[at + 1]);
@@ -118,6 +137,8 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 || !subgroup_barrier
                 || !actual_wg64
                 || float_narrow
+                || native_pack == 0
+                || native_unpack == 0
             {
                 return Err(format!("quant cohort real product/fault/barrier/exact-bit-half {name}: p{products} f{fault} b{subgroup_barrier} narrowing{float_narrow}").into());
             }
@@ -149,6 +170,9 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                     "strata_quant_cohort_iq4_nibble_accepted name={name} layout={mask} runtime_selectors={iq4_high_nibble_selectors}"
                 );
             }
+            println!(
+                "strata_quant_cohort_native_half_accepted name={name} layout={mask} pack_half_2x16={native_pack} unpack_half_2x16={native_unpack} raw_half_narrowing=0"
+            );
         }
     }
     Ok(())
