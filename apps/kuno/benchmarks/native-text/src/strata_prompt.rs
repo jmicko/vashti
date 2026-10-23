@@ -1016,6 +1016,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         scales.clone(),
         q.fault.clone(),
     ]);
+    let mut gr_timing = crate::strata_prefill_profile::Timer::for_gr_sample(q.client)?;
     #[cfg(feature="strata-gr-register-norm")]
     register_norm::launch(q.client,in_place,norm,info)?;
     #[cfg(not(feature="strata-gr-register-norm"))]
@@ -1030,6 +1031,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         norm,
         info,
     )?;
+    gr_timing.mark("hc_sample_norm")?;
     let client = q.client;
     packed_gr_projection(
         client,
@@ -1041,6 +1043,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         10240,
         320,
     )?;
+    gr_timing.mark("hc_sample_down")?;
     if q.inject {
         packed_gr_projection(
             client,
@@ -1053,6 +1056,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
             4,
         )?;
     }
+    gr_timing.mark("hc_sample_injection")?;
     launch(
         client,
         Kernel::GrLow,
@@ -1065,6 +1069,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         ],
         info,
     )?;
+    gr_timing.mark("hc_sample_low")?;
     packed_gr_projection(
         client,
         &low,
@@ -1075,6 +1080,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         320,
         10240,
     )?;
+    gr_timing.mark("hc_sample_up")?;
     launch(
         client,
         Kernel::GrMix,
@@ -1091,6 +1097,7 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         ],
         info,
     )?;
+    gr_timing.mark("hc_sample_mix")?;
     STAGES.with(|s| {
         s.borrow_mut()
             .as_mut()

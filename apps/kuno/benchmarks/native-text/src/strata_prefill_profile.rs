@@ -2,7 +2,7 @@
 //! never enables this switch; no request values or contents enter the receipt.
 use cubecl::{prelude::*, wgpu::WgpuRuntime};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::Instant,
@@ -10,6 +10,34 @@ use std::{
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static REQUEST: AtomicU64 = AtomicU64::new(0);
 thread_local! { static TOTALS: RefCell<BTreeMap<&'static str, (u64,u64,u64)>> = const { RefCell::new(BTreeMap::new()) }; }
+thread_local! { static GR_SAMPLE: Cell<bool> = const { Cell::new(false) }; }
+
+/// Six fenced substeps for ONE compiled-public HC attention invocation only.
+/// Private/clean execution does not create a timer or query the environment.
+/// This diagnostic adds fences, so its elapsed times are not clean selection.
+pub(crate) struct GrSample(Option<bool>);
+impl GrSample {
+    pub(crate) fn new(start: usize, count: usize, layer: usize) -> Self {
+        if !ENABLED.load(Ordering::Acquire) {
+            return Self(None);
+        }
+        let selected = NativeSelection {
+            authorized: std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1"),
+            request: REQUEST.load(Ordering::Relaxed),
+            start,
+            count,
+            layer,
+        }.selects();
+        Self(selected.then(|| GR_SAMPLE.with(|v| v.replace(true))))
+    }
+}
+impl Drop for GrSample {
+    fn drop(&mut self) {
+        if let Some(previous) = self.0 {
+            GR_SAMPLE.with(|v| v.set(previous));
+        }
+    }
+}
 pub(crate) fn enable_compiled_public() {
     ENABLED.store(true, Ordering::Release);
 }
@@ -116,6 +144,17 @@ fn native_class(name: &str) -> usize {
 #[cfg(test)]
 mod native_sample_tests {
     use super::*;
+    #[test]
+    fn disabled_gr_sampling_preserves_scope_without_enabling_public_timing() {
+        assert!(!ENABLED.load(Ordering::Acquire));
+        let previous = GR_SAMPLE.with(|v| v.replace(false));
+        let sample = GrSample::new(0, 4096, 24);
+        assert!(sample.0.is_none());
+        assert!(!GR_SAMPLE.with(Cell::get));
+        drop(sample);
+        assert!(!GR_SAMPLE.with(Cell::get));
+        GR_SAMPLE.with(|v| v.set(previous));
+    }
     #[test]
     fn actual_generated_wide_and_tail_names_are_matrix_not_other() {
         #[cfg(all(feature = "strata-intel-core", feature = "strata-native-expert-wide"))]
@@ -558,6 +597,12 @@ fn native_backend_counts() -> [u64; 38] {
 }
 pub(crate) struct Timer(Option<(ComputeClient<WgpuRuntime>, Instant, [u64; 38])>);
 impl Timer {
+    pub(crate) fn for_gr_sample(client: &ComputeClient<WgpuRuntime>) -> kuno_text::Result<Self> {
+        if !ENABLED.load(Ordering::Acquire) || !GR_SAMPLE.with(Cell::get) {
+            return Ok(Self(None));
+        }
+        Self::new(client)
+    }
     // PUBLIC_QSA_TIMER_ADMISSION_BEGIN
     /// No private client lookup, enqueue, flush or synchronization is added.
     /// Only the existing compiled-public collector may create this sub-timer.

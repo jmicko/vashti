@@ -325,6 +325,7 @@ impl Workspace {
                     cancel,
                 )?);
             }
+            let gr_sample = crate::strata_prefill_profile::GrSample::new(start, count, layer);
             Self::prompt_gr(
                 m,
                 e,
@@ -337,6 +338,7 @@ impl Workspace {
                 0,
                 true,
             )?;
+            drop(gr_sample);
             timing.mark("gr_attention_input")?;
             stages.push(match &mut m.layers[layer] {
                 Layer::Gdn(stage, public) => Stage::Gdn(stage.enqueue_prompt_full(
