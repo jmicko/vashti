@@ -35,18 +35,36 @@ pub(super) fn validate_program(
         }
         classes.get(&p).copied()
     };
-    let start = instructions
-        .iter()
-        .position(|&(_, op, _)| op == 246)
-        .ok_or("register stage real K loop missing")?;
-    let merge = words[instructions[start].0 + 1];
-    let end = instructions
-        .iter()
-        .enumerate()
-        .skip(start + 1)
-        .find(|(_, x)| x.1 == 248 && words[x.0 + 1] == merge)
-        .map(|x| x.0)
-        .ok_or("register stage loop merge extent")?;
+    let mut product_loops = Vec::new();
+    let mut all_loops = 0;
+    for (start, &(a, op, _)) in instructions.iter().enumerate() {
+        if op != 246 {
+            continue;
+        }
+        all_loops += 1;
+        let merge = words[a + 1];
+        let end = instructions
+            .iter()
+            .enumerate()
+            .skip(start + 1)
+            .find(|(_, x)| x.1 == 248 && words[x.0 + 1] == merge)
+            .map(|x| x.0)
+            .ok_or("register stage loop merge extent")?;
+        let products = instructions[start..end]
+            .iter()
+            .filter(|x| x.1 == 4459)
+            .count();
+        if products > 0 {
+            product_loops.push((start, end, products));
+        }
+    }
+    if product_loops.len() != 1
+        || product_loops[0].2 != 8
+        || instructions.iter().filter(|x| x.1 == 4459).count() != 8
+    {
+        return Err("register stage unique complete original K-product loop".into());
+    }
+    let (start, end, _) = product_loops[0];
     let inner = &instructions[start..end];
     let first = inner
         .iter()
@@ -69,7 +87,7 @@ pub(super) fn validate_program(
         return Err("register stage actual load/product/store/fence dataflow".into());
     }
     println!(
-        "strata_register_stage_accepted real_global_loads_before_products={loads} real_slm_stores_after_products={stores}"
+        "strata_register_stage_accepted actual_loops={all_loops} one_complete_product_loop=true real_global_loads_before_products={loads} real_slm_stores_after_products={stores}"
     );
     Ok(())
 }

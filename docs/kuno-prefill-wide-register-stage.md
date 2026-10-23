@@ -31,3 +31,13 @@ opportunity; source order alone is not proof of native hardware overlap or gain.
 Source only; no build,GPU,speed or installation claim. No API/model/context/
 config/frontend/release/reset/reboot change; Vashti:none. Installed binaries
 unchanged. Strata5.3515s remains unmet.
+
+## Initial offline audit correction
+
+b37cd753 CPU build succeeds; original controls reach the actual padded-module
+check, where the NEW audit reports no product in the first SPIRV loop. The
+first-loop assumption was not part of the original matrix contract. Preserve
+this failure/logs. Select the UNIQUE loop containing ALL eight original CMMA
+products,not simply the first loop; retain real in-loop StorageBuffer-load,
+post-product Workgroup-store and following barrier requirements. No GPU/timing
+run or shader change for this audit correction. Actual loop counts reported.
