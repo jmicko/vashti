@@ -331,7 +331,7 @@ fn cases_with_views(
                         {Box::new(op)}
                     },
                     CubeCount::Static(
-                        (output_rows * columns / Op::dequant_values()).div_ceil(256) as u32,
+                        (output_rows * columns / Op::selected_dequant_values()).div_ceil(256) as u32,
                         1,
                         1,
                     ),
@@ -351,7 +351,7 @@ fn cases_with_views(
                         client.launch_unchecked(
                             Box::new(op),
                             CubeCount::Static(
-                                (output_rows * columns / Op::dequant_values()).div_ceil(256) as u32,
+                                (output_rows * columns / Op::selected_dequant_values()).div_ceil(256) as u32,
                                 1,
                                 1,
                             ),
@@ -373,7 +373,7 @@ fn cases_with_views(
                         client.launch_unchecked(
                             Box::new(op),
                             CubeCount::Static(
-                                (output_rows * columns / Op::dequant_values()).div_ceil(256) as u32,
+                                (output_rows * columns / Op::selected_dequant_values()).div_ceil(256) as u32,
                                 1,
                                 1,
                             ),

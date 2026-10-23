@@ -152,7 +152,7 @@ fn one(
         client,
         CohortOp::Image { dtype, down },
         [
-            (words[1] as usize * words[2] as usize / 32).div_ceil(256),
+            (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(256),
             1,
             8,
         ],

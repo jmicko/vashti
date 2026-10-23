@@ -20,6 +20,12 @@ pub(crate) enum CohortOp {
     Activate,
 }
 impl CohortOp {
+    pub(super) fn selected_source(self) -> String {
+        let source=self.source();
+        #[cfg(feature="strata-dequant-quad32")]
+        if let Self::Image{down,..}=self {return super::quad32::source(source,down);}
+        source
+    }
     pub(crate) fn source(self) -> String {
         let old = match self {
             Self::Gather => Op::Gather,
@@ -87,7 +93,7 @@ impl KernelMetadata for CohortOp {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info(*self)
+            .info((*self,cfg!(feature="strata-dequant-quad32")))
             .cube_dim(CubeDim::new_1d(256))
     }
     fn address_type(&self) -> StorageType {
@@ -108,7 +114,7 @@ impl CubeTask<AutoCompiler> for CohortOp {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: self.source(),
+            source: self.selected_source(),
             repr: None,
             cube_dim: CubeDim::new_1d(256),
             debug_info: None,
@@ -137,6 +143,8 @@ fn launch(
     mut args: KernelArguments,
     words: &[u32; WORDS],
 ) -> Result<()> {
+    #[cfg(feature="strata-dequant-quad32")]
+    if matches!(op,CohortOp::Image{..}) {super::quad32::check_hardware(client)?;}
     args = args.with_info(MetadataBindingInfo::custom(
         words
             .chunks_exact(2)
@@ -167,6 +175,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
                 ExecutionMode::Unchecked,
                 StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
             )
+            .map(|mut compiled| {compiled.source=op.source();compiled})
             .unwrap()
         })
         .collect()
@@ -316,6 +325,9 @@ pub(super) fn enqueue_unit(
         "expert_dequant_record32_records",
         (n * (2560 * 1280 + 640 * 2560) / 32) as u64,
     );
+    #[cfg(feature="strata-dequant-quad32")]
+    crate::strata_prefill_profile::count("expert_dequant_quad32_records",
+        (n*(2560*1280+640*2560)/32) as u64);
 
     let x = view(&stage[0], 0, X_BYTES)?;
     let h = view(&stage[0], X_BYTES, H_BYTES)?;
@@ -364,7 +376,7 @@ pub(super) fn enqueue_unit(
                 down,
             },
             [
-                (words[1] as usize * words[2] as usize / 32).div_ceil(256),
+                (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(256),
                 1,
                 n,
             ],

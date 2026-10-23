@@ -51,6 +51,17 @@ impl Op {
             8
         }
     }
+    fn selected_dequant_values() -> usize {
+        if cfg!(feature = "strata-dequant-quad32") { 8 } else { Self::dequant_values() }
+    }
+    fn selected_source(self) -> String {
+        let source=self.source();
+        #[cfg(feature = "strata-dequant-quad32")]
+        if let Self::Dequant{down,..}|Self::ResidentDequant{down,..}|Self::SlotDequant{down,..}=self {
+            return quad32::source(source,down);
+        }
+        source
+    }
     fn lanes(self) -> u32 {
         if self == Self::Gemm { 64 } else { 256 }
     }
@@ -226,7 +237,7 @@ impl KernelMetadata for Op {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info((*self, "prompt-owned-routes-v4-vector8"))
+            .info((*self, "prompt-owned-routes-v4-vector8", cfg!(feature="strata-dequant-quad32")))
             .cube_dim(CubeDim::new_1d(self.lanes()))
     }
     fn address_type(&self) -> StorageType {
@@ -244,7 +255,7 @@ impl CubeTask<AutoCompiler> for Op {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: self.source(),
+            source: self.selected_source(),
             repr: None,
             cube_dim: CubeDim::new_1d(self.lanes()),
             debug_info: None,
@@ -261,6 +272,8 @@ fn dispatch(
     if grid.contains(&0) || grid.iter().any(|&v| v > 65535) || !active() {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
+    #[cfg(feature="strata-dequant-quad32")]
+    if matches!(op,Op::Dequant{..}|Op::ResidentDequant{..}|Op::SlotDequant{..}) {quad32::check_hardware(client)?;}
     args = args.with_info(MetadataBindingInfo::custom(
         words
             .chunks_exact(2)
@@ -304,6 +317,11 @@ mod narrow_padding_probe;
 #[cfg(any(test, feature = "strata-dequant-record32"))]
 #[path = "strata_prompt_dequant_record32.rs"]
 mod record32;
+#[cfg(any(test,feature="strata-dequant-quad32"))]
+#[path="strata_prompt_dequant_quad32.rs"]
+mod quad32;
+#[cfg(feature="strata-dequant-quad32")]
+pub(crate) use quad32::validate_sources as validate_quad_sources;
 #[cfg(feature = "strata-expert-cohorts")]
 #[path = "strata_prompt_expert_cohorts.rs"]
 pub(crate) mod cohorts;
@@ -848,7 +866,7 @@ fn enqueue_original(
                     }
                 },
                 [
-                    (words[1] as usize * words[2] as usize / Op::dequant_values()).div_ceil(256),
+                    (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(256),
                     1,
                     1,
                 ],
@@ -861,6 +879,9 @@ fn enqueue_original(
             "expert_dequant_record32_records",
             ((2560 * 1280 + 640 * 2560) / 32) as u64,
         );
+        #[cfg(feature="strata-dequant-quad32")]
+        crate::strata_prefill_profile::count("expert_dequant_quad32_records",
+            ((2560*1280+640*2560)/32) as u64);
         timing.mark("expert_cpu_dequant");
         crate::strata_matrix::expert(
             client,
@@ -967,6 +988,16 @@ fn enqueue_original(
     }
     Ok(())
 }
+fn dequant_operators() -> Vec<Op> {
+    let mut ops=Vec::new();
+    for (down,types) in [(false,&[q::IQ2_S,q::IQ3_S,q::IQ3_XXS,q::IQ4_XS][..]),(true,&[q::IQ4_NL,q::Q2_0][..])] {
+        for &dtype in types {
+            ops.push(Op::Dequant{dtype,down});ops.push(Op::ResidentDequant{dtype,down});
+            for resident in [false,true] {ops.push(Op::SlotDequant{dtype,down,resident});}
+        }
+    }
+    ops
+}
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     let original = [
         Op::Gather,
@@ -1032,6 +1063,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
             ExecutionMode::Unchecked,
             StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
         )
+        .map(|mut compiled| { compiled.source=op.source(); compiled })
         .unwrap()
     })
     .collect::<Vec<_>>();
