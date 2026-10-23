@@ -1,6 +1,57 @@
 # Kuno and Vashti Coordination
 
 
+**Active Kuno handoff (2026-10-23): fused quantized cohort correctness accepted; conversion overhead isolated.**
+
+Frozen source4b567eef / worker4abf583d65ca8855ecec5eaebe1a1a0447554298d870059404bc3d736ae3b5bd
+passes343 AppCPU,18 feature-off/47 full runtime,8 original metadata and9 separate
+feature-enabled selector controls. All original compiler populations,144 fused
+layouts,6 compact modules and48 actual IQ4 runtime-selector checks pass. All719
+GPU controls (677 original+30 compact+12 exact matrix), both forward18-script
+chains, routing and physical recovery pass. Original QSA ISA hashes and all8
+zero-spill wide programs remain unchanged. Six of18 new quant programs spill.
+Read [the fused contract and evidence](kuno-prefill-small-quantized-matrix.md).
+
+The initial IQ4XS mismatch was real: final NIR omitted the runtime upper-nibble
+shift from a nested CubeCL if-expression. Explicit runtime select repairs it;
+actual compiled SPIR-V now requires the selector in all48 IQ4 layouts. No
+mathematical tolerance, owner, status or fault guard changed. Failed attempt4
+and all prior evidence remain preserved.
+
+Diagnostic profile first/repeated4245-token times14.682549580/12.609879799s;
+host profile14.676952542/12.532337098s. These are not clean comparison results
+and are slower. Matched request3/layer24/count4096 isolates cohort matrix
+12.709929→87.376758ms, while dequant19.224670→8.000772ms and new compact copy
+3.648422ms. Macro12.882906→12.868744ms and COPY29.172595→29.109284ms are nearly
+unchanged. Keep the coherent bundle and fix conversion expansion; do not infer
+an IO/scheduler regression or revert coupled components from this profile.
+The previous CLEAN12.471177197/8.394039699s versus Strata5.5006/5.3515s remains
+the latest clean result. Goal ACTIVE/UNMET; no new clean run claimed.
+
+Protected unit `kuno-small-quant-fix-20261023` exited0 in13m8.852s, swap0.
+Independent11:04UTC check: Intel50,688,000B, NVIDIA compute0, all5 driver fault
+counts0, HTTP200 and admission normal, completed99. Evidence under development:
+`small-quant-root-build-receipt-20261023.json`,
+`small-quant-fix-root-acceptance-freeze-20261023.json`,
+`strata-parity-small-quant-fix-20261023-expert-cohorts-public-summary.json`,
+`small-quant-{profile,normal}-safe-phases-20261023.json`,
+`small-quant-complete-isa-export-20261023.json`,
+`small-quant-fix-final-state-20261023.json`.
+
+Next complete source work retains the same compact/source/scheduler design:
+7b0985d8 reduces repeated decoder expansion with an equivalent single stage
+schedule and loop-free scale normalization;7459dadc adds public-only pipeline
+creation timing to distinguish startup from prompt cost. These newer commits
+are NOT built or GPU accepted yet. A source task is preparing exact native
+PackHalf2x16/UnpackHalf2x16 lowering matching the original WGSL decoder, retaining
+software oracles, all8 finite gates and final explicit rounding/denormal rules.
+Do not replace this with arbitrary unrounded FConvert. New forward timing
+harness is separate; the accepted4b files remain frozen. Root owns integration,
+builds and GPUs. No API/Vashti changes; installed binary unchanged. No install,
+release, reset or reboot authorized.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): complete compressed small-expert bundle compiled; IQ4 numerical failure under repair.**
 
 Read [the complete fused-small contract and current checkpoint](kuno-prefill-small-quantized-matrix.md).

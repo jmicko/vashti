@@ -108,3 +108,25 @@ requirements remain. The run exited1 after4m58.821s with zero swap; physical
 recovery passed, and a separate live check confirms all driver faults0,
 Intel50,688,000B, NVIDIA compute0 and all services/admission healthy.
 Continue the complete bundle and fix the format-specific failure before timing.
+
+## Correctness accepted; measured conversion bottleneck
+
+Source4b567eef/worker4abf583d is identified exactly in the coordination handoff. It retains all719
+GPU controls and both forward full-model chains with recovery. The IQ4 repair
+uses explicit runtime selection and adds48 real SPIR-V selector checks; the
+original failed NIR had lost the upper-nibble branch. No tolerance was changed.
+Diagnostic repeated prompt12.609879799s (host12.532337098s) is slower than the
+previous complete path; no clean measurement of this candidate is claimed.
+Same request3/layer24/count4096 cohort matrix12.709929→87.376758ms isolates the
+new cost. Dequant19.224670→8.000772ms improved, with3.648422ms compact copies.
+All8 old wide ISA programs still have zero spills;6/18 new quant programs spill.
+
+Next complete optimization preserves original encoded copies and publication:
+reduce duplicate staged decoder expansion; replace scale normalization loops;
+port original GLSL.std.450 PackHalf2x16/UnpackHalf2x16 rather than software-heavy
+conversion, only through authenticated typed native shader lowering. Final
+modules must preserve the original rounding/denormal and all8 finite behavior,
+with independent original software/decoded-image controls. Arbitrary default
+OpFConvert remains unacceptable. Public-only native pipeline timing is separate
+from clean comparisons and must never activate or retain clocks in private use.
+No new hardware/performance acceptance is claimed for those pending changes.
