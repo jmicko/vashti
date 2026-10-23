@@ -71,3 +71,21 @@ All original source indices, packed vectors, prefetch, barriers and chronologica
 products remain. The CPU lattice proves bijection; source-prefix identity
 normalizes ONLY the staging function name. No fake unused builtin, capability
 relaxation or extra publication. Initial failure and logs retained.
+
+## Complete connected validation,27451ef9
+
+Worker61a8d8f61d3494c072a1c9bbcca4d097569b5253050401737caca7eb5c9c4095.
+264 CPU/15 runtime/429 WGSL/320 original matrix+16 raw+32 composite layouts;
+ALL405 GPU (all393 retained+12 actual direct/finite), BOTH complete unchanged
+original18-script chains and physical recovery PASS. Full summary:
+`/media/jmicko/faststore/kuno-development/strata-parity-dense-direct-subgroup-20261023-expert-cohorts-public-summary.json`.
+Normal long first/repeat9.611411862/8.370582810s; instrumented9.600728302/
+8.457812067s. Neutral to preceding tiny8.3529s, no speed gain claimed.
+No clean/staged/install on this component. Actual three producers SIMD16,
+334/429/337 instructions,75 sends,128GRF,0:0 spills/fills; finite SIMD32,
+86 instructions,8 sends,0:0. QSA native hashes unchanged zero spills. Export
+first rejected an intermediate finite NIR section with no ISA summary; read-only
+parser distinguishes that section from the actual final SIMD32 ISA, retains it
+as pre-ISA evidence without a compiled-code claim. No GPU/timing rerun.
+Final01:27:10UTC: Intel50,688,000B,NVIDIA compute0,driver faults0,HTTP200,
+admission normal,same boot. Installed301f1fd1/36626d30 unchanged. Goal UNMET.

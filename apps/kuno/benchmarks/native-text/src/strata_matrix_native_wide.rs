@@ -465,6 +465,8 @@ fn dense_wide<F: Float>(
 
 #[cfg(feature="strata-dense-direct-store")]
 include!("strata_matrix_native_direct_store.rs");
+#[cfg(feature="strata-dense-slm40")]
+include!("strata_matrix_dense_slm40.rs");
 
 #[allow(clippy::too_many_arguments)]
 fn selected(
@@ -586,6 +588,36 @@ pub(super) fn try_dense(
     out_stride: usize,
     bfloat: bool,
 ) -> Result<bool> {
+    try_dense_impl(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,cfg!(feature="strata-dense-slm40"))
+}
+#[cfg(feature="strata-dense-slm40")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn try_dense_compact(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 4],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    out_first: usize,
+    out_stride: usize,
+    bfloat: bool,
+) -> Result<bool> {
+    try_dense_impl(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,false)
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn try_dense_impl(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 4],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    out_first: usize,
+    out_stride: usize,
+    bfloat: bool,
+    #[allow(unused_variables)] padded: bool,
+) -> Result<bool> {
     let gr_down = gr_down_shape(bfloat, columns, rows, weight_first, out_first, out_stride);
     let hw = &client.properties().hardware;
     if !selected(
@@ -651,6 +683,11 @@ pub(super) fn try_dense(
     #[cfg(feature="strata-dense-direct-store")]
     if let Some(grid)=direct_selection(&h[2],count,rows,out_first,out_stride,hw.max_cube_count) {
         if gr_down {crate::strata_prefill_profile::count("gr_wide_tail_products",1);}
+        #[cfg(feature="strata-dense-slm40")]
+        if padded {
+            run_slm40_store(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,gr_down,grid)?;
+            return Ok(true);
+        }
         run_direct_store(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,gr_down,grid)?;
         return Ok(true);
     }

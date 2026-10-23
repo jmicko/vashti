@@ -94,7 +94,11 @@ pub(crate) fn cases(
             u::handle(arena, actual_id)?,
             u::handle(arena, fault_id)?,
         ];
-        if !native_wide::try_dense(
+        #[cfg(feature="strata-dense-slm40")]
+        let selected = native_wide::try_dense_compact;
+        #[cfg(not(feature="strata-dense-slm40"))]
+        let selected = native_wide::try_dense;
+        if !selected(
             client,
             h,
             count,

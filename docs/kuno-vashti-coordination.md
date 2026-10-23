@@ -1,5 +1,21 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno continuation (2026-10-23): complete pitch40 dense source.**
+
+Read [pitch40 source contract](kuno-prefill-dense-slm40.md) and [completed compact-direct validation](kuno-prefill-dense-direct-store.md#complete-connected-validation27451ef9).
+Complete27451ef9/worker61a8d8f6 passes264CPU/15runtime/429WGSL/320matrix+16raw+
+32composite/ALL405GPU/BOTH original18-script chains and physical recovery.
+Normal9.6114/8.3706s neutral; new actual producer/finite ISA zero spills/fills,
+QSA hashes unchanged. No clean/staged/install. Goal UNMET vs Strata5.3515s.
+New source couples real pitch40 A/B staging,explicit pad zero and matching
+cooperative readers,keeping compact-direct producer and finite consumer.
+Intended267CPU/15runtime/all original shader controls+24 new layouts/417GPU/
+BOTH original chains. Source only; no build/GPU/speed claim. No API/model/
+context/config/frontend/install/release/reset/reboot change; Vashti:none.
+Latest01:27:10UTC physical recovery: Intel50,688,000B,NVIDIA compute0,driver
+faults0,HTTP200,admission normal. Installed301f1fd1/36626d30 unchanged. Root
+alone owns builds/GPUs; no compile during timing. Earlier checkpoints history.
+
 **Current Kuno continuation (2026-10-23): complete direct dense publication source.**
 
 Read [direct dense source contract](kuno-prefill-dense-direct-store.md).
