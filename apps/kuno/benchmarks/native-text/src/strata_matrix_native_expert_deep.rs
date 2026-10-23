@@ -772,7 +772,8 @@ fn compile(
             LOGICAL_BYTES
         }
     {
-        return Err("deep wide expert actual physical/logical shared layout".into());
+        return Err(format!("deep wide expert actual physical/logical shared layout: actual={} expected={} mask={mask} down={down} direct={direct}",
+            kernel.shared_size,if mask&4!=0 {OPERAND_BYTES}else{LOGICAL_BYTES}).into());
     }
     let words = wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module)?;
     let words =
