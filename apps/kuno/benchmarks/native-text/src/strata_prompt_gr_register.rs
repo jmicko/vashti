@@ -2,7 +2,7 @@
 use super::*;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 struct RegisterNorm(bool);
-fn entry(in_place: bool) -> &'static str {
+fn kernel_entry(in_place: bool) -> &'static str {
     if in_place {
         "kuno_gr_register_norm_inplace"
     } else {
@@ -35,7 +35,7 @@ impl CubeTask<AutoCompiler> for RegisterNorm {
         _: StorageType,
     ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
         Ok(CompiledKernel {
-            entrypoint_name: entry(self.0).into(),
+            entrypoint_name: kernel_entry(self.0).into(),
             debug_name: None,
             source: source(self.0),
             repr: None,
@@ -85,7 +85,7 @@ fn source(in_place: bool) -> String {
             s = s.replace(&format!("@binding({i})"), &format!("@binding({})", i - 1));
         }
     }
-    s.replace("fn main(", &format!("fn {}(", entry(in_place)))
+    s.replace("fn main(", &format!("fn {}(", kernel_entry(in_place)))
 }
 fn dispatch(
     client: &ComputeClient<WgpuRuntime>,
@@ -181,7 +181,7 @@ fn validate_one(in_place: bool) -> std::result::Result<(), Box<dyn std::error::E
     if abi(&module) != abi(&previous)
         || module.entry_points.len() != 1
         || module.entry_points[0].workgroup_size != [256, 1, 1]
-        || module.entry_points[0].name != entry(in_place)
+        || module.entry_points[0].name != kernel_entry(in_place)
     {
         return Err("GR register original ABI/workgroup drift".into());
     }
@@ -246,7 +246,7 @@ fn validate_one(in_place: bool) -> std::result::Result<(), Box<dyn std::error::E
         },
         Some(&n::back::spv::PipelineOptions {
             shader_stage: n::ShaderStage::Compute,
-            entry_point: entry(in_place).into(),
+            entry_point: kernel_entry(in_place).into(),
         }),
     )?;
     let words = wgpu::hal::vulkan::kuno_native_workgroup_layout(&words)?;
