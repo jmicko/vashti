@@ -279,6 +279,9 @@ pub(super) fn validate_global_register_sources()
                 return Err("global register actual SG16".into());
             }
             validate_global_register_program(&words)?;
+            #[cfg(test)]
+            validate_global_register_native_negatives(&words)?;
+
             let mut cmd = std::process::Command::new("spirv-val");
             cmd.args(["--target-env", "vulkan1.3"]);
             if mask & 1 != 0 {
@@ -301,6 +304,65 @@ pub(super) fn validate_global_register_sources()
             println!(
                 "strata_global_register_shader_accepted dtype={name} layout_mask={mask} shared_bytes=0 workgroup=512 subgroup=16 m=128 n=128 k=32 products=8 global_operand_loads=12 global_stores=4 whole_workgroup_handoffs=0"
             );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn validate_global_register_native_negatives(
+    words: &[u32],
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (mut entry, mut grid, mut subgroup, mut input_binding, mut input_var) =
+        (None, None, None, None, None);
+    let mut at = 5;
+    let mut input_id = None;
+    while at < words.len() {
+        let n = (words[at] >> 16) as usize;
+        let op = words[at] & 65535;
+        if op == 15 {
+            entry = Some(at + 3);
+        }
+        if op == 16 && n == 6 && words[at + 2] == 17 {
+            grid = Some(at + 3);
+        }
+        if op == 71 && n == 4 && words[at + 2] == 11 && words[at + 3] == 40 {
+            subgroup = Some(at + 3);
+        }
+        if op == 71 && n == 4 && words[at + 2] == 33 && words[at + 3] == 0 {
+            input_binding = Some(at + 3);
+            input_id = Some(words[at + 1]);
+        }
+        at += n;
+    }
+    at = 5;
+    while at < words.len() {
+        let n = (words[at] >> 16) as usize;
+        if words[at] & 65535 == 59 && Some(words[at + 2]) == input_id {
+            input_var = Some(at + 3);
+        }
+        at += n;
+    }
+    for (pos, value) in [
+        (
+            entry.ok_or("global register real entry negative")?,
+            words[entry.unwrap()] ^ 1,
+        ),
+        (grid.ok_or("global register real grid negative")?, 1024),
+        (
+            subgroup.ok_or("global register real subgroup negative")?,
+            41,
+        ),
+        (
+            input_binding.ok_or("global register real binding negative")?,
+            4,
+        ),
+        (input_var.ok_or("global register real storage negative")?, 4),
+    ] {
+        let mut bad = words.to_vec();
+        bad[pos] = value;
+        if wgpu::hal::vulkan::kuno_cooperative_subgroup(&bad).is_some() {
+            return Err("global register native gate accepted wrong original entry/grid/subgroup/binding/storage".into());
         }
     }
     Ok(())

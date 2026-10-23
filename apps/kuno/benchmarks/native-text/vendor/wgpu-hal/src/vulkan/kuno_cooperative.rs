@@ -195,7 +195,7 @@ pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
                 && y == 1
                 && words[1] == 0x00010600
                 && subgroup_id
-                && subgroup_lane))
+                && (subgroup_lane || direct_global_register_module(words))))
         || !x.is_multiple_of(SUBGROUP)
         // CubeK keeps its genuine2D geometry. Its selected compiler entry
         // maps logical planes/lanes to subgroup builtins, never assumes that
@@ -209,6 +209,107 @@ pub fn kuno_cooperative_subgroup(words: &[u32]) -> Option<u32> {
         return None;
     }
     Some(SUBGROUP)
+}
+
+/// Additional exact compiler entry: cooperative global loads/stores need only
+/// subgroup identity; they have no scalar per-lane publication or SLM stage.
+/// Keep the existing lane-builtin rule for every other512-thread module.
+/// This proves compiler metadata, never physical-device or resource authority.
+fn direct_global_register_module(words: &[u32]) -> bool {
+    if words.len() > 65536 {
+        return false;
+    }
+    let (mut entry_ok, mut forbidden, mut products) = (false, false, 0);
+    let (mut bindings, mut vars, mut parents, mut loads, mut stores) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut at = 5;
+    while at < words.len() {
+        let n = (words[at] >> 16) as usize;
+        if n == 0 || at.checked_add(n).is_none_or(|e| e > words.len()) {
+            return false;
+        }
+        let op = words[at] & 65535;
+        match op {
+            15 => {
+                if n < 4 {
+                    return false;
+                }
+                let mut name = Vec::new();
+                'name: for word in &words[at + 3..at + n] {
+                    for b in word.to_le_bytes() {
+                        if b == 0 {
+                            break 'name;
+                        }
+                        name.push(b);
+                    }
+                }
+                entry_ok = name == b"dense_global_register_store_f_";
+            }
+            71 if n == 4 && words[at + 2] == 33 => bindings.push((words[at + 1], words[at + 3])),
+            59 if n >= 4 => {
+                vars.push((words[at + 2], words[at + 3]));
+                forbidden |= words[at + 3] == 4;
+            }
+            65 | 66 | 67 | 83 | 124 if n >= 4 => parents.push((words[at + 2], words[at + 3])),
+            4457 if n >= 6 => loads.push(words[at + 3]),
+            4458 if n >= 2 => stores.push(words[at + 1]),
+            4459 => products += 1,
+            224 | 225 | 227..=242 => forbidden = true,
+            _ => {}
+        }
+        at += n;
+    }
+    if !entry_ok || forbidden || products != 8 || loads.len() != 12 || stores.len() != 4 {
+        return false;
+    }
+    let binding = |v: u32| bindings.iter().find(|x| x.0 == v).map(|x| x.1);
+    let root = |mut v: u32| -> Option<u32> {
+        for _ in 0..=parents.len() {
+            match parents.iter().find(|x| x.0 == v) {
+                Some(p) => v = p.1,
+                None => return Some(v),
+            }
+        }
+        None
+    };
+    let class = |v: u32| vars.iter().find(|x| x.0 == v).map(|x| x.1);
+    let mut storage = Vec::new();
+    let mut uniforms = 0;
+    for &(v, c) in &vars {
+        match c {
+            12 => storage.push(binding(v)),
+            2 => {
+                if binding(v) != Some(3) {
+                    return false;
+                }
+                uniforms += 1;
+            }
+            _ => {}
+        }
+    }
+    storage.sort_unstable();
+    if storage != [Some(0), Some(1), Some(2)] || uniforms != 1 {
+        return false;
+    }
+    let (mut a, mut b) = (0, 0);
+    for ptr in loads {
+        let Some(r) = root(ptr) else {
+            return false;
+        };
+        if class(r) != Some(12) {
+            return false;
+        }
+        match binding(r) {
+            Some(0) => a += 1,
+            Some(1) => b += 1,
+            _ => return false,
+        }
+    }
+    a == 6
+        && b == 6
+        && stores
+            .into_iter()
+            .all(|p| root(p).is_some_and(|r| class(r) == Some(12) && binding(r) == Some(2)))
 }
 
 fn known_matrix_type(words: &[u32], instruction: &[u32]) -> bool {

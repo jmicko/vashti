@@ -360,7 +360,11 @@ fn global_register_definition<F: Float>(gr_down: bool) -> KernelDefinition {
         gr_down,
     );
     assert!(b.scope.pop_errors().is_empty());
-    b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(512)))
+    b.build(
+        KernelSettings::default()
+            .cube_dim(CubeDim::new_1d(512))
+            .kernel_name("dense_global_register_store_f_"),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

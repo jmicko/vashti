@@ -124,3 +124,16 @@ and in-loop8 loads, ordered four-product banks and two genuine in-loop prefetch
 phases, no Workgroup allocation/barrier/atomic. Old shared CFG proofs unchanged.
 Whole-model counters must partition slm40+deep+asymmetric+global_register=
 direct_store=finite_consumers, with real new selections and old fallbacks explicit.
+
+The first CPU compile rejected an included inner doc comment (E0753); preserved,
+fixed as a plain include comment, no GPU run. The next complete CPU population
+found the missing native ABI component: old WG512 recognition requires explicit
+subgroup lane ID for its SLM/scalar publication. This global-only kernel has
+actual subgroup ID but cooperative loads/stores need no explicit lane builtin.
+New route recognizes only exact generated `dense_global_register_store_f_`,
+SPIRV1.6/WG512/SG16 existing outer checks, original3 storage bindings+INFO3,
+0 shared/barriers/atomics,12 real original global loads and4 original stores,
+eight products. Old lane rule for every other512 entry stays unchanged.24 real
+layouts also test mutated entry, grid, subgroup builtin, input binding/storage
+rejection. Definition uses the same actual generated entry name as launch.
+This native component is composed before any GPU/speed run; acceptance pending.
