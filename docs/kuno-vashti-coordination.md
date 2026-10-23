@@ -1,6 +1,38 @@
 # Kuno and Vashti Coordination
 
 
+**Active Kuno handoff (2026-10-23): complete compressed small-expert bundle compiled; GPU acceptance underway.**
+
+Read [the complete fused-small contract and current checkpoint](kuno-prefill-small-quantized-matrix.md).
+Frozen source888d8b20 / workera3192db31630a59cfff5713ff1bf303efcd4feec082f2d5840c23fb6d0922df3
+passes343 selected AppCPU,18 feature-off/47 full runtime,8 original metadata and
+9 separate feature-enabled selector controls. All original compiler populations
+plus144 new quantized matrix layouts and6 compact-copy modules pass. This is a
+complete compact-source/matrix/scheduler/runtime composition, with original
+activation and ordered-output consumers. Actual new shared allocations fit48KiB.
+
+Protected service `kuno-small-quant-20261023` is currently testing719 GPU controls
+(all677 previous plus30 compact-source and12 exact original-format matrix cases),
+then both forward18-script full-model chains. No GPU acceptance or speed result
+yet. Forward chains retain numerical/ownership/reuse guards but explicitly adapt
+removed FP16-image and actual packed launch/byte counters; original harness files
+are preserved. See development `small-quant-root-build-receipt-20261023.json`,
+`small-quant-root-acceptance-freeze-20261023.json`, `small-quant-harness-20261023/`
+and `small-quant-connected-20261023.log`. Failed compile/harness/expansion attempts
+are preserved. Before hardware validation: Intel50,688,000B, NVIDIA compute0,
+all driver faults0, HTTP200 and admission normal. Swap/core dumps disabled.
+
+The latest accepted CLEAN baseline remains small-direct12.471177197/8.394039699s
+versus Strata5.5006/5.3515s. Goal ACTIVE/UNMET. Do not install or claim parity.
+A separate source note identifies lazy pipeline creation as a first-request
+investigation, not a measured attribution or repeat-speed gain:
+`small-quant-first-prompt-pipelines-20261023.md` under development. That diagnostic
+request used73-token warmup, not clean45, and its pipeline counts include decode.
+No public API change; required Vashti changes:none. Installed binary unchanged.
+No install/release/reset/reboot authorized by this handoff.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): complete small-expert publication accepted; fused small quantized matrices next.**
 
 Frozen source4cc3f68f / worker19d3606e258037e027563b4f299bfdff5d9cc717d0af54a8e24acfb52cbce7c0

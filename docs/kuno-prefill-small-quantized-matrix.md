@@ -63,3 +63,35 @@ controls and original CPU/runtime populations; no relaxed tolerance or speed
 selection of partial pieces. Root owns integration/builds/GPUs; isolated source
 tasks own kernels, cohort producers and native admission. No implementation or
 performance acceptance is claimed by this design document.
+
+## Composed source checkpoint — 2026-10-23
+
+Frozen source `888d8b205071e98214cf3075fb7e4efd0ac07ea0`, worker
+`a3192db31630a59cfff5713ff1bf303efcd4feec082f2d5840c23fb6d0922df3`,
+composes compact producers7ac52735, runtime admissiondec5ef70,
+root integration105716f3, original activation metadata repair362f5717,
+matrix producersf1ea330a, typed shift repair80382bdf and constant-loop repair888d8b20.
+All343 selected AppCPU controls pass, as do18 feature-off/47 full runtime,
+8 original metadata and a separate9-test feature-enabled selector population.
+The original compiler populations pass unchanged, plus144 fused matrix layouts
+and6 compact-copy modules. Actual shared allocation14336/18432/26624 bytes fits
+48KiB hardware in all8 compiler layouts. The6 original quant formats retain
+explicit bit rounding, eight-value finite checks and original K16 ordering.
+
+Protected GPU validation is running as `kuno-small-quant-20261023` against the
+complete bundle, with swap/core dumps disabled. Planned population719 retains
+all677 prior controls and adds30 compact-source plus12 original-format matrix
+comparisons. This paragraph is not GPU acceptance or a performance result.
+The two forward18-script chains preserve original numerical, ownership and
+reuse assertions; their counters now explicitly describe packed bytes and
+10-launch packed cohorts. Do not describe these counter checks as unchanged.
+The original frozen harness and failed attempts remain intact.
+
+Evidence under the development directory: `small-quant-root-build-receipt-20261023.json`,
+`small-quant-root-acceptance-freeze-20261023.json`, `small-quant-harness-20261023/`,
+`check-small-quant-connected-20261023.py` and `small-quant-connected-20261023.log`.
+Attempt1 failed Rust constant visibility/shift types; attempt2 was an external
+harness missing its feature declaration; attempt3 reached offline expansion and
+caught mutation of an unrolled nibble-shift constant. All are preserved with
+source/worker evidence. No GPU ran in those failed attempts.
+No installation, API, model, context, Vashti or driver change. Goal remains unmet.
