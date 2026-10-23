@@ -1,5 +1,36 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): padded K64 accepted; retain M32 product loop next.**
+
+Frozen source131c8fa6 / worker87fa5fb19a934370f7d84dbb219cd76aa04201fb525f48309fc3cef4079947c6
+passes353 CPU,18/47 runtime,8+9 metadata, all compiler populations, all720 GPU
+controls and both full-model chains with recovery. Protected unit exited0 after
+12m9.747s, zero swap. Diagnostic first/repeat11.849637/9.832439s; host profile
+11.845247/9.722708s. No clean run was made. Sampled cohort matrix38.772952ms
+versus K12847.435354ms; all original QSA hashes and wide zero-spill programs
+remain intact. Six M32 quant programs still spill. Repeated4096 chunk7.360426499s;
+148 tail plus teacher/cleanup2.415027860s. Goal ACTIVE/UNMET.
+
+The next source adds DontUnroll only to the genuine atomic-free inner product
+loop, inside the already shared authenticated native packing pass. Source
+arithmetic, bounds, CFG edges, memory scopes, guards and original K16 order stay
+unchanged. Two real-module CPU cases and144 compiler controls are added. This
+source is not yet built or GPU accepted. Read the
+[loop-retention contract](kuno-prefill-small-quantized-matrix.md).
+
+Evidence: `small-quant-pad-actual-root-build-receipt-20261023.json`,
+`small-quant-pad-actual-complete-isa-export-20261023.json`,
+`small-quant-pad-actual-{profile,normal}-safe-phases-20261023.json`,
+`strata-parity-small-quant-pad-actual-20261023-expert-cohorts-public-summary.json`.
+Independent19:02UTC state: Intel50,688,000B, NVIDIA compute0, all5 faults0,
+HTTP200/admission normal, completed133. GPUs free; installed binaries unchanged.
+Latest CLEAN stays12.471177197/8.394039699s versus Strata5.5006/5.3515s.
+No API/Vashti changes, installation, release or reset. Sudo refresh through
+01:47UTC Oct24. Both alias-rejection attempts remain preserved; current actual
+allocation26112B with publication_alias=false is the honest accepted policy.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): complete padded K64 bundle compiled; protected GPU run active.**
 
 Frozen source `131c8fa676c9a5a076ffe99019c1d6dbac8b499b`, worker

@@ -36,6 +36,89 @@ fn instructions(words: &[u32]) -> Vec<(usize, usize, u32)> {
     }
     out
 }
+fn actual_module(dtype: u32, tile: usize) -> Vec<u32> {
+    let mut options = WgpuCompilationOptions {
+        supports_vulkan: true,
+        ..Default::default()
+    };
+    options.vulkan.max_spirv_version = (1, 6);
+    let cubecl::wgpu::AutoRepresentation::SpirV(kernel) = Compiler::compile(
+        &mut cubecl::wgpu::AutoCompiler::SpirV(Default::default()),
+        definition(matches!(dtype, 20 | 42), tile, dtype),
+        &options,
+        ExecutionMode::Unchecked,
+        StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+    )
+    .unwrap() else {
+        panic!("actual quant loop compiler")
+    };
+    wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module).unwrap()
+}
+
+#[test]
+fn quant_native_preserves_genuine_inner_product_loop_and_numeric_words() {
+    for dtype in [18, 21, 22, 23, 20, 42] {
+        for tile in [8, 16, 32] {
+            let original = actual_module(dtype, tile);
+            let native = wgpu::hal::vulkan::kuno_quant_half_pack(&original)
+                .unwrap()
+                .unwrap();
+            let controls: Vec<_> = instructions(&native)
+                .into_iter()
+                .filter_map(|(at, n, op)| {
+                    (op == 246 && n == 4 && native[at + 3] == 2).then_some(at + 3)
+                })
+                .collect();
+            assert_eq!(controls.len(), usize::from(tile == 32));
+            let mut unhinted = native.clone();
+            for &control in &controls {
+                unhinted[control] = 0;
+            }
+            let restored = wgpu::hal::vulkan::kuno_quant_half_pack(&unhinted)
+                .unwrap()
+                .unwrap();
+            assert_eq!(restored, native);
+            assert_eq!(
+                wgpu::hal::vulkan::kuno_quant_half_pack(&native)
+                    .unwrap()
+                    .unwrap(),
+                native
+            );
+            assert_eq!(
+                unhinted.iter().zip(&native).filter(|(a, b)| a != b).count(),
+                controls.len()
+            );
+        }
+    }
+}
+
+#[test]
+fn quant_native_refuses_conflicting_product_loop_hint_and_unknown_cfg_edge() {
+    let native = wgpu::hal::vulkan::kuno_quant_half_pack(&actual_module(23, 32))
+        .unwrap()
+        .unwrap();
+    let at = instructions(&native)
+        .into_iter()
+        .find_map(|(at, n, op)| (op == 246 && n == 4 && native[at + 3] == 2).then_some(at))
+        .unwrap();
+    let mut conflict = native.clone();
+    conflict[at + 3] = 1;
+    assert!(wgpu::hal::vulkan::kuno_quant_half_pack(&conflict).is_err());
+    let continuation = native[at + 2];
+    let start = instructions(&native)
+        .into_iter()
+        .find_map(|(at, n, op)| {
+            (op == 248 && n == 2 && native[at + 1] == continuation).then_some(at)
+        })
+        .unwrap();
+    let edge = instructions(&native)
+        .into_iter()
+        .find_map(|(at, n, op)| (at > start && op == 249 && n == 2).then_some(at))
+        .unwrap();
+    let mut unknown = native.clone();
+    unknown[edge + 1] = native[3];
+    assert!(wgpu::hal::vulkan::kuno_quant_half_pack(&unknown).is_err());
+}
 #[test]
 fn quant_half_native_real_module_uses_original_glsl_packing_and_is_idempotent() {
     let original = original();
@@ -44,16 +127,12 @@ fn quant_half_native_real_module_uses_original_glsl_packing_and_is_idempotent() 
         .unwrap();
     assert_ne!(original, lowered);
     let native = instructions(&lowered);
-    assert!(
-        native
-            .iter()
-            .any(|&(at, n, op)| op == 12 && n == 6 && lowered[at + 4] == 58)
-    );
-    assert!(
-        native
-            .iter()
-            .any(|&(at, n, op)| op == 12 && n == 6 && lowered[at + 4] == 62)
-    );
+    assert!(native
+        .iter()
+        .any(|&(at, n, op)| op == 12 && n == 6 && lowered[at + 4] == 58));
+    assert!(native
+        .iter()
+        .any(|&(at, n, op)| op == 12 && n == 6 && lowered[at + 4] == 62));
     // The authentic source has no unrelated floating-point conversions: every
     // original F16 cast now executes the original GLSL operation explicitly.
     assert!(!native.iter().any(|&(_, _, op)| op == 115));

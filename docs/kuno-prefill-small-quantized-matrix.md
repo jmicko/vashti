@@ -1,5 +1,31 @@
 # Fused quantized small-expert matrices
 
+## Driver loop retention (next source, no acceptance yet)
+
+Complete source131c8fa6 passes all720 GPU controls, both full-model chains and
+physical recovery. Diagnostic first/repeat11.849637/9.832439s; host profile
+11.845247/9.722708s. The sampled cohort matrix drops47.435354 to38.772952ms
+versus K128, but six M32 programs still spill. Actual SPIR-V has an inner
+four-trip product loop; final ISA has only staging/outer loops, indicating driver
+unrolling. No clean run is claimed and the Strata goal remains unmet.
+
+The authenticated native packing pass now retains atomic-free product loops
+with SPIR-V DontUnroll. It traverses actual CFG edges up to each real merge;
+loops containing the original fault atomics and all non-product loops keep
+their original controls. On genuine modules this selects only M32's inner
+loop. Arithmetic, loop bounds, CFG edges, descriptors, source/owner/finite
+guards and original K16 order are unchanged. Both HAL and native replay use
+this existing shared pass. Public half-edge entry is excluded. Conflicting
+controls, missing blocks and unsupported merges fail closed; the pass is
+idempotent on cached native modules. No new feature or inference API is added.
+
+Two additive CPU cases compile all18 genuine matrix definitions, check exactly
+one retained loop for M32 and zero for M8/M16, and verify only loop-control words
+change on already packed modules. Conflicting Unroll and an unknown genuine
+CFG edge must fail. All144 real compiler layouts must prove the retained-loop
+count while preserving every original operation and compiler population.
+Actual driver ISA, exact GPU comparisons and full-model timing remain required.
+
 ## Current allocation policy after compiler inspection
 
 Both source55573ec0 and header-uniform sourceddeafd30 compile B and scratch

@@ -1,7 +1,107 @@
-//! Exact original GLSL half packing for the closed small-quantized CMMA path.
+//! Exact GLSL half packing and retained inner product loops for quantized CMMA.
 //! Typed CubeCL two-lane casts are compiler input, never the executed rounding
 //! instruction: both real native module paths apply this same checked lowering.
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
+
+/// Keep the genuine inner matrix-product loop rolled. Outer staging loops
+/// contain the original fault atomics; they and all non-product loops retain
+/// their original controls. Only the already-authenticated quant entry calls
+/// this helper. No arithmetic, operand, edge or allocation is changed.
+fn retain_product_loops(mut words: Vec<u32>, quant_entry: bool) -> Result<Vec<u32>, &'static str> {
+    if !quant_entry {
+        return Ok(words);
+    }
+    #[derive(Default)]
+    struct Block {
+        successors: Vec<u32>,
+        product: bool,
+        atomic: bool,
+        loop_info: Option<(u32, u32, usize)>,
+    }
+    let mut blocks = BTreeMap::<u32, Block>::new();
+    let mut current = None;
+    let mut at = 5;
+    while at < words.len() {
+        let n = (words[at] >> 16) as usize;
+        if n == 0 || at.checked_add(n).is_none_or(|end| end > words.len()) {
+            return Err("quant loop instruction extent");
+        }
+        let op = words[at] & 65535;
+        if op == 248 && n == 2 {
+            current = Some(words[at + 1]);
+            if blocks.insert(words[at + 1], Block::default()).is_some() {
+                return Err("quant loop duplicate block");
+            }
+        } else if op == 56 {
+            current = None;
+        } else if let Some(block) = current.and_then(|id| blocks.get_mut(&id)) {
+            match op {
+                246 => {
+                    if n != 4
+                        || block
+                            .loop_info
+                            .replace((words[at + 1], words[at + 2], at + 3))
+                            .is_some()
+                    {
+                        return Err("quant loop unsupported merge control");
+                    }
+                }
+                249 if n == 2 => block.successors.push(words[at + 1]),
+                250 if n == 4 || n == 6 => {
+                    block.successors.extend_from_slice(&words[at + 2..at + 4])
+                }
+                251 => {
+                    if n < 3 || (n - 3) % 2 != 0 {
+                        return Err("quant loop unsupported switch width");
+                    }
+                    block.successors.push(words[at + 2]);
+                    for target in (4..n).step_by(2) {
+                        block.successors.push(words[at + target]);
+                    }
+                }
+                4459 => block.product = true,
+                241 => block.atomic = true,
+                _ => {}
+            }
+        }
+        at += n;
+    }
+    let mut controls = Vec::new();
+    for (&header, block) in &blocks {
+        let Some((merge, continuation, control)) = block.loop_info else {
+            continue;
+        };
+        if !blocks.contains_key(&merge) || !blocks.contains_key(&continuation) {
+            return Err("quant loop missing real merge/continue block");
+        }
+        let mut work = Vec::from([header]);
+        let mut seen = BTreeSet::new();
+        let mut product = false;
+        let mut atomic = false;
+        while let Some(id) = work.pop() {
+            if id == merge || !seen.insert(id) {
+                continue;
+            }
+            let block = blocks.get(&id).ok_or("quant loop unknown CFG target")?;
+            product |= block.product;
+            atomic |= block.atomic;
+            work.extend_from_slice(&block.successors);
+        }
+        if product && !atomic {
+            if !seen.contains(&continuation) || !matches!(words[control], 0 | 2) {
+                return Err("quant product loop conflicting control or continuation");
+            }
+            controls.push(control);
+        }
+    }
+    for control in controls {
+        words[control] = 2;
+    } // SPIR-V DontUnroll.
+    Ok(words)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scalar {
@@ -24,8 +124,10 @@ fn literal(i: &[u32]) -> Option<Vec<u8>> {
 }
 
 /// Preserve every original descriptor, owner, instruction result and arithmetic
-/// operation while replacing ONLY genuine vec2 F32/F16 casts in the authenticated
+/// operation while replacing genuine vec2 F32/F16 casts in the authenticated
 /// quantized-cohort module (or its separately compiled public edge control).
+/// The genuine quant entry also retains its atomic-free inner CMMA loop with
+/// DontUnroll; every arithmetic instruction, CFG edge and outer loop is preserved.
 /// Unrelated shaders return None without modification. Selected malformed or
 /// unsupported F16 conversion shapes fail closed rather than execute FConvert.
 pub fn kuno_quant_half_pack(words: &[u32]) -> Result<Option<Vec<u32>>, &'static str> {
@@ -199,7 +301,10 @@ pub fn kuno_quant_half_pack(words: &[u32]) -> Result<Option<Vec<u32>>, &'static 
             if original_pack == 0 || original_unpack == 0 {
                 return Err("quant half incomplete native pack/unpack pair");
             }
-            return Ok(Some(words.to_vec()));
+            return Ok(Some(retain_product_loops(
+                words.to_vec(),
+                name.as_deref() == Some(b"expert_quant_cohort"),
+            )?));
         }
         return Ok(None);
     }
@@ -244,5 +349,8 @@ pub fn kuno_quant_half_pack(words: &[u32]) -> Result<Option<Vec<u32>>, &'static 
         }
     }
     output[3] = bound;
-    Ok(Some(output))
+    Ok(Some(retain_product_loops(
+        output,
+        name.as_deref() == Some(b"expert_quant_cohort"),
+    )?))
 }

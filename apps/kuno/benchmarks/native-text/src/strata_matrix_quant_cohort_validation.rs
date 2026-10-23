@@ -71,6 +71,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             let mut global_input_loads = 0;
             let mut shared_weight_loads = 0;
             let mut workgroup_handoffs = 0;
+            let mut retained_product_loops = 0;
             while at < words.len() {
                 let n = (words[at] >> 16) as usize;
                 let op = words[at] & 65535;
@@ -166,6 +167,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                     float_narrow = true;
                 }
                 products += usize::from(op == 4459);
+                retained_product_loops += usize::from(op == 246 && n == 4 && words[at + 3] == 2);
                 fault |= op == 241;
                 if op == 224 {
                     subgroup_barrier = true;
@@ -199,6 +201,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 || global_input_loads != static_steps * (tile / 8)
                 || shared_weight_loads != static_steps
                 || workgroup_handoffs != 1
+                || retained_product_loops != usize::from(tile == 32)
                 || !fault
                 || !subgroup_barrier
                 || !actual_wg64
@@ -246,6 +249,9 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             println!(
                 "strata_quant_cohort_padded_b_accepted name={name} layout={mask} stride_halves=24 tile_half_span=376 whole_workgroup_handoffs={workgroup_handoffs} actual_publication_alias={}",
                 kernel.shared_size == 24064
+            );
+            println!(
+                "strata_quant_cohort_product_loop_accepted name={name} layout={mask} dont_unroll_loops={retained_product_loops} original_arithmetic_and_cfg_unchanged=true"
             );
         }
     }
