@@ -293,3 +293,88 @@ fn quant_cohort_decoder_preserves_original_six_format_integer_and_factor_associa
         );
     }
 }
+
+#[test]
+fn quant_cohort_loop_free_scale_and_single_stage_keep_exact_original_bits_and_pipeline_trace() {
+    fn leading_zero_scale(bits: u32) -> f32 {
+        let sign = (bits & 32768) << 16;
+        let e = (bits >> 10) & 31;
+        let m = bits & 1023;
+        let mut out = sign;
+        if e == 0 {
+            if m != 0 {
+                let shift = m.leading_zeros() - 21;
+                out |= ((113 - shift) << 23) | (((m << shift) & 1023) << 13);
+            }
+        } else if e == 31 {
+            out |= 2139095040 | (m << 13);
+        } else {
+            out |= ((e + 112) << 23) | (m << 13);
+        }
+        f32::from_bits(out)
+    }
+    // Includes signed zero, every subnormal, both infinities and all NaN bits.
+    for bits in 0..=65535 {
+        assert_eq!(
+            leading_zero_scale(bits).to_bits(),
+            float_bits(bits).to_bits()
+        );
+    }
+    type Event = (u8, usize, usize, usize);
+    const BARRIER: Event = (2, 0, 0, 0);
+    for columns in [640usize, 2560] {
+        for tile in [8usize, 16, 32] {
+            // Accepted prologue + prefetch loop, before this source change.
+            let mut original: Vec<Event> = vec![(0, 0, 0, 0), BARRIER];
+            let mut current = 0;
+            for k in (0..columns).step_by(32) {
+                let next = 1 - current;
+                if k + 32 < columns {
+                    original.push((0, k + 32, next, 0));
+                }
+                for step in 0..2 {
+                    for fragment in 0..tile / 8 {
+                        original.push((1, k + step * 16, current, fragment));
+                    }
+                }
+                original.push(BARRIER);
+                current = next;
+            }
+            // One producer loop, including its last drain-only iteration.
+            let mut selected = Vec::new();
+            let mut producer_k = 0;
+            let mut producer_bank = 0;
+            while producer_k <= columns {
+                let previous_bank = 1 - producer_bank;
+                if producer_k < columns {
+                    selected.push((0, producer_k, producer_bank, 0));
+                }
+                if producer_k != 0 {
+                    for step in 0..2 {
+                        for fragment in 0..tile / 8 {
+                            selected.push((
+                                1,
+                                producer_k - 32 + step * 16,
+                                previous_bank,
+                                fragment,
+                            ));
+                        }
+                    }
+                }
+                selected.push(BARRIER);
+                producer_bank = previous_bank;
+                producer_k += 32;
+            }
+            assert_eq!(selected, original);
+            assert_eq!(selected.iter().filter(|e| e.0 == 0).count(), columns / 32);
+            assert_eq!(
+                selected.iter().filter(|e| e.0 == 1).count(),
+                columns / 16 * (tile / 8)
+            );
+            assert_eq!(
+                selected.iter().filter(|&&e| e == BARRIER).count(),
+                columns / 32 + 1
+            );
+        }
+    }
+}

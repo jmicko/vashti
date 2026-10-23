@@ -309,30 +309,14 @@ pub(crate) fn expert_quant_cohort(
         cmma::MatrixLayout::Undefined,
         0.0,
     );
-    crate::strata_matrix::quant_cohort::stage(
-        input,
-        packed,
-        strata_grid,
-        &mut a,
-        &mut b,
-        fault,
-        prefix,
-        members,
-        row_base,
-        source_first,
-        usize::cast_from(h6) * 4,
-        0,
-        0,
-        down,
-        tile,
-        dtype,
-    );
-    sync_plane();
-    let mut k = 0usize;
-    let mut current = 0usize;
-    while k < columns {
-        let next = 1usize - current;
-        if k + 32 < columns {
+    // One static decoder expansion retains the original lookahead trace:
+    // stage0/sync, stage32/product0/sync, ..., product_last/sync.
+    // The final iteration drains the previous bank without another stage.
+    let mut producer_k = 0usize;
+    let mut producer_bank = 0usize;
+    while producer_k <= columns {
+        let previous_bank = 1usize - producer_bank;
+        if producer_k < columns {
             crate::strata_matrix::quant_cohort::stage(
                 input,
                 packed,
@@ -345,34 +329,39 @@ pub(crate) fn expert_quant_cohort(
                 row_base,
                 source_first,
                 usize::cast_from(h6) * 4,
-                k + 32,
-                next,
+                producer_k,
+                producer_bank,
                 down,
                 tile,
                 dtype,
             );
         }
-        #[unroll]
-        for step in 0..2usize {
-            let af = (sg * 2 + current) * comptime!(tile * 8) + step * comptime!(tile * 4);
-            let bf = (sg * 2 + current) * 128 + step * 64;
-            cmma::load(&am0, &a.to_slice().slice(af, a.len()), 16);
-            cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
-            cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
-            if comptime!(tile >= 16) {
-                cmma::load(&am1, &a.to_slice().slice(af + 32, a.len()), 16);
-                cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+        if producer_k == 0 {
+            sync_plane();
+        } else {
+            #[unroll]
+            for step in 0..2usize {
+                let af =
+                    (sg * 2 + previous_bank) * comptime!(tile * 8) + step * comptime!(tile * 4);
+                let bf = (sg * 2 + previous_bank) * 128 + step * 64;
+                cmma::load(&am0, &a.to_slice().slice(af, a.len()), 16);
+                cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
+                cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
+                if comptime!(tile >= 16) {
+                    cmma::load(&am1, &a.to_slice().slice(af + 32, a.len()), 16);
+                    cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+                }
+                if comptime!(tile == 32) {
+                    cmma::load(&am2, &a.to_slice().slice(af + 64, a.len()), 16);
+                    cmma::load(&am3, &a.to_slice().slice(af + 96, a.len()), 16);
+                    cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
+                    cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
+                }
             }
-            if comptime!(tile == 32) {
-                cmma::load(&am2, &a.to_slice().slice(af + 64, a.len()), 16);
-                cmma::load(&am3, &a.to_slice().slice(af + 96, a.len()), 16);
-                cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
-                cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
-            }
+            sync_plane();
         }
-        sync_plane();
-        current = next;
-        k += 32;
+        producer_bank = previous_bank;
+        producer_k += 32;
     }
     let mut scratch = SharedMemory::<f32>::new(4usize * 128);
     crate::strata_matrix::small_direct::publish(
@@ -480,7 +469,7 @@ pub(crate) fn stage(
         a[first] = lo;
         a[first + 1] = hi;
     }
-    #[unroll]
+    // Keep one decoder/conversion body rather than four inlined row copies.
     for round in 0..4usize {
         let job = lane + round * 16;
         let row = row_base + job / 4;

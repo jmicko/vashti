@@ -29,16 +29,14 @@ pub(crate) fn word(p: &Array<u32>, at: usize) -> u32 {
 pub(crate) fn half_to_float(bits: u32) -> f32 {
     let sign = (bits & 32768) << 16;
     let e = (bits >> 10) & 31;
-    let mut m = bits & 1023;
+    let m = bits & 1023;
     let mut out = sign;
     if e == 0 {
         if m != 0 {
-            let mut exp = 113u32;
-            while (m & 1024) == 0 {
-                m <<= 1;
-                exp -= 1;
-            }
-            out |= (exp << 23) | ((m & 1023) << 13);
+            // Nonzero ten-bit mantissa: shift is exactly 1..10. Normalize
+            // once instead of expanding a data-dependent loop at every row.
+            let shift = m.leading_zeros() - 21;
+            out |= ((113u32 - shift) << 23) | (((m << shift) & 1023) << 13);
         }
     } else if e == 31 {
         out |= 2139095040u32 | (m << 13);
