@@ -11,6 +11,25 @@ pub(super) fn validate_program_expected(
     expected_products: usize,
     marker: &str,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let minimum_transfers = if expected_products == 16 { 8 } else { 4 };
+    validate_program_transfers(words, expected_products, minimum_transfers, false, marker)
+}
+
+pub(super) fn validate_asymmetric_program(
+    words: &[u32],
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // M256/N128 loads two A jobs and one B job, each two vec4 values.
+    // This is a distinct geometry, not a relaxation of the symmetric checks.
+    validate_program_transfers(words, 16, 6, true, "strata_asymmetric_register_stage_accepted")
+}
+
+fn validate_program_transfers(
+    words: &[u32],
+    expected_products: usize,
+    expected_transfers: usize,
+    exact: bool,
+    marker: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     #[cfg(test)]
     if let Some(path) = std::env::var_os("KUNO_TEST_PUBLIC_MATRIX_SPIRV") {
         // Static compiled-public module only; compiled out of all worker binaries.
@@ -160,9 +179,9 @@ pub(super) fn validate_program_expected(
             }
         }
     }
-    let minimum_transfers = if expected_products == 16 { 8 } else { 4 };
-    if loads.len() < minimum_transfers
-        || stores.len() < minimum_transfers
+    if loads.len() < expected_transfers
+        || stores.len() < expected_transfers
+        || (exact && (loads.len() != expected_transfers || stores.len() != expected_transfers))
         || stores
             .iter()
             .any(|&s| !barriers.iter().any(|&b| before(s, b)))

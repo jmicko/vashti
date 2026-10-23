@@ -618,11 +618,7 @@ pub(super) fn validate_asymmetric_sources() -> std::result::Result<(), Box<dyn s
             if wgpu::hal::vulkan::kuno_cooperative_subgroup(&words) != Some(16) {
                 return Err("asymmetric actual SG16".into());
             }
-            super::wide_pipeline::validate_program_expected(
-                &words,
-                16,
-                "strata_asymmetric_register_stage_accepted",
-            )?;
+            super::wide_pipeline::validate_asymmetric_program(&words)?;
             let (mut parents, mut classes, mut constants) =
                 (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
             let (mut loads, mut stores) = (Vec::new(), Vec::new());
