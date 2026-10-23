@@ -28,7 +28,7 @@ pub(crate) fn cases(
     t.read_range(0, &mut bytes)?;
     let mut decoded = Zeroizing::new(vec![0f32; 320 * columns]);
     t.info().dtype().decode(&bytes, &mut decoded)?;
-    let cases = [
+    let base_cases = [
         (true, 128usize, 512usize, 0usize, 128usize, 0usize, "finite"),
         (true, 128, 512, 4, 132, 4, "finite"),
         (true, 256, 512, 0, 256, 0, "finite"),
@@ -41,13 +41,28 @@ pub(crate) fn cases(
         (false, 128, 512, 0, 128, 0, "nan-input"),
         (true, 256, 512, 0, 256, 0, "inf-weight"),
         (false, 128, 512, 0, 128, 0, "negative-inf-weight"),
+        (true, 128, 128, 0, 128, 0, "finite"),
+        (false, 128, 148, 4, 132, 4, "finite"),
+        (true, 256, 513, 0, 256, 0, "finite"),
+        (false, 128, 148, 4, 132, 4, "nan-input-tail"),
+        (true, 128, 148, 0, 128, 0, "nan-weight"),
+        (false, 128, 148, 4, 132, 4, "inf-weight"),
     ];
+    let mut cases = base_cases
+        .into_iter()
+        .map(|(b, n, m, f, s, w, c)| (b, n, m, f, s, w, c, columns))
+        .collect::<Vec<_>>();
+    cases.extend([
+        (true, 128, 128, 0, 128, 0, "finite", 64),
+        (false, 128, 512, 4, 132, 4, "finite", 128),
+        (true, 128, 148, 0, 128, 0, "finite", 320),
+    ]);
     let mut reports = Vec::new();
-    for (bf, rows, count, first, stride, weight_first, control) in cases {
+    for (bf, rows, count, first, stride, weight_first, control, columns) in cases {
         let mut weights = Zeroizing::new(vec![0f32; rows * columns]);
         let mut packed = Zeroizing::new(vec![0u32; (weight_first + rows * columns) / 2]);
         for (i, v) in weights.iter_mut().enumerate() {
-            let (bits, x) = rounded(decoded[i], bf);
+            let (bits, x) = rounded(decoded[(i / columns) * 10240 + i % columns], bf);
             *v = x;
             let at = weight_first + i;
             packed[at / 2] |= u32::from(bits) << (16 * (at % 2));
@@ -81,6 +96,12 @@ pub(crate) fn cases(
             inputs[0] = x;
             image[0] = (image[0] & 0xffff0000) | u32::from(bits);
         }
+        if control == "nan-input-tail" {
+            let (bits, x) = rounded(f32::NAN, bf);
+            let at = (count - 1) * columns;
+            inputs[at] = x;
+            image[at / 2] = (image[at / 2] & 0xffff0000) | u32::from(bits);
+        }
         let input = arena.upload_u32(&image)?;
         let weight = arena.upload_u32(&packed)?;
         let logical = first + (count - 1) * stride + rows;
@@ -94,36 +115,67 @@ pub(crate) fn cases(
             u::handle(arena, actual_id)?,
             u::handle(arena, fault_id)?,
         ];
-        if !native_wide::try_deep_dense(
-            client,
-            h,
-            count,
-            columns,
-            rows,
-            weight_first,
-            first,
-            stride,
-            bf,
-            512,
-        )? {
+        let split = count < 512 || count % 128 != 0;
+        let selected = if split {
+            native_wide::try_deep_dense_split(
+                client,
+                h,
+                count,
+                columns,
+                rows,
+                weight_first,
+                first,
+                stride,
+                bf,
+            )?
+        } else {
+            native_wide::try_deep_dense(
+                client,
+                h,
+                count,
+                columns,
+                rows,
+                weight_first,
+                first,
+                stride,
+                bf,
+                512,
+            )?
+        };
+        if !selected {
             return Err("deep dense actual selected matrix rejected".into());
         }
-        native_wide::shared_reference(
-            client,
-            [
-                u::handle(arena, input)?,
-                u::handle(arena, weight)?,
-                u::handle(arena, reference_id)?,
-                u::handle(arena, old_fault_id)?,
-            ],
-            count,
-            columns,
-            rows,
-            weight_first,
-            first,
-            stride,
-            bf,
-        )?;
+        let rh = [
+            u::handle(arena, input)?,
+            u::handle(arena, weight)?,
+            u::handle(arena, reference_id)?,
+            u::handle(arena, old_fault_id)?,
+        ];
+        if split {
+            native::run_dense_original(
+                client,
+                rh,
+                count,
+                columns,
+                rows,
+                weight_first,
+                first,
+                stride,
+                bf,
+            )?;
+        } else {
+            native_wide::shared_reference(
+                client,
+                rh,
+                count,
+                columns,
+                rows,
+                weight_first,
+                first,
+                stride,
+                bf,
+            )?;
+        }
         let actual = probe::read_native_public(arena, actual_id)?;
         let old = probe::read_native_public(arena, reference_id)?;
         let flags = probe::read_native_public(arena, fault_id)?;
@@ -175,7 +227,7 @@ pub(crate) fn cases(
         }
         reports.push(serde_json::json!({"family":"dense-deep-k64-finite-paired","bfloat":bf,"rows":rows,"columns":columns,"count":count,"first":first,"stride":stride,"weight_first":weight_first,"control":control,
             "bit_mismatches":0,"f64_mismatches":errors,"max_abs":max_abs,"original_shared_gpu_and_f64_both_checked":true,
-            "actual_direct_producer_and_finite_consumer":true,"full_owner_holes_sources_and_fault_checked":true,"fabricated_prompt_or_batch_scope":false,"new_payload_allocations":0,"actual_k64_stages_and_consumers":true}));
+            "actual_direct_producer_and_finite_consumer":true,"full_owner_holes_sources_and_fault_checked":true,"fabricated_prompt_or_batch_scope":false,"new_payload_allocations":0,"actual_k64_stages_and_consumers":true,"split":split,"prefix_count":count/128*128,"suffix_count":count%128}));
         arena.reset()?;
     }
     Ok(reports)

@@ -18,7 +18,8 @@ pub(super) fn source(mut source: String, down: bool) -> String {
     assert_eq!(source.matches(old).count(), 1);
     source = source.replace(
         old,
-        r#"    // Uniform hardware guard precedes every original quantized source read.
+        r#"    if p.columns==0u {return;}
+    // Uniform hardware guard precedes every original quantized source read.
     if width<4u||width>128u||width%4u!=0u||256u%width!=0u||subgroup_count*width!=256u {atomicOr(&fault[0],128u);return;}
     let record=wg.x*64u+subgroup*(width/4u)+lane/4u;
     let live=record<p.rows*p.columns/32u;

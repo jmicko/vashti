@@ -22,10 +22,12 @@ fn deep_stage<F: Float>(
         let row = job / 8;
         let sa = ((token_base + row) * columns + offset) / 4;
         let sb = (weight_first + (row_base + row) * columns + offset) / 4;
-        a[buffer * 2048 + job * 2] = input[sa];
-        a[buffer * 2048 + job * 2 + 1] = input[sa + 1];
-        b[buffer * 2048 + job * 2] = weight[sb];
-        b[buffer * 2048 + job * 2 + 1] = weight[sb + 1];
+        a[buffer * 2048 + (offset - k) / 16 * 512 + row * 4 + ((offset - k) % 16) / 4] = input[sa];
+        a[buffer * 2048 + (offset - k) / 16 * 512 + row * 4 + ((offset - k) % 16) / 4 + 1] =
+            input[sa + 1];
+        b[buffer * 2048 + (offset - k) / 16 * 512 + row * 4 + ((offset - k) % 16) / 4] = weight[sb];
+        b[buffer * 2048 + (offset - k) / 16 * 512 + row * 4 + ((offset - k) % 16) / 4 + 1] =
+            weight[sb + 1];
     }
 }
 
@@ -246,16 +248,16 @@ fn dense_deep_store<F: Float>(
         // DEEP_REGISTER_LOAD_END
         #[unroll]
         for step in 0..4usize {
-            let af = current * 2048 + (subgroup / 4) * comptime!(SUBGROUP_ROWS * 16) + step * 4;
-            let bf = current * 2048 + (subgroup % 4) * 512 + step * 4;
-            cmma::load(&a0, &a.to_slice().slice(af + 0, a.len()), 64);
-            cmma::load(&a1, &a.to_slice().slice(af + 128, a.len()), 64);
+            let af = current * 2048 + step * 512 + (subgroup / 4) * comptime!(SUBGROUP_ROWS * 4);
+            let bf = current * 2048 + step * 512 + (subgroup % 4) * 128;
+            cmma::load(&a0, &a.to_slice().slice(af + 0, a.len()), 16);
+            cmma::load(&a1, &a.to_slice().slice(af + 32, a.len()), 16);
             if comptime!(M_FRAGMENTS == 4) {
-                cmma::load(&a2, &a.to_slice().slice(af + 256, a.len()), 64);
-                cmma::load(&a3, &a.to_slice().slice(af + 384, a.len()), 64);
+                cmma::load(&a2, &a.to_slice().slice(af + 64, a.len()), 16);
+                cmma::load(&a3, &a.to_slice().slice(af + 96, a.len()), 16);
             }
-            cmma::load(&b0, &b.to_slice().slice(bf + 0, b.len()), 64);
-            cmma::load(&b1, &b.to_slice().slice(bf + 256, b.len()), 64);
+            cmma::load(&b0, &b.to_slice().slice(bf + 0, b.len()), 16);
+            cmma::load(&b1, &b.to_slice().slice(bf + 64, b.len()), 16);
             cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
             cmma::execute::<F, F, f32, f32>(&a0, &b1, &c1, &c1);
             cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);
@@ -271,13 +273,13 @@ fn dense_deep_store<F: Float>(
         // K16 steps; every destination is in the disjoint next bank.
         if k + 64 < columns {
             let job0 = usize::cast_from(PLANE_POS) * 16 + usize::cast_from(UNIT_POS_PLANE) + 0;
-            let dest0 = next * 2048 + job0 * 2;
+            let dest0 = next * 2048 + ((job0 % 8) / 2) * 512 + (job0 / 8) * 4 + (job0 % 2) * 2;
             a[dest0] = next_a0_lo;
             a[dest0 + 1] = next_a0_hi;
             b[dest0] = next_b0_lo;
             b[dest0 + 1] = next_b0_hi;
             let job1 = usize::cast_from(PLANE_POS) * 16 + usize::cast_from(UNIT_POS_PLANE) + 512;
-            let dest1 = next * 2048 + job1 * 2;
+            let dest1 = next * 2048 + ((job1 % 8) / 2) * 512 + (job1 / 8) * 4 + (job1 % 2) * 2;
             a[dest1] = next_a1_lo;
             a[dest1 + 1] = next_a1_hi;
             b[dest1] = next_b1_lo;
@@ -742,10 +744,11 @@ mod deep_dense_tests {
                     let row = job / 8;
                     let offset = (job % 8) * 8;
                     assert!(row < 128 && offset + 7 < 64);
-                    assert_eq!(row * 16 + offset / 4, job * 2);
+                    let dest = (offset / 16) * 512 + row * 4 + (offset % 16) / 4;
+                    assert_eq!(dest / 512, offset / 16);
                     for half in 0..2 {
-                        positions[job * 2 + half] += 1;
-                        assert!(bank * 2048 + job * 2 + half < 4096);
+                        positions[dest + half] += 1;
+                        assert!(bank * 2048 + dest + half < 4096);
                     }
                 }
             }
@@ -768,6 +771,42 @@ mod deep_dense_tests {
             }
         }
         assert!(outputs.iter().all(|&n| n == 1));
+    }
+    #[test]
+    fn actual_panel_reader_fragments_match_independent_original_row_k_coordinates() {
+        // Populate once from original row/K labels, then follow the actual
+        // cooperative fragment pointers and16-half reader stride independently.
+        let mut storage = vec![u32::MAX; 16384];
+        for bank in 0..2usize {
+            for row in 0..128 {
+                for k in 0..64 {
+                    let at = bank * 8192 + (k / 16) * 2048 + row * 16 + k % 16;
+                    storage[at] = (bank * 100000 + row * 64 + k) as u32;
+                }
+            }
+        }
+        for bank in 0..2 {
+            for sg in 0..32 {
+                for step in 0..4 {
+                    for fragment in 0..2 {
+                        for (start, rows) in [
+                            ((sg / 4) * 16 + fragment * 8, 8),
+                            ((sg % 4) * 32 + fragment * 16, 16),
+                        ] {
+                            let base = bank * 8192 + step * 2048 + start * 16;
+                            for r in 0..rows {
+                                for k in 0..16 {
+                                    assert_eq!(
+                                        storage[base + r * 16 + k],
+                                        (bank * 100000 + (start + r) * 64 + step * 16 + k) as u32
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn deep_reduction_preserves_every_chronological_k16_step_without_final_prefetch() {
