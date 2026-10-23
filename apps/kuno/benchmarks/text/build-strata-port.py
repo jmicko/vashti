@@ -108,7 +108,7 @@ if '--hc-down-inject' in options and not {'--gr-register-norm','--subgroup-publi
 features += ['strata-hc-down-inject'] if '--hc-down-inject' in options else []
 if '--raw-lookahead' in options and not {'--gr-register-norm','--expert-cohorts','--copy-cohorts','--miss-ring'} <= options:raise ValueError('raw lookahead requires the complete normalized two-bank cohort bundle')
 features += ['strata-raw-lookahead'] if '--raw-lookahead' in options else []
-if '--deep-matrix' in options and not {'--hc-down-inject','--expert-medium','--expert-macro64'} <= options:raise ValueError('deep matrix requires the complete HC/native expert bundle')
+if '--deep-matrix' in options and not {'--hc-down-inject','--native-expert-wide','--expert-macro64'} <= options:raise ValueError('deep matrix requires the complete HC/native expert bundle')
 features += ['strata-deep-matrix'] if '--deep-matrix' in options else []
 if '--raw-slot-overlap' in options and '--raw-lookahead' not in options:raise ValueError('per-slot overlap requires the complete eight-expert lookahead bundle')
 features += ['strata-raw-slot-overlap'] if '--raw-slot-overlap' in options else []
