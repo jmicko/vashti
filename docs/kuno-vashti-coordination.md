@@ -17,10 +17,12 @@ spilling hashes and original QSA ISA remain unchanged.
 Diagnostic profile first/repeated11.004590487/8.946788843s; host-profile
 10.967607646/8.854793404s, versus preceding10.134471518/8.745485045s. This is not a
 speed win. Keep the coherent bundle and address the next real difference.
-The original clean45/4245/4245 comparison is running, with no timing barriers;
-Strata clean5.3515s remains UNMET. Existing host-profile mode retains coarse
+The original clean45/4245/4245 comparison passes: first/repeated long
+12.471177197/8.394039699s versus Strata5.5006/5.3515s; goal UNMET at both.
+Receipt: `strata-parity-small-direct-20261023-fixed-clean-public-summary.json`. Existing host-profile mode retains coarse
 Timer fences and must not be called clean. No installed binary changed.
 
+Read [the complete fused-small contract](kuno-prefill-small-quantized-matrix.md).
 Next coherent design targets groups<32: they account for186.3GB of262.2GB
 FP16 image production in the repeated diagnostic request but only6.78% of
 expert members. The active Strata reference also decodes full images; a fused

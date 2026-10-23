@@ -128,6 +128,24 @@ pub(crate) fn bind(
         Ok(args.with_buffer(h.clone().binding()))
     })
 }
+/// The original public codebook owner, retained by the same model/table scope.
+/// New native matrix arguments must register this exact handle, not recreate
+/// a buffer or substitute an unpriced private table.
+#[cfg(feature = "strata-small-quantized-matrix")]
+pub(crate) fn table_handle(
+    stream: cubecl_common::stream_id::StreamId,
+) -> Result<Handle> {
+    if !enabled() { return Err(reject()); }
+    TABLE.with(|t| {
+        let t = t.borrow();
+        let h = t.as_ref().ok_or_else(reject)?;
+        if h.stream != stream || h.size_in_used() != PUBLIC_TABLE_BYTES {
+            return Err(reject());
+        }
+        Ok(h.clone())
+    })
+}
+
 pub(crate) fn shared_table(mut source: String, binding: usize, dtype: u32) -> String {
     if !enabled() {
         return source;

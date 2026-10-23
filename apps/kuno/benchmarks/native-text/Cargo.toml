@@ -118,6 +118,7 @@ strata-dequant-direct8 = ["strata-dequant-quad32", "cubecl-runtime/kuno-dequant-
 strata-expert-ordered-output = ["strata-native-direct-gu", "strata-expert-cohorts", "cubecl-runtime/kuno-expert-ordered-output", "cubecl-wgpu/kuno-expert-ordered-output"]
 strata-wide-shared-reuse = ["strata-expert-ordered-output", "strata-native-subgroup-publish", "cubecl-runtime/kuno-wide-shared-reuse", "cubecl-wgpu/kuno-wide-shared-reuse"]
 strata-small-direct-publish = ["strata-native-subgroup-publish", "strata-native-direct-gu", "strata-expert-ordered-output", "strata-expert-cohorts", "cubecl-runtime/kuno-small-direct-publish", "cubecl-wgpu/kuno-small-direct-publish"]
+strata-small-quantized-matrix = ["strata-small-direct-publish", "strata-intel-core", "cubecl-runtime/kuno-small-quantized-matrix", "cubecl-wgpu/kuno-small-quantized-matrix"]
 strata-qsa-head-frontier = ["strata-qsa-head-scatter"]
 strata-qsa-head-scatter = ["strata-gdn-coalesce-faults"]
 strata-gdn-coalesce-faults = ["strata-qsa-query-planes"]

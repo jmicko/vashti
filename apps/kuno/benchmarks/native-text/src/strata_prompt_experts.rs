@@ -638,6 +638,7 @@ fn enqueue_original(
     let groups = super::groups::validate(map, count)?;
     crate::strata_prefill_profile::expert_member_geometry(map, groups);
     crate::strata_prefill_profile::count("expert_group_count", groups as u64);
+    #[cfg(not(feature = "strata-small-quantized-matrix"))]
     crate::strata_prefill_profile::count("expert_fp16_image_bytes", (groups * DQ_WORDS * 4) as u64);
     #[cfg(feature = "strata-expert-cohorts")]
     let raw_banks = match crate::strata_prompt::secondary_raw_bank()? {
@@ -908,6 +909,11 @@ fn enqueue_original(
         #[cfg(feature="strata-dequant-direct8")]
         crate::strata_prefill_profile::count("expert_dequant_direct8_records",
             ((2560*1280+640*2560)/32) as u64);
+        // Fused small cohorts no longer produce global FP16 weight images.
+        // Count actual original-image groups here, including any genuine
+        // non-cohort fallback, rather than infer execution from group size.
+        #[cfg(feature = "strata-small-quantized-matrix")]
+        crate::strata_prefill_profile::count("expert_fp16_image_bytes", (DQ_WORDS * 4) as u64);
         timing.mark("expert_cpu_dequant");
         crate::strata_matrix::expert(
             client,

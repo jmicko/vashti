@@ -77,8 +77,12 @@ Evidence under `kuno-development`: `small-direct-root-build-receipt-20261023.jso
 `small-direct-final-state-20261023.json`. The protected service exited0 in
 11m46.908s, peak swap0; Intel recovered to50,688,000B, NVIDIA compute0, all five
 kernel fault counts0, admission normal and Kuno/Ollama/Vashti HTTP200.
-The original clean45/4245/4245 comparison is running separately; no clean speed
-result or installation is claimed here.
+The original clean45/4245/4245 comparison passes with first/repeated long
+12.471177197/8.394039699s, versus Strata5.5006/5.3515s. The goal remains unmet
+at both positions. Receipt: `strata-parity-small-direct-20261023-fixed-clean-public-summary.json`.
+This separate uninstrumented run exited0 in2m21.776s, swap0 and physical
+recovery passed. Four output tokens do not establish sustained decode speed.
+No installation was performed.
 
 The complete bundle is measured only after correctness and physical recovery
 checks. A diagnostic speed result does not by itself establish Strata parity or

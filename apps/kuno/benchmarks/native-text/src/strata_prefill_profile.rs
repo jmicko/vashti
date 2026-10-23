@@ -52,6 +52,7 @@ pub(crate) fn begin() {
 }
 
 // PUBLIC_PREFILL_NATIVE_SAMPLE_BEGIN
+#[cfg(not(feature="strata-small-quantized-matrix"))]
 const NATIVE_CLASSES: [&str; 7] = [
     "dequant",
     "matrix",
@@ -60,6 +61,11 @@ const NATIVE_CLASSES: [&str; 7] = [
     "ordered_copy",
     "ordered_fill",
     "other",
+];
+#[cfg(feature="strata-small-quantized-matrix")]
+const NATIVE_CLASSES: [&str; 8] = [
+    "dequant", "matrix", "gather", "activate", "ordered_copy", "ordered_fill",
+    "other", "compact_copy",
 ];
 const MATRIX_FAMILIES: [&str; 8] = [
     "wide_gu",
@@ -73,6 +79,10 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-small-quantized-matrix")]
+    if name.contains("::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<") {
+        return 6;
+    }
     if name.contains("::expert_wide_gu::ExpertWideGu")
         || name.contains("::expert_wide_gu_direct::ExpertWideGuDirect")
     {
@@ -111,6 +121,15 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-small-quantized-matrix")]
+    {
+        if matches!(name,"StrataExpertCohortGuCompact"|"StrataExpertCohortDownCompact") {
+            return 7;
+        }
+        if name.contains("::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<") {
+            return 1;
+        }
+    }
     match name {
         "StrataPromptExpertF16Image"
         | "StrataPromptExpertResidentGuImage"
@@ -845,5 +864,26 @@ mod small_direct_profile_tests {
             ("probe::strata_matrix::native::small_direct::expert_tail_down::ExpertTailDown<Runtime>",3),
             ("probe::strata_matrix::cohorts::small_direct::expert_cohort::ExpertCohort<Runtime>",6),
         ]{assert_eq!(native_class(name),1);assert_eq!(matrix_family(name),family);}
+    }
+}
+
+#[cfg(all(test,feature="strata-small-quantized-matrix"))]
+mod small_quantized_profile_tests {
+    use super::*;
+    #[test]
+    fn compact_copy_is_distinct_from_dequant_and_quantized_products_are_matrices() {
+        for name in ["StrataExpertCohortGuCompact","StrataExpertCohortDownCompact"] {
+            assert_eq!(native_class(name),7);
+            assert_eq!(NATIVE_CLASSES[native_class(name)],"compact_copy");
+        }
+        let name="probe::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<Runtime>";
+        assert_eq!(native_class(name),1);
+        assert_eq!(matrix_family(name),6);
+        for name in ["StrataExpertCohortGuCompactFake","StrataExpertCohortDownCompact::nested",
+            "probe::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohortFake<Runtime>"] {
+            assert_eq!(native_class(name),6);
+        }
+        assert_eq!(native_class("StrataExpertCohortGuDirect8Image"),0);
+        assert_eq!(native_class("OrderedCopy"),4);
     }
 }
