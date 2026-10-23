@@ -4,8 +4,18 @@ use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
 use cubecl::{Compiler, WgpuCompilationOptions};
 use std::io::Write;
 pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    validate_kind(false)
+}
+pub(crate) fn validate_pipeline() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    validate_kind(true)
+}
+fn validate_kind(pipeline: bool) -> std::result::Result<(), Box<dyn std::error::Error>> {
     for mask in 0u8..8 {
-        for (name, definition) in definitions() {
+        for (name, definition) in if pipeline {
+            pipeline_definitions()
+        } else {
+            definitions()
+        } {
             let tile = if name.ends_with("tile8") {
                 8
             } else if name.ends_with("tile16") {
@@ -33,7 +43,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             };
             // Current block-liveness analysis keeps B and scratch separate.
             // Validate the actual bounded allocation rather than claim reuse.
-            let expected = 26112;
+            let expected = if pipeline { 14080 } else { 26112 };
             if kernel.shared_size != expected {
                 return Err(format!(
                     "quant cohort real SLM {name} mask{mask}: {} != {expected}",
@@ -177,8 +187,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 }
                 at += n;
             }
-            let iq4 = name.starts_with("quant_cohort_dtype23_")
-                || name.starts_with("quant_cohort_dtype20_");
+            let iq4 = name.contains("dtype23_") || name.contains("dtype20_");
             // Inspect the actual compiled module, not merely source spelling.
             // The failing kernel had correct LUTs but lost the dynamic high
             // nibble branch entirely; the real quarter selector must survive.
@@ -196,12 +205,12 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 )
                 .into());
             }
-            let static_steps = if tile == 32 { 1 } else { 4 };
+            let static_steps = if !pipeline && tile == 32 { 1 } else { 4 };
             if products != static_steps * (tile / 8)
                 || global_input_loads != static_steps * (tile / 8)
                 || shared_weight_loads != static_steps
-                || workgroup_handoffs != 1
-                || retained_product_loops != usize::from(tile == 32)
+                || workgroup_handoffs != if pipeline { 2 } else { 1 }
+                || retained_product_loops != usize::from(!pipeline && tile == 32)
                 || !fault
                 || !subgroup_barrier
                 || !actual_wg64
@@ -230,29 +239,33 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             if !validator.wait()?.success() {
                 return Err("quant cohort SPIRV validator".into());
             }
-            println!(
+            if pipeline {
+                println!("strata_quant_pipeline_shader_accepted name={name} layout={mask} shared_bytes={} subgroup=16 workgroup=64 output_columns=32 producer_subgroups=2 consumer_subgroups=2 global_input_loads={global_input_loads} shared_weight_loads={shared_weight_loads} products={products} native_pack={native_pack} native_unpack={native_unpack} iq4_selectors={iq4_high_nibble_selectors} whole_workgroup_handoffs={workgroup_handoffs} raw_half_narrowing=0 dont_unroll_loops={retained_product_loops}",kernel.shared_size);
+            } else {
+                println!(
                 "strata_quant_cohort_shader_accepted name={name} layout={mask} shared_bytes={} subgroup=16 exact_bit_half=true",
                 kernel.shared_size
             );
-            if iq4 {
-                println!(
+                if iq4 {
+                    println!(
                     "strata_quant_cohort_iq4_nibble_accepted name={name} layout={mask} runtime_selectors={iq4_high_nibble_selectors}"
                 );
-            }
-            println!(
+                }
+                println!(
                 "strata_quant_cohort_native_half_accepted name={name} layout={mask} pack_half_2x16={native_pack} unpack_half_2x16={native_unpack} raw_half_narrowing=0"
             );
-            println!(
+                println!(
                 "strata_quant_cohort_k64_padded_accepted name={name} layout={mask} shared_bytes={} global_input_loads={global_input_loads} shared_weight_loads={shared_weight_loads} products={products}",
                 kernel.shared_size
             );
-            println!(
+                println!(
                 "strata_quant_cohort_padded_b_accepted name={name} layout={mask} stride_halves=24 tile_half_span=376 whole_workgroup_handoffs={workgroup_handoffs} actual_publication_alias={}",
                 kernel.shared_size == 24064
             );
-            println!(
+                println!(
                 "strata_quant_cohort_product_loop_accepted name={name} layout={mask} dont_unroll_loops={retained_product_loops} original_arithmetic_and_cfg_unchanged=true"
             );
+            }
         }
     }
     Ok(())

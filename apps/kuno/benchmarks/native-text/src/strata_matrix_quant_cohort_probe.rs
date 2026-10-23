@@ -155,6 +155,7 @@ fn one(
     dtype: u32,
     poison: bool,
     table: &Handle,
+    pipeline: bool,
 ) -> Checked<serde_json::Value> {
     let down = matches!(dtype, 20 | 42);
     let counts = [1usize, 3, 7, 8, 9, 16, 17, 31];
@@ -348,7 +349,8 @@ fn one(
     sanitize(arena)?;
     for tile in [8usize, 16, 32] {
         words[11] = tile as u32;
-        launch(
+        let selected = if pipeline { launch } else { launch_original };
+        selected(
             client,
             [
                 u::handle(arena, ids[0])?,
@@ -385,17 +387,37 @@ fn one(
     if !table_unchanged {
         return Err("quant cohort full immutable public table changed".into());
     }
-    Ok(
-        serde_json::json!({"family":"quant-cohort-original-format-matrix","dtype":dtype,"down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,
+    let mut result = serde_json::json!({"family":"quant-cohort-original-format-matrix","dtype":dtype,"down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,
         "actual_fused_quantized_cmma":true,"original_decoded_image_and_gpu_product_oracle":true,"all_eight_slots_and_nonzero_prefix":true,
         "exact_original8_rounding_and_fault_gate":true,"chronological_k16":true,"bit_mismatches":0,"full_output_words_checked":checked,
-        "full_owner_status_fault_sources_and_tail_checked":true,"single_original_gpu_output_owner":true,"original_full_arena_reset_between_phases":true,"full_public_table_owner_unchanged":true,"full_output_owner_zero_verified_between_programs":true}),
-    )
+        "full_owner_status_fault_sources_and_tail_checked":true,"single_original_gpu_output_owner":true,"original_full_arena_reset_between_phases":true,"full_public_table_owner_unchanged":true,"full_output_owner_zero_verified_between_programs":true});
+    if pipeline {
+        result["actual_producer_consumer_pipeline"] = true.into();
+        result["workgroup_output_columns"] = 32.into();
+        result["producer_subgroups"] = 2.into();
+        result["consumer_subgroups"] = 2.into();
+    }
+    Ok(result)
 }
 pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
+) -> Checked<Vec<serde_json::Value>> {
+    cases_mode(client, arena, file, false)
+}
+pub(crate) fn pipeline_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    file: &kuno_text::GgufFile,
+) -> Checked<Vec<serde_json::Value>> {
+    cases_mode(client, arena, file, true)
+}
+fn cases_mode(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    file: &kuno_text::GgufFile,
+    pipeline: bool,
 ) -> Checked<Vec<serde_json::Value>> {
     if !arena.public_owned_zero_audit_enabled() || arena.buffer_count() != 0 {
         return Err("quant cohort original empty public audit arena required".into());
@@ -418,7 +440,7 @@ pub(crate) fn cases(
     let mut out = Vec::new();
     for dtype in [18u32, 21, 22, 23, 20, 42] {
         for poison in [false, true] {
-            let result = one(client, arena, file, dtype, poison, &table).map_err(
+            let result = one(client, arena, file, dtype, poison, &table, pipeline).map_err(
                 |e| -> Box<dyn std::error::Error> {
                     format!("quant cohort dtype{dtype} poison{poison}: {e}").into()
                 },

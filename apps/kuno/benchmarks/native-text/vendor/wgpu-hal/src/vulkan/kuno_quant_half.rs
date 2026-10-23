@@ -146,7 +146,7 @@ pub fn kuno_quant_half_pack(words: &[u32]) -> Result<Option<Vec<u32>>, &'static 
         if words[probe] & 65535 == 15 && n >= 4 {
             selected |= matches!(
                 literal(&words[probe + 3..probe + n]).as_deref(),
-                Some(b"expert_quant_cohort" | b"quant_half_edges")
+                Some(b"expert_quant_cohort" | b"expert_quant_pipeline" | b"quant_half_edges")
             );
         }
         probe += n;
@@ -230,7 +230,10 @@ pub fn kuno_quant_half_pack(words: &[u32]) -> Result<Option<Vec<u32>>, &'static 
     if local != Some((*entry, [64, 1, 1])) || super::kuno_cooperative_subgroup(words) != Some(16) {
         return Err("quant half genuine cooperative SG16/WG64 geometry");
     }
-    let data_bindings = if name.as_deref() == Some(b"expert_quant_cohort") {
+    let data_bindings = if matches!(
+        name.as_deref(),
+        Some(b"expert_quant_cohort" | b"expert_quant_pipeline")
+    ) {
         7
     } else {
         3
@@ -303,7 +306,10 @@ pub fn kuno_quant_half_pack(words: &[u32]) -> Result<Option<Vec<u32>>, &'static 
             }
             return Ok(Some(retain_product_loops(
                 words.to_vec(),
-                name.as_deref() == Some(b"expert_quant_cohort"),
+                matches!(
+                    name.as_deref(),
+                    Some(b"expert_quant_cohort" | b"expert_quant_pipeline")
+                ),
             )?));
         }
         return Ok(None);
@@ -351,6 +357,9 @@ pub fn kuno_quant_half_pack(words: &[u32]) -> Result<Option<Vec<u32>>, &'static 
     output[3] = bound;
     Ok(Some(retain_product_loops(
         output,
-        name.as_deref() == Some(b"expert_quant_cohort"),
+        matches!(
+            name.as_deref(),
+            Some(b"expert_quant_cohort" | b"expert_quant_pipeline")
+        ),
     )?))
 }

@@ -80,7 +80,7 @@ const MATRIX_FAMILIES: [&str; 8] = [
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
     #[cfg(feature="strata-small-quantized-matrix")]
-    if name.contains("::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<") {
+    if (name.contains("::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<") || name.contains("::strata_matrix::quant_cohort::expert_quant_pipeline::ExpertQuantPipeline<")) {
         return 6;
     }
     if name.contains("::expert_wide_gu::ExpertWideGu")
@@ -126,7 +126,7 @@ fn native_class(name: &str) -> usize {
         if matches!(name,"StrataExpertCohortGuCompact"|"StrataExpertCohortDownCompact") {
             return 7;
         }
-        if name.contains("::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<") {
+        if (name.contains("::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<") || name.contains("::strata_matrix::quant_cohort::expert_quant_pipeline::ExpertQuantPipeline<")) {
             return 1;
         }
     }

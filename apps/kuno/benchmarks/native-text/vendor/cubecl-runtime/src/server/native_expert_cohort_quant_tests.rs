@@ -3,6 +3,60 @@
 use super::*;
 const QUANT: &str =
     "probe::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<Runtime>";
+const PIPELINE: &str =
+    "probe::strata_matrix::quant_cohort::expert_quant_pipeline::ExpertQuantPipeline<Runtime>";
+
+fn pipeline_program(members: &[u32]) -> Vec<Entry> {
+    let mut entries = quant_program(members);
+    for entry in &mut entries {
+        if entry.name == QUANT {
+            entry.name = PIPELINE;
+            let CubeCount::Static(x,y,z)=entry.count else {panic!("real quant static grid")};
+            entry.count=CubeCount::Static(x*2,y,z);
+        }
+    }
+    entries
+}
+
+#[test]
+fn pipeline_cohort_accepts_exact_generated_n32_with_original_roles_and_population() {
+    assert_eq!(quant_matrix_width(PIPELINE),Some(32));
+    assert_eq!(quant_matrix_width(QUANT),Some(64));
+    for members in [&[1][..],&[8],&[9],&[16],&[17],&[31],&[3,12,31],&[1,8,9,16,17,31,3,12]] {
+        let entries=pipeline_program(members);
+        let counts=complete(&entries).unwrap().finish().unwrap();
+        assert_eq!((counts.quant_cohort_groups,counts.quant_cohort_batches),(members.len(),1));
+        assert_eq!(counts.quant_cohort_launches,entries.len());
+        assert_eq!((counts.logical_phases,counts.matrix_pieces),(members.len()*6,members.len()*2));
+    }
+}
+
+#[test]
+fn pipeline_cohort_rejects_wrong_grid_old_identity_forgeries_and_changed_owners() {
+    let baseline=pipeline_program(&[3,12,31]);
+    for index in 0..baseline.len() {
+        if baseline[index].name!=PIPELINE {continue;}
+        let mut p=pipeline_program(&[3,12,31]);
+        let CubeCount::Static(x,y,z)=p[index].count else {panic!()};
+        p[index].count=CubeCount::Static(x/2,y,z);
+        assert!(complete(&p).is_err());
+        let mut p=pipeline_program(&[3,12,31]);p[index].name=QUANT;
+        assert!(complete(&p).is_err());
+        for owner in 0..7 {
+            let mut p=pipeline_program(&[3,12,31]);replace_owner(&mut p[index],owner);
+            assert!(complete(&p).is_err());
+        }
+    }
+    for name in [
+        "probe::quant_cohort::expert_quant_pipeline::ExpertQuantPipeline<Runtime>",
+        "probe::strata_matrix::quant_cohort::expert_quant_pipeline::ExpertQuantPipelineWrong<Runtime>",
+        "probe::strata_matrix::quant_cohort::expert_quant_pipeline::ExpertQuantPipeline<Runtime>::other",
+    ] {
+        assert_eq!(quant_matrix_width(name),None);
+        let mut p=pipeline_program(&[3,12,31]);p[3].name=name;
+        assert!(complete(&p).is_err());
+    }
+}
 
 fn args(handles: Vec<Handle>, words: &[u32; 48], matrix: bool) -> KernelArguments {
     let mut all = words.to_vec();

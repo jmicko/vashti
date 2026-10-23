@@ -1,5 +1,40 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): rolled control accepted; complete producer/consumer source composed.**
+
+Sourceed7991d0 / worker15ad6f18b9868fe35c00e634f886ab2342483e0359baa01ff6ec95bd416b86b1
+passes355 CPU,18/47 runtime,8+9 metadata, every old compiler population and144
+loop-retention layouts, all720 GPU controls and both full-model chains/recovery.
+All18 quant programs now have zero spills and M32 has3 actual native loops,
+but diagnostic first/repeat11.977240/9.888762s (host12.011710/9.880907s) does not
+improve end-to-end speed. Sampled cohort41.076030ms versus prior38.772952ms.
+Keep this complete control; do not select/abandon coupled pieces from one speed.
+Protected run exited0 in12m39.390s, zero swap. Independent19:31UTC state:
+Intel50,688,000B, NVIDIA compute0, driver faults0, HTTP200/admission normal,
+completed136. Evidence uses `small-quant-rolled-*` development namespace and
+`strata-parity-small-quant-rolled-20261023-expert-cohorts-public-summary.json`.
+
+Next source composes a complete WG64/SG16 producer/consumer pipeline: SG0–1
+decode next padded K64 bank while SG2–3 multiply current bank, with common WG
+barriers and producer-only accumulator resets. New exact generated identity
+derives N32; original identity retains N64. Native ABI/global owners and actual
+phase laws are unchanged. Original12 fused comparisons use launch_original;
+12 additional real-format comparisons exercise the new path. Planned732 GPU
+controls preserve all original720. Original18 definitions/144 layouts remain;
+new18 definitions/144 layouts are separate. Two app and two runtime controls
+are additive; their final populations are not yet confirmed by execution.
+Read [the full contract](kuno-prefill-quant-producer-consumer.md).
+
+The complete source is not built or GPU accepted. No speed test until kernel,
+launcher, exact-name/grid admission, real compiler proofs, original/new paired
+oracles and profile classification are composed. This is a Kuno optimization,
+not a claim about pinned Strata's active path. No new inference API, setting,
+feature or Vashti change. Installed binaries unchanged; no install/release/reset.
+Goal ACTIVE/UNMET; latest CLEAN still12.471177197/8.394039699s against Strata
+5.5006/5.3515s. Sudo refresh bounded through01:47UTC Oct24. Both GPUs are free.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): padded K64 accepted; retain M32 product loop next.**
 
 Frozen source131c8fa6 / worker87fa5fb19a934370f7d84dbb219cd76aa04201fb525f48309fc3cef4079947c6

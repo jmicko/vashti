@@ -59,16 +59,19 @@ fn image_variant(name: &str, expected: &str) -> Option<u8> {
     None
 }
 
-fn quant_matrix(name: &str) -> bool {
+fn quant_matrix_width(name: &str) -> Option<u32> {
     #[cfg(feature = "kuno-small-quantized-matrix")]
-    if name.split_once("::strata_matrix::quant_cohort::expert_quant_cohort::")
-        .is_some_and(|(_, suffix)| suffix.strip_prefix("ExpertQuantCohort")
-            .is_some_and(native_strata_generated_type_suffix)) {
-        return true;
+    for (path, kind, width) in [
+        ("::strata_matrix::quant_cohort::expert_quant_cohort::", "ExpertQuantCohort",64),
+        ("::strata_matrix::quant_cohort::expert_quant_pipeline::", "ExpertQuantPipeline",32),
+    ] {
+        if name.split_once(path).is_some_and(|(_, suffix)| suffix.strip_prefix(kind)
+            .is_some_and(native_strata_generated_type_suffix)) { return Some(width); }
     }
     let _ = name;
-    false
+    None
 }
+fn quant_matrix(name: &str) -> bool { quant_matrix_width(name).is_some() }
 
 // The original slot spans are encoded in u32 words, not FP16 image offsets.
 // Exact role equations bind the compact producers and both matrix consumers to
@@ -327,6 +330,7 @@ impl Cohort {
             let quant = self.quantized();
             let arrays = if quant { 7 } else { 6 };
             let metadata = 24 + arrays;
+            let columns_per_workgroup = if quant { quant_matrix_width(name).ok_or_else(|| batch_fault("native quant matrix identity"))? } else {64};
             if args.buffers.len() != arrays
                 || !args.read_dependencies.is_empty()
                 || args.info.data.len() != metadata
@@ -336,7 +340,7 @@ impl Cohort {
                 || if quant { compact_role_words(&w, down).is_none() } else { w[3] != 0 }
                 || w[5] != if down { 2 } else { 0 }
                 || w[11] != tile
-                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/64 && *y==if quant || tile==8{1}else{2} && *c==z)
+                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/columns_per_workgroup && *y==if quant || tile==8{1}else{2} && *c==z)
             {
                 return Err(batch_fault("native expert cohort matrix schema/grid"));
             }
