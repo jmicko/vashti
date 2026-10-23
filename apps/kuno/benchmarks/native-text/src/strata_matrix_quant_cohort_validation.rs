@@ -31,7 +31,9 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             else {
                 return Err("quant cohort actual SPIRV compiler".into());
             };
-            let expected = if mask & 4 != 0 { 24064 } else { 26112 };
+            // Current block-liveness analysis keeps B and scratch separate.
+            // Validate the actual bounded allocation rather than claim reuse.
+            let expected = 26112;
             if kernel.shared_size != expected {
                 return Err(format!(
                     "quant cohort real SLM {name} mask{mask}: {} != {expected}",

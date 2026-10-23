@@ -1,6 +1,23 @@
 # Fused quantized small-expert matrices
 
-## Complete K64 padded layout (current source, not GPU accepted)
+## Current allocation policy after compiler inspection
+
+Both source55573ec0 and header-uniform sourceddeafd30 compile B and scratch
+as separate allocations:26112B in every layout. The latter passes353 CPU,
+18/47 runtime and8+9 metadata. Its offline rejection is the attempted24064B
+reuse property, not an out-of-bounds or numerical failure. Preserve both failed
+expectations and workers. No GPU has run since the accepted K128 build.
+
+Use the actual26112B envelope for all layouts. This remains below the original
+48KiB per-workgroup limit; the former inference that this limit also describes
+per-core workgroup occupancy was not established. No occupancy claim is made.
+Retain the padded producer/reader layout, global A, K64 stages, direct signs,
+M32 loop and one final WG handoff as a complete bundle for measurement. Lifetime
+release remains present, but actual publication alias must be reported false.
+This changes the unachieved optimization expectation, not numerical tolerances,
+source/owner bounds, finite/fault checks or any original GPU oracle.
+
+## Complete K64 padded layout (initial reuse proposal, not GPU accepted)
 
 Compiler checkpoint: source55573ec0 passes353 CPU and all runtime/metadata
 controls, then fails at the first explicit layout: actual26112B, expected24064B.

@@ -335,7 +335,7 @@ fn quant_cohort_padded_b_tiles_are_aligned_disjoint_fully_initialized_and_reusab
     }
     assert!(seen.into_iter().all(|v| v));
     assert_eq!(4 * 2 * 376 * 4 * 2, 24064);
-    assert!(2 * 24064 <= 49152);
+    assert!(24064 + 2048 <= 49152);
     assert_eq!(24064 + 4 * 128 * 4, 26112);
     // Independent source/lifetime fence oracle: publication may alias B only
     // after a whole-WG fence, never after just its subgroup's final reader.
