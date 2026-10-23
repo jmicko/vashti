@@ -1,4 +1,7 @@
 // Genuine64x64 expert macro tile:8 subgroups, orderedK16, original routed stores.
+#[cfg(feature = "strata-deep-matrix")]
+#[path = "strata_matrix_macro64_deep.rs"]
+pub(super) mod deep_macro64;
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn macro64_stage<F: Float>(

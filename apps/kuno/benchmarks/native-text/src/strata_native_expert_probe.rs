@@ -182,6 +182,11 @@ pub(crate) fn macro64_cases(client: &ComputeClient<WgpuRuntime>,
             [&handles[0],&handles[1]].map(|h| (h.size_in_used(), h.offset_start.unwrap_or(0)))) {
             return Err("actual macro64 dispatcher geometry not selected".into());
         }
+        #[cfg(feature = "strata-deep-matrix")]
+        if !super::native::deep_macro64::selected(client,count,rows,columns,first,
+            [&handles[0],&handles[1]].map(|h| (h.size_in_used(),h.offset_start.unwrap_or(0)))) {
+            return Err("actual deep macro64 compiler/capacity path not selected".into());
+        }
         // Counts below256 cannot select the original wide prefix. These exact
         // admitted operands select the new branch in the genuine dispatcher.
         super::native::run_expert(client,handles,count,columns,rows,first,group,down)?;

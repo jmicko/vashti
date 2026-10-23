@@ -1763,6 +1763,10 @@ mod native {
         let macro64_selected = macro64_geometry(count, rows, columns, weight_first,
             client.properties().hardware.max_shared_memory_size,
             [&input, &weight].map(|h| (h.size_in_used(), h.offset_start.unwrap_or(0))));
+        #[cfg(feature = "strata-deep-matrix")]
+        let deep_macro64_selected = use_macro && macro64_selected &&
+            deep_macro64::selected(client,count,rows,columns,weight_first,
+                [&input,&weight].map(|h| (h.size_in_used(),h.offset_start.unwrap_or(0))));
         let narrow = narrow_compatible(client, &input, &weight, count, rows, columns, weight_first);
         let ia = if use_macro || narrow.is_some() {
             macro_half_arg(input)?
@@ -1784,6 +1788,15 @@ mod native {
             #[cfg(feature = "strata-expert-macro64")]
             if use_macro && macro64_selected {
                 crate::strata_prefill_profile::count("expert_macro64_products", 1);
+                #[cfg(feature = "strata-deep-matrix")]
+                if deep_macro64_selected {
+                    crate::strata_prefill_profile::count("expert_macro64_deep_products", 1);
+                    deep_macro64::expert_macro64::launch_unchecked::<WgpuRuntime>(client,
+                        CubeCount::Static(rows.div_ceil(64) as u32,count.div_ceil(64) as u32,1),
+                        CubeDim::new_1d(128),ia,wa,oa,ma,sa,fa,
+                        columns,rows,count,weight_first,group,down);
+                    return Ok(());
+                }
                 expert_macro64::launch_unchecked::<WgpuRuntime>(client,
                     CubeCount::Static(rows.div_ceil(64) as u32, count.div_ceil(64) as u32, 1),
                     CubeDim::new_1d(128), ia, wa, oa, ma, sa, fa,
@@ -2862,6 +2875,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         native_wide::validate_hc_down_inject_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native_wide::validate_deep_dense_sources()?;
+        #[cfg(feature="strata-deep-matrix")]
+        native::deep_macro64::validate_sources()?;
     }
     Ok(())
 }
