@@ -200,9 +200,11 @@ fn new_actual_entry_types_are_distinct_and_original_public_modes_stay_unchanged(
             .all(|(name, _)| !name.contains("shared_reuse"))
     );
     let main = include_str!("strata_matrix.rs");
-    assert_eq!(
-        main.matches("&& native_expert_wide::shared_reuse::try_expert_mode")
-            .count(),
-        2
-    );
+    // Production selects the complete new tail bundle only under its feature;
+    // the original public mode remains the explicit feature-off function.
+    assert_eq!(main.matches("&& reuse_mode(client,h.clone(),count,").count(), 2);
+    assert_eq!(main.matches("let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode;").count(), 2);
+    assert_eq!(main.matches("let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode_small_tail;").count(), 2);
+    assert_eq!(main.matches("#[cfg(all(feature=\"strata-wide-shared-reuse\",not(feature=\"strata-small-direct-publish\")))]").count(), 2);
+    assert_eq!(main.matches("#[cfg(all(feature=\"strata-wide-shared-reuse\",feature=\"strata-small-direct-publish\"))]").count(), 2);
 }
