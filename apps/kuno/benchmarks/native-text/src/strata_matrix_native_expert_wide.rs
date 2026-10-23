@@ -3,6 +3,9 @@
 #[cfg(feature="strata-expert-ordered-output")]
 #[path="strata_matrix_ordered_wide.rs"]
 pub(super) mod ordered;
+#[cfg(feature="strata-wide-shared-reuse")]
+#[path="strata_matrix_wide_shared_reuse.rs"]
+pub(super) mod shared_reuse;
 use crate::strata_prompt::groups as abi;
 use cubecl::{
     ir::{ElemType, FloatKind, features::MmaConfig},

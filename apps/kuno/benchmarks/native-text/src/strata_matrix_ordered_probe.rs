@@ -227,7 +227,7 @@ pub(super) fn scan(
     Ok(scanned)
 }
 
-fn one(
+pub(super) fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     count: usize,
@@ -342,8 +342,11 @@ fn one(
     } else {
         0
     };
+    // Only the separately named additive GU/direct controls select this
+    // original raw-publication contract; existing cases retain their policy.
+    let direct_gu = family == "shared-reuse-direct-gu";
     let direct_member = |member: usize| {
-        ordered
+        (ordered || direct_gu)
             && member < wide_prefix
             && control
                 .bad_member(count)

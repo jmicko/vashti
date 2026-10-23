@@ -1,4 +1,7 @@
 //! Additive ordered PART CMMA producers; original rank entries are untouched.
+#[cfg(feature="strata-wide-shared-reuse")]
+#[path="strata_matrix_ordered_shared_reuse.rs"]
+pub(super) mod shared_reuse;
 use super::*;
 #[cfg(feature = "strata-deep-matrix")]
 #[path = "strata_matrix_ordered_deep.rs"]
@@ -1251,7 +1254,7 @@ fn definition_impl(down: bool, tile: usize, direct_gu: bool) -> KernelDefinition
 
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn publish_routed(
+pub(super) fn publish_routed(
     acc: &cmma::Matrix<f32>,
     scratch: &mut SharedMemory<f32>,
     output: &mut Array<f32>,

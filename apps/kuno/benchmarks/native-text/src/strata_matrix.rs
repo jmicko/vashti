@@ -2699,6 +2699,14 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-wide-shared-reuse")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
+            && native_expert_wide::shared_reuse::try_expert_mode(client,h.clone(),count,
+                columns,rows,weight_first,group,down,
+                cfg!(feature="strata-native-direct-gu")&&!down,false)? {
+            return Ok(());
+        }
+
         native::run_expert(client, h, count, columns, rows, weight_first, group, down)
     }
     #[cfg(not(feature = "strata-intel-core"))]
@@ -2746,6 +2754,14 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-wide-shared-reuse")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
+            && native_expert_wide::shared_reuse::try_expert_mode(client,h.clone(),count,
+                columns,rows,weight_first,group,down,
+                cfg!(feature="strata-native-direct-gu")&&!down,true)? {
+            return Ok(());
+        }
+
         native::ordered::run_expert(client, h, count, columns, rows, weight_first, group, down)
     }
     #[cfg(not(feature = "strata-intel-core"))]
@@ -3316,3 +3332,15 @@ mod ordered_validation;
 mod ordered_probe;
 #[cfg(feature="strata-expert-ordered-output")]
 pub(crate) use ordered_probe::cases as public_ordered_numeric;
+
+#[cfg(feature="strata-wide-shared-reuse")]
+#[path="strata_matrix_shared_reuse_validation.rs"]
+mod shared_reuse_validation;
+#[cfg(feature="strata-wide-shared-reuse")]
+pub(crate) use shared_reuse_validation::validate as validate_shared_reuse_sources;
+
+#[cfg(feature="strata-wide-shared-reuse")]
+#[path="strata_matrix_shared_reuse_probe.rs"]
+mod shared_reuse_probe;
+#[cfg(feature="strata-wide-shared-reuse")]
+pub(crate) use shared_reuse_probe::cases as public_shared_reuse_numeric;
