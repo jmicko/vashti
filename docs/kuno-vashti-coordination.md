@@ -1,26 +1,30 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-23): complete direct-global source composed; not built yet.**
+**Active Kuno handoff (2026-10-23): direct-global accepted, expert-image composition next.**
 
-Read [the exact direct-global contract](kuno-prefill-global-register.md).
-New complete source: WG512/SG16,M128/N128,K32 two real A/B CMMA register banks,
-original packed inputs/column stride, four chronological F32 C accumulators,
-zero shared memory/copies, guarded final prefetch/GR320, original F32 direct
-stores and finite consumer. Aligned selection and original-view prefix/suffix
-are composed with full host guards, actual compiler/CFG proofs, three CPU and
-21 numerical cases, capability reports and anonymous counters. Original747 GPU
-controls/360 CPU cases retained; planned768/363, runtime18/49, metadata8+9.
-Same features, no new API/config/model/frontend. Do not run partial speed tests.
-Source isn't built or GPU accepted; finish this full validation/benchmark block.
+Read [accepted direct-global evidence](kuno-prefill-global-register.md) and
+[next coupled expert contract](kuno-prefill-global-image-experts.md).
+Frozen9638aeb8/workerfa039774 passes363 CPU,18/49 runtime,8+9 metadata,
+10 original native controls,24 new shader layouts and all768 GPU controls,
+both original full-model proof chains and physical recovery. Diagnostic
+11.783730901/9.814627812s; normal11.837493501/9.737173969s. Three new programs
+128GRFs with3:7/1:4/3:7 spills:fills; original8 wide zero-spill/QSA unchanged.
+No substantial full-request gain. Goal ACTIVE/UNMET, clean target5.3515s,
+latest Kuno CLEAN8.394039699s. Keep all variants; no speed-driven rollback.
 
-Motivation is measured: Strata53 GEMM geometries all256 registers, no spills;
-51 use zero shared memory. Accepted Kuno asymmetric lifetime variant still128
-GRFs/heavy spills, normal repeat9.763397092s. Keep its source/evidence. Goal
-ACTIVE/UNMET; clean target5.3515s, latest Kuno CLEAN8.394039699s unchanged.
-Last physical state22:24:28UTC healthy/free, all5 faults0, HTTP200,completed154.
-Bounded sudo refresh through01:47UTC Oct24. Canonical Vashti/inherited pycache
-preserved; no installation/release/reset/global-driver change. Evidence and
-next-step details below remain authoritative for preceding accepted variants.
+Expert phase still about6s; next complete variant couples original FP16-image
+cohort producer/consumer with direct-global register-bank large-expert products,
+original GU finite activation/ordered DOWN finisher, original tails/owners and
+all admission/capacity/erasure proofs. Keep quantized controls and source. A
+counter-only GR-prefix credit correction is pending in source and explicitly
+is not the frozen GPU-tested worker. No API/UI/install/release changes.
+
+Profiler column clarification: Strata's256 means register allocation capacity
+per thread, not actual live-register use. Its measured no-spill/mostlyzero-SLM
+properties remain valid. Full details/rejections preserved in linked docs.
+Independent23:16:51UTC: Intel50,688,000B,NVIDIA compute0, all5 faults0, HTTP200,
+normal admission/completed157. Sudo bounded through01:47UTC Oct24. Canonical
+Vashti/inherited pycache preserved. GPU resources are authorized and recovered.
 
 ## Previous checkpoint
 

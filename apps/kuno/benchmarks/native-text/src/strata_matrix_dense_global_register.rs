@@ -398,6 +398,22 @@ pub(super) fn try_global_register_dense(
     out_stride: usize,
     bfloat: bool,
 ) -> Result<bool> {
+    try_global_register_impl(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_global_register_impl(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 4],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    out_first: usize,
+    out_stride: usize,
+    bfloat: bool,
+    prefix: bool,
+) -> Result<bool> {
     let gr_down = gr_down_shape(bfloat, columns, rows, weight_first, out_first, out_stride);
     let hw = &client.properties().hardware;
     if !global_register_geometry(
@@ -473,10 +489,14 @@ pub(super) fn try_global_register_dense(
     )?;
     // Match the existing full-wide GR credit; shorter original prefix paths
     // intentionally did not claim this population.
-    if gr_down && count >= 512 {
+    if full_gr_credit(gr_down,count,prefix) {
         crate::strata_prefill_profile::count("gr_wide_tail_products", 1);
     }
     Ok(true)
+}
+
+fn full_gr_credit(gr_down: bool, count: usize, prefix: bool) -> bool {
+    gr_down && count >= 512 && !prefix
 }
 
 pub(crate) fn global_register_available(client: &ComputeClient<WgpuRuntime>) -> bool {
@@ -576,7 +596,7 @@ pub(super) fn try_global_register_split(
             out_stride,
         )?;
     }
-    if !try_global_register_dense(
+    if !try_global_register_impl(
         client,
         h.clone(),
         prefix,
@@ -586,6 +606,7 @@ pub(super) fn try_global_register_split(
         out_first,
         out_stride,
         bfloat,
+        true,
     )? {
         return Ok(false);
     }

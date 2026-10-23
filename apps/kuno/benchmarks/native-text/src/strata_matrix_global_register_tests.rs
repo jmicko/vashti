@@ -82,6 +82,11 @@ fn global_register_two_banks_keep_k16_chronology_final_bounds_and_original_capab
     assert!(!valid(128, 10240, 320, 4, 49152, 512, (512, 1, 1), 16, 32));
     assert!(!valid(128, 10240, 384, 1, 49152, 512, (512, 1, 1), 16, 32));
     assert!(!valid(128, 10240, 384, 4, 49152, 512, (512, 1, 1), 32, 32));
+    for count in [128,256,384,512,513,1024] {
+        assert_eq!(full_gr_credit(true,count,false), count>=512);
+        assert!(!full_gr_credit(true,count,true));
+        assert!(!full_gr_credit(false,count,false));
+    }
     for count in [148, 257, 513] {
         let (prefix, suffix) = prefix_partition(count).unwrap();
         assert_eq!(prefix + suffix, count);

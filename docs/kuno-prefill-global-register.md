@@ -8,14 +8,15 @@ opaque oneMKL machine code. Do not claim performance before full acceptance.
 ## Confirmed difference
 
 Development `strata-kernel-properties-public-20261023.json` contains53 real GEMM
-geometry rows for22 entry names: all256 registers/thread, zero private/spill
+geometry rows for22 entry names: all256-register allocation capacity per thread, zero private/spill
 memory;51 rows use0 shared bytes and2 use24576B. Busy FP16/BF16 32x64/64x40
 variants use0 shared bytes. Original fixed45/4245/4245 requests complete with
 correct answer, no prompt/cache reuse,32768 context/int8 KV and original binary.
 Instrumented first/repeated8.5263/8.2870s are not clean timing references.
 The clean target remains5.5006/5.3515s.
 
-Intel documents the register column as register count/thread:
+Intel documents this column as the number of registers available per thread;
+it is allocation capacity, not a measured count of live registers:
 https://github.com/intel/pti-gpu/blob/master/tools/unitrace/README.md
 These are actual queried properties, not tile/register inferences from names.
 The trace is2,710,535bytes, SHA256
@@ -147,3 +148,40 @@ INFO3. No other descriptor class/binding is admitted. All24 actual modules pass
 the current isolated helper and structural/CFG proof in that diagnostic; it is
 explicitly not numerical, GPU or complete linked-worker acceptance. Full build
 and original population checks remain required. Previous rejection retained.
+
+## Accepted complete pipeline (2026-10-23)
+
+Frozen source9638aeb82198a0b2e4bd17e9498ae96148494236 and worker
+fa039774e063994a000340e0d2c3f4332825f8c375a69b65ffb1233a893bd302 pass
+363 AppCPU,18/49 runtime,8+9 metadata and10 original native HAL controls;
+24 new real compiler layouts/CFG checks and all original compiler populations.
+All768 paired GPU controls pass, retaining the original747, as do both complete
+model proof chains, original routing/reuse/capacity constraints and physical
+recovery. Unit b34e8a30dab0475c99506ba37d08f0d5 exits0 in13m2.880s,
+zero swap,28.0GiB peak. No installed binary or service change.
+
+Diagnostic first/repeated11.783730901/9.814627812s; normal11.837493501/
+9.737173969s. Actual three generated global programs use128 GRFs and
+3:7,1:4,3:7 spills:fills, a large reduction from the preceding asymmetric
+109:105/122:132, but no substantial complete-request gain. Keep the variant;
+this is not parity and no CLEAN comparison was justified. Original8 wide
+programs remain zero-spill and both original QSA ISA hashes are unchanged.
+
+Repeated diagnostic experts6.045152173s/attention2.489026440s; normal
+5.967802435/2.489974974s. Sampled layer24 expert GPU: matrices59.742713ms,
+cohorts32.921752ms, weight copies29.123574ms, dequant7.961387ms. These samples
+are diagnostic overhead-bearing observations, not end-to-end speedup promises.
+The earlier complete FP16-image control remains faster than quantized cohorts.
+
+Public artifacts under development: global-register-{profile,normal}-safe-phases-
+20261023.json, global-register-complete-isa-export-20261023.json and the complete
+strata-parity-global-register-20261023-expert-cohorts-public-summary.json.
+Independent23:16:51UTC state: Intel50,688,000B, NVIDIA compute0, all5 classified
+faults0, HTTP200, normal admission/completed157. Both cards are recovered.
+
+A subsequent source audit found only a public profiling counter discrepancy:
+a GR320 prefix of512 from a nonaligned513-member call incorrectly received
+full-wide GR credit. The pending fix distinguishes prefix from whole calls,
+keeping the exact original credit law; no shader, owner, numerical or timing
+change. Its CPU boundary control covers512/513/full versus prefix explicitly.
+Do not claim the corrected source is the frozen GPU-tested worker above.
