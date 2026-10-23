@@ -64,7 +64,11 @@ fn source(in_place: bool) -> String {
 ");
     for k in 0..10 {
         let d = k * 256;
-        s.push_str(&format!("    var r{k}=residual[base+tid+{d}u];if p.apply!=0u {{r{k}=fma(block[t*2560u+tid+{d}u],injection[t*4u+h],previous[base+tid+{d}u]);residual[base+tid+{d}u]=r{k};}}sum+=r{k}*r{k};\n"));
+        // The original native loop compiles to chronological FFMA(r,r,sum).
+        // With += r*r Mesa may swap the first two terms while contracting an
+        // unrolled chain, changing the scale by an ULP. Express that original
+        // native operation explicitly, retaining both its order and rounding.
+        s.push_str(&format!("    var r{k}=residual[base+tid+{d}u];if p.apply!=0u {{r{k}=fma(block[t*2560u+tid+{d}u],injection[t*4u+h],previous[base+tid+{d}u]);residual[base+tid+{d}u]=r{k};}}sum=fma(r{k},r{k},sum);\n"));
     }
     let reduction = old
         .split_once("    for(var d=16u;d>0u;d/=2u)")
@@ -189,6 +193,44 @@ fn validate_one(in_place: bool) -> std::result::Result<(), Box<dyn std::error::E
         return Err("GR register original ABI/workgroup drift".into());
     }
     let entry = &module.entry_points[0].function;
+    let local_name = |p: n::Handle<n::Expression>| match entry.expressions[p] {
+        n::Expression::LocalVariable(v) => entry.local_variables[v].name.as_deref(),
+        _ => None,
+    };
+    let loaded_local = |v: n::Handle<n::Expression>| match entry.expressions[v] {
+        n::Expression::Load { pointer } => local_name(pointer),
+        _ => None,
+    };
+    let mut ordered_squares = 0;
+    for statement in entry.body.iter() {
+        if matches!(statement, n::Statement::Loop { .. }) {
+            break;
+        }
+        if let n::Statement::Store { pointer, value } = statement
+            && local_name(*pointer) == Some("sum")
+        {
+            let n::Expression::Math {
+                fun: n::MathFunction::Fma,
+                arg,
+                arg1: Some(b),
+                arg2: Some(c),
+                ..
+            } = entry.expressions[*value] else {
+                return Err("GR original chronological fused square accumulation".into());
+            };
+            let name = format!("r{ordered_squares}");
+            if loaded_local(arg) != Some(name.as_str())
+                || loaded_local(b) != Some(name.as_str())
+                || loaded_local(c) != Some("sum")
+            {
+                return Err("GR original fused square order changed".into());
+            }
+            ordered_squares += 1;
+        }
+    }
+    if ordered_squares != 10 {
+        return Err("GR missing chronological fused square accumulation".into());
+    }
     for k in 0..10 {
         let var = entry
             .local_variables

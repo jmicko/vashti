@@ -73,3 +73,29 @@ Add four full-mantissa F32 fixture cases (old20 retained,total24,new457GPU)
 covering apply/no-apply and in-place/disjoint. Failure diagnostics contain only
 public mismatch counts per R/image/scale/fault field. Do NOT relax routing or
 bitwise guards. No shader precision policy changes. Source-only correction.
+
+## Physical mapping fixture failure and chronological FMA correction
+
+Source4fa1d067/workere04fa7d2 passes275CPU/15runtime/all original shader
+layouts plus the two new modules. Protected GPU operators STOP before model
+execution on the stronger full-f32 apply=true/disjoint case: mismatches
+[R,image,scale,fault]=[0,0,1,0]. No accepted throughput result. Recovery
+2026-10-23T04:39:48UTC: Intel50,688,000B,NVIDIA compute0,faults0,HTTP200,
+admission normal. Both failed benchmark logs and receipts are retained.
+
+Actual Mesa NIR from that same public run establishes the arithmetic difference:
+original program35 loops FFMA(r,r,sum) chronologically. New program36 computes
+r1*r1 first and FFMA(r0,r0,that),then r2 onward. Contracting the unrolled
+sum+=r*r permits that exchange and changes rounding. Do not disable contraction
+on the new path alone,or relax the original bitwise/routing checks. New source
+expresses sum=fma(rk,rk,sum) for all ten terms,matching the actual original
+native sequence. Existing actual-module CPU validator now checks all ten real
+Naga FMA-to-sum stores and their chronological residual inputs before reduction.
+The original kernels remain untouched as independent GPU comparators. Full
+original GPU and model acceptance remains required; no speed/install claim.
+
+Failure evidence lives under /media/jmicko/faststore/kuno-development:
+gr-register-norm-physical-exact-error-20261023.txt,
+gr-register-physical-failed-programs-20261023.json,
+gr-register-physical-failed-program-{35,36}-20261023.txt,
+gr-register-norm-physical-failure-state-20261023.json.
