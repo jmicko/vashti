@@ -15,9 +15,10 @@ fn launch(
     down: bool,
 ) -> shared::ProbeResult<bool> {
     #[cfg(feature = "strata-deep-matrix")]
-    if count>=(if cfg!(feature="strata-native-expert-medium"){128}else{256})
-        && !super::native_expert_wide::deep::selected(client) {
-        return Err("actual deep wide compiler/capacity path not selected".into());
+    if super::native_expert_wide::deep::selected(client)
+        != crate::strata_worker::deep_capability::Capability::actual(client).routed_selected()
+    {
+        return Err("actual deep wide compiler/capacity selection disagrees".into());
     }
     let actual = super::native_expert_wide::try_expert(
         client,
@@ -64,7 +65,7 @@ pub(crate) fn cases(
     arena: &mut crate::private_arena::PrivateArena,
 ) -> shared::ProbeResult<Vec<serde_json::Value>> {
     use shared::Control::*;
-    shared::cases(
+    let reports = shared::cases(
         client,
         arena,
         "native-wide-routed-expert",
@@ -87,7 +88,31 @@ pub(crate) fn cases(
             (257, InvalidRoute),
         ],
         launch,
-    )
+    )?;
+    #[cfg(feature = "strata-deep-matrix")]
+    let reports = report_deep_selection(client, reports, "actual_native_wide_launch", "wide")?;
+    Ok(reports)
+}
+
+#[cfg(feature = "strata-deep-matrix")]
+fn report_deep_selection(
+    client: &ComputeClient<WgpuRuntime>,
+    mut reports: Vec<serde_json::Value>,
+    original_launch_field: &str,
+    family: &str,
+) -> shared::ProbeResult<Vec<serde_json::Value>> {
+    let observed = crate::strata_worker::deep_capability::Capability::actual(client);
+    for report in &mut reports {
+        let actual = report[original_launch_field]
+            .as_bool()
+            .ok_or("public expert actual selection record missing")?;
+        report[format!("actual_deep_{family}_launch")] =
+            (actual && observed.routed_selected()).into();
+        report[format!("actual_original_{family}_launch")] =
+            (actual && !observed.routed_selected()).into();
+        report["actual_deep_capability_selection_agreed"] = true.into();
+    }
+    Ok(reports)
 }
 
 #[cfg(feature = "strata-native-direct-gu")]
@@ -104,7 +129,7 @@ pub(crate) fn medium_cases(
     arena: &mut crate::private_arena::PrivateArena,
 ) -> shared::ProbeResult<Vec<serde_json::Value>> {
     use shared::Control::*;
-    shared::cases(
+    let reports = shared::cases(
         client,
         arena,
         "native-medium-routed-expert",
@@ -123,7 +148,10 @@ pub(crate) fn medium_cases(
             (129, InvalidRoute),
         ],
         launch,
-    )
+    )?;
+    #[cfg(feature = "strata-deep-matrix")]
+    let reports = report_deep_selection(client, reports, "actual_native_wide_launch", "wide")?;
+    Ok(reports)
 }
 
 #[cfg(feature = "strata-narrow-global")]
@@ -188,16 +216,21 @@ pub(crate) fn macro64_cases(client: &ComputeClient<WgpuRuntime>,
             return Err("actual macro64 dispatcher geometry not selected".into());
         }
         #[cfg(feature = "strata-deep-matrix")]
-        if !super::native::deep_macro64::selected(client,count,rows,columns,first,
-            [&handles[0],&handles[1]].map(|h| (h.size_in_used(),h.offset_start.unwrap_or(0)))) {
-            return Err("actual deep macro64 compiler/capacity path not selected".into());
+        if super::native::deep_macro64::selected(client,count,rows,columns,first,
+            [&handles[0],&handles[1]].map(|h| (h.size_in_used(),h.offset_start.unwrap_or(0))))
+            != crate::strata_worker::deep_capability::Capability::actual(client).routed_selected()
+        {
+            return Err("actual deep macro64 compiler/capacity selection disagrees".into());
         }
         // Counts below256 cannot select the original wide prefix. These exact
         // admitted operands select the new branch in the genuine dispatcher.
         super::native::run_expert(client,handles,count,columns,rows,first,group,down)?;
         Ok(true)
     }
-    shared::cases(client,arena,"native-macro64-routed-expert","actual_macro64_launch",
+    let reports=shared::cases(client,arena,"native-macro64-routed-expert","actual_macro64_launch",
         &[(64,Finite),(65,Finite),(127,Finite),(128,Finite),(129,Finite),(255,Finite),
-          (65,NonfiniteFirst),(65,NonfiniteOther),(65,InvalidRoute),(65,InvalidRoutePrefix)],selected)
+          (65,NonfiniteFirst),(65,NonfiniteOther),(65,InvalidRoute),(65,InvalidRoutePrefix)],selected)?;
+    #[cfg(feature = "strata-deep-matrix")]
+    let reports = report_deep_selection(client, reports, "actual_macro64_launch", "macro64")?;
+    Ok(reports)
 }

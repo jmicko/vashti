@@ -8,6 +8,9 @@ use cubecl::{
 use kuno_text::{GgufFile, GgufLimits, Qwen35Tokenizer, model::Qwen4Exp};
 use std::{io::Read, path::Path, sync::atomic::AtomicBool, time::Instant};
 use zeroize::Zeroizing;
+#[cfg(feature = "strata-deep-matrix")]
+#[path = "strata_deep_capability.rs"]
+pub(crate) mod deep_capability;
 #[path = "../../../src/image_privacy.rs"]
 #[allow(dead_code)]
 mod protection;
@@ -401,8 +404,28 @@ async fn serve(
         #[cfg(not(feature="strata-gr-register-norm"))]
         let gr_register_norm_checks:Vec<serde_json::Value>=Vec::new();
         #[cfg(feature="strata-deep-matrix")]
-        let deep_dense_checks=crate::strata_matrix::public_deep_dense_numeric(&client,&mut arena,&file)
-            .map_err(|error|{eprintln!("public_deep_dense_error {error}");"public_deep_dense_failed"})?;
+        let actual_deep_capability=deep_capability::Capability::actual(&client);
+        #[cfg(feature="strata-deep-matrix")]
+        let deep_matrix_capabilities=actual_deep_capability.report();
+        #[cfg(not(feature="strata-deep-matrix"))]
+        let deep_matrix_capabilities=serde_json::json!({"compiled":false});
+        #[cfg(feature="strata-deep-matrix")]
+        let deep_matrix_unavailable_checks:Vec<serde_json::Value>=actual_deep_capability.unavailable_dense().into_iter().collect();
+        #[cfg(not(feature="strata-deep-matrix"))]
+        let deep_matrix_unavailable_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-deep-matrix")]
+        let deep_dense_checks=if actual_deep_capability.dense_selected() {
+            let checks=crate::strata_matrix::public_deep_dense_numeric(&client,&mut arena,&file)
+                .map_err(|error|{eprintln!("public_deep_dense_error {error}");"public_deep_dense_failed"})?;
+            if checks.len()!=deep_capability::DEEP_DENSE_CASES {
+                return Err("public_deep_dense_case_population");
+            }
+            checks
+        } else {
+            // This is unavailable GPU coverage, not a successful empty suite.
+            // Every original control below still runs through its real fallback.
+            Vec::new()
+        };
         #[cfg(not(feature="strata-deep-matrix"))]
         let deep_dense_checks:Vec<serde_json::Value>=Vec::new();
         #[cfg(feature="strata-hc-down-inject")]
@@ -544,7 +567,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"gr_wide_tail_checks":gr_wide_tail_checks,"tiny_output_checks":tiny_output_checks,"dense_direct_checks":dense_direct_checks,"dense_slm40_checks":dense_slm40_checks,"dense_prefix_checks":dense_prefix_checks,"gr_register_norm_checks":gr_register_norm_checks,"hc_down_inject_checks":hc_down_inject_checks,"deep_dense_checks":deep_dense_checks,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"macro64_expert_checks":macro64_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"cohort_producer_checks":cohort_producer_checks,"cohort_dequant_checks":cohort_dequant_checks,"cohort_matrix_checks":cohort_matrix_checks,"cohort_matrix_pair_checks":cohort_matrix_pair_checks,"cohort_multi_dequant_checks":cohort_multi_dequant_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"gr_wide_tail_checks":gr_wide_tail_checks,"tiny_output_checks":tiny_output_checks,"dense_direct_checks":dense_direct_checks,"dense_slm40_checks":dense_slm40_checks,"dense_prefix_checks":dense_prefix_checks,"gr_register_norm_checks":gr_register_norm_checks,"hc_down_inject_checks":hc_down_inject_checks,"deep_dense_checks":deep_dense_checks,"deep_matrix_capabilities":deep_matrix_capabilities,"deep_matrix_unavailable_checks":deep_matrix_unavailable_checks,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"macro64_expert_checks":macro64_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"cohort_producer_checks":cohort_producer_checks,"cohort_dequant_checks":cohort_dequant_checks,"cohort_matrix_checks":cohort_matrix_checks,"cohort_matrix_pair_checks":cohort_matrix_pair_checks,"cohort_multi_dequant_checks":cohort_multi_dequant_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }
