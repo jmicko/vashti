@@ -120,6 +120,17 @@ fn generated(name: &str, module: &str, ty: &str) -> bool {
     // substring. Runtime type arguments may follow the actual generated type.
     name.split_once("::native_expert_wide::")
         .is_some_and(|(_, suffix)| {
+            // The new genuine K64 producers keep the complete original role,
+            // INFO, owners, grid and phase grammar. Admit only this closed
+            // additional namespace, never arbitrary nesting or deep tail names.
+            #[cfg(feature = "kuno-deep-matrix")]
+            let suffix = if let Some(deep) = suffix.strip_prefix("deep::") {
+                if !matches!((module, ty),
+                    ("expert_wide_gu", "ExpertWideGu")
+                    | ("expert_wide_gu_direct", "ExpertWideGuDirect")
+                    | ("expert_wide_down", "ExpertWideDown")) { return false; }
+                deep
+            } else { suffix };
             suffix
                 .strip_prefix(module)
                 .and_then(|s| s.strip_prefix("::"))

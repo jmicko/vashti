@@ -758,3 +758,58 @@ fn macro64_rejects_original_grid_small_or_wide_members_and_changed_owner() {
         assert!(grammar.launch(MACRO64,false,&grid,&args).is_err());
     }
 }
+
+#[cfg(feature="kuno-deep-matrix")]
+fn deep_product(g:&mut NativeStrataExpertGrammar,h:&[Handle;7],members:u32,down:bool) {
+    let name=if down {
+        "probe::strata_matrix::native_expert_wide::deep::expert_wide_down::ExpertWideDown<Runtime>"
+    }else{"probe::strata_matrix::native_expert_wide::deep::expert_wide_gu::ExpertWideGu<Runtime>"};
+    let rows=if down{2560}else{1280};
+    g.launch(name,false,&CubeCount::Static(rows/128,members/128,1),
+        &matrix_args(h,members,down,true,false)).unwrap();
+    if members%128!=0 {
+        let remain=members%128;let tile=if remain<=8{8}else if remain<32{16}else{32};
+        g.launch(if down{TAIL_DOWN}else{TAIL_GU},false,
+            &CubeCount::Static(rows/64,remain.div_ceil(tile),1),
+            &matrix_args(h,members,down,true,true)).unwrap();
+    }
+}
+#[cfg(feature="kuno-deep-matrix")]
+#[test]
+fn deep_wide_namespace_keeps_all_original_role_owner_grid_and_tail_constraints() {
+    for members in [256,257,287,4096] {
+        let h=owners();let mut g=begin(&h,members);
+        deep_product(&mut g,&h,members,false);activate(&mut g);deep_product(&mut g,&h,members,true);
+        let r=g.finish().unwrap();assert_eq!(r.logical_phases,6);assert_eq!(r.wide_prefixes,2);
+    }
+    let h=owners();let args=matrix_args(&h,256,false,true,false);
+    for name in [
+        "probe::native_expert_wide::deep::deep::expert_wide_gu::ExpertWideGu<Runtime>",
+        "probe::native_expert_wide::deep::expert_wide_gu::ExpertWideGuFake<Runtime>",
+        "probe::native_expert_wide::deeper::expert_wide_gu::ExpertWideGu<Runtime>",
+        "probe::native_expert_wide::deep::expert_wide_down::ExpertWideDown<Runtime>",
+        "probe::native_expert_wide::deep::expert_tail_gu::ExpertTailGu<Runtime>",
+    ] {assert!(begin(&h,256).launch(name,false,&CubeCount::Static(10,2,1),&args).is_err());}
+    let name="probe::native_expert_wide::deep::expert_wide_gu::ExpertWideGu<Runtime>";
+    assert!(begin(&h,256).launch(name,true,&CubeCount::Static(10,2,1),&args).is_err());
+    assert!(begin(&h,256).launch(name,false,&CubeCount::Static(20,2,1),&args).is_err());
+    let mut wrong=matrix_args(&h,256,false,true,false);
+    wrong.buffers[3]=Handle::new(StreamId::current(),MAP_BYTES).binding();
+    assert!(begin(&h,256).launch(name,false,&CubeCount::Static(10,2,1),&wrong).is_err());
+}
+#[cfg(feature="kuno-deep-matrix")]
+#[test]
+fn deep_direct_gu_still_requires_original_checker_before_down_and_complete_batch() {
+    let name="probe::native_expert_wide::deep::expert_wide_gu_direct::ExpertWideGuDirect<Runtime>";
+    let h=owners();let mut g=begin_images(&h,256,true);
+    g.launch(name,false,&CubeCount::Static(10,2,1),&matrix_args(&h,256,false,true,false)).unwrap();
+    assert!(g.finish().is_err());
+    let mut g=begin_images(&h,256,true);
+    g.launch(name,false,&CubeCount::Static(10,2,1),&matrix_args(&h,256,false,true,false)).unwrap();
+    assert!(g.launch("StrataPromptExpertF16Swiglu",false,&CubeCount::Static(320,1,1),&checker(&h,256)).is_err());
+    let mut g=begin_images(&h,256,true);
+    g.launch(name,false,&CubeCount::Static(10,2,1),&matrix_args(&h,256,false,true,false)).unwrap();
+    g.launch("StrataPromptExpertF16SwigluCheckGu",false,&CubeCount::Static(320,1,1),&checker(&h,256)).unwrap();
+    deep_product(&mut g,&h,256,true);let r=g.finish().unwrap();
+    assert_eq!(r.logical_phases,6);assert_eq!(r.gu_checks,1);assert_eq!(r.direct_gu_prefixes,1);
+}
