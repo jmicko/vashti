@@ -149,7 +149,11 @@ fn wide(
     let group = usize::cast_from(group);
     let member_base = usize::cast_from(member_base);
     let piece_members = usize::cast_from(piece_members);
-    if !header_valid(map, count, group)
+    // Every lane reads the same immutable header at identical scalar indices.
+    // Make that existing uniform result visible to the compiler's liveness
+    // analysis, so the later publication storage can reuse the freed operands.
+    // This vote preserves both valid and invalid results and uses no SLM.
+    if !plane_all(header_valid(map, count, group))
         || member_base != 0
         || piece_members != count / 128 * 128
         || columns != comptime!(if down { 640 } else { 2560 })

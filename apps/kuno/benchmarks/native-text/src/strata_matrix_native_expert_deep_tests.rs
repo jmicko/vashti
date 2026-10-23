@@ -175,7 +175,13 @@ fn deep_expert_retains_original_header_publication_helpers_tail_and_k16_order() 
             .split_whitespace()
             .collect()
     }
-    assert_eq!(guard(old), guard(new));
+    let voted_header = "plane_all(header_valid(map, count, group))";
+    assert_eq!(new.matches(voted_header).count(), 1);
+    assert!(new.find(voted_header).unwrap() < new.find("let mut a =").unwrap());
+    // Only normalize the vote over an already uniform, immutable header. All
+    // original rejection terms and their failure/termination body stay exact.
+    let normalized = new.replace(voted_header, "header_valid(map, count, group)");
+    assert_eq!(guard(old), guard(&normalized));
     fn publication(s: &str) -> Vec<&str> {
         s.split_once("    if comptime!(direct_gu) {")
             .unwrap()
