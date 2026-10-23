@@ -92,14 +92,16 @@ fn pipeline_actual_modules_keep_exact_half_sg16_wg64_and_original_entry_boundari
             let mut wrong = original.clone();
             let mut at = 5;
             let mut products = 0;
+            let mut retained_loops = 0;
             while at < native.len() {
                 let n = (native[at] >> 16) as usize;
                 let op = native[at] & 65535;
                 products += usize::from(op == 4459);
-                assert!(!(op == 246 && n == 4 && native[at + 3] == 2));
+                retained_loops += usize::from(op == 246 && n == 4 && native[at + 3] == 2);
                 at += n;
             }
-            assert_eq!(products, 4 * (tile / 8));
+            assert_eq!(products, (if tile == 32 { 1 } else { 4 }) * (tile / 8));
+            assert_eq!(retained_loops, usize::from(tile == 32));
             at = 5;
             while at < wrong.len() {
                 let n = (wrong[at] >> 16) as usize;

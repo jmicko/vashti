@@ -1,5 +1,29 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): full subgroup pipeline accepted; retain its M32 loop next.**
+
+Read [the exact pipeline and accepted receipt](kuno-prefill-quant-producer-consumer.md).
+Sourceb70ccfa2 / workerb86707e6a1e225543a5306003c8603590a0dd925bf28a25b0ce31c355789166c
+passes357 CPU,18/49 runtime,8+9 metadata, all original compiler controls+144 new
+pipeline layouts, all732 GPU controls/both model chains/recovery. All12 new
+real-format pairs have zero bit mismatches. Protected12m39.476s, swap0, peak33.4GiB.
+Diagnostic first/repeat11.585635/9.563812s; host11.694759/9.514985s. Sampled cohort
+41.076030→34.883995ms, but six M32 pipeline variants spill. Existing N64 rolled
+control stays accepted. Next source retains the new pipeline's M32 inner loop,
+with original roles/banks/math/guards intact, before another complete validation.
+No source follow-up GPU acceptance or CLEAN result yet. Latest CLEAN remains
+12.471177197/8.394039699s versus Strata5.5006/5.3515s. Goal ACTIVE/UNMET.
+
+Evidence: `small-quant-pipeline-root-{build-receipt,acceptance-freeze}-20261023.json`,
+`small-quant-pipeline-{profile,normal}-safe-phases-20261023.json`, public ISA export,
+`strata-parity-small-quant-pipeline-20261023-expert-cohorts-public-summary.json`.
+Independent20:13UTC state: Intel50,688,000B, NVIDIA compute0, all5 faults0,
+HTTP200/admission normal, completed139. GPUs free. Installed binaries unchanged;
+no inference API/setting/Vashti change or installation/release/reset/reboot.
+Sudo refresh remains bounded through01:47UTC Oct24.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): rolled control accepted; complete producer/consumer source composed.**
 
 Sourceed7991d0 / worker15ad6f18b9868fe35c00e634f886ab2342483e0359baa01ff6ec95bd416b86b1

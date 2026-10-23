@@ -371,38 +371,79 @@ pub(crate) fn expert_quant_pipeline(
                 cmma::fill(&c3, 0.0f32);
             }
         } else {
-            #[unroll]
-            for step in 0..4usize {
-                let af = (prefix * columns + k + step * 16) / 4;
-                let bf = (sg * 2 + bank) * 376 + step * 94;
-                cmma::load(
-                    &am0,
-                    &input.to_slice().slice(af, input.len()),
-                    u32::cast_from(columns),
-                );
-                cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 24);
-                cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
-                if comptime!(tile >= 16) {
+            if comptime!(tile == 32) {
+                // Preserve the full producer/consumer pipeline while bounding
+                // M32 fragment liveness. The native pass retains this genuine
+                // atomic-free four-trip product loop without changing math.
+                let mut step = 0usize;
+                while step < 4 {
+                    let af = (prefix * columns + k + step * 16) / 4;
+                    let bf = (sg * 2 + bank) * 376 + step * 94;
                     cmma::load(
-                        &am1,
-                        &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                        &am0,
+                        &input.to_slice().slice(af, input.len()),
                         u32::cast_from(columns),
                     );
-                    cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 24);
+                    cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
+                    if comptime!(tile >= 16) {
+                        cmma::load(
+                            &am1,
+                            &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+                    }
+                    if comptime!(tile == 32) {
+                        cmma::load(
+                            &am2,
+                            &input.to_slice().slice(af + 16 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::load(
+                            &am3,
+                            &input.to_slice().slice(af + 24 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
+                        cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
+                    }
+                    step += 1;
                 }
-                if comptime!(tile == 32) {
+            } else {
+                #[unroll]
+                for step in 0..4usize {
+                    let af = (prefix * columns + k + step * 16) / 4;
+                    let bf = (sg * 2 + bank) * 376 + step * 94;
                     cmma::load(
-                        &am2,
-                        &input.to_slice().slice(af + 16 * columns / 4, input.len()),
+                        &am0,
+                        &input.to_slice().slice(af, input.len()),
                         u32::cast_from(columns),
                     );
-                    cmma::load(
-                        &am3,
-                        &input.to_slice().slice(af + 24 * columns / 4, input.len()),
-                        u32::cast_from(columns),
-                    );
-                    cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
-                    cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
+                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 24);
+                    cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
+                    if comptime!(tile >= 16) {
+                        cmma::load(
+                            &am1,
+                            &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+                    }
+                    if comptime!(tile == 32) {
+                        cmma::load(
+                            &am2,
+                            &input.to_slice().slice(af + 16 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::load(
+                            &am3,
+                            &input.to_slice().slice(af + 24 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
+                        cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
+                    }
                 }
             }
         }

@@ -205,12 +205,12 @@ fn validate_kind(pipeline: bool) -> std::result::Result<(), Box<dyn std::error::
                 )
                 .into());
             }
-            let static_steps = if !pipeline && tile == 32 { 1 } else { 4 };
+            let static_steps = if tile == 32 { 1 } else { 4 };
             if products != static_steps * (tile / 8)
                 || global_input_loads != static_steps * (tile / 8)
                 || shared_weight_loads != static_steps
                 || workgroup_handoffs != if pipeline { 2 } else { 1 }
-                || retained_product_loops != usize::from(!pipeline && tile == 32)
+                || retained_product_loops != usize::from(tile == 32)
                 || !fault
                 || !subgroup_barrier
                 || !actual_wg64
