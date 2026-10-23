@@ -463,6 +463,9 @@ fn dense_wide<F: Float>(
     }
 }
 
+#[cfg(feature="strata-dense-direct-store")]
+include!("strata_matrix_native_direct_store.rs");
+
 #[allow(clippy::too_many_arguments)]
 fn selected(
     count: usize,
@@ -644,6 +647,12 @@ pub(super) fn try_dense(
         || hw.max_cube_count.2 < 1
     {
         return Err(Error::LimitExceeded("native wide dense grid"));
+    }
+    #[cfg(feature="strata-dense-direct-store")]
+    if let Some(grid)=direct_selection(&h[2],count,rows,out_first,out_stride,hw.max_cube_count) {
+        if gr_down {crate::strata_prefill_profile::count("gr_wide_tail_products",1);}
+        run_direct_store(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,gr_down,grid)?;
+        return Ok(true);
     }
     let [input, weight, output, fault] = h;
     // SAFETY: true aligned vec4 half owners; no scalar-length/vector-pointer forgery.

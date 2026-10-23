@@ -28,6 +28,12 @@ pub(crate) use native_expert_probe::narrow_cases as public_native_narrow_numeric
 #[cfg(feature = "strata-expert-macro64")]
 pub(crate) use native_expert_probe::macro64_cases as public_native_macro64_numeric;
 
+#[cfg(feature = "strata-dense-direct-store")]
+#[path = "strata_matrix_direct_probe.rs"]
+mod direct_probe;
+#[cfg(feature = "strata-dense-direct-store")]
+pub(crate) use direct_probe::cases as public_direct_numeric;
+
 #[cfg(feature = "strata-tiny-output")]
 #[path = "strata_matrix_tiny_probe.rs"]
 mod tiny_probe;
@@ -2791,6 +2797,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         }
         #[cfg(feature = "strata-tiny-output")]
         native::validate_tiny_producers()?;
+        #[cfg(feature="strata-dense-direct-store")]
+        native_wide::validate_direct_sources()?;
     }
     Ok(())
 }

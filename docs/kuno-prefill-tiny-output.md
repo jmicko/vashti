@@ -96,3 +96,32 @@ control using the ACTUAL BufferLayout contract and actual extra padding; retain
 all260 prior controls. New intended261CPU, unchanged15/429/320+16/all393GPU/BOTH.
 Production allocation claims here mean inference payload owners; ordinary
 per-launch runtime argument metadata still exists. No new payload allocation.
+
+
+## Complete tiny-output acceptance (2026-10-23)
+
+Source144be5489e82f04239e94b691fe2cd05bb727a07, frozenworkerSHA256
+e331b0fac8d6c5088389e5355a7def253d3e104455b1dd619f52c41dbbc09c0a passes
+261 selected AppCPU (all prior260 retained),15 runtime,429WGSL/320matrix plus16
+raw producer layouts, ALL393GPU and BOTH complete original18-script chains.
+Original thresholds/math/owners/erasure/physical recovery retained. Failed old
+source and fixture evidence preserved; no GPU reset/reboot or installation.
+
+Normal first/repeat9.716895461/8.352865318s; profile9.640185198/8.417388000s.
+Prior normal9.679591733/8.450195111s: small~1.15% repeat improvement, neutral
+versus earlier frontier8.3549s. HC attention-input445.798692ms/router382.283756ms
+versus previous484.159467/420.451338ms:~76ms shorter. Selected actual public
+counts194 HC injections,96 shared gates,97 wide GR downs per long request.
+No clean/staged/install run for this small component; keep the entire bundle.
+No Strata5.3515s parity or new decode-throughput claim.
+
+Aggregate strata-parity-tiny-output-owner-guard-20261023-expert-cohorts-public-summary.json.
+Actual public compiler export tiny-output-owner-guard-complete-isa-export-20261023.json
+proves unchanged QSA reference1814b26a/optimizedf49c30e1, zero spills/fills.
+Both actual new tiny consumer programs are SIMD16/128GRF,1004/1007instructions,
+146sends,0spills/0fills. Do not infer dtype from filenames; actual paired BF16/
+FP16 controls qualify both. Actual fresh recovery recorded separately in
+tiny-output-owner-guard-final-state-20261023.json.
+
+Next source couples direct dense output and its real finite-value consumer,
+following the already accepted direct-GU design: [dense-store specification](kuno-prefill-dense-direct-store.md).

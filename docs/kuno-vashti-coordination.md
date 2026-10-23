@@ -1,5 +1,24 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno continuation (2026-10-23): complete direct dense publication source.**
+
+Read [direct dense source contract](kuno-prefill-dense-direct-store.md).
+Preceding144be548/workere331b0fa passes261CPU/15runtime/429WGSL/320matrix+16raw/
+ALL393GPU/BOTH unchanged original18-script chains and physical recovery. Tiny
+component cuts measured HC~76ms; normal repeated8.352865318s is a small gain,
+not Strata parity. New tiny native programs zero spills/fills; QSA hashes and
+all original guards retained. No clean/staged/install on that small component.
+
+New connected source keeps everything, couples direct cooperative dense output
+with real GPU finite/zero/fault consumer, preserving original owners and math.
+No publication scratch is allocated; actual32768B producer with original host
+capability guard retained. Old shared writer stays for fallback. Intended264CPU/
+15runtime/429WGSL/320matrix+16raw+32composite layouts/405GPU/BOTH full chains.
+Source only; no build/GPU/performance/install claim. No API/model/context/config/
+frontend/release/reset/reboot change; Vashti:none. Root alone owns builds/GPUs;
+no compile during GPU timing. Installed301f1fd1/36626d30 unchanged, goal UNMET.
+Refresher1668570 expires06:04:15UTC. Earlier checkpoints below are history.
+
 **Current Kuno continuation (2026-10-23): coupled tiny-output pipeline source.**
 
 Read [tiny-output source contract](kuno-prefill-tiny-output.md).
