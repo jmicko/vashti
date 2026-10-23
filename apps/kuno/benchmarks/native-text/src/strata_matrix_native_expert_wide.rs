@@ -1,5 +1,8 @@
 //! Opt-in native32 routed expert prefix plus authentic original-product tail.
 //! Original FP16 operands, GU/PART/map/status/fault owners and chronological K16.
+#[cfg(feature="strata-expert-ordered-output")]
+#[path="strata_matrix_ordered_wide.rs"]
+pub(super) mod ordered;
 use crate::strata_prompt::groups as abi;
 use cubecl::{
     ir::{ElemType, FloatKind, features::MmaConfig},

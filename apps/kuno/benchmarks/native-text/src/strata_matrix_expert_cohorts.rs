@@ -1,5 +1,10 @@
 //! Genuine cross-expert narrow CMMA. Each group's original8/16-row tile,
 //! chronologicalK16 arithmetic, FP16 inputs and routed publication are retained.
+#[cfg(feature="strata-expert-ordered-output")]
+#[path="strata_matrix_ordered_cohorts.rs"]
+pub(crate) mod ordered;
+#[cfg(feature="strata-expert-ordered-output")]
+pub(crate) use ordered::launch as launch_ordered;
 use super::*;
 use cubecl::{
     compute::KernelLauncher,

@@ -167,6 +167,8 @@ mod register_prefetch;
 #[cfg(feature = "strata-intel-core")]
 mod native {
     use super::*;
+    #[cfg(feature="strata-expert-ordered-output")]
+    pub(super) mod ordered { include!("strata_matrix_ordered.rs"); }
     use cubecl::ir::{ElemType, FloatKind, features::MmaConfig};
     use half::{bf16, f16};
 
@@ -2706,6 +2708,53 @@ pub(crate) fn expert(
     }
 }
 
+#[cfg(feature="strata-expert-ordered-output")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn expert_ordered(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+) -> Result<()> {
+    if !down || !crate::strata_prompt::active()
+        || count == 0
+        || count > crate::strata_prompt::groups::ROUTE_CAPACITY
+        || group >= 512
+        || u32::try_from(weight_first).is_err()
+        || columns != if down { 640 } else { 2560 }
+        || rows != if down { 2560 } else { 1280 }
+        || h.iter().any(|v| v.stream != h[0].stream)
+        || h[5].size_in_used() != 4
+        || h[3].size_in_used() != (crate::strata_prompt::groups::MAP_WORDS * 4) as u64
+        || h[4].size_in_used() != (crate::strata_prompt::groups::STATUS_WORDS * 4) as u64
+        || (count * columns * 2) as u64 > h[0].size_in_used()
+        || weight_first
+            .checked_add(rows * columns)
+            .is_none_or(|n| n as u64 * 2 > h[1].size_in_used())
+        || (if down {
+            crate::strata_prompt::groups::ROUTES * 2560
+        } else {
+            count * 1280
+        } * 4) as u64
+            > h[2].size_in_used()
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    #[cfg(feature = "strata-intel-core")]
+    {
+        native::ordered::run_expert(client, h, count, columns, rows, weight_first, group, down)
+    }
+    #[cfg(not(feature = "strata-intel-core"))]
+    {
+        let _ = client;
+        Err(Error::InvalidBufferLength)
+    }
+}
+
 /// Host-only compilation of the real launched Cube expansions. No runtime,
 /// GPU device, request data or model allocation is constructed by this check.
 pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -3251,3 +3300,19 @@ mod tests {
 pub(crate) use native_expert_probe::direct_gu_cases as public_direct_gu_numeric;
 #[cfg(feature = "strata-native-expert-medium")]
 pub(crate) use native_expert_probe::medium_direct_gu_cases as public_medium_direct_gu_numeric;
+
+/// Additional genuine ordered entries; the original validator/population stays
+/// unchanged. This emits a distinct acceptance marker for every new module.
+#[cfg(feature="strata-expert-ordered-output")]
+pub(crate) fn validate_ordered_sources()->std::result::Result<(),Box<dyn std::error::Error>> {
+    ordered_validation::validate()
+}
+#[cfg(feature="strata-expert-ordered-output")]
+#[path="strata_matrix_ordered_validation.rs"]
+mod ordered_validation;
+
+#[cfg(feature="strata-expert-ordered-output")]
+#[path="strata_matrix_ordered_probe.rs"]
+mod ordered_probe;
+#[cfg(feature="strata-expert-ordered-output")]
+pub(crate) use ordered_probe::cases as public_ordered_numeric;
