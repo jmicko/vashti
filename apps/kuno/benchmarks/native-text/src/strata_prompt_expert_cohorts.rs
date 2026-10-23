@@ -475,6 +475,7 @@ pub(super) fn enqueue_unit(
         if !down {
             words[1] = 2560;
             words[2] = 1280;
+            words[3] = 0;
             words[5] = 0;
             words[11] = 0;
             let args = KernelArguments::new().with_buffers(vec![
