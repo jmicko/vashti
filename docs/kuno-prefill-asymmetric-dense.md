@@ -100,8 +100,8 @@ six. Preserve that rejected attempt under development
 checker requires exactly6 actual StorageBuffer loads before products and6
 Workgroup stores after them. Original symmetric minimum8 is unchanged.
 
-Diagnostic first/repeated11.878727028/9.867797979s; normal schedule
-12.032958780/9.788971544s. These are slower than preceding K32 normal
+Diagnostic first/repeated11.878727479/9.867797562s; normal schedule
+12.032959241/9.788971762s. These are slower than preceding K32 normal
 11.435514301/9.306249103s and the retained FP16-image control normal repeated
 8.854793s. No CLEAN run, no parity claim. Latest CLEAN stays12.471177197/
 8.394039699s versus Strata5.5006/5.3515s. Do not replace the target or conceal
