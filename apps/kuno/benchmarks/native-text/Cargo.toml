@@ -115,6 +115,7 @@ strata-raw-slot-overlap = ["strata-raw-lookahead", "cubecl-wgpu/kuno-raw-slot-ov
 strata-dequant-quad32 = ["strata-dequant-record32", "strata-intel-core", "cubecl-runtime/kuno-dequant-quad32", "cubecl-wgpu/kuno-dequant-quad32"]
 # One coherent expert-ordered producer/inverse-gather consumer layout.
 strata-expert-ordered-output = ["strata-native-direct-gu", "strata-expert-cohorts", "cubecl-runtime/kuno-expert-ordered-output", "cubecl-wgpu/kuno-expert-ordered-output"]
+strata-wide-shared-reuse = ["strata-expert-ordered-output", "strata-native-subgroup-publish", "cubecl-runtime/kuno-wide-shared-reuse", "cubecl-wgpu/kuno-wide-shared-reuse"]
 strata-qsa-head-frontier = ["strata-qsa-head-scatter"]
 strata-qsa-head-scatter = ["strata-gdn-coalesce-faults"]
 strata-gdn-coalesce-faults = ["strata-qsa-query-planes"]

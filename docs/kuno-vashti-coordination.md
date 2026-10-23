@@ -1,5 +1,47 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): preserve ordered bundle; close the measured decoder gap.**
+
+Source54162b57 / worker630c4898c8779b0a6d88d56646b1e2465b72cdd36dd2bfc695c645dae2fddbd2
+passes317 selected AppCPU,18 feature-off/24 full runtime and8 exact metadata
+controls; all original compiler populations plus120 ordered matrix and1 fused
+consumer modules. Actual register CFG count64 is original48+HC8+ordered8.
+All525 GPU controls pass (original469+40 paired ordered producers+16 consumers),
+as do BOTH unchanged18-script full-model chains and physical recovery. Actual
+48KiB hardware correctly records21 deep-only cases unavailable, never passed.
+Original medium feature is disabled: the planned48 ordered producers was a
+counting mistake; the exact active population is40. No tolerance was relaxed.
+
+Profile first/repeated long10.386195819/9.098446276s; normal diagnostic
+10.369469785/8.992040901s. This is slower than prior8.355123182s and still above
+Strata clean5.3515s. Do not describe it as a clean selection or install it.
+The actual matched layer24 timestamp sample isolates dequant14.336803→23.947634ms;
+matrix37.400288→37.084350ms, wide DOWN2.897865→2.654066ms, copy29.176347→29.159880ms.
+Keep the coupled changes and address the confirmed difference, not isolated
+toggle rollback. All four actual wide programs have zero spills; the two other
+spilling public programs are byte-identical to the earlier control. Original
+QSA ISA hashes remain unchanged. Evidence in development: build receipt,
+connected acceptance, safe phases and complete ISA exports under
+`expert-ordered-slot-quad-c-*20261023`; frozen build prefix
+`strata-parity-expert-ordered-slot-quad-c-20261023`. Initial fixture type/generic
+source-parser failures are preserved. Compiler receipt was completed read-only
+after correcting56→64 additive CFG accounting, without rerunning hardware.
+
+Next coherent source: [K32 lifetime reuse](kuno-prefill-wide-shared-reuse.md)
+composes genuine GU/direct/ordered-DOWN entries with actual32KiB explicit
+allocation and original48KiB fallback, original tails/guards and separate actual
+selection counters. Producerd4466c9e/runtimee4d57f2b are composed; unbuilt.
+In parallel, the active pinned Strata Intel decoder uses direct eight-value
+lane-local quant loads with no leader/broadcast. An additive complete decoder
+is in progress, retaining all original scalar/record32/quad controls and exact
+source authority. Root owns integration/builds/GPUs; no GPU testing while
+compilation runs. The performance goal remains ACTIVE and UNMET.
+
+No API/config/model/context/Vashti changes; required Vashti changes:none.
+Installed301f1fd1/36626d30 is unchanged. No install/release/reset/reboot.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): expert-ordered output and vector combine.**
 
 Source327124a1 / workercd4142f97e91466b452896e64ee6a6ce93a6b911419b011bd390d35c18f231ed
