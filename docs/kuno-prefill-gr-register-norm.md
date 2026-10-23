@@ -44,3 +44,7 @@ word,readonly source and padded owner is checked against the original GPU.
 No new production payload allocation. All native zero-spill and BOTH unchanged
 original18-script chains,actual recovery before claims; no compile during timing.
 No speed/build/GPU/install claim for this new source.
+
+Initial ee76a55f CPU build reports only internal probe visibility errors E0364/
+E0603; change probe::cases to pub(crate),matching its internal worker re-export.
+No shader/math,API or GPU change. Failed build logs retained.

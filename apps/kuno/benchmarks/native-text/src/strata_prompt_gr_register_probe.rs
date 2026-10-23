@@ -3,7 +3,7 @@ use super::*;
 use crate::{gr_batch_probe::read_native_public, private_arena::PrivateArena};
 use zeroize::Zeroizing;
 type P<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-pub(super) fn cases(
+pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
