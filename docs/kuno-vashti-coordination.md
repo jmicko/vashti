@@ -19,7 +19,7 @@ Two new outer metadata mistakes (48 vs56 CFG markers,4245 vs4244 batched tokens)
 were corrected with read-only receipt completion, preserving failed originals,
 ALL original checks and completed timings; no favorable hardware rerun.
 
-Next coupled source is COMPOSED, NOT BUILT OR ACCEPTED: double reduction
+Next coupled source is COMPOSED; initial Rust build passes, full acceptance pending: double reduction
 stages across dense/medium/large expert matrices with authentic64KiB hardware
 and actual explicit-layout gates; preserve original K16 arithmetic/owners/faults
 and all original fallback/compiler populations. Per-expert actual copy endpoints
@@ -28,7 +28,9 @@ hazards. Coalesced record32 uses four authentic subgroup lanes and original
 8-value stores. Root owns integration, builds and GPUs; isolated source worktrees
 basedde309ebf only. No compilation during GPU timing. Keep all prior features; no performance testing before complete source acceptance.
 Composed commits d0dbf59b/96925d4b/b8f7aca3/218b6f67/97924d00/e88a0370/
-7c2dacf7/fd936fb4/7b497709. Read [deep matrices](kuno-prefill-deep-matrix.md),
+7c2dacf7/fd936fb4/7b497709/f45b4fbc. Wide-expert shared-memory lifetime
+correction e5bfd4af/2db3b15c now passes all24 actual compiler layouts after
+rejecting the initial80KiB layout; no new GPU run yet. Read [deep matrices](kuno-prefill-deep-matrix.md),
 [slot overlap](kuno-prefill-raw-slot-overlap.md), and
 [coalesced dequant](kuno-prefill-dequant-quad32.md) before changes.
 Intended304 AppCPU, original15+separate17 runtime controls, repeated8exact

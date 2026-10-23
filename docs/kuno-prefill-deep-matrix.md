@@ -167,3 +167,24 @@ request/model bytes, external API or GPU authority are created. Unsupported
 servers conservatively returnfalse. Expert deep variants require this actual
 explicit-layout flag AND64KiB, because their later16KiB publication allocation
 must reuse dead operands; dense direct publication needs no such aliasing.
+
+## Compiler lifetime correction, 2026-10-23
+
+Initial composed source f45b4fbc compiled, and the sixteen macro layouts passed,
+but actual explicit wide-expert layouts used81920B rather than65536B. The
+original64KiB acceptance guard rejected them before any hardware test. Public
+compiler liveness showed later publication scratch hoisted across both operand
+frees. A vote over the already uniform immutable header (e5bfd4af) alone did
+not fix it. CubeCL lowers a general while loop to a control-flow loop whose
+merge is conservatively nonuniform. The supported counted stage-index loop
+(2db3b15c, following the rejected stepped-range frontend spelling6fa52bc6)
+exposes the identical scalar trip count: stage_index in0..columns/64,
+k=stage_index*64. All original chronological K16 products, register prefetch,
+final-block guard, full-workgroup barriers and publication helpers remain.
+
+All24 actual wide GU/direct-GU/DOWN compiler layouts now pass: explicit64KiB,
+nonaliasing80KiB, original role geometry, product/store/barrier requirements and
+actual register/product/SLM CFG. Evidence: development directory
+`deep-expert-shared-diagnostic-test-20261023.log`; earlier failed receipts are
+preserved with source suffixes. This establishes compiler layout only. Full
+composed CPU/runtime/offline/GPU/model/recovery acceptance remains pending.
