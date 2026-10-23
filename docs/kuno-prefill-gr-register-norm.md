@@ -54,3 +54,22 @@ abe19c73/worker83708a1c passes275CPU/15runtime/all429originalWGSL/320matrix+
 Next source gives each new kernel an exact static entrypoint name for actual
 compiler ISA/spill identification; Params/bindings and mathematical body unchanged.
 No inference endpoint or runtime content enters this identity.
+
+## Actual full-model guard failure and stronger fixtures
+
+fd975336/workerbfa336a4 passes275CPU/all shaders/ALL453 GPU and public profile
+compute/recovery, but immutable original QSA-uniform chain rejects changed
+expert-group counts. Therefore NOT full acceptance; no normal or clean/install.
+Profile9.772395357/8.501690357s is not an accepted speed result. Both actual
+new native kernels SIMD32/128GRF/0spills,832/843 instructions. Preserve failure.
+
+The dyadic raw fixtures missed real-activation precision/topology behavior.
+Retain the ORIGINAL LocalInvocationIndex for every scalar sum and write,not
+sg*32+lane. Shuffle pack uses physical-tid parity and explicitly checks actual
+neighbor tid==(tid xor1); unsupported adjacency sets the original sticky fault
+without divergent early exit/barrier. Optional B70 laboratory feature only;
+not advertised portable fallback. Original uninstalled path stays available.
+Add four full-mantissa F32 fixture cases (old20 retained,total24,new457GPU)
+covering apply/no-apply and in-place/disjoint. Failure diagnostics contain only
+public mismatch counts per R/image/scale/fault field. Do NOT relax routing or
+bitwise guards. No shader precision policy changes. Source-only correction.

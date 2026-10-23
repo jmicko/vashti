@@ -30,6 +30,11 @@ pub(crate) fn cases(
             }
         }
     }
+    for apply in [false, true] {
+        for ip in [false, true] {
+            cases.push((8, apply, ip, "full-f32"));
+        }
+    }
     for ip in [false, true] {
         for poison in ["nan-residual", "inf-block"] {
             cases.push((8, true, ip, poison));
@@ -59,6 +64,20 @@ pub(crate) fn cases(
                 .map(|i| ((i % 17) as f32 / 16.).to_bits())
                 .collect::<Vec<_>>(),
         );
+        if control == "full-f32" {
+            for (i, v) in r.iter_mut().enumerate() {
+                let h = (i as u32).wrapping_mul(0x9e3779b9).rotate_left(7);
+                *v = (h & 0x807fffff) | 0x3f000000;
+            }
+            for (i, v) in previous.iter_mut().enumerate() {
+                let h = (i as u32).wrapping_mul(0x85ebca6b).rotate_left(11);
+                *v = (h & 0x807fffff) | 0x3f800000;
+            }
+            for (i, v) in block.iter_mut().enumerate() {
+                let h = (i as u32).wrapping_mul(0xc2b2ae35).rotate_left(13);
+                *v = (h & 0x807fffff) | 0x3e800000;
+            }
+        }
         if control == "nan-residual" {
             let at = first + (count - 1) * 10240 + 17;
             if in_place {
@@ -108,7 +127,7 @@ pub(crate) fn cases(
                 || rb[r.len()..].iter().any(|&x| x != 0)
                 || ob[count * 5120..].iter().any(|&x| x != 0)
                 || sb[count * 4..].iter().any(|&x| x != 0)
-                || fb[0] != u32::from(control != "finite")
+                || fb[0] != u32::from(!matches!(control, "finite" | "full-f32"))
                 || fb[1..].iter().any(|&x| x != 0)
             {
                 return Err("GR whole owner/padding/fault contract".into());
@@ -116,7 +135,16 @@ pub(crate) fn cases(
             all.push([rb, ob, sb, fb]);
         }
         if all[0] != all[1] {
-            return Err("GR register original full bitwise R/image/scales/fault mismatch".into());
+            let counts = (0..4)
+                .map(|i| {
+                    all[0][i]
+                        .iter()
+                        .zip(all[1][i].iter())
+                        .filter(|(a, b)| a != b)
+                        .count()
+                })
+                .collect::<Vec<_>>();
+            return Err(format!("GR original bitwise mismatch fields_R_image_scale_fault={counts:?} control={control} apply={apply} inplace={in_place}").into());
         }
         for (id, original) in [
             (prev, &*previous),

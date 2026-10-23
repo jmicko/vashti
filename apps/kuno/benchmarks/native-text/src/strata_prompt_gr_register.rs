@@ -52,13 +52,16 @@ fn source(in_place: bool) -> String {
         .expect("original GR scalar map")
         .0
         .to_owned();
-    // Explicit complete-SG32 logical topology, never an assumed local-ID/lane map.
+    // Keep the original per-invocation reduction tree. Only pair adjacency is
+    // required for shuffles, checked on the actual shader before use.
     s = s
         .replace(
             "@builtin(local_invocation_index) tid:u32",
             "@builtin(local_invocation_index) physical_tid:u32",
         )
-        .replace("    let t=g.y;", "    let tid=sg*32u+lane;let t=g.y;");
+        .replace("    let t=g.y;", "    let tid=physical_tid;let t=g.y;");
+    s.push_str("    let adjacent=subgroupShuffleXor(tid,1u)==(tid^1u);if !adjacent {atomicOr(&fault[0],1u);}
+");
     for k in 0..10 {
         let d = k * 256;
         s.push_str(&format!("    var r{k}=residual[base+tid+{d}u];if p.apply!=0u {{r{k}=fma(block[t*2560u+tid+{d}u],injection[t*4u+h],previous[base+tid+{d}u]);residual[base+tid+{d}u]=r{k};}}sum+=r{k}*r{k};\n"));
@@ -74,7 +77,7 @@ fn source(in_place: bool) -> String {
     s.push_str(reduction);
     for k in 0..10 {
         let d = k * 256;
-        s.push_str(&format!("    let a{k}=(r{k}*rs)*gamma[h*2560u+tid+{d}u];let b{k}=subgroupShuffleXor(a{k},1u);if (lane&1u)==0u {{let bits=image(a{k},b{k},1u);let good=finite_value(a{k})&&finite_value(b{k})&&finite_value(restored(bits,false,1u))&&finite_value(restored(bits,true,1u));normalized[t*5120u+h*1280u+(tid+{d}u)/2u]=select(0u,bits,good);if !good {{atomicOr(&fault[0],1u);}}}}\n"));
+        s.push_str(&format!("    let a{k}=(r{k}*rs)*gamma[h*2560u+tid+{d}u];let b{k}=subgroupShuffleXor(a{k},1u);if (tid&1u)==0u {{let bits=image(a{k},b{k},1u);let good=finite_value(a{k})&&finite_value(b{k})&&finite_value(restored(bits,false,1u))&&finite_value(restored(bits,true,1u));normalized[t*5120u+h*1280u+(tid+{d}u)/2u]=select(0u,bits,good);if !good {{atomicOr(&fault[0],1u);}}}}\n"));
     }
     s.push_str("}\n");
     if in_place {
