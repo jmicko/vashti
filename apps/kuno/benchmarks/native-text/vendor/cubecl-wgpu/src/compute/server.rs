@@ -268,6 +268,10 @@ impl WgpuServer {
         if let Some(pipeline) = self.pipelines.get(&kernel_id) {
             return Ok(pipeline.clone());
         }
+        #[cfg(feature = "kuno-public-host-clock")]
+        let preparation = super::strata_pipeline_profile::Timer::new(
+            super::strata_pipeline_profile::Stage::Prepare,
+        );
         if external_mask != 0
             && self.public_external_pipeline_count >= cubecl_runtime::public_external::MAX_BUFFERS
         {
@@ -293,6 +297,8 @@ impl WgpuServer {
 
         if let Some(Ok(pipeline)) = cached {
             self.pipelines.insert(kernel_id, pipeline.clone());
+            #[cfg(feature = "kuno-public-host-clock")]
+            preparation.finish(true);
             return Ok(pipeline);
         }
 
@@ -386,6 +392,8 @@ impl WgpuServer {
             }
         }
 
+        #[cfg(feature = "kuno-public-host-clock")]
+        preparation.finish(true);
         Ok(pipeline)
     }
 

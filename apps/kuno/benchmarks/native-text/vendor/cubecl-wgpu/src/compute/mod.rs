@@ -13,6 +13,17 @@ mod strata_draft_scope;
 mod strata_flights;
 pub(crate) mod strata_graph;
 pub(crate) mod strata_pipeline;
+#[cfg(feature = "kuno-public-host-clock")]
+mod strata_pipeline_profile;
+#[cfg(feature = "kuno-public-host-clock")]
+pub use strata_pipeline_profile::{
+    COLUMNS as NATIVE_PIPELINE_CREATION_COLUMNS, LABELS as NATIVE_PIPELINE_CREATION_LABELS,
+    PublicPipelineProfile, totals as native_strata_pipeline_creation_profile,
+};
+#[cfg(feature = "kuno-public-host-clock")]
+pub fn begin_native_strata_public_pipeline_profile() -> Option<PublicPipelineProfile> {
+    strata_pipeline_profile::begin(strata_graph::enabled())
+}
 mod strata_handoff;
 mod strata_info_transfer;
 mod strata_io_reuse;

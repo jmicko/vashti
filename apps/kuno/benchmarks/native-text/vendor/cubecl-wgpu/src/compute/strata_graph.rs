@@ -1523,7 +1523,11 @@ impl Graph {
             if let Some(info) = required.as_mut() {
                 stage = stage.push_next(&mut **info);
             }
-            let pipeline_native = match unsafe {
+            #[cfg(feature = "kuno-public-host-clock")]
+            let creation = super::strata_pipeline_profile::Timer::new(
+                super::strata_pipeline_profile::Stage::NativeCreate,
+            );
+            let created = unsafe {
                 self.device.create_compute_pipelines(
                     vk::PipelineCache::null(),
                     &[vk::ComputePipelineCreateInfo::default()
@@ -1531,7 +1535,10 @@ impl Graph {
                         .layout(layout)],
                     None,
                 )
-            } {
+            };
+            #[cfg(feature = "kuno-public-host-clock")]
+            creation.finish(created.is_ok());
+            let pipeline_native = match created {
                 Ok(v) => v[0],
                 Err((v, _)) => {
                     unsafe {

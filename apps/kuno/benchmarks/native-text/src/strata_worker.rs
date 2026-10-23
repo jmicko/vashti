@@ -21,6 +21,24 @@ fn compiled_public_capacity_entry(public_check: bool, prefill_check: Option<bool
     public_check && prefill_check == Some(true)
 }
 // PUBLIC_CAPACITY_ENTRY_END
+#[cfg(feature = "strata-public-host-clock")]
+fn public_pipeline_snapshot(phase: &'static str, request: usize) {
+    if let Some(totals) = cubecl::wgpu::native_strata_pipeline_creation_profile() {
+        eprintln!("public_native_pipeline_creation {}", serde_json::json!({
+            "compiled_public_fixture_only":true,"content_saved":false,
+            "phase":phase,"request":request,
+            "labels":cubecl::wgpu::NATIVE_PIPELINE_CREATION_LABELS,
+            "columns":cubecl::wgpu::NATIVE_PIPELINE_CREATION_COLUMNS,
+            "cumulative":totals,
+            "host_wall_time_only":true,"extra_gpu_fences":false,
+            "completion_or_correctness_claim":false,
+        }));
+    }
+}
+// Exercise the actual production guard/aggregation helper without a device.
+#[cfg(all(test, feature = "strata-public-host-clock"))]
+#[path = "../vendor/cubecl-wgpu/src/compute/strata_pipeline_profile.rs"]
+mod pipeline_profile_cpu_tests;
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
@@ -163,6 +181,12 @@ fn run_mode(
             crate::strata_prefill_profile::enable_compiled_public();
         }
     }
+    #[cfg(feature = "strata-public-host-clock")]
+    let _pipeline_timing = if compiled_public_capacity_entry(public_check, prefill_check)
+        && !rolling_failure {
+        Some(cubecl::wgpu::begin_native_strata_public_pipeline_profile()
+            .ok_or("public_pipeline_profile_configuration")?)
+    } else { None };
     let mut settings_file = std::fs::File::open(path).map_err(|_| "native_settings_unavailable")?;
     let trust_identity = crate::native_artifact::trusted_settings(&settings_file);
     let mut raw = Vec::new();
@@ -674,6 +698,10 @@ async fn serve(
     }
     let mut load_ns =
         setup_ns.saturating_add(model_started.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+    #[cfg(feature = "strata-public-host-clock")]
+    if compiled_public_capacity_entry(public_check, prefill_check) {
+        public_pipeline_snapshot("load_complete", 0);
+    }
     let mut current = Some(request);
     let mut preload = first_preload;
     let mut public_index = 0;
@@ -687,6 +715,10 @@ async fn serve(
         while let Some(request) = current.take() {
             let prompt_count = request.geometry().map_err(|_| "native_request_invalid")?.0;
             crate::strata_prefill_profile::begin();
+            #[cfg(feature = "strata-public-host-clock")]
+            if compiled_public_capacity_entry(public_check, prefill_check) {
+                public_pipeline_snapshot("request_begin", public_index + 1);
+            }
             let start = Instant::now();
             let mut prompt_ns = 0;
             let mut generation_ns = None;
@@ -721,9 +753,17 @@ async fn serve(
                     }
                     if phase == "last_prompt_input" {
                         prompt_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+                        #[cfg(feature = "strata-public-host-clock")]
+                        if compiled_public_capacity_entry(public_check, prefill_check) {
+                            public_pipeline_snapshot("last_prompt_input", public_index + 1);
+                        }
                     }
                 },
             );
+            #[cfg(feature = "strata-public-host-clock")]
+            if compiled_public_capacity_entry(public_check, prefill_check) {
+                public_pipeline_snapshot("request_end", public_index + 1);
+            }
             if rolling_failure {
                 let [fired, waited, failed] =
                     cubecl::wgpu::native_strata_public_rolling_failure_stats();
