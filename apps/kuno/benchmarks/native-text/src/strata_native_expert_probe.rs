@@ -14,6 +14,11 @@ fn launch(
     group: usize,
     down: bool,
 ) -> shared::ProbeResult<bool> {
+    #[cfg(feature = "strata-deep-matrix")]
+    if count>=(if cfg!(feature="strata-native-expert-medium"){128}else{256})
+        && !super::native_expert_wide::deep::selected(client) {
+        return Err("actual deep wide compiler/capacity path not selected".into());
+    }
     let actual = super::native_expert_wide::try_expert(
         client,
         handles.clone(),

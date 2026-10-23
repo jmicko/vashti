@@ -9,6 +9,9 @@ use cubecl::{
 };
 use half::f16;
 use kuno_text::{Error, Result};
+#[cfg(feature = "strata-deep-matrix")]
+#[path="strata_matrix_native_expert_deep.rs"]
+pub(super) mod deep;
 const BLOCK: usize = 128;
 const MIN_GROUP: usize = if cfg!(feature = "strata-native-expert-medium") {
     128
@@ -1240,10 +1243,21 @@ pub(super) fn try_expert_mode(
         group as u32,
     );
     let (ia, wa, oa, ma, sa, fa) = prefix_args;
+    #[cfg(feature = "strata-deep-matrix")]
+    let deep_selected=deep::selected(client);
+    #[cfg(not(feature = "strata-deep-matrix"))]
+    let deep_selected=false;
     // SAFETY: authentic original six owners, fixed admitted shape/CMMA, complete
     // full-tile prefix, real native32 geometry, preflighted original tail below.
     unsafe {
-        if down {
+        if deep_selected {
+            #[cfg(feature = "strata-deep-matrix")]
+            {
+                crate::strata_prefill_profile::count("expert_wide_deep_products",1);
+                deep::launch_prefix(client,[ia,wa,oa,ma,sa,fa],grids[0],
+                    [columns,rows,count,weight_first,group,0,p.prefix as u32],down,direct);
+            }
+        } else if down {
             expert_wide_down::launch_unchecked::<WgpuRuntime>(
                 client,
                 CubeCount::Static(grids[0].0 as u32, grids[0].1 as u32, 1),

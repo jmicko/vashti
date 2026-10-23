@@ -64,16 +64,18 @@ fn macro64_stage<F: Float>(
             #[unroll]
             for round in 0..8usize {
                 let job = usize::cast_from(UNIT_POS) + round * 128;
+                let target = buffer * 2048 + (job % 16 / 2) * 256 + (job / 16) * 4 + (job % 2) * 2;
                 let token = token_base + job / 16;
                 let col = k + (job % 16) * 8;
                 let source = (token * columns + col) / 4;
-                a[buffer * 2048 + job * 2] = input[source];
-                a[buffer * 2048 + job * 2 + 1] = input[source + 1];
+                a[target] = input[source];
+                a[target + 1] = input[source + 1];
             }
         } else {
             #[unroll]
             for round in 0..8usize {
                 let job = usize::cast_from(UNIT_POS) + round * 128;
+                let target = buffer * 2048 + (job % 16 / 2) * 256 + (job / 16) * 4 + (job % 2) * 2;
                 let token = token_base + job / 16;
                 let col = k + (job % 16) * 8;
                 let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
@@ -83,18 +85,19 @@ fn macro64_stage<F: Float>(
                     lo = input[source];
                     hi = input[source + 1];
                 }
-                a[buffer * 2048 + job * 2] = lo;
-                a[buffer * 2048 + job * 2 + 1] = hi;
+                a[target] = lo;
+                a[target + 1] = hi;
             }
         }
         #[unroll]
         for round in 0..8usize {
             let job = usize::cast_from(UNIT_POS) + round * 128;
+            let target = buffer * 2048 + (job % 16 / 2) * 256 + (job / 16) * 4 + (job % 2) * 2;
             let row = row_base + job / 16;
             let col = k + (job % 16) * 8;
             let source = (weight_first + row * columns + col) / 4;
-            b[buffer * 2048 + job * 2] = weight[source];
-            b[buffer * 2048 + job * 2 + 1] = weight[source + 1];
+            b[target] = weight[source];
+            b[target + 1] = weight[source + 1];
         }
     } else {
         // A full stage is uniform for the workgroup. Resolve that condition
@@ -105,16 +108,18 @@ fn macro64_stage<F: Float>(
             #[unroll]
             for round in 0..8usize {
                 let job = usize::cast_from(UNIT_POS) + round * 128;
+                let target = buffer * 2048 + (job % 16 / 2) * 256 + (job / 16) * 4 + (job % 2) * 2;
                 let token = token_base + job / 16;
                 let col = k + (job % 16) * 8;
                 let source = (token * columns + col) / 4;
-                a[buffer * 2048 + job * 2] = input[source];
-                a[buffer * 2048 + job * 2 + 1] = input[source + 1];
+                a[target] = input[source];
+                a[target + 1] = input[source + 1];
             }
         } else {
             #[unroll]
             for round in 0..8usize {
                 let job = usize::cast_from(UNIT_POS) + round * 128;
+                let target = buffer * 2048 + (job % 16 / 2) * 256 + (job / 16) * 4 + (job % 2) * 2;
                 let token = token_base + job / 16;
                 let col = k + (job % 16) * 8;
                 let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
@@ -126,24 +131,26 @@ fn macro64_stage<F: Float>(
                     lo = input[source];
                     hi = input[source + 1];
                 }
-                a[buffer * 2048 + job * 2] = lo;
-                a[buffer * 2048 + job * 2 + 1] = hi;
+                a[target] = lo;
+                a[target + 1] = hi;
             }
         }
         if row_base + 64 <= rows && k + 128 <= columns {
             #[unroll]
             for round in 0..8usize {
                 let job = usize::cast_from(UNIT_POS) + round * 128;
+                let target = buffer * 2048 + (job % 16 / 2) * 256 + (job / 16) * 4 + (job % 2) * 2;
                 let row = row_base + job / 16;
                 let col = k + (job % 16) * 8;
                 let source = (weight_first + row * columns + col) / 4;
-                b[buffer * 2048 + job * 2] = weight[source];
-                b[buffer * 2048 + job * 2 + 1] = weight[source + 1];
+                b[target] = weight[source];
+                b[target + 1] = weight[source + 1];
             }
         } else {
             #[unroll]
             for round in 0..8usize {
                 let job = usize::cast_from(UNIT_POS) + round * 128;
+                let target = buffer * 2048 + (job % 16 / 2) * 256 + (job / 16) * 4 + (job % 2) * 2;
                 let row = row_base + job / 16;
                 let col = k + (job % 16) * 8;
                 let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
@@ -153,8 +160,8 @@ fn macro64_stage<F: Float>(
                     lo = weight[source];
                     hi = weight[source + 1];
                 }
-                b[buffer * 2048 + job * 2] = lo;
-                b[buffer * 2048 + job * 2 + 1] = hi;
+                b[target] = lo;
+                b[target + 1] = hi;
             }
         }
     }
@@ -305,15 +312,15 @@ pub(super) fn macro64_product<F: Float>(
         for step in 0..8usize {
             let inner = step * 16;
             if k + inner < columns {
-                let af = current * 2048 + (subgroup / 2) * 512 + inner / 4;
-                let bf = current * 2048 + (subgroup % 2) * 1024 + inner / 4;
+                let af = current * 2048 + step * 256 + (subgroup / 2) * 64;
+                let bf = current * 2048 + step * 256 + (subgroup % 2) * 128;
                 // Offsets index real vec4 storage; cmma's stride remains
-                // the128 scalar elements in each staged row. The compiler
+                // the16 scalar elements in each physical K16-panel row. The compiler
                 // divides by the authentic vector width for the pointer.
-                cmma::load(&a0, &a.to_slice().slice(af, a.len()), 128);
-                cmma::load(&a1, &a.to_slice().slice(af + 256, a.len()), 128);
-                cmma::load(&b0, &b.to_slice().slice(bf, b.len()), 128);
-                cmma::load(&b1, &b.to_slice().slice(bf + 512, b.len()), 128);
+                cmma::load(&a0, &a.to_slice().slice(af, a.len()), 16);
+                cmma::load(&a1, &a.to_slice().slice(af + 32, a.len()), 16);
+                cmma::load(&b0, &b.to_slice().slice(bf, b.len()), 16);
+                cmma::load(&b1, &b.to_slice().slice(bf + 64, b.len()), 16);
                 cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
                 cmma::execute::<F, F, f32, f32>(&a0, &b1, &c1, &c1);
                 cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);

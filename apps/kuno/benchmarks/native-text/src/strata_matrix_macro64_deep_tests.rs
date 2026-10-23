@@ -55,8 +55,12 @@ fn deep_macro_stage_jobs_mask_only_original_m_tail_and_cover_every_actual_vector
                                 let row = job / 16;
                                 let col = k + (job % 16) * 8;
                                 for vector in 0..2 {
-                                    let at = bank * 2048 + job * 2 + vector;
-                                    owners[job * 2 + vector] += 1;
+                                    let at = bank * 2048
+                                        + ((col - k) / 16) * 256
+                                        + row * 4
+                                        + ((col - k) % 16) / 4
+                                        + vector;
+                                    owners[at - bank * 2048] += 1;
                                     if base + row < count {
                                         let source = ((base + row) * cols + col + vector * 4) / 4;
                                         assert!(source * 4 + 4 <= count * cols);
@@ -70,13 +74,13 @@ fn deep_macro_stage_jobs_mask_only_original_m_tail_and_cover_every_actual_vector
                         for sg in 0..8 {
                             for step in 0..8 {
                                 for tile in 0..2 {
-                                    let af = bank * 2048 + (sg / 2) * 512 + step * 4 + tile * 256;
-                                    let bf = bank * 2048 + (sg % 2) * 1024 + step * 4 + tile * 512;
+                                    let af = bank * 2048 + step * 256 + (sg / 2) * 64 + tile * 32;
+                                    let bf = bank * 2048 + step * 256 + (sg % 2) * 128 + tile * 64;
                                     for row in 0..8 {
                                         for vector in 0..4 {
                                             let token = base + (sg / 2) * 16 + tile * 8 + row;
                                             assert_eq!(
-                                                a[af + row * 32 + vector],
+                                                a[af + row * 4 + vector],
                                                 if token < count {
                                                     Some(
                                                         (token * cols + k + step * 16 + vector * 4)
@@ -92,7 +96,7 @@ fn deep_macro_stage_jobs_mask_only_original_m_tail_and_cover_every_actual_vector
                                         for vector in 0..4 {
                                             let feature = (sg % 2) * 32 + tile * 16 + row;
                                             assert_eq!(
-                                                b[bf + row * 32 + vector],
+                                                b[bf + row * 4 + vector],
                                                 Some(
                                                     (feature * cols + k + step * 16 + vector * 4)
                                                         / 4

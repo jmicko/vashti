@@ -2877,6 +2877,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         native_wide::validate_deep_dense_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native::deep_macro64::validate_sources()?;
+        #[cfg(feature = "strata-deep-matrix")]
+        native_expert_wide::deep::validate_sources()?;
     }
     Ok(())
 }

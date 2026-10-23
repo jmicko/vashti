@@ -38,6 +38,15 @@ INFO and six phases. Original actual kernel definitions remain untouched.
 No shader is renamed to impersonate a different arithmetic family. Original
 group-end markers,raw releases,copies,source/owner enrollment and erasure stay.
 
+The new producer AND every new cooperative reader use K16-panel-major SLM,
+not a deep linear128-scalar row pitch. Macro operands contain eight K16 panels
+per bank; each panel has64x16 original half values. A job's physical vec4 index
+is bank*2048+panel*256+row*4+within_panel/4. Cooperative loads use stride16.
+The same original global vectors and chronological K16 fragments are read;
+there is no padding,extra staging owner or arithmetic change. Independent CPU
+mapping controls reconstruct original source addresses from logical panel
+coordinates and check every real write/read owner,including masked M tails.
+
 Four additional CPU controls cover real64KiB/explicit-layout geometry;
 all actual vector owners/masked M tails for both banks and all original six
 counts; identical original entry guards/output writer plus K16 order and
@@ -55,10 +64,62 @@ No old tolerance or population is relaxed. Full model routing counts,
 actual zero-spill ISA,both original complete chains and physical recovery
 remain required. Source implementation is not GPU or performance acceptance.
 
+## Routed128x128 prefix component
+
+The separately scoped `native_expert_wide::deep` producer doubles its original
+K32 stage toK64,retaining512 threads/32 sixteen-lane subgroups,the same four
+F32 accumulators per subgroup,original GU/direct-GU/DOWN publication helpers
+and original prefix/tail plan. Each stage contains four physical K16 panels;
+each panel has128x16 original half values. Stage and register-prefetch writers
+use bank*2048+panel*512+row*4+within_panel/4; cooperative readers use stride16.
+Two genuine512-job rounds cover every operand vector exactly once. The eight
+next-stage vec4 values stay in registers across four original K16 product
+groups,then enter only the disjoint next bank before the unchanged handoff.
+
+Two32KiB operand arrays and separate subsequent16KiB publication have the same
+64KiB actual explicit/80KiB logical nonaliasing layout as the deep macro.
+The final full-workgroup barrier precedes BOTH frees and scratch creation.
+The runtime selects the new prefix only after ALL original source/map/shape/
+CMMA/grid/view/tail-argument preflights and the same actual64KiB+explicit
+compiler capability. Otherwise it queues the original prefix. The original
+tail functions and real borrowed tail view remain unchanged. No fallible
+conversion is postponed past either dispatch.
+
+Original K32 functions,definitions and compiler controls remain available and
+unchanged. New genuine types under
+`native_expert_wide::deep::expert_wide_{gu,gu_direct,down}` require the root-owned
+feature-gated EXACT closed-prefix extension to native grammar; original
+role-bearing suffixes,grids,INFO and owner/phase checks remain mandatory.
+The existing profiler recognizes their original exact role-bearing segments;
+no profiler or metadata spoof is added. Public-only
+`expert_wide_deep_products` counts actual new prefix launches. Old full-prefix
+and tail counters,copy bytes,source roles and routing populations stay exact.
+
+Four additional CPU controls cover original shape/workgroup guard composition
+with actual capability; complete two-bank stage+prefetch+CMMA original-vector
+ownership; original header/publication-helper identity,K16 chronology and SLM
+lifetime; and all THREE genuine role entries across eight actual compiler
+layouts. Each new module requires512 threads,subgroup16,16 ordered products,
+16 cooperative loads,four original publication stores (eight compiled stores
+for the direct/fallback branch),ten unchanged static barriers and sticky
+fault operations. The shared actual CFG proof additionally requires eight
+StorageBuffer loads before the genuine product block and eight Workgroup
+stores after it,with its actual subsequent full-workgroup barrier. The
+original8-product/4-load proof and its original48 accepted modules are retained.
+
+Separate offline marker `strata_deep_expert_shader_accepted` appears24 times;
+CFG marker `strata_deep_expert_register_stage_accepted` appears24 times. The
+original compiler population is not replaced by these new modules. Existing
+full-owner/F64/finite/fault/routing/tail GPU fixtures remain unchanged; the
+wide fixture requires the actual new capability BEFORE queuing its prefix.
+These source controls require root integration,CPU/offline checks,actual
+zero-spill ISA and full GPU/model/recovery validation before acceptance.
+
 ## Performance expectation and limits
 
 The macro stage loop has20/5 handoff barriers for GU/DOWN instead of40/10,
-plus the same initial/publication barriers. Total original K16 matrix products
+and the wide prefix40/10 instead of80/20,plus the same initial/publication
+barriers. Total original K16 matrix products
 and source bytes are unchanged. Fewer loop/barrier/address operations are an
 optimization hypothesis; addedSLM/register pressure and native scheduling can
 offset it. Pinned Strata's active Intel path calls oneMKL FP16xFP16->F32 in
