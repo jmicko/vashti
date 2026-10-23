@@ -897,3 +897,7 @@ mod shared_reuse;
 #[cfg(feature="kuno-dequant-direct8")]
 #[path="native_expert_direct8_tests.rs"]
 mod direct8;
+
+#[cfg(all(feature="kuno-small-direct-publish",feature="kuno-expert-ordered-output"))]
+#[path="native_expert_small_direct_tests.rs"]
+mod small_direct;

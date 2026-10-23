@@ -1,6 +1,8 @@
 //! Distinct small-expert cohort grammar. Every INFO record, actual owning view,
 //! per-role phase and physical grid is authenticated before any enqueue.
 use super::*;
+#[cfg(feature = "kuno-small-direct-publish")]
+use super::super::native_expert_batch::native_strata_generated_type_suffix;
 const WORKING: u64 = 80 * 1024 * 1024;
 const X: u64 = 20 * 1024 * 1024;
 const H: u64 = 5 * 1024 * 1024;
@@ -52,6 +54,16 @@ fn image_variant(name: &str, expected: &str) -> Option<u8> {
 }
 
 fn matrix_variant(name: &str, down: bool) -> Option<bool> {
+    // The new function has a DOWN comptime flag in its genuine kernel ID;
+    // INFO/role/owners/grid below still bind that phase. Its DOWN writes the
+    // ordered layout despite not having an `ordered` namespace component.
+    #[cfg(feature = "kuno-small-direct-publish")]
+    if name.split_once("::strata_matrix::cohorts::small_direct::expert_cohort::")
+        .is_some_and(|(_, suffix)| suffix.strip_prefix("ExpertCohort")
+            .is_some_and(native_strata_generated_type_suffix)) {
+        return (!down || cfg!(feature = "kuno-expert-ordered-output")).then_some(down);
+    }
+    if name.contains("::small_direct::") { return None; }
     if name
         .split_once("::cohorts::expert_cohort::")
         .is_some_and(|(_, v)| {

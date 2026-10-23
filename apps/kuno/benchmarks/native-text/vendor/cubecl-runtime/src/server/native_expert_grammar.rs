@@ -1,6 +1,7 @@
 //! Closed native expert grammar: six logical phases, authentic matrix pieces.
 //! No resource lookup, device authority, completion or request cache lives here.
-use super::native_expert_batch::{batch_fault, native_strata_expert_operator};
+use super::native_expert_batch::{batch_fault, native_strata_expert_operator,
+    native_strata_small_direct_generated, native_strata_small_direct_matrix};
 use super::{Binding, CubeCount, KernelArguments, MetadataBindingInfo, ServerError};
 use crate::memory_management::ManagedMemoryId;
 use cubecl_common::stream_id::StreamId;
@@ -117,6 +118,9 @@ fn grid(count: &CubeCount, x: u32, y: u32) -> bool {
     matches!(count, CubeCount::Static(a,b,c) if *a==x && *b==y && *c==1)
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
+    // New entries have their own exact classifier. A forged old family nested
+    // inside the new namespace must not escape into legacy suffix matching.
+    if name.contains("::small_direct::") { return false; }
     #[cfg(feature = "kuno-wide-shared-reuse")]
     if shared_reuse_generated(name, module, ty) {
         return true;
@@ -193,11 +197,22 @@ fn is_direct_gu(name: &str) -> bool {
     generated(name, "expert_wide_gu_direct", "ExpertWideGuDirect")
 }
 fn is_tail(name: &str, down: bool) -> bool {
+    if down && cfg!(feature = "kuno-expert-ordered-output")
+        && native_strata_small_direct_generated(name, "expert_tail_down", "ExpertTailDown") {
+        return true;
+    }
+    if !down && native_strata_small_direct_generated(name, "expert_tail_gu", "ExpertTailGu") {
+        return true;
+    }
     if down {
         generated(name, "expert_tail_down", "ExpertTailDown")
     } else {
         generated(name, "expert_tail_gu", "ExpertTailGu")
     }
+}
+fn ordered_down_layout(name: &str) -> bool {
+    name.contains("::ordered::") || native_strata_small_direct_generated(
+        name, "expert_tail_down", "ExpertTailDown")
 }
 fn matrix(
     args: &KernelArguments,
@@ -391,7 +406,7 @@ impl NativeStrataExpertGrammar {
                 .ok_or_else(|| batch_fault("native expert grammar group missing"))?;
             if let Some(prefix) = self.pending {
                 if release || !is_tail(name, down)
-                    || name.contains("::ordered::") != prefix.ordered_down {
+                    || ordered_down_layout(name) != prefix.ordered_down {
                     return Err(batch_fault("native expert grammar original tail order"));
                 }
                 let (tail, views) = matrix(args, true, true, down, group)?;
@@ -426,6 +441,11 @@ impl NativeStrataExpertGrammar {
                     ));
                 }
                 self.pending = None;
+                if !down && native_strata_small_direct_generated(name, "expert_tail_gu", "ExpertTailGu") {
+                    // A checked old prefix may be followed by the genuine raw
+                    // tail. Validate the whole GU owner before activation.
+                    self.gu_deferred = true;
+                }
                 self.counts.tail_pieces += 1;
                 self.counts.matrix_pieces += 1;
                 self.advance();
@@ -438,6 +458,11 @@ impl NativeStrataExpertGrammar {
                     return Err(batch_fault(
                         "native expert grammar original full member owner",
                     ));
+                }
+                if native_strata_small_direct_matrix(name)
+                    && ((name.contains("::expert_macro::") && params.count < 32)
+                        || (name.contains("::expert_narrow::") && params.count >= 32)) {
+                    return Err(batch_fault("native small direct member geometry"));
                 }
                 let tile = if name.contains("::expert_macro64::")
                     || name.contains("::native::ordered::expert_macro64_deep::") {
@@ -458,6 +483,9 @@ impl NativeStrataExpertGrammar {
                 }
                 if !down {
                     self.gu_views = Some(views);
+                    // Keep the original wide-prefix counter unchanged: this
+                    // is a full small matrix, not a new wide prefix.
+                    self.gu_deferred = native_strata_small_direct_matrix(name);
                 }
                 self.counts.matrix_pieces += 1;
                 self.advance();

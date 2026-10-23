@@ -293,3 +293,7 @@ fn disabled_ordered_cohort_is_rejected_without_changing_original_identity() {
 #[cfg(feature="kuno-dequant-direct8")]
 #[path="native_expert_cohort_direct8_tests.rs"]
 mod direct8;
+
+#[cfg(all(feature="kuno-small-direct-publish",feature="kuno-expert-ordered-output"))]
+#[path="native_expert_cohort_small_direct_tests.rs"]
+mod small_direct;

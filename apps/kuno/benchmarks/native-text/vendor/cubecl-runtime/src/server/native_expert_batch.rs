@@ -34,8 +34,46 @@ pub(crate) fn native_strata_expert_dequant_identity(name:&str)->&str {
     name
 }
 
+/// Genuine new small-matrix entries. Keep this closed before the legacy
+/// substring classifier: disabled or nested new namespaces grant no authority.
+pub(crate) fn native_strata_generated_type_suffix(s: &str) -> bool {
+    if s.is_empty() { return true; }
+    if !s.starts_with('<') || !s.ends_with('>') { return false; }
+    let mut depth = 0usize;
+    for (i, b) in s.bytes().enumerate() {
+        if b == b'<' { depth += 1; }
+        if b == b'>' {
+            if depth == 0 { return false; }
+            depth -= 1;
+            if depth == 0 && i + 1 != s.len() { return false; }
+        }
+    }
+    depth == 0
+}
+pub(crate) fn native_strata_small_direct_generated(name: &str, module: &str, ty: &str) -> bool {
+    let allowed = cfg!(feature = "kuno-small-direct-publish") && matches!((module, ty),
+        ("expert_macro", "ExpertMacro") | ("expert_macro64", "ExpertMacro64")
+        | ("expert_narrow", "ExpertNarrow") | ("expert_tail_gu", "ExpertTailGu")
+        | ("expert_tail_down", "ExpertTailDown"));
+    allowed && name.split_once("::strata_matrix::native::small_direct::")
+        .is_some_and(|(_, suffix)| suffix.strip_prefix(module)
+            .and_then(|s| s.strip_prefix("::"))
+            .and_then(|s| s.strip_prefix(ty))
+            .is_some_and(native_strata_generated_type_suffix))
+}
+pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
+    [("expert_macro", "ExpertMacro"), ("expert_macro64", "ExpertMacro64"),
+        ("expert_narrow", "ExpertNarrow")].into_iter()
+        .any(|(module, ty)| native_strata_small_direct_generated(name, module, ty))
+}
+
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     let name=native_strata_expert_dequant_identity(name);
+    if name.contains("::small_direct::") {
+        return !release && matches!(index % 6, 3 | 5)
+            && (index % 6 != 5 || cfg!(feature = "kuno-expert-ordered-output"))
+            && native_strata_small_direct_matrix(name);
+    }
     // Ordered PART producers are genuine separate DOWN entries. Do not let
     // the original loose legacy-family check accidentally admit them for GU,
     // or accept arbitrary nesting under the new namespace.
