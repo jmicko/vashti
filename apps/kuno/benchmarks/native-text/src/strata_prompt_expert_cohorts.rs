@@ -20,6 +20,7 @@ pub(crate) enum CohortOp {
     Activate,
 }
 impl CohortOp {
+    fn lanes(self)->u32 {if cfg!(feature="strata-dequant-direct8") && matches!(self,Self::Image{..}) {32}else{256}}
     /// Original explicit fixture identity pairs with source() and /32 grids.
     pub(crate) fn original_name(self) -> &'static str {
         match self {
@@ -31,6 +32,8 @@ impl CohortOp {
     }
     pub(super) fn selected_source(self) -> String {
         let source=self.source();
+        #[cfg(feature="strata-dequant-direct8")]
+        if let Self::Image{dtype,down}=self {return super::direct8::source(source,dtype,down);}
         #[cfg(feature="strata-dequant-quad32")]
         if let Self::Image{down,..}=self {return super::quad32::source(source,down);}
         source
@@ -95,10 +98,14 @@ impl KernelMetadata for CohortOp {
     fn name(&self) -> &'static str {
         match self {
             Self::Gather => "StrataExpertCohortGather",
-            Self::Image { down: false, .. } => if cfg!(feature="strata-dequant-quad32") {
+            Self::Image { down: false, .. } => if cfg!(feature="strata-dequant-direct8") {
+                "StrataExpertCohortGuDirect8Image"
+            } else if cfg!(feature="strata-dequant-quad32") {
                 "StrataExpertCohortGuQuad32Image"
             } else { self.original_name() },
-            Self::Image { down: true, .. } => if cfg!(feature="strata-dequant-quad32") {
+            Self::Image { down: true, .. } => if cfg!(feature="strata-dequant-direct8") {
+                "StrataExpertCohortDownDirect8Image"
+            } else if cfg!(feature="strata-dequant-quad32") {
                 "StrataExpertCohortDownQuad32Image"
             } else { self.original_name() },
             Self::Activate => "StrataExpertCohortActivate",
@@ -106,8 +113,8 @@ impl KernelMetadata for CohortOp {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info((*self,cfg!(feature="strata-dequant-quad32")))
-            .cube_dim(CubeDim::new_1d(256))
+            .info((*self,cfg!(feature="strata-dequant-quad32"),cfg!(feature="strata-dequant-direct8")))
+            .cube_dim(CubeDim::new_1d(self.lanes()))
     }
     fn address_type(&self) -> StorageType {
         StorageType::Scalar(ElemType::UInt(UIntKind::U32))
@@ -129,7 +136,7 @@ impl CubeTask<AutoCompiler> for CohortOp {
             debug_name: None,
             source: self.selected_source(),
             repr: None,
-            cube_dim: CubeDim::new_1d(256),
+            cube_dim: CubeDim::new_1d(self.lanes()),
             debug_info: None,
         })
     }
@@ -156,7 +163,7 @@ fn launch(
     mut args: KernelArguments,
     words: &[u32; WORDS],
 ) -> Result<()> {
-    #[cfg(feature="strata-dequant-quad32")]
+    #[cfg(all(feature="strata-dequant-quad32",not(feature="strata-dequant-direct8")))]
     if matches!(op,CohortOp::Image{..}) {super::quad32::check_hardware(client)?;}
     args = args.with_info(MetadataBindingInfo::custom(
         words
@@ -188,7 +195,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
                 ExecutionMode::Unchecked,
                 StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
             )
-            .map(|mut compiled| {compiled.source=op.source();compiled})
+            .map(|mut compiled| {compiled.source=op.source();compiled.cube_dim=CubeDim::new_1d(256);compiled})
             .unwrap()
         })
         .collect()
@@ -338,8 +345,11 @@ pub(super) fn enqueue_unit(
         "expert_dequant_record32_records",
         (n * (2560 * 1280 + 640 * 2560) / 32) as u64,
     );
-    #[cfg(feature="strata-dequant-quad32")]
+    #[cfg(all(feature="strata-dequant-quad32",not(feature="strata-dequant-direct8")))]
     crate::strata_prefill_profile::count("expert_dequant_quad32_records",
+        (n*(2560*1280+640*2560)/32) as u64);
+    #[cfg(feature="strata-dequant-direct8")]
+    crate::strata_prefill_profile::count("expert_dequant_direct8_records",
         (n*(2560*1280+640*2560)/32) as u64);
 
     let x = view(&stage[0], 0, X_BYTES)?;
@@ -389,7 +399,7 @@ pub(super) fn enqueue_unit(
                 down,
             },
             [
-                (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(256),
+                (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(Op::selected_dequant_lanes()),
                 1,
                 n,
             ],
@@ -563,7 +573,8 @@ mod tests {
             let original = if down { "StrataExpertCohortDownImage" } else { "StrataExpertCohortGuImage" };
             assert_eq!(op.original_name(),original);
             let quad = if down { "StrataExpertCohortDownQuad32Image" } else { "StrataExpertCohortGuQuad32Image" };
-            assert_eq!(op.name(),if cfg!(feature="strata-dequant-quad32") {quad} else {original});
+            let direct=if down {"StrataExpertCohortDownDirect8Image"} else {"StrataExpertCohortGuDirect8Image"};
+            assert_eq!(op.name(),if cfg!(feature="strata-dequant-direct8") {direct} else if cfg!(feature="strata-dequant-quad32") {quad} else {original});
             assert_eq!(CohortOp::Gather.name(),CohortOp::Gather.original_name());
             assert_eq!(CohortOp::Activate.name(),CohortOp::Activate.original_name());
         }

@@ -3595,6 +3595,9 @@ impl Graph {
                             "StrataPromptExpertF16Image"
                                 | "StrataPromptExpertResidentGuImage"
                                 | "StrataPromptExpertResidentDownImage"
+                                | "StrataPromptExpertF16Direct8Image"
+                                | "StrataPromptExpertResidentGuDirect8Image"
+                                | "StrataPromptExpertResidentDownDirect8Image"
                         )
                     })
                 }),
@@ -3848,6 +3851,9 @@ impl Graph {
                         "StrataPromptExpertF16Image"
                             | "StrataPromptExpertResidentGuImage"
                             | "StrataPromptExpertResidentDownImage"
+                                | "StrataPromptExpertF16Direct8Image"
+                                | "StrataPromptExpertResidentGuDirect8Image"
+                                | "StrataPromptExpertResidentDownDirect8Image"
                     )
                 })
             }),

@@ -354,6 +354,18 @@ impl NativeStrataExpertGrammar {
         count: &CubeCount,
         args: &KernelArguments,
     ) -> Result<(), ServerError> {
+        let original_name=super::native_expert_batch::native_strata_expert_dequant_identity(name);
+        if original_name!=name {
+            let down=self.phase==2;
+            if !matches!(self.phase,1|2)
+                || word(&args.info,1)?!=if down {640}else{2560}
+                || word(&args.info,2)?!=if down {2560}else{1280}
+                || word(&args.info,5)?!=if down {2}else{0}
+                || !grid(count,if down {6400}else{12800},1) {
+                return Err(batch_fault("native expert direct8 authentic WG32 role/shape/grid"));
+            }
+        }
+        let name=original_name;
         #[cfg(feature="kuno-expert-cohorts")]
         if self.cohort.is_some() || name=="StrataExpertCohortGather" {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred {return Err(batch_fault("native expert cohort interrupted original group"));}

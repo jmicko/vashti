@@ -118,7 +118,12 @@ fn native_class(name: &str) -> usize {
         | "StrataExpertCohortGuImage"
         | "StrataExpertCohortDownImage"
         | "StrataExpertCohortGuQuad32Image"
-        | "StrataExpertCohortDownQuad32Image" => 0,
+        | "StrataExpertCohortDownQuad32Image"
+        | "StrataPromptExpertF16Direct8Image"
+        | "StrataPromptExpertResidentGuDirect8Image"
+        | "StrataPromptExpertResidentDownDirect8Image"
+        | "StrataExpertCohortGuDirect8Image"
+        | "StrataExpertCohortDownDirect8Image" => 0,
         "StrataPromptExpertGemm" => 1,
         "StrataPromptExpertGather" | "StrataExpertCohortGather" => 2,
         "StrataPromptExpertF16Swiglu"
@@ -813,5 +818,15 @@ impl CpuTimer {
             });
             *start = Instant::now();
         }
+    }
+}
+
+#[cfg(all(test,feature="strata-dequant-direct8"))]
+mod direct8_profile_tests {
+    use super::*;
+    #[test]
+    fn genuine_direct8_names_keep_same_dequant_profile_class() {
+        for name in ["StrataPromptExpertF16Direct8Image","StrataPromptExpertResidentGuDirect8Image","StrataPromptExpertResidentDownDirect8Image","StrataExpertCohortGuDirect8Image","StrataExpertCohortDownDirect8Image"] {assert_eq!(native_class(name),0);}
+        for name in ["StrataPromptExpertF16Direct8ImageFake","StrataExpertCohortGuDirect8Image::nested"] {assert_eq!(native_class(name),6);}
     }
 }

@@ -331,7 +331,7 @@ fn cases_with_views(
                         {Box::new(op)}
                     },
                     CubeCount::Static(
-                        (output_rows * columns / Op::selected_dequant_values()).div_ceil(256) as u32,
+                        (output_rows * columns / Op::selected_dequant_values()).div_ceil(Op::selected_dequant_lanes()) as u32,
                         1,
                         1,
                     ),
@@ -351,7 +351,7 @@ fn cases_with_views(
                         client.launch_unchecked(
                             Box::new(op),
                             CubeCount::Static(
-                                (output_rows * columns / Op::selected_dequant_values()).div_ceil(256) as u32,
+                                (output_rows * columns / Op::selected_dequant_values()).div_ceil(Op::selected_dequant_lanes()) as u32,
                                 1,
                                 1,
                             ),
@@ -373,7 +373,7 @@ fn cases_with_views(
                         client.launch_unchecked(
                             Box::new(op),
                             CubeCount::Static(
-                                (output_rows * columns / Op::selected_dequant_values()).div_ceil(256) as u32,
+                                (output_rows * columns / Op::selected_dequant_values()).div_ceil(Op::selected_dequant_lanes()) as u32,
                                 1,
                                 1,
                             ),
@@ -417,7 +417,7 @@ fn cases_with_views(
                 "down":down,"host_staged":host,"control":control,"bit_mismatches":mismatches,
                 "warm_fenced_wall_ns":warm_dispatch_ns,"image_bytes":output_words*4,
                 "batched_public_diagnostic":batched_public_diagnostic,
-                "actual_native_kernels":true,"original_weights":control!="nonfinite",
+                "actual_direct8":cfg!(feature="strata-dequant-direct8"),"values_per_invocation":Op::selected_dequant_values(),"workgroup_invocations":Op::selected_dequant_lanes(),"actual_native_kernels":true,"original_weights":control!="nonfinite",
                 "original_weight_acceptance":control=="valid",
                 "full_owner_and_tail_checked":true,"authentic_physical_sources":true}),
             );

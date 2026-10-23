@@ -139,7 +139,8 @@ fn validate_one(source: &str, label: &str) -> std::result::Result<(), Box<dyn st
 pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::Error>> {
     for op in super::dequant_operators() {
         let label = format!("{op:?}");
-        validate_one(&op.selected_source(), &label)?;
+        let down=matches!(op,Op::Dequant{down:true,..}|Op::ResidentDequant{down:true,..}|Op::SlotDequant{down:true,..});
+        validate_one(&source(op.source(),down), &label)?;
     }
     #[cfg(feature = "strata-expert-cohorts")]
     for (down, types) in [
@@ -148,7 +149,7 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
     ] {
         for &dtype in types {
             let op = cohorts::CohortOp::Image { dtype, down };
-            validate_one(&op.selected_source(), &format!("cohort-{dtype}-{down}"))?;
+            validate_one(&source(op.source(),down), &format!("cohort-{dtype}-{down}"))?;
         }
     }
     Ok(())
@@ -217,11 +218,7 @@ mod tests {
             } else {
                 super::super::record32::source(old, down)
             };
-            let selected = if cfg!(feature = "strata-dequant-quad32") {
-                op.selected_source()
-            } else {
-                source(old.clone(), down)
-            };
+            let selected = source(old.clone(), down);
             let module = wgpu::naga::front::wgsl::parse_str(&selected).unwrap();
             wgpu::naga::valid::Validator::new(
                 wgpu::naga::valid::ValidationFlags::all(),
@@ -275,7 +272,7 @@ mod tests {
         }
         assert_eq!(
             Op::selected_dequant_values(),
-            if cfg!(feature = "strata-dequant-quad32") {
+            if cfg!(any(feature = "strata-dequant-quad32",feature="strata-dequant-direct8")) {
                 VALUES_PER_INVOCATION
             } else {
                 Op::dequant_values()

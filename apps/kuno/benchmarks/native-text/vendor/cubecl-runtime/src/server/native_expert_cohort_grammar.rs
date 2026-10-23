@@ -21,13 +21,13 @@ pub(super) struct Cohort {
     partial: Option<View>,
     h: Option<View>,
     status: Option<View>,
-    quad_images: Option<bool>,
+    quad_images: Option<u8>,
     ordered_down: Option<bool>,
 }
 
-fn image_variant(name: &str, expected: &str) -> Option<bool> {
+fn image_variant(name: &str, expected: &str) -> Option<u8> {
     if name == expected {
-        return Some(false);
+        return Some(0);
     }
     #[cfg(feature = "kuno-dequant-quad32")]
     if matches!(
@@ -40,7 +40,13 @@ fn image_variant(name: &str, expected: &str) -> Option<bool> {
             "StrataExpertCohortDownQuad32Image"
         )
     ) {
-        return Some(true);
+        return Some(1);
+    }
+    #[cfg(feature="kuno-dequant-direct8")]
+    if matches!((expected,name),
+        ("StrataExpertCohortGuImage","StrataExpertCohortGuDirect8Image")|
+        ("StrataExpertCohortDownImage","StrataExpertCohortDownDirect8Image")) {
+        return Some(2);
     }
     None
 }
@@ -402,7 +408,7 @@ impl Cohort {
                 || w[1] != if down { 640 } else { 2560 }
                 || w[2] != if down { 2560 } else { 1280 }
                 || w[5] != if down { 2 } else { 0 }
-                || !matches!(count,CubeCount::Static(x,1,c)if *x==(w[1]*w[2]/if quad {8}else{32}).div_ceil(256) && *c==z)
+                || !matches!(count,CubeCount::Static(x,1,c)if *x==(w[1]*w[2]/if quad!=0 {8}else{32}).div_ceil(if quad==2 {32}else{256}) && *c==z)
                 || self.quad_images.is_some_and(|old| old != quad)
             {
                 return Err(batch_fault(

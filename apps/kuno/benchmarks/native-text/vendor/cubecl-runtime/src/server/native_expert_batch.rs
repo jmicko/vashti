@@ -21,7 +21,21 @@ pub const NATIVE_EXPERT_BATCH_HOST_BYTES: usize = 3 * NATIVE_EXPERT_BATCH_BYTES;
 /// kernel may stand in for that producer. The separately named resident GU and
 /// DOWN producers have identical math but no raw-slot release, like Strata's
 /// original `slot >= 0` condition. Their names also bind the actual role.
+/// Closed direct8 identities retain the original exact role/release contract.
+/// No suffix, prefix, or namespace alias is admitted.
+pub(crate) fn native_strata_expert_dequant_identity(name:&str)->&str {
+    #[cfg(feature="kuno-dequant-direct8")]
+    match name {
+        "StrataPromptExpertF16Direct8Image"=>return "StrataPromptExpertF16Image",
+        "StrataPromptExpertResidentGuDirect8Image"=>return "StrataPromptExpertResidentGuImage",
+        "StrataPromptExpertResidentDownDirect8Image"=>return "StrataPromptExpertResidentDownImage",
+        _=>{}
+    }
+    name
+}
+
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
+    let name=native_strata_expert_dequant_identity(name);
     // Ordered PART producers are genuine separate DOWN entries. Do not let
     // the original loose legacy-family check accidentally admit them for GU,
     // or accept arbitrary nesting under the new namespace.

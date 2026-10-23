@@ -152,7 +152,7 @@ fn one(
         client,
         CohortOp::Image { dtype, down },
         [
-            (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(256),
+            (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(Op::selected_dequant_lanes()),
             1,
             8,
         ],
@@ -206,7 +206,7 @@ fn one(
         return Err("public cohort multi-slot source fault".into());
     }
     Ok(
-        serde_json::json!({"family":"cohort-multi-original-dequant","dtype":dtype,"down":down,"groups":8,"distinct_original_model_experts":8,"simultaneous_host_gpu_roles":true,"mixed_gate_up_residency":!down,"all_output_image_slots_0_through_7":true,"resident_sentinel8":true,"original_map_builder_and_validator":true,"bit_mismatches":0,"full_owner_sources_and_unused_image_tail_checked":true}),
+        serde_json::json!({"family":"cohort-multi-original-dequant","dtype":dtype,"down":down,"groups":8,"distinct_original_model_experts":8,"actual_direct8":cfg!(feature="strata-dequant-direct8"),"values_per_invocation":Op::selected_dequant_values(),"workgroup_invocations":Op::selected_dequant_lanes(),"simultaneous_host_gpu_roles":true,"mixed_gate_up_residency":!down,"all_output_image_slots_0_through_7":true,"resident_sentinel8":true,"original_map_builder_and_validator":true,"bit_mismatches":0,"full_owner_sources_and_unused_image_tail_checked":true}),
     )
 }
 pub(crate) fn cases(

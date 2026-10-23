@@ -893,3 +893,7 @@ fn ordered_wide_down_and_tail_keep_one_layout_and_all_original_owner_checks() {
 #[cfg(feature = "kuno-wide-shared-reuse")]
 #[path = "native_expert_shared_reuse_tests.rs"]
 mod shared_reuse;
+
+#[cfg(feature="kuno-dequant-direct8")]
+#[path="native_expert_direct8_tests.rs"]
+mod direct8;

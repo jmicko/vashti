@@ -52,18 +52,24 @@ impl Op {
         }
     }
     fn selected_dequant_values() -> usize {
-        if cfg!(feature = "strata-dequant-quad32") { 8 } else { Self::dequant_values() }
+        if cfg!(any(feature = "strata-dequant-quad32",feature="strata-dequant-direct8")) { 8 } else { Self::dequant_values() }
     }
     fn selected_source(self) -> String {
         let source=self.source();
+        #[cfg(feature = "strata-dequant-direct8")]
+        if let Self::Dequant{dtype,down}|Self::ResidentDequant{dtype,down}|Self::SlotDequant{dtype,down,..}=self {
+            return direct8::source(source,dtype,down);
+        }
         #[cfg(feature = "strata-dequant-quad32")]
         if let Self::Dequant{down,..}|Self::ResidentDequant{down,..}|Self::SlotDequant{down,..}=self {
             return quad32::source(source,down);
         }
         source
     }
+    fn selected_dequant_lanes() -> usize { if cfg!(feature="strata-dequant-direct8") {32} else {256} }
+    fn original_lanes(self)->u32 {if self==Self::Gemm {64}else{256}}
     fn lanes(self) -> u32 {
-        if self == Self::Gemm { 64 } else { 256 }
+        if cfg!(feature="strata-dequant-direct8") && matches!(self,Self::Dequant{..}|Self::ResidentDequant{..}|Self::SlotDequant{..}) {32} else {self.original_lanes()}
     }
     fn source(self) -> String {
         let source = self.source_unpadded();
@@ -199,19 +205,8 @@ impl Op {
         s
     }
 }
-impl KernelMetadata for Op {
-    fn native_release_after(&self) -> bool {
-        matches!(
-            self,
-            Self::Dequant { down: true, .. }
-                | Self::SlotDequant {
-                    down: true,
-                    resident: false,
-                    ..
-                }
-        )
-    }
-    fn name(&self) -> &'static str {
+impl Op {
+    fn original_name(&self) -> &'static str {
         match self {
             Self::Gather => "StrataPromptExpertGather",
             Self::Dequant { .. }
@@ -235,9 +230,32 @@ impl KernelMetadata for Op {
             Self::ActivateCheckGu => "StrataPromptExpertF16SwigluCheckGu",
         }
     }
+}
+impl KernelMetadata for Op {
+    fn native_release_after(&self) -> bool {
+        matches!(
+            self,
+            Self::Dequant { down: true, .. }
+                | Self::SlotDequant {
+                    down: true,
+                    resident: false,
+                    ..
+                }
+        )
+    }
+    fn name(&self) -> &'static str {
+        #[cfg(feature="strata-dequant-direct8")]
+        match self {
+            Self::Dequant{..}|Self::SlotDequant{resident:false,..}=>return "StrataPromptExpertF16Direct8Image",
+            Self::ResidentDequant{down:false,..}|Self::SlotDequant{resident:true,down:false,..}=>return "StrataPromptExpertResidentGuDirect8Image",
+            Self::ResidentDequant{down:true,..}|Self::SlotDequant{resident:true,down:true,..}=>return "StrataPromptExpertResidentDownDirect8Image",
+            _=>{}
+        }
+        self.original_name()
+    }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info((*self, "prompt-owned-routes-v4-vector8", cfg!(feature="strata-dequant-quad32")))
+            .info((*self, "prompt-owned-routes-v4-vector8", cfg!(feature="strata-dequant-quad32"),cfg!(feature="strata-dequant-direct8")))
             .cube_dim(CubeDim::new_1d(self.lanes()))
     }
     fn address_type(&self) -> StorageType {
@@ -272,7 +290,7 @@ fn dispatch(
     if grid.contains(&0) || grid.iter().any(|&v| v > 65535) || !active() {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
-    #[cfg(feature="strata-dequant-quad32")]
+    #[cfg(all(feature="strata-dequant-quad32",not(feature="strata-dequant-direct8")))]
     if matches!(op,Op::Dequant{..}|Op::ResidentDequant{..}|Op::SlotDequant{..}) {quad32::check_hardware(client)?;}
     args = args.with_info(MetadataBindingInfo::custom(
         words
@@ -322,6 +340,11 @@ mod record32;
 mod quad32;
 #[cfg(feature="strata-dequant-quad32")]
 pub(crate) use quad32::validate_sources as validate_quad_sources;
+#[cfg(any(test,feature="strata-dequant-direct8"))]
+#[path="strata_prompt_dequant_direct8.rs"]
+mod direct8;
+#[cfg(feature="strata-dequant-direct8")]
+pub(crate) use direct8::validate_sources as validate_direct8_sources;
 #[cfg(feature = "strata-expert-cohorts")]
 #[path = "strata_prompt_expert_cohorts.rs"]
 pub(crate) mod cohorts;
@@ -866,7 +889,7 @@ fn enqueue_original(
                     }
                 },
                 [
-                    (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(256),
+                    (words[1] as usize * words[2] as usize / Op::selected_dequant_values()).div_ceil(Op::selected_dequant_lanes()),
                     1,
                     1,
                 ],
@@ -879,8 +902,11 @@ fn enqueue_original(
             "expert_dequant_record32_records",
             ((2560 * 1280 + 640 * 2560) / 32) as u64,
         );
-        #[cfg(feature="strata-dequant-quad32")]
+        #[cfg(all(feature="strata-dequant-quad32",not(feature="strata-dequant-direct8")))]
         crate::strata_prefill_profile::count("expert_dequant_quad32_records",
+            ((2560*1280+640*2560)/32) as u64);
+        #[cfg(feature="strata-dequant-direct8")]
+        crate::strata_prefill_profile::count("expert_dequant_direct8_records",
             ((2560*1280+640*2560)/32) as u64);
         timing.mark("expert_cpu_dequant");
         crate::strata_matrix::expert(
@@ -1067,7 +1093,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
             ExecutionMode::Unchecked,
             StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
         )
-        .map(|mut compiled| { compiled.source=op.source(); compiled })
+        .map(|mut compiled| { compiled.source=op.source(); compiled.cube_dim=CubeDim::new_1d(op.original_lanes()); compiled })
         .unwrap()
     })
     .collect::<Vec<_>>();
@@ -1413,7 +1439,9 @@ mod miss_ring_producer_tests {
             assert!(!actual.native_release_after());
             assert_eq!(
                 actual.name(),
-                if down {
+                if cfg!(feature="strata-dequant-direct8") {
+                    if down { "StrataPromptExpertResidentDownDirect8Image" } else { "StrataPromptExpertResidentGuDirect8Image" }
+                } else if down {
                     "StrataPromptExpertResidentDownImage"
                 } else {
                     "StrataPromptExpertResidentGuImage"
