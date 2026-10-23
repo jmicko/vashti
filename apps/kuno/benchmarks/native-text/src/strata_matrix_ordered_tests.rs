@@ -1,6 +1,7 @@
 use super::*;
 fn function<'a>(source: &'a str, name: &str) -> &'a str {
-    let start = source.find(&format!("fn {name}(")).expect(name);
+    let start = source.find(&format!("fn {name}("))
+        .or_else(|| source.find(&format!("fn {name}<"))).expect(name);
     let open = start + source[start..].find('{').unwrap();
     let mut depth = 0;
     for (offset, byte) in source[open..].bytes().enumerate() {
