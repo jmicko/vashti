@@ -3,8 +3,8 @@
 This internal candidate preserves the complete compact-source/activation/ordered
 consumer path. It adds no inference API, configuration field or Vashti change.
 The existing scalar/frame contract and original model/owner/fault guards remain.
-Source b70ccfa2 is GPU accepted, as recorded below. The loop-retention follow-up
-is composed but not yet built or measured.
+Source b70ccfa2 is GPU accepted, as recorded below. The retained-loop follow-up is also accepted below. The K32 follow-up is
+composed but not yet built or measured.
 
 ## Complete execution
 
@@ -90,3 +90,26 @@ Artifacts use `small-quant-pipeline-*` under the development directory, includin
 root build/freeze receipts, public ISA export and both safe phase receipts.
 Independent20:13UTC state: Intel50,688,000B, NVIDIA compute0, all5 faults0,
 HTTP200/admission normal, completed139. No installation/API/Vashti changes.
+
+## Retained pipeline accepted; coherent K32 follow-up
+
+Source `3f7c48d48a045904b3d40f88c8c7a6acd368da60`, worker
+`a83297ae5843a7757c1c37003976f1ece754c7d6f7f5bc3f73833147605dc1f7`,
+passes the same357 AppCPU,18/49 runtime,8+9 metadata, all compiler populations,
+all732 GPU controls and both full-model chains/recovery. All18 pipeline programs
+now have zero spills; M32 has4 native loops, versus3 before. Sampled cohort
+34.883995→34.201352ms; diagnostic11.539289877/9.543312487s,
+host11.677776/9.511270s, essentially unchanged. No CLEAN run. Protected run
+12m50.752s, zero swap, peak32.0GiB. A receipt-only fixed-load regex rejection is
+archived; actual compiler and CPU checks passed before its correction. Evidence
+uses `small-quant-pipeline-roll-*`. Independent20:36UTC state: Intel50,688,000B,
+NVIDIA compute0, all5 faults0, HTTP200/admission normal, completed142.
+
+Next candidate reduces only this pipeline's K grain to32. Producer lane/round
+mapping and both consumers change together. Four rounds cover four rows each:
+row=round*4+lane/4,column=(lane%4)*8. Two pitch24 trimmed K16 tiles use188vec4
+per bank; two SGs×two banks need6016B plus2048B publication scratch=8064B.
+All data and padding have unique writers. Same N32/WG64/SG16 roles and common
+barriers; M32 retains a now two-trip native inner loop. Old N64 K64 control and
+original populations stay unchanged. This footprint is a target, not a measured
+occupancy claim. Source is not yet built/GPU accepted. No API/Vashti changes.

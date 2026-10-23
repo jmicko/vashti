@@ -1,5 +1,34 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): retained pipeline accepted; complete K32 source composed.**
+
+Read [the exact contract and acceptance](kuno-prefill-quant-producer-consumer.md).
+Source3f7c48d4 / workera83297ae5843a7757c1c37003976f1ece754c7d6f7f5bc3f73833147605dc1f7
+passes357 CPU,18/49 runtime,8+9 metadata, all compiler controls,732 GPU controls,
+both model chains and recovery. All18 pipeline programs now have zero spills;
+M32 has4 native loops. Diagnostic11.539290/9.543312s, host11.677776/9.511270s,
+essentially unchanged; sampled cohort34.201352ms. Protected12m50.752s, swap0,
+peak32.0GiB. Receipt-only regex rejection is preserved under development
+`small-quant-pipeline-roll-receipt-failure-20261023/`; source/checks unchanged.
+Evidence uses `small-quant-pipeline-roll-*`. Independent20:36UTC state:
+Intel50,688,000B, NVIDIA compute0, all5 faults0, HTTP200/admission normal,
+completed142. GPUs free; installed binaries unchanged. Goal ACTIVE/UNMET.
+
+Next source composes K32 producer mapping and both consumers: two padded K16
+tiles,188vec4/bank,four rounds/four rows per producer,total8064B shared, same
+N32/WG64/SG16 roles and common barriers. M32 retains its two-step product loop.
+Independent data/padding/bank/chronology arithmetic extends the existing CPU
+case. Original N64 K64 control and all original populations retained. Not yet
+built or GPU accepted; no speed selection from a partial pipeline.
+
+No CLEAN run; latest stays12.471177197/8.394039699s versus Strata5.5006/5.3515s.
+Strata receipt independently confirms4096+148 split. Normal mode already uses
+rolling submission; instrumented operator sampling disables it for timing.
+Neither is a newly found mismatch. No API/setting/Vashti changes or install/
+release/reset/reboot. Bounded sudo refresh remains through01:47UTC Oct24.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): full subgroup pipeline accepted; retain its M32 loop next.**
 
 Read [the exact pipeline and accepted receipt](kuno-prefill-quant-producer-consumer.md).

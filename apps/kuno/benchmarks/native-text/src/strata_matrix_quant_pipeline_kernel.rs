@@ -242,7 +242,7 @@ pub(crate) fn expert_quant_pipeline(
     }
     // Gather/activation initialize every padded input row. Load A directly,
     // as the accepted global narrow products do; only decoded weights need SLM.
-    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(2usize * 2 * 376);
+    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(2usize * 2 * 188);
     let am0 = unsafe {
         cmma::Matrix::<f16>::uninitialized(
             cmma::MatrixIdent::A,
@@ -291,7 +291,7 @@ pub(crate) fn expert_quant_pipeline(
     // Producer subgroups own the two N16 panels. Every subgroup reaches the
     // same barrier; consumers cannot read bank0 until its full publication.
     if producer {
-        crate::strata_matrix::quant_cohort::stage(
+        crate::strata_matrix::quant_cohort::pipeline_stage(
             packed,
             strata_grid,
             &mut b,
@@ -345,8 +345,8 @@ pub(crate) fn expert_quant_pipeline(
     while k < columns {
         let next = 1usize - bank;
         if producer {
-            if k + 64 < columns {
-                crate::strata_matrix::quant_cohort::stage(
+            if k + 32 < columns {
+                crate::strata_matrix::quant_cohort::pipeline_stage(
                     packed,
                     strata_grid,
                     &mut b,
@@ -354,7 +354,7 @@ pub(crate) fn expert_quant_pipeline(
                     row_base,
                     source_first,
                     usize::cast_from(h6) * 4,
-                    k + 64,
+                    k + 32,
                     next,
                     down,
                     dtype,
@@ -374,11 +374,11 @@ pub(crate) fn expert_quant_pipeline(
             if comptime!(tile == 32) {
                 // Preserve the full producer/consumer pipeline while bounding
                 // M32 fragment liveness. The native pass retains this genuine
-                // atomic-free four-trip product loop without changing math.
+                // atomic-free two-trip product loop without changing math.
                 let mut step = 0usize;
-                while step < 4 {
+                while step < 2 {
                     let af = (prefix * columns + k + step * 16) / 4;
-                    let bf = (sg * 2 + bank) * 376 + step * 94;
+                    let bf = (sg * 2 + bank) * 188 + step * 94;
                     cmma::load(
                         &am0,
                         &input.to_slice().slice(af, input.len()),
@@ -412,9 +412,9 @@ pub(crate) fn expert_quant_pipeline(
                 }
             } else {
                 #[unroll]
-                for step in 0..4usize {
+                for step in 0..2usize {
                     let af = (prefix * columns + k + step * 16) / 4;
-                    let bf = (sg * 2 + bank) * 376 + step * 94;
+                    let bf = (sg * 2 + bank) * 188 + step * 94;
                     cmma::load(
                         &am0,
                         &input.to_slice().slice(af, input.len()),
@@ -450,7 +450,7 @@ pub(crate) fn expert_quant_pipeline(
         // This single dynamic instance is reached by producers AND consumers.
         sync_cube();
         bank = next;
-        k += 64;
+        k += 32;
     }
     let mut scratch = SharedMemory::<f32>::new(4usize * 128);
     if !producer {
@@ -513,6 +513,66 @@ pub(crate) fn expert_quant_pipeline(
                 group,
                 down,
             );
+        }
+    }
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pipeline_stage(
+    packed: &Array<u32>,
+    grid: &Array<u32>,
+    b: &mut SharedMemory<Vector<f16, Const<4>>>,
+    fault: &mut Array<Atomic<u32>>,
+    row_base: usize,
+    source_first: usize,
+    up_offset: usize,
+    k: usize,
+    bank: usize,
+    #[comptime] down: bool,
+    #[comptime] dtype: u32,
+) {
+    let sg = usize::cast_from(PLANE_POS);
+    let lane = usize::cast_from(UNIT_POS_PLANE);
+    // Each half subgroup reads contiguous K32 of one encoded row. Every
+    // eight-value group has exactly one writer; four rows advance per round.
+    for round in 0..4usize {
+        let local_row = round * 4 + lane / 4;
+        let row = row_base + local_row;
+        let col = lane % 4 * 8;
+        let first = (sg * 2 + bank) * 188 + (col / 16) * 94 + local_row * 6 + (col % 16) / 4;
+        let mut packed_row = source_first
+            + row
+                * comptime!(crate::strata_matrix::quant_cohort::quant_row_bytes(
+                    dtype, down
+                ));
+        if comptime!(!down) {
+            packed_row = source_first
+                + (row / 2)
+                    * comptime!(crate::strata_matrix::quant_cohort::quant_row_bytes(
+                        dtype, false
+                    ));
+            if row % 2 != 0 {
+                packed_row += up_offset;
+            }
+        }
+        crate::strata_matrix::quant_cohort::decoder::store8(
+            packed,
+            grid,
+            packed_row,
+            k + col,
+            b,
+            first,
+            fault,
+            dtype,
+        );
+        // Pitch24 gives every16-value matrix column a16-byte padding cell.
+        // The final column has no trailing padding, so each K16 tile occupies
+        // 376 halves and starts at a16-byte aligned address. Initialize every
+        // padding vector exactly once, including both lookahead banks.
+        if col % 16 == 0 && local_row < 15 {
+            b[first + 4] = Vector::<f16, Const<4>>::new(f16::new(0.0));
+            b[first + 5] = Vector::<f16, Const<4>>::new(f16::new(0.0));
         }
     }
 }

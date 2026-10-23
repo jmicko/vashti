@@ -43,7 +43,7 @@ fn validate_kind(pipeline: bool) -> std::result::Result<(), Box<dyn std::error::
             };
             // Current block-liveness analysis keeps B and scratch separate.
             // Validate the actual bounded allocation rather than claim reuse.
-            let expected = if pipeline { 14080 } else { 26112 };
+            let expected = if pipeline { 8064 } else { 26112 };
             if kernel.shared_size != expected {
                 return Err(format!(
                     "quant cohort real SLM {name} mask{mask}: {} != {expected}",
@@ -205,7 +205,13 @@ fn validate_kind(pipeline: bool) -> std::result::Result<(), Box<dyn std::error::
                 )
                 .into());
             }
-            let static_steps = if tile == 32 { 1 } else { 4 };
+            let static_steps = if tile == 32 {
+                1
+            } else if pipeline {
+                2
+            } else {
+                4
+            };
             if products != static_steps * (tile / 8)
                 || global_input_loads != static_steps * (tile / 8)
                 || shared_weight_loads != static_steps
