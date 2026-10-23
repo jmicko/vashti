@@ -1,7 +1,7 @@
 # Kuno and Vashti Coordination
 
 
-**Active Kuno handoff (2026-10-23): complete compressed small-expert bundle compiled; GPU acceptance underway.**
+**Active Kuno handoff (2026-10-23): complete compressed small-expert bundle compiled; IQ4 numerical failure under repair.**
 
 Read [the complete fused-small contract and current checkpoint](kuno-prefill-small-quantized-matrix.md).
 Frozen source888d8b20 / workera3192db31630a59cfff5713ff1bf303efcd4feec082f2d5840c23fb6d0922df3
@@ -11,16 +11,19 @@ plus144 new quantized matrix layouts and6 compact-copy modules pass. This is a
 complete compact-source/matrix/scheduler/runtime composition, with original
 activation and ordered-output consumers. Actual new shared allocations fit48KiB.
 
-Protected service `kuno-small-quant-20261023` is currently testing719 GPU controls
-(all677 previous plus30 compact-source and12 exact original-format matrix cases),
-then both forward18-script full-model chains. No GPU acceptance or speed result
-yet. Forward chains retain numerical/ownership/reuse guards but explicitly adapt
-removed FP16-image and actual packed launch/byte counters; original harness files
-are preserved. See development `small-quant-root-build-receipt-20261023.json`,
-`small-quant-root-acceptance-freeze-20261023.json`, `small-quant-harness-20261023/`
-and `small-quant-connected-20261023.log`. Failed compile/harness/expansion attempts
-are preserved. Before hardware validation: Intel50,688,000B, NVIDIA compute0,
-all driver faults0, HTTP200 and admission normal. Swap/core dumps disabled.
+Protected service `kuno-small-quant-20261023` exited1 during the new public
+matrix controls, before full-model execution. First failure: dtype23/IQ4XS,
+finite case, exact output mismatch; dtype18/21/22 finite and poison cases had
+completed. Do not count the planned719 population as accepted or report speed.
+No numerical tolerance was relaxed; preserve the complete producer/consumer
+bundle while diagnosing. Frozen worker and all build/harness receipts are
+preserved under development `small-quant-attempt4-gpu-numeric-20261023/`;
+protected operator evidence remains `strata-parity-small-quant-20261023-operators/`.
+The run lasted4m58.821s, swap0. Its physical recovery check passed; independent
+10:36UTC live check confirms Intel50,688,000B, NVIDIA compute0, all5 driver fault
+counts0, Kuno/Ollama/Vashti HTTP200 and admission normal (completed96).
+See `small-quant-failed-final-state-20261023.json`. The original harness remains
+unchanged; forward counter adaptations and acceptance freezes are retained.
 
 The latest accepted CLEAN baseline remains small-direct12.471177197/8.394039699s
 versus Strata5.5006/5.3515s. Goal ACTIVE/UNMET. Do not install or claim parity.

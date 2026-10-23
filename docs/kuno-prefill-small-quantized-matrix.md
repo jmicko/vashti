@@ -95,3 +95,16 @@ harness missing its feature declaration; attempt3 reached offline expansion and
 caught mutation of an unrolled nibble-shift constant. All are preserved with
 source/worker evidence. No GPU ran in those failed attempts.
 No installation, API, model, context, Vashti or driver change. Goal remains unmet.
+
+## First hardware result — 2026-10-23
+
+Source888d8b20/worker a3192db3 failed the public IQ4XS finite matrix comparison
+(dtype23), after the first six IQ3XXS/IQ3S/IQ2S finite/poison cases completed.
+This is a numerical failure, not a speed result; no full-model request ran.
+The frozen build and receipts are archived as development
+`small-quant-attempt4-gpu-numeric-20261023/`; protected original operator output
+remains `strata-parity-small-quant-20261023-operators/`. All original validation
+requirements remain. The run exited1 after4m58.821s with zero swap; physical
+recovery passed, and a separate live check confirms all driver faults0,
+Intel50,688,000B, NVIDIA compute0 and all services/admission healthy.
+Continue the complete bundle and fix the format-specific failure before timing.
