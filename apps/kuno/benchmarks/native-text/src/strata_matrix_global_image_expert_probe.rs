@@ -12,7 +12,7 @@ fn old_direct(
     g: usize,
     d: bool,
 ) -> ProbeResult<bool> {
-    if !native_expert_wide::try_expert_mode(client, h, n, k, r, w, g, d, true)? {
+    if !native_expert_wide::try_expert_mode_small_tail(client, h, n, k, r, w, g, d, true)? {
         return Err("old actual directGU prefix required".into());
     }
     Ok(false)
@@ -27,7 +27,7 @@ fn old_ordered(
     g: usize,
     d: bool,
 ) -> ProbeResult<bool> {
-    if !native_expert_wide::ordered::try_expert_mode(client, h, n, k, r, w, g, d, false)? {
+    if !native_expert_wide::ordered::try_expert_mode_small_tail(client, h, n, k, r, w, g, d, false)? {
         return Err("old actual ordered prefix required".into());
     }
     Ok(false)

@@ -87,3 +87,11 @@ FP16 byte counter with actual image production even when quantized controls
 remain compiled: count all real groups once, not only non-cohort groups. This
 is profiling metadata, not an inference arithmetic change. Full acceptance and
 all live testing remain pending.
+
+All366 AppCPU,18/51 runtime and8+9 metadata controls now pass for sourceedbc7fb8.
+The worker-only build was deliberately interrupted before GPU use for a final
+numerical-oracle integration correction: the new reference launchers must use
+original small/direct tails, matching the production path, and the existing
+independent F64/full-owner oracle must recognize those genuine complete8 raw
+fragments. Other oracle families and every tolerance remain unchanged. No GPU
+or timing result exists for this new variant yet; full rebuild remains required.

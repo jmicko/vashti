@@ -352,10 +352,13 @@ pub(super) fn one(
     // Only the separately named additive GU/direct controls select this
     // original raw-publication contract; existing cases retain their policy.
     let small_selected=family.starts_with("small-direct-") && ordered;
-    let direct_gu = family == "shared-reuse-direct-gu" || (small_selected && !down);
+    // New global-register controls deliberately use the same complete8 direct
+    // tail publication as the production path. All old families keep policy.
+    let global_direct_tail=matches!(family,"global-register-direct-gu"|"global-register-ordered-down");
+    let direct_gu = family == "shared-reuse-direct-gu" || family=="global-register-direct-gu" || (small_selected && !down);
     let direct_member = |member: usize| {
         (ordered || direct_gu)
-            && if small_selected {member/8*8+8<=count} else {member < wide_prefix}
+            && if small_selected || global_direct_tail {member/8*8+8<=count} else {member < wide_prefix}
             && control
                 .bad_member(count)
                 .is_none_or(|bad| bad / 8 != member / 8)
