@@ -247,6 +247,63 @@ fn quant_cohort_k128_global_input_and_weight_banks_cover_original_operands_once(
     assert_eq!(4 * 2 * 16 * 128 * 2 + 4 * 128 * 4, 34816);
     assert!(34816 < 49152);
 }
+
+#[test]
+fn quant_cohort_k64_mapping_and_unpacked_signs_match_original_byte_wrapping() {
+    let mut seen = vec![false; 4 * 2 * 16 * 64];
+    for sg in 0..4usize {
+        for bank in 0..2usize {
+            for round in 0..8usize {
+                for lane in 0..16usize {
+                    let row = round * 2 + lane / 8;
+                    let col = lane % 8 * 8;
+                    let first =
+                        ((sg * 2 + bank) * 256 + col / 16 * 64 + row * 4 + col % 16 / 4) * 4;
+                    for j in 0..8 {
+                        assert!(!seen[first + j]);
+                        seen[first + j] = true;
+                        let local = first + j - (sg * 2 + bank) * 16 * 64;
+                        assert_eq!(
+                            (local / 256, local % 256 / 16, local % 16),
+                            ((col + j) / 16, row, (col + j) % 16)
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(seen.into_iter().all(|v| v));
+    for columns in [640usize, 2560] {
+        assert_eq!(
+            (0..columns)
+                .step_by(64)
+                .flat_map(|base| (0..4).map(move |step| base + step * 16))
+                .collect::<Vec<_>>(),
+            (0..columns).step_by(16).collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(4 * 2 * 16 * 64 * 2 + 4 * 128 * 4, 18432);
+    // Exhaustive byte/sign oracle includes values outside the actual tables;
+    // the128 wrap case must stay -128 even when negated before truncation.
+    for byte in 0u32..256 {
+        for negative in [false, true] {
+            let signed = if negative {
+                -(byte as i32)
+            } else {
+                byte as i32
+            };
+            let original = (signed as u8) as i8 as i32;
+            let selected = signed.wrapping_shl(24) >> 24;
+            assert_eq!(selected, original);
+            for scale in [-7.75f32, -0.0, 0.0, 0.25, 31.0] {
+                assert_eq!(
+                    (scale * selected as f32).to_bits(),
+                    (scale * original as f32).to_bits()
+                );
+            }
+        }
+    }
+}
 #[test]
 fn quant_cohort_compact_shape_requires_real_six_format_role_bytes_and_distinct_tiles() {
     for gu in [18u32, 21, 22, 23] {

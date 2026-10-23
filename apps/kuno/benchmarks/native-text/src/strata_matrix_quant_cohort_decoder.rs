@@ -8,6 +8,7 @@ pub(crate) struct Decoded {
     d: f32,
     lo: u32,
     hi: u32,
+    signs: u32,
 }
 #[cube]
 pub(crate) fn byte(p: &Array<u32>, at: usize) -> u32 {
@@ -153,6 +154,7 @@ pub(crate) fn decode8(
     let mut d = 0.0f32;
     let mut lo = 0u32;
     let mut hi = 0u32;
+    let mut sign_mask = 0u32;
     if comptime!(dtype == 18) {
         let base = row + block / 8 * 98;
         let codes = crate::strata_matrix::quant_cohort::decoder::halfword(
@@ -166,14 +168,9 @@ pub(crate) fn decode8(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         ) * (0.5 + f32::cast_from(aux >> 28))
             * 0.5;
-        lo = crate::strata_matrix::quant_cohort::decoder::signed_word(
-            grid[usize::cast_from(codes & 255)],
-            signs,
-        );
-        hi = crate::strata_matrix::quant_cohort::decoder::signed_word(
-            grid[usize::cast_from(codes >> 8)],
-            signs >> 4,
-        );
+        sign_mask = signs;
+        lo = grid[usize::cast_from(codes & 255)];
+        hi = grid[usize::cast_from(codes >> 8)];
     } else if comptime!(dtype == 21) {
         let base = row + block / 8 * 110;
         let codes = crate::strata_matrix::quant_cohort::decoder::halfword(
@@ -191,14 +188,9 @@ pub(crate) fn decode8(
         d = crate::strata_matrix::quant_cohort::decoder::native_half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         ) * f32::cast_from(1 + 2 * scale);
-        lo = crate::strata_matrix::quant_cohort::decoder::signed_word(
-            grid[256 + usize::cast_from(first)],
-            signs,
-        );
-        hi = crate::strata_matrix::quant_cohort::decoder::signed_word(
-            grid[256 + usize::cast_from(second)],
-            signs >> 4,
-        );
+        sign_mask = signs;
+        lo = grid[256 + usize::cast_from(first)];
+        hi = grid[256 + usize::cast_from(second)];
     } else if comptime!(dtype == 22) {
         let base = row + block / 8 * 82;
         let index =
@@ -216,14 +208,9 @@ pub(crate) fn decode8(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
         ) * (0.5 + f32::cast_from(scale))
             * 0.25;
-        lo = crate::strata_matrix::quant_cohort::decoder::signed_word(
-            grid[768 + usize::cast_from(index) * 2],
-            signs,
-        );
-        hi = crate::strata_matrix::quant_cohort::decoder::signed_word(
-            grid[769 + usize::cast_from(index) * 2],
-            signs >> 4,
-        );
+        sign_mask = signs;
+        lo = grid[768 + usize::cast_from(index) * 2];
+        hi = grid[769 + usize::cast_from(index) * 2];
     } else if comptime!(dtype == 23) {
         let base = row + block / 8 * 136;
         let header = crate::strata_matrix::quant_cohort::decoder::word(p, base);
@@ -268,7 +255,12 @@ pub(crate) fn decode8(
         lo = crate::strata_matrix::quant_cohort::decoder::q2_word(codes & 255);
         hi = crate::strata_matrix::quant_cohort::decoder::q2_word(codes >> 8);
     }
-    Decoded { d, lo, hi }
+    Decoded {
+        d,
+        lo,
+        hi,
+        signs: sign_mask,
+    }
 }
 #[cube]
 pub(crate) fn store8(
@@ -302,11 +294,27 @@ pub(crate) fn store8(
         let c1 = (packed >> u32::cast_from(pair % 2 * 16 + 8)) & 255;
         let mut s0 = i32::cast_from(c0);
         let mut s1 = i32::cast_from(c1);
-        if c0 >= 128 {
-            s0 -= 256;
-        }
-        if c1 >= 128 {
-            s1 -= 256;
+        if comptime!(dtype == 18 || dtype == 21 || dtype == 22) {
+            // IQ2/IQ3 keep table magnitudes and their original separate sign
+            // mask until the multiply. Avoid packing signed bytes just to
+            // unpack them again. Arithmetic sign extension preserves even the
+            // original byte-wrapping edge at magnitude128, with no table-range
+            // assumption or changed F32 association.
+            if (decoded.signs & (1u32 << comptime!((pair * 2) as u32))) != 0 {
+                s0 = -s0;
+            }
+            if (decoded.signs & (1u32 << comptime!((pair * 2 + 1) as u32))) != 0 {
+                s1 = -s1;
+            }
+            s0 = (s0 << 24u32) >> 24u32;
+            s1 = (s1 << 24u32) >> 24u32;
+        } else {
+            if c0 >= 128 {
+                s0 -= 256;
+            }
+            if c1 >= 128 {
+                s1 -= 256;
+            }
         }
         let x = decoded.d * f32::cast_from(s0);
         let y = decoded.d * f32::cast_from(s1);

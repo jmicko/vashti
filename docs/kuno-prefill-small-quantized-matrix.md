@@ -1,5 +1,30 @@
 # Fused quantized small-expert matrices
 
+## K64 occupancy and direct sign conversion (pending validation)
+
+The accepted K128 version preserves exact results but is slower: diagnostic
+repeat10.619382166s versus native-half K32 10.071408282s. Its first4096 chunk
+is nearly unchanged, while the148 tail grows2.406616230 to2.884975162s.
+Six M32 quant programs spill. Keep direct global input loads and the complete
+encoded source/publication pipeline; correct its execution grain together:
+
+- K64 double weight banks occupy16384 bytes plus2048 publication scratch.
+  Each half subgroup decodes one contiguous64-column row, with eight rounds
+  covering all16 rows. Original chronological K16 products remain unchanged.
+- M8/M16 use four static K16 steps. M32 uses one genuine four-iteration loop
+  to limit the lifetime of global input fragments and temporary addresses.
+  Compiler proofs distinguish actual global A and shared B load counts in
+  this loop from the two static smaller variants.
+- IQ2/IQ3 retain magnitude bytes and the separate original sign mask until
+  conversion, rather than packing signed bytes then unpacking those bytes.
+  Signed arithmetic extension retains the original8-bit wrap for every byte,
+  including magnitude128. FP32 factor association, native F16 rounding and
+  the all-eight finite gate are unchanged. IQ4/Q2 keep their original path.
+
+Original K32/K128 mapping oracles remain, with an additive K64/sign oracle;
+all original real-format whole-owner GPU comparisons remain mandatory. No
+new API, option, feature, model storage or runtime owner is introduced.
+
 ## K128 panels with direct input loads (source proposal, 2026-10-23)
 
 The complete native-half bundle is numerically accepted but its sampled fused

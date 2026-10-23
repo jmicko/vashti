@@ -1,5 +1,40 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): K128 correctness accepted; occupancy/decoder correction next.**
+
+Source `1fe9b87426794f59814550da364e1df62439266b`, worker
+`15d00a160619390f4b576db39247caa6795e55e2b8f90972b0e7c445e74e8e78`,
+passes 351 AppCPU, 18/47 runtime, 8+9 metadata, all old compiler controls,
+144 K128 storage/layout proofs, all 720 GPU controls and both full-model chains.
+The protected unit exited 0 after 12m37.794s, with zero swap and physical recovery.
+Diagnostic first/repeated prompt times are 12.605240109/10.619382166s;
+host-profile times are 12.635199224/10.550333353s. No clean run was made.
+Sampled cohort matrix is 47.435354ms, versus native-half K32 45.719463ms.
+Six of eighteen quant programs now spill, all M32; original wide programs still
+have zero spills and original QSA ISA remains unchanged.
+
+The repeated 4096 chunk is nearly unchanged (7.677508957s), while the 148 tail
+plus teacher/cleanup rises to 2.884975162s. The next coherent correction keeps
+direct A loads and encoded compact producers: K64 weight banks halve actual SLM
+to 18432 bytes, constrain M32's unrolled fragment lifetime, and remove redundant
+IQ2/IQ3 sign packing followed immediately by signed-byte unpacking. Preserve
+original arithmetic, eight-value poison gates and exact original GPU oracles.
+This is not acceptance or a speed claim for the pending correction.
+
+Evidence under development: `small-quant-panel-root-build-receipt-20261023.json`,
+`small-quant-panel-complete-isa-export-20261023.json`,
+`small-quant-panel-{profile,normal}-safe-phases-20261023.json`,
+`strata-parity-small-quant-panel-20261023-expert-cohorts-public-summary.json`.
+A receipt-only wrapper variable-shadowing failure is archived in
+`small-quant-panel-receipt-harness-failure-20261023/`; all actual tests had passed.
+The corrected final checks resumed without rerunning passing tests or changing
+source. Independent 18:10UTC state: Intel50,688,000B, NVIDIA compute0, all five
+driver faults0, HTTP200/admission normal. The borrowed cache-loan cleanup path
+is bypassed in this owned-stage configuration; do not attribute tail time to it.
+Goal ACTIVE/UNMET; installed binaries unchanged. No API/Vashti changes.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): native half bundle accepted; larger fused panels next.**
 
 Frozen source `cbd8a5b98351ca057dba7d7ca5465628ae4ea975`, worker

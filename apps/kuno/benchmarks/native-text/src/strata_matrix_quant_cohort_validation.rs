@@ -31,7 +31,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             else {
                 return Err("quant cohort actual SPIRV compiler".into());
             };
-            let expected = 32768 + 2048;
+            let expected = 16384 + 2048;
             if kernel.shared_size != expected {
                 return Err(format!(
                     "quant cohort real SLM {name} mask{mask}: {} != {expected}",
@@ -155,9 +155,10 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 )
                 .into());
             }
-            if products != 8 * (tile / 8)
-                || global_input_loads != 8 * (tile / 8)
-                || shared_weight_loads != 8
+            let static_steps = if tile == 32 { 1 } else { 4 };
+            if products != static_steps * (tile / 8)
+                || global_input_loads != static_steps * (tile / 8)
+                || shared_weight_loads != static_steps
                 || !fault
                 || !subgroup_barrier
                 || !actual_wg64
@@ -199,7 +200,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 "strata_quant_cohort_native_half_accepted name={name} layout={mask} pack_half_2x16={native_pack} unpack_half_2x16={native_unpack} raw_half_narrowing=0"
             );
             println!(
-                "strata_quant_cohort_k128_accepted name={name} layout={mask} shared_bytes={} global_input_loads={global_input_loads} shared_weight_loads={shared_weight_loads} products={products}",
+                "strata_quant_cohort_k64_accepted name={name} layout={mask} shared_bytes={} global_input_loads={global_input_loads} shared_weight_loads={shared_weight_loads} products={products}",
                 kernel.shared_size
             );
         }

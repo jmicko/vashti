@@ -232,7 +232,7 @@ pub(crate) fn expert_quant_cohort(
     }
     // Gather/activation initialize every padded input row. Load A directly,
     // as the accepted global narrow products do; only decoded weights need SLM.
-    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(4usize * 2 * 16 * 128 / 4);
+    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(4usize * 2 * 16 * 64 / 4);
     let am0 = unsafe {
         cmma::Matrix::<f16>::uninitialized(
             cmma::MatrixIdent::A,
@@ -310,8 +310,8 @@ pub(crate) fn expert_quant_cohort(
         cmma::MatrixLayout::Undefined,
         0.0,
     );
-    // One K128 weight panel per bank. Direct input loads preserve original
-    // row strides and all eight chronological K16 products. The final
+    // One K64 weight panel per bank. Direct input loads preserve original
+    // row strides and all four chronological K16 products. The final
     // iteration drains the last complete panel without staging another.
     let mut producer_k = 0usize;
     let mut producer_bank = 0usize;
@@ -335,44 +335,80 @@ pub(crate) fn expert_quant_cohort(
         if producer_k == 0 {
             sync_plane();
         } else {
-            #[unroll]
-            for step in 0..8usize {
-                let af = (prefix * columns + producer_k - 128 + step * 16) / 4;
-                let bf = (sg * 2 + previous_bank) * 512 + step * 64;
-                cmma::load(
-                    &am0,
-                    &input.to_slice().slice(af, input.len()),
-                    u32::cast_from(columns),
-                );
-                cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
-                cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
-                if comptime!(tile >= 16) {
+            if comptime!(tile == 32) {
+                for step in 0..4usize {
+                    let af = (prefix * columns + producer_k - 64 + step * 16) / 4;
+                    let bf = (sg * 2 + previous_bank) * 256 + step * 64;
                     cmma::load(
-                        &am1,
-                        &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                        &am0,
+                        &input.to_slice().slice(af, input.len()),
                         u32::cast_from(columns),
                     );
-                    cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
+                    cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
+                    if comptime!(tile >= 16) {
+                        cmma::load(
+                            &am1,
+                            &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+                    }
+                    if comptime!(tile == 32) {
+                        cmma::load(
+                            &am2,
+                            &input.to_slice().slice(af + 16 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::load(
+                            &am3,
+                            &input.to_slice().slice(af + 24 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
+                        cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
+                    }
                 }
-                if comptime!(tile == 32) {
+            } else {
+                #[unroll]
+                for step in 0..4usize {
+                    let af = (prefix * columns + producer_k - 64 + step * 16) / 4;
+                    let bf = (sg * 2 + previous_bank) * 256 + step * 64;
                     cmma::load(
-                        &am2,
-                        &input.to_slice().slice(af + 16 * columns / 4, input.len()),
+                        &am0,
+                        &input.to_slice().slice(af, input.len()),
                         u32::cast_from(columns),
                     );
-                    cmma::load(
-                        &am3,
-                        &input.to_slice().slice(af + 24 * columns / 4, input.len()),
-                        u32::cast_from(columns),
-                    );
-                    cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
-                    cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
+                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
+                    cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
+                    if comptime!(tile >= 16) {
+                        cmma::load(
+                            &am1,
+                            &input.to_slice().slice(af + 8 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am1, &bm, &c1, &c1);
+                    }
+                    if comptime!(tile == 32) {
+                        cmma::load(
+                            &am2,
+                            &input.to_slice().slice(af + 16 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::load(
+                            &am3,
+                            &input.to_slice().slice(af + 24 * columns / 4, input.len()),
+                            u32::cast_from(columns),
+                        );
+                        cmma::execute::<f16, f16, f32, f32>(&am2, &bm, &c2, &c2);
+                        cmma::execute::<f16, f16, f32, f32>(&am3, &bm, &c3, &c3);
+                    }
                 }
             }
             sync_plane();
         }
         producer_bank = previous_bank;
-        producer_k += 128;
+        producer_k += 64;
     }
     let mut scratch = SharedMemory::<f32>::new(4usize * 128);
     crate::strata_matrix::small_direct::publish(
@@ -454,12 +490,13 @@ pub(crate) fn stage(
 ) {
     let sg = usize::cast_from(PLANE_POS);
     let lane = usize::cast_from(UNIT_POS_PLANE);
-    // The whole subgroup reads contiguous K128 of one encoded row. Every
-    // eight-value group has exactly one writer; sixteen rows form its panel.
-    for round in 0..16usize {
-        let row = row_base + round;
-        let col = lane * 8;
-        let first = (sg * 2 + bank) * 512 + (col / 16) * 64 + round * 4 + (col % 16) / 4;
+    // Each half subgroup reads contiguous K64 of one encoded row. Every
+    // eight-value group has exactly one writer; two rows advance per round.
+    for round in 0..8usize {
+        let local_row = round * 2 + lane / 8;
+        let row = row_base + local_row;
+        let col = lane % 8 * 8;
+        let first = (sg * 2 + bank) * 256 + (col / 16) * 64 + local_row * 4 + (col % 16) / 4;
         let mut packed_row = source_first
             + row
                 * comptime!(crate::strata_matrix::quant_cohort::quant_row_bytes(
