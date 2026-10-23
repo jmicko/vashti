@@ -1,5 +1,5 @@
-//! Complete padded producer + original chronological CMMA for tiny N.
-//! Included inside native: original product, dtype rounding and writer policy.
+// Complete padded producer + original chronological CMMA for tiny N.
+// Included inside native: original product, dtype rounding and writer policy.
 
 #[cube(launch_unchecked)]
 fn tiny_pad_copy(input: &Array<u32>, output: &mut Array<u32>, words: usize, padded: usize) {

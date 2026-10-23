@@ -62,3 +62,8 @@ Then BOTH original18-script full model/profile/normal/compiler/owner/erasure/
 physical-recovery chains before speed claims. All353 old controls stay.
 No CPU compilation during GPU timing. Keep original clean-selection and staged
 installation gates. No performance/install claim from source implementation.
+
+
+Initial source1f28f1ab CPU build stops on Rust inner doc comments in an include!
+file (E0753), before any test/GPU execution. Change those two comments to ordinary
+comments; no algorithm, guard or test change. Preserve initial diagnostics.
