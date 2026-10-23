@@ -19,15 +19,23 @@ Two new outer metadata mistakes (48 vs56 CFG markers,4245 vs4244 batched tokens)
 were corrected with read-only receipt completion, preserving failed originals,
 ALL original checks and completed timings; no favorable hardware rerun.
 
-Next coupled source is IN PROGRESS, NOT BUILT OR ACCEPTED: double reduction
+Next coupled source is COMPOSED, NOT BUILT OR ACCEPTED: double reduction
 stages across dense/medium/large expert matrices with authentic64KiB hardware
 and actual explicit-layout gates; preserve original K16 arithmetic/owners/faults
 and all original fallback/compiler populations. Per-expert actual copy endpoints
 retain existing complete three-role commands and all source/slot/whole-bank
 hazards. Coalesced record32 uses four authentic subgroup lanes and original
 8-value stores. Root owns integration, builds and GPUs; isolated source worktrees
-basedde309ebf only. No compilation during GPU timing. Keep all prior features;
-compose these changes before performance testing. New flags --deep-matrix,
+basedde309ebf only. No compilation during GPU timing. Keep all prior features; no performance testing before complete source acceptance.
+Composed commits d0dbf59b/96925d4b/b8f7aca3/218b6f67/97924d00/e88a0370/
+7c2dacf7/fd936fb4/7b497709. Read [deep matrices](kuno-prefill-deep-matrix.md),
+[slot overlap](kuno-prefill-raw-slot-overlap.md), and
+[coalesced dequant](kuno-prefill-dequant-quad32.md) before changes.
+Intended304 AppCPU, original15+separate17 runtime controls, repeated8exact
+metadata controls, original compiler populations plus16dense/16macro/24expert/
+30quad modules,ALL490 GPU controls and BOTH original18-script chains.
+Original selector8 fragments remain byte-identical; new graph endpoint method
+is outside those metadata tests and needs its own queue/GPU evidence. New flags --deep-matrix,
 --raw-slot-overlap,--dequant-quad32 are explicit optional laboratory selectors.
 No API/model/context/config/frontend/install/release/reset/reboot change;
 required Vashti changes:none. Canonical Vashti checkout remains untouched.
