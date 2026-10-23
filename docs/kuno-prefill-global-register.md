@@ -108,3 +108,19 @@ asymmetric adaptation remains a later alternative, not the next first choice
 now that direct-global/register differences are measured. Any WG1024 selection
 must query/gate real per-device subgroup capacity rather than relying on a
 machine-specific capture or tightening the entire backend's existing32 gate.
+
+## Source composition checkpoint
+
+Complete source now composes the direct-global kernel, both genuine operand
+banks, host launch/capability/whole-call bounds and original-view prefix/suffix,
+original finite consumer/counter partition,24 actual compiler/CFG layouts,
+three independent CPU controls and21 paired original-GPU/F64 cases. Existing
+shared/asymmetric kernels and all original controls remain. Same feature set;
+no new model/API/setting. No build, GPU acceptance or speed claim yet.
+
+Compiler proof separately requires real original binding0/1 operands (six loads
+each), binding2 F32 publication, original dynamic scalar INFO stride, initial4
+and in-loop8 loads, ordered four-product banks and two genuine in-loop prefetch
+phases, no Workgroup allocation/barrier/atomic. Old shared CFG proofs unchanged.
+Whole-model counters must partition slm40+deep+asymmetric+global_register=
+direct_store=finite_consumers, with real new selections and old fallbacks explicit.

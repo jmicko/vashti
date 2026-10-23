@@ -63,6 +63,14 @@ mod asymmetric_probe;
 pub(crate) use asymmetric_probe::cases as public_asymmetric_dense_numeric;
 #[cfg(feature="strata-deep-matrix")]
 pub(crate) use native_wide::asymmetric_available as public_asymmetric_available;
+#[cfg(feature="strata-deep-matrix")]
+#[path="strata_matrix_global_register_probe.rs"]
+mod global_register_probe;
+#[cfg(feature="strata-deep-matrix")]
+pub(crate) use global_register_probe::cases as public_global_register_numeric;
+#[cfg(feature="strata-deep-matrix")]
+pub(crate) use native_wide::global_register_available as public_global_register_available;
+
 
 #[cfg(feature="strata-hc-down-inject")]
 #[path="strata_matrix_hc_down_inject_probe.rs"]
@@ -1555,6 +1563,9 @@ mod native {
         bfloat: bool,
     ) -> Result<()> {
         #[cfg(feature="strata-deep-matrix")]
+        if super::native_wide::try_global_register_dense(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)?
+            || super::native_wide::try_global_register_split(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? {return Ok(());}
+        #[cfg(feature="strata-deep-matrix")]
         if super::native_wide::try_asymmetric_dense(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? {return Ok(());}
         #[cfg(feature="strata-deep-matrix")]
         if super::native_wide::try_deep_dense_split(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)?
@@ -2982,6 +2993,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         native_wide::validate_deep_dense_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native_wide::validate_asymmetric_sources()?;
+        #[cfg(feature="strata-deep-matrix")]
+        native_wide::validate_global_register_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native::deep_macro64::validate_sources()?;
         #[cfg(feature = "strata-deep-matrix")]

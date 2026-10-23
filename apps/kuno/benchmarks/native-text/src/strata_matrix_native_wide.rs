@@ -471,6 +471,8 @@ include!("strata_matrix_dense_slm40.rs");
 include!("strata_matrix_dense_deep.rs");
 #[cfg(feature = "strata-deep-matrix")]
 include!("strata_matrix_dense_asymmetric.rs");
+#[cfg(feature="strata-deep-matrix")]
+include!("strata_matrix_dense_global_register.rs");
 #[cfg(feature="strata-dense-prefix")]
 include!("strata_matrix_dense_prefix.rs");
 #[cfg(feature="strata-hc-down-inject")]

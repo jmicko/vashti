@@ -1,5 +1,29 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): complete direct-global source composed; not built yet.**
+
+Read [the exact direct-global contract](kuno-prefill-global-register.md).
+New complete source: WG512/SG16,M128/N128,K32 two real A/B CMMA register banks,
+original packed inputs/column stride, four chronological F32 C accumulators,
+zero shared memory/copies, guarded final prefetch/GR320, original F32 direct
+stores and finite consumer. Aligned selection and original-view prefix/suffix
+are composed with full host guards, actual compiler/CFG proofs, three CPU and
+21 numerical cases, capability reports and anonymous counters. Original747 GPU
+controls/360 CPU cases retained; planned768/363, runtime18/49, metadata8+9.
+Same features, no new API/config/model/frontend. Do not run partial speed tests.
+Source isn't built or GPU accepted; finish this full validation/benchmark block.
+
+Motivation is measured: Strata53 GEMM geometries all256 registers, no spills;
+51 use zero shared memory. Accepted Kuno asymmetric lifetime variant still128
+GRFs/heavy spills, normal repeat9.763397092s. Keep its source/evidence. Goal
+ACTIVE/UNMET; clean target5.3515s, latest Kuno CLEAN8.394039699s unchanged.
+Last physical state22:24:28UTC healthy/free, all5 faults0, HTTP200,completed154.
+Bounded sudo refresh through01:47UTC Oct24. Canonical Vashti/inherited pycache
+preserved; no installation/release/reset/global-driver change. Evidence and
+next-step details below remain authoritative for preceding accepted variants.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): both asymmetric variants accepted; direct-global difference confirmed.**
 
 Read [the next complete implementation contract](kuno-prefill-global-register.md)
