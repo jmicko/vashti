@@ -130,3 +130,32 @@ with independent original software/decoded-image controls. Arbitrary default
 OpFConvert remains unacceptable. Public-only native pipeline timing is separate
 from clean comparisons and must never activate or retain clocks in private use.
 No new hardware/performance acceptance is claimed for those pending changes.
+
+
+## Native conversion bundle — compiled, hardware validation pending
+
+Sourcecbd8a5b9 uses the original GLSL.std.450 native half packing operations.
+Typed CubeCL vec2 F32/F16 casts are only compiler input: the shared HAL/native
+replay pass replaces them with PackHalf2x16/UnpackHalf2x16 and bitcasts before
+driver pipeline creation. It recognizes only the genuine cooperative WG64/SG16
+quantized entry and separately compiled public edge entry, with original complete
+descriptor inventory. Unknown types, wrong widths or shapes fail closed. All
+original source/owner/geometry/rounding/denormal admission remains. Manual offline
+definitions now carry the same names as their generated runtime entries; no
+alternate name or unvalidated fallback was admitted.
+
+All finite values, signed zeros, half subnormals and boundary rounding remain
+bit-exact. Internal NaN payloads may be quieted by the original native operation;
+they are never published as model values: the original all-eight finite gate
+zeros the group and records its fault. The new edge proof fixes this contract
+up front, compares native and retained software helpers with independent host
+half conversion, initializes output sentinels, and checks all original owner
+words/padding and physical zero erasure. Its genuine cooperative matrix result
+is independently observed. This is one additive GPU case, not a replacement for
+any of the12 unchanged original-format matrix controls or original719 total.
+
+The complete source passes350 AppCPU,18/47 runtime,8+9 metadata,144 native half
+matrix layouts,8 edge layouts,48 IQ4 selector layouts and every old compiler
+population. The protected720-control/both-profile run is pending. No performance,
+GPU acceptance or installation claim yet. Timing harness changes retain existing
+public chunk events and fixed-schema pipeline clocks, with no new GPU fence.

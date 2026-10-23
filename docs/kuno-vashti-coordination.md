@@ -1,6 +1,54 @@
 # Kuno and Vashti Coordination
 
 
+**Active Kuno handoff (2026-10-23): native half conversion bundle compiled; protected GPU validation running.**
+
+Frozen source `cbd8a5b98351ca057dba7d7ca5465628ae4ea975`, worker
+`df784f1ead35bd92c2172a714c29dabb82cd4635d3db813f4317734a7a411207`
+composes stage reduction7b0985d8, public pipeline timing7459dadc, native
+packingceabf664, edge compilerf732a7c7, edge proof4d896931, integration1434e7f8
+and strict offline entry identitiescbd8a5b9. All350 AppCPU,18 feature-off/47
+full runtime,8 original+9 separate metadata controls pass. Every old compiler
+population passes, plus144 actual native PackHalf2x16/UnpackHalf2x16 layouts,
+8 genuine cooperative edge layouts and48 original IQ4 runtime-selector proofs.
+Read [the complete contract](kuno-prefill-small-quantized-matrix.md) and
+[public pipeline timing](kuno-prefill-native-pipeline-timing.md).
+
+`kuno-small-quant-slim-20261023.service`, invocation
+`8e1aca91666e4a8e8eaf8ff6981ee893`, is running the protected planned720 GPU
+controls and both forward full-model chains, with swap/core dumps disabled.
+This is NOT GPU acceptance or a speed result. The extra one-case proof covers
+all65536 half encodings,190458 signed midpoint/adjacent-F32 inputs and exact
+all-eight finite behavior, plus an actual cooperative matrix witness. Original
+719 controls remain unchanged. Root owns GPU execution; no concurrent builds.
+
+The forward timing harness now retains existing prompt_prefix/prompt_chunk
+markers without changing engine work or adding fences. For4245 prompt tokens,
+the batched prefix is4096+148; the last single-token decode is separate. Second
+chunk wall time includes teacher work and final source/loan cleanup. Native
+pipeline timing separately attributes first-request creation cost. Both modes
+remain diagnostic; original clean45/4245/4245 comparison is required afterward.
+
+Evidence under development: `small-quant-slim-root-build-receipt-20261023.json`,
+`small-quant-slim-root-acceptance-freeze-20261023.json`,
+`small-quant-slim-harness-20261023/`, `small-quant-slim-connected-20261023.log`.
+Attempt1 CPU failure preserved in `small-quant-slim-attempt1-cpu-20261023/`:
+manual definitions used a default name; assigning their genuine generated names
+repairs selection without relaxing the native pass. Attempt2 aggregate failure
+preserved in `small-quant-slim-attempt2-harness-20261023/`: all350/18/47 tests
+passed, but a wrapper incorrectly expected feature-off-only negative cases in
+the full-feature set. Exact original18 and47 populations were independently
+verified, then unchanged source resumed at metadata/build/offline; no passing
+CPU tests were rerun or weakened. Before GPU: all servicesHTTP200, admission
+normal, Intel50,688,000B, NVIDIA compute0, all5 driver fault counts0.
+
+Goal ACTIVE/UNMET. Latest CLEAN remains12.471177197/8.394039699s versus
+Strata5.5006/5.3515s; no speed claim for the pending candidate. No API or Vashti
+change; installed binaries unchanged. No installation/release/reset/reboot.
+
+## Previous checkpoint
+
+
 **Active Kuno handoff (2026-10-23): fused quantized cohort correctness accepted; conversion overhead isolated.**
 
 Frozen source4b567eef / worker4abf583d65ca8855ecec5eaebe1a1a0447554298d870059404bc3d736ae3b5bd
