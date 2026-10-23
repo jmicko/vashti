@@ -93,10 +93,7 @@ pub(crate) fn iq4_word(codes: u32, high: bool) -> u32 {
     let mut out = 0u32;
     #[unroll]
     for j in 0..4u32 {
-        let mut shift = j * 8;
-        if high {
-            shift += 4;
-        }
+        let shift = j * 8 + if high { 4u32 } else { 0u32 };
         let index = (codes >> shift) & 15;
         let mut lut = 3215825025u32; // bfad9881: -127,-104,-83,-65
         if index >= 4 {
