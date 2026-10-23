@@ -57,3 +57,17 @@ and input/weight owner unchanged. No Session/fake scope. Original complete18-
 script normal/profile/compiler/selection/source/budget/erasure/recovery chains
 both required before speed selection. No CPU compile during GPU timing.
 No favorable rerun, precision relaxation or installation from source/diagnostics.
+
+## Initial offline finding and coupled staging correction
+
+Initial d49b25f6 builds and263/264 selected CPU controls pass, but the new
+composite validator rejects the producer subgroup identity before GPU use.
+Removing scalar publication legitimately removes the lane builtin, while the
+original512-lane compiler recognizer requires actual SubgroupId and
+SubgroupLocalInvocationId. Keep that recognizer unchanged. The direct producer
+now stages the original full operands with genuine SG16*subgroup+lane jobs;
+every original job occurs exactly once, independent of local-ID subgroup order.
+All original source indices, packed vectors, prefetch, barriers and chronological
+products remain. The CPU lattice proves bijection; source-prefix identity
+normalizes ONLY the staging function name. No fake unused builtin, capability
+relaxation or extra publication. Initial failure and logs retained.

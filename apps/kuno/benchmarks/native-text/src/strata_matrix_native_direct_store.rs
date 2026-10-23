@@ -1,6 +1,53 @@
 // Coupled direct dense publication and finite sanitizer; included in native_wide.
 #[cube]
 #[allow(clippy::too_many_arguments)]
+fn direct_stage<F: Float>(
+    input: &Array<Vector<F, Const<4>>>,
+    weight: &Array<Vector<F, Const<4>>>,
+    a: &mut SharedMemory<Vector<F, Const<4>>>,
+    b: &mut SharedMemory<Vector<F, Const<4>>>,
+    columns: usize,
+    weight_first: usize,
+    token_base: usize,
+    row_base: usize,
+    k: usize,
+    buffer: usize,
+    #[comptime] gr_down: bool,
+) {
+    // Full128x128x32 stages only. Two genuine vec4s per job preserve original
+    // FP16/BF16 bits; every one of the1024 vectors per operand is written once.
+    #[unroll]
+    for round in 0..comptime!(STAGE_ROUNDS) {
+        // Genuine complete-SG16 lane mapping retains all original stage jobs.
+        let job = usize::cast_from(PLANE_POS) * 16
+            + usize::cast_from(UNIT_POS_PLANE)
+            + round * comptime!(STAGE_THREADS);
+        let offset = k + (job % 4) * 8;
+        let row = job / 4;
+        let source_a = ((token_base + row) * columns + offset) / 4;
+        let source_b = (weight_first + (row_base + row) * columns + offset) / 4;
+        a[buffer * 1024 + job * 2] = input[source_a];
+        a[buffer * 1024 + job * 2 + 1] = input[source_a + 1];
+        if comptime!(gr_down) {
+            // The sole extra shape is the authentic320-row GR down image.
+            // Do not read the missing last64 rows, even from a larger owner.
+            let mut lo = Vector::<F, Const<4>>::new(F::new(0.0));
+            let mut hi = Vector::<F, Const<4>>::new(F::new(0.0));
+            if row_base + row < 320 {
+                lo = weight[source_b];
+                hi = weight[source_b + 1];
+            }
+            b[buffer * 1024 + job * 2] = lo;
+            b[buffer * 1024 + job * 2 + 1] = hi;
+        } else {
+            b[buffer * 1024 + job * 2] = weight[source_b];
+            b[buffer * 1024 + job * 2 + 1] = weight[source_b + 1];
+        }
+    }
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
 fn publish_global(
     acc: &cmma::Matrix<f32>,
     output: &mut Array<f32>,
@@ -193,7 +240,7 @@ fn dense_wide_store<F: Float>(
     let subgroup = usize::cast_from(PLANE_POS);
     let token_base = usize::cast_from(CUBE_POS_Y) * 128;
     let row_base = usize::cast_from(CUBE_POS_X) * 128;
-    stage::<F>(
+    direct_stage::<F>(
         input,
         weight,
         &mut a,
@@ -214,7 +261,7 @@ fn dense_wide_store<F: Float>(
         // Same accepted immediate global-load→SLM-store software-prefetch ordering.
         // This expresses overlap opportunity, not guaranteed asynchronous execution.
         if k + 32 < columns {
-            stage::<F>(
+            direct_stage::<F>(
                 input,
                 weight,
                 &mut a,
@@ -633,6 +680,17 @@ mod direct_tests {
     use super::*;
     #[test]
     fn all_global_fragments_and_balanced_sanitizer_grids_cover_only_logical_outputs() {
+        // The genuine SG/lane staging map covers each original local-ID job
+        // exactly once; no assumption about physical local-ID subgroup order.
+        let mut jobs = vec![0u8; STAGE_ROUNDS * STAGE_THREADS];
+        for round in 0..STAGE_ROUNDS {
+            for sg in 0..SUBGROUPS {
+                for lane in 0..16 {
+                    jobs[sg * 16 + lane + round * STAGE_THREADS] += 1;
+                }
+            }
+        }
+        assert!(jobs.iter().all(|&n| n == 1));
         for (count, rows, first, stride) in [
             (512usize, 128usize, 0usize, 128usize),
             (512, 128, 4, 132),
@@ -719,7 +777,9 @@ mod direct_tests {
         );
         assert_eq!(
             original.split_whitespace().collect::<Vec<_>>(),
-            new.split_whitespace().collect::<Vec<_>>()
+            new.replace("direct_stage::<F>(", "stage::<F>(")
+                .split_whitespace()
+                .collect::<Vec<_>>()
         );
     }
     #[test]
