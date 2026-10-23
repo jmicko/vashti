@@ -39,6 +39,7 @@ resolver = "2"
 kuno-deep-matrix = ["std"]
 kuno-wide-shared-reuse = ["std"]
 kuno-dequant-quad32 = ["std", "kuno-expert-cohorts"]
+kuno-dequant-direct8 = ["kuno-dequant-quad32"]
 kuno-expert-ordered-output = ["std", "kuno-expert-cohorts"]
 kuno-expert-cohorts = []
 kuno-native-expert-medium = []

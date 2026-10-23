@@ -1196,6 +1196,8 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     crate::strata_matrix::validate_shared_reuse_sources()?;
     #[cfg(feature="strata-dequant-quad32")]
     crate::strata_prompt::experts::validate_quad_sources()?;
+    #[cfg(feature="strata-dequant-direct8")]
+    crate::strata_prompt::experts::validate_direct8_sources()?;
     #[cfg(feature="strata-gr-register-norm")]
     crate::strata_prompt::register_norm::validate_sources()?;
     println!("strata_shader_set_complete shaders={}", shaders.len());
