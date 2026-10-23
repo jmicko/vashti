@@ -1,5 +1,35 @@
 # Fused quantized small-expert matrices
 
+## Complete K64 padded layout (current source, not GPU accepted)
+
+Compose the K64/direct-sign revision below with padded B staging and matching
+cooperative readers before live speed tests. The unpadded K64 sourcea97cee6c
+passes352 CPU,18/47 runtime,8+9 metadata and every compiler population, but has
+not run on the GPU. Do not claim its performance or hardware acceptance.
+
+B uses pitch24 halves for each16-value column. Each K16 tile trims the last
+column's unused padding, occupying376 halves; all tile starts and strides stay
+16-byte aligned. Pitch20 would violate the cooperative-load alignment rule and
+is rejected by design ([Vulkan08986](https://docs.vulkan.org/spec/latest/appendices/spirvenv.html#VUID-RuntimeSpirv-OpCooperativeMatrixLoadKHR-08986)).
+Each tile's15 padding cells is initialized exactly once by the corresponding
+real decoder job. Existing all-eight values/fault behavior remains unchanged.
+
+Four tiles, two banks and four subgroups occupy24064 bytes. After the last K64
+handoff, one genuine whole-workgroup barrier joins every subgroup before the B
+lifetime ends. Only then may publication scratch alias B on explicit-layout
+devices. The real compiler envelope is24064 bytes with explicit layout and
+26112 bytes without it. The B70 supports the former, as established by original
+shared-reuse GPU controls. Two such workgroups fit its48KiB shared limit; this
+is a capacity calculation, not a measured occupancy or speed claim.
+
+Native compiler proofs must inspect actual F16vec4 B pointers, stride6 in
+vec4 units, original global A storage, chronological products, one full-WG
+handoff and the real physical envelope in all144 layouts. Original subgroup
+panel barriers remain; the new WG barrier is only for the cross-subgroup
+publication alias. Old source guard changes from forbidding every WG barrier
+to requiring exactly this single epilogue fence before free/scratch creation.
+An additive independent mapping/padding/alignment oracle accompanies it.
+
 ## K64 occupancy and direct sign conversion (pending validation)
 
 The accepted K128 version preserves exact results but is slower: diagnostic

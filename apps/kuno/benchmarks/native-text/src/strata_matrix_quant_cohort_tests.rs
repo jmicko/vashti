@@ -304,6 +304,46 @@ fn quant_cohort_k64_mapping_and_unpacked_signs_match_original_byte_wrapping() {
         }
     }
 }
+
+#[test]
+fn quant_cohort_padded_b_tiles_are_aligned_disjoint_fully_initialized_and_reusable() {
+    let mut seen = vec![false; 4 * 2 * 376 * 4];
+    for sg in 0..4usize {
+        for bank in 0..2usize {
+            let base = (sg * 2 + bank) * 376 * 4;
+            for step in 0..4usize {
+                let tile = base + step * 94 * 4;
+                assert_eq!(tile * 2 % 16, 0);
+                for row in 0..16usize {
+                    for col in 0..16usize {
+                        let offset = tile + row * 24 + col;
+                        assert!(!seen[offset]);
+                        seen[offset] = true;
+                        assert_eq!(offset - tile, row * 24 + col);
+                    }
+                    if row < 15 {
+                        for padding in 16..24usize {
+                            let offset = tile + row * 24 + padding;
+                            assert!(!seen[offset]);
+                            seen[offset] = true;
+                        }
+                    }
+                }
+                assert_eq!(tile + 15 * 24 + 16, base + (step + 1) * 376);
+            }
+        }
+    }
+    assert!(seen.into_iter().all(|v| v));
+    assert_eq!(4 * 2 * 376 * 4 * 2, 24064);
+    assert!(2 * 24064 <= 49152);
+    assert_eq!(24064 + 4 * 128 * 4, 26112);
+    // Independent source/lifetime fence oracle: publication may alias B only
+    // after a whole-WG fence, never after just its subgroup's final reader.
+    let source = include_str!("strata_matrix_quant_cohort_kernel.rs");
+    assert_eq!(source.matches("sync_cube()").count(), 1);
+    let epilogue = source.split_once("sync_cube();").unwrap().1;
+    assert!(epilogue.find("b.free()").unwrap() < epilogue.find("let mut scratch").unwrap());
+}
 #[test]
 fn quant_cohort_compact_shape_requires_real_six_format_role_bytes_and_distinct_tiles() {
     for gu in [18u32, 21, 22, 23] {
@@ -362,7 +402,11 @@ fn quant_cohort_source_preserves_eight_value_poison_gate_and_existing_consumers(
     assert!(has(zero, "b = Vector::<f16, Const<4>>::new(f16::new(0.0))"));
     assert!(has(zero, "fault[0].fetch_or(128)"));
     assert!(!has(k, "native_release_after"));
-    assert!(!has(k, "sync_cube()"));
+    // Bank reuse becomes cross-subgroup only after all K products. Retain
+    // subgroup-only panel handoffs, plus one whole-workgroup lifetime fence.
+    assert_eq!(k.matches("sync_cube()").count(), 1);
+    let release = k.split_once("sync_cube();").unwrap().1;
+    assert!(release.find("b.free()").unwrap() < release.find("let mut scratch").unwrap());
     assert!(k.matches("sync_plane()").count() >= 2);
     assert_eq!(
         k.matches("crate::strata_matrix::small_direct::publish(")

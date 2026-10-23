@@ -31,7 +31,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             else {
                 return Err("quant cohort actual SPIRV compiler".into());
             };
-            let expected = 16384 + 2048;
+            let expected = if mask & 4 != 0 { 24064 } else { 26112 };
             if kernel.shared_size != expected {
                 return Err(format!(
                     "quant cohort real SLM {name} mask{mask}: {} != {expected}",
@@ -63,9 +63,12 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             let mut native_pack = 0;
             let mut native_unpack = 0;
             let mut pointer_storage = std::collections::HashMap::new();
+            let mut pointer_pointee = std::collections::HashMap::new();
+            let mut half_vector_width = std::collections::HashMap::new();
             let mut pointer_values = std::collections::HashMap::new();
             let mut global_input_loads = 0;
             let mut shared_weight_loads = 0;
+            let mut workgroup_handoffs = 0;
             while at < words.len() {
                 let n = (words[at] >> 16) as usize;
                 let op = words[at] & 65535;
@@ -98,6 +101,18 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 if op == 43 && n == 4 && u32_types.contains(&words[at + 1]) {
                     u32_constants.insert(words[at + 2], words[at + 3]);
                 }
+                // CubeCL expresses scalar-half stride24 as six vec4 elements;
+                // accept a folded literal or evaluate that exact constant SHR.
+                if op == 194 && n == 5 && u32_types.contains(&words[at + 1]) {
+                    if let (Some(&value), Some(&shift)) = (
+                        u32_constants.get(&words[at + 3]),
+                        u32_constants.get(&words[at + 4]),
+                    ) {
+                        if shift < 32 {
+                            u32_constants.insert(words[at + 2], value >> shift);
+                        }
+                    }
+                }
                 if matches!(op, 41 | 42) && n == 3 {
                     boolean_constants.insert(words[at + 2]);
                 }
@@ -105,10 +120,12 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                     runtime_selections.push((words[at + 3], words[at + 4], words[at + 5]));
                 }
                 if op == 23 && n == 4 && half_types.contains(&words[at + 2]) {
+                    half_vector_width.insert(words[at + 1], words[at + 3]);
                     half_types.insert(words[at + 1]);
                 }
                 if op == 32 && n == 4 {
                     pointer_storage.insert(words[at + 1], words[at + 2]);
+                    pointer_pointee.insert(words[at + 1], words[at + 3]);
                 }
                 if matches!(op, 59 | 61 | 65 | 66 | 67 | 70 | 83 | 124)
                     && n >= 3
@@ -122,7 +139,24 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                         .and_then(|ty| pointer_storage.get(ty))
                     {
                         Some(12) => global_input_loads += 1,
-                        Some(4) => shared_weight_loads += 1,
+                        Some(4) => {
+                            let actual_width = pointer_values
+                                .get(&words[at + 3])
+                                .and_then(|ty| pointer_pointee.get(ty))
+                                .and_then(|ty| half_vector_width.get(ty));
+                            if actual_width != Some(&4) {
+                                return Err(
+                                    "quant cohort padded B must be an actual F16 vec4 pointer"
+                                        .into(),
+                                );
+                            }
+                            if u32_constants.get(&words[at + 5]) != Some(&6) {
+                                return Err(
+                                    "quant cohort padded B stride must be six vec4 halves".into()
+                                );
+                            }
+                            shared_weight_loads += 1;
+                        }
                         _ => return Err("quant cohort unproved cooperative operand storage".into()),
                     }
                 }
@@ -133,6 +167,9 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 fault |= op == 241;
                 if op == 224 {
                     subgroup_barrier = true;
+                    if u32_constants.get(&words[at + 1]) == Some(&2) {
+                        workgroup_handoffs += 1;
+                    }
                 }
                 at += n;
             }
@@ -159,6 +196,7 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             if products != static_steps * (tile / 8)
                 || global_input_loads != static_steps * (tile / 8)
                 || shared_weight_loads != static_steps
+                || workgroup_handoffs != 1
                 || !fault
                 || !subgroup_barrier
                 || !actual_wg64
@@ -200,8 +238,12 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 "strata_quant_cohort_native_half_accepted name={name} layout={mask} pack_half_2x16={native_pack} unpack_half_2x16={native_unpack} raw_half_narrowing=0"
             );
             println!(
-                "strata_quant_cohort_k64_accepted name={name} layout={mask} shared_bytes={} global_input_loads={global_input_loads} shared_weight_loads={shared_weight_loads} products={products}",
+                "strata_quant_cohort_k64_padded_accepted name={name} layout={mask} shared_bytes={} global_input_loads={global_input_loads} shared_weight_loads={shared_weight_loads} products={products}",
                 kernel.shared_size
+            );
+            println!(
+                "strata_quant_cohort_padded_b_accepted name={name} layout={mask} stride_halves=24 tile_half_span=376 whole_workgroup_handoffs={workgroup_handoffs} actual_publication_alias={}",
+                kernel.shared_size == 24064
             );
         }
     }

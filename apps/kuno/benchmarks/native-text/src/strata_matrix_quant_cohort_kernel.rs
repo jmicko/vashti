@@ -232,7 +232,7 @@ pub(crate) fn expert_quant_cohort(
     }
     // Gather/activation initialize every padded input row. Load A directly,
     // as the accepted global narrow products do; only decoded weights need SLM.
-    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(4usize * 2 * 16 * 64 / 4);
+    let mut b = SharedMemory::<Vector<f16, Const<4>>>::new(4usize * 2 * 376);
     let am0 = unsafe {
         cmma::Matrix::<f16>::uninitialized(
             cmma::MatrixIdent::A,
@@ -338,13 +338,13 @@ pub(crate) fn expert_quant_cohort(
             if comptime!(tile == 32) {
                 for step in 0..4usize {
                     let af = (prefix * columns + producer_k - 64 + step * 16) / 4;
-                    let bf = (sg * 2 + previous_bank) * 256 + step * 64;
+                    let bf = (sg * 2 + previous_bank) * 376 + step * 94;
                     cmma::load(
                         &am0,
                         &input.to_slice().slice(af, input.len()),
                         u32::cast_from(columns),
                     );
-                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
+                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 24);
                     cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
                     if comptime!(tile >= 16) {
                         cmma::load(
@@ -373,13 +373,13 @@ pub(crate) fn expert_quant_cohort(
                 #[unroll]
                 for step in 0..4usize {
                     let af = (prefix * columns + producer_k - 64 + step * 16) / 4;
-                    let bf = (sg * 2 + previous_bank) * 256 + step * 64;
+                    let bf = (sg * 2 + previous_bank) * 376 + step * 94;
                     cmma::load(
                         &am0,
                         &input.to_slice().slice(af, input.len()),
                         u32::cast_from(columns),
                     );
-                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 16);
+                    cmma::load(&bm, &b.to_slice().slice(bf, b.len()), 24);
                     cmma::execute::<f16, f16, f32, f32>(&am0, &bm, &c0, &c0);
                     if comptime!(tile >= 16) {
                         cmma::load(
@@ -409,6 +409,13 @@ pub(crate) fn expert_quant_cohort(
         }
         producer_bank = previous_bank;
         producer_k += 64;
+    }
+    // Explicit-layout devices may overlay publication scratch with B. This
+    // is a cross-subgroup reuse: join the whole workgroup once before freeing
+    // the final B lifetime, not merely each subgroup's last panel handoff.
+    sync_cube();
+    unsafe {
+        b.free();
     }
     let mut scratch = SharedMemory::<f32>::new(4usize * 128);
     crate::strata_matrix::small_direct::publish(
@@ -496,7 +503,7 @@ pub(crate) fn stage(
         let local_row = round * 2 + lane / 8;
         let row = row_base + local_row;
         let col = lane % 8 * 8;
-        let first = (sg * 2 + bank) * 256 + (col / 16) * 64 + local_row * 4 + (col % 16) / 4;
+        let first = (sg * 2 + bank) * 376 + (col / 16) * 94 + local_row * 6 + (col % 16) / 4;
         let mut packed_row = source_first
             + row
                 * comptime!(crate::strata_matrix::quant_cohort::quant_row_bytes(
@@ -522,5 +529,13 @@ pub(crate) fn stage(
             fault,
             dtype,
         );
+        // Pitch24 gives every16-value matrix column a16-byte padding cell.
+        // The final column has no trailing padding, so each K16 tile occupies
+        // 376 halves and starts at a16-byte aligned address. Initialize every
+        // padding vector exactly once, including both lookahead banks.
+        if col % 16 == 0 && local_row < 15 {
+            b[first + 4] = Vector::<f16, Const<4>>::new(f16::new(0.0));
+            b[first + 5] = Vector::<f16, Const<4>>::new(f16::new(0.0));
+        }
     }
 }
