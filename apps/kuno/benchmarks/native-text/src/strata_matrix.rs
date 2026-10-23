@@ -2,6 +2,9 @@
 //! Data stays in the already admitted BF16/FP16 images and F32 result owners.
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
 use kuno_text::{Error, Result};
+#[cfg(feature="strata-wide-register-stage")]
+#[path="strata_matrix_wide_pipeline.rs"]
+mod wide_pipeline;
 #[cfg(feature = "strata-expert-cohorts")]
 #[path = "strata_matrix_expert_cohorts.rs"]
 pub(crate) mod cohorts;
@@ -2788,6 +2791,10 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     multiply |= op == 4459;
                     fault |= op == 241;
                     at += size;
+                }
+                #[cfg(feature="strata-wide-register-stage")]
+                if name.starts_with("expert_wide32_") || name=="expert_direct_gu" {
+                    wide_pipeline::validate_program(&canonical)?;
                 }
                 if !matrix || !multiply || !fault {
                     return Err("matrix multiply/fault instructions absent".into());

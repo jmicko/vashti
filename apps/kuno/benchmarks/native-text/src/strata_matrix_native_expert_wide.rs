@@ -423,6 +423,23 @@ fn wide(
     let mut current = 0usize;
     while k < columns {
         let next = 1usize - current;
+        // REGISTER_STAGE_LOAD_BEGIN: real global values stay live across
+        // the current original matrix products; next SLM writes occur later.
+        let mut next_a_lo=Vector::<f16,Const<4>>::new(f16::new(0.0));
+        let mut next_a_hi=Vector::<f16,Const<4>>::new(f16::new(0.0));
+        let mut next_b_lo=Vector::<f16,Const<4>>::new(f16::new(0.0));
+        let mut next_b_hi=Vector::<f16,Const<4>>::new(f16::new(0.0));
+        if comptime!(cfg!(feature="strata-wide-register-stage") && STAGE_ROUNDS==1) {
+            if k+32<columns {
+                let job=usize::cast_from(PLANE_POS)*16+usize::cast_from(UNIT_POS_PLANE);
+                let row=job/4;
+                let off=k+32+(job%4)*8;
+                let source_a=((token_base+row)*columns+off)/4;
+                let source_b=(weight_first+(row_base+row)*columns+off)/4;
+                next_a_lo=input[source_a];next_a_hi=input[source_a+1];
+                next_b_lo=weight[source_b];next_b_hi=weight[source_b+1];
+            }
+        } else {
         // Same accepted immediate global-load→SLM-store software-prefetch ordering.
         // This expresses overlap opportunity, not guaranteed asynchronous execution.
         if k + 32 < columns {
@@ -439,6 +456,8 @@ fn wide(
                 next,
             );
         }
+        }
+        // REGISTER_STAGE_LOAD_END
         #[unroll]
         for step in 0..2usize {
             let af = current * 1024 + (subgroup / 4) * comptime!(SUBGROUP_ROWS * 8) + step * 4;
@@ -462,6 +481,19 @@ fn wide(
                 cmma::execute::<f16, f16, f32, f32>(&a3, &b1, &c7, &c7);
             }
         }
+        // REGISTER_STAGE_STORE_BEGIN: only after all chronological current
+        // CMMA products, publish the prefetched values into the disjoint bank.
+        if comptime!(cfg!(feature="strata-wide-register-stage") && STAGE_ROUNDS==1) {
+            if k+32<columns {
+                let job=usize::cast_from(PLANE_POS)*16+usize::cast_from(UNIT_POS_PLANE);
+                let row=job/4;
+                let dest=next*1024+job*2;
+                a[dest]=next_a_lo;a[dest+1]=next_a_hi;
+                b[dest]=next_b_lo;b[dest+1]=next_b_hi;
+                
+            }
+        }
+        // REGISTER_STAGE_STORE_END
         // Current reads end and all next-stage writes become visible before switch.
         sync_cube();
         current = next;

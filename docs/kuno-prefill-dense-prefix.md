@@ -31,3 +31,20 @@ required before speed selection. No compilation during GPU timing.
 Source only; no build/GPU/performance/install claim. No API/model/context/
 config/frontend/release/reset/reboot change; Vashti:none. Strata5.3515s still
 unmet; complete predecessor821bfd6a normal8.4267s is neutral.
+
+## Complete4439c220 validation
+
+Workerc7cadabd571de3f76ef2fe3e1f913c3e62a118029401368ee4128a6fa47860bc.
+270CPU/15runtime/all429WGSL/320matrix+16raw+32compact+24padded layouts and
+ALL433GPU (all417 retained+16 exact prefix/fallback) PASS, BOTH unchanged
+original18-script chains and physical recovery PASS. Normal first/repeat
+9.823343190/8.511345409s; profile9.810843273/8.568571713s. No gain versus
+previous8.4267; no clean/staged/install. No favorable rerun. Padded/compact/
+finite and QSA native code retain zero spills, original QSA hashes unchanged.
+Full summary:
+`/media/jmicko/faststore/kuno-development/strata-parity-dense-prefix-20261023-expert-cohorts-public-summary.json`.
+This is correct alternate scheduling, not evidence that every wide tile wins
+for small-N/short-M occupancy. All code retained; goal UNMET vs Strata5.3515s.
+Next complete source couples actual register-staged next operands in BOTH
+dense and routed-expert wide kernels; existing narrow register-prefetch
+does not cover these loops.

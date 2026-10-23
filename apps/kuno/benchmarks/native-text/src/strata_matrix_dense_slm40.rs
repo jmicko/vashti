@@ -238,23 +238,46 @@ fn dense_slm40_store<F: Float>(
     let mut current = 0usize;
     while k < columns {
         let next = 1usize - current;
-        // Same accepted immediate global-load→SLM-store software-prefetch ordering.
-        // This expresses overlap opportunity, not guaranteed asynchronous execution.
-        if k + 32 < columns {
-            slm40_stage::<F>(
-                input,
-                weight,
-                &mut a,
-                &mut b,
-                columns,
-                weight_first,
-                token_base,
-                row_base,
-                k + 32,
-                next,
-                gr_down,
-            );
+        // REGISTER_STAGE_LOAD_BEGIN: real global values stay live across
+        // the current original matrix products; next SLM writes occur later.
+        let mut next_a_lo = Vector::<F, Const<4>>::new(F::new(0.0));
+        let mut next_a_hi = Vector::<F, Const<4>>::new(F::new(0.0));
+        let mut next_b_lo = Vector::<F, Const<4>>::new(F::new(0.0));
+        let mut next_b_hi = Vector::<F, Const<4>>::new(F::new(0.0));
+        if comptime!(cfg!(feature = "strata-wide-register-stage") && STAGE_ROUNDS == 1) {
+            if k + 32 < columns {
+                let job = usize::cast_from(PLANE_POS) * 16 + usize::cast_from(UNIT_POS_PLANE);
+                let row = job / 4;
+                let off = k + 32 + (job % 4) * 8;
+                let source_a = ((token_base + row) * columns + off) / 4;
+                let source_b = (weight_first + (row_base + row) * columns + off) / 4;
+                next_a_lo = input[source_a];
+                next_a_hi = input[source_a + 1];
+                if !comptime!(gr_down) || row_base + row < 320 {
+                    next_b_lo = weight[source_b];
+                    next_b_hi = weight[source_b + 1];
+                }
+            }
+        } else {
+            // Same accepted immediate global-load→SLM-store software-prefetch ordering.
+            // This expresses overlap opportunity, not guaranteed asynchronous execution.
+            if k + 32 < columns {
+                slm40_stage::<F>(
+                    input,
+                    weight,
+                    &mut a,
+                    &mut b,
+                    columns,
+                    weight_first,
+                    token_base,
+                    row_base,
+                    k + 32,
+                    next,
+                    gr_down,
+                );
+            }
         }
+        // REGISTER_STAGE_LOAD_END
         #[unroll]
         for step in 0..2usize {
             let af = current * 1280 + (subgroup / 4) * comptime!(SUBGROUP_ROWS * 10) + step * 4;
@@ -278,6 +301,26 @@ fn dense_slm40_store<F: Float>(
                 cmma::execute::<F, F, f32, f32>(&a3, &b1, &c7, &c7);
             }
         }
+        // REGISTER_STAGE_STORE_BEGIN: only after all chronological current
+        // CMMA products, publish the prefetched values into the disjoint bank.
+        if comptime!(cfg!(feature = "strata-wide-register-stage") && STAGE_ROUNDS == 1) {
+            if k + 32 < columns {
+                let job = usize::cast_from(PLANE_POS) * 16 + usize::cast_from(UNIT_POS_PLANE);
+                let row = job / 4;
+                let dest = next * 1280 + row * 10 + (job % 4) * 2;
+                a[dest] = next_a_lo;
+                a[dest + 1] = next_a_hi;
+                b[dest] = next_b_lo;
+                b[dest + 1] = next_b_hi;
+                if job % 4 == 0 {
+                    a[next * 1280 + row * 10 + 8] = Vector::<F, Const<4>>::new(F::new(0.0));
+                    a[next * 1280 + row * 10 + 9] = Vector::<F, Const<4>>::new(F::new(0.0));
+                    b[next * 1280 + row * 10 + 8] = Vector::<F, Const<4>>::new(F::new(0.0));
+                    b[next * 1280 + row * 10 + 9] = Vector::<F, Const<4>>::new(F::new(0.0));
+                }
+            }
+        }
+        // REGISTER_STAGE_STORE_END
         // Current reads end and all next-stage writes become visible before switch.
         sync_cube();
         current = next;
@@ -437,6 +480,8 @@ pub(super) fn validate_slm40_sources() -> std::result::Result<(), Box<dyn std::e
             let words = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&words)?
                 .unwrap_or(words);
             let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)?.unwrap_or(words);
+            #[cfg(feature = "strata-wide-register-stage")]
+            super::wide_pipeline::validate_program(&words)?;
             let sg = wgpu::hal::vulkan::kuno_cooperative_subgroup(&words);
             if (producer && sg != Some(16)) || (!producer && sg.is_some()) {
                 return Err("direct composite subgroup identity".into());

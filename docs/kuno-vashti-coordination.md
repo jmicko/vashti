@@ -1,5 +1,22 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno continuation (2026-10-23): coupled wide register-stage source.**
+
+Read [real register staging contract](kuno-prefill-wide-register-stage.md) and [complete prefix validation](kuno-prefill-dense-prefix.md#complete4439c220-validation).
+Complete4439c220/workerc7cadabd passes270CPU/15runtime/all shader layouts/
+ALL433GPU/BOTH original18-script chains and recovery. Normal9.8233/8.5113s
+no gain; all compact/padded/finite/QSA ISA zero spills, QSA hashes unchanged.
+No clean/staged/install. Goal UNMET vs Strata5.3515s.
+New source keeps everything and couples actual next global vector loads into
+registers,original current CMMA products,then disjoint next-SLM writes in BOTH
+dense and routed-expert wide producers. Original final-block guard,math,stage
+addresses,barriers,owners,capacity and erasure retained. Intended273CPU/
+15runtime/all original shaders +48 actual compiler in-loop dataflow checks/
+all433GPU/BOTH original chains. Source only; no build/GPU/speed claim.
+No API/model/context/config/frontend/install/release/reset/reboot changes;
+Vashti:none. Installed301f1fd1/36626d30 unchanged. Root owns builds/GPUs;
+no compile during GPU timing. Earlier checkpoints history.
+
 **Current Kuno continuation (2026-10-23): real M128 prefix + original tail source.**
 
 Read [exact prefix contract](kuno-prefill-dense-prefix.md) and [completed padded validation](kuno-prefill-dense-slm40.md#complete821bfd6a-validation).
