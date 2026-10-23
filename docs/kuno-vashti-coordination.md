@@ -1,5 +1,34 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): complete asymmetric accepted; register-pressure fix composed.**
+
+Read [exact implementation and evidence](kuno-prefill-asymmetric-dense.md).
+Source d6c98298 / worker057f899f passes360 CPU,18/49 runtime,8+9 metadata,
+all747 GPU controls, both full-model chains and recovery. Original732 retained.
+Diagnostic first/repeated11.878727/9.867798s; normal12.032959/9.788972s: slower
+than preceding K32 normal9.306249s and retained FP16-image8.854793s. No CLEAN.
+Actual compiler code identifies128-GRF spills:109:106 FP16/BF16,122:132 GR320.
+Original8 wide zero-spill/QSA ISA unchanged. Dense coarse timings regress;
+expert and attention core essentially unchanged. Keep complete source/evidence.
+
+Next composed source reuses one A matrix, loading each fragment just before
+its two products while retaining both B fragments, all8 C accumulators, same
+16 products/12 loads, same6-vector next prefetch, M256/N128/K32 double banks,
+direct stores and finite checks. No component rollback/precision/owner change.
+Not yet built/GPU accepted. Finish complete compiler/numeric/model/recovery
+validation before speed selection. Original exact6 asymmetric CFG check is
+separate from unchanged minimum8 symmetric check; first checker rejection saved.
+
+Development evidence `asymmetric-dense-*` and complete747 public summary.
+Unit ada5de2dbede455a9ba1a5ef7e513668 exited0,12m41.884s, zero swap,34.7GiBpeak.
+Independent21:57:38UTC state: Intel50,688,000B,NVIDIA compute0, all5 faults0,
+HTTP200/admission normal/completed150. GPUs free. Installed binaries unchanged.
+Canonical Vashti and inherited text/__pycache__ preserved. No API/config/UI/
+installation/release/reset/reboot. Goal ACTIVE/UNMET. Target Strata5.3515s;
+latest CLEAN Kuno8.394039699s. Bounded sudo refresher through01:47UTC Oct24.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): asymmetric dense source composed from reference profiling.**
 
 Read [the coupled asymmetric contract](kuno-prefill-asymmetric-dense.md) and

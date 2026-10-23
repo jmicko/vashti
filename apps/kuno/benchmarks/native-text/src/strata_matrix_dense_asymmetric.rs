@@ -89,44 +89,6 @@ fn dense_asymmetric_store<F: Float>(
         )
     };
     // SAFETY: every full current stage is initialized and synchronized before use.
-    let a1 = unsafe {
-        cmma::Matrix::<F>::uninitialized(
-            cmma::MatrixIdent::A,
-            8usize,
-            16usize,
-            16usize,
-            cmma::MatrixLayout::RowMajor,
-        )
-    };
-    // SAFETY: every full current stage is initialized and synchronized before use.
-    let a2 = if comptime!(true) {
-        unsafe {
-            cmma::Matrix::<F>::uninitialized(
-                cmma::MatrixIdent::A,
-                8usize,
-                16usize,
-                16usize,
-                cmma::MatrixLayout::RowMajor,
-            )
-        }
-    } else {
-        a0
-    };
-    // SAFETY: every full current stage is initialized and synchronized before use.
-    let a3 = if comptime!(true) {
-        unsafe {
-            cmma::Matrix::<F>::uninitialized(
-                cmma::MatrixIdent::A,
-                8usize,
-                16usize,
-                16usize,
-                cmma::MatrixLayout::RowMajor,
-            )
-        }
-    } else {
-        a1
-    };
-    // SAFETY: every full current stage is initialized and synchronized before use.
     let b0 = unsafe {
         cmma::Matrix::<F>::uninitialized(
             cmma::MatrixIdent::B,
@@ -275,24 +237,24 @@ fn dense_asymmetric_store<F: Float>(
         for step in 0..2usize {
             let af = current * 2048 + step * 1024 + (subgroup / 4) * 128;
             let bf = current * 1024 + step * 512 + (subgroup % 4) * 128;
-            cmma::load(&a0, &a.to_slice().slice(af + 0, a.len()), 16);
-            cmma::load(&a1, &a.to_slice().slice(af + 32, a.len()), 16);
-            if comptime!(true) {
-                cmma::load(&a2, &a.to_slice().slice(af + 64, a.len()), 16);
-                cmma::load(&a3, &a.to_slice().slice(af + 96, a.len()), 16);
-            }
+            // Keep both B fragments, but load each A fragment immediately
+            // before its two products. All eight output accumulators keep the
+            // original K16 order; four simultaneously live A matrices are
+            // unnecessary in the preceding heavily spilling128-GRF program.
             cmma::load(&b0, &b.to_slice().slice(bf + 0, b.len()), 16);
             cmma::load(&b1, &b.to_slice().slice(bf + 64, b.len()), 16);
+            cmma::load(&a0, &a.to_slice().slice(af + 0, a.len()), 16);
             cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
             cmma::execute::<F, F, f32, f32>(&a0, &b1, &c1, &c1);
-            cmma::execute::<F, F, f32, f32>(&a1, &b0, &c2, &c2);
-            cmma::execute::<F, F, f32, f32>(&a1, &b1, &c3, &c3);
-            if comptime!(true) {
-                cmma::execute::<F, F, f32, f32>(&a2, &b0, &c4, &c4);
-                cmma::execute::<F, F, f32, f32>(&a2, &b1, &c5, &c5);
-                cmma::execute::<F, F, f32, f32>(&a3, &b0, &c6, &c6);
-                cmma::execute::<F, F, f32, f32>(&a3, &b1, &c7, &c7);
-            }
+            cmma::load(&a0, &a.to_slice().slice(af + 32, a.len()), 16);
+            cmma::execute::<F, F, f32, f32>(&a0, &b0, &c2, &c2);
+            cmma::execute::<F, F, f32, f32>(&a0, &b1, &c3, &c3);
+            cmma::load(&a0, &a.to_slice().slice(af + 64, a.len()), 16);
+            cmma::execute::<F, F, f32, f32>(&a0, &b0, &c4, &c4);
+            cmma::execute::<F, F, f32, f32>(&a0, &b1, &c5, &c5);
+            cmma::load(&a0, &a.to_slice().slice(af + 96, a.len()), 16);
+            cmma::execute::<F, F, f32, f32>(&a0, &b0, &c6, &c6);
+            cmma::execute::<F, F, f32, f32>(&a0, &b1, &c7, &c7);
         }
         // ASYMMETRIC_REGISTER_STORE_BEGIN: complete current products first.
         if k + 32 < columns {

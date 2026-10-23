@@ -81,3 +81,53 @@ Original public fixture SHA/token counts and inference binary remain unchanged;
 all three reference requests and physical recovery pass. Instrumented8.39s is
 not the clean5.3515s baseline and must not replace it. Kernel properties absent
 from this older tool (e.g. register-file size) remain unproven.
+
+## First complete acceptance and register-pressure follow-up
+
+Source d6c98298e32e309ede91b4fbb6da3e1314e777b9, worker
+057f899fc49f279406f628edf2e6be16ed55a222787ecd797ce00b35ac72dfb6
+passes360 AppCPU,18/49 runtime,8+9 metadata, all original compiler populations
+plus24 asymmetric layouts/CFG proofs, all747 GPU controls, both complete-model
+chains and physical recovery. All15 new pairs have zero bit/F64 mismatches.
+Actual large-request partition475 asymmetric+475 old slm40=950 direct stores=
+950 finite consumers; no K64 deep selection on48KiB hardware. Original732 GPU
+controls and357 AppCPU cases remain exact prefixes/retained populations.
+
+The first CPU attempt used the original symmetric checker, which derived eight
+next-stage transfers from16 products. New asymmetric geometry actually needs
+six. Preserve that rejected attempt under development
+`asymmetric-dense-six-vector-check-failure-20261023/`. New explicit asymmetric
+checker requires exactly6 actual StorageBuffer loads before products and6
+Workgroup stores after them. Original symmetric minimum8 is unchanged.
+
+Diagnostic first/repeated11.878727028/9.867797979s; normal schedule
+12.032958780/9.788971544s. These are slower than preceding K32 normal
+11.435514301/9.306249103s and the retained FP16-image control normal repeated
+8.854793s. No CLEAN run, no parity claim. Latest CLEAN stays12.471177197/
+8.394039699s versus Strata5.5006/5.3515s. Do not replace the target or conceal
+these regressions. Complete source/worker/evidence remains available.
+
+Actual asymmetric Intel programs spill heavily at128 GRFs: FP16/BF16
+109:106 spills:fills, GR320122:132. Old8 wide programs remain zero-spill and
+both QSA ISA hashes unchanged. Measured dense coarse regions regress together:
+GDN projections0.403602→0.588714s, output0.162664→0.249223s; QSA projections
+0.122782→0.173578s, output0.054956→0.084207s. Expert6.069373→6.068521s and
+QSA attention merge remain essentially unchanged. These include queue waits;
+not an isolated-kernel causality claim. Register pressure is the measured next
+implementation target, not evidence that the complete geometry is invalid.
+
+Next complete source shortens A-operand lifetime: keep both B fragments, load
+one A fragment immediately before its two products, then reuse that one A
+matrix for each of the other three rows. Original sixteen chronological
+products, eight C accumulators, six-vector register prefetch, both shared banks,
+all bindings/owners/guards, direct stores and finite consumer remain. Twelve
+actual cooperative loads stay required. This follow-up is composed but not yet
+built/GPU accepted; don't infer a speed gain from its source order alone.
+
+Evidence uses development `asymmetric-dense-*` including build receipt,
+acceptance freeze, both safe phase exports, complete ISA export and
+`strata-parity-asymmetric-dense-20261023-expert-cohorts-public-summary.json`.
+Protected unit invocation ada5de2dbede455a9ba1a5ef7e513668 exited0 after
+12m41.884s, zero swap, peak34.7GiB. Independent21:57:38UTC state: Intel
+50,688,000B,NVIDIA compute0, all5 classified faults0, HTTP200, admission normal.
+No installed binary/API/config/Vashti changes. Goal ACTIVE/UNMET.
