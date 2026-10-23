@@ -20,6 +20,15 @@ pub(crate) enum CohortOp {
     Activate,
 }
 impl CohortOp {
+    /// Original explicit fixture identity pairs with source() and /32 grids.
+    pub(crate) fn original_name(self) -> &'static str {
+        match self {
+            Self::Gather => "StrataExpertCohortGather",
+            Self::Image { down: false, .. } => "StrataExpertCohortGuImage",
+            Self::Image { down: true, .. } => "StrataExpertCohortDownImage",
+            Self::Activate => "StrataExpertCohortActivate",
+        }
+    }
     pub(super) fn selected_source(self) -> String {
         let source=self.source();
         #[cfg(feature="strata-dequant-quad32")]
@@ -86,8 +95,12 @@ impl KernelMetadata for CohortOp {
     fn name(&self) -> &'static str {
         match self {
             Self::Gather => "StrataExpertCohortGather",
-            Self::Image { down: false, .. } => "StrataExpertCohortGuImage",
-            Self::Image { down: true, .. } => "StrataExpertCohortDownImage",
+            Self::Image { down: false, .. } => if cfg!(feature="strata-dequant-quad32") {
+                "StrataExpertCohortGuQuad32Image"
+            } else { self.original_name() },
+            Self::Image { down: true, .. } => if cfg!(feature="strata-dequant-quad32") {
+                "StrataExpertCohortDownQuad32Image"
+            } else { self.original_name() },
             Self::Activate => "StrataExpertCohortActivate",
         }
     }
@@ -392,7 +405,12 @@ pub(super) fn enqueue_unit(
         for tile in [8usize, 16] {
             if (0..n).any(|i| (words[17 + i * 4] <= 8) == (tile == 8)) {
                 words[11] = tile as u32;
-                crate::strata_matrix::cohorts::launch(
+                #[cfg(feature = "strata-expert-ordered-output")]
+                let product = if down { crate::strata_matrix::cohorts::launch_ordered }
+                    else { crate::strata_matrix::cohorts::launch };
+                #[cfg(not(feature = "strata-expert-ordered-output"))]
+                let product = crate::strata_matrix::cohorts::launch;
+                product(
                     client,
                     [
                         if down { h.clone() } else { x.clone() },
@@ -537,6 +555,18 @@ mod tests {
         w[44..48].fill(0);
         w[10] = 17;
         assert!(validate_words(&w).is_ok());
+    }
+    #[test]
+    fn selected_quad_image_identity_keeps_original_explicit_fixture_names() {
+        for down in [false,true] {
+            let op = CohortOp::Image { dtype:q::IQ3_S,down };
+            let original = if down { "StrataExpertCohortDownImage" } else { "StrataExpertCohortGuImage" };
+            assert_eq!(op.original_name(),original);
+            let quad = if down { "StrataExpertCohortDownQuad32Image" } else { "StrataExpertCohortGuQuad32Image" };
+            assert_eq!(op.name(),if cfg!(feature="strata-dequant-quad32") {quad} else {original});
+            assert_eq!(CohortOp::Gather.name(),CohortOp::Gather.original_name());
+            assert_eq!(CohortOp::Activate.name(),CohortOp::Activate.original_name());
+        }
     }
     #[test]
     fn actual_cohort_sources_validate_and_keep_original_source_rounding_faults_and_complete_owners()

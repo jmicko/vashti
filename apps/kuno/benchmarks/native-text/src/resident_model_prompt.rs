@@ -449,6 +449,13 @@ impl Workspace {
                 &BatchSpans::new(count, 0, 0, 640, 0, D),
                 cancel,
             )?;
+            #[cfg(feature = "strata-expert-ordered-output")]
+            self.global_moe.as_mut().ok_or_else(error)?.finish_prompt_ordered_shared(
+                &m.arena, layer, v[2].clone(), v[8].clone(), v[9].clone(),
+                v[3].clone(), m.b.fault,
+            )?;
+            #[cfg(not(feature = "strata-expert-ordered-output"))]
+            {
             self.global_moe.as_mut().ok_or_else(error)?.finish_prompt(
                 &m.arena,
                 layer,
@@ -468,6 +475,7 @@ impl Workspace {
                 ],
                 info,
             )?;
+            }
             timing.mark("shared_expert_merge")?;
             previous = Some((v[0].clone(), v[3].clone()));
         }

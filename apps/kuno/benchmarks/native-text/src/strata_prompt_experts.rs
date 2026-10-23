@@ -919,7 +919,11 @@ fn enqueue_original(
         };
         dispatch(client, activation, [activate_groups, 1, 1], args, base)?;
         timing.mark("expert_cpu_activate");
-        crate::strata_matrix::expert(
+        #[cfg(feature = "strata-expert-ordered-output")]
+        let down_product = crate::strata_matrix::expert_ordered;
+        #[cfg(not(feature = "strata-expert-ordered-output"))]
+        let down_product = crate::strata_matrix::expert;
+        down_product(
             client,
             [
                 input.clone(),

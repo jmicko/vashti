@@ -31,6 +31,47 @@ mod prompt_numeric;
 #[path = "strata_prompt_route_registers.rs"]
 mod route_registers;
 pub(crate) use prompt_numeric::cases as public_prompt_numeric;
+#[cfg(feature = "strata-expert-ordered-output")]
+#[path = "strata_prompt_ordered_probe.rs"]
+mod prompt_ordered;
+#[cfg(feature = "strata-expert-ordered-output")]
+pub(crate) use prompt_ordered::cases as public_prompt_ordered;
+
+/// Compiled-public paired producer probes bind real arena owners directly.
+/// This launches the exact consumer used by finish_prompt_ordered_shared.
+#[cfg(feature = "strata-expert-ordered-output")]
+pub(crate) fn launch_public_ordered_shared(
+    client: &cubecl::prelude::ComputeClient<cubecl::wgpu::WgpuRuntime>,
+    handles: [Handle; 11],
+    count: usize,
+    layer: usize,
+    epoch: u32,
+) -> Result<()> {
+    if !(1..=crate::strata_prompt::groups::CAPACITY).contains(&count)
+        || layer >= 48 || epoch == 0 || handles.iter().any(|h| h.stream != handles[0].stream)
+    {
+        return Err(reject());
+    }
+    for (i, handle) in handles.iter().enumerate() {
+        for previous in &handles[..i] {
+            if crate::strata_prompt::storage::overlaps(handle, previous)? {
+                return Err(reject());
+            }
+        }
+    }
+    let args = KernelArguments::new()
+        .with_buffers(handles.into_iter().map(|h| h.binding()).collect())
+        .with_info(MetadataBindingInfo::custom(vec![
+            count as u64 | ((layer as u64) << 32), u64::from(epoch), 2560u64 << 32, 0,
+        ]));
+    // SAFETY: caller supplies only fixed-public, real retained arena owners;
+    // production WGSL validates every original bound extent before access.
+    unsafe {
+        client.launch_unchecked(Box::new(Kernel::PromptOrderedSharedReduce),
+            CubeCount::Static(count as u32, 1, 1), args);
+    }
+    Ok(())
+}
 
 const ROOT_BYTES: [u64; 11] = [
     32768,
@@ -80,6 +121,7 @@ enum Kernel {
     PromptRoute,
     PromptRouteFinalize,
     PromptReduce,
+    PromptOrderedSharedReduce,
 }
 impl Kernel {
     fn dim(self) -> CubeDim {
@@ -115,6 +157,10 @@ impl Kernel {
                 crate::strata_prompt::groups::shader_prefix()
                     + include_str!("strata_prompt_reduce.wgsl")
             }
+            Self::PromptOrderedSharedReduce => {
+                crate::strata_prompt::groups::shader_prefix()
+                    + include_str!("strata_prompt_ordered_shared_reduce.wgsl")
+            }
         }
     }
 }
@@ -128,6 +174,7 @@ impl KernelMetadata for Kernel {
             Self::PromptRoute => "StrataPromptNativeRoutes",
             Self::PromptRouteFinalize => "StrataPromptNativeRouteHeader",
             Self::PromptReduce => "StrataPromptRankReduceAndStamp",
+            Self::PromptOrderedSharedReduce => "StrataPromptOrderedSharedReduceAndStamp",
         }
     }
     fn id(&self) -> KernelId {
@@ -601,6 +648,7 @@ impl Workspace {
                 }
                 error
             })?;
+            drop(raw);
             boundary.mark("expert_boundary_host_group");
             let mut bytes = Zeroizing::new(Vec::with_capacity(
                 crate::strata_prompt::groups::MAP_WORDS * 4,
@@ -615,6 +663,24 @@ impl Workspace {
                 &bytes,
             )?;
             boundary.mark("expert_boundary_map_upload");
+            #[cfg(feature = "strata-expert-ordered-output")]
+            {
+                let inverse = crate::strata_prompt::groups::ordered_inverse(&map, count)?;
+                // Reuse the priced MAP upload capacity. Clear the previous
+                // full initialized span before shortening this private Vec.
+                bytes.fill(0);
+                bytes.clear();
+                for &word in inverse.iter() {
+                    bytes.extend_from_slice(&word.to_le_bytes());
+                }
+                crate::strata_prompt::stage_private_view(
+                    arena,
+                    self.ids[0],
+                    crate::strata_prompt::groups::views()?.raw,
+                    &bytes,
+                )?;
+                boundary.mark("expert_boundary_inverse_upload");
+            }
             crate::strata_prompt::experts::enqueue(
                 client,
                 graph,
@@ -686,6 +752,70 @@ impl Workspace {
         }
         crate::strata_prompt::validate_output(&output)?;
         self.finish_data(arena, layer, output, fault, None)
+    }
+    /// Ordered PART consumer plus the original prompt SharedMerge. The old
+    /// routed owner remains bound RW so failed reductions retain its exact
+    /// prior value before the shared merge, as the separate original did.
+    #[cfg(feature = "strata-expert-ordered-output")]
+    pub(crate) fn finish_prompt_ordered_shared(
+        &mut self,
+        arena: &PrivateArena,
+        layer: usize,
+        routed: Handle,
+        shared: Handle,
+        scalar: Handle,
+        combined: Handle,
+        fault: BufferId,
+    ) -> Result<()> {
+        if !crate::strata_prompt::active() {
+            return Err(reject());
+        }
+        let active = self.active.as_ref().ok_or_else(reject)?;
+        let count = active[0];
+        if !self.layer_pending || active[1] != layer || active[2] != 0 {
+            return Err(reject());
+        }
+        let data = [&routed, &shared, &scalar, &combined];
+        for (index, handle) in data.iter().enumerate() {
+            crate::strata_prompt::validate_output(handle)?;
+            let needed = count * (if index == 2 { 1 } else { 2560 }) * 4;
+            if handle.size_in_used() < needed as u64 {
+                return Err(reject());
+            }
+            for other in &data[..index] {
+                if crate::strata_prompt::storage::overlaps(handle, other)? {
+                    return Err(reject());
+                }
+            }
+        }
+        let views = crate::strata_prompt::groups::views()?;
+        let audit = u::handle(arena, self.ids[8])?;
+        let fault = u::handle(arena, fault)?;
+        for handle in data {
+            for owner in views.handles().into_iter().chain([&audit, &fault]) {
+                if crate::strata_prompt::storage::overlaps(handle, owner)? {
+                    return Err(reject());
+                }
+            }
+        }
+        let client = arena.client().map_err(u::fault)?;
+        let args = KernelArguments::new()
+            .with_buffers(vec![
+                views.partial.binding(), views.probability.binding(),
+                views.status.binding(), views.map.binding(), routed.binding(),
+                audit.binding(), fault.binding(), views.raw.binding(),
+                shared.binding(), scalar.binding(), combined.binding(),
+            ])
+            .with_info(info(&[count as u32, layer as u32, self.epoch, 0, 0, 2560, 0, 0]));
+        // SAFETY: all original private owners, checked inverse upload, expert
+        // role publications and shared projections precede this dispatch.
+        unsafe {
+            client.launch_unchecked(Box::new(Kernel::PromptOrderedSharedReduce),
+                CubeCount::Static(count as u32, 1, 1), args);
+        }
+        self.active.as_mut().ok_or_else(reject)?[1] += 1;
+        self.layer_pending = false;
+        Ok(())
     }
     fn finish_data(
         &mut self,
@@ -1042,6 +1172,73 @@ pub(crate) fn compiled_sources() -> Vec<CompiledKernel<AutoCompiler>> {
     .collect()
 }
 
+/// Same Naga options, unchecked addressing and checked workgroup-layout
+/// canonicalization as the genuine native graph factory. The original shared
+/// multiply/add policy has no product-rounding annotation postpass.
+#[cfg(any(test, feature = "strata-expert-ordered-output"))]
+fn prompt_consumer_shader_words(compiled: &CompiledKernel<AutoCompiler>)
+    -> std::result::Result<Vec<u32>, Box<dyn std::error::Error>>
+{
+    use wgpu::naga as n;
+    if compiled.source.contains("STRATA_ROUND_PRODUCTS") {
+        return Err("prompt consumer changed original shared product policy".into());
+    }
+    let module = n::front::wgsl::parse_str(&compiled.source)?;
+    let validation = n::valid::Validator::new(n::valid::ValidationFlags::all(),
+        n::valid::Capabilities::all()).validate(&module)?;
+    if compiled.cube_dim != CubeDim::new_1d(module.entry_points[0].workgroup_size[0]) {
+        return Err("prompt consumer actual metadata dimension".into());
+    }
+    let words = n::back::spv::write_vec(&module,&validation,&n::back::spv::Options {
+        lang_version:(1,3),
+        zero_initialize_workgroup_memory:n::back::spv::ZeroInitializeWorkgroupMemoryMode::None,
+        bounds_check_policies:n::proc::BoundsCheckPolicies {
+            index:n::proc::BoundsCheckPolicy::Unchecked,
+            buffer:n::proc::BoundsCheckPolicy::Unchecked,
+            image_load:n::proc::BoundsCheckPolicy::Unchecked,
+            binding_array:n::proc::BoundsCheckPolicy::Unchecked,
+        },
+        ..Default::default()
+    },Some(&n::back::spv::PipelineOptions {
+        shader_stage:n::ShaderStage::Compute,entry_point:compiled.entrypoint_name.clone(),
+    }))?;
+    Ok(wgpu::hal::vulkan::kuno_native_workgroup_layout(&words)
+        .map_err(|e|format!("prompt consumer native workgroup layout: {e}"))?)
+}
+
+/// Additional to the unchanged original429-module population.
+#[cfg(feature = "strata-expert-ordered-output")]
+pub(crate) fn validate_prompt_ordered_sources()
+    -> std::result::Result<(), Box<dyn std::error::Error>>
+{
+    use std::io::Write;
+    let compiled = Kernel::PromptOrderedSharedReduce.compile(
+        &mut AutoCompiler::Wgsl(Default::default()),&Default::default(),
+        ExecutionMode::Unchecked,StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+    )?;
+    let words = prompt_consumer_shader_words(&compiled)?;
+    let mut constants = std::collections::BTreeMap::new();
+    let mut barriers = Vec::new();let mut multiply = 0;let mut at = 5;
+    while at < words.len() {
+        let n = (words[at] >> 16) as usize;let op = words[at] & 65535;
+        if n == 0 || at+n > words.len() {return Err("ordered consumer opcode extent".into());}
+        if op == 43 && n == 4 {constants.insert(words[at+2],words[at+3]);}
+        if op == 224 {barriers.push(words[at+3]);}
+        if op == 133 {multiply += 1;}
+        at += n;
+    }
+    if barriers.len()!=2 || constants.get(&barriers[0]).is_none_or(|s|s&0x100==0)
+        || constants.get(&barriers[1]).is_none_or(|s|s&0x40==0) || multiply==0
+    {return Err("ordered consumer original product and snapshot barriers".into());}
+    let mut validator = std::process::Command::new("spirv-val")
+        .args(["--target-env","vulkan1.3","-"]).stdin(std::process::Stdio::piped()).spawn()?;
+    validator.stdin.take().ok_or("ordered consumer validator stdin")?.write_all(
+        &words.iter().flat_map(|w|w.to_le_bytes()).collect::<Vec<_>>())?;
+    if !validator.wait()?.success() {return Err("ordered consumer SPIRV validation".into());}
+    println!("strata_prompt_ordered_shader_accepted storage_bindings=11 workgroup_barriers=1 storage_barriers=1 original_shared_policy=1");
+    Ok(())
+}
+
 #[cfg(all(test, feature = "strata-intel-core"))]
 mod direct_quote_tests {
     use super::*;
@@ -1069,6 +1266,67 @@ mod direct_quote_tests {
 
 #[cfg(test)]
 mod route_plan_tests {
+    #[test]
+    fn ordered_prompt_consumer_compiles_with_snapshot_barriers_and_original_rounding() {
+        use super::*;
+        use wgpu::naga as n;
+        let kernel = Kernel::PromptOrderedSharedReduce;
+        let source = kernel.source();
+        let module = n::front::wgsl::parse_str(&source).unwrap();
+        let validation = n::valid::Validator::new(n::valid::ValidationFlags::all(),
+            n::valid::Capabilities::all()).validate(&module).unwrap();
+        assert_eq!(module.entry_points[0].workgroup_size, [256, 1, 1]);
+        assert_eq!(kernel.dim(), CubeDim::new_1d(256));
+        let bindings = module.global_variables.iter().filter_map(|(_, g)|
+            g.binding.as_ref().map(|b| b.binding)).collect::<Vec<_>>();
+        assert_eq!(bindings, (0..12).collect::<Vec<_>>());
+        let uses = validation.get_entry_point(0);
+        for (id, global) in module.global_variables.iter() {
+            if let Some(binding) = &global.binding {
+                let writes = uses[id].contains(n::valid::GlobalUse::WRITE);
+                assert_eq!(writes, matches!(binding.binding, 0 | 2 | 4 | 5 | 6 | 10));
+            }
+        }
+        let compiled = kernel.compile(&mut AutoCompiler::Wgsl(Default::default()),
+            &Default::default(),ExecutionMode::Unchecked,
+            StorageType::Scalar(ElemType::UInt(UIntKind::U32))).unwrap();
+        let words = prompt_consumer_shader_words(&compiled).unwrap();
+        let policy = |words: &[u32]| {
+            let mut multiply = std::collections::BTreeSet::new();
+            let mut decorations = std::collections::BTreeSet::new();
+            let mut barriers = 0;let mut at = 5;
+            while at < words.len() {
+                let count = (words[at] >> 16) as usize;let opcode = words[at] & 65535;
+                if opcode == 133 { multiply.insert(words[at + 2]); }
+                if opcode == 71 && count >= 3 && words[at + 2] == 42 {
+                    decorations.insert(words[at + 1]);
+                }
+                if opcode == 224 { barriers += 1; }
+                at += count;
+            }
+            (multiply.len(),multiply.intersection(&decorations).count(),barriers)
+        };
+        let old = crate::strata_prompt::Kernel::SharedMerge.compile(
+            &mut AutoCompiler::Wgsl(Default::default()), &Default::default(),
+            ExecutionMode::Unchecked, StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+        ).unwrap();
+        let old_words = prompt_consumer_shader_words(&old).unwrap();
+        let new_policy = policy(&words);let old_policy = policy(&old_words);
+        assert!(new_policy.0 > 0 && old_policy.0 > 0);
+        assert_eq!(new_policy.1,old_policy.1);
+        assert_eq!(new_policy.2,2);
+        assert!(!old.source.contains("STRATA_ROUND_PRODUCTS"));
+        let snapshot = source.find("valid=finite(partial[ordinal*640u].x)").unwrap();
+        let barrier = source.find("storageBarrier();").unwrap();
+        let normalize = source.find("status[PROMPT_ROUTES+row*10u+lane]=route_valid[lane]").unwrap();
+        let sanitize = source.find("partial[ordinal*640u+column]=x").unwrap();
+        assert!(snapshot < barrier && barrier < normalize && barrier < sanitize);
+        assert!(source.contains("sum=fma(x,vec4<f32>(weight),sum);"));
+        assert!(source.contains("weight_sum+=weight;"));
+        assert!(!source.contains("if rank==0u"));
+        assert!(!source.contains("STRATA_ROUND_PRODUCTS"));
+        assert!(source.contains("markers[rank]==1u || markers[rank]==2u"));
+    }
     #[test]
     fn prompt_route_workgroups_cover_each_token_once_without_live_tail_rows() {
         use super::*;

@@ -127,6 +127,27 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
     }
     Ok(groups)
 }
+/// Authenticated inverse of the original, fully checked grouped permutation.
+/// RAW is dead after the audited router readback; its existing private view
+/// holds this prefix until the layer's ordered consumer has finished.
+pub(crate) fn ordered_inverse(map: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
+    validate(map, count)?;
+    let total = count * 10;
+    let mut inverse = Zeroizing::new(vec![u32::MAX; total]);
+    for ordinal in 0..total {
+        let route = map[MEMBERS + ordinal] as usize;
+        if route >= total || inverse[route] != u32::MAX {
+            return Err(crate::strata_prompt::invalid_buffer_length());
+        }
+        inverse[route] = ordinal as u32;
+    }
+    for (route, &ordinal) in inverse.iter().enumerate() {
+        if ordinal as usize >= total || map[MEMBERS + ordinal as usize] as usize != route {
+            return Err(crate::strata_prompt::invalid_buffer_length());
+        }
+    }
+    Ok(inverse)
+}
 /// Real prompt-only views. The raw DMA ring has an independent whole owner;
 /// GU/PART and routing cells reuse the attention phase above the matrix image.
 /// Decode's MAX8 roots and descriptors are never reinterpreted or enlarged.
@@ -264,6 +285,23 @@ mod native_route_layout_tests {
         raw[LOGICAL + tail] = raw[LOGICAL + tail - 1];
         raw[MEMBERS + tail] = raw[MEMBERS + tail - 1];
         assert!(group(&raw, count).is_err());
+    }
+    #[test]
+    fn ordered_inverse_authenticates_every_original_route_and_rejects_corruption() {
+        for count in [1, 9, 148, 257, ROUTE_CAPACITY] {
+            let mut map = group(&packet(count), count).unwrap();
+            let inverse = ordered_inverse(&map, count).unwrap();
+            assert_eq!(inverse.len(), count * 10);
+            assert!(inverse.len() <= RAW_WORDS);
+            for ordinal in 0..count * 10 {
+                assert_eq!(inverse[map[MEMBERS + ordinal] as usize], ordinal as u32);
+            }
+            map[MEMBERS + count * 10 - 1] = map[MEMBERS];
+            assert!(ordered_inverse(&map, count).is_err());
+        }
+        let map = group(&packet(9), 9).unwrap();
+        assert!(ordered_inverse(&map, 8).is_err());
+        assert!(ordered_inverse(&map[..MAP_WORDS - 1], 9).is_err());
     }
     #[test]
     fn actual_moe_descriptors_are_disjoint_from_raw_ring_and_each_other() {

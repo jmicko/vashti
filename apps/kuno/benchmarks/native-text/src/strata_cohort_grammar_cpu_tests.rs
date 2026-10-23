@@ -127,7 +127,7 @@ fn program() -> Vec<Entry> {
                 dtype: if d { q::Q2_0 } else { q::IQ3_S },
                 down: d,
             }
-            .name(),
+            .original_name(),
             release: d,
             grid: CubeCount::Static(if d { 200 } else { 400 }, 1, 2),
             args,
