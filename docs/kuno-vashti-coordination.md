@@ -25,6 +25,13 @@ Next coherent source uses existing PART in expert order, authenticated route
 inverse in the dead router RAW view, direct valid DOWN cooperative stores, and
 vector4 inverse gather with exact pending finite/status closure and shared
 merge. Read [the coupled layout contract](kuno-prefill-expert-ordered-output.md).
+Source is now composed (c92e5a56 producers, fe640d10 consumer, 98dae7df/57b0110e
+runtime grammar, d9d38d62 actual capability reporting, 38c267fb source-proof
+formatting). Intended additions are13CPU,120 ordered matrix layouts,1 consumer
+module,48 raw producer and16 consumer GPU cases. All original469 GPU controls
+remain;21 deep-only cases are explicitly unavailable on this48KiB device.
+No new build/GPU/performance acceptance yet. [Consumer details](kuno-prefill-expert-ordered-consumer.md).
+
 The four new experimental features remain additive: deep matrices, per-slot
 copy endpoints, quad32 dequant and expert-ordered output. No speed selection
 before complete source/correctness/recovery acceptance. Root owns integration,
