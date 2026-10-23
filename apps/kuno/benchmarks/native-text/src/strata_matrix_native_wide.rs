@@ -467,6 +467,8 @@ fn dense_wide<F: Float>(
 include!("strata_matrix_native_direct_store.rs");
 #[cfg(feature="strata-dense-slm40")]
 include!("strata_matrix_dense_slm40.rs");
+#[cfg(feature="strata-dense-prefix")]
+include!("strata_matrix_dense_prefix.rs");
 
 #[allow(clippy::too_many_arguments)]
 fn selected(
@@ -480,7 +482,21 @@ fn selected(
     plane_min: u32,
     plane_max: u32,
 ) -> bool {
-    count >= 512
+    selected_min(count,columns,rows,weight_first,shared,max_units,max_dim,plane_min,plane_max,512)
+}
+fn selected_min(
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    shared: usize,
+    max_units: u32,
+    max_dim: (u32, u32, u32),
+    plane_min: u32,
+    plane_max: u32,
+    minimum: usize,
+) -> bool {
+    count >= minimum
         && count.is_multiple_of(BLOCK)
         && rows != 0
         && rows.is_multiple_of(BLOCK)
@@ -588,7 +604,7 @@ pub(super) fn try_dense(
     out_stride: usize,
     bfloat: bool,
 ) -> Result<bool> {
-    try_dense_impl(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,cfg!(feature="strata-dense-slm40"))
+    try_dense_impl(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,cfg!(feature="strata-dense-slm40"),false)
 }
 #[cfg(feature="strata-dense-slm40")]
 #[allow(clippy::too_many_arguments)]
@@ -603,7 +619,7 @@ pub(super) fn try_dense_compact(
     out_stride: usize,
     bfloat: bool,
 ) -> Result<bool> {
-    try_dense_impl(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,false)
+    try_dense_impl(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,false,false)
 }
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_dense_impl(
@@ -617,10 +633,11 @@ pub(super) fn try_dense_impl(
     out_stride: usize,
     bfloat: bool,
     #[allow(unused_variables)] padded: bool,
+    prefix: bool,
 ) -> Result<bool> {
     let gr_down = gr_down_shape(bfloat, columns, rows, weight_first, out_first, out_stride);
     let hw = &client.properties().hardware;
-    if !selected(
+    if !selected_min(
         count,
         columns,
         if gr_down {
@@ -634,6 +651,7 @@ pub(super) fn try_dense_impl(
         hw.max_cube_dim,
         hw.plane_size_min,
         hw.plane_size_max,
+        if prefix {128} else {512},
     ) {
         return Ok(false);
     }
@@ -682,7 +700,7 @@ pub(super) fn try_dense_impl(
     }
     #[cfg(feature="strata-dense-direct-store")]
     if let Some(grid)=direct_selection(&h[2],count,rows,out_first,out_stride,hw.max_cube_count) {
-        if gr_down {crate::strata_prefill_profile::count("gr_wide_tail_products",1);}
+        if gr_down && !prefix {crate::strata_prefill_profile::count("gr_wide_tail_products",1);}
         #[cfg(feature="strata-dense-slm40")]
         if padded {
             run_slm40_store(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat,gr_down,grid)?;
@@ -698,7 +716,7 @@ pub(super) fn try_dense_impl(
         unsafe { ArrayArg::from_raw_parts(weight.clone(), weight.size_in_used() as usize / 8) };
     let oa = crate::resident_util::raw_arg(output.clone(), output.size_in_used() as usize / 4)?;
     let fa = crate::resident_util::raw_arg(fault, 1)?;
-    if gr_down {
+    if gr_down && !prefix {
         crate::strata_prefill_profile::count("gr_wide_tail_products", 1);
     }
     // SAFETY: complete original logical owners, all grid/offset/index limits,

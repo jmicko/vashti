@@ -390,6 +390,11 @@ async fn serve(
             .map_err(|error|{eprintln!("public_dense_slm40_error {error}");"public_dense_slm40_failed"})?;
         #[cfg(not(feature="strata-dense-slm40"))]
         let dense_slm40_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-dense-prefix")]
+        let dense_prefix_checks=crate::strata_matrix::public_prefix_numeric(&client,&mut arena,&file)
+            .map_err(|error|{eprintln!("public_dense_prefix_error {error}");"public_dense_prefix_failed"})?;
+        #[cfg(not(feature="strata-dense-prefix"))]
+        let dense_prefix_checks:Vec<serde_json::Value>=Vec::new();
         let mut operator_checks =
             crate::strata_global_moe::public_prompt_numeric(&client, &mut arena)
                 .map_err(|_| "public_prompt_route_numeric_failed")?;
@@ -524,7 +529,7 @@ async fn serve(
         }
         eprintln!(
             "public_prefill_matrix {}",
-            serde_json::json!({"cases":cases,"gr_wide_tail_checks":gr_wide_tail_checks,"tiny_output_checks":tiny_output_checks,"dense_direct_checks":dense_direct_checks,"dense_slm40_checks":dense_slm40_checks,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"macro64_expert_checks":macro64_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"cohort_producer_checks":cohort_producer_checks,"cohort_dequant_checks":cohort_dequant_checks,"cohort_matrix_checks":cohort_matrix_checks,"cohort_matrix_pair_checks":cohort_matrix_pair_checks,"cohort_multi_dequant_checks":cohort_multi_dequant_checks,"closed":true,"content_saved":false})
+            serde_json::json!({"cases":cases,"gr_wide_tail_checks":gr_wide_tail_checks,"tiny_output_checks":tiny_output_checks,"dense_direct_checks":dense_direct_checks,"dense_slm40_checks":dense_slm40_checks,"dense_prefix_checks":dense_prefix_checks,"native_prepared_checks":native_prepared_checks,"operator_checks":operator_checks,"expert_scratch_image_checks":expert_scratch_image_checks,"attention_checks":attention_checks,"qsa_math_checks":qsa_math_checks,"qsa_xmx_checks":qsa_xmx_checks,"packed_cache_checks":packed_cache_checks,"gdn_math_checks":gdn_math_checks,"expert_matrix_checks":expert_matrix_checks,"native_expert_matrix_checks":native_expert_matrix_checks,"direct_gu_checks":direct_gu_checks,"medium_expert_checks":medium_expert_checks,"macro64_expert_checks":macro64_expert_checks,"medium_direct_gu_checks":medium_direct_gu_checks,"narrow_padding_checks":narrow_padding_checks,"narrow_expert_checks":narrow_expert_checks,"cohort_producer_checks":cohort_producer_checks,"cohort_dequant_checks":cohort_dequant_checks,"cohort_matrix_checks":cohort_matrix_checks,"cohort_matrix_pair_checks":cohort_matrix_pair_checks,"cohort_multi_dequant_checks":cohort_multi_dequant_checks,"closed":true,"content_saved":false})
         );
         return Ok(());
     }

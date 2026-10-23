@@ -23,3 +23,16 @@ no favorable rerun,precision relaxation,install or release from diagnostics.
 Source only; no build,GPU or speed claim. Previous complete27451ef9/worker61a8d8f6
 normal8.3706s is neutral; Strata clean5.3515s remains unmet. No API/model/context/
 config/frontend changes; required Vashti:none.
+
+## Complete821bfd6a validation
+
+Worker01188d21bb4e4838e097c7fe278d22b229f188b1f91f3c7ed1c4ac71933ad68c.
+267CPU/15runtime/429WGSL/320matrix+16raw+32compact+24padded layouts, ALL417GPU
+(all405 retained+12 padded),BOTH unchanged original18-script chains and physical
+recovery PASS. Normal9.555901327/8.426700364s; profile9.627530733/8.520494850s.
+Neutral/slightly longer than compact8.3706s; no gain,clean,staged,install or
+Strata parity claimed. All three padded native programs SIMD16,359/454/362
+instructions,79 sends,128GRF,0:0 spills/fills. Original compact/finite and QSA
+zero-spill guards retained. Full public summary:
+`/media/jmicko/faststore/kuno-development/strata-parity-dense-slm40-20261023-expert-cohorts-public-summary.json`.
+No API/config/model/context/frontend changes; Vashti:none.

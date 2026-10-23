@@ -1,5 +1,21 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno continuation (2026-10-23): real M128 prefix + original tail source.**
+
+Read [exact prefix contract](kuno-prefill-dense-prefix.md) and [completed padded validation](kuno-prefill-dense-slm40.md#complete821bfd6a-validation).
+Complete821bfd6a/worker01188d21 passes267CPU/15runtime/all shaders/ALL417GPU/
+BOTH original18-script chains and recovery. Normal9.5559/8.4267s neutral,
+actual padded/compact/finite/QSA ISA zero spills. No clean/staged/install.
+New connected source handles the genuine148-token chunk with128 wide +20
+original fallback,retaining every numerical/capability/owner/erasure guard.
+Original general minimum512 and original counter97 retained; explicit real
+prefix minimum128,new counters,actual offset borrowed tail with no extra tokens
+or allocations. Intended270CPU/15runtime/all original shader controls/433GPU/
+BOTH chains. Source only; no build/GPU/speed claim. Goal UNMET vs Strata5.3515s.
+No API/model/context/config/frontend/install/release/reset/reboot change;
+Vashti:none. Installed301f1fd1/36626d30 unchanged. Root alone owns builds/GPUs;
+no compilation during timing. Earlier checkpoints are history.
+
 **Current Kuno continuation (2026-10-23): complete pitch40 dense source.**
 
 Read [pitch40 source contract](kuno-prefill-dense-slm40.md) and [completed compact-direct validation](kuno-prefill-dense-direct-store.md#complete-connected-validation27451ef9).

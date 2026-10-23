@@ -38,6 +38,11 @@ pub(crate) use direct_probe::cases as public_direct_numeric;
 mod slm40_probe;
 #[cfg(feature="strata-dense-slm40")]
 pub(crate) use slm40_probe::cases as public_slm40_numeric;
+#[cfg(feature="strata-dense-prefix")]
+#[path="strata_matrix_prefix_probe.rs"]
+mod prefix_probe;
+#[cfg(feature="strata-dense-prefix")]
+pub(crate) use prefix_probe::cases as public_prefix_numeric;
 
 #[cfg(feature = "strata-tiny-output")]
 #[path = "strata_matrix_tiny_probe.rs"]
@@ -1493,6 +1498,22 @@ mod native {
     }
     #[allow(clippy::too_many_arguments)]
     pub(super) fn run_dense(
+        client: &ComputeClient<WgpuRuntime>,
+        h: [Handle; 4],
+        count: usize,
+        columns: usize,
+        rows: usize,
+        weight_first: usize,
+        out_first: usize,
+        out_stride: usize,
+        bfloat: bool,
+    ) -> Result<()> {
+        #[cfg(feature="strata-dense-prefix")]
+        if super::native_wide::try_dense_split(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? {return Ok(());}
+        run_dense_original(client,h,count,columns,rows,weight_first,out_first,out_stride,bfloat)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn run_dense_original(
         client: &ComputeClient<WgpuRuntime>,
         h: [Handle; 4],
         count: usize,
