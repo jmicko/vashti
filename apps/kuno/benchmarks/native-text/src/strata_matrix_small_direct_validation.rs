@@ -100,8 +100,12 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             if !product || !fault || !direct_store || !checked_store {
                 return Err(format!("small direct missing actual math/global/checked/fault: {name} p{product} f{fault} g{direct_store} s{checked_store}").into());
             }
-            let mut validator = std::process::Command::new("spirv-val")
-                .args(["--target-env", "vulkan1.3", "-"])
+            let mut command = std::process::Command::new("spirv-val");
+            command.args(["--target-env", "vulkan1.3"]);
+            if mask & 1 != 0 {
+                command.arg("--uniform-buffer-standard-layout");
+            }
+            let mut validator = command.arg("-")
                 .stdin(std::process::Stdio::piped())
                 .spawn()?;
             validator
