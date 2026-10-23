@@ -1,7 +1,7 @@
 //! Additive ordered PART CMMA producers; original rank entries are untouched.
 #[cfg(feature="strata-wide-shared-reuse")]
 #[path="strata_matrix_ordered_shared_reuse.rs"]
-pub(super) mod shared_reuse;
+pub(crate) mod shared_reuse;
 use super::*;
 #[cfg(feature = "strata-deep-matrix")]
 #[path = "strata_matrix_ordered_deep.rs"]

@@ -16,7 +16,7 @@ pub fn expert_wide_down(
     member_base: u32,
     piece_members: u32,
 ) {
-    super::super::shared_reuse::wide(
+    crate::strata_matrix::native_expert_wide::shared_reuse::wide(
         input,
         weight,
         output,
