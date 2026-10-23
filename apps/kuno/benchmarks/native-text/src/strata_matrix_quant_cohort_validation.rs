@@ -52,6 +52,10 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
             let mut subgroup_barrier = false;
             let mut actual_wg64 = false;
             let mut half_types = std::collections::HashSet::new();
+            let mut u32_types = std::collections::HashSet::new();
+            let mut u32_constants = std::collections::HashMap::new();
+            let mut boolean_constants = std::collections::HashSet::new();
+            let mut runtime_selections = Vec::new();
             let mut float_narrow = false;
             while at < words.len() {
                 let n = (words[at] >> 16) as usize;
@@ -65,6 +69,18 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 if op == 22 && n == 3 && words[at + 2] == 16 {
                     half_types.insert(words[at + 1]);
                 }
+                if op == 21 && n == 4 && words[at + 2..at + 4] == [32, 0] {
+                    u32_types.insert(words[at + 1]);
+                }
+                if op == 43 && n == 4 && u32_types.contains(&words[at + 1]) {
+                    u32_constants.insert(words[at + 2], words[at + 3]);
+                }
+                if matches!(op, 41 | 42) && n == 3 {
+                    boolean_constants.insert(words[at + 2]);
+                }
+                if op == 169 && n == 6 && u32_types.contains(&words[at + 1]) {
+                    runtime_selections.push((words[at + 3], words[at + 4], words[at + 5]));
+                }
                 if op == 23 && n == 4 && half_types.contains(&words[at + 2]) {
                     half_types.insert(words[at + 1]);
                 }
@@ -77,6 +93,25 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                     subgroup_barrier = true;
                 }
                 at += n;
+            }
+            let iq4 = name.starts_with("quant_cohort_dtype23_")
+                || name.starts_with("quant_cohort_dtype20_");
+            // Inspect the actual compiled module, not merely source spelling.
+            // The failing kernel had correct LUTs but lost the dynamic high
+            // nibble branch entirely; the real quarter selector must survive.
+            let iq4_high_nibble_selectors = runtime_selections
+                .iter()
+                .filter(|(condition, high, low)| {
+                    !boolean_constants.contains(condition)
+                        && u32_constants.get(high) == Some(&4)
+                        && u32_constants.get(low) == Some(&0)
+                })
+                .count();
+            if iq4 && iq4_high_nibble_selectors == 0 {
+                return Err(format!(
+                    "quant cohort actual IQ4 runtime high-nibble selection missing {name} mask{mask}"
+                )
+                .into());
             }
             if products != 2 * (tile / 8)
                 || !fault
@@ -109,6 +144,11 @@ pub(crate) fn validate() -> std::result::Result<(), Box<dyn std::error::Error>> 
                 "strata_quant_cohort_shader_accepted name={name} layout={mask} shared_bytes={} subgroup=16 exact_bit_half=true",
                 kernel.shared_size
             );
+            if iq4 {
+                println!(
+                    "strata_quant_cohort_iq4_nibble_accepted name={name} layout={mask} runtime_selectors={iq4_high_nibble_selectors}"
+                );
+            }
         }
     }
     Ok(())

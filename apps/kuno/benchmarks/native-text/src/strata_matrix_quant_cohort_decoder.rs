@@ -91,9 +91,13 @@ pub(crate) fn signed_word(magnitude: u32, signs: u32) -> u32 {
 #[cube]
 pub(crate) fn iq4_word(codes: u32, high: bool) -> u32 {
     let mut out = 0u32;
+    // Use the explicit runtime IR selector. The nested if-expression in an
+    // unrolled shift was lowered as zero, so quarters2/3 read low nibbles.
+    // The actual SPIR-V validator now requires this real0/4 selection.
+    let nibble_shift = select(high, 4u32, 0u32);
     #[unroll]
     for j in 0..4u32 {
-        let shift = j * 8 + if high { 4u32 } else { 0u32 };
+        let shift = j * 8 + nibble_shift;
         let index = (codes >> shift) & 15;
         let mut lut = 3215825025u32; // bfad9881: -127,-104,-83,-65
         if index >= 4 {
