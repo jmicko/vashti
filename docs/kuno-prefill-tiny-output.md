@@ -77,3 +77,22 @@ selection and10 original-model GPU controls before testing, retain FP16 prefix
 path. Original dtype-specific mixed input selection and source/dequantization
 are unchanged. Planned all393GPU =original353+40 new paired controls. Counter
 classification uses logical rows4/1 so BF16shared is not mislabeled injection.
+
+
+## First complete tiny-source attempt
+
+Sourcee7eee86b/workere92f1144 passes260CPU/15runtime/429WGSL/320matrix+16raw
+producer layouts. Protected original operators reach the tiny suite; bitwise
+original/new output and fault checks pass up to a full scratch-owner guard
+failure. No full-model or speed run; physical recovery passes. Preserve
+strata-parity-tiny-output-bf16-shared-20261023-operators and compiler/error log.
+
+The new fixture uploaded padWords+64 sentinel words but compared EVERY remaining
+physical owner word with the sentinel. BufferLayout::new rounds sub2MiB spans
+to a power of two; Upload::words zeroes its remaining allocator padding. Correct
+check keeps the64 uploaded sentinel words unchanged AND requires every further
+owned word zero. No shader/math/private-path/owner/tolerance change. Add one CPU
+control using the ACTUAL BufferLayout contract and actual extra padding; retain
+all260 prior controls. New intended261CPU, unchanged15/429/320+16/all393GPU/BOTH.
+Production allocation claims here mean inference payload owners; ordinary
+per-launch runtime argument metadata still exists. No new payload allocation.

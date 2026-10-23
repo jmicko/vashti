@@ -139,7 +139,8 @@ pub(crate) fn cases(
                 }
                 if staged[..packed.len()] != packed[..]
                     || staged[packed.len()..pad_words].iter().any(|&v| v != 0)
-                    || staged[pad_words..].iter().any(|&v| v != sentinel)
+                    || staged[pad_words..initial.len()] != initial[pad_words..]
+                    || staged[initial.len()..].iter().any(|&v| v != 0)
                     || after_input[..image.len()] != image[..]
                     || after_input[image.len()..].iter().any(|&v| v != 0)
                     || after_weights[..packed.len()] != packed[..]
@@ -184,4 +185,35 @@ pub(crate) fn cases(
         }
     }
     Ok(reports)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn real_allocator_padding_is_zero_after_the_uploaded_sentinel_region() {
+        use crate::private_arena::BufferLayout;
+        for (columns, rows) in [(10240usize, 4usize), (2560, 1)] {
+            let padded = 16 * columns / 2;
+            let logical = padded + 64;
+            let layout = BufferLayout::new(logical).unwrap();
+            assert_eq!(layout.logical_words, logical);
+            assert!(
+                layout.owned_words > logical,
+                "actual power-of-two allocation has extra padding"
+            );
+            let source = rows * columns / 2;
+            assert!(source < padded);
+            // An Upload::words copies exactly logical data and zeroes the rest.
+            let mut uploaded = vec![0u32; layout.owned_words];
+            uploaded[..logical].fill(0xa57a0f11);
+            assert_eq!(uploaded[padded..logical].len(), 64);
+            assert!(uploaded[padded..logical].iter().all(|&v| v == 0xa57a0f11));
+            assert!(uploaded[logical..].iter().all(|&v| v == 0));
+            assert!(
+                uploaded[padded..].iter().any(|&v| v != 0xa57a0f11),
+                "old entire-owner sentinel assumption must fail"
+            );
+            assert_eq!(layout.owned_bytes, layout.owned_words * 4);
+        }
+    }
 }
