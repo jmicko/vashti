@@ -228,12 +228,11 @@ fn one(
     }
     let mut packed = Zeroizing::new(vec![
         0u8;
-        crate::strata_prompt::storage::WORKING_BYTES as usize
+        crate::strata_prompt::layout::WORKING_BYTES as usize
     ]);
     let mut image = Zeroizing::new(vec![
         0u32;
-        crate::strata_prompt::storage::WORKING_BYTES as usize
-            / 4
+        crate::strata_prompt::layout::WORKING_BYTES as usize / 4
     ]);
     let mut weight_fault = 0u32;
     for slot in 0..8 {

@@ -10,15 +10,15 @@ pub(crate) struct Decoded {
 }
 #[cube]
 pub(crate) fn byte(p: &Array<u32>, at: usize) -> u32 {
-    (p[at / 4] >> (at % 4 * 8)) & 255
+    (p[at / 4] >> u32::cast_from(at % 4 * 8)) & 255
 }
 #[cube]
 pub(crate) fn halfword(p: &Array<u32>, at: usize) -> u32 {
-    (p[at / 4] >> (at % 4 * 8)) & 65535
+    (p[at / 4] >> u32::cast_from(at % 4 * 8)) & 65535
 }
 #[cube]
 pub(crate) fn word(p: &Array<u32>, at: usize) -> u32 {
-    let shift = at % 4 * 8;
+    let shift = u32::cast_from(at % 4 * 8);
     let mut result = p[at / 4] >> shift;
     if shift != 0 {
         result |= p[at / 4 + 1] << (32 - shift);
@@ -142,7 +142,7 @@ pub(crate) fn decode8(
             base + 2 + group * 8 + quarter * 2,
         );
         let aux = crate::strata_matrix::quant_cohort::decoder::word(p, base + 66 + group * 4);
-        let sc = (aux >> (quarter * 7)) & 127;
+        let sc = (aux >> u32::cast_from(quarter * 7)) & 127;
         let signs = sc | ((sc.count_ones() & 1) << 7);
         d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
@@ -163,12 +163,12 @@ pub(crate) fn decode8(
             base + 2 + group * 8 + quarter * 2,
         );
         let high = crate::strata_matrix::quant_cohort::decoder::byte(p, base + 66 + group);
-        let first = (codes & 255) | (((high >> (quarter * 2)) & 1) << 8);
-        let second = (codes >> 8) | (((high >> (quarter * 2 + 1)) & 1) << 8);
+        let first = (codes & 255) | (((high >> u32::cast_from(quarter * 2)) & 1) << 8);
+        let second = (codes >> 8) | (((high >> u32::cast_from(quarter * 2 + 1)) & 1) << 8);
         let signs =
             crate::strata_matrix::quant_cohort::decoder::byte(p, base + 74 + group * 4 + quarter);
         let scale = (crate::strata_matrix::quant_cohort::decoder::byte(p, base + 106 + group / 2)
-            >> (group % 2 * 4))
+            >> u32::cast_from(group % 2 * 4))
             & 15;
         d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
@@ -186,13 +186,13 @@ pub(crate) fn decode8(
         let index =
             crate::strata_matrix::quant_cohort::decoder::byte(p, base + 2 + group * 4 + quarter)
                 | (((crate::strata_matrix::quant_cohort::decoder::byte(p, base + 66 + group)
-                    >> (quarter * 2))
+                    >> u32::cast_from(quarter * 2))
                     & 3)
                     << 8);
         let signs =
             crate::strata_matrix::quant_cohort::decoder::byte(p, base + 34 + group * 4 + quarter);
         let scale = (crate::strata_matrix::quant_cohort::decoder::byte(p, base + 74 + group)
-            >> (quarter / 2 * 4))
+            >> u32::cast_from(quarter / 2 * 4))
             & 15;
         d = crate::strata_matrix::quant_cohort::decoder::half_to_float(
             crate::strata_matrix::quant_cohort::decoder::halfword(p, base),
@@ -210,9 +210,9 @@ pub(crate) fn decode8(
         let base = row + block / 8 * 136;
         let header = crate::strata_matrix::quant_cohort::decoder::word(p, base);
         let low = (crate::strata_matrix::quant_cohort::decoder::byte(p, base + 4 + group / 2)
-            >> (group % 2 * 4))
+            >> u32::cast_from(group % 2 * 4))
             & 15;
-        let scale = low | (((header >> (16 + group * 2)) & 3) << 4);
+        let scale = low | (((header >> u32::cast_from(16 + group * 2)) & 3) << 4);
         let codes = base + 8 + group * 16 + quarter % 2 * 8;
         d = crate::strata_matrix::quant_cohort::decoder::half_to_float(header & 65535)
             * f32::cast_from(i32::cast_from(scale) - 32);
@@ -280,8 +280,8 @@ pub(crate) fn store8(
         if pair >= 2 {
             packed = decoded.hi;
         }
-        let c0 = (packed >> (pair % 2 * 16)) & 255;
-        let c1 = (packed >> (pair % 2 * 16 + 8)) & 255;
+        let c0 = (packed >> u32::cast_from(pair % 2 * 16)) & 255;
+        let c1 = (packed >> u32::cast_from(pair % 2 * 16 + 8)) & 255;
         let mut s0 = i32::cast_from(c0);
         let mut s1 = i32::cast_from(c1);
         if c0 >= 128 {

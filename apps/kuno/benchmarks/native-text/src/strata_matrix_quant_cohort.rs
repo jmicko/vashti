@@ -196,7 +196,7 @@ pub(crate) fn launch(
         || words[5] != if down { 2 } else { 0 }
         || words[3] as usize != quant_row_bytes(dtype, down)
         || input.size_in_used() < (padded * words[1] as usize * 2) as u64
-        || weight.size_in_used() != crate::strata_prompt::storage::WORKING_BYTES
+        || weight.size_in_used() != crate::strata_prompt::layout::WORKING_BYTES
         || output.size_in_used()
             != if down {
                 crate::strata_prompt::groups::PART_BYTES
