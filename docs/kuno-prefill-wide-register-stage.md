@@ -47,3 +47,13 @@ at compiler block ordering or relax the eight-product requirement. A test-only
 explicit KUNO_TEST_PUBLIC_MATRIX_SPIRV export saves ONLY the static public
 compiled module (compiled out of workers); collect actual loop/product metadata
 and disassembly before correcting traversal. No speed/GPU claim or rerun.
+
+Actual836a8ae4 offline export confirms ONE loop header115/merge118, eight
+products in block160, but zero products lexically before serialized merge118.
+Control-flow traversal reaches all eight and next Workgroup-store blocks258/272
+then original barrier259. This is serialized block ordering,not a missing matrix
+loop. Final audit walks real OpBranch/Conditional/Switch CFG edges,selects the
+unique eight-product loop,excludes iteration backedges when proving loads before
+products and stores after products,requires a real Workgroup barrier reachable
+after EVERY next-stage store. Output stores outside the loop remain excluded.
+No shader/maths/owner or GPU change for this audit correction.

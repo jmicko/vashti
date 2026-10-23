@@ -1,11 +1,11 @@
-//! Actual compiler dataflow evidence for register-loaded next K32 stages.
+//! Actual compiler CFG dataflow for register-loaded next K32 stages.
 use std::collections::{BTreeMap, BTreeSet};
 pub(super) fn validate_program(
     words: &[u32],
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     #[cfg(test)]
     if let Some(path) = std::env::var_os("KUNO_TEST_PUBLIC_MATRIX_SPIRV") {
-        // Offline compiled-public module only; compiled out of all workers.
+        // Static compiled-public module only; compiled out of all worker binaries.
         std::fs::write(
             path,
             words
@@ -16,8 +16,11 @@ pub(super) fn validate_program(
     }
     let mut parents = BTreeMap::new();
     let mut classes = BTreeMap::new();
-    let mut instructions = Vec::new();
+    let mut constants = BTreeMap::new();
+    let mut blocks = BTreeMap::<u32, Vec<(usize, u32, usize)>>::new();
+    let mut loops = Vec::new();
     let mut at = 5;
+    let mut block = None;
     while at < words.len() {
         let n = (words[at] >> 16) as usize;
         if n == 0 || at + n > words.len() {
@@ -25,15 +28,30 @@ pub(super) fn validate_program(
         }
         let op = words[at] & 65535;
         match op {
+            43 if n == 4 => {
+                constants.insert(words[at + 2], words[at + 3]);
+            }
             59 => {
                 classes.insert(words[at + 2], words[at + 3]);
             }
             65 | 66 | 67 | 83 | 124 => {
                 parents.insert(words[at + 2], words[at + 3]);
             }
+            248 => {
+                block = Some(words[at + 1]);
+                blocks.insert(words[at + 1], Vec::new());
+            }
+            246 => {
+                loops.push((block.ok_or("register stage header block")?, words[at + 1]));
+            }
             _ => {}
         }
-        instructions.push((at, op, n));
+        if let Some(b) = block {
+            blocks
+                .get_mut(&b)
+                .ok_or("register stage block")?
+                .push((at, op, n));
+        }
         at += n;
     }
     let root_class = |mut p: u32| -> Option<u32> {
@@ -46,59 +64,112 @@ pub(super) fn validate_program(
         }
         classes.get(&p).copied()
     };
+    let mut edges = BTreeMap::new();
+    for (&b, ins) in &blocks {
+        let &(a, op, n) = ins.last().ok_or("register stage block terminator")?;
+        let successors = match op {
+            249 => vec![words[a + 1]],
+            250 => vec![words[a + 2], words[a + 3]],
+            251 => std::iter::once(words[a + 2])
+                .chain((a + 4..a + n).step_by(2).map(|i| words[i]))
+                .collect(),
+            _ => Vec::new(),
+        };
+        edges.insert(b, successors);
+    }
+    let products = blocks
+        .iter()
+        .flat_map(|(&b, v)| v.iter().filter(|x| x.1 == 4459).map(move |x| (b, x.0)))
+        .collect::<Vec<_>>();
+    if products.len() != 8 || products.iter().any(|x| x.0 != products[0].0) {
+        return Err("register stage all eight original products in actual matrix block".into());
+    }
     let mut product_loops = Vec::new();
-    let mut all_loops = 0;
-    for (start, &(a, op, _)) in instructions.iter().enumerate() {
-        if op != 246 {
-            continue;
+    for &(header, merge) in &loops {
+        let mut region = BTreeSet::new();
+        let mut todo = vec![header];
+        while let Some(b) = todo.pop() {
+            if b == merge || !region.insert(b) {
+                continue;
+            }
+            todo.extend(
+                edges
+                    .get(&b)
+                    .ok_or("register stage CFG edge")?
+                    .iter()
+                    .copied(),
+            );
         }
-        all_loops += 1;
-        let merge = words[a + 1];
-        let end = instructions
-            .iter()
-            .enumerate()
-            .skip(start + 1)
-            .find(|(_, x)| x.1 == 248 && words[x.0 + 1] == merge)
-            .map(|x| x.0)
-            .ok_or("register stage loop merge extent")?;
-        let products = instructions[start..end]
-            .iter()
-            .filter(|x| x.1 == 4459)
-            .count();
-        if products > 0 {
-            product_loops.push((start, end, products));
+        if products.iter().any(|x| region.contains(&x.0)) {
+            product_loops.push((header, region));
         }
     }
-    if product_loops.len() != 1
-        || product_loops[0].2 != 8
-        || instructions.iter().filter(|x| x.1 == 4459).count() != 8
+    if product_loops.len() != 1 {
+        return Err("register stage unique complete K-product CFG".into());
+    }
+    let (header, region) = product_loops.pop().unwrap();
+    let reachable = |from: u32, to: u32| -> bool {
+        let mut todo = vec![from];
+        let mut seen = BTreeSet::new();
+        while let Some(b) = todo.pop() {
+            if !seen.insert(b) {
+                continue;
+            }
+            if b == to {
+                return true;
+            }
+            for &next in edges.get(&b).into_iter().flatten() {
+                if next != header && region.contains(&next) {
+                    todo.push(next);
+                }
+            }
+        }
+        false
+    };
+    let before = |a: (u32, usize), b: (u32, usize)| -> bool {
+        if a.0 == b.0 {
+            a.1 < b.1
+        } else {
+            reachable(a.0, b.0)
+        }
+    };
+    let first = *products.iter().min_by_key(|x| x.1).unwrap();
+    let last = *products.iter().max_by_key(|x| x.1).unwrap();
+    let mut loads = Vec::new();
+    let mut stores = Vec::new();
+    let mut barriers = Vec::new();
+    for &b in &region {
+        for &(a, op, _) in &blocks[&b] {
+            if op == 61 && root_class(words[a + 3]) == Some(12) && before((b, a), first) {
+                loads.push((b, a));
+            }
+            if op == 62 && root_class(words[a + 1]) == Some(4) && before(last, (b, a)) {
+                stores.push((b, a));
+            }
+            if op == 224 && constants.get(&words[a + 1]) == Some(&2) {
+                barriers.push((b, a));
+            }
+        }
+    }
+    if loads.len() < 4
+        || stores.len() < 4
+        || stores
+            .iter()
+            .any(|&s| !barriers.iter().any(|&b| before(s, b)))
     {
-        return Err(format!("register stage unique complete original K-product loop: loops={all_loops} product_loops={product_loops:?} module_products={}",instructions.iter().filter(|x|x.1==4459).count()).into());
-    }
-    let (start, end, _) = product_loops[0];
-    let inner = &instructions[start..end];
-    let first = inner
-        .iter()
-        .position(|x| x.1 == 4459)
-        .ok_or("register stage first original product")?;
-    let last = inner.iter().rposition(|x| x.1 == 4459).unwrap();
-    let loads = inner[..first]
-        .iter()
-        .filter(|&&(a, op, _)| op == 61 && root_class(words[a + 3]) == Some(12))
-        .count();
-    let stores = inner[last + 1..]
-        .iter()
-        .filter(|&&(a, op, _)| op == 62 && root_class(words[a + 1]) == Some(4))
-        .count();
-    let final_store = inner
-        .iter()
-        .rposition(|&(a, op, _)| op == 62 && root_class(words[a + 1]) == Some(4))
-        .ok_or("register stage real post-product SLM writes")?;
-    if loads < 4 || stores < 4 || !inner[final_store + 1..].iter().any(|x| x.1 == 224) {
-        return Err("register stage actual load/product/store/fence dataflow".into());
+        return Err(format!(
+            "register stage actual CFG load/product/store/fence: loads={} stores={} barriers={}",
+            loads.len(),
+            stores.len(),
+            barriers.len()
+        )
+        .into());
     }
     println!(
-        "strata_register_stage_accepted actual_loops={all_loops} one_complete_product_loop=true real_global_loads_before_products={loads} real_slm_stores_after_products={stores}"
+        "strata_register_stage_accepted actual_loops={} one_complete_product_loop=true real_global_loads_before_products={} real_slm_stores_after_products={} cfg_iteration_backedge_excluded=true",
+        loops.len(),
+        loads.len(),
+        stores.len()
     );
     Ok(())
 }
