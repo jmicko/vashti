@@ -304,9 +304,11 @@ fn wide(
         0usize,
     );
     sync_cube();
-    let mut k = 0usize;
     let mut current = 0usize;
-    while k < columns {
+    // A scalar stepped range exposes the uniform exit to CubeCL. A general
+    // while loop conservatively marks its merge divergent and hoists later
+    // publication storage across the explicit operand frees.
+    for k in (0usize..columns).step_by(64usize) {
         let next = 1usize - current;
         let mut next_a_lo0 = Vector::<f16, Const<4>>::new(f16::new(0.0));
         let mut next_a_hi0 = Vector::<f16, Const<4>>::new(f16::new(0.0));
@@ -385,7 +387,6 @@ fn wide(
         // Original uniform handoff ends current readers and publishes next.
         sync_cube();
         current = next;
-        k += 64;
     }
     // SAFETY: every lane passed the final whole-workgroup handoff; no operand
     // pointer is used by the original publication helpers below.
@@ -759,7 +760,7 @@ fn compile(
     options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
     options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
     options.vulkan.supports_explicit_smem = mask & 4 != 0;
-    let mut compiler=AutoCompiler::SpirV(Default::default());
+    let mut compiler = AutoCompiler::SpirV(Default::default());
     let AutoRepresentation::SpirV(kernel) = Compiler::compile(
         &mut compiler,
         definition(down, direct),
@@ -778,12 +779,19 @@ fn compile(
         }
     {
         #[cfg(test)]
-        if let AutoCompiler::SpirV(c)=&compiler {
-            eprintln!("deep_public_shared_allocations {:?}",c.shared_liveness.allocations);
+        if let AutoCompiler::SpirV(c) = &compiler {
+            eprintln!(
+                "deep_public_shared_allocations {:?}",
+                c.shared_liveness.allocations
+            );
             for node in c.opt.node_ids() {
-                let live=c.shared_liveness.at_block(node);
+                let live = c.shared_liveness.at_block(node);
                 if !live.is_empty() {
-                    eprintln!("deep_public_shared_block node={node:?} uniform={} live={live:?}",c.uniformity.is_block_uniform(node));
+                    eprintln!(
+                        "deep_public_shared_block node={node:?} uniform={} live={live:?} flow={:?}",
+                        c.uniformity.is_block_uniform(node),
+                        c.opt.block(node).control_flow.borrow()
+                    );
                 }
             }
         }
