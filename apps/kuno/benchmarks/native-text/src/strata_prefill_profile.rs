@@ -87,7 +87,7 @@ fn matrix_family(name: &str) -> usize {
         4
     } else if name.contains("::expert_narrow::ExpertNarrow") {
         5
-    } else if (name.contains("::cohorts::expert_cohort::ExpertCohort") || name.contains("::cohorts::ordered::expert_cohort::ExpertCohort")) {
+    } else if (name.contains("::cohorts::expert_cohort::ExpertCohort") || name.contains("::cohorts::ordered::expert_cohort::ExpertCohort") || name.contains("::cohorts::small_direct::expert_cohort::ExpertCohort")) {
         6
     } else {
         7
@@ -138,6 +138,7 @@ fn native_class(name: &str) -> usize {
             || name.contains("::expert_tail_down::ExpertTailDown")
             || name.contains("::cohorts::expert_cohort::ExpertCohort")
             || name.contains("::cohorts::ordered::expert_cohort::ExpertCohort")
+            || name.contains("::cohorts::small_direct::expert_cohort::ExpertCohort")
             || name.contains("::expert::Expert")
             || (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64") || name.contains("::native::ordered::expert_macro64_deep::ExpertMacro64Deep"))
             || name.contains("::expert_narrow::ExpertNarrow")
@@ -828,5 +829,21 @@ mod direct8_profile_tests {
     fn genuine_direct8_names_keep_same_dequant_profile_class() {
         for name in ["StrataPromptExpertF16Direct8Image","StrataPromptExpertResidentGuDirect8Image","StrataPromptExpertResidentDownDirect8Image","StrataExpertCohortGuDirect8Image","StrataExpertCohortDownDirect8Image"] {assert_eq!(native_class(name),0);}
         for name in ["StrataPromptExpertF16Direct8ImageFake","StrataExpertCohortGuDirect8Image::nested"] {assert_eq!(native_class(name),6);}
+    }
+}
+
+#[cfg(all(test,feature="strata-small-direct-publish"))]
+mod small_direct_profile_tests {
+    use super::*;
+    #[test]
+    fn genuine_small_direct_producers_keep_matrix_family_and_phase_profiles(){
+        for (name,family) in [
+            ("probe::strata_matrix::native::small_direct::expert_macro::ExpertMacro<Runtime>",4),
+            ("probe::strata_matrix::native::small_direct::expert_macro64::ExpertMacro64<Runtime>",4),
+            ("probe::strata_matrix::native::small_direct::expert_narrow::ExpertNarrow<Runtime>",5),
+            ("probe::strata_matrix::native::small_direct::expert_tail_gu::ExpertTailGu<Runtime>",2),
+            ("probe::strata_matrix::native::small_direct::expert_tail_down::ExpertTailDown<Runtime>",3),
+            ("probe::strata_matrix::cohorts::small_direct::expert_cohort::ExpertCohort<Runtime>",6),
+        ]{assert_eq!(native_class(name),1);assert_eq!(matrix_family(name),family);}
     }
 }

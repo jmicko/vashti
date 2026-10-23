@@ -657,6 +657,41 @@ pub(crate) fn try_expert_mode(
     direct: bool,
     ordered_output: bool,
 ) -> Result<bool> {
+    try_expert_mode_impl(client,h,count,columns,rows,weight_first,group,down,direct,ordered_output,false)
+}
+
+#[cfg(feature="strata-small-direct-publish")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_expert_mode_small_tail(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+    direct: bool,
+    ordered_output: bool,
+) -> Result<bool> {
+    if down && !ordered_output {return Err(Error::InvalidBufferLength);}
+    try_expert_mode_impl(client,h,count,columns,rows,weight_first,group,down,direct,ordered_output,true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_expert_mode_impl(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+    direct: bool,
+    ordered_output: bool,
+    small_tail: bool,
+) -> Result<bool> {
     if (ordered_output && !down) || (direct && down) {
         return Err(Error::InvalidBufferLength);
     }
@@ -842,6 +877,11 @@ pub(crate) fn try_expert_mode(
             1,
         );
         if let Some((ia, wa, oa, ma, sa, fa)) = tail_args {
+            if small_tail {
+                #[cfg(feature="strata-small-direct-publish")]
+                crate::strata_matrix::small_direct::launch_tail(client,[ia,wa,oa,ma,sa,fa],grids[1],
+                    [columns,rows,count,weight_first,group,p.prefix as u32,p.tail as u32],down,p.tail_tile);
+            } else {
             if ordered_output {
                 super::ordered::expert_tail_down::launch_unchecked::<WgpuRuntime>(
                     client,
@@ -902,6 +942,8 @@ pub(crate) fn try_expert_mode(
                     p.tail as u32,
                     p.tail_tile,
                 );
+            }
+
             }
         }
     }

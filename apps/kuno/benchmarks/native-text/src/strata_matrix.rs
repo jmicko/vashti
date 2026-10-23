@@ -164,9 +164,18 @@ pub(crate) async fn request_device(
 #[path = "strata_matrix_register_prefetch.rs"]
 mod register_prefetch;
 
+#[cfg(feature="strata-small-direct-publish")]
+pub(crate) use native::small_direct;
+#[cfg(feature="strata-small-direct-publish")]
+pub(crate) use native::small_direct::validate_sources as validate_small_direct_sources;
+#[cfg(feature="strata-small-direct-publish")]
+pub(crate) use native::small_direct::public_numeric as public_small_direct_numeric;
+
 #[cfg(feature = "strata-intel-core")]
 mod native {
     use super::*;
+    #[cfg(feature="strata-small-direct-publish")]
+    pub(crate) mod small_direct {include!("strata_matrix_small_direct.rs");}
     #[cfg(feature="strata-expert-ordered-output")]
     pub(super) mod ordered { include!("strata_matrix_ordered.rs"); }
     use cubecl::ir::{ElemType, FloatKind, features::MmaConfig};
@@ -2699,14 +2708,23 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(all(feature="strata-wide-shared-reuse",feature="strata-small-direct-publish"))]
+        let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode_small_tail;
+        #[cfg(all(feature="strata-wide-shared-reuse",not(feature="strata-small-direct-publish")))]
+        let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode;
         #[cfg(feature="strata-wide-shared-reuse")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
-            && native_expert_wide::shared_reuse::try_expert_mode(client,h.clone(),count,
+            && reuse_mode(client,h.clone(),count,
                 columns,rows,weight_first,group,down,
                 cfg!(feature="strata-native-direct-gu")&&!down,false)? {
             return Ok(());
         }
 
+        #[cfg(feature="strata-small-direct-publish")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? {
+            if native_expert_wide::try_expert_mode_small_tail(client,h.clone(),count,columns,rows,weight_first,group,false,true)?
+                || small_direct::try_expert(client,h.clone(),count,columns,rows,weight_first,group,false)? {return Ok(());}
+        }
         native::run_expert(client, h, count, columns, rows, weight_first, group, down)
     }
     #[cfg(not(feature = "strata-intel-core"))]
@@ -2754,14 +2772,23 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(all(feature="strata-wide-shared-reuse",feature="strata-small-direct-publish"))]
+        let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode_small_tail;
+        #[cfg(all(feature="strata-wide-shared-reuse",not(feature="strata-small-direct-publish")))]
+        let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode;
         #[cfg(feature="strata-wide-shared-reuse")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
-            && native_expert_wide::shared_reuse::try_expert_mode(client,h.clone(),count,
+            && reuse_mode(client,h.clone(),count,
                 columns,rows,weight_first,group,down,
                 cfg!(feature="strata-native-direct-gu")&&!down,true)? {
             return Ok(());
         }
 
+        #[cfg(feature="strata-small-direct-publish")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? {
+            if native_expert_wide::ordered::try_expert_mode_small_tail(client,h.clone(),count,columns,rows,weight_first,group,true,false)?
+                || small_direct::try_expert(client,h.clone(),count,columns,rows,weight_first,group,true)? {return Ok(());}
+        }
         native::ordered::run_expert(client, h, count, columns, rows, weight_first, group, down)
     }
     #[cfg(not(feature = "strata-intel-core"))]

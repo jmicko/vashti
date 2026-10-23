@@ -499,7 +499,7 @@ fn wide(
                 let dest=next*1024+job*2;
                 a[dest]=next_a_lo;a[dest+1]=next_a_hi;
                 b[dest]=next_b_lo;b[dest+1]=next_b_hi;
-                
+
             }
         }
         // REGISTER_STAGE_STORE_END
@@ -1160,6 +1160,39 @@ pub(super) fn try_expert_mode(
     down: bool,
     direct: bool,
 ) -> Result<bool> {
+    try_expert_mode_impl(client,h,count,columns,rows,weight_first,group,down,direct,false)
+}
+
+#[cfg(feature="strata-small-direct-publish")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_expert_mode_small_tail(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+    direct: bool,
+) -> Result<bool> {
+    if down {return Err(Error::InvalidBufferLength);}
+    try_expert_mode_impl(client,h,count,columns,rows,weight_first,group,down,direct,true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_expert_mode_impl(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+    direct: bool,
+    small_tail: bool,
+) -> Result<bool> {
     let hw = &client.properties().hardware;
     if !selected(
         count,
@@ -1322,6 +1355,11 @@ pub(super) fn try_expert_mode(
             );
         }
         if let Some((ia, wa, oa, ma, sa, fa)) = tail_args {
+            if small_tail {
+                #[cfg(feature="strata-small-direct-publish")]
+                crate::strata_matrix::small_direct::launch_tail(client,[ia,wa,oa,ma,sa,fa],grids[1],
+                    [columns,rows,count,weight_first,group,p.prefix as u32,p.tail as u32],down,p.tail_tile);
+            } else {
             if down {
                 expert_tail_down::launch_unchecked::<WgpuRuntime>(
                     client,
@@ -1362,6 +1400,8 @@ pub(super) fn try_expert_mode(
                     p.tail as u32,
                     p.tail_tile,
                 );
+            }
+
             }
         }
     }

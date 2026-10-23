@@ -415,10 +415,12 @@ pub(super) fn enqueue_unit(
         for tile in [8usize, 16] {
             if (0..n).any(|i| (words[17 + i * 4] <= 8) == (tile == 8)) {
                 words[11] = tile as u32;
-                #[cfg(feature = "strata-expert-ordered-output")]
+                #[cfg(feature="strata-small-direct-publish")]
+                let product=crate::strata_matrix::cohorts::small_direct::launch;
+                #[cfg(all(feature = "strata-expert-ordered-output",not(feature="strata-small-direct-publish")))]
                 let product = if down { crate::strata_matrix::cohorts::launch_ordered }
                     else { crate::strata_matrix::cohorts::launch };
-                #[cfg(not(feature = "strata-expert-ordered-output"))]
+                #[cfg(all(not(feature = "strata-expert-ordered-output"),not(feature="strata-small-direct-publish")))]
                 let product = crate::strata_matrix::cohorts::launch;
                 product(
                     client,

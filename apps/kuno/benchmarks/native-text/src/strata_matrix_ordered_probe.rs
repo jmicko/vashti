@@ -296,7 +296,14 @@ pub(super) fn one(
             words[16] = f.group as u32;
             words[17] = count as u32;
             words[19] = 8;
-            if ordered {
+            #[cfg(feature="strata-small-direct-publish")]
+            let small_cohort=family=="small-direct-cohort" && ordered;
+            #[cfg(not(feature="strata-small-direct-publish"))]
+            let small_cohort=false;
+            if small_cohort {
+                #[cfg(feature="strata-small-direct-publish")]
+                crate::strata_matrix::cohorts::small_direct::launch(client,selected,&words,down,words[11]as usize)?;
+            } else if ordered && down {
                 crate::strata_matrix::cohorts::launch_ordered(
                     client,
                     selected,
@@ -319,7 +326,7 @@ pub(super) fn one(
                 }
                 Ok(())
             })?;
-            true
+            if family=="small-direct-cohort" {ordered}else{true}
         }
         #[cfg(not(feature = "strata-expert-cohorts"))]
         {
@@ -344,10 +351,11 @@ pub(super) fn one(
     };
     // Only the separately named additive GU/direct controls select this
     // original raw-publication contract; existing cases retain their policy.
-    let direct_gu = family == "shared-reuse-direct-gu";
+    let small_selected=family.starts_with("small-direct-") && ordered;
+    let direct_gu = family == "shared-reuse-direct-gu" || (small_selected && !down);
     let direct_member = |member: usize| {
         (ordered || direct_gu)
-            && member < wide_prefix
+            && if small_selected {member/8*8+8<=count} else {member < wide_prefix}
             && control
                 .bad_member(count)
                 .is_none_or(|bad| bad / 8 != member / 8)
@@ -379,7 +387,7 @@ pub(super) fn one(
     let mut mismatches = 0;
     let mut max_abs = 0f32;
     let output_words = scan(arena, output, |at, bits| {
-        let member = if ordered {
+        let member = if ordered && down {
             (at / f.rows)
                 .checked_sub(prefix)
                 .filter(|&m| m < count && control.bad_member(count) != Some(m))
@@ -465,8 +473,13 @@ pub(super) fn one(
         "deliberately_mutated_after_original_validation":control.bad_member(count).is_some(),
         "noncontiguous_routes_above_20479":true,"real_weight_offset_half_elements":PREFIX});
     report[launch_field] = actual_launch.into();
-    report["expert_ordered_part"] = ordered.into();
-    report["raw_pending2_checked_before_consumer"] = (ordered && wide_prefix > 0).into();
+    report["expert_ordered_part"] = (ordered && down).into();
+    if family.starts_with("small-direct-") {
+        report["actual_small_direct_publication"]=small_selected.into();
+        report["raw_gu_pending_finite"]= (small_selected && !down).into();
+        report["complete_original8_fragment_only"]=true.into();
+    }
+    report["raw_pending2_checked_before_consumer"] = (down && ordered && if small_selected {(0..count).any(direct_member)} else {wide_prefix > 0}).into();
     report["paired_original_rank_case_retained"] = true.into();
     if cohort {
         report["original_fixture_prefix_repacked_half_elements"] = PREFIX.into();
