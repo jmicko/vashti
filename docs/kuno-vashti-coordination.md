@@ -14,7 +14,9 @@ HTTP200,admission normal. Installed301f1fd1/36626d30 unchanged.
 Complete new source couples REAL raw-U32 padded weight producer with SAME
 chronological original CMMA and logicalN4/N1 writer, on existing80MiB scratch.
 Targets masked HC injection/shared gate loops, retains all prior optimizations.
-Intended260CPU/15runtime/429WGSL/320matrix+16raw layouts/383GPU/BOTH chains.
+Initial7f3a94cd/workerdbdc14c6 passes260CPU/15runtime/429WGSL/320matrix+16raw
+layouts. Final current-model BF16 shared-gate selection adds10 GPU controls;
+planned393GPU/BOTH chains. No GPU test on this new bundle yet.
 Source only; no build, GPU, speed or installation claim. No API/model/context/
 config/frontend/release/reset/reboot change; Vashti:none. Goal UNMET vs Strata
 clean5.3515s. Root alone owns builds/GPUs; no compile during GPU timing.

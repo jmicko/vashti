@@ -13,7 +13,7 @@ HC remains~0.90s versus reference HC185ms (instrumented scopes differ).
 
 Actual original native product takes its masked K16 staging arm whenever N<16.
 For the genuine BF1610240x4 HC injection this executes1280 workgroup barriers
-per8-token tile. FP162560x1 shared gate executes320 per8-token tile. This is a
+per8-token tile. BF162560x1 shared gate (also retained FP16 variant) executes320 per8-token tile. This is a
 source-based bottleneck lead, not measured isolated attribution. Strata uses
 oneMKL; no assertion it uses this exact implementation.
 
@@ -51,9 +51,10 @@ Retain15 runtime controls and429WGSL/304 matrix layouts; add16 real cooperative
 consumer layouts (320 total), plus16 separate raw producer layouts validated by
 spirv-val without weakening existing CMMA requirements.
 
-Add30 actual paired original-GPU +independent original F64 controls to353:
+Add40 actual paired original-GPU +independent original F64 controls to353:
 BF16HC counts1/3/7/8/9/45/512/513 finite +NaN-weight/input at9 (copy mode);
-FP16shared same10 cases in BOTH disjoint-copy and authentic-prefix-in-place modes.
+BF16shared same10 cases in disjoint-copy mode; retained FP16shared same10 cases
+in BOTH disjoint-copy and authentic-prefix-in-place modes.
 Compare original/new bits for EVERY output/fault owner word, unchanged F64
 1e-4+3e-4*abs(reference), logical output padding0, raw original source prefix,
 all padded weight rows0 and full scratch tail sentinel unchanged. Preserve
@@ -67,3 +68,12 @@ installation gates. No performance/install claim from source implementation.
 Initial source1f28f1ab CPU build stops on Rust inner doc comments in an include!
 file (E0753), before any test/GPU execution. Change those two comments to ordinary
 comments; no algorithm, guard or test change. Preserve initial diagnostics.
+
+
+Source7f3a94cd/workerdbdc14c6 passes260CPU/15runtime/429WGSL/320matrix plus16raw
+producer layouts, with no GPU run yet. Final pinned profile inspection shows
+DTYPES_10=[30;49] for current shared gates too. Extend the actual BF16 shared
+selection and10 original-model GPU controls before testing, retain FP16 prefix
+path. Original dtype-specific mixed input selection and source/dequantization
+are unchanged. Planned all393GPU =original353+40 new paired controls. Counter
+classification uses logical rows4/1 so BF16shared is not mislabeled injection.

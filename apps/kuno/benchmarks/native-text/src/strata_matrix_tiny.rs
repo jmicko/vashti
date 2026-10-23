@@ -52,7 +52,10 @@ fn dense_tiny<F: Float>(
     }
 }
 fn tiny_shape(columns: usize, rows: usize, bfloat: bool) -> bool {
-    matches!((columns, rows, bfloat), (10240, 4, true) | (2560, 1, false))
+    matches!(
+        (columns, rows, bfloat),
+        (10240, 4, true) | (2560, 1, false) | (2560, 1, true)
+    )
 }
 fn tiny_views(
     h: &[Handle; 5],
@@ -205,7 +208,7 @@ pub(super) fn run_tiny(
         }
     }
     crate::strata_prefill_profile::count(
-        if bfloat {
+        if rows == 4 {
             "tiny_gr_injection_products"
         } else {
             "tiny_shared_gate_products"
@@ -384,7 +387,7 @@ mod tiny_tests {
     }
     #[test]
     fn source_and_zero_padding_are_disjoint_and_preserve_every_raw_word() {
-        for (columns, rows, bf) in [(10240, 4, true), (2560, 1, false)] {
+        for (columns, rows, bf) in [(10240, 4, true), (2560, 1, false), (2560, 1, true)] {
             assert!(tiny_shape(columns, rows, bf));
             let mut seen = vec![0; 16 * columns / 2];
             for group in 0..(16 * columns / 2).div_ceil(256) {

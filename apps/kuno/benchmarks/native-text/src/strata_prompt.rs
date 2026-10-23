@@ -740,10 +740,10 @@ pub(crate) fn project(
         stage[1].clone()
     };
     #[cfg(feature = "strata-tiny-output")]
-    if dtype != 30 && columns == 2560 && rows == 1 && count <= groups::CAPACITY {
+    if columns == 2560 && rows == 1 && count <= groups::CAPACITY {
         return crate::strata_matrix::tiny(client,
             [mixed_image.unwrap_or_else(|| stage[0].clone()), weights, stage[1].clone(), output, fault],
-            count, columns, rows, out_first, out_stride, false);
+            count, columns, rows, out_first, out_stride, dtype == 30);
     }
     crate::strata_matrix::dense(
         client,

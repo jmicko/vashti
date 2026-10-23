@@ -22,6 +22,7 @@ pub(crate) fn cases(
     for (columns, rows, bf, name) in [
         (10240usize, 4usize, true, "blk.0.hc_attn_inject.weight"),
         (2560, 1, false, "blk.0.ffn_gate_inp_shexp.weight"),
+        (2560, 1, true, "blk.0.ffn_gate_inp_shexp.weight"),
     ] {
         let tensor = file.tensor(name).ok_or("tiny original model tensor")?;
         if tensor.info().dimensions() != [columns as u64, rows as u64]
