@@ -81,6 +81,9 @@ pub struct NativeStrataExpertGrammarCounts {
     pub cohort_groups:usize,
     pub cohort_launches:usize,
     pub cohort_batches:usize,
+    pub quant_cohort_groups: usize,
+    pub quant_cohort_launches: usize,
+    pub quant_cohort_batches: usize,
     pub launches: usize,
     pub logical_phases: usize,
     pub matrix_pieces: usize,
@@ -120,7 +123,7 @@ fn grid(count: &CubeCount, x: u32, y: u32) -> bool {
 fn generated(name: &str, module: &str, ty: &str) -> bool {
     // New entries have their own exact classifier. A forged old family nested
     // inside the new namespace must not escape into legacy suffix matching.
-    if name.contains("::small_direct::") { return false; }
+    if name.contains("::small_direct::") || name.contains("::quant_cohort::") { return false; }
     #[cfg(feature = "kuno-wide-shared-reuse")]
     if shared_reuse_generated(name, module, ty) {
         return true;
@@ -390,6 +393,11 @@ impl NativeStrataExpertGrammar {
             self.counts.launches+=1;self.counts.cohort_launches+=1;
             if done {
                 let groups=cohort.groups();
+                if cohort.quantized() {
+                    self.counts.quant_cohort_groups += groups;
+                    self.counts.quant_cohort_batches += 1;
+                    self.counts.quant_cohort_launches += cohort.launches();
+                }
                 self.groups+=groups;self.counts.cohort_groups+=groups;self.counts.cohort_batches+=1;
                 self.counts.logical_phases+=groups*6;self.counts.matrix_pieces+=groups*2;self.counts.gu_checks+=groups;
                 self.cohort=None;

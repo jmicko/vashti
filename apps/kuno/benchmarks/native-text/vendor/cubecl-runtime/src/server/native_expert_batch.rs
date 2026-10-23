@@ -69,6 +69,9 @@ pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     let name=native_strata_expert_dequant_identity(name);
+    // Packed cohorts have a distinct seven-buffer grammar and never belong to
+    // the six-buffer regular family, even through a nested legacy name.
+    if name.contains("::quant_cohort::") { return false; }
     if name.contains("::small_direct::") {
         return !release && matches!(index % 6, 3 | 5)
             && (index % 6 != 5 || cfg!(feature = "kuno-expert-ordered-output"))
@@ -131,6 +134,9 @@ pub struct NativeStrataExpertBatchReceipt {
     pub cohort_groups:usize,
     pub cohort_launches:usize,
     pub cohort_batches:usize,
+    pub quant_cohort_groups: usize,
+    pub quant_cohort_launches: usize,
+    pub quant_cohort_batches: usize,
     pub launches: usize,
     pub copy_segments: usize,
     pub logical_phases: usize,

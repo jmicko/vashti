@@ -297,3 +297,7 @@ mod direct8;
 #[cfg(all(feature="kuno-small-direct-publish",feature="kuno-expert-ordered-output"))]
 #[path="native_expert_cohort_small_direct_tests.rs"]
 mod small_direct;
+
+#[cfg(all(feature="kuno-small-quantized-matrix",feature="kuno-expert-ordered-output"))]
+#[path="native_expert_cohort_quant_tests.rs"]
+mod quant;

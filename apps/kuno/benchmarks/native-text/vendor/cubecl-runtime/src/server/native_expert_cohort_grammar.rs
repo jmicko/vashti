@@ -1,7 +1,7 @@
 //! Distinct small-expert cohort grammar. Every INFO record, actual owning view,
 //! per-role phase and physical grid is authenticated before any enqueue.
 use super::*;
-#[cfg(feature = "kuno-small-direct-publish")]
+#[cfg(any(feature = "kuno-small-direct-publish", feature = "kuno-small-quantized-matrix"))]
 use super::super::native_expert_batch::native_strata_generated_type_suffix;
 const WORKING: u64 = 80 * 1024 * 1024;
 const X: u64 = 20 * 1024 * 1024;
@@ -50,7 +50,34 @@ fn image_variant(name: &str, expected: &str) -> Option<u8> {
         ("StrataExpertCohortDownImage","StrataExpertCohortDownDirect8Image")) {
         return Some(2);
     }
+    #[cfg(feature = "kuno-small-quantized-matrix")]
+    if matches!((expected, name),
+        ("StrataExpertCohortGuImage", "StrataExpertCohortGuCompact") |
+        ("StrataExpertCohortDownImage", "StrataExpertCohortDownCompact")) {
+        return Some(3);
+    }
     None
+}
+
+fn quant_matrix(name: &str) -> bool {
+    #[cfg(feature = "kuno-small-quantized-matrix")]
+    if name.split_once("::strata_matrix::quant_cohort::expert_quant_cohort::")
+        .is_some_and(|(_, suffix)| suffix.strip_prefix("ExpertQuantCohort")
+            .is_some_and(native_strata_generated_type_suffix)) {
+        return true;
+    }
+    let _ = name;
+    false
+}
+
+// The original slot spans are encoded in u32 words, not FP16 image offsets.
+// Exact role equations bind the compact producers and both matrix consumers to
+// the same authentic row bytes without adding an independently mutable record.
+fn compact_role_words(w: &[u32; 48], down: bool) -> Option<u32> {
+    let span = if down { w[8].checked_sub(w[6])?.checked_sub(w[7])? } else { w[6] };
+    (w[3] != 0 && w[6] == w[7] && w[6] % 4 == 0 && w[7] % 4 == 0
+        && span % 4 == 0 && u64::from(span) * 4 == u64::from(w[3]) * if down { 2560 } else { 640 })
+        .then_some(span)
 }
 
 fn matrix_variant(name: &str, down: bool) -> Option<bool> {
@@ -63,7 +90,7 @@ fn matrix_variant(name: &str, down: bool) -> Option<bool> {
             .is_some_and(native_strata_generated_type_suffix)) {
         return (!down || cfg!(feature = "kuno-expert-ordered-output")).then_some(down);
     }
-    if name.contains("::small_direct::") { return None; }
+    if name.contains("::small_direct::") || name.contains("::quant_cohort::") { return None; }
     if name
         .split_once("::cohorts::expert_cohort::")
         .is_some_and(|(_, v)| {
@@ -225,8 +252,14 @@ impl Cohort {
             stage += 1;
         }
         for down in [false, true] {
-            for (i, tile) in [8, 16].into_iter().enumerate() {
-                if self.families[i] {
+            for (i, tile) in [8, 16, 32].into_iter().enumerate() {
+                let present = if self.quantized() {
+                    (0..self.words[9] as usize).any(|slot| {
+                        let members = self.words[17 + slot * 4];
+                        tile == if members <= 8 { 8 } else if members <= 16 { 16 } else { 32 }
+                    })
+                } else { i < 2 && self.families[i] };
+                if present {
                     if stage == self.phase {
                         return Some((if down { "matrix-down" } else { "matrix-gu" }, false, tile));
                     }
@@ -255,7 +288,9 @@ impl Cohort {
         let matrix = expected.starts_with("matrix");
         let down = expected == "matrix-down" || expected == "StrataExpertCohortDownImage";
         let ordered = if matrix {
-            matrix_variant(name, down)
+            if self.quantized() {
+                (quant_matrix(name) && (!down || cfg!(feature = "kuno-expert-ordered-output"))).then_some(down)
+            } else { matrix_variant(name, down) }
         } else {
             None
         };
@@ -289,16 +324,19 @@ impl Cohort {
         }
         let z = w[9];
         if matrix {
-            if args.buffers.len() != 6
+            let quant = self.quantized();
+            let arrays = if quant { 7 } else { 6 };
+            let metadata = 24 + arrays;
+            if args.buffers.len() != arrays
                 || !args.read_dependencies.is_empty()
-                || args.info.data.len() != 30
-                || args.info.dynamic_metadata_offset != 30
+                || args.info.data.len() != metadata
+                || args.info.dynamic_metadata_offset != metadata
                 || w[1] != if down { 640 } else { 2560 }
                 || w[2] != if down { 2560 } else { 1280 }
-                || w[3] != 0
+                || if quant { compact_role_words(&w, down).is_none() } else { w[3] != 0 }
                 || w[5] != if down { 2 } else { 0 }
                 || w[11] != tile
-                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/64 && *y==if tile==8{1}else{2} && *c==z)
+                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/64 && *y==if quant || tile==8{1}else{2} && *c==z)
             {
                 return Err(batch_fault("native expert cohort matrix schema/grid"));
             }
@@ -327,13 +365,17 @@ impl Cohort {
             {
                 return Err(batch_fault("native expert cohort matrix actual owners"));
             }
-            for (i, v) in views.iter().enumerate() {
-                let unit = if i < 2 { 8 } else { 4 };
+            if quant && Some(View::new(&args.buffers[6])?) != self.grid {
+                return Err(batch_fault("native expert cohort compact matrix table owner"));
+            }
+            for (i, binding) in args.buffers.iter().enumerate() {
+                let v = View::new(binding)?;
+                let unit = if i == 0 || (!quant && i == 1) { 8 } else { 4 };
                 let len = v.used() / unit;
                 if v.first % unit != 0
                     || v.used() % unit != 0
                     || u64::from(word(&args.info, 48 + i)?) != len
-                    || u64::from(word(&args.info, 54 + i)?) != len
+                    || u64::from(word(&args.info, 48 + arrays + i)?) != len
                 {
                     return Err(batch_fault("native expert cohort matrix array INFO"));
                 }
@@ -411,6 +453,8 @@ impl Cohort {
             self.h = Some(views[2]);
         } else {
             let quad = quad.ok_or_else(|| batch_fault("native expert cohort image identity"))?;
+            let compact = quad == 3;
+            let compact_words = compact_role_words(&w, down);
             let offset = usize::from(!down);
             let expected_len = 7 + offset;
             if args.buffers.len() != expected_len
@@ -420,7 +464,11 @@ impl Cohort {
                 || w[1] != if down { 640 } else { 2560 }
                 || w[2] != if down { 2560 } else { 1280 }
                 || w[5] != if down { 2 } else { 0 }
-                || !matches!(count,CubeCount::Static(x,1,c)if *x==(w[1]*w[2]/if quad!=0 {8}else{32}).div_ceil(if quad==2 {32}else{256}) && *c==z)
+                || if compact {
+                    !matches!((count, compact_words), (CubeCount::Static(x,1,c), Some(words)) if *x==(words/4).div_ceil(256) && *c==z)
+                } else {
+                    !matches!(count,CubeCount::Static(x,1,c)if *x==(w[1]*w[2]/if quad!=0 {8}else{32}).div_ceil(if quad==2 {32}else{256}) && *c==z)
+                }
                 || self.quad_images.is_some_and(|old| old != quad)
             {
                 return Err(batch_fault(
@@ -439,6 +487,7 @@ impl Cohort {
                 || raw.first != 0
                 || raw.end != 0
                 || image.used() != WORKING
+                || (compact && image.first % 16 != 0)
                 || grid.used() != 32768
                 || addresses.used() != 32768
                 || [raw, image, grid, addresses]
@@ -465,6 +514,8 @@ impl Cohort {
     pub(super) fn groups(&self) -> usize {
         self.words[9] as usize
     }
+    pub(super) fn quantized(&self) -> bool { self.quad_images == Some(3) }
+    pub(super) fn launches(&self) -> usize { self.phase }
 }
 
 #[cfg(test)]

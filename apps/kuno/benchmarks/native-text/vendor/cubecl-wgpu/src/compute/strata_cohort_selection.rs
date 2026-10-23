@@ -2,7 +2,27 @@
 //! This never grants execution, source, reuse, replay or completion authority.
 use super::transient_io::{NativeExpertBatchScope, NativeExpertCohortStamp, fault};
 use cubecl_core::server::ServerError;
-use cubecl_runtime::server::native_expert_grammar::NativeStrataExpertGrammar;
+use cubecl_runtime::server::native_expert_grammar::{NativeStrataExpertGrammar, NativeStrataExpertGrammarCounts};
+
+// Original cohorts retain six to eight dispatches. Only a completely validated
+// packed cohort can contain three GU and three DOWN tiles (ten dispatches).
+fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
+    if c.quant_cohort_groups > c.cohort_groups
+        || c.quant_cohort_batches > c.cohort_batches
+        || c.quant_cohort_launches > c.cohort_launches
+        || (!cfg!(feature = "kuno-small-quantized-matrix") && c.quant_cohort_batches != 0)
+        || c.quant_cohort_groups < c.quant_cohort_batches
+        || c.quant_cohort_groups > c.quant_cohort_batches * 8
+        || c.quant_cohort_launches < c.quant_cohort_batches * 6
+        || c.quant_cohort_launches > c.quant_cohort_batches * 10 {
+        return false;
+    }
+    let old_batches = c.cohort_batches - c.quant_cohort_batches;
+    let old_groups = c.cohort_groups - c.quant_cohort_groups;
+    let old_launches = c.cohort_launches - c.quant_cohort_launches;
+    old_groups >= old_batches && old_groups <= old_batches * 8
+        && old_launches >= old_batches * 6 && old_launches <= old_batches * 8
+}
 
 /// Existing compiled-public fixed-layer profile only. These aggregate labels
 /// identify actual scoped grammar, recording and original driver-pool events.
@@ -144,7 +164,9 @@ impl Book {
     ) -> Result<(), ServerError> {
         let counts = grammar.finish()?;
         if counts.cohort_groups == 0 {
-            if counts.cohort_launches != 0 || counts.cohort_batches != 0 {
+            if counts.cohort_launches != 0 || counts.cohort_batches != 0
+                || counts.quant_cohort_groups != 0 || counts.quant_cohort_launches != 0
+                || counts.quant_cohort_batches != 0 {
                 return Err(fault("native cohort empty grammar evidence"));
             }
             return Ok(());
@@ -164,8 +186,7 @@ impl Book {
             || counts.logical_phases % 6 != 0
             || counts.logical_phases / 6 > 512
             || counts.cohort_groups > counts.logical_phases / 6
-            || counts.cohort_launches < counts.cohort_batches * 6
-            || counts.cohort_launches > counts.cohort_batches * 8
+            || !cohort_launch_population(&counts)
             || counts.launches < counts.cohort_launches
             || counts.launches > 5632
         {
@@ -321,6 +342,38 @@ impl Drop for RecordingAdmission {
         }
         wipe(&mut self.nodes);
         wipe(&mut self.compute);
+    }
+}
+
+#[cfg(all(test, feature = "kuno-small-quantized-matrix"))]
+mod quant_population_tests {
+    use super::*;
+    #[test]
+    fn packed_ten_launch_bound_never_expands_the_original_eight_launch_partition() {
+        let mut c = NativeStrataExpertGrammarCounts {
+            cohort_groups: 2, cohort_batches: 1, cohort_launches: 8,
+            ..Default::default()
+        };
+        assert!(cohort_launch_population(&c));
+        c.cohort_launches = 9;
+        assert!(!cohort_launch_population(&c));
+        c.cohort_groups = 3; c.cohort_launches = 10;
+        c.quant_cohort_groups = 3; c.quant_cohort_batches = 1; c.quant_cohort_launches = 10;
+        assert!(cohort_launch_population(&c));
+        for bad in [5,11] {
+            c.cohort_launches = bad; c.quant_cohort_launches = bad;
+            assert!(!cohort_launch_population(&c));
+        }
+        // Mixed old/new tapes keep two independent closed populations.
+        c.cohort_groups = 5; c.cohort_batches = 2; c.cohort_launches = 18;
+        c.quant_cohort_launches = 10;
+        assert!(cohort_launch_population(&c));
+        c.cohort_launches = 19;
+        assert!(!cohort_launch_population(&c));
+        c.cohort_launches = 18; c.quant_cohort_launches = 9;
+        assert!(!cohort_launch_population(&c));
+        c.quant_cohort_launches = 10; c.quant_cohort_groups = 5;
+        assert!(!cohort_launch_population(&c));
     }
 }
 

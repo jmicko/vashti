@@ -308,6 +308,9 @@ impl WgpuServer {
             { receipt.unit_releases = unit_releases; }
             receipt.cohort_launches=logical.cohort_launches;
             receipt.cohort_batches=logical.cohort_batches;
+            receipt.quant_cohort_groups = logical.quant_cohort_groups;
+            receipt.quant_cohort_launches = logical.quant_cohort_launches;
+            receipt.quant_cohort_batches = logical.quant_cohort_batches;
             receipt.logical_phases = logical.logical_phases;
             receipt.matrix_pieces = logical.matrix_pieces;
             receipt.wide_prefixes = logical.wide_prefixes;
