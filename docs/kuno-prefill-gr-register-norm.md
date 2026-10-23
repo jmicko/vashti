@@ -7,10 +7,10 @@ registers. Kuno's GR_NORM writes pending R,then rereads R in a different pair
 map and needs a real storageBarrier. Do not merely delete that necessary barrier.
 
 Port TOGETHER: ten explicit F32 scalar residual registers (no dynamically
-indexed local array),same FMA/write and chronological sum r*r,unchanged two-level
+indexed local array),same FMA/write and chronological native fused square sum,unchanged two-level
 SG32 xor reduction and local workgroup barrier. Normalize each scalar in its
 original lane; shuffle xor1 supplies odd neighbor to even lane for identical
-BF16 pair packing. Explicit logical tid=sg*32+lane,full256x1 workgroup/fixed32
+BF16 pair packing. Original LocalInvocationIndex,verified neighbor adjacency,full256x1 workgroup/fixed32
 contract,bijective original256-stride scalar map. Both in-place(one RW R
 descriptor) and disjoint previous/R variants. Original kernels retained as
 independent GPU comparators/fallback. New path tested on actual B70 only; no
@@ -99,3 +99,25 @@ gr-register-norm-physical-exact-error-20261023.txt,
 gr-register-physical-failed-programs-20261023.json,
 gr-register-physical-failed-program-{35,36}-20261023.txt,
 gr-register-norm-physical-failure-state-20261023.json.
+
+## Complete 5ae19f5e validation
+
+Frozen source5ae19f5edf2d7b364e8f7c9abf9fd0c5a1f97849,
+workerdc00d189266ebf9cd9e4fd799ab545b070782e93e44a480f410d4273e113cb68:
+275CPU/15runtime/all429WGSL/320matrix+16raw+32compact+24padded/48actual
+pipeline-CFG proofs+2new norm modules/ALL457GPU/BOTH unchanged original
+18-script chains and physical recovery PASS. All24 norm cases are bit exact.
+Both modes preserve routing[7663,26673,26673],actual fullGRdown counts[0,97,97],
+new norm counts[97,194,194]. Both actual new SIMD32 kernels have zero spills.
+
+Public instrumented first/repeated long9.854916837/8.557609991s; normal
+9.872980496/8.468479392s. Normal HC attention+router815.766879ms versus prior
+891.447830ms; overall repeat gain is small. No clean/staged/install/release.
+Do NOT count the initial permission-failed launch as a model test: the root
+build's0500 binary initially needed its intended jmicko ownership. Retain that
+failed receipt; the owner-corrected run above is the complete actual test.
+
+Evidence under /media/jmicko/faststore/kuno-development:
+strata-parity-gr-register-norm-fma-owner-20261023-expert-cohorts-public-summary.json,
+gr-register-norm-fma-complete-isa-export-20261023.json,
+gr-register-norm-fma-owner-connected-20261023.log.
