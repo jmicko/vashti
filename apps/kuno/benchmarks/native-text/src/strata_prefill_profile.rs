@@ -161,6 +161,7 @@ fn native_class(name: &str) -> usize {
             || name.contains("::expert::Expert")
             || (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64") || name.contains("::native::ordered::expert_macro64_deep::ExpertMacro64Deep"))
             || name.contains("::expert_narrow::ExpertNarrow")
+            || name.contains("::native_wide::dense_asymmetric_store::DenseAsymmetricStore<")
             || name.contains("::library_dense::LibraryDense")
             || name.contains("::library_expert::LibraryExpert") =>
         {

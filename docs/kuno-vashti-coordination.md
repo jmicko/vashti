@@ -1,5 +1,49 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): asymmetric dense source composed from reference profiling.**
+
+Read [the coupled asymmetric contract](kuno-prefill-asymmetric-dense.md) and
+[accepted preceding quant pipeline](kuno-prefill-quant-producer-consumer.md).
+Current unbuilt candidate composes M256/N128/K32 WG512/SG16: A32KiB+B16KiB,
+K16-sliced shared layout, six register prefetch vectors/lane, eight accumulators,
+masked authentic GR320, direct global stores and original finite/fault consumer.
+Original vector/bounds/nonalias/grid/capability guards remain. Complete aligned
+M256 batches only; unmatched shapes retain existing paths. No global owner/copy.
+Original65536B K64 deep kernels remain separate unavailable controls on B70.
+
+Three CPU cases,24 real compiler layouts,15 original-GPU/F64 paired cases and
+anonymous dense partition counter are composed with the runtime. Planned360
+AppCPU,18/49 runtime,8+9 metadata,all747 GPU controls. Original732 retained. This
+candidate is not built or GPU accepted yet. Do not test partial pieces for speed.
+No inference API/configuration/Vashti or installation/release/reset/reboot change.
+
+New fixed-public Strata profiling captures22 GEMM variants. Busy GEMMs also use
+WG512/SG16, with several fixed32-workgroup shapes; internal persistent loops/
+register allocation are unproven. Thus smaller workgroups alone are not a verified
+Strata difference. Larger asymmetric reuse is a bounded Kuno adaptation that fits
+Vulkan48KiB, not a claim to duplicate the opaque library's exact tile. HIP-only
+upmix remains outside selected Intel path. Reference pipeline fields and source
+fixture remain unchanged. A fixture-only Rust exit shim flushes the pinned
+profiler before Strata's _Exit, without running oneAPI/Strata destructors. First
+capture without it failed to save geometry; preserved, not called acceptance.
+Profiler artifacts mounted read-only; no system install/driver changes.
+
+Evidence: development `strata-kernel-profile-public-{receipt,gemm}-20261023.json`
+and `strata-kernel-profile-exit-20261023/trace/kernel-profile.1`. All three
+45/4245/4245 public requests/recovery pass. Instrumented timings are not clean
+reference;5.5006/5.3515s target unchanged. Existing coarse timing receipt remains
+useful with its queue-idle/event-overhead limitation.
+
+Latest accepted Kuno source6edb769c/workerf31fa3f6 passes357 CPU,18/49 runtime,
+8+9 metadata,all732 GPU controls,full model and recovery. K32 diagnostic normal
+11.435514301/9.306249103s,about6% better than starting rolled control, but full
+FP16-image control4cc3f68f normal repeat8.854793s remains faster. Latest CLEAN
+12.471177197/8.394039699s still behind Strata. Goal ACTIVE/UNMET. GPUs currently
+free; reference profiling exited cleanly. Bounded sudo refresh through01:47UTC
+Oct24. Canonical Vashti and inherited text/__pycache__ preserved.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): full K32 pipeline accepted; parity unmet.**
 
 Read [the complete contract and acceptance](kuno-prefill-quant-producer-consumer.md).
