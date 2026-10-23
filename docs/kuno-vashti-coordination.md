@@ -1,5 +1,47 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): both asymmetric variants accepted; direct-global difference confirmed.**
+
+Read [the next complete implementation contract](kuno-prefill-global-register.md)
+and [accepted asymmetric evidence](kuno-prefill-asymmetric-dense.md).
+Source81e1833a / worker6e03932e passes360 CPU,18/49 runtime,8+9 metadata,
+all compiler controls,747 GPU cases, both model chains and recovery. Lifetime
+reordering normal first/repeated11.950878733/9.763397092s, essentially unchanged
+from prior12.032959241/9.788971762s. Still heavy128-GRF spills109:105/122:132.
+Keep both variants; original8 wide zero-spill/QSA hashes intact. Goal UNMET.
+
+New verified local profiler capture:53 real Strata GEMM geometries/22 entry names,
+all256 registers/thread, no spills/private memory;51 use0 shared bytes. Busy
+32x64/64x40 variants use0 shared. Original3 public requests/binary/context/reuse
+policy unchanged; actual nonempty trace/recovery accepted. Instrumented timings
+aren't the target; clean Strata5.5006/5.3515s and latest Kuno CLEAN12.471177197/
+8.394039699s unchanged. Full FP16-image control normal8.854793s still faster.
+
+NEXT: compose direct-global A/B matrix-register pipeline with modest four-C
+blocking, both operand banks/prefetch, original K16 math, direct stores/finite
+consumer, aligned M128 and original-view prefix/suffix, all host capability/
+ownership/erasure guards and real compiler/numeric/model proofs BEFORE speed.
+No source implementation exists yet. Do not spend the next pass on another
+source-order tweak, API/cancellation work, or isolated component speed rollback.
+Detailed proposed363 CPU/768 GPU populations and exact checks in linked contract.
+WG1024/SG16 is hardware-supported here but is a secondary option; don't tighten
+global device admission or assume one capture gives other hardware authority.
+
+Artifacts: `asymmetric-dense-live-*`, complete747 public summary,
+`strata-kernel-properties-public-20261023.json` (53 real rows) and original trace.
+Source/package equivalence of profiler embedded commit unverified (upstream404),
+read-only package hash/runtime artifacts and original inference binary fixed.
+CPU-only container-version attempt failed/launcher cleaned; host version2.4
+passes. Initial CSV leading-space rejection preserved and fixed on same trace.
+No system/driver install, inference API/config/frontend or release changes.
+
+Latest22:24:28UTC state: Intel50,688,000B,NVIDIA compute0, all5 classified faults0,
+HTTP200/admission normal/completed154. GPUs free; canonical Vashti and inherited
+text/__pycache__ preserved. Bounded sudo refresh still through01:47UTC Oct24.
+Current source/working tree contains no pending engine change. Keep goal active.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): complete asymmetric accepted; register-pressure fix composed.**
 
 Read [exact implementation and evidence](kuno-prefill-asymmetric-dense.md).

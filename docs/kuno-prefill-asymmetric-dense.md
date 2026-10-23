@@ -131,3 +131,24 @@ Protected unit invocation ada5de2dbede455a9ba1a5ef7e513668 exited0 after
 12m41.884s, zero swap, peak34.7GiB. Independent21:57:38UTC state: Intel
 50,688,000B,NVIDIA compute0, all5 classified faults0, HTTP200, admission normal.
 No installed binary/API/config/Vashti changes. Goal ACTIVE/UNMET.
+
+## Lifetime follow-up accepted; direct-global difference confirmed
+
+Source81e1833a5694e1771dafbba516dc1c430c24d46a, worker
+6e03932ecf18d812ed92f4e40d3148da4f4833c3dd683f61ed17e89e35db8e39
+passes unchanged360 AppCPU,18/49 runtime,8+9 metadata, all compiler populations,
+all747 GPU controls, both model chains and physical recovery. Diagnostic first/
+repeat11.975399639/9.839792699s; normal11.950878733/9.763397092s. Same heavy
+spills remain:109:105 FP16/BF16,122:132 GR320,128GRFs. Original8 wide programs
+zero-spill and both QSA ISA hashes unchanged. No material speed gain, no CLEAN.
+Unit7c5a85055abc4af1960d2e1a5e8a5a4e exited0 after12m48.700s, zero swap,
+peak29.7GiB. Independent22:20:32UTC state free/healthy/completed153.
+
+Read [the next complete direct-global contract](kuno-prefill-global-register.md).
+New Strata capture53 geometry rows/22 GEMM names: all256 registers/thread,
+no spills/private memory,51 use zero shared bytes. Both earlier Kuno asymmetric
+variants remain intact. Next adapt register blocking and both global operands
+together, rather than assuming the shared tile or source order matches oneMKL.
+No new direct-global source/build/GPU acceptance yet. Last physical state after
+reference22:24:28UTC: Intel50,688,000B,NVIDIA compute0, all5 faults0, HTTP200,
+admission normal/completed154. Installed binaries unchanged. Goal ACTIVE/UNMET.
