@@ -1,5 +1,31 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): padded K64 source composed; compiler lifetime rejection under repair.**
+
+No GPU ran after the accepted K128 source1fe9b874. Unpadded K64 sourcea97cee6c
+passes352 CPU and all runtime/metadata/compiler populations, with no GPU or speed
+claim. Complete padded source55573ec0 passes353 CPU,18/47 runtime and8+9 metadata.
+Its first72 new compiler layouts pass, but explicit-layout mask4 reports26112B
+instead of the required24064B. Preserve this rejection and workerfbd3558e in
+development `strata-parity-small-quant-pad-20261023/`; the build receipt is absent.
+
+Read [the complete padded producer/consumer/lifetime contract](kuno-prefill-small-quantized-matrix.md).
+The current repair follows original native header validation: genuine subgroup
+votes over the same immutable map-cell guards expose the uniform continuation
+to shared-memory liveness analysis. Guard conditions, original compact sources,
+chronological products, finite checks and whole-WG-before-publication fence
+remain required. Do not lower the expected allocation or run a speed test before
+the compiler proves actual reuse. Current repair is not compiled or accepted.
+
+Separate forward build/harness namespaces preserve failed source and all prior
+controls. Installed binaries and Vashti remain unchanged. Both GPUs are free;
+sudo refresh is bounded through01:47UTC onOct24 under
+`sudo-refresh-quant-panel-20261023-owner.json`. Goal ACTIVE/UNMET. Last complete
+GPU result remains K12812.605240109/10.619382166s diagnostic; latest CLEAN still
+12.471177197/8.394039699s versus Strata5.5006/5.3515s. No installation/release/reset.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): K128 correctness accepted; occupancy/decoder correction next.**
 
 Source `1fe9b87426794f59814550da364e1df62439266b`, worker

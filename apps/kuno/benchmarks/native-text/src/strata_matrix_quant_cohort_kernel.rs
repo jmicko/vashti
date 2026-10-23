@@ -152,23 +152,28 @@ pub(crate) fn expert_quant_cohort(
         }
         terminate!();
     }
-    if map[0] != h0
-        || map[1] != 0
-        || map[2] != h0
-        || map[3] < 1
-        || map[3] > 512
-        || group >= usize::cast_from(map[3])
-    {
+    // Match original native header validation: all lanes check the same
+    // immutable map cells. A genuine subgroup vote keeps the uniform accepted
+    // continuation visible to shared-memory lifetime analysis.
+    if !plane_all(
+        !(map[0] != h0
+            || map[1] != 0
+            || map[2] != h0
+            || map[3] < 1
+            || map[3] > 512
+            || group >= usize::cast_from(map[3])),
+    ) {
         if UNIT_POS == 0 {
             fault[0].fetch_or(128);
         }
         terminate!();
     }
-    if map[4 + group] >= 512
-        || map[516 + group] != count
-        || usize::cast_from(map[1028 + group]) > usize::cast_from(h0) * 10
-        || members > usize::cast_from(h0) * 10 - usize::cast_from(map[1028 + group])
-    {
+    if !plane_all(
+        !(map[4 + group] >= 512
+            || map[516 + group] != count
+            || usize::cast_from(map[1028 + group]) > usize::cast_from(h0) * 10
+            || members > usize::cast_from(h0) * 10 - usize::cast_from(map[1028 + group])),
+    ) {
         if UNIT_POS == 0 {
             fault[0].fetch_or(128);
         }

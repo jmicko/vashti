@@ -2,6 +2,14 @@
 
 ## Complete K64 padded layout (current source, not GPU accepted)
 
+Compiler checkpoint: source55573ec0 passes353 CPU and all runtime/metadata
+controls, then fails at the first explicit layout: actual26112B, expected24064B.
+The non-explicit72 layouts pass. Current header-continuation repair uses genuine
+subgroup votes over the same immutable uniform map-cell guards, matching the
+original native kernels, so lifetime analysis can see the accepted continuation.
+No guard is removed and no allocation expectation is relaxed. No GPU has run
+for either padded source or the unpadded K64 source.
+
 Compose the K64/direct-sign revision below with padded B staging and matching
 cooperative readers before live speed tests. The unpadded K64 sourcea97cee6c
 passes352 CPU,18/47 runtime,8+9 metadata and every compiler population, but has

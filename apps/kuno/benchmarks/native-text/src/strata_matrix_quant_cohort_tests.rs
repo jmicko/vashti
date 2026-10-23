@@ -405,6 +405,7 @@ fn quant_cohort_source_preserves_eight_value_poison_gate_and_existing_consumers(
     // Bank reuse becomes cross-subgroup only after all K products. Retain
     // subgroup-only panel handoffs, plus one whole-workgroup lifetime fence.
     assert_eq!(k.matches("sync_cube()").count(), 1);
+    assert_eq!(compact(k).matches("if!plane_all(!(").count(), 2);
     let release = k.split_once("sync_cube();").unwrap().1;
     assert!(release.find("b.free()").unwrap() < release.find("let mut scratch").unwrap());
     assert!(k.matches("sync_plane()").count() >= 2);
