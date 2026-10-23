@@ -23,6 +23,9 @@ pub fn kuno_cooperative_subgroup_shared_barriers(
     }
     let mut positions = Vec::new();
     let mut memory_constant = None;
+    let mut subgroup_scope_constant = None;
+    let mut non_subgroup_barrier = false;
+    let mut first_function = None;
     let mut at = 5;
     while at < words.len() {
         let n = (words[at] >> 16) as usize;
@@ -30,6 +33,9 @@ pub fn kuno_cooperative_subgroup_shared_barriers(
             return Err("cooperative subgroup barrier instruction extent");
         }
         let op = words[at] & 65535;
+        if op == 54 && first_function.is_none() {
+            first_function = Some(at);
+        }
         if op == 43 && n == 4 && words[at + 3] == 264 && constant(words, words[at + 2]) == Some(264)
         {
             memory_constant = Some(words[at + 2]);
@@ -40,7 +46,9 @@ pub fn kuno_cooperative_subgroup_shared_barriers(
             }
             let execution = constant(words, words[at + 1])
                 .ok_or("cooperative subgroup barrier execution scope")?;
+            non_subgroup_barrier |= execution != 3;
             if execution == 3 {
+                subgroup_scope_constant = Some(words[at + 1]);
                 if constant(words, words[at + 2]) != Some(3) {
                     return Err("cooperative subgroup barrier memory scope");
                 }
@@ -56,12 +64,34 @@ pub fn kuno_cooperative_subgroup_shared_barriers(
     if positions.is_empty() {
         return Ok(None);
     }
-    // Existing full input-stage barriers provide this literal unsigned32
-    // AcquireRelease|WorkgroupMemory constant. No new IDs/types are invented.
-    let memory = memory_constant.ok_or("cooperative subgroup shared fence constant")?;
+    // Staged matrices reuse their existing AcquireRelease|WorkgroupMemory
+    // constant. Global-operand kernels have no workgroup input barrier; emit
+    // the same real typed constant rather than adding an unnecessary barrier.
+    // Missing/poisoned stage-barrier semantics remain an error.
     let mut out = words.to_vec();
+    let (memory, inserted) = if let Some(memory) = memory_constant {
+        (memory, None)
+    } else {
+        if non_subgroup_barrier {
+            return Err("cooperative subgroup shared fence constant");
+        }
+        let scope = subgroup_scope_constant.ok_or("cooperative subgroup scope constant")?;
+        // constant() above already proves this exact definition has an
+        // unsigned32 type; reuse it, never an inferred or fabricated type.
+        let ty = defining_instruction(words, scope, 43)
+            .ok_or("cooperative subgroup scope definition")?[1];
+        let before = first_function.ok_or("cooperative subgroup function section")?;
+        let id = words[3];
+        out[3] = id
+            .checked_add(1)
+            .ok_or("cooperative subgroup constant id overflow")?;
+        (id, Some((before, ty)))
+    };
     for position in positions {
         out[position] = memory;
+    }
+    if let Some((before, ty)) = inserted {
+        out.splice(before..before, [4 << 16 | 43, ty, memory, 264]);
     }
     Ok(Some(out))
 }

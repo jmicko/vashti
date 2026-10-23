@@ -110,3 +110,97 @@ fn small_direct_publisher_keeps_real_collective_pending_status_and_checked_owner
     assert!(activation.contains("Op::ActivateCheckGu"));
     assert!(include_str!("strata_prompt_ordered_shared_reduce.wgsl").contains("down==2u"));
 }
+
+#[test]
+fn global_operand_publication_emits_only_missing_typed_subgroup_memory_constant() {
+    use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
+    use cubecl::{Compiler, WgpuCompilationOptions};
+    let mut definitions = super::definitions();
+    definitions.extend(crate::strata_matrix::cohorts::small_direct::definitions());
+    let selected = [
+        "small_direct_expert_global_narrow8_gu",
+        "small_direct_expert_cohort16_down",
+    ];
+    let mut checked = 0;
+    for (name, definition) in definitions {
+        if !selected.contains(&name) {
+            continue;
+        }
+        let mut options = WgpuCompilationOptions {
+            supports_vulkan: true,
+            ..Default::default()
+        };
+        options.vulkan.max_spirv_version = (1, 6);
+        let AutoRepresentation::SpirV(kernel) = Compiler::compile(
+            &mut AutoCompiler::SpirV(Default::default()),
+            definition,
+            &options,
+            ExecutionMode::Unchecked,
+            StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)),
+        )
+        .unwrap() else {
+            panic!("actual SPIR-V representation");
+        };
+        let before =
+            wgpu::hal::vulkan::kuno_native_workgroup_layout(&kernel.assembled_module).unwrap();
+        let mut constants = std::collections::BTreeMap::new();
+        let mut barriers = Vec::new();
+        let mut first_function = None;
+        let mut at = 5;
+        while at < before.len() {
+            let n = (before[at] >> 16) as usize;
+            match before[at] & 65535 {
+                43 if n == 4 => {
+                    constants.insert(before[at + 2], (before[at + 1], before[at + 3]));
+                }
+                224 => {
+                    barriers.push(at);
+                }
+                54 if first_function.is_none() => {
+                    first_function = Some(at);
+                }
+                _ => {}
+            }
+            at += n;
+        }
+        assert!(!barriers.is_empty());
+        assert!(!constants.values().any(|&(_, v)| v == 264));
+        for &at in &barriers {
+            assert_eq!(constants[&before[at + 1]].1, 3);
+            assert_eq!(constants[&before[at + 2]].1, 3);
+            assert_eq!(constants[&before[at + 3]].1, 0);
+        }
+        let after = wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&before)
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.len(), before.len() + 4);
+        assert_eq!(after[3], before[3] + 1);
+        let first = first_function.unwrap();
+        let ty = constants[&before[barriers[0] + 1]].0;
+        assert_eq!(
+            &after[first..first + 4],
+            &[4 << 16 | 43, ty, before[3], 264]
+        );
+        let mut restored = after.clone();
+        restored.drain(first..first + 4);
+        restored[3] = before[3];
+        for at in barriers {
+            assert_eq!(restored[at + 3], before[3]);
+            restored[at + 3] = before[at + 3];
+        }
+        assert_eq!(
+            restored, before,
+            "only typed constant, bound and subgroup semantics may change"
+        );
+        assert!(
+            wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&after)
+                .unwrap()
+                .is_none()
+        );
+        let mut overflow = before;
+        overflow[3] = u32::MAX;
+        assert!(wgpu::hal::vulkan::kuno_cooperative_subgroup_shared_barriers(&overflow).is_err());
+        checked += 1;
+    }
+    assert_eq!(checked, selected.len());
+}
