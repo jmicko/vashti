@@ -664,7 +664,10 @@ fn enqueue_original(
                 group=unit.end;
                 continue;
             }
+            #[cfg(not(feature = "strata-raw-lookahead"))]
             if unit.end!=group+1 {return Err(Error::InvalidBufferLength);}
+            #[cfg(feature = "strata-raw-lookahead")]
+            if !unit.legacy {return Err(Error::InvalidBufferLength);}
         }
         #[cfg(feature = "strata-expert-cohorts")]
         if let Some(ring)=miss_ring.as_mut() {
@@ -920,8 +923,13 @@ fn enqueue_original(
             // before its DQ can import the other bank's pending COPY wait.
             client.native_strata_expert_unit_end().map_err(crate::resident_util::fault)?;
             let plan=raw_plan.as_mut().unwrap();
-            plan.consumed(unit)?;
-            prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
+            #[cfg(feature = "strata-raw-lookahead")]
+            let retired = plan.complete_group(unit,group)?;
+            #[cfg(not(feature = "strata-raw-lookahead"))]
+            let retired = {plan.consumed(unit)?;true};
+            if retired {
+                prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
+            }
         }
         #[cfg(feature = "strata-prefill-miss-ring")]
         if let Some(ring)=miss_ring.as_mut() { ring.consumed(group)?; }
@@ -938,6 +946,15 @@ fn enqueue_original(
             ("expert_streamed_groups",misses as u64),("expert_resident_groups",resident as u64),
             ("expert_raw_slots_peak_sum",peak as u64),("expert_raw_copy_cohorts",cohorts as u64),
         ] { crate::strata_prefill_profile::count(name,value); }
+        #[cfg(feature = "strata-raw-lookahead")]
+        for (name,value) in [
+            "expert_raw_lookahead_legacy_units",
+            "expert_raw_lookahead_legacy_groups",
+            "expert_raw_lookahead_batched_units",
+            "expert_raw_lookahead_batched_groups",
+        ].into_iter().zip(plan.legacy_geometry()?) {
+            crate::strata_prefill_profile::count(name,value as u64);
+        }
     }
     #[cfg(feature = "strata-expert-scratch-ring")]
     {

@@ -5,6 +5,10 @@ use zeroize::{Zeroize, Zeroizing};
 const GROUPS: usize = 512;
 const SLOTS: usize = 8;
 const RESIDENT: u8 = 8;
+const LEGACY_GROUPS: usize = 4;
+// All original group boundaries are <=512. Keep the upload-unit kind in its
+// existing two-u16 record rather than adding another routing allocation.
+const LEGACY_UNIT: u16 = 1 << 15;
 // Replacement for the mutually exclusive original miss-ring's8KiB scratch
 // inside the unchanged complete native batch's24MiB host envelope.
 pub(super) const HOST_BYTES: usize = 8192;
@@ -14,6 +18,7 @@ pub(super) struct Unit {
     pub first: usize,
     pub end: usize,
     pub bank: usize,
+    pub legacy: bool,
 }
 fn reject() -> Error {
     Error::InvalidFormat("native whole raw bank unit plan")
@@ -23,6 +28,7 @@ pub(super) struct Plan {
     slots: Zeroizing<Vec<u8>>,
     issued: usize,
     consumed: usize,
+    next_group: usize,
     occupied: [Option<usize>; 2],
     live: usize,
     peak: usize,
@@ -31,6 +37,9 @@ pub(super) struct Plan {
 }
 impl Plan {
     pub(super) fn new(members: &[u32], streamed: &[bool]) -> Result<Self> {
+        Self::with_lookahead(members, streamed, cfg!(feature = "strata-raw-lookahead"))
+    }
+    fn with_lookahead(members: &[u32], streamed: &[bool], lookahead: bool) -> Result<Self> {
         if members.is_empty()
             || members.len() > GROUPS
             || members.len() != streamed.len()
@@ -66,8 +75,16 @@ impl Plan {
                 while end < members.len() && end < first + SLOTS && members[end] < 32 {
                     end += 1;
                 }
+            } else if lookahead {
+                while end < members.len() && end < first + LEGACY_GROUPS && members[end] >= 32 {
+                    end += 1;
+                }
             }
-            units.push([first as u16, end as u16]);
+            let legacy = lookahead && members[first] >= 32;
+            units.push([
+                first as u16,
+                end as u16 | if legacy { LEGACY_UNIT } else { 0 },
+            ]);
             let mut next_slot = 0;
             for &host in &streamed[first..end] {
                 slots.push(if host {
@@ -89,6 +106,7 @@ impl Plan {
             slots,
             issued: 0,
             consumed: 0,
+            next_group: 0,
             occupied: [None; 2],
             live: 0,
             peak: 0,
@@ -101,8 +119,9 @@ impl Plan {
         Ok(Unit {
             index,
             first: first as usize,
-            end: end as usize,
+            end: (end & !LEGACY_UNIT) as usize,
             bank: index % 2,
+            legacy: end & LEGACY_UNIT != 0,
         })
     }
     fn authenticate(&self, unit: Unit) -> Result<()> {
@@ -138,10 +157,10 @@ impl Plan {
         self.issued += 1;
         Ok(Some(unit))
     }
-    pub(super) fn current(&self, first: usize) -> Result<Unit> {
+    pub(super) fn current(&self, group: usize) -> Result<Unit> {
         let unit = self.unit(self.consumed)?;
         self.authenticate(unit)?;
-        if unit.first != first {
+        if group != self.next_group || !(unit.first..unit.end).contains(&group) {
             return Err(reject());
         }
         Ok(unit)
@@ -161,7 +180,39 @@ impl Plan {
     /// unit+2's host copies; every actual overwrite still waits real readers.
     pub(super) fn consumed(&mut self, unit: Unit) -> Result<()> {
         self.authenticate(unit)?;
-        if unit.index != self.consumed {
+        // A real small cohort (or the unchanged original singleton path) closes
+        // all of its groups together. A lookahead legacy upload unit must use
+        // complete_group after EACH original final DOWN instead.
+        if unit.legacy || self.next_group != unit.first {
+            return Err(reject());
+        }
+        self.retire(unit, unit.end)
+    }
+    /// Advance only the next genuinely enqueued original legacy group. This is
+    /// host bookkeeping, never a claim that a copy or kernel has completed.
+    /// The original native group-end marker remains the caller's prerequisite.
+    #[cfg(any(test, feature = "strata-raw-lookahead"))]
+    pub(super) fn complete_group(&mut self, unit: Unit, group: usize) -> Result<bool> {
+        self.authenticate(unit)?;
+        if !unit.legacy
+            || unit.index != self.consumed
+            || group != self.next_group
+            || !(unit.first..unit.end).contains(&group)
+        {
+            return Err(reject());
+        }
+        let next = group + 1;
+        if next == unit.end {
+            self.retire(unit, next)?;
+            Ok(true)
+        } else {
+            self.next_group = next;
+            Ok(false)
+        }
+    }
+    fn retire(&mut self, unit: Unit, next: usize) -> Result<()> {
+        self.authenticate(unit)?;
+        if unit.index != self.consumed || next != unit.end {
             return Err(reject());
         }
         let misses = self.slots[unit.first..unit.end]
@@ -171,11 +222,13 @@ impl Plan {
         self.live = self.live.checked_sub(misses).ok_or_else(reject)?;
         self.occupied[unit.bank] = None;
         self.consumed += 1;
+        self.next_group = next;
         Ok(())
     }
     pub(super) fn finish(&self) -> Result<(usize, usize, usize, usize)> {
         if self.issued != self.units.len()
             || self.consumed != self.units.len()
+            || self.next_group != self.slots.len()
             || self.live != 0
             || self.occupied != [None; 2]
         {
@@ -188,11 +241,29 @@ impl Plan {
             self.copy_units,
         ))
     }
+    #[cfg(any(test, feature = "strata-raw-lookahead"))]
+    pub(super) fn legacy_geometry(&self) -> Result<[usize; 4]> {
+        self.finish()?;
+        let mut result = [0; 4];
+        for &[first, encoded_end] in self.units.iter() {
+            if encoded_end & LEGACY_UNIT != 0 {
+                let groups = usize::from((encoded_end & !LEGACY_UNIT) - first);
+                result[0] += 1;
+                result[1] += groups;
+                if groups > 1 {
+                    result[2] += 1;
+                    result[3] += groups;
+                }
+            }
+        }
+        Ok(result)
+    }
     fn erase(&mut self) {
         self.units.zeroize();
         self.slots.zeroize();
         self.issued.zeroize();
         self.consumed.zeroize();
+        self.next_group.zeroize();
         self.occupied.zeroize();
         self.live.zeroize();
         self.peak.zeroize();
@@ -227,7 +298,9 @@ mod tests {
                 let host: Vec<_> = (0..len)
                     .map(|i| pattern == 1 || pattern > 1 && (i * 17 + pattern) % 3 != 0)
                     .collect();
-                let mut p = Plan::new(&members, &host).unwrap();
+                // Keep the ORIGINAL singleton policy and its exact oracle even
+                // when this test binary also enables the optional lookahead.
+                let mut p = Plan::with_lookahead(&members, &host, false).unwrap();
                 let mut seen = vec![0; len];
                 let mut first = 0;
                 while first < len {
@@ -301,8 +374,16 @@ mod tests {
         p.erase();
         assert!(p.units.is_empty() && p.slots.is_empty());
         assert_eq!(
-            (p.issued, p.consumed, p.live, p.peak, p.misses, p.copy_units),
-            (0, 0, 0, 0, 0, 0)
+            (
+                p.issued,
+                p.consumed,
+                p.next_group,
+                p.live,
+                p.peak,
+                p.misses,
+                p.copy_units
+            ),
+            (0, 0, 0, 0, 0, 0, 0)
         );
         assert_eq!(p.occupied, [None; 2]);
         let a = unsafe { std::slice::from_raw_parts(p.units.as_ptr().cast::<u8>(), uc * 4) };
@@ -310,3 +391,11 @@ mod tests {
         assert!(a.iter().chain(b).all(|&v| v == 0));
     }
 }
+
+#[cfg(all(test, feature = "strata-raw-lookahead"))]
+#[path = "strata_prompt_raw_lookahead_tests.rs"]
+mod lookahead_tests;
+
+#[cfg(all(test, feature = "strata-raw-lookahead"))]
+#[path = "strata_prompt_raw_lookahead_queue_tests.rs"]
+mod queue_tests;
