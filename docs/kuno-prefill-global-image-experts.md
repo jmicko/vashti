@@ -78,3 +78,12 @@ identities), two runtime grammar controls,16 real layout/CFG shader proofs and
 24 paired original-GPU/F64 controls; original363/49/768 retained. Planned
 366 AppCPU,18/51 runtime,8+9 metadata and792 GPU cases. Complete source is not
 built or accepted; no timing claims or partial GPU tests.
+
+The first composed366 AppCPU controls (including actual16 new modules/CFG) and
+18 feature-off runtime controls pass. The full metadata fixture initially lacked
+its feature-forward declaration; it failed before running any full runtime
+control. Preserve that build attempt. The source audit also aligns the original
+FP16 byte counter with actual image production even when quantized controls
+remain compiled: count all real groups once, not only non-cohort groups. This
+is profiling metadata, not an inference arithmetic change. Full acceptance and
+all live testing remain pending.
