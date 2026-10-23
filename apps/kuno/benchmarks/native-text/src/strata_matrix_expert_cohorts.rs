@@ -3,6 +3,9 @@
 #[cfg(feature="strata-expert-ordered-output")]
 #[path="strata_matrix_ordered_cohorts.rs"]
 pub(crate) mod ordered;
+#[cfg(feature="strata-small-direct-publish")]
+#[path="strata_matrix_cohort_small_direct.rs"]
+pub(crate) mod small_direct;
 #[cfg(feature="strata-expert-ordered-output")]
 pub(crate) use ordered::launch as launch_ordered;
 use super::*;
