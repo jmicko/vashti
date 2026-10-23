@@ -18,8 +18,57 @@ pub(super) struct Cohort {
     grid: Option<View>,
     addresses: Option<View>,
     gu: Option<View>,
+    partial: Option<View>,
     h: Option<View>,
     status: Option<View>,
+    quad_images: Option<bool>,
+    ordered_down: Option<bool>,
+}
+
+fn image_variant(name: &str, expected: &str) -> Option<bool> {
+    if name == expected {
+        return Some(false);
+    }
+    #[cfg(feature = "kuno-dequant-quad32")]
+    if matches!(
+        (expected, name),
+        (
+            "StrataExpertCohortGuImage",
+            "StrataExpertCohortGuQuad32Image"
+        ) | (
+            "StrataExpertCohortDownImage",
+            "StrataExpertCohortDownQuad32Image"
+        )
+    ) {
+        return Some(true);
+    }
+    None
+}
+
+fn matrix_variant(name: &str, down: bool) -> Option<bool> {
+    if name
+        .split_once("::cohorts::expert_cohort::")
+        .is_some_and(|(_, v)| {
+            v.strip_prefix("ExpertCohort")
+                .is_some_and(|s| s.is_empty() || s.starts_with('<'))
+        })
+    {
+        return Some(false);
+    }
+    #[cfg(feature = "kuno-expert-ordered-output")]
+    if down
+        && name
+            .split_once("::strata_matrix::cohorts::ordered::expert_cohort::")
+            .is_some_and(|(_, v)| {
+                v.strip_prefix("ExpertCohort")
+                    .is_some_and(|s| s.is_empty() || (s.starts_with('<') && s.ends_with('>')))
+            })
+    {
+        return Some(true);
+    }
+    #[cfg(not(feature = "kuno-expert-ordered-output"))]
+    let _ = down;
+    None
 }
 struct Words([u32; 48]);
 impl core::ops::Deref for Words {
@@ -138,8 +187,11 @@ impl Cohort {
             grid: None,
             addresses: None,
             gu: None,
+            partial: None,
             h: None,
             status: None,
+            quad_images: None,
+            ordered_down: None,
         })
     }
     fn expected(&self) -> Option<(&'static str, bool, u32)> {
@@ -184,13 +236,29 @@ impl Cohort {
             .ok_or_else(|| batch_fault("native expert cohort surplus phase"))?;
         let matrix = expected.starts_with("matrix");
         let down = expected == "matrix-down" || expected == "StrataExpertCohortDownImage";
-        let is_matrix = name
-            .split_once("::cohorts::expert_cohort::")
-            .is_some_and(|(_, v)| {
-                v.strip_prefix("ExpertCohort")
-                    .is_some_and(|s| s.is_empty() || s.starts_with('<'))
-            });
-        if release != expected_release || if matrix { !is_matrix } else { name != expected } {
+        let ordered = if matrix {
+            matrix_variant(name, down)
+        } else {
+            None
+        };
+        let image = matches!(
+            expected,
+            "StrataExpertCohortGuImage" | "StrataExpertCohortDownImage"
+        );
+        let quad = if image {
+            image_variant(name, expected)
+        } else {
+            None
+        };
+        if release != expected_release
+            || if matrix {
+                ordered.is_none()
+            } else if image {
+                quad.is_none()
+            } else {
+                name != expected
+            }
+        {
             return Err(batch_fault("native expert cohort authentic phase/order"));
         }
         let w = values(args)?;
@@ -256,6 +324,16 @@ impl Cohort {
                 if Some(views[4]) != self.status {
                     return Err(batch_fault("native expert cohort status producer changed"));
                 }
+                if self.partial.is_some_and(|old| old != views[2]) {
+                    return Err(batch_fault("native expert cohort DOWN owner changed"));
+                }
+                if self.ordered_down.is_some_and(|old| Some(old) != ordered) {
+                    return Err(batch_fault(
+                        "native expert cohort DOWN layout family changed",
+                    ));
+                }
+                self.partial = Some(views[2]);
+                self.ordered_down = ordered;
             } else {
                 if self.gu.is_some_and(|v| v != views[2])
                     || self.status.is_some_and(|v| v != views[4])
@@ -314,6 +392,7 @@ impl Cohort {
             }
             self.h = Some(views[2]);
         } else {
+            let quad = quad.ok_or_else(|| batch_fault("native expert cohort image identity"))?;
             let offset = usize::from(!down);
             let expected_len = 7 + offset;
             if args.buffers.len() != expected_len
@@ -323,7 +402,8 @@ impl Cohort {
                 || w[1] != if down { 640 } else { 2560 }
                 || w[2] != if down { 2560 } else { 1280 }
                 || w[5] != if down { 2 } else { 0 }
-                || !matches!(count,CubeCount::Static(x,1,c)if *x==(w[1]*w[2]/32).div_ceil(256) && *c==z)
+                || !matches!(count,CubeCount::Static(x,1,c)if *x==(w[1]*w[2]/if quad {8}else{32}).div_ceil(256) && *c==z)
+                || self.quad_images.is_some_and(|old| old != quad)
             {
                 return Err(batch_fault(
                     "native expert cohort exact dequant role/schema",
@@ -359,6 +439,7 @@ impl Cohort {
             self.images = Some(image);
             self.grid = Some(grid);
             self.addresses = Some(addresses);
+            self.quad_images = Some(quad);
         }
         self.phase += 1;
         Ok(self.expected().is_none())
@@ -367,6 +448,10 @@ impl Cohort {
         self.words[9] as usize
     }
 }
+
+#[cfg(test)]
+#[path = "native_expert_cohort_grammar_tests.rs"]
+mod tests;
 impl Drop for Cohort {
     fn drop(&mut self) {
         for word in &mut self.words {
