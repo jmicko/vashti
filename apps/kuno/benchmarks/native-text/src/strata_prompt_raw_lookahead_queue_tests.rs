@@ -22,7 +22,12 @@ fn node(copy: bool, release_after: bool, accesses: Vec<Access>) -> NodeAccess {
         accesses,
     }
 }
-fn prefetch(raw: &mut Plan, nodes: &mut Vec<NodeAccess>, uploads: &mut [usize; 12]) {
+fn prefetch(
+    raw: &mut Plan,
+    nodes: &mut Vec<NodeAccess>,
+    uploads: &mut [usize; 12],
+    copy_boundaries: bool,
+) {
     while let Some(unit) = raw.issue_next().unwrap() {
         for group in unit.first..unit.end {
             let slot = raw.slot(unit, group).unwrap().unwrap();
@@ -41,12 +46,28 @@ fn prefetch(raw: &mut Plan, nodes: &mut Vec<NodeAccess>, uploads: &mut [usize; 1
                     )],
                 ));
             }
+            // The production cut is after the captured expert command's final
+            // real role copy, never between the roles of that expert.
+            if copy_boundaries {
+                nodes.last_mut().unwrap().release_after = true;
+            }
         }
     }
 }
 
 #[test]
 fn eight_legacy_groups_replay_real_raw_read_release_before_math_and_after_compaction() {
+    // Preserve the original accepted four-expert COPY-segment oracle even
+    // when the new production feature is enabled.
+    check_slot_waits(false);
+}
+
+#[test]
+fn per_expert_copies_keep_each_original_slot_wait_before_and_after_compaction() {
+    check_slot_waits(true);
+}
+
+fn check_slot_waits(copy_boundaries: bool) {
     for dequant_release in [false, true] {
         for compact in [false, true] {
             let mut raw = Plan::new(&[64; 12], &[true; 12]).unwrap();
@@ -54,7 +75,7 @@ fn eight_legacy_groups_replay_real_raw_read_release_before_math_and_after_compac
             let mut uploads = [usize::MAX; 12];
             let mut dequant = [usize::MAX; 12];
             let mut down_math = [usize::MAX; 12];
-            prefetch(&mut raw, &mut nodes, &mut uploads);
+            prefetch(&mut raw, &mut nodes, &mut uploads, copy_boundaries);
             assert!(uploads[..8].iter().all(|&i| i != usize::MAX));
             assert!(uploads[8..].iter().all(|&i| i == usize::MAX));
 
@@ -106,7 +127,7 @@ fn eight_legacy_groups_replay_real_raw_read_release_before_math_and_after_compac
                     ],
                 ));
                 if raw.complete_group(unit, group).unwrap() {
-                    prefetch(&mut raw, &mut nodes, &mut uploads);
+                    prefetch(&mut raw, &mut nodes, &mut uploads, copy_boundaries);
                 }
             }
             let (misses, resident, peak, copy_units) = raw.finish().unwrap();
@@ -127,17 +148,36 @@ fn eight_legacy_groups_replay_real_raw_read_release_before_math_and_after_compac
             if compact {
                 actual.compact_segments().unwrap();
             }
-            let refill = &actual.segments[actual.node_segments[uploads[8]]];
-            let old_read = &actual.segments[actual.node_segments[dequant[3]]];
-            let old_math = &actual.segments[actual.node_segments[down_math[3]]];
-            assert!(refill.copy);
-            assert_eq!(refill.waits[0], old_read.signal);
-            if dequant_release {
-                assert!(refill.waits[0] < old_math.signal);
-            } else {
-                // Negative control: omitting the genuine early-release marker
-                // drags the same refill behind matrix work. No wait is waived.
-                assert_eq!(refill.waits[0], old_math.signal);
+            for replacement in 8..12 {
+                let old = if copy_boundaries { replacement - 8 } else { 3 };
+                let refill = &actual.segments[actual.node_segments[uploads[replacement]]];
+                let old_read = &actual.segments[actual.node_segments[dequant[old]]];
+                let old_math = &actual.segments[actual.node_segments[down_math[old]]];
+                assert!(refill.copy);
+                assert_eq!(refill.waits[0], old_read.signal);
+                if dequant_release {
+                    assert!(refill.waits[0] < old_math.signal);
+                } else {
+                    // Negative control: omitting the genuine early release
+                    // drags each same slot behind its own original math.
+                    assert_eq!(refill.waits[0], old_math.signal);
+                }
+            }
+            for group in 0..12 {
+                let first = actual.node_segments[uploads[group]];
+                assert!((1..3).all(|role| actual.node_segments[uploads[group] + role] == first));
+                if copy_boundaries && group % 4 != 3 {
+                    assert_ne!(first, actual.node_segments[uploads[group + 1]]);
+                }
+            }
+            if copy_boundaries {
+                // The first DQ imports only its own initial upload endpoint,
+                // allowing later initial-slot DMA to overlap its compute.
+                let dq0 = &actual.segments[actual.node_segments[dequant[0]]];
+                let copy0 = &actual.segments[actual.node_segments[uploads[0]]];
+                let copy7 = &actual.segments[actual.node_segments[uploads[7]]];
+                assert_eq!(dq0.waits[1], copy0.signal);
+                assert!(dq0.waits[1] < copy7.signal);
             }
             for bank in 1..=2 {
                 assert!(actual.conflicts(&[access(bank, 0, BANK, true)]).unwrap());
@@ -150,5 +190,101 @@ fn eight_legacy_groups_replay_real_raw_read_release_before_math_and_after_compac
                 );
             }
         }
+    }
+}
+
+#[test]
+fn per_expert_copy_cuts_preserve_each_main_and_shared_reader_wait() {
+    for compact in [false, true] {
+        let mut nodes = Vec::new();
+        let mut main_read = [0; 4];
+        let mut shared_read = [0; 4];
+        let mut uploads = [0; 4];
+        for slot in 0..4 {
+            main_read[slot] = nodes.len();
+            nodes.push(node(
+                false,
+                true,
+                vec![access(1, slot as u64 * SLOT, SLOT, false)],
+            ));
+            shared_read[slot] = nodes.len();
+            let mut shared = node(
+                false,
+                true,
+                vec![access(1, slot as u64 * SLOT, SLOT, false)],
+            );
+            shared.shared = true;
+            nodes.push(shared);
+        }
+        for slot in 0..4 {
+            uploads[slot] = nodes.len();
+            nodes.push(node(
+                true,
+                true,
+                vec![access(1, slot as u64 * SLOT, SLOT, true)],
+            ));
+            // A real later main reader observes this original COPY endpoint,
+            // so neither that endpoint nor its required peer waits disappear.
+        }
+        for slot in 0..4 {
+            nodes.push(node(
+                false,
+                true,
+                vec![access(1, slot as u64 * SLOT, SLOT, false)],
+            ));
+        }
+        let mut planner = Planner::new(nodes.len(), false).unwrap();
+        for n in &nodes {
+            planner.push(n).unwrap();
+        }
+        let mut actual = planner.finish().unwrap();
+        if compact {
+            actual.compact_segments().unwrap();
+        }
+        for slot in 0..4 {
+            let upload = &actual.segments[actual.node_segments[uploads[slot]]];
+            let main = &actual.segments[actual.node_segments[main_read[slot]]];
+            let shared = &actual.segments[actual.node_segments[shared_read[slot]]];
+            assert!(upload.copy && !upload.shared);
+            assert_eq!(upload.waits, [main.signal, 0, shared.signal]);
+            assert_eq!(upload.wait, main.signal.max(shared.signal));
+            if slot != 3 {
+                assert!(upload.waits[2]
+                    < actual.segments[actual.node_segments[shared_read[slot + 1]]].signal);
+            }
+        }
+    }
+}
+
+#[test]
+fn per_expert_copy_cuts_do_not_narrow_a_whole_bank_cohort_reader() {
+    for compact in [false, true] {
+        let mut nodes = vec![
+            node(false, true, vec![access(1, 0, BANK, false)]),
+            node(false, true, vec![access(2, 0, 4096, true)]),
+        ];
+        let mut uploads = [0; 4];
+        for slot in 0..4 {
+            uploads[slot] = nodes.len();
+            nodes.push(node(
+                true,
+                true,
+                vec![access(1, slot as u64 * SLOT, SLOT, true)],
+            ));
+        }
+        let mut planner = Planner::new(nodes.len(), false).unwrap();
+        for n in &nodes {
+            planner.push(n).unwrap();
+        }
+        let mut actual = planner.finish().unwrap();
+        if compact {
+            actual.compact_segments().unwrap();
+        }
+        let cohort = &actual.segments[actual.node_segments[0]];
+        for upload in uploads {
+            let copy = &actual.segments[actual.node_segments[upload]];
+            assert_eq!(copy.waits[0], cohort.signal);
+        }
+        assert!(actual.conflicts(&[access(1, 4 * SLOT, 4 * SLOT, true)]).unwrap());
     }
 }

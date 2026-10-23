@@ -275,9 +275,6 @@ impl WgpuServer {
                         receipt.launches += 1;
                     }
                     NativeStrataExpertCommand::HostCopies(copies) => {
-                        self.scheduler
-                            .stream(&stream_id)
-                            .check_native_expert_batch(&scope)?;
                         let mut actual = Vec::with_capacity(copies.0.len());
                         for copy in &copies.0 {
                             let source = resources[indices[&key(&copy.source)]].clone();
@@ -292,7 +289,11 @@ impl WgpuServer {
                         }
                         self.scheduler
                             .stream(&stream_id)
-                            .stage_public_host_copies_owned(&actual, Some(owners.clone()))?;
+                            .stage_public_host_copies_owned(
+                                &actual,
+                                Some(owners.clone()),
+                                Some(&scope),
+                            )?;
                         receipt.copy_segments += actual.len();
                     }
                 }

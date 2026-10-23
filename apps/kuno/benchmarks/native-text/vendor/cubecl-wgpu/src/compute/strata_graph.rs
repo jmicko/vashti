@@ -1677,6 +1677,35 @@ impl Graph {
         self.nodes.push(node);
         Ok(())
     }
+    /// Preserve the end of one genuine captured expert's HOST-copy command.
+    /// Every actual role remains in the same copy segment. A following expert
+    /// can then wait on its own old slot reader instead of raising this entire
+    /// segment's wait to the final reader of a four-group upload unit.
+    #[cfg(feature = "kuno-raw-slot-overlap")]
+    pub(crate) fn release_expert_host_copies(&mut self, copies: usize) -> Result<(), ServerError> {
+        let first = self
+            .nodes
+            .len()
+            .checked_sub(copies)
+            .filter(|_| copies != 0)
+            .ok_or_else(|| fault("native expert host copy boundary extent"))?;
+        let nodes = &mut self.nodes[first..];
+        let shared = nodes[0].shared;
+        if nodes.iter().any(|node| {
+            !matches!(node.dispatch, Dispatch::Copy)
+                || node.pipeline.is_some()
+                || node.owners.is_none()
+                || node.resources.len() != 2
+                || node.shared != shared
+                || node.release_after
+        }) {
+            return Err(fault("native expert host copy boundary actual transfers"));
+        }
+        // No node/source/access/owner/queue changes. The original Planner uses
+        // this genuine endpoint and retains all MAIN/COPY/SHARED wait entries.
+        nodes.last_mut().unwrap().release_after = true;
+        Ok(())
+    }
     fn visit_node_bindings(
         &self,
         n: &Node,

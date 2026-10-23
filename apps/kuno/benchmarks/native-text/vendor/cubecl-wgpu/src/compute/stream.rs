@@ -813,7 +813,7 @@ impl WgpuStream {
             u64,
         )],
     ) -> Result<(), ServerError> {
-        self.stage_public_host_copies_owned(copies, None)
+        self.stage_public_host_copies_owned(copies, None, None)
     }
     #[allow(clippy::type_complexity)]
     pub(crate) fn stage_public_host_copies_owned(
@@ -826,8 +826,20 @@ impl WgpuStream {
             u64,
         )],
         owners: Option<Arc<Vec<cubecl_runtime::server::Binding>>>,
+        expert_scope: Option<&super::transient_io::NativeExpertBatchScope>,
     ) -> Result<(), ServerError> {
         self.private_io_active()?;
+        // Only the already validated complete expert batch can request a cut
+        // after its original HostCopies command. This remains an enqueue
+        // boundary, never completion or permission to reuse an owning range.
+        if let Some(scope) = expert_scope {
+            self.check_native_expert_batch(scope)?;
+            if owners.is_none() || self.strata_graph.is_none() {
+                return Err(super::transient_io::fault(
+                    "native expert host copy retained graph required",
+                ));
+            }
+        }
         // Validate every physical range before changing the encoder or graph.
         for (i, (source, sfirst, target, tfirst, bytes)) in copies.iter().enumerate() {
             let s = source.resource();
@@ -882,6 +894,13 @@ impl WgpuStream {
                     .copy_buffer_to_buffer(&s.buffer, *sfirst, &t.buffer, *tfirst, *bytes);
             }
             self.tasks_count += 1;
+        }
+        #[cfg(feature = "kuno-raw-slot-overlap")]
+        if expert_scope.is_some() && !copies.is_empty() {
+            self.strata_graph
+                .as_mut()
+                .unwrap()
+                .release_expert_host_copies(copies.len())?;
         }
         scopes.finish(self.transient_io.as_mut().unwrap());
         self.flush_if_needed();

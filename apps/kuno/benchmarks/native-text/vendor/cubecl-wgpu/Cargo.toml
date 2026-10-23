@@ -41,6 +41,7 @@ kuno-expert-cohorts = ["kuno-strata-shared", "cubecl-runtime/kuno-expert-cohorts
 kuno-native-prepared = ["kuno-strata-shared"]
 kuno-compute-main = ["kuno-strata-shared"]
 kuno-copy-cohorts = ["kuno-public-host-clock"]
+kuno-raw-slot-overlap = ["kuno-expert-cohorts", "kuno-copy-cohorts"]
 kuno-strata-shared = []
 kuno-native-unused-descriptors = []
 kuno-public-host-clock = ["dep:libc"]
