@@ -755,8 +755,9 @@ fn compile(
     options.vulkan.supports_uniform_standard_layout = mask & 1 != 0;
     options.vulkan.supports_uniform_unsized_array = mask & 2 != 0;
     options.vulkan.supports_explicit_smem = mask & 4 != 0;
+    let mut compiler=AutoCompiler::SpirV(Default::default());
     let AutoRepresentation::SpirV(kernel) = Compiler::compile(
-        &mut AutoCompiler::SpirV(Default::default()),
+        &mut compiler,
         definition(down, direct),
         &options,
         ExecutionMode::Unchecked,
@@ -772,6 +773,16 @@ fn compile(
             LOGICAL_BYTES
         }
     {
+        #[cfg(test)]
+        if let AutoCompiler::SpirV(c)=&compiler {
+            eprintln!("deep_public_shared_allocations {:?}",c.shared_liveness.allocations);
+            for node in c.opt.node_ids() {
+                let live=c.shared_liveness.at_block(node);
+                if !live.is_empty() {
+                    eprintln!("deep_public_shared_block node={node:?} uniform={} live={live:?}",c.uniformity.is_block_uniform(node));
+                }
+            }
+        }
         return Err(format!("deep wide expert actual physical/logical shared layout: actual={} expected={} mask={mask} down={down} direct={direct}",
             kernel.shared_size,if mask&4!=0 {OPERAND_BYTES}else{LOGICAL_BYTES}).into());
     }
