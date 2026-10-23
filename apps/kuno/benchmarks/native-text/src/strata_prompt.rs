@@ -1033,27 +1033,33 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
     )?;
     gr_timing.mark("hc_sample_norm")?;
     let client = q.client;
-    packed_gr_projection(
-        client,
-        &normalized,
-        &weights[0],
-        &down,
-        &q.fault,
-        q.count,
-        10240,
-        320,
-    )?;
-    gr_timing.mark("hc_sample_down")?;
-    if q.inject {
+    #[cfg(feature="strata-hc-down-inject")]
+    let fused_down_injection = if q.inject {
+        // Retain the original complete STAGES normalized-image identity and
+        // active Scope. The combined raw implementation does not invent one.
+        STAGES.with(|s| {
+            if s.borrow().as_ref().is_some_and(|s| s.gr_input(&normalized,10240)) {
+                Ok(())
+            } else {Err(invalid_buffer_length())}
+        })?;
+        crate::strata_matrix::hc_down_inject(client,
+            [normalized.clone(),weights[0].clone(),weights[2].clone(),down.clone(),
+                q.injection.clone(),q.fault.clone()],stages()?[1].clone(),q.count)?
+    } else {false};
+    #[cfg(not(feature="strata-hc-down-inject"))]
+    let fused_down_injection=false;
+    if !fused_down_injection {
         packed_gr_projection(
-            client,
-            &normalized,
-            &weights[2],
-            &q.injection,
-            &q.fault,
-            q.count,
-            10240,
-            4,
+            client, &normalized, &weights[0], &down, &q.fault,
+            q.count, 10240, 320,
+        )?;
+    }
+    // With the combined path this phase includes BOTH original products.
+    gr_timing.mark("hc_sample_down")?;
+    if q.inject && !fused_down_injection {
+        packed_gr_projection(
+            client, &normalized, &weights[2], &q.injection, &q.fault,
+            q.count, 10240, 4,
         )?;
     }
     gr_timing.mark("hc_sample_injection")?;

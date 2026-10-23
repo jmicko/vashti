@@ -469,6 +469,8 @@ include!("strata_matrix_native_direct_store.rs");
 include!("strata_matrix_dense_slm40.rs");
 #[cfg(feature="strata-dense-prefix")]
 include!("strata_matrix_dense_prefix.rs");
+#[cfg(feature="strata-hc-down-inject")]
+include!("strata_matrix_hc_down_inject.rs");
 
 #[allow(clippy::too_many_arguments)]
 fn selected(

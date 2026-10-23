@@ -47,6 +47,21 @@ mod prefix_probe;
 #[cfg(feature="strata-dense-prefix")]
 pub(crate) use prefix_probe::cases as public_prefix_numeric;
 
+#[cfg(feature="strata-hc-down-inject")]
+#[path="strata_matrix_hc_down_inject_probe.rs"]
+mod hc_down_inject_probe;
+#[cfg(feature="strata-hc-down-inject")]
+pub(crate) use hc_down_inject_probe::cases as public_hc_down_inject_numeric;
+
+/// Production-only full owner/scope entry. Public raw comparison uses the same
+/// validated implementation directly and never fabricates this prompt Scope.
+#[cfg(feature="strata-hc-down-inject")]
+pub(crate) fn hc_down_inject(client:&ComputeClient<WgpuRuntime>,h:[Handle;6],
+    workspace:Handle,count:usize)->Result<bool> {
+    if !crate::strata_prompt::active() {return Err(Error::InvalidBufferLength);}
+    native_wide::try_hc_down_inject(client,h,workspace,count,0,0)
+}
+
 #[cfg(feature = "strata-tiny-output")]
 #[path = "strata_matrix_tiny_probe.rs"]
 mod tiny_probe;
@@ -2834,6 +2849,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         native_wide::validate_direct_sources()?;
         #[cfg(feature="strata-dense-slm40")]
         native_wide::validate_slm40_sources()?;
+        #[cfg(feature="strata-hc-down-inject")]
+        native_wide::validate_hc_down_inject_sources()?;
     }
     Ok(())
 }
