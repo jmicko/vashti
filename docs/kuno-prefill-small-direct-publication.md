@@ -30,14 +30,55 @@ Counters retain their meanings: native GU checks count all actual groups;
 direct-GU prefix counts remain wide-prefix counts. Additive selected-launch
 counters identify the small direct kernels. Eligibility alone is not execution.
 
-Intended complete validation adds seven application CPU controls, seven runtime
+Complete validation adds eight application CPU controls, seven runtime
 controls, 176 compiler layouts (18 regular plus4 grouped definitions, each with
 8 layouts), and104 paired numerical controls (68 regular plus36 grouped) to the
 previous326 application CPU,34 full runtime and573 GPU controls. The original
 feature-off controls, separate eight metadata controls, shader populations and
 both original18-script whole-model chains remain. Existing public numerical
-oracles, source/owner/fault checks and tolerances are unchanged. Compilation and
-GPU results are pending; these planned counts do not establish acceptance.
+oracles, source/owner/fault checks and tolerances are unchanged.
+
+## Completed acceptance, 2026-10-23
+
+Frozen source `4cc3f68f030a859ab36c15b6dad4547ba1da0292`, worker
+`19d3606e258037e027563b4f299bfdff5d9cc717d0af54a8e24acfb52cbce7c0`
+passes334 selected application CPU controls,18 feature-off and41 full runtime
+controls,8 separate original metadata controls, all original compiler
+populations and176 added layouts. All677 GPU controls pass, including all573
+previous controls,68 regular small-direct and36 grouped small-direct controls.
+The21 deep-only64KiB controls remain explicitly unavailable on this48KiB device.
+Both unchanged18-script whole-model chains pass with original routing totals
+[7663,26673,26673], actual new selection counters and physical recovery.
+
+The selected complete implementation is271d261a,7dbadaac,89b781fe,95134b22,
+5f5f2358,1ca4e84e and4cc3f68f. Three failed preparation attempts are retained:
+an obsolete source-text fixture required updating for the explicit old/new
+selector; the real HAL needed to insert a typed264 subgroup memory-semantics
+constant for global-operand kernels which have no workgroup barrier; and the
+new offline validator needed the actual selected standard-uniform-layout flag.
+The HAL change adds no barrier and retains rejection of malformed mixed scopes.
+An additional CPU test checks real emitted global/cohort modules, untouched
+instruction words, idempotence and ID-bound overflow. No numerical tolerance
+or original ownership check was weakened.
+
+Diagnostic first/repeated long prompt times are11.004590487/8.946788843s in
+profile mode and10.967607646/8.854793404s in host-profile mode. The latter is
+slightly slower than preceding10.134471518/8.745485045s; it is not evidence of
+clean parity or a reason to discard part of this coherent producer/consumer
+change. Matched layer24 matrix time rises36.353866->39.483661ms, including
+cohorts10.839204->12.709929ms. Dequant19.224670ms and copy29.172595ms remain.
+All8 actual wide programs and all new small programs have zero spills; the two
+older unrelated spilling program hashes and original QSA ISA remain unchanged.
+
+Evidence under `kuno-development`: `small-direct-root-build-receipt-20261023.json`,
+`strata-parity-small-direct-20261023-expert-cohorts-public-summary.json`,
+`small-direct-{profile,normal}-safe-phases-20261023.json`,
+`small-direct-complete-isa-export-20261023.json` and
+`small-direct-final-state-20261023.json`. The protected service exited0 in
+11m46.908s, peak swap0; Intel recovered to50,688,000B, NVIDIA compute0, all five
+kernel fault counts0, admission normal and Kuno/Ollama/Vashti HTTP200.
+The original clean45/4245/4245 comparison is running separately; no clean speed
+result or installation is claimed here.
 
 The complete bundle is measured only after correctness and physical recovery
 checks. A diagnostic speed result does not by itself establish Strata parity or

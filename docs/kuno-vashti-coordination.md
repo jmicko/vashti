@@ -1,6 +1,39 @@
 # Kuno and Vashti Coordination
 
 
+**Active Kuno handoff (2026-10-23): complete small-expert publication accepted; fused small quantized matrices next.**
+
+Frozen source4cc3f68f / worker19d3606e258037e027563b4f299bfdff5d9cc717d0af54a8e24acfb52cbce7c0
+passes334 AppCPU,18 feature-off/41 full runtime,8 original metadata, all original
+compiler populations plus176 layouts, all677 GPU controls and BOTH unchanged
+18-script full-model chains. Routing[7663,26673,26673], actual selection and
+physical recovery pass.21 deep-only64KiB controls remain unavailable on48KiB
+hardware. Read [complete small-publication evidence](kuno-prefill-small-direct-publication.md).
+No numerical or ownership guard was weakened. Protected run exited0 in11m46.908s,
+swap0; Intel50,688,000B, NVIDIA compute0, kernel faults0, HTTP200/admission normal.
+All8 wide and all new small ISA programs have zero spills; old two unrelated
+spilling hashes and original QSA ISA remain unchanged.
+
+Diagnostic profile first/repeated11.004590487/8.946788843s; host-profile
+10.967607646/8.854793404s, versus preceding10.134471518/8.745485045s. This is not a
+speed win. Keep the coherent bundle and address the next real difference.
+The original clean45/4245/4245 comparison is running, with no timing barriers;
+Strata clean5.3515s remains UNMET. Existing host-profile mode retains coarse
+Timer fences and must not be called clean. No installed binary changed.
+
+Next coherent design targets groups<32: they account for186.3GB of262.2GB
+FP16 image production in the repeated diagnostic request but only6.78% of
+expert members. The active Strata reference also decodes full images; a fused
+small quantized-CMMA producer is a new Kuno optimization, not an unported Strata
+cache. Preserve exact format decoding, explicit F16 rounding, chronological
+K16 math, original finite/status consumers and all source/lifetime checks.
+The intended complete change includes packed source preparation, matrix
+producers, scheduler and runtime admission together. No partial-component
+performance selection. Root owns integration/builds/GPUs; isolated tasks are
+source-only. Backend internal; required Vashti changes:none. Goal ACTIVE/UNMET.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): shared lifetime/direct8 accepted; complete small-expert publication next.**
 
 Frozen source `c501ab882248fbe29b291fa9eb3b1055a853dc8a`, worker
