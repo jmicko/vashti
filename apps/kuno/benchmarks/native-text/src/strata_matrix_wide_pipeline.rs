@@ -3,6 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) fn validate_program(
     words: &[u32],
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    validate_program_expected(words, 8, "strata_register_stage_accepted")
+}
+
+pub(super) fn validate_program_expected(
+    words: &[u32],
+    expected_products: usize,
+    marker: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     #[cfg(test)]
     if let Some(path) = std::env::var_os("KUNO_TEST_PUBLIC_MATRIX_SPIRV") {
         // Static compiled-public module only; compiled out of all worker binaries.
@@ -81,8 +89,9 @@ pub(super) fn validate_program(
         .iter()
         .flat_map(|(&b, v)| v.iter().filter(|x| x.1 == 4459).map(move |x| (b, x.0)))
         .collect::<Vec<_>>();
-    if products.len() != 8 || products.iter().any(|x| x.0 != products[0].0) {
-        return Err("register stage all eight original products in actual matrix block".into());
+    if products.len() != expected_products || products.is_empty()
+        || products.iter().any(|x| x.0 != products[0].0) {
+        return Err("register stage all chronological products in actual matrix block".into());
     }
     let mut product_loops = Vec::new();
     for &(header, merge) in &loops {
@@ -151,8 +160,9 @@ pub(super) fn validate_program(
             }
         }
     }
-    if loads.len() < 4
-        || stores.len() < 4
+    let minimum_transfers = if expected_products == 16 { 8 } else { 4 };
+    if loads.len() < minimum_transfers
+        || stores.len() < minimum_transfers
         || stores
             .iter()
             .any(|&s| !barriers.iter().any(|&b| before(s, b)))
@@ -166,7 +176,7 @@ pub(super) fn validate_program(
         .into());
     }
     println!(
-        "strata_register_stage_accepted actual_loops={} one_complete_product_loop=true real_global_loads_before_products={} real_slm_stores_after_products={} cfg_iteration_backedge_excluded=true",
+        "{marker} actual_loops={} one_complete_product_loop=true real_global_loads_before_products={} real_slm_stores_after_products={} cfg_iteration_backedge_excluded=true",
         loops.len(),
         loads.len(),
         stores.len()

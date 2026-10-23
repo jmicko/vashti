@@ -1,37 +1,37 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-23): compose HC projection fusion and deeper raw-weight lookahead.**
+**Active Kuno handoff (2026-10-23): compose deep matrices, per-slot uploads and coalesced dequant.**
 
-Read [completed register normalization](kuno-prefill-gr-register-norm.md#complete-5ae19f5e-validation)
-and [completed six-phase diagnostic](kuno-prefill-hc-sample.md#completed-diagnostic8b1fd224).
-The latest complete arithmetic source is5ae19f5e/workerdc00d189:275CPU/15runtime/
-all original shader layouts+2norm modules/ALL457GPU/BOTH unchanged original
-18-script chains/routing[7663,26673,26673]/actual physical recovery PASS.
-Normal first/repeated long9.872980496/8.468479392s; HC~816ms vs prior891ms.
-No clean or installation on this small gain. Prior best clean7.924977071s;
-Strata clean5.3515s remains unmet. Failed earlier numerical fixtures are retained.
+Completed source de309ebfb6db720c4ba5f9c278a205fb41f6701c / worker
+0ccb105762abb62ed1b41d95ce75cf7193b689b184bcb5d5e41f4443b2c1746b passes
+286 selected CPU controls,15 runtime controls,429 original WGSL modules,
+320 original matrix layouts,16 raw,32 composite,24 padded,48 original+8 HC
+register CFG checks,2 normalization and16 HC layouts; ALL469 GPU controls;
+BOTH unchanged original18-script full-model chains; routing[7663,26673,26673]
+and physical recovery. Coupled HC down+injection and eight-group raw lookahead
+are retained. Read their [exact contract/evidence](kuno-prefill-hc-down-inject.md#complete-de309ebf-validation)
+and [lookahead evidence](kuno-prefill-raw-lookahead.md#complete-de309ebf-validation).
+Profile first/repeated long9.728968924/8.419709565s; normal9.797516084/8.355123182s
+versus prior9.872980496/8.468479392s. These are diagnostic, not clean selection.
+Actual new HC producer/finite ISA0spills/fills; original QSA hashes unchanged.
+No clean or installation for this modest gain. Strata clean5.3515s is UNMET.
+Two new outer metadata mistakes (48 vs56 CFG markers,4245 vs4244 batched tokens)
+were corrected with read-only receipt completion, preserving failed originals,
+ALL original checks and completed timings; no favorable hardware rerun.
 
-Diagnostic8b1fd224/workerde3ddfd1 passes276CPU/15runtime/all shader layouts and
-original public full-model profile/recovery. Single4096-token layer24 HC sample
-norm1.503ms/down1.205ms/inject0.990ms/low0.422ms/up1.363ms/mix1.169ms includes
-six completion fences; it is not clean or pure GPU timing. StrataHC185ms excludes
-much of normalization,so do not directly compare it to Kuno's inclusive816ms.
-
-Next coupled source retains all prior optimizations. HC down already computes
-an unused64-feature tail; stage four genuine injection-weight rows there and
-publish them safely to the separate4-column output. Keep originalK16 arithmetic,
-real source owners,padding/finite/fault checks and original suffix fallback; no
-new production payload allocation. Independently group up to four consecutive
-legacy expert groups per original raw bank unit,so two existing banks provide
-up to eight-group lookahead. Preserve sequential group authority,all original
-kernel/end markers,source bytes,whole-root cohort hazards and retirement.
-Original64MiB raw-root allocation and8KiB host quote stay unchanged.
-
-Root owns builds/hardware. CPU implementations use separate detached worktrees
-based8b1fd224; no builds or GPU tests until composed. Exact optional build flags
-are --hc-down-inject and --raw-lookahead. New source is not yet accepted or timed.
-No API/model/context/config/frontend/install/release/reset/reboot change; Vashti:none.
-Keep credentials/private content out of notes. Canonical Vashti checkout untouched.
+Next coupled source is IN PROGRESS, NOT BUILT OR ACCEPTED: double reduction
+stages across dense/medium/large expert matrices with authentic64KiB hardware
+and actual explicit-layout gates; preserve original K16 arithmetic/owners/faults
+and all original fallback/compiler populations. Per-expert actual copy endpoints
+retain existing complete three-role commands and all source/slot/whole-bank
+hazards. Coalesced record32 uses four authentic subgroup lanes and original
+8-value stores. Root owns integration, builds and GPUs; isolated source worktrees
+basedde309ebf only. No compilation during GPU timing. Keep all prior features;
+compose these changes before performance testing. New flags --deep-matrix,
+--raw-slot-overlap,--dequant-quad32 are explicit optional laboratory selectors.
+No API/model/context/config/frontend/install/release/reset/reboot change;
+required Vashti changes:none. Canonical Vashti checkout remains untouched.
+Keep prompts/images/tokens/expert content out of files and receipts.
 
 ## Earlier checkpoints
 

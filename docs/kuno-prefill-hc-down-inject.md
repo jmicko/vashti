@@ -108,3 +108,43 @@ No GPU work or builds were performed by the implementation subtask. Root owns
 builds, hardware, protected execution and final validation. No API, model,
 context, scheduler, privileged control, frontend, installed binary, release,
 GPU reset or reboot changes. Required Vashti changes: none.
+
+## Complete de309ebf validation
+
+Source de309ebfb6db720c4ba5f9c278a205fb41f6701c; frozen worker
+0ccb105762abb62ed1b41d95ce75cf7193b689b184bcb5d5e41f4443b2c1746b.
+286 selected App CPU controls and15 runtime controls PASS. Original429 WGSL,
+320 matrix,16 raw,32 composite,24 padded,48 prior register CFG and2 norm
+layouts remain;8 extra genuine HC CFG and16 HC layouts PASS. All469 GPU
+controls, including12 full-owner bit-exact HC down/injection controls, PASS.
+BOTH unchanged original18-script chains PASS, original route counts
+[7663,26673,26673], genuine model/packed sources, all original numerical,
+owner, erasure, queue, native-prepared and physical recovery guards retained.
+
+Normal first/repeated4245-token prompt9.797516084/8.355123182s; instrumented
+profile9.728968924/8.419709565s. Prior accepted normalization normal
+9.872980496/8.468479392s. Small diagnostic gain only; no clean selection,
+installation or Strata parity claim (clean reference5.3515s). Normal experts
+5.091678941s; inclusive HC768.747164ms. Combined selected down1.249538ms
+includes injection; its separate diagnostic fence0.022271ms is not an unchanged
+injection-kernel interval. New HC native producer/finite actual ISA have zero
+spills/fills; original reference/optimized QSA hashes remain1814b26a/f49c30e1.
+
+Long requests exercise194 fused products per projection,409728 prefix and1940
+suffix token visits; together(4245-1)*97 because PromptPlan batches the prefix
+and processes its final scalar token separately. Old logical full-call coverage
+is gr_wide_tail_products0 + hc_fused_full_down_products97. Lookahead observes
+4415 legacy upload units for7719 groups;1936 multi-group units contain5240
+groups. Same13291 streamed groups,39873 HOST role copies and27345664000 bytes
+per corresponding long request. No role bytes, model cache or arena quote added.
+
+Evidence under /media/jmicko/faststore/kuno-development:
+strata-parity-fused-hc-eight-lookahead-20261023{,-operators,-profile,-normal};
+full aggregate suffix-expert-cohorts-public-summary.json;
+fused-hc-eight-lookahead-root-build-receipt-20261023.json;
+fused-hc-lookahead-complete-isa-export-20261023.json.
+Initial build count guard wrongly expected48 rather than56 CFG markers; outer
+counter guard wrongly included the last scalar token. Failed logs preserved.
+Read-only completions verify every prior control/hash and both existing complete
+chains without rerunning hardware or selecting favorable timings.
+No public/private API or frontend change; required Vashti changes:none.

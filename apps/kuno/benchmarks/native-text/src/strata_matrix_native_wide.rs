@@ -467,6 +467,8 @@ fn dense_wide<F: Float>(
 include!("strata_matrix_native_direct_store.rs");
 #[cfg(feature="strata-dense-slm40")]
 include!("strata_matrix_dense_slm40.rs");
+#[cfg(feature = "strata-deep-matrix")]
+include!("strata_matrix_dense_deep.rs");
 #[cfg(feature="strata-dense-prefix")]
 include!("strata_matrix_dense_prefix.rs");
 #[cfg(feature="strata-hc-down-inject")]

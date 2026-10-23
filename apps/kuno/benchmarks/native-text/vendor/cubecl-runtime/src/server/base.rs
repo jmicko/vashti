@@ -1145,6 +1145,13 @@ where
         })
     }
 
+    /// Whether this server's actual compiler/device enables explicit shared
+    /// memory layout. This is immutable capability, never completion credit.
+    #[cfg(feature = "kuno-deep-matrix")]
+    fn native_explicit_shared_layout(&mut self) -> bool {
+        false
+    }
+
     /// Bounded, same-stream FULL retained allocation metadata only. Does not
     /// execute pending tasks, map bytes, synchronize, allocate GPU memory,
     /// clean a pool, or grant completed-fence credit. Unsupported backends

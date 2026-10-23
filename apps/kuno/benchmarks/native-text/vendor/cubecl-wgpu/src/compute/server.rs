@@ -1008,6 +1008,12 @@ impl ComputeServer for WgpuServer {
         Ok(addresses)
     }
 
+    #[cfg(feature = "kuno-deep-matrix")]
+    fn native_explicit_shared_layout(&mut self) -> bool {
+        self.compilation_options.supports_vulkan
+            && self.compilation_options.vulkan.supports_explicit_smem
+    }
+
     fn retained_resource_metadata(
         &mut self,
         bindings: Vec<Binding>,
