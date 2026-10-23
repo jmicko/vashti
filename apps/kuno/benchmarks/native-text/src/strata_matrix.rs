@@ -2732,6 +2732,12 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-global-image-experts")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
+            && native_expert_wide::global_register::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {
+            return Ok(());
+        }
+
         #[cfg(all(feature="strata-wide-shared-reuse",feature="strata-small-direct-publish"))]
         let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode_small_tail;
         #[cfg(all(feature="strata-wide-shared-reuse",not(feature="strata-small-direct-publish")))]
@@ -2796,6 +2802,12 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-global-image-experts")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
+            && native_expert_wide::global_register::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {
+            return Ok(());
+        }
+
         #[cfg(all(feature="strata-wide-shared-reuse",feature="strata-small-direct-publish"))]
         let reuse_mode=native_expert_wide::shared_reuse::try_expert_mode_small_tail;
         #[cfg(all(feature="strata-wide-shared-reuse",not(feature="strata-small-direct-publish")))]
@@ -2995,6 +3007,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         native_wide::validate_asymmetric_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native_wide::validate_global_register_sources()?;
+        #[cfg(feature="strata-global-image-experts")]
+        native_expert_wide::global_register::validate_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native::deep_macro64::validate_sources()?;
         #[cfg(feature = "strata-deep-matrix")]
@@ -3399,3 +3413,16 @@ pub(crate) use shared_reuse_validation::validate as validate_shared_reuse_source
 mod shared_reuse_probe;
 #[cfg(feature="strata-wide-shared-reuse")]
 pub(crate) use shared_reuse_probe::cases as public_shared_reuse_numeric;
+
+#[cfg(feature="strata-global-image-experts")]
+pub(crate) use native_expert_wide::global_register::validate_sources as validate_global_image_expert_sources;
+#[cfg(feature="strata-global-image-experts")]
+#[path="strata_matrix_global_image_expert_probe.rs"]
+mod global_image_expert_probe;
+#[cfg(feature="strata-global-image-experts")]
+pub(crate) use global_image_expert_probe::cases as public_global_image_expert_numeric;
+
+#[cfg(all(test,feature="strata-global-image-experts"))]
+pub(crate) fn global_image_profile_names()->[&'static str;2] {
+ [core::any::type_name::<native_expert_wide::global_register::expert_global_register_gu::ExpertGlobalRegisterGu<WgpuRuntime>>(),core::any::type_name::<native_expert_wide::global_register::expert_global_register_down::ExpertGlobalRegisterDown<WgpuRuntime>>()]
+}

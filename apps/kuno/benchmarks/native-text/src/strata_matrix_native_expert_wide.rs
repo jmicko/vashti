@@ -6,6 +6,9 @@ pub(super) mod ordered;
 #[cfg(feature="strata-wide-shared-reuse")]
 #[path="strata_matrix_wide_shared_reuse.rs"]
 pub(super) mod shared_reuse;
+#[cfg(feature="strata-global-image-experts")]
+#[path="strata_matrix_global_image_experts.rs"]
+pub(crate) mod global_register;
 use crate::strata_prompt::groups as abi;
 use cubecl::{
     ir::{ElemType, FloatKind, features::MmaConfig},

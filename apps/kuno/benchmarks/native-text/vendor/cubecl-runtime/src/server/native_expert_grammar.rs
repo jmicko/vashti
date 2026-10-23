@@ -120,7 +120,21 @@ fn word(info: &MetadataBindingInfo, index: usize) -> Result<u32, ServerError> {
 fn grid(count: &CubeCount, x: u32, y: u32) -> bool {
     matches!(count, CubeCount::Static(a,b,c) if *a==x && *b==y && *c==1)
 }
+// Exact new identities; this maps roles, never resource or phase authority.
+fn global_register_generated(name:&str,module:&str,ty:&str)->bool {
+ if !cfg!(feature="kuno-global-image-experts") {return false;}
+ let actual=match(module,ty) {
+  ("expert_wide_gu_direct","ExpertWideGuDirect")=>"expert_global_register_gu::ExpertGlobalRegisterGu",
+  ("expert_wide_down","ExpertWideDown")=>"expert_global_register_down::ExpertGlobalRegisterDown",
+  _=>return false,
+ };
+ name.split_once("::strata_matrix::native_expert_wide::global_register::")
+  .is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
+}
 fn generated(name: &str, module: &str, ty: &str) -> bool {
+    if name.contains("::global_register::") {
+        return global_register_generated(name,module,ty);
+    }
     // New entries have their own exact classifier. A forged old family nested
     // inside the new namespace must not escape into legacy suffix matching.
     if name.contains("::small_direct::") || name.contains("::quant_cohort::") { return false; }
@@ -214,7 +228,7 @@ fn is_tail(name: &str, down: bool) -> bool {
     }
 }
 fn ordered_down_layout(name: &str) -> bool {
-    name.contains("::ordered::") || native_strata_small_direct_generated(
+    name.contains("::ordered::") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
         name, "expert_tail_down", "ExpertTailDown")
 }
 fn matrix(
@@ -526,7 +540,7 @@ impl NativeStrataExpertGrammar {
                     self.advance();
                 } else {
                     self.pending = Some(Pending {
-                        params, views, ordered_down: name.contains("::ordered::"),
+                        params, views, ordered_down: ordered_down_layout(name),
                     });
                 }
             }

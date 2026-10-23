@@ -65,3 +65,16 @@ full-pipeline gap.
 
 Contract composed; implementation and all new acceptance are pending. The last
 accepted complete source remains9638aeb8. This is not performance acceptance.
+
+## Composed source checkpoint
+
+Complete feature now includes genuine separately generated global GU and ordered
+DOWN entries, authentic two A/B banks, no operand SLM, original16KiB subgroup
+fallback publication, original host preflight/prefix/tails, original image-cohort
+producer/consumers, exact role/ordered layout grammar and anonymous path counters.
+Quantized numerical/compiler cases remain compiled independently. Added three
+AppCPU controls (two actual-module/geometry controls and real generated profile
+identities), two runtime grammar controls,16 real layout/CFG shader proofs and
+24 paired original-GPU/F64 controls; original363/49/768 retained. Planned
+366 AppCPU,18/51 runtime,8+9 metadata and792 GPU cases. Complete source is not
+built or accepted; no timing claims or partial GPU tests.

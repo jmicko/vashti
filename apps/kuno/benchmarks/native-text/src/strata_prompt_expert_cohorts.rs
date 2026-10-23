@@ -344,7 +344,7 @@ pub(super) fn enqueue_unit(
     words[9]=n as u32;
     validate_words(&words)?;
     crate::strata_prefill_profile::count("expert_narrow_global_groups", n as u64);
-    #[cfg(not(feature = "strata-small-quantized-matrix"))]
+    #[cfg(any(not(feature = "strata-small-quantized-matrix"),feature="strata-global-image-experts"))]
     {
     crate::strata_prefill_profile::count(
         "expert_dequant_record32_records",
@@ -399,9 +399,9 @@ pub(super) fn enqueue_unit(
         ]);
         args = crate::strata_intel_core::bind(args, owners[0].stream)?;
         args = layer_sources.bind_image(args)?;
-        #[cfg(feature = "strata-small-quantized-matrix")]
+        #[cfg(all(feature = "strata-small-quantized-matrix",not(feature="strata-global-image-experts")))]
         compact::launch(client, compact::CompactOp { dtype: p.dtype(), down }, args, &words)?;
-        #[cfg(not(feature = "strata-small-quantized-matrix"))]
+        #[cfg(any(not(feature = "strata-small-quantized-matrix"),feature="strata-global-image-experts"))]
         launch(
             client,
             CohortOp::Image {
@@ -420,12 +420,12 @@ pub(super) fn enqueue_unit(
     for down in [false, true] {
         words[1] = if down { 640 } else { 2560 };
         words[2] = if down { 2560 } else { 1280 };
-        #[cfg(not(feature = "strata-small-quantized-matrix"))]
+        #[cfg(any(not(feature = "strata-small-quantized-matrix"),feature="strata-global-image-experts"))]
         { words[3] = 0; }
-        #[cfg(feature = "strata-small-quantized-matrix")]
+        #[cfg(all(feature = "strata-small-quantized-matrix",not(feature="strata-global-image-experts")))]
         { words[3] = ps[if down { 2 } else { 0 }].row_bytes() as u32; }
         words[5] = if down { 2 } else { 0 };
-        #[cfg(feature = "strata-small-quantized-matrix")]
+        #[cfg(all(feature = "strata-small-quantized-matrix",not(feature="strata-global-image-experts")))]
         for tile in [8usize, 16, 32] {
             if (0..n).any(|i| compact::tile_for(words[17 + i * 4] as usize) == tile) {
                 words[11] = tile as u32;
@@ -441,7 +441,7 @@ pub(super) fn enqueue_unit(
                     if down { "expert_small_quant_down_launches" } else { "expert_small_quant_gu_launches" }, 1);
             }
         }
-        #[cfg(not(feature = "strata-small-quantized-matrix"))]
+        #[cfg(any(not(feature = "strata-small-quantized-matrix"),feature="strata-global-image-experts"))]
         for tile in [8usize, 16] {
             if (0..n).any(|i| (words[17 + i * 4] <= 8) == (tile == 8)) {
                 words[11] = tile as u32;
@@ -497,18 +497,18 @@ pub(super) fn enqueue_unit(
     for (name, value) in [
         ("expert_cohort_groups", n as u64),
         ("expert_cohort_batches", 1),
-        (if cfg!(feature = "strata-small-quantized-matrix") { "expert_small_quant_compact_slots_used" } else { "expert_cohort_image_slots_used" }, n as u64),
-        (if cfg!(feature = "strata-small-quantized-matrix") { "expert_small_quant_compact_slots_capacity" } else { "expert_cohort_image_slots_capacity" }, MAX as u64),
-        (if cfg!(feature = "strata-small-quantized-matrix") { "expert_small_quant_compact_bytes_capacity" } else { "expert_cohort_image_bytes_capacity" },
-            MAX as u64 * if cfg!(feature = "strata-small-quantized-matrix") { stride as u64 } else { IMAGE_BYTES }),
+        (if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { "expert_small_quant_compact_slots_used" } else { "expert_cohort_image_slots_used" }, n as u64),
+        (if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { "expert_small_quant_compact_slots_capacity" } else { "expert_cohort_image_slots_capacity" }, MAX as u64),
+        (if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { "expert_small_quant_compact_bytes_capacity" } else { "expert_cohort_image_bytes_capacity" },
+            MAX as u64 * if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { stride as u64 } else { IMAGE_BYTES }),
         ("expert_cohort_x_owner_bytes", X_BYTES),
         ("expert_cohort_h_owner_bytes", H_BYTES),
         ("expert_cohort_logical_phases", (n * 6) as u64),
-        ("expert_cohort_fp16_image_bytes", if cfg!(feature = "strata-small-quantized-matrix") { 0 } else { n as u64 * IMAGE_BYTES }),
+        ("expert_cohort_fp16_image_bytes", if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { 0 } else { n as u64 * IMAGE_BYTES }),
     ] {
         crate::strata_prefill_profile::count(name, value);
     }
-    #[cfg(feature = "strata-small-quantized-matrix")]
+    #[cfg(all(feature = "strata-small-quantized-matrix",not(feature="strata-global-image-experts")))]
     crate::strata_prefill_profile::count("expert_small_quant_working_owner_bytes", storage::WORKING_BYTES);
     Ok(())
 }

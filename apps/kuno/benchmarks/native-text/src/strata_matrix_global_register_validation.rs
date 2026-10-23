@@ -2,6 +2,13 @@
 fn validate_global_register_program(
     words: &[u32],
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    validate_global_register_pipeline(words,false)
+}
+#[cfg(feature="strata-global-image-experts")]
+pub(super) fn validate_global_register_expert_program(words:&[u32])->std::result::Result<(),Box<dyn std::error::Error>> {
+    validate_global_register_pipeline(words,true)
+}
+fn validate_global_register_pipeline(words:&[u32], expert:bool)->std::result::Result<(),Box<dyn std::error::Error>> {
     use std::collections::{BTreeMap, BTreeSet};
     let (mut parents, mut classes, mut bindings, mut defs) = (
         BTreeMap::new(),
@@ -80,12 +87,11 @@ fn validate_global_register_program(
         at += n;
     }
     if !wg
-        || barriers != 0
-        || atomics != 0
+        || (!expert && (barriers != 0 || atomics != 0))
         || loads.len() != 12
-        || stores.len() != 4
+        || stores.len() != if expert {8}else{4}
         || products.len() != 8
-        || classes.values().any(|&c| c == 4)
+        || (!expert && classes.values().any(|&c| c == 4))
     {
         return Err(format!("global register actual module WG={wg} barriers={barriers} atomics={atomics} loads={} stores={} products={}",loads.len(),stores.len(),products.len()).into());
     }
@@ -116,7 +122,7 @@ fn validate_global_register_program(
             if !seen.insert(v) {
                 continue;
             }
-            if matches!(classes.get(&v), Some(2 | 12)) && bindings.get(&v) == Some(&3) {
+            if matches!(classes.get(&v), Some(2 | 12)) && bindings.get(&v) == Some(&(if expert {6}else{3})) {
                 uniform = true;
             }
             if let Some(d) = defs.get(&v) {
@@ -134,12 +140,14 @@ fn validate_global_register_program(
     if input_loads != 6 || weight_loads != 6 {
         return Err("global register actual six A and six B loads".into());
     }
+    let (mut global_stores,mut fallback_stores)=(0,0);
     for ptr in stores {
-        let r = root(ptr)?;
-        if classes.get(&r) != Some(&12) || bindings.get(&r) != Some(&2) {
-            return Err("global register original global output owner".into());
-        }
+        let r=root(ptr)?;
+        if classes.get(&r)==Some(&12) && bindings.get(&r)==Some(&2) {global_stores+=1;}
+        else if expert && classes.get(&r)==Some(&4) {fallback_stores+=1;}
+        else {return Err("global register original global output or exact fallback owner".into());}
     }
+    if global_stores!=4 || fallback_stores!=if expert{4}else{0} {return Err("global register exact publication population".into());}
     let mut edges = BTreeMap::new();
     for (&b, ins) in &blocks {
         let &(a, op) = ins.last().ok_or("global register block terminator")?;
@@ -183,6 +191,9 @@ fn validate_global_register_program(
         || loads.iter().filter(|p| region.contains(&p.0)).count() != 8
     {
         return Err("global register actual initial4 plus in-loop8 operand loads".into());
+    }
+    if region.iter().flat_map(|b|&blocks[b]).any(|(_,op)|*op==224 || (227..=242).contains(op)) {
+        return Err("global register product loop must not contain publication barriers/atomics".into());
     }
     let reachable = |from: u32, to: u32| {
         let (mut todo, mut seen) = (vec![from], BTreeSet::new());
@@ -236,9 +247,11 @@ fn validate_global_register_program(
     if early != 4 || later != 4 || !before(first, last) {
         return Err(format!("global register actual prefetch chronology {early}/{later}").into());
     }
-    println!(
-        "strata_global_register_pipeline_accepted initial_global_loads=4 first_bank_prefetch=4 second_bank_prefetch=4 products=8 iteration_backedge_excluded=true"
-    );
+    if expert {
+        println!("strata_global_expert_pipeline_accepted initial_global_loads=4 first_bank_prefetch=4 second_bank_prefetch=4 products=8 iteration_backedge_excluded=true original_fallback_publication=true");
+    } else {
+        println!("strata_global_register_pipeline_accepted initial_global_loads=4 first_bank_prefetch=4 second_bank_prefetch=4 products=8 iteration_backedge_excluded=true");
+    }
     Ok(())
 }
 pub(super) fn validate_global_register_sources()

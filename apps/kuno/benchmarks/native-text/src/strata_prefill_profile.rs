@@ -79,6 +79,12 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-global-image-experts")]
+    {
+        if name.contains("::native_expert_wide::global_register::expert_global_register_gu::ExpertGlobalRegisterGu<") {return 0;}
+        if name.contains("::native_expert_wide::global_register::expert_global_register_down::ExpertGlobalRegisterDown<") {return 1;}
+    }
+
     #[cfg(feature="strata-small-quantized-matrix")]
     if (name.contains("::strata_matrix::quant_cohort::expert_quant_cohort::ExpertQuantCohort<") || name.contains("::strata_matrix::quant_cohort::expert_quant_pipeline::ExpertQuantPipeline<")) {
         return 6;
@@ -121,6 +127,10 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-global-image-experts")]
+    if name.contains("::native_expert_wide::global_register::expert_global_register_gu::ExpertGlobalRegisterGu<")
+        || name.contains("::native_expert_wide::global_register::expert_global_register_down::ExpertGlobalRegisterDown<") {return 1;}
+
     #[cfg(feature="strata-small-quantized-matrix")]
     {
         if matches!(name,"StrataExpertCohortGuCompact"|"StrataExpertCohortDownCompact") {
@@ -888,4 +898,14 @@ mod small_quantized_profile_tests {
         assert_eq!(native_class("StrataExpertCohortGuDirect8Image"),0);
         assert_eq!(native_class("OrderedCopy"),4);
     }
+}
+
+#[cfg(all(test,feature="strata-global-image-experts"))]
+mod global_image_expert_profile_tests {
+ use super::*;
+ #[test]
+ fn actual_global_image_entries_are_matrices_in_original_gu_down_families(){
+  let names=crate::strata_matrix::global_image_profile_names();
+  for(i,n)in names.into_iter().enumerate(){assert_eq!(native_class(n),1);assert_eq!(matrix_family(n),i);}
+ }
 }

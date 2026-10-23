@@ -1,7 +1,7 @@
 // Direct original StorageBuffer operands; two real CMMA register banks.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn global_register_load<F: Float>(
+pub(super) fn global_register_load<F: Float>(
     input: &Array<Vector<F, Const<4>>>,
     weight: &Array<Vector<F, Const<4>>>,
     a0: &cmma::Matrix<F>,
@@ -44,7 +44,7 @@ fn global_register_load<F: Float>(
 }
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn global_register_products<F: Float>(
+pub(super) fn global_register_products<F: Float>(
     a0: &cmma::Matrix<F>,
     a1: &cmma::Matrix<F>,
     b0: &cmma::Matrix<F>,

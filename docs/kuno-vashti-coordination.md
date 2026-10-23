@@ -16,8 +16,9 @@ Expert phase still about6s; next complete variant couples original FP16-image
 cohort producer/consumer with direct-global register-bank large-expert products,
 original GU finite activation/ordered DOWN finisher, original tails/owners and
 all admission/capacity/erasure proofs. Keep quantized controls and source. A
-counter-only GR-prefix credit correction is pending in source and explicitly
-is not the frozen GPU-tested worker. No API/UI/install/release changes.
+counter-only GR-prefix credit correction and complete new expert source are
+composed, not yet built; they are not the frozen GPU-tested worker. Planned
+366 CPU,18/51 runtime,8+9 metadata,16 new layout proofs and792 GPU cases. No API/UI/install/release changes.
 
 Profiler column clarification: Strata's256 means register allocation capacity
 per thread, not actual live-register use. Its measured no-spill/mostlyzero-SLM
