@@ -1,4 +1,4 @@
-//! Actual native module and CFG evidence for the direct-global operand banks.
+// Actual native module and CFG evidence for the direct-global operand banks.
 fn validate_global_register_program(
     words: &[u32],
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
