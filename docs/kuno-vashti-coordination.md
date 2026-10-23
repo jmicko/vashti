@@ -1,5 +1,48 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): complete padded K64 bundle compiled; protected GPU run active.**
+
+Frozen source `131c8fa676c9a5a076ffe99019c1d6dbac8b499b`, worker
+`87fa5fb19a934370f7d84dbb219cd76aa04201fb525f48309fc3cef4079947c6`,
+composes direct A, K64 stages, direct IQ2/IQ3 sign conversion, M32 fragment loop,
+padded column-major B, uniform checked headers and one final whole-WG handoff.
+It passes353 AppCPU,18/47 runtime,8+9 metadata, all old compiler populations,
+144 padded K64 layouts,144 actual B stride/type/handoff proofs,144 native half
+layouts,8 half-edge layouts and48 original IQ4 selectors. Read the
+[complete contract and allocation correction](kuno-prefill-small-quantized-matrix.md).
+
+Both prior explicit-alias expectations failed before any GPU use. Current
+compiler honestly reports26112B in every layout, with publication_alias=false.
+The same bounded separate allocation is accepted below the48KiB per-WG cap;
+no occupancy claim or alias saving is made. This corrects an unachieved
+optimization expectation, without changing numerical/source/owner/fault guards.
+The proposed24KiB reuse is not required to test the coherent matrix pipeline.
+
+Protected `kuno-small-quant-pad-actual-20261023.service`, invocation
+`c2227bba874a483aa7f0a88983e4ed47`, is running planned720 GPU controls and both
+full-model chains. This is not GPU or speed acceptance. Root owns GPUs; no
+concurrent builds or source changes. All source/prior failures remain preserved.
+Before GPU: Intel50,688,000B, NVIDIA compute0, driver faults0, HTTP200/admission
+normal. Artifacts under development:
+`small-quant-pad-actual-root-build-receipt-20261023.json`,
+`small-quant-pad-actual-root-acceptance-freeze-20261023.json`,
+`small-quant-pad-actual-connected-20261023.log`. Forward18 scripts reuse the
+unchanged `small-quant-pad-uniform-harness-20261023/`, manifest
+`48ba0576da6615a7bdc0a1bedd0f88cc63d7203bde410514ca0211851edde74f`.
+
+Read-only Mesa layout research is under development
+`mesa-coopmat-layout-research-20261023/`: a pinned primary-source mirror uses
+packed dword B loads for column-major layout; opposite layout unpacks/repacks.
+Padding changes predicted bank starts while preserving this path. Exact source
+equivalence to installed26.2.5~kisak1 was not established; no driver was changed.
+
+Goal ACTIVE/UNMET. Last complete GPU result remains K128 diagnostic
+12.605240109/10.619382166s; latest CLEAN remains12.471177197/8.394039699s versus
+Strata5.5006/5.3515s. Installed binaries unchanged. No API/Vashti changes or
+installation/release/reset/reboot. Sudo refresh bounded through01:47UTC Oct24.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): padded K64 source composed; compiler lifetime rejection under repair.**
 
 No GPU ran after the accepted K128 source1fe9b874. Unpadded K64 sourcea97cee6c
