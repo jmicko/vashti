@@ -57,3 +57,33 @@ unique eight-product loop,excludes iteration backedges when proving loads before
 products and stores after products,requires a real Workgroup barrier reachable
 after EVERY next-stage store. Output stores outside the loop remain excluded.
 No shader/maths/owner or GPU change for this audit correction.
+
+## Complete a2da580f validation and one clean
+
+Workera962757951d42aae3e95f5c30bb1e1628156a0dca2a896c51ab1f3b39c1c66c2.
+273CPU/15runtime/all429WGSL/320matrix+16raw+32compact+24padded plus48 actual
+CFG pipeline layouts,ALL433GPU,BOTH unchanged original18-script chains and
+physical recovery PASS. Normal9.802115231/8.495972147s; instrumented
+9.891050999/8.593749267s. Actual three dense and three wide expert native
+programs SIMD16/128GRF/zero spills; QSA original hashes unchanged zero spills.
+Sampled layer24 wideGU5.4106->6.5297ms; no pipeline speedup established.
+Kuno11983 resident pairs versus pinned Strata11608; residency is not lower.
+Host registered26,215,808,000B,raw banks67,108,864B. These are real allocations.
+
+ONE unchanged clean helper (SHAa0b1b40e5b9ebf00721604c5a2cc1cf6090890a390ff1512e343fdde391f4914)
+45/4245/4245,seed0,temp0,4outputs,profiles[] gives first11.238878190s and
+repeat8.059392110s. Installed reference10.897223643/8.712129955s. Repeat7.49%
+faster,first slower,original5% EACH selection FAILS. Prior complete frontier
+clean7.924977071s remains better; Strata5.3515s remains UNMET. No favorable
+rerun,staged/install/release. All full and clean public summaries under
+`/media/jmicko/faststore/kuno-development/strata-parity-wide-register-stage-cfg-20261023*`.
+Final03:43:27UTC same boot: Intel50,688,000B,NVIDIA compute0,faults0,HTTP200,
+admission normal. Status read at03:42 was an older snapshot; clean had finished
+normally,not a hang. No reset/reboot.
+
+Next grounded source difference: pinned Strata gr_write_norm_rs_kernel holds
+its ten original per-thread R values in v[10],then normalizes without rereading
+R. Kuno GR_NORM rereads R through a packed-pair mapping and consequently needs
+a storageBarrier. Port register retention PLUS subgroup pair packing together;
+preserve256-stride sum order and both-level32-lane xor reduction. Strata also
+uses256 threads,so a guessed thread-count difference is disproven.

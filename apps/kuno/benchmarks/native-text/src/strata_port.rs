@@ -1188,6 +1188,8 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     crate::strata_matrix::validate_sources()?;
+    #[cfg(feature="strata-gr-register-norm")]
+    crate::strata_prompt::register_norm::validate_sources()?;
     println!("strata_shader_set_complete shaders={}", shaders.len());
     Ok(())
 }

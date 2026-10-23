@@ -28,6 +28,9 @@ pub(crate) mod groups;
 pub(crate) mod layout;
 #[path = "strata_prompt_storage.rs"]
 pub(crate) mod storage;
+#[cfg(feature="strata-gr-register-norm")]
+#[path="strata_prompt_gr_register.rs"]
+pub(crate) mod register_norm;
 thread_local! {static STAGES:RefCell<Option<storage::Storage>>=const{RefCell::new(None)};}
 // Preserve the original error variant while locating the first explicit
 // prompt-layout guard in fixed-public completion checks. No sizes or contents.
@@ -1013,6 +1016,9 @@ pub(crate) fn gr_handles(q: GrHandles<'_>, weights: [Handle; 3]) -> Result<()> {
         scales.clone(),
         q.fault.clone(),
     ]);
+    #[cfg(feature="strata-gr-register-norm")]
+    register_norm::launch(q.client,in_place,norm,info)?;
+    #[cfg(not(feature="strata-gr-register-norm"))]
     launch(
         q.client,
         if in_place {

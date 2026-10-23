@@ -1,5 +1,24 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno continuation (2026-10-23): coupled GR residual-register normalization source.**
+
+Read [register normalization contract](kuno-prefill-gr-register-norm.md) and [full preceding acceptance/ONE clean](kuno-prefill-wide-register-stage.md#complete-a2da580f-validation-and-one-clean).
+Completea2da580f/workera9627579 passes273CPU/15runtime/all original shaders/
+48actualCFG stage proofs/ALL433GPU/BOTH original18-script chains/recovery.
+Normal9.8021/8.4960s neutral; ONE clean11.238878190/8.059392110s vs installed
+10.897223643/8.712129955s FAILS5% EACH. Prior clean7.925s better; Strata5.3515
+unmet. No favorable rerun/staged/install/release. Native programs zero spills.
+New source ports a grounded pinned-Strata gr_write_norm_rs difference: ten
+register-held residuals,original scalar256-stride sum and SG32 xor reduction,
+plus neighbor shuffle pair packing. Avoid R reread/global-storage barrier by
+removing its actual cross-lane dependency; keep local barrier and full scopes.
+Original kernels/429WGSL retained; new two modules and20 full-owner paired
+GPU cases. Intended275CPU/15runtime/all old shader layouts+2WGSL/453GPU/BOTH
+chains. Source only; no build/GPU/speed claim. No API/model/context/config/
+frontend/install/release/reset/reboot change; Vashti:none. Last03:43:27UTC
+recovery Intel50,688,000B,NVIDIA compute0,faults0,HTTP200,admission normal.
+Root owns builds/GPUs; no compile during GPU timing. Earlier checkpoints history.
+
 **Current Kuno continuation (2026-10-23): coupled wide register-stage source.**
 
 Read [real register staging contract](kuno-prefill-wide-register-stage.md) and [complete prefix validation](kuno-prefill-dense-prefix.md#complete4439c220-validation).
