@@ -546,7 +546,7 @@ pub(super) fn try_asymmetric_dense(
     Ok(true)
 }
 
-pub(super) fn asymmetric_available(client: &ComputeClient<WgpuRuntime>) -> bool {
+pub(crate) fn asymmetric_available(client: &ComputeClient<WgpuRuntime>) -> bool {
     let hw = &client.properties().hardware;
     asymmetric_geometry(
         512,
