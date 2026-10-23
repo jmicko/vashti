@@ -116,7 +116,7 @@ fn validate_global_register_program(
             if !seen.insert(v) {
                 continue;
             }
-            if classes.get(&v) == Some(&2) && bindings.get(&v) == Some(&3) {
+            if matches!(classes.get(&v), Some(2 | 12)) && bindings.get(&v) == Some(&3) {
                 uniform = true;
             }
             if let Some(d) = defs.get(&v) {

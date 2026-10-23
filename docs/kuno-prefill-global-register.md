@@ -137,3 +137,13 @@ eight products. Old lane rule for every other512 entry stays unchanged.24 real
 layouts also test mutated entry, grid, subgroup builtin, input binding/storage
 rejection. Definition uses the same actual generated entry name as launch.
 This native component is composed before any GPU/speed run; acceptance pending.
+
+A fast CPU-only diagnostic of the exact kernel/definition and native helper
+identified the remaining native rejection: conservative original layout masks
+put scalar INFO3 in StorageBuffer12; uniform-capable masks use Uniform2. The
+new recognition/stride proof now permits those two original INFO representations
+while still requiring exactly three data StorageBuffers0/1/2 and exactly one
+INFO3. No other descriptor class/binding is admitted. All24 actual modules pass
+the current isolated helper and structural/CFG proof in that diagnostic; it is
+explicitly not numerical, GPU or complete linked-worker acceptance. Full build
+and original population checks remain required. Previous rejection retained.

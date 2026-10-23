@@ -274,21 +274,19 @@ fn direct_global_register_module(words: &[u32]) -> bool {
     };
     let class = |v: u32| vars.iter().find(|x| x.0 == v).map(|x| x.1);
     let mut storage = Vec::new();
-    let mut uniforms = 0;
+    let mut infos = 0;
     for &(v, c) in &vars {
         match c {
+            2 | 12 if binding(v) == Some(3) => infos += 1,
             12 => storage.push(binding(v)),
-            2 => {
-                if binding(v) != Some(3) {
-                    return false;
-                }
-                uniforms += 1;
-            }
+            2 => return false,
             _ => {}
         }
     }
     storage.sort_unstable();
-    if storage != [Some(0), Some(1), Some(2)] || uniforms != 1 {
+    // Original conservative layouts put scalar INFO in a StorageBuffer;
+    // uniform-capable layouts use Uniform. The three data bindings stay exact.
+    if storage != [Some(0), Some(1), Some(2)] || infos != 1 {
         return false;
     }
     let (mut a, mut b) = (0, 0);
