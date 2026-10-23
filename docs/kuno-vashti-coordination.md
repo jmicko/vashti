@@ -1,6 +1,42 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-23): compose deep matrices, per-slot uploads and coalesced dequant.**
+**Active Kuno handoff (2026-10-23): expert-ordered output and vector combine.**
+
+Source327124a1 / workercd4142f97e91466b452896e64ee6a6ce93a6b911419b011bd390d35c18f231ed
+passes304 selected AppCPU, original15+separate17 runtime and8 exact metadata
+controls; all original compiler populations plus16 deep dense,16 deep macro,
+24 deep expert and30 quad-dequant modules. Protected GPU acceptance stopped at
+`deep dense actual selected matrix rejected`: actual Intel B70 Vulkan and3060
+both advertise49152B shared memory, below the new kernels'65536B requirement.
+The authentic gate rejected before any new deep matrix ran. This is NOT a
+numerical error, GPU fault, or completed490-control/model/performance result.
+Physical recovery passed: Intel50688000B, NVIDIA compute0, faults0, HTTP200 and
+admission active/paused/recovery=false, waiting0. Evidence: development files
+`deep-panel-slot-quad-root-build-receipt-20261023.json` and
+`deep-failure-public-summary-20261023.log`. Preserve the failed receipt.
+
+Keep64KiB variants guarded for capable devices; do not spoof hardware capacity
+or claim they executed on this machine. Correct hardware-aware validation is
+required. Previous accepted de309ebf remains469 GPU controls/BOTH original18-
+script chains; diagnostic repeated8.355123182s versus Strata clean5.3515s,
+which is still UNMET. Installed301f1fd1/36626d30 remains unchanged.
+
+Next coherent source uses existing PART in expert order, authenticated route
+inverse in the dead router RAW view, direct valid DOWN cooperative stores, and
+vector4 inverse gather with exact pending finite/status closure and shared
+merge. Read [the coupled layout contract](kuno-prefill-expert-ordered-output.md).
+The four new experimental features remain additive: deep matrices, per-slot
+copy endpoints, quad32 dequant and expert-ordered output. No speed selection
+before complete source/correctness/recovery acceptance. Root owns integration,
+builds and GPUs; agents edit isolated worktrees based327124a1.
+
+No API/model/context/config/frontend/install/release/reset/reboot changes;
+required Vashti changes:none. Canonical Vashti checkout remains untouched.
+Keep prompts/images/tokens/expert content out of files and receipts.
+
+## Earlier checkpoints
+
+**Earlier Kuno handoff (2026-10-23): compose deep matrices, per-slot uploads and coalesced dequant.**
 
 Completed source de309ebfb6db720c4ba5f9c278a205fb41f6701c / worker
 0ccb105762abb62ed1b41d95ce75cf7193b689b184bcb5d5e41f4443b2c1746b passes
@@ -43,7 +79,6 @@ No API/model/context/config/frontend/install/release/reset/reboot change;
 required Vashti changes:none. Canonical Vashti checkout remains untouched.
 Keep prompts/images/tokens/expert content out of files and receipts.
 
-## Earlier checkpoints
 
 **Current Kuno continuation (2026-10-23): coupled wide register-stage source.**
 

@@ -37,6 +37,7 @@ resolver = "2"
 
 [features]
 kuno-deep-matrix = ["std"]
+kuno-expert-ordered-output = ["std", "kuno-expert-cohorts"]
 kuno-expert-cohorts = []
 kuno-native-expert-medium = []
 autotune-checks = []
