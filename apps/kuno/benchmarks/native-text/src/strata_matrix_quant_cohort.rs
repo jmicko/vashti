@@ -154,7 +154,14 @@ fn definition(down: bool, tile: usize, dtype: u32) -> KernelDefinition {
         tile,
         dtype,
     );
-    b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
+    // Match the actual generated producer identity rather than the builder's
+    // generic default `main`; the closed native lowering must inspect the
+    // same genuine entry in offline controls and runtime compilation.
+    b.build(
+        KernelSettings::default()
+            .cube_dim(CubeDim::new_1d(64))
+            .kernel_name("expert_quant_cohort"),
+    )
 }
 
 fn matrix_settings() -> KernelSettings {

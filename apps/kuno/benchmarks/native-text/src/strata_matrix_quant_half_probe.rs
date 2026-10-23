@@ -177,7 +177,13 @@ pub(crate) fn definition() -> KernelDefinition {
         count.into(),
         control_first.into(),
     );
-    builder.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
+    // Compile the same genuine generated entry used by the public device
+    // launch, never a renamed default `main` accepted by a looser predicate.
+    builder.build(
+        KernelSettings::default()
+            .cube_dim(CubeDim::new_1d(64))
+            .kernel_name("quant_half_edges"),
+    )
 }
 
 fn append_record(records: &mut Vec<u32>, scale: u16, values: [u32; 8]) {
