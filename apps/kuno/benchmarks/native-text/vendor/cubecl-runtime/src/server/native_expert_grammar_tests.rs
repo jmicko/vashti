@@ -889,3 +889,7 @@ fn ordered_wide_down_and_tail_keep_one_layout_and_all_original_owner_checks() {
         "probe::native_expert_wide::ordered::expert_wide_down::ExpertWideDownFake<Runtime>",
     ] { assert!(!is_wide(name, false) && !is_wide(name, true) && !is_direct_gu(name)); }
 }
+
+#[cfg(feature = "kuno-wide-shared-reuse")]
+#[path = "native_expert_shared_reuse_tests.rs"]
+mod shared_reuse;

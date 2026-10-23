@@ -1147,7 +1147,7 @@ where
 
     /// Whether this server's actual compiler/device enables explicit shared
     /// memory layout. This is immutable capability, never completion credit.
-    #[cfg(feature = "kuno-deep-matrix")]
+    #[cfg(any(feature = "kuno-deep-matrix", feature = "kuno-wide-shared-reuse"))]
     fn native_explicit_shared_layout(&mut self) -> bool {
         false
     }

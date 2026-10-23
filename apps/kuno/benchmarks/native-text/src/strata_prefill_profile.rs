@@ -147,6 +147,19 @@ fn native_class(name: &str) -> usize {
 #[cfg(test)]
 mod native_sample_tests {
     use super::*;
+    #[cfg(feature = "strata-wide-shared-reuse")]
+    #[test]
+    fn genuine_shared_reuse_prefixes_keep_original_operator_and_matrix_family_classes() {
+        for (name,family) in [
+            ("x::strata_matrix::native_expert_wide::shared_reuse::expert_wide_gu::ExpertWideGu<T>",0),
+            ("x::strata_matrix::native_expert_wide::shared_reuse::expert_wide_gu_direct::ExpertWideGuDirect<T>",0),
+            ("x::strata_matrix::native_expert_wide::shared_reuse::expert_wide_down::ExpertWideDown<T>",1),
+            ("x::strata_matrix::native_expert_wide::ordered::shared_reuse::expert_wide_down::ExpertWideDown<T>",1),
+        ] {
+            assert_eq!(native_class(name),1);
+            assert_eq!(matrix_family(name),family);
+        }
+    }
     #[test]
     fn disabled_gr_sampling_preserves_scope_without_enabling_public_timing() {
         assert!(!ENABLED.load(Ordering::Acquire));

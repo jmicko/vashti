@@ -1008,7 +1008,7 @@ impl ComputeServer for WgpuServer {
         Ok(addresses)
     }
 
-    #[cfg(feature = "kuno-deep-matrix")]
+    #[cfg(any(feature = "kuno-deep-matrix", feature = "kuno-wide-shared-reuse"))]
     fn native_explicit_shared_layout(&mut self) -> bool {
         self.compilation_options.supports_vulkan
             && self.compilation_options.vulkan.supports_explicit_smem

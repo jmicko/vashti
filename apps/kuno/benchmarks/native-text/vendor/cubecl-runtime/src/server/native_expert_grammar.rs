@@ -117,6 +117,10 @@ fn grid(count: &CubeCount, x: u32, y: u32) -> bool {
     matches!(count, CubeCount::Static(a,b,c) if *a==x && *b==y && *c==1)
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
+    #[cfg(feature = "kuno-wide-shared-reuse")]
+    if shared_reuse_generated(name, module, ty) {
+        return true;
+    }
     // Exact role-bearing generated suffix, rather than a generic wide/tail
     // substring. Runtime type arguments may follow the actual generated type.
     name.split_once("::native_expert_wide::")
@@ -145,6 +149,38 @@ fn generated(name: &str, module: &str, ty: &str) -> bool {
                 .and_then(|s| s.strip_prefix(ty))
                 .is_some_and(|s| s.is_empty() || s.starts_with('<'))
         })
+}
+#[cfg(feature = "kuno-wide-shared-reuse")]
+fn shared_reuse_generated(name: &str, module: &str, ty: &str) -> bool {
+    // These are separately generated K32 lifetime entries, not aliases for
+    // arbitrary nesting, deep variants or changed tails. The original INFO,
+    // role, prefix grid, owners, checker and exact tail checks still run.
+    let (suffix, ordered) = if let Some((_, _ordered_suffix)) =
+        name.split_once("::strata_matrix::native_expert_wide::ordered::shared_reuse::")
+    {
+        #[cfg(not(feature = "kuno-expert-ordered-output"))]
+        return false;
+        #[cfg(feature = "kuno-expert-ordered-output")]
+        (_ordered_suffix, true)
+    } else if let Some((_, suffix)) =
+        name.split_once("::strata_matrix::native_expert_wide::shared_reuse::")
+    {
+        (suffix, false)
+    } else {
+        return false;
+    };
+    let allowed = if ordered {
+        (module, ty) == ("expert_wide_down", "ExpertWideDown")
+    } else {
+        matches!((module, ty),
+            ("expert_wide_gu", "ExpertWideGu")
+            | ("expert_wide_gu_direct", "ExpertWideGuDirect")
+            | ("expert_wide_down", "ExpertWideDown"))
+    };
+    allowed && suffix.strip_prefix(module)
+        .and_then(|s| s.strip_prefix("::"))
+        .and_then(|s| s.strip_prefix(ty))
+        .is_some_and(|s| s.is_empty() || (s.starts_with('<') && s.ends_with('>')))
 }
 fn is_wide(name: &str, down: bool) -> bool {
     if down {

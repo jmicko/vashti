@@ -35,7 +35,7 @@ pub struct ComputeClient<R: Runtime> {
     device: DeviceHandle<R::Server>,
     utilities: Arc<ServerUtilities<R::Server>>,
     stream_id: Option<StreamId>,
-    #[cfg(feature = "kuno-deep-matrix")]
+    #[cfg(any(feature = "kuno-deep-matrix", feature = "kuno-wide-shared-reuse"))]
     native_explicit_smem: Arc<std::sync::OnceLock<bool>>,
     #[cfg(feature = "std")]
     native_expert_capture: Option<
@@ -53,7 +53,7 @@ impl<R: Runtime> Clone for ComputeClient<R> {
             device: self.device.clone(),
             utilities: self.utilities.clone(),
             stream_id: self.stream_id,
-            #[cfg(feature = "kuno-deep-matrix")]
+            #[cfg(any(feature = "kuno-deep-matrix", feature = "kuno-wide-shared-reuse"))]
             native_explicit_smem: self.native_explicit_smem.clone(),
             #[cfg(feature = "std")]
             native_expert_capture: self.native_expert_capture.clone(),
@@ -77,7 +77,7 @@ impl<R: Runtime> ComputeClient<R> {
             device: context,
             utilities,
             stream_id: None,
-            #[cfg(feature = "kuno-deep-matrix")]
+            #[cfg(any(feature = "kuno-deep-matrix", feature = "kuno-wide-shared-reuse"))]
             native_explicit_smem: Arc::new(std::sync::OnceLock::new()),
             #[cfg(feature = "std")]
             native_expert_capture: None,
@@ -98,7 +98,7 @@ impl<R: Runtime> ComputeClient<R> {
             device: context,
             utilities,
             stream_id: None,
-            #[cfg(feature = "kuno-deep-matrix")]
+            #[cfg(any(feature = "kuno-deep-matrix", feature = "kuno-wide-shared-reuse"))]
             native_explicit_smem: Arc::new(std::sync::OnceLock::new()),
             #[cfg(feature = "std")]
             native_expert_capture: None,
@@ -116,7 +116,7 @@ impl<R: Runtime> ComputeClient<R> {
     /// performs no dispatch, allocation, submission, readback or completion.
     /// Clones share the cached result; unsupported/unavailable servers remain
     /// conservative. A different client's/device's capability is never reused.
-    #[cfg(feature = "kuno-deep-matrix")]
+    #[cfg(any(feature = "kuno-deep-matrix", feature = "kuno-wide-shared-reuse"))]
     pub fn native_explicit_shared_layout(&self) -> bool {
         *self.native_explicit_smem.get_or_init(|| {
             self.device
