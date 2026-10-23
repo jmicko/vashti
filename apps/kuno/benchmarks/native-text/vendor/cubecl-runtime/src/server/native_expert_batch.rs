@@ -22,6 +22,25 @@ pub const NATIVE_EXPERT_BATCH_HOST_BYTES: usize = 3 * NATIVE_EXPERT_BATCH_BYTES;
 /// DOWN producers have identical math but no raw-slot release, like Strata's
 /// original `slot >= 0` condition. Their names also bind the actual role.
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
+    // Ordered PART producers are genuine separate DOWN entries. Do not let
+    // the original loose legacy-family check accidentally admit them for GU,
+    // or accept arbitrary nesting under the new namespace.
+    if name.contains("::ordered::") {
+        #[cfg(feature = "kuno-expert-ordered-output")]
+        if index % 6 == 5 && !release {
+            if let Some(suffix) = name.split_once("::native::ordered::").map(|(_, s)| s) {
+                #[cfg(feature = "kuno-deep-matrix")]
+                if suffix.strip_prefix("expert_macro64_deep::ExpertMacro64Deep")
+                    .is_some_and(|s| s.is_empty() || s.starts_with('<')) { return true; }
+                return [
+                    "expert::Expert", "expert_macro::ExpertMacro",
+                    "expert_macro64::ExpertMacro64", "expert_narrow::ExpertNarrow",
+                ].iter().any(|entry| suffix.strip_prefix(entry)
+                    .is_some_and(|s| s.is_empty() || s.starts_with('<')));
+            }
+        }
+        return false;
+    }
     match index % 6 {
         0 => name == "StrataPromptExpertGather" && !release,
         1 => {

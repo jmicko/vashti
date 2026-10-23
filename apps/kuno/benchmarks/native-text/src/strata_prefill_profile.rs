@@ -83,11 +83,11 @@ fn matrix_family(name: &str) -> usize {
         2
     } else if name.contains("::expert_tail_down::ExpertTailDown") {
         3
-    } else if (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64")) {
+    } else if (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64") || name.contains("::native::ordered::expert_macro64_deep::ExpertMacro64Deep")) {
         4
     } else if name.contains("::expert_narrow::ExpertNarrow") {
         5
-    } else if name.contains("::cohorts::expert_cohort::ExpertCohort") {
+    } else if (name.contains("::cohorts::expert_cohort::ExpertCohort") || name.contains("::cohorts::ordered::expert_cohort::ExpertCohort")) {
         6
     } else {
         7
@@ -116,7 +116,9 @@ fn native_class(name: &str) -> usize {
         | "StrataPromptExpertResidentGuImage"
         | "StrataPromptExpertResidentDownImage"
         | "StrataExpertCohortGuImage"
-        | "StrataExpertCohortDownImage" => 0,
+        | "StrataExpertCohortDownImage"
+        | "StrataExpertCohortGuQuad32Image"
+        | "StrataExpertCohortDownQuad32Image" => 0,
         "StrataPromptExpertGemm" => 1,
         "StrataPromptExpertGather" | "StrataExpertCohortGather" => 2,
         "StrataPromptExpertF16Swiglu"
@@ -130,8 +132,9 @@ fn native_class(name: &str) -> usize {
             || name.contains("::expert_tail_gu::ExpertTailGu")
             || name.contains("::expert_tail_down::ExpertTailDown")
             || name.contains("::cohorts::expert_cohort::ExpertCohort")
+            || name.contains("::cohorts::ordered::expert_cohort::ExpertCohort")
             || name.contains("::expert::Expert")
-            || (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64"))
+            || (name.contains("::expert_macro::ExpertMacro") || name.contains("::expert_macro64::ExpertMacro64") || name.contains("::native::ordered::expert_macro64_deep::ExpertMacro64Deep"))
             || name.contains("::expert_narrow::ExpertNarrow")
             || name.contains("::library_dense::LibraryDense")
             || name.contains("::library_expert::LibraryExpert") =>
@@ -189,6 +192,22 @@ mod native_sample_tests {
             ),
         ] {
             assert_eq!(native_class(name), class);
+        }
+    }
+    #[cfg(feature = "strata-expert-ordered-output")]
+    #[test]
+    fn new_ordered_and_quad_entries_keep_their_actual_operator_classes() {
+        for (name, family) in [
+            ("x::native_expert_wide::ordered::expert_wide_down::ExpertWideDown<T>", 1),
+            ("x::native_expert_wide::ordered::expert_tail_down::ExpertTailDown<T>", 3),
+            ("x::native::ordered::expert_macro64_deep::ExpertMacro64Deep<T>", 4),
+            ("x::cohorts::ordered::expert_cohort::ExpertCohort<T>", 6),
+        ] {
+            assert_eq!(native_class(name), 1);
+            assert_eq!(matrix_family(name), family);
+        }
+        for name in ["StrataExpertCohortGuQuad32Image", "StrataExpertCohortDownQuad32Image"] {
+            assert_eq!(native_class(name), 0);
         }
     }
     #[test]

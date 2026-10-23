@@ -112,7 +112,7 @@ strata-hc-down-inject = ["strata-gr-register-norm", "strata-native-subgroup-publ
 strata-raw-lookahead = ["strata-gr-register-norm", "strata-expert-cohorts", "strata-copy-cohorts"]
 strata-deep-matrix = ["strata-hc-down-inject", "strata-native-direct-gu", "cubecl-runtime/kuno-deep-matrix", "cubecl-wgpu/kuno-deep-matrix"]
 strata-raw-slot-overlap = ["strata-raw-lookahead", "cubecl-wgpu/kuno-raw-slot-overlap"]
-strata-dequant-quad32 = ["strata-dequant-record32", "strata-intel-core"]
+strata-dequant-quad32 = ["strata-dequant-record32", "strata-intel-core", "cubecl-runtime/kuno-dequant-quad32", "cubecl-wgpu/kuno-dequant-quad32"]
 # One coherent expert-ordered producer/inverse-gather consumer layout.
 strata-expert-ordered-output = ["strata-native-direct-gu", "strata-expert-cohorts", "cubecl-runtime/kuno-expert-ordered-output", "cubecl-wgpu/kuno-expert-ordered-output"]
 strata-qsa-head-frontier = ["strata-qsa-head-scatter"]

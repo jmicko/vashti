@@ -35,6 +35,7 @@ resolver = "2"
 
 [features]
 kuno-deep-matrix = ["kuno-strata-shared", "cubecl-runtime/kuno-deep-matrix"]
+kuno-dequant-quad32 = ["kuno-strata-shared", "kuno-expert-cohorts", "cubecl-runtime/kuno-dequant-quad32"]
 kuno-expert-ordered-output = ["kuno-strata-shared", "kuno-expert-cohorts", "cubecl-runtime/kuno-expert-ordered-output"]
 kuno-subgroup-quad-vertical = ["kuno-subgroup-quad"]
 kuno-subgroup-quad = ["kuno-strata-shared"]

@@ -70,6 +70,7 @@ struct Params {
 struct Pending {
     params: Params,
     views: [View; 6],
+    ordered_down: bool,
 }
 
 /// Counts are returned only after a complete original batch is validated. The
@@ -120,6 +121,13 @@ fn generated(name: &str, module: &str, ty: &str) -> bool {
     // substring. Runtime type arguments may follow the actual generated type.
     name.split_once("::native_expert_wide::")
         .is_some_and(|(_, suffix)| {
+            #[cfg(feature = "kuno-expert-ordered-output")]
+            let suffix = if let Some(ordered) = suffix.strip_prefix("ordered::") {
+                if !matches!((module, ty),
+                    ("expert_wide_down", "ExpertWideDown")
+                    | ("expert_tail_down", "ExpertTailDown")) { return false; }
+                ordered
+            } else { suffix };
             // The new genuine K64 producers keep the complete original role,
             // INFO, owners, grid and phase grammar. Admit only this closed
             // additional namespace, never arbitrary nesting or deep tail names.
@@ -334,7 +342,8 @@ impl NativeStrataExpertGrammar {
                 .group
                 .ok_or_else(|| batch_fault("native expert grammar group missing"))?;
             if let Some(prefix) = self.pending {
-                if release || !is_tail(name, down) {
+                if release || !is_tail(name, down)
+                    || name.contains("::ordered::") != prefix.ordered_down {
                     return Err(batch_fault("native expert grammar original tail order"));
                 }
                 let (tail, views) = matrix(args, true, true, down, group)?;
@@ -382,7 +391,8 @@ impl NativeStrataExpertGrammar {
                         "native expert grammar original full member owner",
                     ));
                 }
-                let tile = if name.contains("::expert_macro64::") {
+                let tile = if name.contains("::expert_macro64::")
+                    || name.contains("::native::ordered::expert_macro64_deep::") {
                     if !(64..256).contains(&params.count) {
                         return Err(batch_fault("native expert macro64 member geometry"));
                     }
@@ -431,7 +441,9 @@ impl NativeStrataExpertGrammar {
                 if params.piece == params.count {
                     self.advance();
                 } else {
-                    self.pending = Some(Pending { params, views });
+                    self.pending = Some(Pending {
+                        params, views, ordered_down: name.contains("::ordered::"),
+                    });
                 }
             }
         } else {

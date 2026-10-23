@@ -813,3 +813,79 @@ fn deep_direct_gu_still_requires_original_checker_before_down_and_complete_batch
     deep_product(&mut g,&h,256,true);let r=g.finish().unwrap();
     assert_eq!(r.logical_phases,6);assert_eq!(r.gu_checks,1);assert_eq!(r.direct_gu_prefixes,1);
 }
+
+#[cfg(feature = "kuno-expert-ordered-output")]
+#[test]
+fn ordered_full_down_preserves_original_matrix_roles_owners_and_dispatch() {
+    for (members, module, ty, tile) in [
+        (3u32, "expert_narrow", "ExpertNarrow", 8u32),
+        (17, "expert_narrow", "ExpertNarrow", 16),
+        (32, "expert_macro", "ExpertMacro", 32),
+        (65, "expert_macro64", "ExpertMacro64", 64),
+        (255, "expert_macro64", "ExpertMacro64", 64),
+    ] {
+        let name = alloc::format!("probe::strata_matrix::native::ordered::{module}::{ty}<Runtime>");
+        let h = owners();
+        let mut g = begin(&h, members);
+        product(&mut g, &h, members, false, false);
+        activate(&mut g);
+        g.launch(&name, false, &CubeCount::Static(40, members.div_ceil(tile), 1),
+            &matrix_args(&h, members, true, false, false)).unwrap();
+        assert_eq!(g.finish().unwrap().logical_phases, 6);
+        for bad in 0..4 {
+            let mut g = begin(&h, members);
+            product(&mut g, &h, members, false, false);
+            activate(&mut g);
+            let mut args = matrix_args(&h, members, true, false, false);
+            if bad == 0 { args.buffers[3] = owners()[3].clone().binding(); }
+            if bad == 1 { set_word(&mut args.info, 0, 2560); }
+            let grid = CubeCount::Static(if bad == 2 { 20 } else { 40 }, members.div_ceil(tile), 1);
+            assert!(g.launch(&name, bad == 3, &grid, &args).is_err());
+        }
+        // A valid new DOWN name is never an alias for a GU product.
+        assert!(begin(&h, members).launch(&name, false,
+            &CubeCount::Static(20, members.div_ceil(tile), 1),
+            &matrix_args(&h, members, false, false, false)).is_err());
+    }
+    for name in [
+        "probe::strata_matrix::native::ordered::ordered::expert_macro::ExpertMacro<Runtime>",
+        "probe::strata_matrix::native::ordered::expert_macro::ExpertMacroFake<Runtime>",
+        "probe::strata_matrix::native::ordered::other::expert_macro::ExpertMacro<Runtime>",
+    ] { assert!(!native_strata_expert_operator(name, false, 5)); }
+}
+
+#[cfg(feature = "kuno-expert-ordered-output")]
+#[test]
+fn ordered_wide_down_and_tail_keep_one_layout_and_all_original_owner_checks() {
+    let wide = "probe::strata_matrix::native_expert_wide::ordered::expert_wide_down::ExpertWideDown<Runtime>";
+    let tail = "probe::strata_matrix::native_expert_wide::ordered::expert_tail_down::ExpertTailDown<Runtime>";
+    for members in [256u32, 257, 287, 4096] {
+        let h = owners();
+        let mut g = begin(&h, members);
+        product(&mut g, &h, members, false, true);
+        activate(&mut g);
+        g.launch(wide, false, &CubeCount::Static(20, members / 128, 1),
+            &matrix_args(&h, members, true, true, false)).unwrap();
+        if members % 128 != 0 {
+            let rest = members % 128;
+            let tile = if rest <= 8 { 8 } else if rest < 32 { 16 } else { 32 };
+            g.launch(tail, false, &CubeCount::Static(40, rest.div_ceil(tile), 1),
+                &matrix_args(&h, members, true, true, true)).unwrap();
+        }
+        assert_eq!(g.finish().unwrap().logical_phases, 6);
+    }
+    for (first, second) in [(wide, TAIL_DOWN), (WIDE_DOWN, tail)] {
+        let h = owners(); let mut g = begin(&h, 257);
+        product(&mut g, &h, 257, false, true); activate(&mut g);
+        g.launch(first, false, &CubeCount::Static(20, 2, 1),
+            &matrix_args(&h, 257, true, true, false)).unwrap();
+        assert!(g.launch(second, false, &CubeCount::Static(40, 1, 1),
+            &matrix_args(&h, 257, true, true, true)).is_err());
+    }
+    for name in [
+        "probe::native_expert_wide::ordered::expert_wide_gu::ExpertWideGu<Runtime>",
+        "probe::native_expert_wide::ordered::expert_wide_gu_direct::ExpertWideGuDirect<Runtime>",
+        "probe::native_expert_wide::ordered::ordered::expert_wide_down::ExpertWideDown<Runtime>",
+        "probe::native_expert_wide::ordered::expert_wide_down::ExpertWideDownFake<Runtime>",
+    ] { assert!(!is_wide(name, false) && !is_wide(name, true) && !is_direct_gu(name)); }
+}
