@@ -155,7 +155,11 @@ fn check_registered_grammar(h: [Handle; 7], weights: Option<[Handle; 2]>) {
             };
             grammar
                 .launch(
-                    op.name(),
+                    // This original matrix-registration fixture deliberately uses
+                    // the original DQ marker with no DQ INFO/owners. Selected
+                    // Direct8 has its own complete role/grid/owner controls and
+                    // must never accept this deliberately empty placeholder.
+                    op.original_name(),
                     op.native_release_after(),
                     &CubeCount::Static(1, 1, 1),
                     &KernelArguments::new(),
