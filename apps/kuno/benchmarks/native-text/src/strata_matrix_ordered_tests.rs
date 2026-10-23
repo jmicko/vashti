@@ -16,7 +16,9 @@ fn function<'a>(source: &'a str, name: &str) -> &'a str {
     panic!("function extent {name}")
 }
 fn tokens(s: &str) -> String {
-    s.split_whitespace().collect()
+    // rustfmt adds a syntactic trailing call comma when the qualified deep
+    // helper wraps. No expression/operator/argument is normalized away.
+    s.split_whitespace().collect::<String>().replace(",)", ")")
 }
 fn restore_rank(s: &str) -> String {
     tokens(s).replace(
