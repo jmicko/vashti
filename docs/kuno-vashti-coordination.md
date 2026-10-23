@@ -1,5 +1,25 @@
 # Kuno and Vashti Coordination
 
+**Current Kuno continuation (2026-10-23): coupled tiny-output pipeline source.**
+
+Read [tiny-output source contract](kuno-prefill-tiny-output.md).
+Full precedingfe5285ae/worker0e79dd6c passes257CPU/15runtime/429WGSL/304layouts/
+ALL353GPU/BOTH original18-script chains and physical recovery. Normal repeat
+8.450195111s is neutral; no clean/staged/install for that component. New outer
+counter96 assumption omitted the genuine MTP teacher GR; actual97 reverified by
+read-only completion, with no hardware/timing rerun or changed original guard.
+Latest physical recovery00:10:35UTC: Intel50,688,000B,NVIDIA compute0,faults0,
+HTTP200,admission normal. Installed301f1fd1/36626d30 unchanged.
+
+Complete new source couples REAL raw-U32 padded weight producer with SAME
+chronological original CMMA and logicalN4/N1 writer, on existing80MiB scratch.
+Targets masked HC injection/shared gate loops, retains all prior optimizations.
+Intended260CPU/15runtime/429WGSL/320matrix+16raw layouts/383GPU/BOTH chains.
+Source only; no build, GPU, speed or installation claim. No API/model/context/
+config/frontend/release/reset/reboot change; Vashti:none. Goal UNMET vs Strata
+clean5.3515s. Root alone owns builds/GPUs; no compile during GPU timing.
+Earlier checkpoints below are history. Refresher1668570 expires06:04:15UTC.
+
 **Current Kuno continuation (2026-10-23 00:00UTC): GR wide-tail full validation.**
 
 Read [the exact source, failures, correction and evidence](kuno-prefill-gr-wide-tail.md).

@@ -125,3 +125,30 @@ HC projection lead is grounded, not yet a measured whole-prompt gain.
 Installed worker301f1fd1/gateway36626d30 unchanged. No API/config/context/model/
 frontend/release/reset/reboot change. Vashti:none. Bounded sudo refresher1668570
 expires2026-10-23 06:04:15UTC; verify exact owned script before stopping it.
+
+
+## Full acceptance complete; neutral speed (2026-10-23)
+
+Final exact-source fe5285ae/worker0e79dd6c passes257CPU/15runtime/429WGSL/
+304matrix layouts/ALL353GPU and BOTH unchanged original18-script chains with
+physical recovery. Normal first/repeat9.679591733/8.450195111s; profile
+9.751734118/8.508565680s, neutral to previous static9.7281/8.4162s.
+HC attention-input484.159467ms/router420.451338ms remain unchanged. Keep the
+correct complete source; no clean/staged/install run for this neutral component.
+
+The first OUTER aggregate stopped AFTER both complete original chains on a new
+counter assumption96. Actual97 is correct:48 target layers*2 GR +one MTP teacher
+GR for the full4096 chunk; the short remaining chunk does not select wide.
+resident_mtp_prompt.rs206–225 makes that genuine GR call with injection enabled.
+Corrected read-only completion re-verifies the original final reencode proof,
+exact frozen worker/source/harness identities and all original acceptance guards,
+then ALL353 extra counts. No hardware/timing rerun. Protected read-only helper
+complete-gr-wide-tail-flags-aggregate-final-20261023.py uses the actual distinct
+profile/normal receipt schemas; failed preliminary metadata-only checks retained.
+The original18 scripts/manifest are byte-for-byte unchanged.
+
+Final aggregate: strata-parity-gr-wide-tail-flags-full-20261022-expert-cohorts-public-summary.json.
+Fresh gr-wide-tail-flags-full-final-state-20261023.json00:10:35UTC confirms
+same boot,Intel50,688,000B,NVIDIA compute0,faults0,HTTP200,admission normal.
+No installation, API or frontend change. Next complete tiny-output producer+
+consumer bundle in [tiny-output specification](kuno-prefill-tiny-output.md).

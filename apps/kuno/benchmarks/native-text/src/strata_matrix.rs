@@ -28,11 +28,24 @@ pub(crate) use native_expert_probe::narrow_cases as public_native_narrow_numeric
 #[cfg(feature = "strata-expert-macro64")]
 pub(crate) use native_expert_probe::macro64_cases as public_native_macro64_numeric;
 
+#[cfg(feature = "strata-tiny-output")]
+#[path = "strata_matrix_tiny_probe.rs"]
+mod tiny_probe;
+#[cfg(feature = "strata-tiny-output")]
+pub(crate) use tiny_probe::cases as public_tiny_numeric;
+
 #[cfg(feature = "strata-intel-core")]
 #[path = "strata_matrix_numeric_probe.rs"]
 mod numeric;
 #[cfg(feature = "strata-intel-core")]
 pub(crate) use numeric::cases as public_numeric;
+
+#[cfg(feature = "strata-tiny-output")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn tiny(client:&ComputeClient<WgpuRuntime>, h:[Handle;5], count:usize,
+    columns:usize,rows:usize,out_first:usize,out_stride:usize,bfloat:bool)->Result<()> {
+    native::run_tiny(client,h,count,columns,rows,out_first,out_stride,bfloat)
+}
 
 /// Actual generated producer types, without constructing a client/device. The
 /// generated KernelMetadata uses its type name; the batch gate checks exactly
@@ -225,6 +238,8 @@ mod native {
         sync_cube();
         out
     }
+    #[cfg(feature = "strata-tiny-output")]
+    include!("strata_matrix_tiny.rs");
     // Two K64 operand buffers: A[2][32][64] and B[2][64][64].
     // Half/BF16 vectors preserve their original bits; no F32 round trip.
     #[cfg(feature = "strata-expert-macro64")]
@@ -1094,6 +1109,8 @@ mod native {
             ("expert_narrow16_gu", definition_expert_narrow(false, 16)),
             ("expert_narrow16_down", definition_expert_narrow(true, 16)),
         ];
+        #[cfg(feature = "strata-tiny-output")]
+        out.extend([("dense_tiny_fp16", definition_tiny::<f16>()), ("dense_tiny_bf16", definition_tiny::<bf16>())]);
         #[cfg(feature = "strata-expert-macro64")]
         out.extend([("expert_macro64_gu", definition_expert_macro64(false)),
                     ("expert_macro64_down", definition_expert_macro64(true))]);
@@ -2772,6 +2789,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 );
             }
         }
+        #[cfg(feature = "strata-tiny-output")]
+        native::validate_tiny_producers()?;
     }
     Ok(())
 }

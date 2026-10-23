@@ -739,6 +739,12 @@ pub(crate) fn project(
         )?;
         stage[1].clone()
     };
+    #[cfg(feature = "strata-tiny-output")]
+    if dtype != 30 && columns == 2560 && rows == 1 && count <= groups::CAPACITY {
+        return crate::strata_matrix::tiny(client,
+            [mixed_image.unwrap_or_else(|| stage[0].clone()), weights, stage[1].clone(), output, fault],
+            count, columns, rows, out_first, out_stride, false);
+    }
     crate::strata_matrix::dense(
         client,
         [
@@ -1124,6 +1130,12 @@ fn packed_gr_projection(
     })?;
     // External injection is already validated by the authentic arena/full-prompt
     // caller; unlike the two internal GEMM results it need not be a carved view.
+    #[cfg(feature = "strata-tiny-output")]
+    if columns == 10240 && rows == 4 {
+        return crate::strata_matrix::tiny(client,
+            [input.clone(), weight.clone(), stages()?[1].clone(), output.clone(), fault.clone()],
+            count, columns, rows, 0, rows, true);
+    }
     crate::strata_matrix::dense(
         client,
         [input.clone(), weight.clone(), output.clone(), fault.clone()],
