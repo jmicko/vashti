@@ -308,7 +308,8 @@ fn wide(
     // A scalar stepped range exposes the uniform exit to CubeCL. A general
     // while loop conservatively marks its merge divergent and hoists later
     // publication storage across the explicit operand frees.
-    for k in (0usize..columns).step_by(64usize) {
+    for stage_index in 0usize..columns / 64usize {
+        let k = stage_index * 64usize;
         let next = 1usize - current;
         let mut next_a_lo0 = Vector::<f16, Const<4>>::new(f16::new(0.0));
         let mut next_a_hi0 = Vector::<f16, Const<4>>::new(f16::new(0.0));

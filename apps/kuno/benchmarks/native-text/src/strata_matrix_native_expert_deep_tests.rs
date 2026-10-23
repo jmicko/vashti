@@ -182,7 +182,8 @@ fn deep_expert_retains_original_header_publication_helpers_tail_and_k16_order() 
     // original rejection terms and their failure/termination body stay exact.
     let normalized = new.replace(voted_header, "header_valid(map, count, group)");
     assert_eq!(guard(old), guard(&normalized));
-    assert!(new.contains("for k in (0usize..columns).step_by(64usize)"));
+    assert!(new.contains("for stage_index in 0usize..columns / 64usize"));
+    assert!(new.contains("let k = stage_index * 64usize;"));
     assert!(!new.contains("while k < columns"));
     fn publication(s: &str) -> Vec<&str> {
         s.split_once("    if comptime!(direct_gu) {")
