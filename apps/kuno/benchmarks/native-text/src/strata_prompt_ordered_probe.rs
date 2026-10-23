@@ -106,7 +106,7 @@ fn side(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,input:&Inputs
             CubeCount::Static((input.count*2560).div_ceil(256) as u32,1,1),args);}
     }
     let observed=[routed,combined,status_id,audit,fault_id].into_iter()
-        .map(|id|probe::read_native_public(arena,id)).collect::<Result<Vec<_>>>()?;
+        .map(|id|probe::read_native_public(arena,id)).collect::<ProbeResult<Vec<_>>>()?;
     if observed[3].iter().enumerate().any(|(i,&word)| {
         let expected=if (28..32).contains(&i) {[input.count as u32,19,127,8][i-28]} else {0};
         word!=expected
