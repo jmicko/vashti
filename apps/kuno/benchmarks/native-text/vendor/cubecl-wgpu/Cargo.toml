@@ -36,6 +36,7 @@ resolver = "2"
 [features]
 kuno-deep-matrix = ["kuno-strata-shared", "cubecl-runtime/kuno-deep-matrix"]
 kuno-wide-shared-reuse = ["kuno-strata-shared", "cubecl-runtime/kuno-wide-shared-reuse"]
+kuno-small-direct-publish = ["kuno-strata-shared", "cubecl-runtime/kuno-small-direct-publish"]
 kuno-dequant-quad32 = ["kuno-strata-shared", "kuno-expert-cohorts", "cubecl-runtime/kuno-dequant-quad32"]
 kuno-dequant-direct8 = ["kuno-dequant-quad32", "cubecl-runtime/kuno-dequant-direct8"]
 kuno-expert-ordered-output = ["kuno-strata-shared", "kuno-expert-cohorts", "cubecl-runtime/kuno-expert-ordered-output"]

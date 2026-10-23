@@ -1194,6 +1194,8 @@ pub(crate) fn validate_shader_set() -> Result<(), Box<dyn std::error::Error>> {
     crate::strata_global_moe::validate_prompt_ordered_sources()?;
     #[cfg(feature="strata-wide-shared-reuse")]
     crate::strata_matrix::validate_shared_reuse_sources()?;
+    #[cfg(feature="strata-small-direct-publish")]
+    crate::strata_matrix::validate_small_direct_sources()?;
     #[cfg(feature="strata-dequant-quad32")]
     crate::strata_prompt::experts::validate_quad_sources()?;
     #[cfg(feature="strata-dequant-direct8")]
