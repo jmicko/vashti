@@ -1,5 +1,42 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-23): full K32 pipeline accepted; parity unmet.**
+
+Read [the complete contract and acceptance](kuno-prefill-quant-producer-consumer.md).
+Frozen source6edb769c / workerf31fa3f6a6c24daa930dbe8152a39985a188241dd087c4a619a192fbe33e4210
+passes357 CPU,18/49 runtime,8+9 metadata, original compiler populations plus144
+new layouts, all732 GPU controls and both whole-model chains/recovery. Actual
+8064B shared/all layouts; all18 new ISA programs zero spills; original wide/QSA
+checks unchanged. Diagnostic first/repeat11.434381486/9.406666034s, host mode
+11.435514301/9.306249103s. Same sampled cohort32.783261ms, down from41.076030ms
+at the starting control. About6% diagnostic improvement; no CLEAN or parity claim.
+Protected13m6.216s, zero swap, peak31.1GiB; invocationcd58ad4b3ab443ae9f18e3b447d171ab.
+
+Complete FP16-image control4cc3f68f is still faster: normal repeated8.854793s
+versus9.306249s. Keep all coupled source variants; do not hide the regression or
+choose from an isolated timing. Latest CLEAN remains12.471177197/8.394039699s
+against Strata5.5006/5.3515s. Next investigate measured dense/GR and expert queue
+execution differences with the existing protected Strata timing receipt, then
+compose the next complete change. Do not keep treating this grain as the entire
+gap. Strata timing phases include queue idle/event overhead; boundaries differ.
+Reference4096+148 matches ours; normal rolling submission already works.
+
+Artifacts: `small-quant-pipeline-k32-root-{build-receipt,acceptance-freeze}-20261023.json`,
+both safe phase exports, complete ISA export and
+`strata-parity-small-quant-pipeline-k32-20261023-expert-cohorts-public-summary.json`.
+Read-only primary-source GRF check under `mesa-large-grf-source-check-20261023/`:
+executor-utility support does not establish automatic Vulkan large-GRF support.
+No new profiler/driver installation. Existing Strata timing receipt is available
+at `strata-matched-timing-reference-20261020/receipt.json`.
+
+Independent20:58UTC state: Intel50,688,000B,NVIDIA compute0,all5 faults0,
+HTTP200/admission normal,completed145. GPUs free; installed binaries unchanged.
+Canonical Vashti checkout and inherited text/__pycache__ preserved. No API,
+setting, frontend, installation, release, reboot or reset. Goal ACTIVE/UNMET;
+sudo refresh bounded through01:47UTC Oct24.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): retained pipeline accepted; complete K32 source composed.**
 
 Read [the exact contract and acceptance](kuno-prefill-quant-producer-consumer.md).

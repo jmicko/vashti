@@ -3,8 +3,8 @@
 This internal candidate preserves the complete compact-source/activation/ordered
 consumer path. It adds no inference API, configuration field or Vashti change.
 The existing scalar/frame contract and original model/owner/fault guards remain.
-Source b70ccfa2 is GPU accepted, as recorded below. The retained-loop follow-up is also accepted below. The K32 follow-up is
-composed but not yet built or measured.
+Current K32 source6edb769c is fully GPU accepted below. The original K64 pipeline
+and its retained-loop revision remain committed controls. Parity remains unmet.
 
 ## Complete execution
 
@@ -14,9 +14,9 @@ panels with logical subgroup index `PLANE_POS-2`. Each workgroup covers N32;
 the native grid is `rows/32,1,cohort_count`. Original `expert_quant_cohort`
 remains N64 and its original geometry/controls remain independently accepted.
 
-Producers fill bank0 before a common whole-workgroup barrier. In each K64
+Producers fill bank0 before a common whole-workgroup barrier. In each K32
 iteration, producers stage the next bank while consumers execute the current
-bank's four chronological K16 products. A single barrier outside both role
+bank's two chronological K16 products. A single barrier outside both role
 branches joins every reader and writer before banks switch. All lanes execute
 the same dynamic barrier instances, including the final drain. Separate role
 loops with independent barriers are forbidden.
@@ -24,14 +24,14 @@ loops with independent barriers are forbidden.
 Producer lanes reset their private C fragments after staging, using genuine
 matrix fills. Their unused previous accumulators need not remain live through
 integer decoding. Consumer lanes preserve their original C accumulation.
-M8/M16 retain four static chronological K16 steps. M32 uses a genuine four-trip
+M8/M16 retain two static chronological K16 steps. M32 uses a genuine two-trip
 inner product loop, retained by the existing authenticated native DontUnroll pass.
 This bounds fragment liveness while preserving both subgroup roles and banks.
 The initial all-static pipeline and original N64 rolled kernel remain controls.
 
-Keep the existing pitch24, trimmed376-half K16 tiles. Two logical subgroups and
-two banks require12032B. Original publication indexes actual SG2–3, so allocate
-four128-F32 scratch slots,2048B. Total14080B is a separate-allocation envelope;
+Keep pitch24, trimmed376-half K16 tiles. Each K32 bank contains two such tiles,
+188vec4. Two logical subgroups and two banks require6016B. Publication indexes
+actual SG2–3, retaining four128-F32 scratch slots,2048B. Total8064B is separate;
 do not assume lifetime aliasing. Only consumers publish after the final common
 barrier. No new global/private owner or model copy is needed.
 
@@ -113,3 +113,54 @@ All data and padding have unique writers. Same N32/WG64/SG16 roles and common
 barriers; M32 retains a now two-trip native inner loop. Old N64 K64 control and
 original populations stay unchanged. This footprint is a target, not a measured
 occupancy claim. Source is not yet built/GPU accepted. No API/Vashti changes.
+
+## Complete K32 acceptance and next direction (2026-10-23)
+
+Frozen source `6edb769ca9f97123970037315a254d166e348b44`, worker
+`f31fa3f6a6c24daa930dbe8152a39985a188241dd087c4a619a192fbe33e4210`:
+357 CPU,18/49 runtime,8+9 metadata, all original compiler controls plus144 new
+pipeline layouts pass. Actual8064B shared in all layouts, exact native halves,
+N32/WG64/SG16, common barriers and48 M32 retained loops. All732 GPU controls,
+original18-script chains, full-model routing/counter/reuse/capacity and recovery
+pass. Original12 N64 numerical pairs remain; all12 new pipeline pairs have zero
+bit mismatches. All18 new pipeline ISA programs have zero spills, as do original
+wide programs; both original QSA ISA hashes remain unchanged.
+
+Protected unit `kuno-small-quant-pipeline-k32-20261023`, invocation
+`cd58ad4b3ab443ae9f18e3b447d171ab`, exited0 in13m6.216s, zero swap, peak31.1GiB.
+Diagnostic first/repeat11.434381486/9.406666034s; host-mode11.435514301/9.306249103s.
+Same sampled cohort32.783261ms, versus34.201352ms retained K64 and41.076030ms
+original N64 rolled control. Repeated4096 host chunk7.151744100s (normal7.040471967),
+148 tail+teacher/cleanup2.193977196s (normal2.208794477). About6% improvement over
+the starting diagnostic, without closing parity. No fresh CLEAN run or install.
+
+The complete FP16-image control4cc3f68f remains faster: same diagnostic repeated
+8.946789s (normal8.854793s), cohort12.709929ms and dequant19.224670ms. Current
+fusion saves image traffic but still costs more end-to-end; do not hide this
+regression or select a path from a single kernel. Its last clean12.471177197/
+8.394039699s is still the newest clean comparison, against Strata5.5006/5.3515s.
+Retain complete coupled candidates; future selection needs whole-model evidence.
+
+Evidence in development uses `small-quant-pipeline-k32-*`, including root build/
+freeze receipts, both safe phase exports, complete ISA export, final-state and
+`strata-parity-small-quant-pipeline-k32-20261023-expert-cohorts-public-summary.json`.
+Independent20:58UTC state: Intel50,688,000B,NVIDIA compute0,all5 kernel faults0,
+HTTP200 and normal admission,completed145. GPUs free; installed binaries intact.
+Only inherited untracked text/__pycache__ remains in this worktree.
+
+Next review measured remaining dense/GR and expert scheduling gaps against the
+existing protected Strata timing receipt, rather than repeatedly changing this
+one grain. `strata-matched-timing-reference-20261020/receipt.json` already contains
+fixed-public coarse GPU phases; no new profiler install is needed for that.
+Its phase intervals include queue idle/event overhead, so they are leads, not
+identical boundaries to Kuno's timers. Reference repeated full prompt5.3515s uses
+4096+148, identical to ours. Normal Kuno already uses real rolling submission;
+the instrumented operator sample deliberately disables it for timestamps.
+
+Read-only GRF research archived in `mesa-large-grf-source-check-20261023/`:
+[upstream cb671c51](https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa/+/cb671c51db1407f82c366b32642a7271224ceedd)
+changes only the executor utility, not automatic ANV compiler policy. Inspected
+[brw compiler04cbd47f](https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa/+/04cbd47f72d02d3f5a54f5a9dc46439c909d36c9/src/intel/compiler/brw/brw_compiler.c)
+still distinguishes128 GRFs on Xe2 from256 on Xe3. Do not assume a news headline
+means a driver upgrade fixes Vulkan inference. No driver was built/installed.
+No API/config/Vashti change, release, reset or reboot. Goal ACTIVE/UNMET.
