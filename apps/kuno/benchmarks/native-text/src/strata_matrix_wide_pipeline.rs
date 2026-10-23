@@ -3,6 +3,17 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) fn validate_program(
     words: &[u32],
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("KUNO_TEST_PUBLIC_MATRIX_SPIRV") {
+        // Offline compiled-public module only; compiled out of all workers.
+        std::fs::write(
+            path,
+            words
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect::<Vec<_>>(),
+        )?;
+    }
     let mut parents = BTreeMap::new();
     let mut classes = BTreeMap::new();
     let mut instructions = Vec::new();
@@ -62,7 +73,7 @@ pub(super) fn validate_program(
         || product_loops[0].2 != 8
         || instructions.iter().filter(|x| x.1 == 4459).count() != 8
     {
-        return Err("register stage unique complete original K-product loop".into());
+        return Err(format!("register stage unique complete original K-product loop: loops={all_loops} product_loops={product_loops:?} module_products={}",instructions.iter().filter(|x|x.1==4459).count()).into());
     }
     let (start, end, _) = product_loops[0];
     let inner = &instructions[start..end];

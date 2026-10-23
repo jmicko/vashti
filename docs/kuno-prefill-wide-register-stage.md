@@ -41,3 +41,9 @@ this failure/logs. Select the UNIQUE loop containing ALL eight original CMMA
 products,not simply the first loop; retain real in-loop StorageBuffer-load,
 post-product Workgroup-store and following barrier requirements. No GPU/timing
 run or shader change for this audit correction. Actual loop counts reported.
+
+The next audit still rejects unique-loop structure before GPU use. Do not guess
+at compiler block ordering or relax the eight-product requirement. A test-only
+explicit KUNO_TEST_PUBLIC_MATRIX_SPIRV export saves ONLY the static public
+compiled module (compiled out of workers); collect actual loop/product metadata
+and disassembly before correcting traversal. No speed/GPU claim or rerun.
