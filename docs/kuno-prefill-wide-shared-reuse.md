@@ -87,3 +87,16 @@ both original full-model chains remain required for complete pipeline proof.
 No speed conclusion follows from source completion or a single compiler/module
 sample. Compare only after the entire coupled candidate and original controls
 pass, then confirm actual production counters, ISA and physical recovery.
+
+## Complete composed validation, 2026-10-23
+
+The complete `c501ab88`/`f9a3725b2eba522e209c9737228c632fc0178e37da3c77c19a8a9f66837af18b`
+bundle passes326 selected AppCPU,18/34 runtime controls,8 original metadata
+controls, all original shader populations plus32 shared-reuse/30 direct8
+modules,96 register CFG checks,573 GPU controls and both original18-script
+whole-model chains. Real selection counters and physical recovery pass.
+Diagnostic normal repeated prompt8.745485045s improves preceding8.992040901s
+but does not match Strata5.3515s. No clean selection or installation. See the
+[active coordination handoff](kuno-vashti-coordination.md) for exact evidence,
+limitations and preserved initial build/fixture failures. Earlier source-only
+status in this document describes the isolated implementation stage.

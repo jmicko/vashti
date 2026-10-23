@@ -1,5 +1,61 @@
 # Kuno and Vashti Coordination
 
+
+**Active Kuno handoff (2026-10-23): shared lifetime/direct8 accepted; complete small-expert publication next.**
+
+Frozen source `c501ab882248fbe29b291fa9eb3b1055a853dc8a`, worker
+`f9a3725b2eba522e209c9737228c632fc0178e37da3c77c19a8a9f66837af18b` passes
+326 selected AppCPU,18 feature-off/34 full runtime and8 separate original
+metadata controls. All original compiler populations pass, plus32 shared-reuse
+layouts and30 direct8 modules; actual register CFG checks96=64 original+32 reuse.
+All573 GPU controls pass (525 original semantic controls+48 reuse); the102
+existing dequant cases execute actual Direct8/WG32, not old quad. Both unchanged
+18-script full-model proof chains, routing[7663,26673,26673], actual selection
+counters and physical recovery pass. The original21 deep-only64KiB cases remain
+explicitly unavailable on the actual48KiB hardware. No tolerance was relaxed.
+Read [shared lifetime reuse](kuno-prefill-wide-shared-reuse.md) and
+[direct8 decoder](kuno-prefill-dequant-direct8.md).
+
+Diagnostic profile first/repeated long10.058809444/8.781795945s; normal
+10.134471518/8.745485045s versus preceding10.369469785/8.992040901s. This modest
+gain is not clean selection and is still above older8.355123182s and Strata
+clean5.3515s. Keep the coherent bundle; do not install or declare parity.
+Matched layer24 dequant23.947634->19.167420ms, matrix37.084350->36.353866ms,
+wide GU6.497654->5.779060ms. Cohort10.839204ms and macro12.273061ms remain.
+All8 actual wide programs have zero spills. The2 other spilling programs and
+original QSA ISA hashes remain identical to the preceding complete run.
+Actual Kuno expert backing24,414,233,600B/11,983 ranked pairs already exceeds
+Strata reference11,608 slots/22,556MiB; the legacy192-slot/8GiB constructor is
+not the active global budget. Upstream --stream-experts does not enable its
+stream_all branch here: actual nonresident share52.77% exceeds its10% gate.
+Normal-mode rolling submission is active; timestamp-mode zero rolling counters
+are not production evidence. Existing normal host work has~1.16s total ceiling,
+partly overlapped already; do not promise all of it is recoverable.
+
+Evidence under development: `reuse-direct8-root-build-receipt-20261023.json`,
+`strata-parity-reuse-direct8-20261023-expert-cohorts-public-summary.json`,
+`reuse-direct8-{profile,normal}-safe-phases-20261023.json`,
+`reuse-direct8-complete-isa-export-20261023.json` and
+`reuse-direct8-final-state-20261023.json`. Preserved attempt1 build failure was
+CubeCL relative macro path/private module access, fixed617a9442. Attempt2
+passed new controls but2 legacy matrix-registration fixtures used empty DQ
+arguments with selected Direct8 identity; c501ab88 correctly keeps those
+legacy-only fixtures on original identities. New Direct8 runtime validation
+was not weakened. FinalGPU service exited0 in9m56s, swap0, allfaults0;
+Intel50,688,000B, NVIDIA compute0, HTTP200 and admission normal. Installed
+301f1fd1/36626d30 unchanged. No install/release/reset/reboot or Vashti changes.
+
+Next complete source bundle targets smaller expert publication: real direct
+CMMA stores for full valid8-row fragments across macro32/macro64/narrow/cohort
+and genuine wide tails, original checked fallback for partial/invalid routes,
+mandatory existing raw-GU finite activation and ordered-DOWN pending2/inverse
+consumer. Original arithmetic, owners, definitions and tests remain. Root owns
+integration/build/GPU; three isolated source tasks basedc501ab88 split regular
+producers, cohorts and runtime grammar. Do not benchmark partial components.
+Goal remains ACTIVE and UNMET. Required Vashti changes:none.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): preserve ordered bundle; close the measured decoder gap.**
 
 Source54162b57 / worker630c4898c8779b0a6d88d56646b1e2465b72cdd36dd2bfc695c645dae2fddbd2
