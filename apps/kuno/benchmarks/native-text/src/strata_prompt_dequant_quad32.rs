@@ -13,14 +13,14 @@ pub(super) fn source(mut source: String, down: bool) -> String {
     let signature = "fn main(@builtin(global_invocation_id) id:vec3<u32>) {";
     assert_eq!(source.matches(signature).count(), 1);
     source = source.replace(signature,
-        "fn main(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) workgroup:vec3<u32>,@builtin(subgroup_id) subgroup:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,@builtin(num_subgroups) subgroup_count:u32) {");
+        "fn main(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) wg:vec3<u32>,@builtin(subgroup_id) subgroup:u32,@builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32,@builtin(num_subgroups) subgroup_count:u32) {");
     let old = "    let record=id.x;if record>=p.rows*p.columns/32u {return;}\n    let row=record/(p.columns/32u);let col=(record%(p.columns/32u))*32u;\n    write_record32(row,col,record*4u);";
     assert_eq!(source.matches(old).count(), 1);
     source = source.replace(
         old,
         r#"    // Uniform hardware guard precedes every original quantized source read.
     if width<4u||width>128u||width%4u!=0u||256u%width!=0u||subgroup_count*width!=256u {atomicOr(&fault[0],128u);return;}
-    let record=workgroup.x*64u+subgroup*(width/4u)+lane/4u;
+    let record=wg.x*64u+subgroup*(width/4u)+lane/4u;
     let live=record<p.rows*p.columns/32u;
     let row=record/(p.columns/32u);let col=(record%(p.columns/32u))*32u;
     write_quad32(row,col,record*4u,lane%4u,lane,live);"#,
@@ -263,7 +263,7 @@ mod tests {
                     > helper.rfind("subgroupShuffle(").unwrap()
             );
             assert!(selected.contains("@builtin(subgroup_id) subgroup:u32"));
-            assert!(selected.contains("workgroup.x*64u+subgroup*(width/4u)+lane/4u"));
+            assert!(selected.contains("wg.x*64u+subgroup*(width/4u)+lane/4u"));
             assert!(selected.contains("arrayLength(&addresses)!=2048u"));
             assert!(selected.contains("arrayLength(&raw)!=p.r5"));
             assert!(selected.contains("src.z!=bytes/4u||src.z!=expected||src.w>1u"));

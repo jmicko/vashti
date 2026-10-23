@@ -17,7 +17,7 @@ each publishing its own adjacent8-value quarter.
 `strata-intel-core`; the latter requests and enables the actual SUBGROUP device
 feature. No native Quad capability or local-invocation lane ordering is assumed.
 The source uses the genuine subgroup ID, invocation ID, and width. Record
-number is `workgroup.x*64 + subgroup*(width/4) + lane/4`; quarter is `lane%4`.
+number is `wg.x*64 + subgroup*(width/4) + lane/4`; quarter is `lane%4`.
 Queried client bounds and a shader width guard require complete four-lane
 quads. Shader width must be4..128, divide256, be divisible by4, and its product
 with the actual subgroup count must be256. All valid
