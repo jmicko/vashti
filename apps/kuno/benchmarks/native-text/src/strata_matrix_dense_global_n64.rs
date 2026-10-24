@@ -3,7 +3,7 @@ use super::*;
 
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn load<F: Float>(
+pub(in crate::strata_matrix) fn load<F: Float>(
     input: &Array<Vector<F, Const<4>>>,
     weight: &Array<Vector<F, Const<4>>>,
     a0: &cmma::Matrix<F>,
@@ -34,7 +34,7 @@ pub(super) fn load<F: Float>(
     );
 }
 #[cube]
-pub(super) fn products<F: Float>(
+pub(in crate::strata_matrix) fn products<F: Float>(
     a0: &cmma::Matrix<F>,
     a1: &cmma::Matrix<F>,
     b: &cmma::Matrix<F>,
@@ -45,7 +45,7 @@ pub(super) fn products<F: Float>(
     cmma::execute::<F, F, f32, f32>(a1, b, c1, c1);
 }
 #[cube(launch_unchecked)]
-pub(super) fn dense_global_n64_store<F: Float>(
+pub(in crate::strata_matrix) fn dense_global_n64_store<F: Float>(
     input: &Array<Vector<F, Const<4>>>,
     weight: &Array<Vector<F, Const<4>>>,
     output: &mut Array<f32>,
@@ -313,7 +313,7 @@ fn global_n64_geometry(
         && dim.0 >= 512
 }
 #[allow(clippy::too_many_arguments)]
-pub(super) fn try_global_n64_dense(
+pub(in crate::strata_matrix) fn try_global_n64_dense(
     client: &ComputeClient<WgpuRuntime>,
     h: [Handle; 4],
     count: usize,
@@ -467,7 +467,7 @@ pub(crate) fn global_n64_available(client: &ComputeClient<WgpuRuntime>) -> bool 
 }
 // Real complete-M128 prefix plus original exact remaining-member producer.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn try_global_n64_split(
+pub(in crate::strata_matrix) fn try_global_n64_split(
     client: &ComputeClient<WgpuRuntime>,
     h: [Handle; 4],
     count: usize,
@@ -548,7 +548,7 @@ pub(super) fn try_global_n64_split(
         return Ok(false);
     }
     if suffix > 0 {
-        super::native::run_dense_original(
+        crate::strata_matrix::native::run_dense_original(
             client,
             [shifted, h[1].clone(), h[2].clone(), h[3].clone()],
             suffix,
@@ -572,6 +572,6 @@ include!("strata_matrix_global_n64_validation.rs");
 mod tests;
 
 #[cfg(test)]
-pub(super) fn profile_name() -> &'static str {
+pub(in crate::strata_matrix) fn profile_name() -> &'static str {
     core::any::type_name::<dense_global_n64_store::DenseGlobalN64Store<f16, WgpuRuntime>>()
 }

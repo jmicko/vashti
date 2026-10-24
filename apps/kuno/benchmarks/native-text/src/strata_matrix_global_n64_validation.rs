@@ -5,7 +5,7 @@ fn validate_global_n64_program(
     validate_global_n64_pipeline(words, false)
 }
 #[cfg(feature = "strata-global-image-experts")]
-pub(super) fn validate_global_n64_expert_program(
+pub(in crate::strata_matrix) fn validate_global_n64_expert_program(
     words: &[u32],
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     validate_global_n64_pipeline(words, true)
@@ -269,7 +269,7 @@ fn validate_global_n64_pipeline(
     }
     Ok(())
 }
-pub(super) fn validate_global_n64_sources() -> std::result::Result<(), Box<dyn std::error::Error>> {
+pub(in crate::strata_matrix) fn validate_global_n64_sources() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
     use cubecl::{Compiler, ExecutionMode, WgpuCompilationOptions};
     use std::io::Write;

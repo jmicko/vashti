@@ -400,7 +400,7 @@ async fn serve(
         #[cfg(not(feature="strata-global-register-n64"))]
         let global_n64_expert_checks:Vec<serde_json::Value>=Vec::new();
         #[cfg(feature="strata-global-register-n64")]
-        let global_n64_checks=if crate::strata_matrix::public_global_n64_available(&client){crate::strata_matrix::public_global_n64_numeric(&client,&mut arena).map_err(|error|{eprintln!("public_global_n64_error {error}");"public_global_n64_failed"})?}else{Vec::new()};
+        let global_n64_checks=if crate::strata_matrix::public_global_n64_available(&client){crate::strata_matrix::public_global_n64_numeric(&client,&mut arena,&file).map_err(|error|{eprintln!("public_global_n64_error {error}");"public_global_n64_failed"})?}else{Vec::new()};
         #[cfg(feature="strata-global-register-n64")]
         let global_n64_capabilities=serde_json::json!({"compiled":true,"available":crate::strata_matrix::public_global_n64_available(&client),"required_shared_bytes":0,"original_backend_shared_gate":49152,"device_shared_bytes":client.properties().hardware.max_shared_memory_size,"workgroup":512,"subgroup":16,"expected_cases":21,"executed_cases":global_n64_checks.len()});
         #[cfg(not(feature="strata-global-register-n64"))]

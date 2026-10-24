@@ -107,3 +107,15 @@ negative controls additionally mutate actual new dense modules in every layout.
 Original logical M128 wide_blocks credit remains unchanged; the new anonymous
 expert_global_n64_workgroups separately counts real(rows/64)*(prefix/128).
 This is source composition only: no build, GPU or performance acceptance yet.
+
+The first CPU build rejected nested-module visibility/imports and a missing GGUF
+argument to the new numerical harness (14 diagnostics); no GPU use. Preserve
+that build. Helpers now expose only the existing strata_matrix internal scope,
+the suffix uses its actual original native module, and the probe receives the
+same original GGUF reference. No arithmetic or resource-policy change.
+
+GR320 has no padded N64 columns, so its genuine BF16 host case can legitimately
+emit/share the same device program as ordinary BF16.24 layout-case emissions do
+not imply24 distinct modules; the native ISA inventory may contain two or three
+dense programs. Real21-case GPU coverage must prove GR320's actual rows/stride,
+not a distinct shader hash or fabricated branch.
