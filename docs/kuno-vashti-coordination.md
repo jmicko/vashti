@@ -1,6 +1,41 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): carried operand bundle fully validated.**
+**Active Kuno handoff (2026-10-24 UTC): row-ordered cohorts fully validated.**
+
+Source148758ae/worker19c9456a passes414 full/409 off same-source AppCPU,18/73
+runtime,8+9 metadata,10 native, all original1425 plus16 actual sorted-map GPU
+consumer pairs (1441 total), and BOTH original18-script model/compiler/recovery
+chains.213 actual compiler captures; all22 small kernels zero-spill, QSA hashes
+same. Full carry/preload/producer/consumer variants retained; no isolated rollback.
+Read [exact completed acceptance, original CLEAN and next source leads](kuno-prefill-cohort-row-order.md).
+Normal first/repeat10.554253471/8.772859676s (8.66% repeated reduction versus
+complete carry). Original unchanged CLEAN45/4245/4245:11.817666824/8.323282816s,
+profiles empty, ONE run. Previous best12.471177197/8.394039699s; observed repeat
+change0.84%, not variance-controlled. Strata5.5006/5.3515s still unmet.
+
+Extra same-worker96-position host trace passes all original scope/counter/
+normal-rolling/recovery laws. Main/tail cohort batches1158/1252, occupancy98.23%/
+98.38%, exactly the per-layer lower bound. Membership,27.35GB copies and useful/
+padded FLOP counters unchanged; bulk dispatches88390->65576. No claim that trace
+reran numerical controls, or that sampled GPU intervals sum to normal wall time.
+
+Next audit actual ordinary dense projection producer/consumer shape policy.
+Historical accepted a761763e profile's four GDN/QSA projections total~0.358s LESS
+than current; recurrence and QSA attention/merge are stable. Keep all variants;
+source evidence and exact numbers are in the linked note. Separately23 first-long
+pipeline prepares/creates consume0.608/1.092s host time, then repeat has0 misses.
+Investigate genuine static model-load preparation, without forged owner/state/
+completion or private persistence. No source implementation of those leads yet.
+
+GPU acceptance/CLEAN and extra trace units exit0, independent13:26:38UTC:
+Intel42278912B,NVIDIA compute0/desktop620MiB,all5 faults0,HTTP200,admission inactive/
+unpaused/no recovery/waiting0/completed251. No GPU test/worker remains. Goal
+ACTIVE/UNMET; no install/release/API/Vashti/canonical/driver/boot changes.
+Old refresher2936238 verified/stopped; new3062861,parent3556 bounded13:23:42..
+17:23:42UTC. Verify actual identity/cache before reuse. Inherited untracked
+text/__pycache__ preserved. Earlier snapshots below remain historical.
+
+**Preceding carried operand checkpoint:**
 
 Source50708bb8/worker8c6f1aeb passes409 full/408 feature-off same-source AppCPU,
 18/73 runtime,8+9 metadata,10 native,48 genuine layout/SSA/owner controls,
