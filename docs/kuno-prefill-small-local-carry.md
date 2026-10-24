@@ -8,6 +8,24 @@ explicitly import `half::f16`; its parent scope does not export that concrete
 type. Preserve the failed full-build log. Add the explicit import and rebuild
 the same complete candidate. No GPU test has started.
 
+Forward source79b80db3 compiles. Its first four macro layouts and cohort GU pass
+the actual carried proof, then the cohort DOWN negative accepts a vec4-to-vec3
+type mutation. The copied stride validator allowed its dynamic-INFO alternative
+to bypass the exact typed constant cohort stride. Require that typed stride
+for the actual cohort specialization, and do not traverse OpConstant literal
+bits as definition IDs when proving dynamic INFO ancestry. Apply the same
+strict rule to the retained local validator. No matrix arithmetic changes.
+An isolated CPU harness includes the actual forward validator with only test
+cfg/visibility adjusted: all six available genuine layout0 modules and their
+negative mutations pass. The earlier instrumented harness (v2) changes error
+text to identify the accepted mutation; its inherited only-visibility flag is
+inaccurate. Preserve it as diagnostics, not an exact-source acceptance claim.
+Full422/all48 layout acceptance remains pending.
+
+The new multi-slot pair now names its real reference explicitly as the preceding
+local-prefetch arithmetic, rather than inheriting the full-walk reference label.
+All original pair reports remain unchanged.
+
 The accepted N128/four-C small macro and cohort consumers have zero spills but
 are slower than the earlier N64/two-C carried consumers. Their K16 arithmetic
 uses only current-iteration operands. This candidate combines the N128 owner

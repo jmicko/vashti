@@ -227,6 +227,10 @@ pub(crate) fn validate_program(
             if !seen.insert(v) {
                 continue;
             }
+            // OpConstant operands are literal bits, never value-ID edges.
+            if value_ops.get(&v) == Some(&43) {
+                continue;
+            }
             if matches!(classes.get(&v), Some(2 | 12))
                 && bindings.get(&v) == Some(&(if expert { 6 } else { 3 }))
             {
@@ -251,7 +255,11 @@ pub(crate) fn validate_program(
                 .and_then(|(_, ty)| vectors.get(ty))
                 .is_some_and(|(scalar, width)| *width == 4 && float_widths.get(scalar) == Some(&16))
         });
-        if !uniform && !constant_cohort_stride {
+        if if small.is_some_and(|(_, cohort, _)| cohort) {
+            !constant_cohort_stride
+        } else {
+            !uniform
+        } {
             return Err("local prefetch authentic dynamic INFO or exact vec4 cohort stride".into());
         }
     }
