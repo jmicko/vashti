@@ -264,13 +264,7 @@ pub(super) fn one(
     let input = arena.upload_u32(&image)?;
     let weight = arena.upload_u32(&f.weight_image)?;
     let output_words=(if down{abi::PART_BYTES}else{abi::GU_BYTES})as usize/4;
-    let output=if let Some(bits)=control.invalid_sentinel(){
-        let member=control.bad_member(count).unwrap();
-        let base=if down&&ordered{f.map[1028+f.group]as usize+member}else if down{f.routes[member]}else{member};
-        let mut words=Zeroizing::new(vec![0u32;output_words]);
-        words[base*f.rows..(base+1)*f.rows].fill(bits);
-        arena.upload_u32(&words)?
-    }else{arena.allocate_zeroed(output_words)?};
+    let output=arena.allocate_zeroed(output_words)?;
     let map = arena.upload_u32(&f.map)?;
     let status = arena.upload_u32(&f.status)?;
     let fault = if control.initial_fault()==0{arena.allocate_zeroed(1)?}else{arena.upload_u32(&[control.initial_fault()])?};
@@ -280,6 +274,9 @@ pub(super) fn one(
         let base=if down&&ordered{prefix+member}else if down{f.routes[member]}else{member};
         (base*f.rows,bits)
     });
+    if let Some((first,bits))=sentinel_first {
+        wide32_fixture::seed(client,arena.handle(output)?.clone(),output_words,first,f.rows,bits)?;
+    }
     let handles = [input, weight, output, map, status, fault]
         .map(|id| u::handle(arena, id))
         .into_iter()
@@ -648,3 +645,6 @@ pub(crate) fn cases(
     }
     Ok(reports)
 }
+
+#[path="strata_matrix_wide32_fixture.rs"]
+pub(in crate::strata_matrix) mod wide32_fixture;

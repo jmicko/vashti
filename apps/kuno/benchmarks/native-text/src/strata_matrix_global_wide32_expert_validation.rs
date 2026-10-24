@@ -59,6 +59,7 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         }
     }
     validate_guard_sources()?;
+    crate::strata_matrix::ordered_probe::wide32_fixture::validate_sources()?;
     Ok(())
 }
 

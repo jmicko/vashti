@@ -94,6 +94,7 @@ pub(crate) fn cases(
     for (family, down, ordered, old, new) in families {
         for (new_selected, launch) in [(false, old), (true, new)] {
             for &(count, control) in &controls {
+                eprintln!("public_wide32_case_begin family={family} count={count} control={control:?} new={new_selected}");
                 let result = ordered_probe::one(
                     client,
                     arena,
@@ -105,8 +106,11 @@ pub(crate) fn cases(
                     launch,
                     ordered,
                 );
-                arena.reset()?;
-                let mut report = result?;
+                if let Err(ref error)=result {eprintln!("public_wide32_case_error family={family} count={count} control={control:?} new={new_selected} cause={error:?}");}
+                let reset=arena.reset();
+                if let Err(ref error)=reset {eprintln!("public_wide32_case_reset_error {error:?}");}
+                let mut report=result?;
+                reset?;
                 report["actual_global_wide32_banks"] = new_selected.into();
                 report["operand_shared_bytes"] =
                     serde_json::json!(if new_selected { Some(0) } else { None });
