@@ -1,7 +1,7 @@
 # Larger per-subgroup matrices with an ordered route guard
 
-Implemented at d081b38a; final acceptance audit pending as recorded below.
-No clean performance/parity claim. Backend benchmark feature, retain all complete variants. No API/UI,
+Implemented at d081b38a; accepted by the completed-receipt audit below.
+Original live audit failure remains preserved. No clean performance/parity claim. Backend benchmark feature, retain all complete variants. No API/UI,
 installed-service/driver/model/dtype/capacity/owner/erasure change. Goal remains
 same fixed public first/repeated Strata comparison, target5.3515s repeated.
 
@@ -195,3 +195,32 @@ runner. Original failed receipts/source/worker/logs are unchanged; an exact
 older386 driver copy remains in `wide32-fullspan-fixture-rejection-20261024`.
 The new local-route candidate is separately described in
 [kuno-prefill-wide32-local-routes.md](kuno-prefill-wide32-local-routes.md).
+
+
+## Completed-receipt acceptance after source advance
+
+The narrowly revised read-only v2 audit now passes all959 GPU controls and
+both original18-script chains over the SAME original receipts. Exact actual
+large-request dense partition is950 new-wide32,0 old-transpose/N64/register/
+asymmetric/SLM40 products; all950 have their original finite consumers. The
+GR320 fallback remains independently covered by genuine GPU cases, but the
+whole-model fused HC/GR path does not select it. The earlier assertion requiring
+nonzero old-transpose production was wrong; no production path was changed.
+
+Original frozen wrapper SHA d6583527008c141d2db9e8ea83da708a64be07b3cdce4ddf3fd4223dbfd5d6e4
+and failed live invocation/exit remain unchanged. First read-only revision
+also stopped at a live-worktree metadata hash after source intentionally
+advanced. V2 checks that manifest against its frozen d081b38a Git blobs instead,
+retaining the actual old metadata executable hash and all original tests.
+Both read-only revisions/logs are preserved; neither launches a worker/GPU.
+V2 SHA7ca41c1ab9fb66d1d0927b4d5532c2ed738602f34690e49a5ebf24e3f316df43;
+unit `kuno-wide32-completed-audit-v2-20261024` passes. All3 original receipt
+hashes before/after match. `wide32-completed-readonly-v2-20261024.log` records
+exit0 and explicitly records original_live_exit1; do not relabel the live unit.
+
+Public full959 summary, `global-wide32-{profile,normal}-safe-phases-20261024.json`
+and `global-wide32-complete-isa-export-20261024.json` now exist. All191 programs
+retained;2 new dense/2 new expert programs have0:0 spills:fills. Dense340/343
+instructions90 sends; GU3075 instructions553 sends, DOWN2089/384;128GRF.
+Original8 wide zero-spill and both original QSA ISA hashes remain exact.
+Timings/physical recovery above remain unchanged; no new inference was run.

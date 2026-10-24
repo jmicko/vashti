@@ -58,14 +58,61 @@ candidate. Speed interpretation remains the whole first/repeated comparison;
 the unchanged clean Strata target is5.5006/5.3515s. No performance claim yet.
 
 
-## Source checkpoint
+## Accepted complete result
 
-Implemented d1b4d3f1, original variant retained by feature-off selection. Three
-independent mathematical controls compile and pass (65536 mixed branch masks,
-all256 bad-route positions across two tiles, original8-member status/finite
-rules). Actual full application/compiler controls and983 GPU cases are pending.
-Unprivileged full build stopped immediately at a root-owned Cargo fingerprint;
-sudo was requested once and Demons shell is waiting. Do not weaken file or GPU
-privacy protections to bypass it. No GPU process remains from this candidate.
-Prepared bounded root CPU driver builds both feature modes and runs390 exact
-controls per mode before a new worker freeze or GPU authorization is used.
+Source8a2652ecb4d76a5363728e8ad9b90e8114b4afa4, worker
+e4d38a763a0498949107bce57d1dbaf452b58d64df06a838193f3e23369387fe.
+Both preceding/local feature builds pass all390 AppCPU names, retaining387.
+Actual compiler/CFG/negative/production AtomicOr classifier proofs pass in
+both modes. Completed exact CPU selection/logs were reused for the SAME source
+in the worker build; no duplicate AppCPU execution is claimed.18 feature-off
+and59 full runtime,8+9 metadata and10 original native controls also pass.
+All prior compiler populations and original native HAL source remain intact.
+
+All983 GPU controls pass (original959 plus24 new sentinel controls). Both
+original18-script normal/diagnostic full-model chains and all original
+capacity/owner/status/finite/reuse/rolling/erasure checks pass. Genuine new
+prefix counters remain2344 GU/2344 DOWN,287490 actual N128/WG256 workgroups;
+all950 large-request dense products use wide32 with their finite consumers.
+Whole accepted artifact includes actual source/executable/manifest hashes.
+
+Diagnostic warm/first/repeated3.723993112/11.403487658/9.420896605s; normal
+3.752159479/11.411931752/9.360428477s. Essentially unchanged from preceding
+normal11.453113618/9.369922453s. No CLEAN rerun: normal remains slower than
+retained8.854793s trigger. The best prior CLEAN8.394039699s and Strata
+5.5006/5.3515s comparison remain unchanged. Goal ACTIVE/UNMET. Keep both complete
+variants; do not abandon the coupled route/mapping change from these timings.
+
+The intended scheduling change DID execute: large-request proven AtomicOr
+views83798->88486 and actual encoded compute barriers108225->98849 (9376 fewer).
+Legacy inventory230776 and copy barriers96 stay identical. Thus fewer barriers
+alone are not the remaining whole-model gap. New dense/expert programs remain
+0:0 spills:fills at128GRF;191 total ISA programs, original8 wide and2 QSA hashes
+retained. Dense340/343 instructions90 sends; GU3043/553, DOWN2069/381.
+
+Sampled layer24/start0/count4096 diagnostic matrix families (calls,ns):
+cohort278/13354772; macro236/12887171; wideGU49/8075987;
+wideDOWN49/3306294; tailGU48/3961142; tailDOWN48/1384476.
+Dequant19238978ns and OrderedCopy29164373ns. These intervals can overlap;
+do not sum them as elapsed wall time. Medium/small kernels retain their older
+input-A/shared-stage arithmetic and remain a substantial matrix cost.
+
+Protected unit `kuno-local32-complete-20261024`, invocation
+5f89462c7b554cff9560372bb5dda059, exits0. CPU18m19.546s,32.2GiB peak,swap0.
+Separate off/on CPU unit invocation16ab68f2f3af41fb9120e4b387457598 passes.
+Independent04:06:13UTC state: Intel50,688,000B, NVIDIA compute0/display575MiB,
+all5 classified kernel faults0; Kuno/Ollama/Vashti HTTP200, admission normal,
+completed175. All benchmark processes terminal; physical GPU recovery passes.
+No installation, service/settings/API/UI/driver/reset/reboot change.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`local32-complete-driver-20261024.log`, `local32-unit-terminal-20261024.log`,
+`local32-cpu-safe-20261024.json`, frozen `global-local32-root-*`, full983 summary,
+`global-local32-{profile,normal}-safe-phases-20261024.json`,
+`global-local32-complete-isa-export-20261024.json`,
+`global-local32-final-state-20261024.json`. The earlier unprivileged build
+rejection and3 independent mathematical-test artifacts remain preserved.
+Bounded four-hour sudo refresher PID2712660 is still active; do not extend it
+indefinitely. No credentials or private request content were persisted.
+
+Next complete proposal: [global small/medium products](kuno-prefill-global-small-products.md).

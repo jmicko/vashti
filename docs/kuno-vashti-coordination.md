@@ -1,5 +1,72 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-24 UTC): complete local-route bundle accepted; extend small/medium matrix coverage next.**
+
+Read [accepted983 result](kuno-prefill-wide32-local-routes.md),
+[completed959 audit correction](kuno-prefill-wide32-guarded.md), and
+[next complete small/medium proposal](kuno-prefill-global-small-products.md).
+Worktree `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`. Frozen source8a2652ec / workere4d38a76. Canonical
+Vashti untouched; inherited `text/__pycache__/` preserved. Goal ACTIVE/UNMET.
+Same Strata CLEAN first/repeat5.5006/5.3515s, prior Kuno CLEAN12.471177197/
+8.394039699s unchanged. No API/UI/config/install/release/reset/driver change.
+
+Both feature-off/local-route builds pass390 AppCPU (all387 retained), including
+actual shader/CFG/negative/production AtomicOr proofs. Same-source completed
+390 logs reused in worker build; no duplicate execution claim.18/59 runtime,
+8+9 metadata,10 native, all original compiler sets and all983 GPU controls pass
+(original959 plus24 local sentinel cases). Both original18-script full-model
+normal/diagnostic chains, all original ownership/finite/status/capacity/reuse/
+rolling/erasure checks,8 original wide zero-spill and2 QSA ISA hashes pass.
+Full191-program ISA export exists; new dense/GU/DOWN remain0:0 spills:fills.
+
+Diagnostic first/repeated11.403487658/9.420896605s; normal11.411931752/
+9.360428477s, essentially unchanged from prior11.453113618/9.369922453s.
+No CLEAN (normal did not beat the retained8.854793s trigger). Intended dependency
+change DID execute: AtomicOr-only views83798->88486, encoded compute barriers
+108225->98849, original230776 legacy inventory/copy barriers96 unchanged.
+Keep the complete route/ownership bundle; fewer barriers alone are insufficient.
+
+Prior d081b38a/full959 original live invocation remains EXIT1 at its incorrect
+nonzero old-transpose production assertion. Separate read-only v2 completed
+receipt audit passes exact950 wide32/0 older dense partition with same finite
+consumers and unchanged original receipt hashes; no GPU rerun. First read-only
+revision also failed because live source had advanced; v2 checks frozen Git
+blobs/executable hashes instead. Both failed logs/wrappers kept. Full959 public
+summary/ISA/phase exports now exist. Do not relabel the original failed live unit.
+
+NEXT: compose global weights-first/column-major products for BOTH medium/full-
+small macros and cohort16 with genuine smaller WG/larger subgroup cells,
+masked actual partial-input staging, original independent8-half publication,
+new exact native role/grid guards, real counters and all proofs. Proposal only;
+no new small/medium source exists yet. Keep cohort tile8 and original wide tails
+on their complete prior paths. Do not weaken capacity/ownership/math/erasure or
+abandon coupled components from isolated speed. Full details in linked contract.
+Confirmed Strata DQ=2 equals Kuno;96/384 is its separate raw ring, not DQ slots.
+Current macros still use32/36KiB shared stages; cohort16 old2-C arithmetic.
+Sample cohort13.355ms+macro12.887ms identify substantial remaining matrix work;
+timestamp intervals can overlap, so do not sum as wall cost.
+
+Protected complete unit `kuno-local32-complete-20261024`, invocation
+5f89462c7b554cff9560372bb5dda059, exits0; CPU18m19.546s,32.2GiB peak, swap0.
+Separate off/on390 CPU invocation16ab68f2f3af41fb9120e4b387457598 also passes.
+04:06:13UTC independent state Intel50,688,000B, NVIDIA compute0/display575MiB,
+all5 classified faults0, Kuno/Ollama/Vashti HTTP200, admission normal/completed175.
+All benchmark processes terminal; GPUs physically recovered. No running GPU test.
+Bounded four-hour sudo refresher PID2712660 remains active; do not extend it
+indefinitely. Sudo was refreshed and goal resumed; prior blocked condition cleared.
+
+Artifacts `/media/jmicko/faststore/kuno-development`: `local32-complete-driver-20261024.log`,
+`local32-unit-terminal-20261024.log`, `local32-cpu-safe-20261024.json`, frozen
+`global-local32-root-*`, full983 public summary, `global-local32-{profile,normal}-safe-phases-20261024.json`,
+`global-local32-complete-isa-export-20261024.json`, `global-local32-final-state-20261024.json`.
+Prior corrected acceptance `wide32-completed-readonly-v2-20261024.log`, its frozen
+read-only script SHA7ca41c1ab9fb66d1d0927b4d5532c2ed738602f34690e49a5ebf24e3f316df43,
+full959 summary and global-wide32-* exports. Source-only next leads also in
+`next-full-small-matrix-source-leads-20261024.json`. No Vashti consumer work needed.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-24 UTC): full wide32 runs finished; final audit pending, local-route candidate implemented.**
 
 Read [full wide32 implementation/results and preserved failures](kuno-prefill-wide32-guarded.md)
