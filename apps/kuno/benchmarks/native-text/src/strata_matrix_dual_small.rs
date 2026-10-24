@@ -1,6 +1,7 @@
 // Pure-global two-C cells: 16 members x16 output rows per SG16.
 // Original real grid, padded producers, independent8-half publication and ABI.
 use super::*;
+use half::f16;
 const PADDED_GLOBAL: bool = true;
 #[cube]
 #[allow(clippy::too_many_arguments)]

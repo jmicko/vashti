@@ -83,3 +83,13 @@ unchanged original CLEAN gate follow complete source and numerical acceptance.
 No speed-based isolated rollback. Keep this complete variant and fix any source,
 compiler, correctness or owner defect before drawing a performance conclusion.
 No install/release/API/Vashti/canonical/driver/reset/reboot change is authorized.
+
+## Preserved initial compile checkpoint
+
+Source56dbb5f2 passes18 feature-off and100 full actual runtime metadata controls.
+The first AppCPU compilation rejects an unqualified `f16` in the newly extracted
+root-level dual publication helper: unlike its old nested native scope, that
+module does not inherit `half::f16`. Add that explicit import; do not enable Rust's
+unstable primitive half type or change the operand representation. No GPU was
+loaded, no arithmetic or speed result exists. Preserve the failed build and rerun
+complete source/CPU/compiler checks for the corrected worker.
