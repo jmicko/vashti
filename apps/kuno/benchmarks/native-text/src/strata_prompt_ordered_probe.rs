@@ -11,7 +11,8 @@ fn metadata(words: &[u32]) -> MetadataBindingInfo {
     MetadataBindingInfo::custom(words.chunks_exact(2)
         .map(|w| u64::from(w[0]) | (u64::from(w[1]) << 32)).collect())
 }
-fn grouped(count: usize) -> Result<Zeroizing<Vec<u32>>> {
+fn grouped(count: usize) -> Result<Zeroizing<Vec<u32>>> { grouped_policy(count, false) }
+fn grouped_policy(count: usize, row_order: bool) -> Result<Zeroizing<Vec<u32>>> {
     let mut raw = Zeroizing::new(vec![0; groups::LOGICAL + count * 10]);
     raw[..3].copy_from_slice(&[count as u32, 0, count as u32]);
     for route in 0..count * 10 {
@@ -19,7 +20,7 @@ fn grouped(count: usize) -> Result<Zeroizing<Vec<u32>>> {
         raw[1540 + route] = (logical * 13 + 17) % 512;
         raw[groups::LOGICAL + route] = logical;
     }
-    groups::group(&raw, count)
+    if row_order { groups::group_for_prefill(&raw, count) } else { groups::group(&raw, count) }
 }
 /// Sparse public initialization uses the genuine original copy kernel and
 /// retains BOTH real owners. Its small source avoids a400MiB host payload.
@@ -122,6 +123,11 @@ fn side(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,input:&Inputs
 }
 
 pub(crate) fn cases(client: &ComputeClient<WgpuRuntime>, arena: &mut PrivateArena)
+    -> ProbeResult<Vec<serde_json::Value>> { policy_cases(client, arena, false) }
+#[cfg(feature="strata-cohort-row-order")]
+pub(crate) fn row_order_cases(client: &ComputeClient<WgpuRuntime>, arena: &mut PrivateArena)
+    -> ProbeResult<Vec<serde_json::Value>> { policy_cases(client, arena, true) }
+fn policy_cases(client: &ComputeClient<WgpuRuntime>, arena: &mut PrivateArena, row_order: bool)
     -> ProbeResult<Vec<serde_json::Value>>
 {
     let mut reports = Vec::new();
@@ -133,7 +139,7 @@ pub(crate) fn cases(client: &ComputeClient<WgpuRuntime>, arena: &mut PrivateAren
         (9,"inverse_oob"), (9,"unknown_down"), (9,"weight_negative"),
         (9,"shared_inf"),
     ] {
-        let map = grouped(count)?;
+        let map = grouped_policy(count, row_order)?;
         let inverse = groups::ordered_inverse(&map, count)?;
         let mut raw = Zeroizing::new((0..count*10*2560).map(|i| {
             if i % 13 == 0 { (-0.0f32).to_bits() }
@@ -211,7 +217,7 @@ pub(crate) fn cases(client: &ComputeClient<WgpuRuntime>, arena: &mut PrivateAren
         }
         println!("public_prompt_ordered count={count} control={control} mismatches=0");
         reports.push(serde_json::json!({"family":"prompt-ordered-shared", "count":count,
-            "control":control,"original_pair_bitwise":true,"mismatches":0,
+            "control":control,"row_order_selected":row_order,"original_pair_bitwise":true,"mismatches":0,
             "fault":expected_fault,"complete_owners_checked":true,"actual_native_kernels":true}));
     }
     Ok(reports)

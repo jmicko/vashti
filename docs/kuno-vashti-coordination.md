@@ -13,12 +13,15 @@ Normal first/repeat11.417902189/9.604607590s; profile11.441860176/9.701743208s.
 Observed normal2.81%/3.05% longer than preload; NOT variance-controlled. No new
 CLEAN, no parity and no installation. Keep the entire selectable carried variant.
 
-Next [coherent cohort row-ordering design](kuno-prefill-cohort-row-order.md)
-is recorded, not implemented. Full4096 chunk has9100 groups in4021 eight-slot
-cohorts:28.3% occupancy; tail89.6%. New producer/prefix/inverse/ring/consumer
-policy must preserve the original token/rank accumulation and all owners/source/
-metadata bounds, with original logical policy retained. Do not infer a speedup
-or copy-overlap loss from the serialized single-layer sample.
+Next [coherent cohort row-ordering](kuno-prefill-cohort-row-order.md) is COMPOSED,
+not built/live-tested. Real production `group_for_prefill` changes map ordering
+before prefixes/inverse/raw-bank staging; original group/reference policy and
+all1425 old fixtures stay intact. Five new full-map/rank-FMA/rejection/budget/
+real-plan controls planned (414 full/409 off);16 extra paired actual GPU consumer
+controls planned,1441 total fresh cases. Kernel/vendor/ABI/owner sources unchanged,
+full carry bundle retained; no isolated rollback. Private order is1KiB Zeroizing
+stack, no history/persistence. Full4096 chunk had28.3% eight-slot occupancy;
+no speedup is assumed. Original first/repeated CLEAN gate and recovery still apply.
 
 V3 unit exits0, final state exits0;12:18:35UTC Intel42278912B,NVIDIA compute0/
 desktop621MiB,faults0,all3HTTP200,admission inactive/unpaused/no recovery/waiting0/

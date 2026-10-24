@@ -36,6 +36,8 @@ pub(crate) use prompt_numeric::cases as public_prompt_numeric;
 mod prompt_ordered;
 #[cfg(feature = "strata-expert-ordered-output")]
 pub(crate) use prompt_ordered::cases as public_prompt_ordered;
+#[cfg(feature="strata-cohort-row-order")]
+pub(crate) use prompt_ordered::row_order_cases as public_prompt_row_order;
 
 /// Compiled-public paired producer probes bind real arena owners directly.
 /// This launches the exact consumer used by finish_prompt_ordered_shared.
@@ -640,7 +642,7 @@ impl Workspace {
                 )
             })?;
             boundary.mark("expert_boundary_route_readback_checkpoint");
-            let map = crate::strata_prompt::groups::group(&raw, count).map_err(|error| {
+            let map = crate::strata_prompt::groups::group_for_prefill(&raw, count).map_err(|error| {
                 // Fixed compiled-public diagnostics only. No input, route,
                 // expert ID, tensor value or private-worker observation.
                 if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {

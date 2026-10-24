@@ -30,6 +30,21 @@ const MEMBERS: usize = 1540;
 const LENGTHS: usize = 516;
 const OFFSETS: usize = 1028;
 pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
+    group_with_order(raw, count, false)
+}
+/// Production whole-prefill policy. Original numerical fixtures and decode
+/// retain logical order; the SAME authenticated raw packet builds all prefixes,
+/// members and downstream inverse before expert staging can observe this map.
+pub(crate) fn group_for_prefill(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
+    let map = group_with_order(raw, count, cfg!(feature = "strata-cohort-row-order"))?;
+    if cfg!(feature = "strata-cohort-row-order") {
+        crate::strata_prefill_profile::count("expert_row_order_layers", 1);
+        crate::strata_prefill_profile::count("expert_row_order_groups", u64::from(map[3]));
+    }
+    Ok(map)
+}
+const ORDER_BYTES: usize = 512 * size_of::<u16>();
+fn group_with_order(raw: &[u32], count: usize, row_order: bool) -> Result<Zeroizing<Vec<u32>>> {
     if !(1..=ROUTE_CAPACITY).contains(&count)
         || raw.len() != LOGICAL + count * 10
         || raw[..4] != [count as u32, 0, count as u32, 0]
@@ -62,9 +77,19 @@ pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
     let mut map = Zeroizing::new(vec![0u32; MAP_WORDS]);
     map[..3].copy_from_slice(&[count as u32, 0, count as u32]);
     let mut offsets = Zeroizing::new([0usize; 512]);
+    // Exactly1KiB, in place and erased on every return. Sorting allocates no
+    // extra heap and does not retain any cross-request expert-use history.
+    let mut order = Zeroizing::new(std::array::from_fn::<u16, 512, _>(|i| i as u16));
+    if row_order {
+        order.sort_unstable_by_key(|&id| {
+            let n = lengths[usize::from(id)];
+            (if n == 0 { usize::MAX } else { n }, id)
+        });
+    }
     let mut n = 0;
     let mut groups = 0;
-    for logical in 0..512 {
+    for &logical in order.iter() {
+        let logical = usize::from(logical);
         if lengths[logical] == 0 {
             continue;
         }
@@ -324,3 +349,7 @@ mod native_route_layout_tests {
         assert_eq!(v.status.size_in_used(), (STATUS_WORDS * 4) as u64);
     }
 }
+
+#[cfg(all(test, feature = "strata-cohort-row-order"))]
+#[path = "strata_prompt_group_order_tests.rs"]
+pub(crate) mod row_order_tests;

@@ -56,3 +56,35 @@ strata_prompt_raw_banks.rs::Plan::with_lookahead, and
 strata_prompt_expert_cohorts.rs::enqueue_unit. The final consumer needs an explicit
 source audit before selecting an ordering. Standalone content-free analysis:
 /media/jmicko/faststore/kuno-development/next-cohort-fill-analysis-20261024.json.
+
+## Composed source policy
+
+`strata-cohort-row-order` / `--cohort-row-order` requires the COMPLETE carried
+bundle and ordered output. Original `groups::group` remains the logical-order
+fixture/reference policy; only the real whole-prefill call uses the explicit
+`group_for_prefill`. The latter orders by (member_count,logical_id), placing
+unused IDs last, BEFORE deriving every prefix/member/inverse and real raw-bank
+plan. Decode and all original1425 numerical fixtures retain their old maps.
+The1KiB Zeroizing u16 order stack sorts in place, with no retained history or
+heap allocation; conservative original2MiB host reservation remains sufficient.
+
+Source audit: `strata_global_moe.rs` uploads this exact map, then derives/uploads
+its inverse, then enqueues experts using the SAME map. Original
+`strata_prompt_ordered_shared_reduce.wgsl` reads `inverse[token*10+rank]`, checks
+the map roundtrip, and accumulates rank0..9 using its untouched FMAs. No GPU
+shader/vendor/authority/owner/geometry change is composed. Both macro and cohort
+carry remain selected, not rolled back.
+
+Five additional CPU controls cover complete source-cell/member/inverse mappings,
+nonassociative rank-FMA bit equality over full public maps, strict production
+call-site and original scratch bounds, packet rejection/ties, and the REAL
+raw-bank planner's source slots/consumption/release laws with mixed memory tiers.
+All409 original controls remain, planned414 full and409 feature-off on the same
+source. Sixteen additional actual-GPU paired controls use the real sorted map,
+original rank-reduce/SharedMerge reference and actual ordered consumer, checking
+whole owners, immutable sources and every original finite/fault/poison/erasure
+case. All original1425 GPU controls remain, planned1441 freshly executed.
+Original18/73 runtime,8+9 metadata,10 native and BOTH original18-script full-model/
+compiler/recovery chains remain required. Actual row-order layer/group counters
+must equal real successful grouping and actual model counts. Compilation/live
+acceptance and all speed claims are pending at this source checkpoint.

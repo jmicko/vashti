@@ -223,3 +223,39 @@ fn raw_lookahead_cursor_flag_and_full_reserved_metadata_erase_inside_original_ei
     let slots = unsafe { std::slice::from_raw_parts(plan.slots.as_ptr(), sc) };
     assert!(units.iter().chain(slots).all(|&byte| byte == 0));
 }
+
+#[cfg(feature="strata-cohort-row-order")]
+#[test]
+fn reordered_real_maps_fill_cohorts_without_changing_any_source_slot_or_release_law() {
+    use crate::strata_prompt::groups;
+    let raw = groups::row_order_tests::packet(148);
+    let mut totals = Vec::new();
+    for map in [groups::group(&raw, 148).unwrap(), groups::group_for_prefill(&raw, 148).unwrap()] {
+        let n = groups::validate(&map, 148).unwrap();
+        let members = &map[516..516+n];
+        let host = (0..n).map(|g| map[4+g] % 3 != 1).collect::<Vec<_>>();
+        let mut plan = Plan::new(members, &host).unwrap();
+        let mut group=0;let mut cohorts=0;let mut seen=vec![false;n];
+        while group<n {
+            while plan.issue_next().unwrap().is_some() {}
+            let unit=plan.current(group).unwrap();
+            if unit.legacy {
+                for g in unit.first..unit.end {
+                    assert!(!seen[g]);seen[g]=true;
+                    assert_eq!(plan.slot(unit,g).unwrap().is_some(),host[g]);
+                    assert_eq!(plan.complete_group(unit,g).unwrap(),g+1==unit.end);
+                }
+            }else{
+                cohorts+=1;assert!(unit.end-unit.first<=8);
+                for g in unit.first..unit.end {assert!(!seen[g]);seen[g]=true;assert!(members[g]<32);assert_eq!(plan.slot(unit,g).unwrap().is_some(),host[g]);}
+                plan.consumed(unit).unwrap();
+            }
+            group=unit.end;
+        }
+        let (misses,resident,peak,_)=plan.finish().unwrap();
+        assert!(peak<=16);assert_eq!(misses,host.iter().filter(|&&h|h).count());assert_eq!(misses+resident,n);assert!(seen.into_iter().all(|v|v));
+        totals.push((cohorts,members.iter().filter(|&&v|v<32).count(),misses));
+    }
+    assert_eq!(totals[0].1,totals[1].1);assert_eq!(totals[0].2,totals[1].2);
+    assert!(totals[1].0<totals[0].0);assert_eq!(totals[1].0,totals[1].1.div_ceil(8));
+}
