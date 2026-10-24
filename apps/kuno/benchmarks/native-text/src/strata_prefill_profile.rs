@@ -79,6 +79,8 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-global-transpose")]
+    {if name.contains("::native_expert_wide::global_transpose::expert_global_transpose_gu::ExpertGlobalTransposeGu<"){return 0;}if name.contains("::native_expert_wide::global_transpose::expert_global_transpose_down::ExpertGlobalTransposeDown<"){return 1;}}
     #[cfg(feature="strata-global-register-n64")]
     {if name.contains("::native_expert_wide::global_n64::expert_global_n64_gu::ExpertGlobalN64Gu<"){return 0;}if name.contains("::native_expert_wide::global_n64::expert_global_n64_down::ExpertGlobalN64Down<"){return 1;}}
 
@@ -130,6 +132,8 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-global-transpose")]
+    if name.contains("::native_expert_wide::global_transpose::expert_global_transpose_gu::ExpertGlobalTransposeGu<") || name.contains("::native_expert_wide::global_transpose::expert_global_transpose_down::ExpertGlobalTransposeDown<") || name.contains("::native_wide::global_transpose::dense_global_transpose_store::DenseGlobalTransposeStore<"){return 1;}
     #[cfg(feature="strata-global-register-n64")]
     if name.contains("::native_expert_wide::global_n64::expert_global_n64_gu::ExpertGlobalN64Gu<") || name.contains("::native_expert_wide::global_n64::expert_global_n64_down::ExpertGlobalN64Down<") || name.contains("::native_wide::global_n64::dense_global_n64_store::DenseGlobalN64Store<"){return 1;}
 
@@ -922,5 +926,14 @@ mod global_n64_profile_tests{
  #[test]
  fn actual_n64_generated_producers_keep_original_matrix_and_expert_family_classes(){
   for(i,n)in crate::strata_matrix::global_n64_profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);if i<2{assert_eq!(matrix_family(n),i);}}
+ }
+}
+
+#[cfg(all(test,feature="strata-global-transpose"))]
+mod global_transpose_profile_tests{
+ use super::*;
+ #[test]
+ fn actual_transpose_generated_producers_keep_original_matrix_and_expert_family_classes(){
+  for(i,n)in crate::strata_matrix::global_transpose_profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);if i<2{assert_eq!(matrix_family(n),i);}}
  }
 }

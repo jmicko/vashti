@@ -48,6 +48,7 @@ cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
 strata-global-register-n64 = ["strata-global-image-experts", "cubecl-wgpu/kuno-global-register-n64"]
+strata-global-transpose = ["strata-global-register-n64", "cubecl-wgpu/kuno-global-transpose"]
 strata-global-image-experts = ["strata-deep-matrix", "strata-small-direct-publish", "strata-expert-cohorts", "strata-wide-shared-reuse", "cubecl-wgpu/kuno-global-image-experts"]
 strata-expert-cohorts = ["strata-narrow-global", "strata-dequant-record32", "cubecl-runtime/kuno-expert-cohorts", "cubecl-wgpu/kuno-expert-cohorts"]
 strata-expert-register-prefetch = ["strata-expert-cohorts"]

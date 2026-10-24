@@ -1375,3 +1375,7 @@ pub(super) mod tests {
 #[cfg(feature="strata-global-register-n64")]
 #[path="strata_matrix_dense_global_n64.rs"]
 pub(super) mod global_n64;
+
+#[cfg(feature="strata-global-transpose")]
+#[path="strata_matrix_dense_global_transpose.rs"]
+pub(super) mod global_transpose;

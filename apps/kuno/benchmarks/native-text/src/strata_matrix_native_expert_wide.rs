@@ -2307,3 +2307,7 @@ mod tests {
 #[cfg(feature="strata-global-register-n64")]
 #[path="strata_matrix_global_n64_experts.rs"]
 pub(crate) mod global_n64;
+
+#[cfg(feature="strata-global-transpose")]
+#[path="strata_matrix_global_transpose_experts.rs"]
+pub(crate) mod global_transpose;

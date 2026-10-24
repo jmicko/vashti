@@ -131,6 +131,17 @@ fn global_register_generated(name:&str,module:&str,ty:&str)->bool {
  name.split_once("::strata_matrix::native_expert_wide::global_register::")
   .is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
 }
+fn global_transpose_generated(name:&str,module:&str,ty:&str)->bool {
+ if !cfg!(feature="kuno-global-transpose"){return false;}
+ let actual=match(module,ty){
+ ("expert_wide_gu_direct","ExpertWideGuDirect")=>"expert_global_transpose_gu::ExpertGlobalTransposeGu",
+ ("expert_wide_down","ExpertWideDown")=>"expert_global_transpose_down::ExpertGlobalTransposeDown",
+ _=>return false};
+ name.split_once("::strata_matrix::native_expert_wide::global_transpose::").is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
+}
+fn global_transpose_prefix(name:&str)->bool {
+ global_transpose_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown")
+}
 fn global_n64_generated(name:&str,module:&str,ty:&str)->bool {
  if !cfg!(feature="kuno-global-register-n64"){return false;}
  let actual=match(module,ty){
@@ -143,6 +154,7 @@ fn global_n64_prefix(name:&str)->bool {
  global_n64_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_n64_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
+    if name.contains("::global_transpose::") {return global_transpose_generated(name,module,ty);}
     if name.contains("::global_n64::") {return global_n64_generated(name,module,ty);}
     if name.contains("::global_register::") {
         return global_register_generated(name,module,ty);
@@ -240,7 +252,7 @@ fn is_tail(name: &str, down: bool) -> bool {
     }
 }
 fn ordered_down_layout(name: &str) -> bool {
-    name.contains("::ordered::") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
+    name.contains("::ordered::") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
         name, "expert_tail_down", "ExpertTailDown")
 }
 fn matrix(
@@ -536,7 +548,7 @@ impl NativeStrataExpertGrammar {
                     || params.piece != params.count / 128 * 128
                     || views[0] != group.input
                     || u64::from(params.count) * u64::from(params.columns) * 2 > views[0].used()
-                    || !grid(count, params.rows / if global_n64_prefix(name){64}else{128}, params.piece / 128)
+                    || !grid(count, params.rows / if global_transpose_prefix(name)||global_n64_prefix(name){64}else{128}, params.piece / 128)
                 {
                     return Err(batch_fault("native expert grammar exact wide prefix"));
                 }
