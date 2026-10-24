@@ -299,7 +299,7 @@ fn validate_cells(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>,cells:
     }
     if global_stores
         != if small.is_some() {
-            8
+            cells * 2
         } else if expert {
             10
         } else {
@@ -314,7 +314,7 @@ fn validate_cells(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>,cells:
                 0
             }
     {
-        return Err("global wide32 exact publication population".into());
+        return Err(format!("global small exact publication cells={cells} global={global_stores} fallback={fallback_stores}").into());
     }
     let mut edges = BTreeMap::new();
     for (&b, ins) in &blocks {

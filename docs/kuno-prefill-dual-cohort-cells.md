@@ -93,3 +93,12 @@ module does not inherit `half::f16`. Add that explicit import; do not enable Rus
 unstable primitive half type or change the operand representation. No GPU was
 loaded, no arithmetic or speed result exists. Preserve the failed build and rerun
 complete source/CPU/compiler checks for the corrected worker.
+
+Corrected7599aebb compiles; all18/100 runtime controls pass. The AppCPU suite
+then rejects the first genuine dual module in retained whole-compiler coverage:
+the new two-C validator entry still used the old literal8 global publication
+stores. Its other actual6-store/4-product/load/ABI checks had passed. Make the
+closed population exactly2*cells (4 for new, unchanged8 for old), retaining
+fallback exactlycells and every original negative/origin/SSA proof. No GPU or
+speed run occurred. Preserve this failed suite; rerun the complete corrected
+source rather than bypassing the original whole-compiler test.
