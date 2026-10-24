@@ -55,7 +55,7 @@ pub(in crate::strata_matrix) fn validate_program(
         // Only value-producing instructions relevant to authentic dynamic strides.
         if matches!(
             op,
-            43 | 170 | 171 | 227 | 61
+            43 | 170 | 171 | 227 | 334 | 61
                 | 65
                 | 66
                 | 67
@@ -207,13 +207,17 @@ pub(in crate::strata_matrix) fn validate_program(
     let ws=normal_loads.iter().filter(|p|bindings.get(&root(p.2).unwrap())==Some(&1)).map(|p|p.1).collect::<Vec<_>>();
     for i in 0..4 {if ws[i]>=ps[2*i] || (i>0&&ws[i]<=ps[2*i-1]){return Err("wide32 actual one-A/two-product lifetime order".into());}}
     if expert {
-        let mut fault_read=false;
+        let mut fault_reads=BTreeSet::new();let mut all_values=BTreeSet::new();let mut branches=BTreeSet::new();
         let mut at=5;
         while at<words.len(){let n=(words[at]>>16)as usize;
-            if words[at]&65535==227 && bindings.get(&root(words[at+3])?)==Some(&5){fault_read=true;}
+            if words[at]&65535==227 && bindings.get(&root(words[at+3])?)==Some(&5){fault_reads.insert(words[at+2]);}
+            if words[at]&65535==334{all_values.insert(words[at+2]);}
+            if words[at]&65535==250{branches.insert(words[at+1]);}
             at+=n;
         }
-        if !fault_read{return Err("wide32 actual original sticky-fault branch load".into());}
+        let mut guarded=false;
+        for all in all_values.intersection(&branches){let mut seen=BTreeSet::new();let mut todo=vec![*all];while let Some(v)=todo.pop(){if !seen.insert(v){continue;}if fault_reads.contains(&v){guarded=true;}if let Some(d)=defs.get(&v){todo.extend(d.iter().copied().filter(|v|defs.contains_key(v)));}}}
+        if !guarded{return Err("wide32 subgroup-uniform original sticky-fault branch".into());}
     }
     Ok(())
 }
@@ -254,6 +258,8 @@ pub(in crate::strata_matrix) fn validate_sources() -> std::result::Result<(), Bo
                 return Err("global wide32 actual SG16".into());
             }
             validate_program(&words,false)?;
+            #[cfg(test)]
+            validate_negatives(&words,false)?;
 
 
             let mut cmd = std::process::Command::new("spirv-val");
@@ -281,4 +287,21 @@ pub(in crate::strata_matrix) fn validate_sources() -> std::result::Result<(), Bo
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(in crate::strata_matrix) fn validate_negatives(words:&[u32],expert:bool)->std::result::Result<(),Box<dyn std::error::Error>>{
+ let (mut at,mut changes,mut zero)=(5,Vec::new(),None);
+ while at<words.len(){let n=(words[at]>>16)as usize;let op=words[at]&65535;
+  if op==43&&n==4&&words[at+3]==0{zero=Some(words[at+2]);}
+  if op==16&&n==6&&words[at+2]==17{changes.push((at+3,1024));}
+  if op==71&&n==4&&words[at+2]==33&&words[at+3]==0{changes.push((at+3,9));}
+  if op==71&&n==4&&words[at+2]==33&&words[at+3]==if expert{6}else{3}{changes.push((at+3,10));}
+  if expert&&op==334{changes.push((at,(n as u32)<<16|335));}
+  at+=n;
+ }
+ at=5;while at<words.len(){let n=(words[at]>>16)as usize;if words[at]&65535==4458{changes.push((at+3,zero.ok_or("wide32 actual zero constant")?));break;}at+=n;}
+ if changes.len()<4{return Err("wide32 actual negative inventory".into());}
+ for(i,value)in changes{let mut bad=words.to_vec();bad[i]=value;if validate_program(&bad,expert).is_ok(){return Err("wide32 accepted wrong grid/binding/INFO/store/fault-uniformity".into());}}
+ Ok(())
 }

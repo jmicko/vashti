@@ -114,7 +114,7 @@ fn wide(
         }
         terminate!();
     }
-    if fault[0].load()==0 {
+    if plane_all(fault[0].load()==0) {
     let c00=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
     let c01=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
     let c10=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);

@@ -73,7 +73,9 @@ numerical-probe launcher, which has no captured Gather, queues a distinct tiny
 route guard with original map/fault and actual count/group; it cannot be
 admitted into a native captured expert batch. No hidden cached validation.
 
-If original sticky fault is zero, run eight-C arithmetic, direct column-major
+Use subgroup plane_all on the original atomic fault-zero read so every CMMA
+branch is uniform even if an unrelated later fault arrives. If all lanes see
+original sticky fault zero, run eight-C arithmetic, direct column-major
 stores, then (after all C fragments die) simple original DOWN pending2 writes
 for all32 real members in the single column-zero subgroup. If nonzero, use
 accepted two-C publication/math over four serial64x64 subtiles with16 SG and

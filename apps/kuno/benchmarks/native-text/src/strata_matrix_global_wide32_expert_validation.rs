@@ -32,6 +32,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 return Err("global wide32 expert actual SG16".into());
             }
             crate::strata_matrix::native_wide::global_wide32::validation::validate_program(&words,true)?;
+            #[cfg(test)]
+            crate::strata_matrix::native_wide::global_wide32::validation::validate_negatives(&words,true)?;
             let mut cmd = std::process::Command::new("spirv-val");
             cmd.args(["--target-env", "vulkan1.3"]);
             if mask & 1 != 0 {
