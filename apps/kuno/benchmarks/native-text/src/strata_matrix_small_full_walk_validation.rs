@@ -18,6 +18,7 @@ fn program(
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut values: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     let mut matrix_results = BTreeMap::new();
+    let mut actual_definitions: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     let mut product_inputs = BTreeMap::new();
     let mut shared_writes = Vec::new();
     let mut barrier_sites = Vec::new();
@@ -27,6 +28,14 @@ fn program(
         let op = words[at] & 65535;
         if n == 0 || at + n > words.len() {
             return Err("small full walk opcode extent".into());
+        }
+        if n >= 3
+            && matches!(
+                op,
+                43 | 44 | 45 | 46 | 61 | 80 | 81 | 83 | 124 | 245 | 4457 | 4459
+            )
+        {
+            actual_definitions.insert(words[at + 2], words[at..at + n].to_vec());
         }
         match op {
             16 if n == 6 && words[at + 2] == 17 => {
@@ -189,6 +198,7 @@ fn program(
         values: &BTreeMap<u32, Vec<u32>>,
         matrices: &BTreeMap<u32, usize>,
         seen: &mut BTreeSet<u32>,
+        actual_definitions: &BTreeMap<u32, Vec<u32>>,
     ) -> std::result::Result<BTreeSet<u32>, Box<dyn std::error::Error>> {
         if matrices.contains_key(&id) {
             return Ok(BTreeSet::from([id]));
@@ -196,12 +206,21 @@ fn program(
         if !seen.insert(id) {
             return Err("full walk B matrix SSA cycle".into());
         }
-        let inputs = values
-            .get(&id)
-            .ok_or("full walk unrecognized actual B value")?;
+        let inputs = values.get(&id).ok_or_else(|| {
+            format!(
+                "full walk unrecognized actual B value id={id} definition={:?}",
+                actual_definitions.get(&id)
+            )
+        })?;
         let mut result = BTreeSet::new();
         for &i in inputs {
-            result.extend(origins(i, values, matrices, &mut seen.clone())?);
+            result.extend(origins(
+                i,
+                values,
+                matrices,
+                &mut seen.clone(),
+                actual_definitions,
+            )?);
         }
         Ok(result)
     }
@@ -250,6 +269,7 @@ fn program(
                 &values,
                 &matrix_results,
                 &mut BTreeSet::new(),
+                &actual_definitions,
             )?;
             *b_values.entry(b).or_default() += 1;
         }

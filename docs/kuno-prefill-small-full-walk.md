@@ -67,3 +67,11 @@ producers. New paired references use accepted global-small tile16/macros;
 tile8 and wide tails are untouched. Original18 feature-off runtime,8+9
 metadata and10 native still required. Neither full compilation nor live runs
 have executed for this new bundle. Do not interpret speed until complete.
+
+First398 CPU build at2598d134 compiles successfully, then the new actual
+shader SSA proof rejects an unrecognized B value before any new GPU test.
+No numerical failure or speed result is claimed. The proof remains strict;
+next diagnostic records the missing SSA ID's actual defining instruction,
+then determine whether it is an unsupported valid provenance or a real
+producer/SSA issue. Do not simply bypass the independent-B/overwrite check.
+Failed CPU log/artifacts `small-full-walk-app-cpu-20261024` are preserved.
