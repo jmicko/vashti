@@ -4,6 +4,14 @@ pub(crate) fn validate_program(
     expert: bool,
     small: Option<(usize, bool, u32)>,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    validate_cells(words,expert,small,4)
+}
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) fn validate_dual_program(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>)->std::result::Result<(),Box<dyn std::error::Error>> {
+    validate_cells(words,expert,small,2)
+}
+fn validate_cells(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>,cells:usize)->std::result::Result<(),Box<dyn std::error::Error>> {
+    assert!(matches!(cells,2|4));
     use std::collections::{BTreeMap, BTreeSet};
     assert!(expert && small.is_some(), "small carried validator scope");
     let wg_expected = 32u32;
@@ -134,7 +142,7 @@ pub(crate) fn validate_program(
         || (!expert && (barriers != 0 || atomics != 0))
         || loads.len()
             != if small.is_some() {
-                13
+                5 + cells * 2
             } else if expert {
                 13
             } else {
@@ -142,7 +150,7 @@ pub(crate) fn validate_program(
             }
         || stores.len()
             != if small.is_some() {
-                12
+                cells * 3
             } else if expert {
                 12
             } else {
@@ -150,7 +158,7 @@ pub(crate) fn validate_program(
             }
         || products.len()
             != if small.is_some() {
-                8
+                cells * 2
             } else if expert {
                 12
             } else {
@@ -269,7 +277,7 @@ pub(crate) fn validate_program(
         }
         || weight_loads
             != if small.is_some() {
-                10
+                2 + cells * 2
             } else if expert {
                 10
             } else {
@@ -299,7 +307,7 @@ pub(crate) fn validate_program(
         }
         || fallback_stores
             != if small.is_some() {
-                4
+                cells
             } else if expert {
                 2
             } else {
@@ -349,15 +357,15 @@ pub(crate) fn validate_program(
         }
     }
     let counts: BTreeSet<usize> = innermost.iter().map(|c| c.2).collect();
-    if counts != BTreeSet::from([8]) || innermost.len() != 1 {
+    if counts != BTreeSet::from([cells * 2]) || innermost.len() != 1 {
         return Err("small local carry exact eight-product loop".into());
     }
-    let normal = innermost.iter().find(|c| c.2 == 8).unwrap();
+    let normal = innermost.iter().find(|c| c.2 == cells * 2).unwrap();
     let normal_loads = loads
         .iter()
         .filter(|p| normal.1.contains(&p.0))
         .collect::<Vec<_>>();
-    if normal_loads.len() != 10 {
+    if normal_loads.len() != 2 + cells * 2 {
         return Err("balanced wide32 two genuine5-operand banks in K loop".into());
     }
     if normal_loads
@@ -529,7 +537,7 @@ pub(crate) fn validate_program(
     let mut next_b = None;
     // Product pairs C0:(0,2), C1:(1,3), C2:(4,6), C3:(5,7).
     let pairs = [(0usize, 2usize), (1, 3), (4, 6), (5, 7)];
-    for (cell, (i, j)) in pairs.into_iter().enumerate() {
+    for (cell, (i, j)) in pairs.into_iter().take(cells).enumerate() {
         let a0 = proof.origins(words[ps[i] + 3], BTreeSet::new())?;
         let a1 = proof.origins(words[ps[j] + 3], BTreeSet::new())?;
         let b0 = proof.origins(words[ps[i] + 4], BTreeSet::new())?;
@@ -610,7 +618,7 @@ pub(crate) fn validate_program(
         matrices: &c_values,
         ..proof
     };
-    for (i, j) in pairs {
+    for (i, j) in pairs.into_iter().take(cells) {
         if c_proof.origins(words[ps[j] + 5], BTreeSet::new())? != BTreeSet::from([words[ps[i] + 2]])
         {
             return Err("granular exact ascending K16 C dependency".into());
@@ -627,6 +635,14 @@ pub(crate) fn negatives(
     expert: bool,
     small: Option<(usize, bool, u32)>,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    negative_cells(words,expert,small,4)
+}
+#[cfg(all(test,feature="strata-small-dual-cells"))]
+pub(crate) fn dual_negatives(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>)->std::result::Result<(),Box<dyn std::error::Error>> {
+    negative_cells(words,expert,small,2)
+}
+#[cfg(test)]
+fn negative_cells(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>,cells:usize)->std::result::Result<(),Box<dyn std::error::Error>> {
     let mut mutations = Vec::new();
     let mut at = 5;
     let mut zero = None;
@@ -688,14 +704,14 @@ pub(crate) fn negatives(
     for (i, v) in mutations {
         let mut bad = words.to_vec();
         bad[i] = v;
-        if validate_program(&bad, expert, small).is_ok() {
+        if validate_cells(&bad, expert, small,cells).is_ok() {
             return Err("local prefetch accepted geometry/binding/layout corruption".into());
         }
     }
     let row = if small.is_some() { 1 } else { 2 };
     let mut bad = words.to_vec();
     bad[ps[row] + 3] = words[ps[0] + 3];
-    if validate_program(&bad, expert, small).is_ok() {
+    if validate_cells(&bad, expert, small,cells).is_ok() {
         return Err("local prefetch accepted weight-row crosswire".into());
     }
     let a = stores
@@ -710,7 +726,7 @@ pub(crate) fn negatives(
         .ok_or("local prefetch other C store")?;
     let mut bad = words.to_vec();
     bad[a + 1] = words[b + 1];
-    if validate_program(&bad, expert, small).is_ok() {
+    if validate_cells(&bad, expert, small,cells).is_ok() {
         return Err("local prefetch accepted C crosswire".into());
     }
     Ok(())

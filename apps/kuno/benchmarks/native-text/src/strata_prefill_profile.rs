@@ -82,6 +82,8 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-small-dual-cells")]
+    if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 6;}
     #[cfg(feature="strata-regular-cohorts")]
     if name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::"){return 6;}
     #[cfg(feature="strata-small-granular")]
@@ -162,6 +164,8 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-small-dual-cells")]
+    if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 1;}
     #[cfg(feature="strata-regular-cohorts")]
     {
         if name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::"){return 1;}
@@ -1073,5 +1077,19 @@ mod regular_classes {
   let name=core::any::type_name::<crate::strata_matrix::cohorts::regular::expert_regular_cohort::ExpertRegularCohort<cubecl::wgpu::WgpuRuntime>>();
   assert_eq!(super::matrix_family(name),6);assert_eq!(super::native_class(name),1);
   for (n,c)in [("StrataExpertRegularCohortGuDirect8Image",0),("StrataExpertRegularCohortDownDirect8Image",0),("StrataExpertRegularCohortGather",2),("StrataExpertRegularCohortActivate",3)]{assert_eq!(super::native_class(n),c);}
+ }
+}
+
+#[cfg(all(test,feature="strata-small-dual-cells"))]
+mod dual_profile_tests {
+ use super::*;
+ #[test]
+ fn genuine_dual_cohorts_have_matrix_class_without_old_producer_credit() {
+  for n in ["probe::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohort<R>","probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>"] {
+   assert_eq!(native_class(n),1);assert_eq!(matrix_family(n),6);
+  }
+  for source in [include_str!("strata_matrix_dual_regular_cohort.rs"),include_str!("strata_matrix_dual_small_cohort.rs")] {
+   assert!(!source.contains("\"expert_regular_cohort_"));assert!(!source.contains("\"expert_granular_small_cohort_"));assert!(!source.contains("\"expert_local_cohort_"));
+  }
  }
 }

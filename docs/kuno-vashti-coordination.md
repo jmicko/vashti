@@ -1,5 +1,18 @@
 # Kuno and Vashti Coordination
 
+**Current source continuation (2026-10-24 UTC): dual cells composed, unvalidated.**
+
+Read [the complete two-C cohort policy and transfer audit](kuno-prefill-dual-cohort-cells.md).
+Actual normal receipt/source confirms genuine transfer authority, rolling selection
+and dependency-permitted raw refill overlap; no missing queue was found. Serial
+copy timestamps do NOT prove normal DMA concurrency or absence of overlap.
+Complete optional new regular32..255 AND small cohort16 M16/N32/WG32 consumers,
+guarded two-C K32 carry, exact native identities/grids, unchanged packed producers/
+owners/caps, honest counters and original-reference probes are composed. Original
+four-C and tile8/large paths retained. Next freeze/compile and complete acceptance;
+no new GPU/math/speed claim yet. Prior validated result below remains authoritative.
+No API/Vashti/installed/canonical/driver/reset/reboot changes.
+
 **Current validated Kuno handoff (2026-10-24 UTC): regular batching is faster.**
 
 Sourcebac6da32 / worker42e3bc4e passes442 full/435 off AppCPU,18/96 runtime,

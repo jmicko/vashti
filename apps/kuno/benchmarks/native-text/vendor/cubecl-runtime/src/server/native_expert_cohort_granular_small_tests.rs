@@ -15,3 +15,18 @@ fn granular_small_cohort_refuses_tile8_aliases_missing_phases_and_changed_matrix
   let mut p=global_program();p[index].count=CubeCount::Static(1,1,1);assert!(run(&p).is_err());
  }
 }
+
+#[cfg(feature="kuno-small-dual-cells")]
+const DUAL:&str="probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<Runtime>";
+#[cfg(feature="kuno-small-dual-cells")]
+fn dual_program()->Vec<Entry>{let mut p=global_program();for e in &mut p{if e.name==GLOBAL {e.name=DUAL;let CubeCount::Static(x,y,z)=e.count else{panic!("literal grid")};e.count=CubeCount::Static(x*2,y,z);}}p}
+#[cfg(feature="kuno-small-dual-cells")]
+#[test]
+fn dual_small_exact_n32_grid_keeps_tile8_original_packing_and_phases(){run(&dual_program()).unwrap();assert_eq!(matrix_variant(DUAL,true),Some(true));}
+#[cfg(feature="kuno-small-dual-cells")]
+#[test]
+fn dual_small_refuses_old_grid_tile8_aliases_and_changed_owners(){
+ for index in [4usize,7] {let mut p=dual_program();let CubeCount::Static(x,y,z)=p[index].count else{panic!("literal grid")};p[index].count=CubeCount::Static(x/2,y,z);assert!(run(&p).is_err());}
+ let mut p=dual_program();p[3].name=DUAL;assert!(run(&p).is_err());
+ for name in ["probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohortFake<R>","probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>::tail","probe::strata_matrix::nested::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>"]{assert_eq!(matrix_variant(name,false),None);}
+}

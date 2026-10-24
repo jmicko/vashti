@@ -731,9 +731,18 @@ pub(crate) use granular_pair_probe::cases as public_granular_pairs;
 
 #[cfg(feature="strata-regular-cohorts")]
 pub(crate) mod regular {use super::*;include!("strata_matrix_regular_cohort.rs");}
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) mod dual_regular {use super::*;include!("strata_matrix_dual_regular_cohort.rs");}
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) mod dual_small {use super::*;include!("strata_matrix_dual_small_cohort.rs");}
 
 #[cfg(feature="strata-regular-cohorts")]
 #[path="strata_matrix_regular_pair_probe.rs"]
 mod regular_pair_probe;
 #[cfg(feature="strata-regular-cohorts")]
 pub(crate) use regular_pair_probe::cases as public_regular_pairs;
+
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) use regular_pair_probe::dual_cases as public_dual_regular_pairs;
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) use granular_pair_probe::dual_cases as public_dual_small_pairs;

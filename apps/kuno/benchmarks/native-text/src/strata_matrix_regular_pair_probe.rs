@@ -159,6 +159,7 @@ fn compare_reference(arena: &PrivateArena, id: BufferId, reference: &[u32]) -> C
 fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
+    dual: bool,
     down: bool,
     poison: bool,
     counts: &[usize],
@@ -256,7 +257,7 @@ fn one(
     // reference already writes original ordered PART; GU's local rows are
     // packed into a zeroizing host oracle, without a second GPU output owner.
     let ri = arena.allocate_zeroed(256 * cols as usize / 2)?;
-    let mut reference = Zeroizing::new(vec![0u32; arena.layout(a)?.owned_words]);
+    let mut reference = Zeroizing::new(if down {Vec::new()}else{vec![0u32; arena.layout(a)?.owned_words]});
     for (i, &members) in counts.iter().enumerate() {
         let mut packed = Zeroizing::new(vec![0u32; arena.layout(ri)?.owned_words]);
         let start = words[18 + i * 4] as usize * cols as usize / 2;
@@ -307,7 +308,11 @@ fn one(
         reference = snapshot(arena, a)?;
     }
     erase_output(client, arena, a)?;
-    regular::launch(
+    #[cfg(feature="strata-small-dual-cells")]
+    let product=if dual {dual_regular::launch}else{regular::launch};
+    #[cfg(not(feature="strata-small-dual-cells"))]
+    let product={assert!(!dual);regular::launch};
+    product(
         client,
         [
             u::handle(arena, src)?,
@@ -350,9 +355,9 @@ fn one(
     }
     Ok(
         serde_json::json!({"family":"regular-packed-cohort-original-per-expert-pair",
-        "actual_previous_per_expert_granular_reference":true,"actual_new_regular_cohort":true,
+        "actual_previous_per_expert_granular_reference":true,"actual_new_regular_cohort":!dual,
         "down":down,"groups":slots,"counts":counts,"poison_and_invalid_route":poison,
-        "actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,
+        "actual_dual_cells":dual,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,
         "bit_mismatches":0,"full_output_words_checked":checked,
         "full_owner_status_fault_sources_and_tail_checked":true,
         "single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,
@@ -365,6 +370,13 @@ pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
 ) -> Checked<Vec<serde_json::Value>> {
+    cases_mode(client,arena,false)
+}
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) fn dual_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+    cases_mode(client,arena,true)
+}
+fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bool)->Checked<Vec<serde_json::Value>> {
     if !arena.public_owned_zero_audit_enabled() || arena.buffer_count() != 0 {
         return Err("public cohort pair original empty audit arena required".into());
     }
@@ -376,7 +388,7 @@ pub(crate) fn cases(
     ] {
         for down in [false, true] {
             for poison in [false, true] {
-                let result = one(client, arena, down, poison, counts).map_err(
+                let result = one(client, arena, dual, down, poison, counts).map_err(
                     |e| -> Box<dyn std::error::Error> {
                         format!(
                             "public regular paired down={down} poison={poison} groups={}: {e}",

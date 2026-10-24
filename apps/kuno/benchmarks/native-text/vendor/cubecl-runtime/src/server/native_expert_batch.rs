@@ -106,7 +106,18 @@ fn granular_cohort(name: &str) -> bool {
     granular_role(name,"::strata_matrix::cohorts::granular_small::",
         "expert_granular_cohort::ExpertGranularCohort")
 }
+pub(crate) fn native_strata_dual_cohort(name:&str,regular:bool)->bool {
+ if !cfg!(feature="kuno-small-dual-cells"){return false;}
+ let (path,ty)=if regular {
+  ("::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::","ExpertDualRegularCohort")
+ }else{
+  ("::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::","ExpertDualSmallCohort")
+ };
+ name.split_once(path).filter(|(prefix,_)|!prefix.contains("::strata_matrix::"))
+  .is_some_and(|(_,suffix)|suffix.strip_prefix(ty).is_some_and(native_strata_generated_type_suffix))
+}
 pub(crate) fn native_strata_regular_cohort(name:&str)->bool {
+ if name.contains("::dual_regular::"){return native_strata_dual_cohort(name,true);}
  cfg!(feature="kuno-regular-cohorts") && name.split_once("::strata_matrix::cohorts::regular::expert_regular_cohort::")
   .filter(|(prefix,_)|!prefix.contains("::strata_matrix::"))
   .is_some_and(|(_,suffix)|suffix.strip_prefix("ExpertRegularCohort")
@@ -135,6 +146,7 @@ pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
  roles.into_iter().find_map(|(role,tile)|suffix.strip_prefix(role).filter(|s|native_strata_generated_type_suffix(s)).map(|_|tile))
 }
 pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
+ if name.contains("::dual_small::"){return native_strata_dual_cohort(name,false);}
  if name.contains("::granular_small::") {return granular_cohort(name);}
  if cfg!(feature="kuno-local-prefetch") && name.split_once("::strata_matrix::cohorts::local_small::expert_local_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertLocalCohort").is_some_and(native_strata_generated_type_suffix)){return true;}
 
@@ -143,7 +155,7 @@ pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
 }
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
-    if name.contains("::regular::") || name.starts_with("StrataExpertRegularCohort"){return false;}
+    if name.contains("::regular::") || name.contains("::dual_regular::") || name.contains("::dual_small::") || name.starts_with("StrataExpertRegularCohort"){return false;}
     let name=native_strata_expert_padded_identity(native_strata_expert_dequant_identity(name));
     if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::") || name.contains("::granular_small::")) {
         return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();

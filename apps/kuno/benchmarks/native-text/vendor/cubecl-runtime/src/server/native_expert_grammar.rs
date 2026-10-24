@@ -489,7 +489,7 @@ impl NativeStrataExpertGrammar {
             return Ok(());
         }
         // New/disabled/nested regular roles cannot fall into any legacy grammar.
-        if name.contains("::regular::") || name.starts_with("StrataExpertRegularCohort") {
+        if name.contains("::regular::") || name.contains("::dual_regular::") || name.contains("::dual_small::") || name.starts_with("StrataExpertRegularCohort") {
             return Err(batch_fault("native regular cohort role outside its genuine scope"));
         }
         #[cfg(feature="kuno-expert-cohorts")]

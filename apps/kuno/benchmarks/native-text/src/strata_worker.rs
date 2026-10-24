@@ -412,6 +412,12 @@ async fn serve(
         // Exercise the new complete producer/reference family first. Every
         // original control still follows; a probe setup failure can be fixed
         // without waiting through the entire original numeric population.
+        #[cfg(feature="strata-small-dual-cells")]
+        let dual_regular_checks=crate::strata_matrix::cohorts::public_dual_regular_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_dual_regular_error {e}");"public_dual_regular_failed"})?;
+        #[cfg(feature="strata-small-dual-cells")]
+        let dual_small_checks=crate::strata_matrix::cohorts::public_dual_small_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_dual_small_error {e}");"public_dual_small_failed"})?;
         #[cfg(feature="strata-regular-cohorts")]
         let regular_cohort_producer_checks=crate::strata_prompt::experts::regular::public_producers(&client,&mut arena)
             .map_err(|e|{eprintln!("public_regular_cohort_producer_error {e}");"public_regular_cohort_producer_failed"})?;
@@ -849,6 +855,8 @@ async fn serve(
              report["granular_pair_checks"]=granular_pair_checks.into();
              report["regular_cohorts_selected"]=cfg!(feature="strata-regular-cohorts").into();
              #[cfg(feature="strata-regular-cohorts")] {
+                #[cfg(feature="strata-small-dual-cells")]
+                {report["dual_regular_checks"]=dual_regular_checks.into();report["dual_small_checks"]=dual_small_checks.into();}
                 report["regular_cohort_producer_checks"]=regular_cohort_producer_checks.into();
                 report["regular_cohort_dequant_checks"]=regular_cohort_dequant_checks.into();
                 report["regular_cohort_matrix_checks"]=regular_cohort_matrix_checks.into();

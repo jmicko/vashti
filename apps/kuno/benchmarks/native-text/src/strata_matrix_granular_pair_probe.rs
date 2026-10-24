@@ -168,6 +168,7 @@ fn compare_reference(arena: &PrivateArena, id: BufferId, reference: &[u32]) -> C
 fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
+    dual: bool,
     down: bool,
     poison: bool,
 ) -> Checked<serde_json::Value> {
@@ -305,7 +306,11 @@ fn one(
         if tile == 8 {
             small_direct::launch(client, handles, &words, down, tile)?;
         } else {
-            granular_small::launch(client, handles, &words, down, tile)?;
+            #[cfg(feature="strata-small-dual-cells")]
+    let product=if dual {dual_small::launch}else{granular_small::launch};
+    #[cfg(not(feature="strata-small-dual-cells"))]
+    let product={assert!(!dual);granular_small::launch};
+    product(client, handles, &words, down, tile)?;
         }
     }
     cubecl::future::block_on(client.sync()).map_err(u::fault)?;
@@ -336,13 +341,20 @@ fn one(
         }
     }
     Ok(
-        serde_json::json!({"family":"small-granular-packed-cohort-pair","actual_previous_small_local_carry_reference":true,"actual_new_small_granular_tile16_n64":true,"original_tile8_retained":true,"nonfinite_and_invalid_new_slot6":poison,"down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,"nonzero_group_prefix_and_image_slot7":true,"bit_mismatches":0,"full_output_words_checked":checked,"full_owner_status_fault_sources_and_tail_checked":true,"single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,"zeroizing_host_reference_bytes":reference_bytes,"host_reference_limit_bytes":REFERENCE_BYTES,"readback_window_bytes":WINDOW_WORDS*4,"original_arena_budget_bytes":arena.budget_bytes(),"actual_arena_charged_bytes":arena.charged_bytes()}),
+        serde_json::json!({"family":"small-granular-packed-cohort-pair","actual_previous_small_local_carry_reference":true,"actual_new_small_granular_tile16_n64":!dual,"original_tile8_retained":true,"nonfinite_and_invalid_new_slot6":poison,"down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,"actual_dual_cells":dual,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,"nonzero_group_prefix_and_image_slot7":true,"bit_mismatches":0,"full_output_words_checked":checked,"full_owner_status_fault_sources_and_tail_checked":true,"single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,"zeroizing_host_reference_bytes":reference_bytes,"host_reference_limit_bytes":REFERENCE_BYTES,"readback_window_bytes":WINDOW_WORDS*4,"original_arena_budget_bytes":arena.budget_bytes(),"actual_arena_charged_bytes":arena.charged_bytes()}),
     )
 }
 pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
 ) -> Checked<Vec<serde_json::Value>> {
+    cases_mode(client,arena,false)
+}
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) fn dual_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+    cases_mode(client,arena,true)
+}
+fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bool)->Checked<Vec<serde_json::Value>> {
     if !arena.public_owned_zero_audit_enabled() || arena.buffer_count() != 0 {
         return Err("public cohort pair original empty audit arena required".into());
     }
@@ -350,7 +362,7 @@ pub(crate) fn cases(
     for down in [false, true] {
         for poison in [false, true] {
             let result =
-                one(client, arena, down, poison).map_err(|error| -> Box<dyn std::error::Error> {
+                one(client, arena, dual, down, poison).map_err(|error| -> Box<dyn std::error::Error> {
                     format!("public cohort paired down={down} poison={poison}: {error}").into()
                 });
             arena.reset()?;

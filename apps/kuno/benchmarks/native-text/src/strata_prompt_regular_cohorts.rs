@@ -457,7 +457,11 @@ pub(super) fn enqueue_unit(
         }
         words[5] = if down { 2 } else { 0 };
         words[11] = 16;
-        crate::strata_matrix::cohorts::regular::launch(
+        #[cfg(feature="strata-small-dual-cells")]
+        let product=crate::strata_matrix::cohorts::dual_regular::launch;
+        #[cfg(not(feature="strata-small-dual-cells"))]
+        let product=crate::strata_matrix::cohorts::regular::launch;
+        product(
             client,
             [
                 if down { h.clone() } else { x.clone() },

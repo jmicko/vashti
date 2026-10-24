@@ -313,3 +313,18 @@ fn regular_cohort_exact_new_entry_cannot_accept_suffix_or_nested_legacy_forgery(
         assert!(run(&p).is_err());
     }
 }
+
+#[cfg(feature="kuno-small-dual-cells")]
+const DUAL:&str="probe::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohort<Runtime>";
+#[cfg(feature="kuno-small-dual-cells")]
+fn dual_program()->Vec<Entry>{let mut p=program(&[32,33,63,64,65,127,128,255]);for e in &mut p{if e.name==REGULAR {e.name=DUAL;let CubeCount::Static(x,y,z)=e.count else{panic!("literal grid")};e.count=CubeCount::Static(x*2,y,z);}}p}
+#[cfg(feature="kuno-small-dual-cells")]
+#[test]
+fn dual_regular_exact_original_phase_and_owners_accept_actual_n32_grid(){run(&dual_program()).unwrap();assert_eq!(matrix_variant(DUAL,true),Some(true));}
+#[cfg(feature="kuno-small-dual-cells")]
+#[test]
+fn dual_regular_refuses_old_grid_nested_aliases_and_changed_phase_owners(){
+ for index in [3usize,5] {let mut p=dual_program();let CubeCount::Static(x,y,z)=p[index].count else{panic!("literal grid")};p[index].count=CubeCount::Static(x/2,y,z);assert!(run(&p).is_err());}
+ for name in ["probe::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohortFake<R>","probe::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohort<R>::tail","probe::strata_matrix::nested::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohort<R>"] {assert_eq!(matrix_variant(name,false),None);}
+ let mut p=dual_program();p[5].args.buffers[0]=Handle::new(StreamId::current(),H).binding();assert!(run(&p).is_err());
+}

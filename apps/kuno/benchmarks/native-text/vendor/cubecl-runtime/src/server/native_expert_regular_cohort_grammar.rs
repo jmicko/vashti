@@ -261,7 +261,7 @@ impl Cohort {
             let quant = false;
             let arrays = if quant { 7 } else { 6 };
             let metadata = 24 + arrays;
-            let columns_per_workgroup = 64;
+            let columns_per_workgroup = if super::super::native_expert_batch::native_strata_dual_cohort(name,true){32}else{64};
             if !super::super::native_expert_batch::native_strata_regular_cohort(name)
                 || tile != 16
                 || args.buffers.len() != arrays

@@ -193,6 +193,10 @@ pub(crate) use native::padded_global;
 pub(crate) use native::balanced_global;
 #[cfg(feature="strata-small-granular")]
 pub(crate) use native::granular_small;
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) mod dual_products {use super::*;include!("strata_matrix_dual_products.rs");}
+#[cfg(feature="strata-small-dual-cells")]
+pub(crate) mod dual_small {use super::*;include!("strata_matrix_dual_small.rs");}
 #[cfg(feature="strata-local-prefetch")]
 pub(crate) use native::local_small;
 #[cfg(feature="strata-small-direct-publish")]
@@ -2953,6 +2957,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             let definitions = definitions.into_iter().chain(cohorts::definitions());
             #[cfg(feature="strata-regular-cohorts")]
             let definitions=definitions.into_iter().chain(cohorts::regular::definitions());
+            #[cfg(feature="strata-small-dual-cells")]
+            let definitions=definitions.into_iter().chain(cohorts::dual_regular::definitions()).chain(cohorts::dual_small::definitions());
             for (name, definition) in definitions {
                 let mut compiler = AutoCompiler::SpirV(Default::default());
                 let mut options = WgpuCompilationOptions {
@@ -2976,6 +2982,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let expected_shared = native::compiled_shared_bytes(name, layout_mask & 4 != 0);
                 #[cfg(feature="strata-regular-cohorts")]
                 let expected_shared=if name.starts_with("regular_cohort16_"){Some(1024)}else{expected_shared};
+                #[cfg(feature="strata-small-dual-cells")]
+                let expected_shared=if name.starts_with("dual_regular_cohort16_")||name.starts_with("dual_small_cohort16_"){Some(1024)}else{expected_shared};
                 #[cfg(feature = "strata-expert-cohorts")]
                 let expected_shared = if name.starts_with("expert_cohort") {
                     Some(if name.contains("cohort8") { 2048 } else { 4096 })
@@ -3030,6 +3038,18 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     println!("strata_regular_cohort_shader_accepted name={name} layout={layout_mask} shared_bytes={} workgroup=32 subgroup=16 original_granular_products=true",kernel.shared_size);
                     #[cfg(test)]
                     if let Some(dir)=std::env::var_os("KUNO_PUBLIC_REGULAR_COHORT_MODULE_DIR") {
+                        std::fs::write(std::path::PathBuf::from(dir).join(format!("{name}-layout{layout_mask}.spv")),words.iter().flat_map(|w|w.to_le_bytes()).collect::<Vec<_>>())?;
+                    }
+                }
+                #[cfg(feature="strata-small-dual-cells")]
+                if name.starts_with("dual_regular_cohort16_")||name.starts_with("dual_small_cohort16_") {
+                    let shape=Some((16usize,true,if name.ends_with("_down"){640}else{2560}));
+                    granular_validation::validate_dual_program(words,true,shape)?;
+                    #[cfg(test)]
+                    granular_validation::dual_negatives(words,true,shape)?;
+                    println!("strata_dual_cohort_shader_accepted name={name} layout={layout_mask} shared_bytes={} workgroup=32 subgroup=16 accumulators=2",kernel.shared_size);
+                    #[cfg(test)]
+                    if let Some(dir)=std::env::var_os("KUNO_PUBLIC_DUAL_COHORT_MODULE_DIR") {
                         std::fs::write(std::path::PathBuf::from(dir).join(format!("{name}-layout{layout_mask}.spv")),words.iter().flat_map(|w|w.to_le_bytes()).collect::<Vec<_>>())?;
                     }
                 }
@@ -3698,3 +3718,7 @@ mod granular_tests {
   }
  }
 }
+
+#[cfg(all(test,feature="strata-small-dual-cells"))]
+#[path="strata_matrix_dual_cpu_tests.rs"]
+mod dual_cpu_tests;
