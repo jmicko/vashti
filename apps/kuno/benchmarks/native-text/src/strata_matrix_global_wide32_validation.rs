@@ -55,7 +55,7 @@ pub(in crate::strata_matrix) fn validate_program(
         // Only value-producing instructions relevant to authentic dynamic strides.
         if matches!(
             op,
-            43 | 170 | 171 | 227 | 334 | 61
+            43 | 164..=191 | 227 | 334 | 61
                 | 65
                 | 66
                 | 67
@@ -206,7 +206,62 @@ pub(in crate::strata_matrix) fn validate_program(
     let ps=products.iter().filter(|p|normal.1.contains(&p.0)).map(|p|p.1).collect::<Vec<_>>();
     let ws=normal_loads.iter().filter(|p|bindings.get(&root(p.2).unwrap())==Some(&1)).map(|p|p.1).collect::<Vec<_>>();
     for i in 0..4 {if ws[i]>=ps[2*i] || (i>0&&ws[i]<=ps[2*i-1]){return Err("wide32 actual one-A/two-product lifetime order".into());}}
-    if expert {
+    if expert && cfg!(feature = "strata-wide32-local-routes") {
+        // Invoke the production classifier on the actual final module. A name,
+        // branch prediction, source hint or expected fault value is no proof.
+        if cubecl_wgpu::native_strata_atomic_or_descriptor_mask(words, 0x3f) != 1 << 5 {
+            return Err("local32 original fault descriptor is not proven AtomicOr-only".into());
+        }
+        let checked = innermost.iter().find(|c| c.2 == 4).unwrap();
+        let reachable = |start: u32, stop: u32| -> BTreeSet<u32> {
+            let (mut seen, mut todo) = (BTreeSet::new(), vec![start]);
+            while let Some(b) = todo.pop() {
+                if b == stop || !seen.insert(b) { continue; }
+                if let Some(next) = edges.get(&b) { todo.extend(next.iter().copied()); }
+            }
+            seen
+        };
+        let mut guarded = false;
+        for ins in blocks.values() {
+            let Some(&(branch, 250)) = ins.last() else { continue; };
+            let Some(&(merge, _)) = ins.iter().rev().find(|(_, op)| *op == 247) else { continue; };
+            let condition = words[branch + 1];
+            // GroupNonUniformAll must be the condition actually separating the
+            // eight-product and four-product loops, not an unrelated header All.
+            let Some(&all_at) = ins.iter().find(|(at, op)| *op == 334 && words[*at + 2] == condition).map(|(at, _)| at) else { continue; };
+            let yes = reachable(words[branch + 2], words[merge + 1]);
+            let no = reachable(words[branch + 3], words[merge + 1]);
+            if !(yes.contains(&normal.0) && !yes.contains(&checked.0)
+                && no.contains(&checked.0) && !no.contains(&normal.0)) { continue; }
+            let (mut seen, mut todo, mut map_reads, mut comparisons) =
+                (BTreeSet::new(), vec![words[all_at + 2]], BTreeSet::new(), 0usize);
+            while let Some(v) = todo.pop() {
+                if !seen.insert(v) { continue; }
+                if let Some(d) = defs.get(&v) {
+                    // Locate the real definition, rather than guessing an ID's
+                    // semantic role from a source name or integer value.
+                    let mut at = 5;
+                    while at < words.len() {
+                        let n = (words[at] >> 16) as usize;
+                        let op = words[at] & 65535;
+                        if n >= 4 && words[at + 2] == v {
+                            if op == 176 { comparisons += 1; }
+                            if op == 61 && bindings.get(&root(words[at + 3])?) == Some(&3) {
+                                map_reads.insert(v);
+                            }
+                        }
+                        at += n;
+                    }
+                    todo.extend(d.iter().copied().filter(|v| defs.contains_key(v)));
+                }
+            }
+            guarded |= map_reads.len() >= 3 && comparisons >= 2;
+        }
+        if !guarded { return Err("local32 actual subgroup-All two-route guard and raw/checked CFG".into()); }
+    } else if expert {
+        if cubecl_wgpu::native_strata_atomic_or_descriptor_mask(words, 0x3f) != 0 {
+            return Err("wide32 preceding fault-load descriptor unexpectedly classified AtomicOr-only".into());
+        }
         let mut fault_reads=BTreeSet::new();let mut all_values=BTreeSet::new();let mut branches=BTreeSet::new();
         let mut at=5;
         while at<words.len(){let n=(words[at]>>16)as usize;
@@ -303,6 +358,29 @@ pub(in crate::strata_matrix) fn validate_negatives(words:&[u32],expert:bool)->st
  at=5;while at<words.len(){let n=(words[at]>>16)as usize;if words[at]&65535==4458{changes.push((at+3,zero.ok_or("wide32 actual zero constant")?));break;}at+=n;}
  if changes.len()<4{return Err("wide32 actual negative inventory".into());}
  if expert{let mut bad=words.to_vec();let mut at=5;while at<bad.len(){let n=(bad[at]>>16)as usize;if bad[at]&65535==334{bad[at]=(n as u32)<<16|335;}at+=n;}if validate_program(&bad,true).is_ok(){return Err("wide32 accepted non-all fault selection".into());}}
+ if expert && cfg!(feature = "strata-wide32-local-routes") {
+  let mut bad = words.to_vec(); let mut at = 5; let mut changed = false;
+  while at < bad.len() {
+   let n = (bad[at] >> 16) as usize;
+   if bad[at] & 65535 == 241 && n == 7 {
+    bad[at] = (6u32 << 16) | 227; bad.remove(at + 6); changed = true; break;
+   }
+   at += n;
+  }
+  if !changed || cubecl_wgpu::native_strata_atomic_or_descriptor_mask(&bad, 0x3f) != 0
+      || validate_program(&bad, true).is_ok() {
+   return Err("local32 accepted actual fault read in an AtomicOr-only module".into());
+  }
+  let mut bad = words.to_vec(); let mut at = 5; let mut changed = false;
+  while at < bad.len() {
+   let n = (bad[at] >> 16) as usize;
+   if bad[at] & 65535 == 71 && n == 4 && bad[at + 2] == 33 && bad[at + 3] == 3 {
+    bad[at + 3] = 9; changed = true;
+   }
+   at += n;
+  }
+  if !changed || validate_program(&bad, true).is_ok() { return Err("local32 accepted wrong actual route-map binding".into()); }
+ }
  for(i,value)in changes{let mut bad=words.to_vec();bad[i]=value;if validate_program(&bad,expert).is_ok(){return Err("wide32 accepted wrong grid/binding/INFO/store/fault-uniformity".into());}}
  Ok(())
 }

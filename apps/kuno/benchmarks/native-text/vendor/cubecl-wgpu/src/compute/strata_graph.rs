@@ -15,6 +15,13 @@ use std::{
 use wgpu::naga;
 #[path = "strata_atomic_or.rs"]
 mod atomic_or;
+/// Laboratory compiler proof only; the graph still classifies each real
+/// immutable pipeline itself. This function grants no runtime authority.
+#[cfg(feature = "kuno-global-wide32")]
+pub fn native_strata_atomic_or_descriptor_mask(words: &[u32], storage_mask: u32) -> u32 {
+    atomic_or::mask(words, storage_mask)
+}
+
 #[path = "strata_binding_owners.rs"]
 mod binding_owners;
 #[path = "strata_capture_buffers.rs"]

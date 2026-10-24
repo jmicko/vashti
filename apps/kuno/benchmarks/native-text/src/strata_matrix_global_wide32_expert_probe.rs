@@ -72,6 +72,8 @@ pub(crate) fn cases(
         (257, InvalidLowSentinelNonfiniteFirst),
         (257, InvalidHighSentinelNonfiniteFirst),
     ];
+    #[cfg(feature = "strata-wide32-local-routes")]
+    controls.extend([16usize, 24, 32, 63, 127, 255].map(|m| (257, InvalidLocalSentinelNonfiniteFirst(m))));
     #[cfg(feature = "strata-native-expert-medium")]
     controls.extend([(128, Finite), (129, Finite)]);
     let families: [(&'static str, bool, bool, Launcher, Launcher); 2] = [

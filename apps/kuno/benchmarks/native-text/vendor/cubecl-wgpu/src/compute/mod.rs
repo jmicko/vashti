@@ -82,3 +82,6 @@ pub use strata_graph::native_strata_segment_compact_profile;
 
 #[cfg(feature = "kuno-native-prepared")]
 pub use strata_pipeline::native_strata_prepared_pipeline_stats;
+
+#[cfg(feature = "kuno-global-wide32")]
+pub use strata_graph::native_strata_atomic_or_descriptor_mask;

@@ -114,7 +114,22 @@ fn wide(
         }
         terminate!();
     }
-    if plane_all(fault[0].load()==0) {
+    // Route ownership and the fallback mapping below are one coupled change.
+    // Unlike a global sticky-fault read, these independent map reads preserve
+    // the backend's original unused-result AtomicOr-only fault classification.
+    let raw_good = if comptime!(cfg!(feature = "strata-wide32-local-routes")) {
+        let sg = usize::cast_from(PLANE_POS);
+        let lane = usize::cast_from(UNIT_POS_PLANE);
+        let token = usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32;
+        let prefix = usize::cast_from(map[1028 + group]);
+        let total = usize::cast_from(map[0]) * 10;
+        let low = usize::cast_from(map[1540 + prefix + token + lane]);
+        let high = usize::cast_from(map[1540 + prefix + token + 16 + lane]);
+        low < total && high < total
+    } else {
+        fault[0].load() == 0
+    };
+    if plane_all(raw_good) {
     let c00=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
     let c01=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
     let c10=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
@@ -140,8 +155,8 @@ fn wide(
     cmma::store(&mut output.slice_mut(first+0*out_stride+24,output.len()),&c30,u32::cast_from(out_stride),cmma::MatrixLayout::ColMajor);
     cmma::store(&mut output.slice_mut(first+16*out_stride+24,output.len()),&c31,u32::cast_from(out_stride),cmma::MatrixLayout::ColMajor);
         // All C fragments are dead before these original pending-status writes.
-        // Matching original Gather already validated every route in production;
-        // standalone callers queue an explicit route guard before this entry.
+        // The local-route variant validates precisely these32 routes itself.
+        // The preceding variant uses the original ordered Gather/guard fault.
         if comptime!(down) && row==0 {
             let lane=usize::cast_from(UNIT_POS_PLANE);
             let r0=usize::cast_from(map[1540+prefix+token+lane]);
@@ -231,10 +246,16 @@ fn wide(
         0.0,
     );
     let sg = usize::cast_from(PLANE_POS);
-    let token_base = usize::cast_from(CUBE_POS_Y) * 128 + tile_m * 64;
-    let row_base = usize::cast_from(CUBE_POS_X) * 128 + tile_n * 64;
-    let token = token_base + (sg / 4) * 16;
-    let row = row_base + (sg % 4) * 16;
+    let token = if comptime!(cfg!(feature = "strata-wide32-local-routes")) {
+        usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32 + tile_m * 16
+    } else {
+        usize::cast_from(CUBE_POS_Y) * 128 + tile_m * 64 + (sg / 4) * 16
+    };
+    let row = if comptime!(cfg!(feature = "strata-wide32-local-routes")) {
+        usize::cast_from(CUBE_POS_X) * 128 + (sg % 4) * 32 + tile_n * 16
+    } else {
+        usize::cast_from(CUBE_POS_X) * 128 + tile_n * 64 + (sg % 4) * 16
+    };
     crate::strata_matrix::native_wide::global_transpose::load::<f16>(
         input,
         weight,

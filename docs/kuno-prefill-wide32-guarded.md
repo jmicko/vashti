@@ -1,7 +1,7 @@
 # Larger per-subgroup matrices with an ordered route guard
 
-NEXT PROPOSAL ONLY after accepted1d5d0adb; no implementation or performance
-claim. Backend benchmark feature, retain all complete variants. No API/UI,
+Implemented at d081b38a; final acceptance audit pending as recorded below.
+No clean performance/parity claim. Backend benchmark feature, retain all complete variants. No API/UI,
 installed-service/driver/model/dtype/capacity/owner/erasure change. Goal remains
 same fixed public first/repeated Strata comparison, target5.3515s repeated.
 
@@ -132,3 +132,66 @@ partitions, original capacities/reuse/rolling/erasure and all ISA exports. Keep
 8 old zero-spill wide kernels and2 QSA hashes. Assess full normal/diagnostic
 first/repeated times; original CLEAN only when promising. Static send/spill
 counts and component times are diagnosis, not a substitute for the whole run.
+
+
+## Implemented full run, 2026-10-24 UTC
+
+Frozen source d081b38a1c56fc09e6b4978ff6d6e2f89d6b0b5b, worker
+b85d46489d1b3a206ec81c8b424b629f1834de8d590dd63987714151c300672e.
+Actual387 AppCPU (original386 plus the real GPU-sentinel initializer module),
+18/59 runtime,8+9 metadata,10 original native tests passed. Actual matrix and
+standalone guard modules validate. Sentinels are initialized by a tiny scalar
+GPU shader over the ORIGINAL output owner, never an offset host upload or a
+new output allocation. Its eight compiler layouts are also checked.
+
+Protected invocation305dee630d794bb49183ad8b9898349c
+(`kuno-global-wide32-seeded2-20261024`) completed both original18-script chains,
+including operator controls and physical recovery, then EXITED1 in the final
+connected audit at line691. The asserted partition required nonzero counts
+for BOTH new-wide32 and old-transpose dense products. Its exact actual counters
+still need protected receipt inspection before revising this assertion. Fused
+HC/GR may bypass the real-GR320 fallback entirely in the whole-model fixture;
+this is a source lead, not yet a verified explanation of the failed assertion.
+Do NOT call the unit successful, publish a final959 acceptance proof or relaunch
+GPU/model tests merely to fix a receipt assertion. Preserve the frozen failed
+wrapper and validate the SAME immutable receipts with a narrowly reviewed
+read-only audit revision if their real counters justify it.
+
+Completed diagnostic first/repeat11.502265204/9.424782167s; normal
+11.453113618/9.369922453s. Warm requests3.787430749/3.736089751s respectively.
+No original CLEAN run: normal9.3699s did not meet the existing8.854793s trigger.
+These instrumented full results are a modest improvement from preceding
+normal9.811339312s, not the clean Strata5.3515s target. Goal ACTIVE/UNMET.
+
+Unit21m46.878s, CPU22m13.055s,30.6GiB peak, swap0. Independent02:33:05UTC:
+Intel50,688,000B, NVIDIA compute0/display596MiB, all5 fault classes0; Kuno,
+Ollama and Vashti HTTP200, admission normal/completed172. The test processes
+are terminal and GPUs physically recovered. No installs/settings/resets.
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`wide32-seeded2-driver-20261024.log`, frozen `global-wide32-root-*`,
+`strata-parity-global-wide32-20261024-{operators,profile,normal}` and
+`global-wide32-final-state-20261024.json`. Final ISA/phase exports were NOT
+written because acceptance stopped first. Do not infer absence means no runs.
+
+### Preserved rejected attempts
+
+All sources/workers/receipts/logs remain in separate development directories:
+
+| Directory prefix | Result |
+| --- | --- |
+| wide32-uniformity-source-revision | Initial CPU build stopped before GPU to require subgroup-uniform fault branch. |
+| wide32-output-borrow-compile-rejection | One original-owner borrow compile error; no GPU. |
+| wide32-transposed-fallback-proof-rejection | Wrong static input/weight-load inventory; corrected to5input/10weight for the full mixed raw+checked module. No GPU. |
+| wide32-fullspan-fixture-rejection | Original private upload rejected offset sentinel write; guards retained. |
+| wide32-systemd-git-scope-rejection | Exact-worktree Git trust absent in systemd; per-process trust only, no global change. |
+| wide32-systemd-worker-traversal-rejection | Root0700 artifact directory prevented runuser worker traversal; artifact directory ownership corrected. Subsequent preflight correctly refused overwriting its failed directory. |
+| wide32-closed-arena-rejection | Actual private arena closed; reset error masked the original cause. Replaced fixture host seed with original-owner GPU initializer and report original case errors before reset. Do not claim the masked original cause was established. |
+| wide32-sentinel-ir-import-rejection | Missing IR ElemType import in new actual compiler control; no GPU. |
+
+Provenance caveat: the build-driver script copied into
+`wide32-closed-arena-rejection-20261024` was copied AFTER the driver had been
+revised for387 tests and artifact ownership. It is not the exact earlier386
+runner. Original failed receipts/source/worker/logs are unchanged; an exact
+older386 driver copy remains in `wide32-fullspan-fixture-rejection-20261024`.
+The new local-route candidate is separately described in
+[kuno-prefill-wide32-local-routes.md](kuno-prefill-wide32-local-routes.md).

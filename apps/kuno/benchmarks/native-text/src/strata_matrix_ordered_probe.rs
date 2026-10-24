@@ -35,10 +35,12 @@ pub(super) enum Control {
     PriorFaultNonfiniteFirst,
     InvalidLowSentinelNonfiniteFirst,
     InvalidHighSentinelNonfiniteFirst,
+    InvalidLocalSentinelNonfiniteFirst(usize),
 }
 impl Control {
     fn name(self) -> &'static str {
         match self {
+            Self::InvalidLocalSentinelNonfiniteFirst(_) => "invalid-local-sentinel-nonfinite-feature-zero",
             Self::Finite => "finite-ieee",
             Self::PriorFaultFinite=>"prior-fault-finite",
             Self::PriorFaultNonfiniteFirst=>"prior-fault-nonfinite-feature-zero",
@@ -54,13 +56,14 @@ impl Control {
     }
     fn bad_feature(self) -> Option<usize> {
         match self {
-            Self::NonfiniteFirst | Self::InvalidLowNonfiniteFirst | Self::InvalidHighNonfiniteFirst | Self::PriorFaultNonfiniteFirst | Self::InvalidLowSentinelNonfiniteFirst | Self::InvalidHighSentinelNonfiniteFirst => Some(0),
+            Self::NonfiniteFirst | Self::InvalidLowNonfiniteFirst | Self::InvalidHighNonfiniteFirst | Self::PriorFaultNonfiniteFirst | Self::InvalidLowSentinelNonfiniteFirst | Self::InvalidHighSentinelNonfiniteFirst | Self::InvalidLocalSentinelNonfiniteFirst(_) => Some(0),
             Self::NonfiniteOther => Some(4),
             _ => None,
         }
     }
     fn bad_member(self, count: usize) -> Option<usize> {
         match self {
+            Self::InvalidLocalSentinelNonfiniteFirst(member) => Some(member),
             Self::InvalidRoute => Some(count - 1),
             Self::InvalidRoutePrefix | Self::InvalidLowNonfiniteFirst | Self::InvalidLowSentinelNonfiniteFirst => Some(0),
             Self::InvalidHighNonfiniteFirst | Self::InvalidHighSentinelNonfiniteFirst => Some(8),
@@ -68,7 +71,7 @@ impl Control {
         }
     }
     fn initial_fault(self)->u32 {if matches!(self,Self::PriorFaultFinite|Self::PriorFaultNonfiniteFirst){128}else{0}}
-    fn invalid_sentinel(self)->Option<u32>{if matches!(self,Self::InvalidLowSentinelNonfiniteFirst|Self::InvalidHighSentinelNonfiniteFirst){Some(0x3ec00000)}else{None}}
+    fn invalid_sentinel(self)->Option<u32>{if matches!(self,Self::InvalidLowSentinelNonfiniteFirst|Self::InvalidHighSentinelNonfiniteFirst|Self::InvalidLocalSentinelNonfiniteFirst(_)){Some(0x3ec00000)}else{None}}
 
 }
 
@@ -498,7 +501,7 @@ pub(super) fn one(
         return Err("public CubeK expert unchanged IEEE parity".into());
     }
     let mut report = serde_json::json!({"family":family,"down":down,"count":count,"rows":f.rows,"columns":f.columns,
-        "control":control.name(),"mismatches":mismatches,"max_abs":max_abs,
+        "control":control.name(),"invalid_member":control.bad_member(count),"mismatches":mismatches,"max_abs":max_abs,
         "full_output_words_checked":output_words,"full_status_words_checked":status_words,
         "full_owner_status_fault_sources_and_tail_checked":true,"original_map_builder_and_validator":true,
         "deliberately_mutated_after_original_validation":control.bad_member(count).is_some(),
