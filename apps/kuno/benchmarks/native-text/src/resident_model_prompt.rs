@@ -307,6 +307,7 @@ impl Workspace {
         timing.mark("setup_embedding")?;
         for layer in 0..LAYERS {
             u::cancel(cancel)?;
+            let layer_trace = crate::strata_prefill_profile::FullHostLayer::new(start,count,layer);
             if layer == 1 {
                 if let Some((source, block)) = previous.take() {
                     p::write_handles(
@@ -478,6 +479,7 @@ impl Workspace {
             }
             timing.mark("shared_expert_merge")?;
             previous = Some((v[0].clone(), v[3].clone()));
+            layer_trace.finish();
         }
         if let Some((source, block)) = previous.take() {
             p::write_handles(

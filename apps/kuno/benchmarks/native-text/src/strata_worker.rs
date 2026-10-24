@@ -42,38 +42,44 @@ mod pipeline_profile_cpu_tests;
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false, None, false, false, false, false, false)
+    run_mode(path, false, None, false, false, false, false, false, false)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, false, false, false, false, false)
+    run_mode(path, true, None, false, false, false, false, false, false)
 }
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
-    run_mode(path, true, Some(profile), false, false, false, false, false)
+    run_mode(path, true, Some(profile), false, false, false, false, false, false)
 }
 #[cfg(feature = "strata-public-host-clock")]
 pub(crate) fn public_prefill_host_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(true), false, false, false, false, true)
+    run_mode(path, true, Some(true), false, false, false, false, true, false)
 }
+/// Bounded fixed-public last-request host trace across both chunks and all layers.
+#[cfg(feature = "strata-public-host-clock")]
+pub(crate) fn public_prefill_host_trace(path: &Path) -> Result<()> {
+    run_mode(path, true, Some(true), false, false, false, false, true, true)
+}
+
 
 /// Three identical compiled-public short requests exercise cold and two warm
 /// prefix paths. Ordinary request erasure and final session close are unchanged.
 pub(crate) fn public_prefill_short_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, true, false, false, false)
+    run_mode(path, true, Some(false), false, true, false, false, false, false)
 }
 pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, false, false, false)
+    run_mode(path, true, None, true, false, false, false, false, false)
 }
 /// Fixed-public original expert matrices only; no Session or private input.
 pub(crate) fn public_matrix_timing_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, true, false, false)
+    run_mode(path, true, None, true, false, true, false, false, false)
 }
 /// Explicit compiled-public terminal negative check. It never reads stdin and
 /// cannot be selected through KNT2 or the inference API. An actual submitted
 /// prefix is interrupted; owning process exit is part of this check's recovery.
 pub(crate) fn public_rolling_failure_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, false, false, true, false)
+    run_mode(path, true, Some(false), false, false, false, true, false, false)
 }
 fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
@@ -94,7 +100,9 @@ fn run_mode(
     matrix_timing: bool,
     rolling_failure: bool,
     host_clock_only: bool,
+    full_host_trace: bool,
 ) -> Result<()> {
+    if full_host_trace && !host_clock_only {return Err("public_full_host_trace_configuration");}
     if rolling_failure
         && (!public_check
             || prefill_check != Some(false)
@@ -179,6 +187,7 @@ fn run_mode(
         }
         if !rolling_failure {
             crate::strata_prefill_profile::enable_compiled_public();
+            if full_host_trace {crate::strata_prefill_profile::enable_full_host_trace();}
         }
     }
     #[cfg(feature = "strata-public-host-clock")]

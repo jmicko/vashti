@@ -9,6 +9,7 @@ use std::{
 };
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static REQUEST: AtomicU64 = AtomicU64::new(0);
+static FULL_HOST_TRACE: AtomicBool = AtomicBool::new(false);
 thread_local! { static TOTALS: RefCell<BTreeMap<&'static str, (u64,u64,u64)>> = const { RefCell::new(BTreeMap::new()) }; }
 thread_local! { static GR_SAMPLE: Cell<bool> = const { Cell::new(false) }; }
 
@@ -41,6 +42,8 @@ impl Drop for GrSample {
 pub(crate) fn enable_compiled_public() {
     ENABLED.store(true, Ordering::Release);
 }
+/// Only the new fixed-public CLI calls this, after ordinary host-mode admission.
+pub(crate) fn enable_full_host_trace() {FULL_HOST_TRACE.store(true,Ordering::Release);}
 pub(crate) fn compiled_public_enabled() -> bool {
     ENABLED.load(Ordering::Acquire)
 }
@@ -395,6 +398,7 @@ fn native_totals() -> [(u64, u64); NATIVE_TOTALS] {
 /// Drop on error disables sampling without publishing incomplete timestamps.
 pub(crate) struct NativeExpertLayer {
     before: Option<[(u64, u64); NATIVE_TOTALS]>,
+    location: Option<(usize,usize,usize)>,
     #[cfg(feature = "strata-public-host-clock")]
     host_before: [[u64; 4]; 8],
     #[cfg(feature = "strata-public-host-clock")]
@@ -409,6 +413,7 @@ impl NativeExpertLayer {
         if !ENABLED.load(Ordering::Acquire) {
             return Self {
                 before: None,
+                location: None,
                 #[cfg(feature = "strata-public-host-clock")]
                 host_before: [[0; 4]; 8],
                 #[cfg(feature = "strata-public-host-clock")]
@@ -430,10 +435,15 @@ impl NativeExpertLayer {
             count,
             layer,
         }
-        .selects();
+        .selects() || full_host_selected(
+            FULL_HOST_TRACE.load(Ordering::Acquire),
+            std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref()==Ok("1"),
+            std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref()==Ok("prefill-host-layer"),
+            REQUEST.load(Ordering::Relaxed),start,count,layer);
         if !selected {
             return Self {
                 before: None,
+                location: None,
                 #[cfg(feature = "strata-public-host-clock")]
                 host_before: [[0; 4]; 8],
                 #[cfg(feature = "strata-public-host-clock")]
@@ -448,6 +458,7 @@ impl NativeExpertLayer {
         cubecl::wgpu::set_native_strata_profile_active(true);
         Self {
             before: Some(before),
+            location: Some((start,count,layer)),
             #[cfg(feature = "strata-public-host-clock")]
             host_before: cubecl::wgpu::native_strata_host_capture_profile(),
             #[cfg(feature = "strata-public-host-clock")]
@@ -480,7 +491,8 @@ impl NativeExpertLayer {
             // Zero timestamp_calls honestly means the existing graph threshold
             // did not sample this interval; no cap or fence is relaxed.
             #[allow(unused_mut)]
-            let mut record = serde_json::json!({"sampled_layers":1,"request_index":3,"start":0,"count":4096,"layer":24,"timestamp_calls":timestamp_calls,"classes":classes});
+            let (start,count,layer)=self.location.take().expect("selected public location");
+            let mut record = serde_json::json!({"sampled_layers":1,"request_index":3,"start":start,"count":count,"layer":layer,"timestamp_calls":timestamp_calls,"classes":classes});
             // Static family identifiers only, from the same completed fixed
             // public samples. No raw program name or request label is emitted.
             let matrix_families: BTreeMap<_, _> = MATRIX_FAMILIES
@@ -1010,3 +1022,7 @@ mod padded_global_profile_tests {
   for(i,n)in crate::strata_matrix::balanced_global::profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);assert_eq!(matrix_family(n),if i==4{6}else{4});}
  }
 }
+
+mod full_host_trace {use super::*;include!("strata_prefill_full_host_trace.rs");}
+pub(crate) use full_host_trace::FullHostLayer;
+use full_host_trace::full_host_selected;

@@ -2,6 +2,17 @@
 
 **Active Kuno handoff (2026-10-24 UTC): full1425 banked preload accepted.**
 
+Next diagnostic source is composed:
+[fixed-public96-position host attribution](kuno-prefill-full-host-trace.md).
+It uses existing host-only native policy and original coarse profile fences,
+adds no GPU queries/synchronization, and leaves old modes/private entry/math/
+owners/scheduling unchanged. Planned408 CPU, original405 retained; no build/live
+claim yet. Three unchanged-worker Mesa trace attempts failed before completing
+a model request, all physically recovered with faults0 and normal services;
+partial captures are not speed evidence. Do not keep attempting driver tracing.
+Exact failed-artifact lineage, privacy restrictions and next validation are in
+the linked note. Original accepted preload results below remain authoritative.
+
 Source `aa38762b` / worker `c0f4692b`: same-source405 full/404 feature-off AppCPU,
 18/73 runtime,8+9 metadata,10 native, fresh all1425 GPU cases and both original
 18-script model/recovery chains pass. No GPU numerical receipt reuse for this
