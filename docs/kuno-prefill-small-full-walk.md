@@ -75,3 +75,15 @@ next diagnostic records the missing SSA ID's actual defining instruction,
 then determine whether it is an unsupported valid provenance or a real
 producer/SSA issue. Do not simply bypass the independent-B/overwrite check.
 Failed CPU log/artifacts `small-full-walk-app-cpu-20261024` are preserved.
+
+The second compiled diagnostic identifies the actual missing definition:
+`OpLoad` from Function storage, not a missing cooperative operand or evidence
+of incorrect arithmetic. New proof traces exact reaching `OpStore` values on
+EVERY CFG predecessor in the SAME K iteration, rejects uninitialized and
+previous-iteration paths, then follows those values to actual global/shared
+CMMA loads. Independent B-origin sets and the real alias negative remain.
+Test binaries may export fixed compiler modules to an explicit per-run CPU
+artifact directory for faster standalone proof debugging; private worker
+builds omit this export entirely. These contain no request/model/GPU data.
+One actual repository masked-stage mathematical test passes separately; this
+is not full app/shader/GPU acceptance. V3 compile/proof is next.

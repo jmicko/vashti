@@ -20,7 +20,10 @@ together, retaining every existing variant/control. Complete new source is
 now composed (three AppCPU/four runtime/120 GPU additions:398/67/1223);
 first compilation passes, but its new B-SSA proof rejects an unrecognized
 actual B value. Strict provenance diagnostic added; no GPU run/speed claim.
-Inspect actual defining instruction before changing producer or proof.
+Actual B definition is Function-storage OpLoad. Exact same-iteration CFG
+reaching-store proof added, retaining all predecessor/uninitialized/alias
+rejections; v3 compilation pending. One standalone actual masked-stage
+mathematical test passes; no full app/shader/GPU acceptance yet.
 Complete unit2528d58ded784cd4b9ff6772cadf415d exits0;05:00:40UTC Intel50,688,000B,
 NVIDIA compute0/display575MiB, all5 faults0, HTTP200/admission normal/completed178.
 No GPU job remains; no installed services changed. Bounded sudo refresher

@@ -542,13 +542,20 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let path = std::path::PathBuf::from(dir);
                 // Fixed compiler definitions only: no request, activation,
                 // weight contents or GPU data is present in these modules.
-                std::fs::write(
-                    path.join(format!("{name}-layout{mask}.spv")),
-                    words
-                        .iter()
-                        .flat_map(|w| w.to_le_bytes())
-                        .collect::<Vec<_>>(),
-                )?;
+                let file = path.join(format!("{name}-layout{mask}.spv"));
+                let bytes = words
+                    .iter()
+                    .flat_map(|w| w.to_le_bytes())
+                    .collect::<Vec<_>>();
+                if file.exists() {
+                    if std::fs::read(&file)? != bytes {
+                        return Err(
+                            "full walk fixed compiler module changed within frozen test".into()
+                        );
+                    }
+                } else {
+                    std::fs::write(file, bytes)?;
+                }
             }
             program(&words, cohort, tile)?;
             #[cfg(test)]
