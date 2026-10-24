@@ -20,6 +20,38 @@ fn fixture(counts: &[u32]) -> [u32; WORDS] {
 }
 #[test]
 fn regular_cohort_info_proves_exact_existing_images_packed_rows_and_strict_member_class() {
+    for op in [RegularOp::Gather, RegularOp::Activate] {
+        let source = op.source();
+        assert!(source.contains("let tile=16u;let padded=((real+tile-1u)/tile)*tile;"));
+        assert!(!source.contains("32u,real>=32u"));
+    }
+    let counts = [32usize, 33, 63, 64, 65, 127, 128, 255];
+    for row_words in [1280usize, 320] {
+        let mut prefix = 0usize;
+        let mut writes = vec![0u8; counts.iter().map(|n| n.div_ceil(16) * 16 * row_words).sum()];
+        for n in counts {
+            let padded = n.div_ceil(16) * 16;
+            // Exact real source's stride and physical producer grid.
+            let stride = (255 * row_words).div_ceil(256) * 256;
+            for id in 0..stride {
+                for at in (n * row_words + id..padded * row_words).step_by(stride) {
+                    writes[prefix * row_words + at] += 1;
+                }
+            }
+            assert!(
+                writes[prefix * row_words..(prefix + n) * row_words]
+                    .iter()
+                    .all(|v| *v == 0)
+            );
+            assert!(
+                writes[(prefix + n) * row_words..(prefix + padded) * row_words]
+                    .iter()
+                    .all(|v| *v == 1)
+            );
+            prefix += padded;
+        }
+    }
+
     for n in 32..256u32 {
         for len in 1..=8 {
             let w = fixture(&vec![n; len]);

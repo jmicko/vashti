@@ -49,6 +49,15 @@ impl RegularOp {
             Self::Image { dtype, down } => Op::Dequant { dtype, down },
         };
         let mut source = old.source();
+        if matches!(self, Self::Gather | Self::Activate) {
+            // Both producers must initialize ONLY this group's Pad16 suffix.
+            // The inherited regular Pad32 loop can overlap the NEXT packed
+            // group when the real row count is33,65,... and Z runs in parallel.
+            let previous = "let tile=select(select(16u,8u,real<=8u),32u,real>=32u);";
+            assert_eq!(source.matches(previous).count(), 1);
+            source = source.replace(previous, "let tile=16u;");
+        }
+
         source = source.replace("var<uniform> p:Params;", "var<uniform> cohort:CohortInfo;\nvar<private> p:Params;\nvar<private> cohort_prefix:u32;\nvar<private> cohort_slot:u32;");
         source.push_str(include_str!("strata_prompt_regular_cohort_header.wgsl"));
         source = source.replace("fn main(@builtin(global_invocation_id) id:vec3<u32>) {", "fn main(@builtin(global_invocation_id) id:vec3<u32>) {\n    if !cohort_begin(id.z) {return;}");

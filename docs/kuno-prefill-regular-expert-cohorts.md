@@ -122,3 +122,12 @@ all original compiler/resource and fresh GPU numerical acceptance. Then both
 complete model chains and the unchanged original CLEAN gate. Do not claim
 Strata itself batches experts; this is our source-grounded hypothesis. Preserve
 failures and whole variants without isolated speed-based component rollbacks.
+
+Source review before live GPU execution found and fixed a genuine coupled
+padding defect: inherited global producers usedPad32 for32..255, while new
+packed prefixes usedPad16. Parallel Z groups could clear a following group's
+real rows. Both new gather/activation now explicitly usePad16 and an actual-
+source CPU control proves disjoint real/padding writes. Original old producers
+are untouched. Initial3cdb3da3 compile failed inference at shader-list joining;
+72933c8d fixes it. Its CPU run is preserved, superseded before GPU execution
+by this padding correction; no pre-correction GPU or speed claim.
