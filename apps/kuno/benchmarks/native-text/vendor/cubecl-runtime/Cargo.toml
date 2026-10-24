@@ -38,6 +38,7 @@ resolver = "2"
 [features]
 kuno-global-register-n64 = ["kuno-global-image-experts"]
 kuno-global-transpose = ["kuno-global-register-n64"]
+kuno-global-wide32 = ["kuno-global-transpose"]
 kuno-global-image-experts = ["kuno-wide-shared-reuse", "kuno-expert-ordered-output"]
 kuno-deep-matrix = ["std"]
 kuno-wide-shared-reuse = ["std"]

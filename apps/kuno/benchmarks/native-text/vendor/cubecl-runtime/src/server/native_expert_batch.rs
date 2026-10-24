@@ -69,6 +69,7 @@ pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     let name=native_strata_expert_dequant_identity(name);
+    if name.contains("::global_wide32::"){return false;}
     // Packed cohorts have a distinct seven-buffer grammar and never belong to
     // the six-buffer regular family, even through a nested legacy name.
     if name.contains("::quant_cohort::") { return false; }

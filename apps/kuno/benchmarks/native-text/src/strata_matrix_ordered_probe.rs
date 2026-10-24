@@ -31,11 +31,19 @@ pub(super) enum Control {
     InvalidRoutePrefix,
     InvalidLowNonfiniteFirst,
     InvalidHighNonfiniteFirst,
+    PriorFaultFinite,
+    PriorFaultNonfiniteFirst,
+    InvalidLowSentinelNonfiniteFirst,
+    InvalidHighSentinelNonfiniteFirst,
 }
 impl Control {
     fn name(self) -> &'static str {
         match self {
             Self::Finite => "finite-ieee",
+            Self::PriorFaultFinite=>"prior-fault-finite",
+            Self::PriorFaultNonfiniteFirst=>"prior-fault-nonfinite-feature-zero",
+            Self::InvalidLowSentinelNonfiniteFirst=>"invalid-low-sentinel-nonfinite-feature-zero",
+            Self::InvalidHighSentinelNonfiniteFirst=>"invalid-high-sentinel-nonfinite-feature-zero",
             Self::NonfiniteFirst => "nonfinite-feature-zero",
             Self::NonfiniteOther => "nonfinite-other-feature",
             Self::InvalidRoute => "invalid-route-bound",
@@ -46,7 +54,7 @@ impl Control {
     }
     fn bad_feature(self) -> Option<usize> {
         match self {
-            Self::NonfiniteFirst | Self::InvalidLowNonfiniteFirst | Self::InvalidHighNonfiniteFirst => Some(0),
+            Self::NonfiniteFirst | Self::InvalidLowNonfiniteFirst | Self::InvalidHighNonfiniteFirst | Self::PriorFaultNonfiniteFirst | Self::InvalidLowSentinelNonfiniteFirst | Self::InvalidHighSentinelNonfiniteFirst => Some(0),
             Self::NonfiniteOther => Some(4),
             _ => None,
         }
@@ -54,11 +62,14 @@ impl Control {
     fn bad_member(self, count: usize) -> Option<usize> {
         match self {
             Self::InvalidRoute => Some(count - 1),
-            Self::InvalidRoutePrefix | Self::InvalidLowNonfiniteFirst => Some(0),
-            Self::InvalidHighNonfiniteFirst => Some(8),
+            Self::InvalidRoutePrefix | Self::InvalidLowNonfiniteFirst | Self::InvalidLowSentinelNonfiniteFirst => Some(0),
+            Self::InvalidHighNonfiniteFirst | Self::InvalidHighSentinelNonfiniteFirst => Some(8),
             _ => None,
         }
     }
+    fn initial_fault(self)->u32 {if matches!(self,Self::PriorFaultFinite|Self::PriorFaultNonfiniteFirst){128}else{0}}
+    fn invalid_sentinel(self)->Option<u32>{if matches!(self,Self::InvalidLowSentinelNonfiniteFirst|Self::InvalidHighSentinelNonfiniteFirst){Some(0x3ec00000)}else{None}}
+
 }
 
 struct Fixture {
@@ -256,7 +267,18 @@ pub(super) fn one(
         arena.allocate_zeroed((if down { abi::PART_BYTES } else { abi::GU_BYTES }) as usize / 4)?;
     let map = arena.upload_u32(&f.map)?;
     let status = arena.upload_u32(&f.status)?;
-    let fault = arena.allocate_zeroed(1)?;
+    let fault = if control.initial_fault()==0{arena.allocate_zeroed(1)?}else{arena.upload_u32(&[control.initial_fault()])?};
+    let prefix=f.map[1028+f.group]as usize;
+    let sentinel_first=control.invalid_sentinel().map(|bits|{
+        let member=control.bad_member(count).unwrap();
+        let base=if down&&ordered{prefix+member}else if down{f.routes[member]}else{member};
+        (base*f.rows,bits)
+    });
+    if let Some((first,bits))=sentinel_first {
+        let bytes=bits.to_le_bytes().repeat(f.rows);
+        client.write_private(read_window(arena.handle(output)?.clone(),first*4,f.rows*4)?,bytes)?;
+        cubecl::future::block_on(client.sanitize_transient_io_audited())?;
+    }
     let handles = [input, weight, output, map, status, fault]
         .map(|id| u::handle(arena, id))
         .into_iter()
@@ -359,8 +381,8 @@ pub(super) fn one(
     let small_selected=family.starts_with("small-direct-") && ordered;
     // New global-register controls deliberately use the same complete8 direct
     // tail publication as the production path. All old families keep policy.
-    let global_direct_tail=matches!(family,"global-register-direct-gu"|"global-register-ordered-down"|"global-n64-direct-gu"|"global-n64-ordered-down"|"global-transpose-direct-gu"|"global-transpose-ordered-down");
-    let direct_gu = family == "shared-reuse-direct-gu" || family=="global-register-direct-gu" || family=="global-n64-direct-gu" || family=="global-transpose-direct-gu" || (small_selected && !down);
+    let global_direct_tail=matches!(family,"global-register-direct-gu"|"global-register-ordered-down"|"global-n64-direct-gu"|"global-n64-ordered-down"|"global-transpose-direct-gu"|"global-transpose-ordered-down"|"global-wide32-direct-gu"|"global-wide32-ordered-down");
+    let direct_gu = family == "shared-reuse-direct-gu" || family=="global-register-direct-gu" || family=="global-n64-direct-gu" || family=="global-transpose-direct-gu" || family=="global-wide32-direct-gu" || (small_selected && !down);
     let direct_member = |member: usize| {
         (ordered || direct_gu)
             && if small_selected || global_direct_tail {member/8*8+8<=count} else {member < wide_prefix}
@@ -395,6 +417,9 @@ pub(super) fn one(
     let mut mismatches = 0;
     let mut max_abs = 0f32;
     let output_words = scan(arena, output, |at, bits| {
+        if let Some((first,expected))=sentinel_first {
+            if at>=first&&at<first+f.rows {if bits!=expected{return Err("wide32 original invalid-route sentinel overwritten".into());}return Ok(());}
+        }
         let member = if ordered && down {
             (at / f.rows)
                 .checked_sub(prefix)
@@ -450,7 +475,7 @@ pub(super) fn one(
         }
         Ok(())
     })?;
-    let expected_fault = if control.bad_member(count).is_some()
+    let expected_fault = control.initial_fault() | if control.bad_member(count).is_some()
         || (control.bad_feature().is_some() && (0..count).any(|m| !direct_member(m)))
     {
         128

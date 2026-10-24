@@ -56,70 +56,54 @@ not reusing N64's rows/64 or its30*logical-block workgroup formula; new factor15
 because GU10 and DOWN20 X tiles per original logical pair. Keep the original
 logical M128 block counter separate and unchanged.
 
-## Ordered guard and checked branch are required together
+## Revised guard composition: preserve the existing tape limit
 
-Normal expert branch must not combine eight live C fragments with a full
-per-element invalid-route publisher. Before EACH selected new GU or DOWN prefix,
-queue a tiny genuine route guard using original6 logical owners and original
-7 scalar parameters. It validates header, role/shape, original count/group,
-base0 and exact count/128*128 prefix, then checks every real prefix route.
-Fault writes OR128 into the ORIGINAL sticky fault owner, never clear it.
-For DOWN, write pending2 only for valid prefix routes into the original DOWN
-status half; invalid-route slots stay untouched. GU status is unchanged.
-Header failure must not access route/status beyond original extents.
-Original tail executes as before. No host readback, hidden route cache or new flag.
+Source review before integration found the existing ORIGINAL Gather already
+validates every real route against p.count*10 and atomically ORs128 into the
+same fault owner. Its map binding is read-only. Native grammar binds the
+matrix to that original Gather's exact group/input/map/fault views; map has
+no writer between Gather, GU and DOWN. Existing queue WRITE-to-READ/WRITE
+hazards must order fault validation before the raw prefix's atomic fault read.
+The prefix still performs the original header/role/count/piece checks.
 
-The raw arithmetic prefix reads that SAME sticky fault after a real queue
-WRITE->READ/WRITE dependency from the guard. If zero, all prefix routes were
-checked: run the eight-C arithmetic and direct column-major stores with no
-per-element route/status publisher. Pending2 is not accepted output; existing
-GU check/activation and DOWN inverse/finite consumers remain mandatory and
-run only after prefix/tail completion. No metadata-only guard may authorize it.
+The initially proposed two extra production guard dispatches would require
+up to512*(10+3) command slots, exceeding ORIGINAL5632. Do NOT expand that limit.
+Re-use authentic Gather as the production route guard instead. A standalone
+numerical-probe launcher, which has no captured Gather, queues a distinct tiny
+route guard with original map/fault and actual count/group; it cannot be
+admitted into a native captured expert batch. No hidden cached validation.
 
-If nonzero, use a checked fallback preserving the exact original8-member
-raw/finite/status semantics. Reuse the accepted transposed two-C publisher and
-K16 math, processing four serial64-member x64-column subtiles within the genuine
-M128/N128/WG256 region (16 subgroups, not the old32-subgroup mapping). Read only
-original input/weights. With16 subgroups,2048 F32 slots suffice for the same
-128-F32 per-subgroup publication scratch:8KiB, no operand SLM. This allocation
-still exists in the compiled expert shader even when its normal branch avoids
-it; do NOT claim an actual0SLM expert program. Every scratch extent/barrier and
-handoff must be proved for the new geometry; all old variants stay unchanged.
+If original sticky fault is zero, run eight-C arithmetic, direct column-major
+stores, then (after all C fragments die) simple original DOWN pending2 writes
+for all32 real members in the single column-zero subgroup. If nonzero, use
+accepted two-C publication/math over four serial64x64 subtiles with16 SG and
+2048 F32/8KiB scratch. This retains exact8-member raw/finite/status halves and
+invalid-route storage untouched, even if previously nonzero. The compiled
+expert shader still allocates8KiB fallback SLM; do not call it0SLM. No operand
+SLM, new flag, fake count, new owner or new production dispatch.
 
-A prior sticky fault conservatively selects checked fallback, even with valid
-routes. Fault never changes from nonzero to zero during this prefix, and the
-normal branch must not introduce a new fault writer after the guard. Existing
-header-fault behavior remains. This avoids a race in branch selection.
+A prior or unrelated sticky fault conservatively selects the checked branch.
+Fault never clears during this scope. A bad route in THIS group must already
+have set fault before any raw workgroup; a later unrelated fault only switches
+some other workgroup to the equivalent conservative branch. Preserve genuine
+header faults and existing GU-check/activation/DOWN-inverse finite consumers.
+Pending2 never means accepted output. Do not raw-write invalid rows then clear
+them: original invalid-route storage must remain untouched.
 
-Do NOT implement unconditional raw writes followed by zeroing invalid rows:
-the old producer leaves invalid-route output storage untouched, including
-previous nonzero contents. Likewise do not sanitize all16 members when only
-one8-member half is invalid. Original pending2/finite/activated-GU status rules,
-all real source owners, capacities and tails remain exact.
-
-## Closed integration before GPU performance
-
-Use new exact generated guard and prefix identities. Explicitly admit guard
-only in the current GU/DOWN matrix phase, before its prefix, with authentic
-original6 owners and7 scalar values, group/input/map/status/fault and weight/
-output views. Keep a pending guard record; prefix must consume the exact
-matching guard once. Missing, duplicate, wrong-role, changed-owner/INFO/grid,
-legacy prefix after guard, unfinished guard and feature-off forged namespace
-must reject. Pending guard may not escape a group, tail or recording.
-
-Original6 logical phases, matrix-piece counts and M128 block credits remain.
-Count real guard enqueues separately; propagate count through runtime receipt,
-actual WGPU graph records, selected/retained/reused completion and public-only
-counters. Update physical launch equations by actual guards, never fabricate
-virtual phases or silently remove resource/launch/retained-capacity checks.
-Inspect `native_expert_batch` operator admission as well as grammar; one
-classifier passing is not the entire native path. Ordinary source/erasure
-ownership and borrowed-wrapper lifetimes remain in force.
+Closed exact new namespace for genuine GU/DOWN roles, N128/WG256 physical grid,
+original6 owners/7 scalars and exact original Gather/activation/tail phase order.
+Refuse a missing Gather, changed map/fault/input/owner/INFO/grid, fake nested
+legacy names and a standalone guard inserted into a captured group. Keep
+original6 logical phases and all physical launch/command/host/retained bounds
+unchanged. Count production Gather-guarded prefixes separately from standalone
+probe guards; these are enqueue counters, never execution/completion authority.
+Original native operator admission must close the new namespace before loose
+legacy suffix checks. Feature-off forgeries must remain rejected.
 
 Proposed acceptance inventory (finalize exact names before freeze): retain
 all378 AppCPU,18/55 runtime,8+9 metadata,10 native, original compiler sets and890
 GPU cases. Add8 AppCPU (3 dense/3 expert/1 actual profile identity/1 guard-source
-and ordering coverage),4 runtime closed guard/role/owner/order controls; planned
+and ordering coverage),4 runtime closed original-Gather/role/owner/order controls; planned
 386 CPU,18/59 runtime. Additional actual dense/expert/guard modules across8
 layout combinations need real CFG proof, raw/fallback branch partition, same
 original INFO, chronological K16, output stores, exact physical grids and

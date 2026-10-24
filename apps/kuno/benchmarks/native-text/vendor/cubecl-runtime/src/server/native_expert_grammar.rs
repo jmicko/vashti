@@ -131,6 +131,17 @@ fn global_register_generated(name:&str,module:&str,ty:&str)->bool {
  name.split_once("::strata_matrix::native_expert_wide::global_register::")
   .is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
 }
+fn global_wide32_generated(name:&str,module:&str,ty:&str)->bool {
+ if !cfg!(feature="kuno-global-wide32"){return false;}
+ let actual=match(module,ty){
+ ("expert_wide_gu_direct","ExpertWideGuDirect")=>"expert_global_wide32_gu::ExpertGlobalWide32Gu",
+ ("expert_wide_down","ExpertWideDown")=>"expert_global_wide32_down::ExpertGlobalWide32Down",
+ _=>return false};
+ name.split_once("::strata_matrix::native_expert_wide::global_wide32::").is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
+}
+fn global_wide32_prefix(name:&str)->bool {
+ global_wide32_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown")
+}
 fn global_transpose_generated(name:&str,module:&str,ty:&str)->bool {
  if !cfg!(feature="kuno-global-transpose"){return false;}
  let actual=match(module,ty){
@@ -154,6 +165,7 @@ fn global_n64_prefix(name:&str)->bool {
  global_n64_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_n64_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
+    if name.contains("::global_wide32::") {return global_wide32_generated(name,module,ty);}
     if name.contains("::global_transpose::") {return global_transpose_generated(name,module,ty);}
     if name.contains("::global_n64::") {return global_n64_generated(name,module,ty);}
     if name.contains("::global_register::") {
@@ -252,7 +264,7 @@ fn is_tail(name: &str, down: bool) -> bool {
     }
 }
 fn ordered_down_layout(name: &str) -> bool {
-    name.contains("::ordered::") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
+    name.contains("::ordered::") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
         name, "expert_tail_down", "ExpertTailDown")
 }
 fn matrix(

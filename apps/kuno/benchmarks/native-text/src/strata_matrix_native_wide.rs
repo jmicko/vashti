@@ -1379,3 +1379,7 @@ pub(super) mod global_n64;
 #[cfg(feature="strata-global-transpose")]
 #[path="strata_matrix_dense_global_transpose.rs"]
 pub(super) mod global_transpose;
+
+#[cfg(feature="strata-global-wide32")]
+#[path="strata_matrix_dense_global_wide32.rs"]
+pub(super) mod global_wide32;
