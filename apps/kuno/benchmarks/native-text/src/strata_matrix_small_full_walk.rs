@@ -256,11 +256,10 @@ pub(crate) fn product(
             // loads them directly from global input. The preceding variant is
             // kept behind the feature-off selection. Avoid merging eight C
             // matrices from two independent K loops into publication.
-            let separate_full_loop = if comptime!(cfg!(feature = "strata-single-k-walk")) {
-                false
-            } else {
-                token + 32 <= count
-            };
+            let mut separate_full_loop = false;
+            if comptime!(!cfg!(feature = "strata-single-k-walk")) {
+                separate_full_loop = token + 32 <= count;
+            }
             if separate_full_loop {
                 crate::strata_matrix::native_wide::global_wide32::compute::<f16>(
                     input,
