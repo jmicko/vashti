@@ -1,6 +1,46 @@
 # Kuno and Vashti Coordination
 
-**Current handoff (2026-10-24 UTC): complete small carry accepted, neutral.**
+**Current handoff (2026-10-24 UTC): granular/interleaved small policy accepted.**
+
+Source2391584c / worker1c708939 passes425 full/422 feature-off AppCPU,18/91
+runtime,8+9+10 original metadata/native,24 new counter controls,all48 actual new
+layouts and fresh ALL1987 GPU cases. Both complete original18-script model/
+compiler/owner/counter/erasure/recovery chains pass. All six genuine new programs
+are zero-spill;240 total captures, old22 small/QSA unchanged. Every older full
+variant remains. [Exact results and failures](kuno-prefill-small-granular.md).
+
+Normal first/repeat10.902525619/8.868221228s; sampled10.964424202/8.957015352s.
+Repeat5.13% shorter than preceding9.347526684s, single observations without
+variance control. No new CLEAN (original trigger8.854793s unmet by14.4ms).
+Strata clean5.3515s remains unmet. No timing/precision/ownership cap relaxed.
+Sample macro19.282ms/cohort7.065ms, copy29.179ms/dequant17.715ms. Normal experts
+5.244s,attention2.426s. Samples cannot be summed/scaled as normal wall time.
+All residency/source bytes remain identical;13291 misses/39873 role copies,
+27.345664GB. New actual macro workgroups2175000; old producers get zero credit.
+
+Next compose [contiguous HOST expert blobs](kuno-prefill-host-expert-blobs.md).
+Pinned Strata's selected pinned mirror issues ONE full blob memcpy per miss;
+current genuine PromptLayer->Sources resolves/copies THREE role-major ranges.
+Compose plan/layout/loading/source binding/CPU map/rebase/shadow/retirement,
+actual owner-safe copy coalescing and honest counters TOGETHER, retaining the
+accepted kernel bundle. Same original128MiB HOST root/256B alignment/setup/
+registry/capacity bounds; no duplicated whole HOST cache or reduced residency.
+No next-source implementation/compilation/speed claim. Read that plan first.
+Unchanged synthetic math is not a HOST-layout test: use actual source-byte/
+copy/CPU-borrow/rebase/recovery evidence and both full model chains. Retain all
+1987 controls; any reuse must prove unchanged kernels and explicitly say reuse.
+
+The read-only Mesa audit also confirms MatrixLoad's optional alignment is parsed
+but not forwarded by26.2.5 vtn_cmat.c. Hint-only/vector-width/panel speed claims
+remain unproven. Do not repeat blind transpose or inactive CUDA fused quant.
+
+Full unit exits0; independent18:54:59UTC Intel42278912B,NVIDIA compute0/desktop
+626MiB,all5 faults0,all3HTTP200,admission inactive/unpaused/no recovery/waiting0/
+completed264. No test worker remains. Goal ACTIVE/UNMET. Refresher3184527,parent
+3556 bounded to20:55:17UTC; verify before reuse. No API/Vashti/canonical/install/
+release/driver/boot change. Inherited text/__pycache__ preserved.
+
+**Preceding handoff (2026-10-24 UTC): complete small carry accepted, neutral.**
 
 Source94613ad7 / worker6a4f0eca passes422 full/421 feature-off same-source AppCPU,
 18/86 runtime,8+9 metadata,10 native,all48 carried layouts plus every original

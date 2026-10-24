@@ -1,7 +1,7 @@
 # Complete granular small-expert pipeline
 
-Source candidate composed after accepted source94613ad7/full1867. Not yet
-compiled or measured. Keep all previous complete variants. No API, model,
+Complete accepted candidate after source94613ad7/full1867. Frozen runtime
+source2391584c / worker1c708939, all1987 fresh controls and both full chains pass. Keep all previous complete variants. No API, model,
 Vashti, install, release, driver or boot change.
 
 The full four-C carried small kernels spill at128GRF. The short-lived four-C
@@ -118,3 +118,95 @@ Additional plan: three AppCPU cases (coverage/scratch, genuine profile roles,
 48 emitted layout proofs), three regular native grammar cases and two cohort
 cases. Planned total425 AppCPU,422 feature-off,18/91 runtime,1987 fresh GPU.
 CPU/compiler and live outcomes remain pending; no speed or acceptance claim.
+
+
+## Complete acceptance (2026-10-24 UTC)
+
+Frozen source `2391584c714d1957a2d43ad2e0e825d99d6ece38`, worker
+`1c7089398848be3f29fbd4846f5bc5692fbf2cc70d685e857e7b57d1e2905ceb`.
+Runtime commits: baf86573 composes both granular consumers/shared interleaved
+core/actual role and grid grammar;4656562c appends public report fields outside
+the old JSON macro's recursion limit;2391584c fixes genuine module/type names
+and typed carried-reference entry. All older complete variants remain available.
+
+425 full/422 feature-off same-source AppCPU;18/91 actual runtime; original8+9
+metadata and10 native controls;24 additional producer-counter metadata controls
+pass. All48 new actual shader layouts prove WG32/SG16,1024B scratch, typed
+constant strides, genuine operand origins/chronological C and corruption
+rejection. Original429 WGSL/320 matrix layouts and every earlier module/resource
+control retained. Actual fresh1987 GPU cases (all1867 plus116 old/new/F64 and4
+mixed-slot pairs) pass. BOTH complete original18-script model/compiler/source/
+owner/counter/erasure/recovery chains pass. No numerical receipt reuse.
+
+| mode | warm73 prefill | first4245 prefill | repeated4245 prefill | model load |
+| --- | ---: | ---: | ---: | ---: |
+| normal |3.768138064s|10.902525619s|8.868221228s|117.033891473s|
+| sampled |3.826523635s|10.964424202s|8.957015352s|84.458318860s|
+
+Normal repeated is5.1276% shorter than preceding9.347526684s, in individual
+observations, not variance-controlled. Four output tokens each are not a
+sustained decode benchmark. No new CLEAN:8.868221228s exceeds the unchanged
+normal trigger8.854793s by14.428228ms. Do not relax it or run a favorable retry.
+The most recent original CLEAN8.323282816s/Strata5.3515s comparison remains
+unmet; this does not claim8.323s is the fastest historical incomplete variant.
+
+Actual240 native compiler captures include all six new genuine kernels, each
+zero-spill/fill. Macro32/64 GU2694instructions/451sends, DOWN3308/557;
+cohort GU2831/460 and DOWN3409/566; all SIMD16/128GRF. No speed is inferred
+from compiler estimated cycles. Original22 small and both QSA hashes retained;
+large dense/expert paths remain zero-spill. The full spilling carry controls
+remain genuinely compiled/executed; no isolated rollback.
+
+Sample layer24/main4096 macro26.813109->19.282232ms, cohort7.691611->7.064579ms;
+wideGU8.026197ms/DOWN3.327654ms, dequant17.714503ms/copy29.178992ms. Do not
+sum/scale these samples into normal latency. Normal repeated expert interval
+5.696305728->5.243748123s, attention2.436403882->2.426451341s. Original static
+capacity/residency and27345664000 copied bytes/39873 role copies stay identical.
+Logical macros4218/6532 stay identical; actual physical workgroups383820->2175000.
+Old N128/full-carry producer counters are zero in production; new counters are
+actual genuine launches. Original generic logical cohort counts stay honest.
+
+Next grounded change: [complete contiguous HOST expert blobs](kuno-prefill-host-expert-blobs.md),
+matching Strata's one copy per expert instead of three actual role sources.
+Both use pinned/registered HOST data; this is not a disk-versus-RAM difference.
+Actual GPU residency is already higher than Strata's reference; do not reduce it
+or duplicate a full HOST mirror. Layout, ownership, CPU borrow, rebase/shadows,
+source tables, true copy coalescing and counters must change together.
+
+An additional read-only Mesa26.2.5 source audit finds `vtn_cmat.c:105-130`
+parses optional MatrixLoad alignment but never forwards it into the pointer or
+`nir_cmat_load`. A hint-only change is not a justified optimization. Existing
+row-major A/column-major B are packed-layout matches. K16 panel layout alone
+does not prove fewer sends; the old actual dense K16 loop has8 input d32x2,
+16 weight d32 sends and8 DPAS. Larger typed byte pointers or manual fragments
+remain unimplemented/unproven alternatives, not the next source scope.
+
+All evidence under `/media/jmicko/faststore/kuno-development`:
+`small-granular-root-build-receipt-20261024.json`,
+`small-granular-v1-{acceptance-freeze,complete-isa-export,normal-safe-phases,profile-safe-phases,terminal-audit,final-state}-20261024.json`,
+`strata-parity-small-granular-v1-20261024-{operators,profile,normal}/receipt.json`,
+`strata-parity-small-granular-v1-20261024-expert-cohorts-public-summary.json`,
+`small-granular-independent-final-state-20261024.json`.
+Controller `run-small-granular-v1-complete-20261024.py`, wrapper
+`check-small-granular-v1-connected-20261024.py`, harness
+`small-granular-forward-harness-v1-20261024` retain all18 original scripts with
+only path relocation and append a genuine new counter-helper branch. Actual
+accepted worker features73. Compilation/metadata wrappers do not themselves
+prove physical math; the fresh operator and full model receipts do.
+
+Preserved failures: CPU unitv1 used a short source ID and failed before build;
+v2 sourcebaf86573 hit JSON macro recursion;v3 source4656562c exposed include
+comments, generated cohort identity, a retained old probe include and function
+pointer typing errors. Finalv4 CPU/source2391584c and complete releasev1 pass.
+The initial derived CPU log had a stale422 summary despite425 actual completed
+records. Keep it; preflight produces a separate v2 derived log from those same
+425 actual records. All original plus new read-only preflight passes before GPU.
+No threshold/tolerance/capacity relaxation and no favorable rerun.
+
+Complete unit `kuno-small-granular-complete-v1-20261024` exits0, independent
+18:54:59UTC Intel42278912B,NVIDIA compute0/desktop626MiB,all5 kernel fault
+classes0,all3HTTP200,admission inactive/unpaused/no recovery/waiting0/completed264.
+No test worker remains; same boot/kernel. Bounded refresher3184527/parent3556
+expires20:55:17UTC; verify identity/cache before reuse. No API, frontend,
+canonical checkout, install, release, driver or boot change. Goal ACTIVE/UNMET.
+Inherited text/__pycache__ preserved. No Vashti consumer change is required.
