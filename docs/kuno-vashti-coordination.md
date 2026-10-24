@@ -1,6 +1,36 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): full96-position host profile accepted.**
+**Active Kuno handoff (2026-10-24 UTC): carried operand bundle fully validated.**
+
+Source50708bb8/worker8c6f1aeb passes409 full/408 feature-off same-source AppCPU,
+18/73 runtime,8+9 metadata,10 native,48 genuine layout/SSA/owner controls,
+48 actual K/address proofs plus144 address/guard negatives, fresh all1425 GPU
+controls and BOTH original18-script full-model/compiler/recovery chains.
+Actual212 compiler captures (one fewer duplicate dense-N64 capture, within the
+existing accepted2-or3 law); all22 small kernels zero-spill, old QSA hashes same.
+Read [complete carried-bundle acceptance and preserved failures](kuno-prefill-balanced-carry.md).
+Normal first/repeat11.417902189/9.604607590s; profile11.441860176/9.701743208s.
+Observed normal2.81%/3.05% longer than preload; NOT variance-controlled. No new
+CLEAN, no parity and no installation. Keep the entire selectable carried variant.
+
+Next [coherent cohort row-ordering design](kuno-prefill-cohort-row-order.md)
+is recorded, not implemented. Full4096 chunk has9100 groups in4021 eight-slot
+cohorts:28.3% occupancy; tail89.6%. New producer/prefix/inverse/ring/consumer
+policy must preserve the original token/rank accumulation and all owners/source/
+metadata bounds, with original logical policy retained. Do not infer a speedup
+or copy-overlap loss from the serialized single-layer sample.
+
+V3 unit exits0, final state exits0;12:18:35UTC Intel42278912B,NVIDIA compute0/
+desktop621MiB,faults0,all3HTTP200,admission inactive/unpaused/no recovery/waiting0/
+completed246. No GPU test/worker remains. Goal ACTIVE/UNMET; best CLEAN8.394039699s
+versus Strata5.3515s unchanged. Bounded sudo refresher2936238 authorized until
+13:55UTC; verify identity/cache before reuse. Canonical/Vashti/API/install/
+release/driver/boot unchanged; no frontend handoff. Preserve inherited untracked
+text/__pycache__. Earlier snapshots below remain historical.
+
+**Previous full-host diagnostic checkpoint:**
+
+**Full96-position host profile accepted.**
 
 Source29a3cfe8/workerf743481a passes408 AppCPU (original405 retained),429 WGSL,
 320 matrix/48 balanced layouts and full fixed-public host-only model/recovery.
