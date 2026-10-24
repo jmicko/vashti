@@ -1,4 +1,120 @@
-# Regular expert cohorts: complete source bundle, acceptance pending
+# Regular expert cohorts: complete bundle validated
+
+**Accepted runtime source:** `bac6da32a38d3c2f0e0ae1e1a2442090c2dd46d1`.
+**Frozen worker:** `42e3bc4e37f0f318e671a408d0ca8fe17353dbf65efb4ad106a8c0ed155941d8`.
+The entire new policy passes CPU/compiler, fresh GPU numerical and BOTH full
+model/counter/owner/erasure/recovery chains. Strata parity remains UNMET.
+
+## Completed acceptance and measured result (2026-10-24 UTC)
+
+The explicit `--regular-cohorts` / `strata-regular-cohorts` variant retains every
+preceding complete variant. New authentic32..255-member batches use the original
+interleaved four-C K32 products and original8-member publication. Distinct gather,
+Pad16, eight-slot dequant, GU, validating activation, ordered DOWN, INFO/native
+six-phase grammar and bank retirement are connected. Original1..31 and >=256
+paths remain. Same two32MiB raw banks,20MiB X/5MiB H/80MiB working owners,
+75MiB FP16 images,4096 packed-row cap (new maximum2048), original metadata caps.
+No arithmetic precision, generation fixture, context, seed or tolerance changed.
+
+Fresh final-source validation passes442 full and435 feature-off AppCPU,18 baseline
+and96 full native runtime,9/10/10 selector metadata (off/quant/regular),10 original
+native metadata,30 retained HOST plus39 new counter metadata cases. Offline437
+WGSL/336 matrix layouts include every original320 plus16 genuine new regular
+layouts with WG32/SG16/1024B publication and actual carried-product SSA checks.
+Fresh ALL2011 GPU controls retain every original1987 and add6 paired producers,
+6 original-GGUF/all-eight-slot/mixed HOST/GPU dequant,12 full output/status/fault/
+source comparisons against real preceding per-expert granular GU/DOWN kernels.
+All new bit mismatches are0. Uneven counts32/33/63/64/65/127/128/255,8x255 and
+partial3-group batches, nonfinite and invalid routes pass. No numerical receipt
+reuse. Both complete18-script model/compiler/counter/owner/erasure/recovery chains
+pass, including real regular-group source/admission/use and whole-model closure.
+
+Fresh original HOST source audit independently checks all25,878,092,800 bytes,
+12,593 experts/350 scoped maps,435 actual source-to-bank copies/907,084,800 payload
+bytes and2610 negatives. Both full raw roots64MiB are zero-audited;1,403,217,408
+transient-I/O bytes zero-audited, checked session close/CLOSED and recovery pass.
+Physical adaptive rebase was NOT tested; original aligned paths are retained.
+Same11,983 resident pairs, original24,414,233,600 GPU expert bytes and original
+26,215,808,000 total HOST bytes. Repeated13,291 misses/13,291 submitted copy ranges,
+27,345,664,000 staged bytes unchanged; no new model copy or root reservation.
+
+| Public mode | Warm prompt | First4245 | Repeated4245 | Load |
+| --- | ---: | ---: | ---: | ---: |
+| Normal73/4245/4245 |3.944335192s|10.151786328s|8.220987394s|78.536056400s|
+| Sampled73/4245/4245 |4.003536331s|10.110572400s|8.305763806s|77.976556944s|
+| Original CLEAN45/4245/4245 |6.617266796s|11.939835038s|7.766934179s|78.581749512s|
+
+Normal repeated is7.13% shorter than the preceding complete HOST variant's
+8.852502616s. Its first was10.880471877s. Sampled repeat was8.998811837s. The
+unchanged normal trigger8.854793s admits ONE original CLEAN, with empty profiles
+and original45/4245/4245 counts: repeated is7.84% shorter than preceding8.427964917s
+(first12.766184520s). Earlier row-order CLEAN8.323282816s also remains recorded.
+These are single observations, with no variance or disk-cold control. No favorable
+retry/threshold change and no sustained decode claim from four output tokens.
+Strata CLEAN first/repeat5.5006/5.3515s remains substantially faster.
+
+Normal repeated expert interval falls5.225996740s ->4.587474525s; attention remains
+2.422284996s. Sample L24/main4096: matrix31.216233ms (previous42.923519ms), cohort
+14.538537ms, copy28.416198ms, dequant17.110411ms. Do NOT sum/scale sampled overlapping
+costs into normal wall time. The old per-expert macro family correctly receives0
+production credit; real regular5375 groups/720 batches produce4320 physical phase
+launches. Matrix physical workgroups2,322,780 versus2,175,000 active tile workgroups
+are distinct, with the original factor2 bound retained. Old small groups keep
+their own genuine producer credit; no old per-expert attribution for new kernels.
+
+Fresh250 native compiler captures include both genuine new regular programs,
+each SIMD16 and0:0 spills:fills. Original six granular and22 original small
+programs stay represented; both original QSA ISA hashes remain unchanged.
+Zero spills do not establish occupancy or an opaque oneMKL tile shape.
+
+## Evidence, failures and next investigation
+
+All artifacts are under `/media/jmicko/faststore/kuno-development`:
+
+- `regular-cohorts-v3-root-build-receipt-20261024.json`, AppCPU-v5/off-AppCPU-v3,
+  full-runtime-cpu-v3 and selector-v3 exact controls.
+- `regular-cohorts-v4-acceptance-freeze-20261024.json`, frozen worker build
+  `strata-parity-regular-cohorts-v3-20261024` and source/feature hashes.
+- `regular-cohorts-v3-real-bytes-safe-20261024.json`: FRESH final-source audit.
+- `strata-parity-regular-cohorts-v4-20261024-{operators,profile,normal,clean}` and
+  `...-expert-cohorts-public-summary.json`: all2011 plus both full chains.
+- `regular-cohorts-v4-{profile,normal}-safe-phases-20261024.json`,
+  `regular-cohorts-v4-complete-isa-export-20261024.json`,
+  `regular-cohorts-v4-original-clean-safe-20261024.json`.
+- `regular-cohorts-v4-{final-state,independent-final-state}-20261024.json`.
+
+Preserve all failures:3cdb3da3 shader Vec inference ->72933c8d; inherited Pad32
+would overlap new Pad16 rows ->aeeb8fff fixes BOTH producers. e7718887 fixes
+all prototype/read-dependency streams in the new grammar and corrects a new
+metadata test's unsupported assumption about a PART sink's first-bound ID.
+Workerccc0114a passes CPU/compiler and source audit; v2 checker stops before math
+on stale320 versus336 layout count. Checkerv3 corrects that count and passes
+preflight. V3 reaches the new paired matrix but its oracle incorrectly uploads
+whole owned bytes through a logical trimmed view; strict private upload rejects
+it. bac6da32 uses the FULL retained arena handle for upload, keeps logical matrix
+views and moves the complete new24 family first, with all original controls
+following. V4 reruns ALL2011 FRESH; no imported numeric acceptance. The final
+fresh source audit also reruns for the changed worker. Old failures are untouched.
+
+Whole supervisorv4 exits0, no worker remains. Independent final state: Intel
+42,278,912 bytes, NVIDIA compute0, all five fault classes0, all three HTTP200,
+admission inactive/unpaused/no recovery/waiting0/completed276. Same boot/kernel.
+No install, release, API, Vashti, driver, reset or reboot change. Canonical checkout
+and inherited `text/__pycache__` remain untouched. Required Vashti changes:none.
+
+Next audit the ACTUAL selected transfer/compute submission and dependency path,
+including whether this banked policy overlaps copies with computation. Kuno
+already HAS a genuine dedicated transfer queue; source review must establish
+selection/overlap before proposing changes. Sample copy time alone is not proof
+that overlap is absent. Read-only Strata review confirms its selected Intel path
+uses ordinary half-input/F32 GEMM and a two-slot decoded-expert ring, not a hidden
+model-sized decoded cache; inactive HIP/CUDA tricks remain irrelevant. Native
+oneMKL tile internals are unknown. Keep the ENTIRE accepted variant while choosing
+the next coherent change from confirmed evidence. The two-C policy below remains
+an unimplemented secondary lead, not an assumed register-spill cure.
+
+## Original planning record and intermediate checkpoints
+
 
 The complete regular-cohort source bundle is composed, including public
 original-reference probes and distinct native completion/counter roles. It has

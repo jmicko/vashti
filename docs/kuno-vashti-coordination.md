@@ -1,6 +1,42 @@
 # Kuno and Vashti Coordination
 
-**Current source work (2026-10-24 UTC): regular expert cohorts composed, not validated.**
+**Current validated Kuno handoff (2026-10-24 UTC): regular batching is faster.**
+
+Sourcebac6da32 / worker42e3bc4e passes442 full/435 off AppCPU,18/96 runtime,
+9/10/10 selector metadata,10 native,30+39 counter metadata,437 WGSL/336 matrix
+layouts and fresh ALL2011 GPU controls (old1987 plusnew24). BOTH complete original
+18-script model/compiler/counter/owner/erasure/recovery chains pass. Read the
+[complete regular-cohort acceptance and preserved failures](kuno-prefill-regular-expert-cohorts.md).
+
+New32..255-member batches retain original four-C interleaved math, Pad16,
+old1..31 and >=256 paths, exact native roles and original owners/caps. Same two
+raw banks/80MiB working/75MiB images. Real5375 regular groups/720 batches,
+2,322,780 physical versus2,175,000 active matrix workgroups; no fake old credit.
+Fresh original25.878GB HOST audit/copy/zeroization and checked close/CLOSED pass.
+Both new genuine compiler programs are zero-spill,250 captures, old QSA ISA hashes
+unchanged. No numerical acceptance imported from failed preliminary workers.
+
+Normal first/repeat10.151786328/8.220987394s versus preceding10.880471877/
+8.852502616s:7.13% shorter repeat. Sampled10.110572400/8.305763806s. Original
+unchanged CLEAN trigger admits ONE45/4245/4245 run, profiles empty:
+11.939835038/7.766934179s versus12.766184520/8.427964917s (repeat7.84% shorter).
+Single observations, no variance/disk-cold control or sustained decode claim.
+Strata5.5006/5.3515s remains UNMET. Keep every complete variant.
+
+Normal experts4.587474525s (was5.225996740), attention2.422284996s. Sample matrix
+31.216ms, cohort14.539ms, copy28.416ms, dequant17.110ms. Do not sum/scale overlaps.
+Next audit actual selected copy/compute submission/dependency overlap; genuine
+transfer queue ALREADY exists. No absent-overlap claim from sample time alone.
+Two-C smaller cells remain an unimplemented secondary hypothesis, not a proven fix.
+
+Supervisorv4 exits0; independent Intel42278912B,NVIDIA compute0,five faults0,
+all3HTTP200,admission inactive/unpaused/no recovery/wait0/completed276. No worker
+remains. Goal ACTIVE/UNMET. Refresher wrapper3321602(parent3556),script3321605,
+bounded21:01:21..01:01:21UTC; verify identity/cache. No API/Vashti/canonical/install/
+release/driver/reset/reboot changes. Inherited text/__pycache__ preserved.
+
+
+**Preceding source checkpoint (2026-10-24 UTC): regular cohorts composed.**
 
 Read [the complete regular-cohort source policy](kuno-prefill-regular-expert-cohorts.md).
 Distinct32..255 producers/INFO/matrices/native grammar, original two-bank owner
