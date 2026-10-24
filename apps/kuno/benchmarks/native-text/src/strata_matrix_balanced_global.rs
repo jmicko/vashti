@@ -1,5 +1,5 @@
-//! Pure-global two-C cells: 16 members x16 output rows per SG16.
-//! Original real grid, padded producers, independent8-half publication and ABI.
+// Pure-global two-C cells: 16 members x16 output rows per SG16.
+// Original real grid, padded producers, independent8-half publication and ABI.
 use super::*;
 const PADDED_GLOBAL:bool=true;
 #[cube]
