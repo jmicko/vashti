@@ -1,7 +1,12 @@
 # Complete N128 small-expert temporal carry
 
-Backend-only candidate composed after the complete local-prefetch acceptance.
-No compilation, numerical execution, timing or installation claim yet.
+Backend-only continuation after the complete local-prefetch acceptance.
+Implementation history and completed acceptance are recorded below.
+
+**Completed status, 2026-10-24 UTC:** the full candidate now passes CPU,
+numerical and both model acceptance chains. It is neutral/slightly slower and
+its carried small kernels spill registers. Keep the complete variant. Exact
+results follow the implementation history; no installation or parity claim.
 
 Initial source a7fd8ded fails compilation because the new shared module did not
 explicitly import `half::f16`; its parent scope does not export that concrete
@@ -74,3 +79,121 @@ compiler/counter/capacity/erasure/recovery chains, actual ISA/spills and the sam
 original first/repeated CLEAN gate. Do not credit source spelling, estimated
 cycles or an isolated microbenchmark as prompt-speed acceptance. No API,
 Vashti, installed service, driver, boot or release change is authorized here.
+
+## Completed acceptance and preserved failures
+
+Source `94613ad7929378ea5761ab94ea2037d5530c7768`, worker
+`6a4f0eca6253e0285fba4212ec7b2c75cf0875af03d3e44b70697124d4e3d779`
+passes all422 full / 421 feature-off same-source AppCPU controls, the unchanged
+18 / 86 runtime controls, 8 + 9 metadata and 10 native controls. All48 new
+carried layouts, preceding88 local layouts, original429 WGSL / 320 matrix
+controls and all previous module/resource checks pass.
+
+Fresh GPU execution passes all1867 controls: every preceding1747 plus116 new
+regular/cohort old/new/F64 cases and4 mixed-slot pairs. Both original complete
+model/compiler/source/owner/capacity/erasure/recovery chains pass. Every request
+produces four outputs; this is not sustained decode throughput. The final proof
+explicitly records `fresh_public_numerical_execution=true`. No old numerical
+receipt substitutes for the new worker.
+
+| Mode | Warm73 | First4245 | Repeated4245 | Model load |
+| --- | ---: | ---: | ---: | ---: |
+| Normal scheduling | 3.883731470 s | 11.458690320 s | 9.347526684 s | 81.690894022 s |
+| Sampled profile | 3.913913730 s | 11.432224226 s | 9.350972261 s | 78.902582317 s |
+
+Repeated normal time is0.42% longer than the preceding9.308575798 s observation;
+this is not variance-controlled or a speed gain. No original CLEAN ran because
+its trigger was not met. Best prior CLEAN11.817666824 / 8.323282816 s versus
+Strata5.5006 / 5.3515 s remains authoritative; the goal is active and unmet.
+
+CPU failures a7fd8ded and79b80db3 described above remain preserved. Build v3
+passes. First acceptance preparation used a missing optional zero counter in a
+synthetic metadata fixture and stopped before any GPU execution; its partial
+forward-harness-v1 directory remains. Forward harness-v2 uses explicit zero
+defaults and passes18 metadata controls. These translated prior public profiles
+are CPU bookkeeping fixtures, not new numerical evidence.
+
+Read-only preflight v1 then referenced `runtime-cpu-v1` logs, whereas the actual
+completed builder emitted `-v2` logs. Preserve the failed preflight and wrapper;
+forward wrapper-v2 names those actual completed files. Read-only preflight v2
+passes. Only then was the one fresh complete GPU unit started. All18 original
+model-chain scripts are preserved with path relocation only; original numerical
+and model assertions remain. New exact counter laws require actual carried
+subcounts equal the existing N128 family counts, not invented old-kernel credit.
+
+## Actual compiler and phase evidence
+
+The export contains234 actual compiler programs, including12 small programs:
+both genuine arithmetic specializations for each of four macro roles and two
+cohort roles. Names alone cannot distinguish the specializations. A separate
+read-only audit binds the exact original chunk hashes and classifies the actual
+final native instruction inventories: four DPAS instructions for each short
+K16 loop, eight for each full-carried K32 loop. It does not guess from export
+order, estimated cycles or program names.
+
+All six short programs remain zero-spill. All six carried programs spill:
+
+| Carried role | Instructions | Spills:fills | Sends | GRF |
+| --- | ---: | ---: | ---: | ---: |
+| Macro32/64 GU, each | 4163 | 12:322 | 485 | 128 |
+| Macro32/64 DOWN, each | 5453 | 44:434 | 591 | 128 |
+| Cohort GU | 3642 | 11:176 | 468 | 128 |
+| Cohort DOWN | 4226 | 9:182 | 574 | 128 |
+
+Both large dense and both large expert programs remain zero-spill; the old22
+small programs and original two QSA assembly hashes remain unchanged. These
+are actual compiler facts, not measured instruction latency.
+
+Matching serialized layer24 sample: macro26.813109 ms versus previous26.528896,
+cohort7.691611 versus7.891718, large GU8.050415 versus8.063954 and large
+DOWN3.331454 versus3.334012. Whole normal experts5.696305728 s and
+attention2.436403882 s, compared with prior5.663845805 / 2.431003274 s.
+Overlapping/serialized diagnostic intervals must not be summed into normal
+wall time or extrapolated across both chunks. Spills are real, but these
+observations do not prove that they alone explain the missing gain.
+
+Read-only compiler review exports the accepted BF16 dense control's native
+code: one K16 loop has8 input-buffer loads,16 weight-buffer loads and8 DPAS
+instructions. Mesa26.2.5's actual cooperative-matrix lowering emits packed
+scalar dereference loads; vector-pointer width cancels in its stride conversion.
+Do not treat a wider Rust vector alone as proof of better loads or blindly
+transpose the already matching A/B register layouts. This is a BF16 dense
+control, not an expert timing or a dump of oneMKL's opaque GEMM. Pinned Strata's
+Intel/non-HIP `prompt_f16()` returns false; no alternate FP16 precision shortcut
+was established. Source/code provenance is in the artifact map below.
+
+Next compose [granular workgroups and interleaved operand carry](kuno-prefill-small-granular.md)
+for BOTH small consumers. The complete new policy addresses register liveness
+and available workgroups together, preserves four-C reuse and keeps every
+existing variant. It is not implemented or speed-accepted yet.
+
+## Recovery and artifacts
+
+`kuno-small-local-carry-v1-complete-20261024` exits0. Final17:32:56 UTC and
+independent17:34:28 UTC snapshots show Intel42,278,912 B, NVIDIA compute0 and
+desktop621 MiB, all five kernel fault classes0, all three services HTTP200,
+admission inactive/unpaused/no recovery/waiting0/completed261. No test worker
+remains. No reset, driver, boot, installation, release, API or Vashti change.
+
+Old refresher3062861 and its own sleep were identity-verified and stopped.
+New refresher3184527,parent3556 is bounded16:55:17..20:55:17 UTC. Verify its
+actual identity and credential before reuse. It stores no password.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+
+- `small-local-carry-root-build-receipt-20261024.json`, full AppCPU-v3,
+  feature-off AppCPU-v1,72-feature `strata-parity-small-local-carry-v1-20261024`
+  release worker and offline log, original runtime/deep-runtime-v2 logs.
+- Full build unit-v3 and read-only preflight-v2 pass; earlier failed builds,
+  validator harnesses and preflight-v1 remain. Actual-validator-v3 checks all
+  six genuine exported layout0 programs and negatives without GPU execution.
+- `small-local-carry-forward-harness-v2-20261024/`: all original18 scripts,
+  appended exact counter laws and18 CPU metadata controls.
+- `strata-parity-small-local-carry-v1-20261024-{operators,profile,normal}` and
+  `strata-parity-small-local-carry-v1-20261024-expert-cohorts-public-summary.json`.
+- `small-local-carry-v1-{acceptance-freeze,complete-isa-export,normal-safe-phases,
+  profile-safe-phases,actual-isa-provenance,final-state}-20261024.json` and
+  `small-local-carry-independent-final-state-20261024.json`. No CLEAN receipt.
+- `dense-operand-code-audit-20261024/`, `mesa-cmma-load-audit-20261024/` and
+  `dense-operand-read-only-findings-20261024.json`: pinned code/source only,
+  no new GPU execution or performance measurement.

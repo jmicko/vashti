@@ -1,19 +1,44 @@
 # Kuno and Vashti Coordination
 
-**Current composition (2026-10-24 UTC): small temporal-carry bundle composed.**
+**Current handoff (2026-10-24 UTC): complete small carry accepted, neutral.**
 
-[Complete N128 small-expert carry](kuno-prefill-small-local-carry.md) composes
-BOTH macro and cohort consumers with the retained genuine four-C K32 arithmetic.
-The complete accepted large eight-C path stays. Original explicit numerical/
-compiler entries remain carry=false; production uses a genuine compile-time
-specialization selected by the new feature. Same authentic native roles, scalar
-ABI, N128 grids, padding, six owners, guards and publishers; no runtime-name
-widening. New actual subcounters,48 additional layouts, planned422/421 AppCPU
-and1867 fresh GPU cases. No compilation/live/speed claim yet. Every older
-variant/control remains. The completed acceptance below remains authoritative.
-No API/Vashti/canonical/install/release/driver/boot change.
+Source94613ad7 / worker6a4f0eca passes422 full/421 feature-off same-source AppCPU,
+18/86 runtime,8+9 metadata,10 native,all48 carried layouts plus every original
+module/resource control. Fresh all1867 GPU cases and BOTH complete original
+model/compiler/owner/counter/erasure/recovery chains pass. No numerical receipt
+reuse. [Complete evidence and preserved failures](kuno-prefill-small-local-carry.md).
 
-**Current handoff (2026-10-24 UTC): complete local-prefetch policy validated.**
+Normal first/repeated11.458690320/9.347526684s; sampled11.432224226/9.350972261s.
+Repeated is0.42% longer than preceding9.308575798s in individual observations;
+not a speed gain or variance-controlled result. No new CLEAN; best prior
+CLEAN8.323282816s versus Strata5.3515s remains unmet. Keep every complete variant.
+
+Actual234 compiler captures include12 genuine small specializations. Separate
+hash-bound native DPAS inventory distinguishes six short4-DPAS/zero-spill from
+six carried8-DPAS/spilling programs. Macro GU12:322 / DOWN44:434 spills:fills;
+cohort GU11:176 / DOWN9:182. Old22 small and QSA hashes retained; large dense/
+experts remain zero-spill. Sample macro26.813ms/cohort7.692ms; normal experts
+5.696s/attention2.436s. Do not sum overlapping samples or blame all time on spills.
+
+Next compose [granular workgroups AND interleaved carry](kuno-prefill-small-granular.md)
+for BOTH regular small and cohort16: M16/N64/WG32 with same16x32/four-C subgroup
+reuse, four-A/two-B interleaved K32 banks, guarded genuine refill and constant
+role geometry after original INFO guards. Actual1024B publication scratch must
+be proved. Distinct exact native roles/grids, original producers/owners/limits/
+publishers and honest new counters change together. Large eight-C stays intact.
+For64-member GU current10 workgroups becomes80 with the SAME active subgroup/
+cell math; underfill is a source-grounded hypothesis, not measured occupancy.
+No next-source implementation/compilation/speed claim yet. Cold preparation and
+global image packing remain separate unimplemented leads, not scope creep here.
+
+Full unit exits0; independent17:34:28UTC Intel42278912B,NVIDIA compute0/desktop
+621MiB,all5 faults0,all3HTTP200,admission inactive/unpaused/no recovery/waiting0/
+completed261. No GPU worker remains. Goal ACTIVE/UNMET. Refresher3062861 and
+its own sleep verified/stopped; new3184527,parent3556 bounded16:55:17..20:55:17UTC.
+Verify identity/cache before reuse. No API/Vashti/canonical/install/release/
+driver/boot change. Inherited text/__pycache__ preserved.
+
+**Preceding handoff (2026-10-24 UTC): complete local-prefetch policy validated.**
 
 Source16054c83 / workere23a3bf3 passes421 full/418 feature-off same-source
 AppCPU,18/86 runtime,8+9 metadata,10 native,all88 new actual layouts and fresh
