@@ -31,6 +31,15 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             if wgpu::hal::vulkan::kuno_cooperative_subgroup(&words) != Some(16) {
                 return Err("balanced wide32 expert actual SG16".into());
             }
+            if let Ok(dir) = std::env::var("KUNO_PUBLIC_BALANCED_WIDE32_MODULE_DIR") {
+                std::fs::write(
+                    std::path::Path::new(&dir).join(format!("balanced-wide32-{name}-{mask}.spv")),
+                    words
+                        .iter()
+                        .flat_map(|w| w.to_le_bytes())
+                        .collect::<Vec<_>>(),
+                )?;
+            }
             crate::strata_matrix::native_wide::balanced_wide32::validation::validate_program(
                 &words, true,
             )?;
@@ -63,7 +72,7 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         }
     }
     validate_guard_sources()?;
-    crate::strata_matrix::ordered_probe::wide32_fixture::validate_sources()?;
+    // Original shared fixture validation remains in the unchanged old variant.
     Ok(())
 }
 

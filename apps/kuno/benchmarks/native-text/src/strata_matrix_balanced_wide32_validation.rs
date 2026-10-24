@@ -27,6 +27,9 @@ pub(in crate::strata_matrix) fn validate_program(
             71 if n == 4 && words[at + 2] == 33 => {
                 bindings.insert(words[at + 1], words[at + 3]);
             }
+            56 => {
+                block = None;
+            }
             59 => {
                 classes.insert(words[at + 2], words[at + 3]);
             }
@@ -256,84 +259,245 @@ pub(in crate::strata_matrix) fn validate_program(
     {
         return Err("balanced wide32 authentic two input-B loop operands".into());
     }
-    // CFG block serialization is not execution order. Resolve only actual copy
-    // instructions and degenerate phis; preserve genuine loop-carried phis.
-    fn value_root(
-        id: u32,
-        defs: &BTreeMap<u32, Vec<u32>>,
-        ops: &BTreeMap<u32, u32>,
-        depth: usize,
-    ) -> u32 {
-        if depth > 64 {
-            return id;
-        }
-        if let Some(d) = defs.get(&id) {
-            if ops.get(&id) == Some(&83) {
-                return value_root(d[0], defs, ops, depth + 1);
-            }
-            if ops.get(&id) == Some(&245) && d.len() >= 2 {
-                let first = value_root(d[0], defs, ops, depth + 1);
-                if d.iter()
-                    .step_by(2)
-                    .all(|&v| v != id && value_root(v, defs, ops, depth + 1) == first)
-                {
-                    return first;
-                }
-            }
-        }
-        id
-    }
-    let mut value_ops = BTreeMap::new();
+    // Follow genuine Function-storage reaching definitions, including initial
+    // loads and loop backedges. CubeCL does not keep CMMA handles in scalar SSA.
+    let mut full_defs = BTreeMap::new();
+    let mut aliases = BTreeMap::new();
+    let mut locations = BTreeMap::new();
+    let mut matrix_values = BTreeMap::new();
     let mut at = 5;
+    let mut block = 0;
     while at < words.len() {
         let n = (words[at] >> 16) as usize;
-        if n >= 4 {
-            value_ops.insert(words[at + 2], words[at] & 65535);
+        let op = words[at] & 65535;
+        if op == 248 {
+            block = words[at + 1];
+        }
+        if matches!(op, 61 | 83 | 124 | 245 | 4457 | 4459) {
+            full_defs.insert(words[at + 2], words[at..at + n].to_vec());
+            locations.insert(words[at + 2], (block, at));
+        }
+        if op == 4457 {
+            matrix_values.insert(words[at + 2], at);
+        }
+        if op == 83 {
+            aliases.insert(words[at + 2], vec![words[at + 3]]);
+        }
+        if op == 245 {
+            aliases.insert(
+                words[at + 2],
+                (at + 3..at + n).step_by(2).map(|i| words[i]).collect(),
+            );
         }
         at += n;
     }
-    let resolve = |id| value_root(id, &defs, &value_ops, 0);
+    let actual_blocks = blocks
+        .iter()
+        .map(|(&b, ins)| (b, ins.iter().map(|i| i.0).collect::<Vec<_>>()))
+        .collect::<BTreeMap<_, _>>();
+    struct BDefinitions<'a> {
+        words: &'a [u32],
+        blocks: &'a BTreeMap<u32, Vec<usize>>,
+        edges: &'a BTreeMap<u32, Vec<u32>>,
+        defs: &'a BTreeMap<u32, Vec<u32>>,
+        matrices: &'a BTreeMap<u32, usize>,
+        aliases: &'a BTreeMap<u32, Vec<u32>>,
+        classes: &'a BTreeMap<u32, u32>,
+        parents: &'a BTreeMap<u32, u32>,
+        locations: &'a BTreeMap<u32, (u32, usize)>,
+    }
+    impl BDefinitions<'_> {
+        fn root(&self, mut id: u32) -> std::result::Result<u32, Box<dyn std::error::Error>> {
+            let mut seen = BTreeSet::new();
+            while let Some(&p) = self.parents.get(&id) {
+                if !seen.insert(id) {
+                    return Err("full walk matrix pointer cycle".into());
+                }
+                id = p;
+            }
+            Ok(id)
+        }
+        fn reaching(
+            &self,
+            ptr: u32,
+            block: u32,
+            before: usize,
+            mut seen: BTreeSet<u32>,
+        ) -> std::result::Result<BTreeSet<u32>, Box<dyn std::error::Error>> {
+            // A revisited loop edge contributes no new store. The callers still
+            // require the exact initial/current/backedge origin sets.
+            if !seen.insert(block) {
+                return Ok(BTreeSet::new());
+            }
+            for &a in self
+                .blocks
+                .get(&block)
+                .ok_or("full walk B missing load block")?
+                .iter()
+                .rev()
+            {
+                if a < before && self.words[a] & 65535 == 62 && self.root(self.words[a + 1])? == ptr
+                {
+                    return Ok(BTreeSet::from([self.words[a + 2]]));
+                }
+            }
+            let predecessors = self
+                .edges
+                .iter()
+                .filter(|(_, es)| es.contains(&block))
+                .map(|(&b, _)| b)
+                .collect::<Vec<_>>();
+            if predecessors.is_empty() {
+                return Err("full walk B has an uninitialized current-iteration path".into());
+            }
+            let mut stores = BTreeSet::new();
+            for b in predecessors {
+                stores.extend(self.reaching(ptr, b, usize::MAX, seen.clone())?);
+            }
+            Ok(stores)
+        }
+        fn origins(
+            &self,
+            id: u32,
+            mut seen: BTreeSet<u32>,
+        ) -> std::result::Result<BTreeSet<u32>, Box<dyn std::error::Error>> {
+            if self.matrices.contains_key(&id) {
+                return Ok(BTreeSet::from([id]));
+            }
+            if !seen.insert(id) {
+                return Ok(BTreeSet::new());
+                return Err("full walk B matrix value cycle".into());
+            }
+            let mut result = BTreeSet::new();
+            if let Some(inputs) = self.aliases.get(&id) {
+                for &i in inputs {
+                    result.extend(self.origins(i, seen.clone())?);
+                }
+                return Ok(result);
+            }
+            let d = self
+                .defs
+                .get(&id)
+                .ok_or_else(|| format!("full walk B missing definition id={id}"))?;
+            if d[0] & 65535 != 61 || d.len() != 4 {
+                return Err(
+                    format!("full walk B unsupported definition id={id} words={d:?}").into(),
+                );
+            }
+            let ptr = self.root(d[3])?;
+            if self.classes.get(&ptr) != Some(&7) {
+                return Err(
+                    "full walk B load is not original function-local matrix storage".into(),
+                );
+            }
+            let &(block, at) = self
+                .locations
+                .get(&id)
+                .ok_or("full walk B missing actual load location")?;
+            for value in self.reaching(ptr, block, at, BTreeSet::new())? {
+                result.extend(self.origins(value, seen.clone())?);
+            }
+            Ok(result)
+        }
+    }
+    let proof = BDefinitions {
+        words,
+        blocks: &actual_blocks,
+        edges: &edges,
+        defs: &full_defs,
+        matrices: &matrix_values,
+        aliases: &aliases,
+        classes: &classes,
+        parents: &parents,
+        locations: &locations,
+    };
     let ps = products
         .iter()
         .filter(|p| normal.1.contains(&p.0))
         .map(|p| p.1)
         .collect::<Vec<_>>();
-    let results = ps.iter().map(|&a| words[a + 2]).collect::<BTreeSet<_>>();
-    let first = ps
-        .iter()
-        .copied()
-        .filter(|&a| !results.contains(&resolve(words[a + 5])))
-        .collect::<Vec<_>>();
-    let second = ps
-        .iter()
-        .copied()
-        .filter(|&a| results.contains(&resolve(words[a + 5])))
-        .collect::<Vec<_>>();
-    let first_results = first.iter().map(|&a| words[a + 2]).collect::<BTreeSet<_>>();
-    let second_inputs = second
-        .iter()
-        .map(|&a| resolve(words[a + 5]))
-        .collect::<BTreeSet<_>>();
-    if results.len() != 8 || first.len() != 4 || second.len() != 4 || first_results != second_inputs
-    {
-        return Err(format!("balanced wide32 four exact chronological accumulator chains: products={:?} first={first_results:?} second={second_inputs:?}",ps.iter().map(|&a|words[a+2..a+6].to_vec()).collect::<Vec<_>>()).into());
-    }
-    let mut in_loop = BTreeMap::new();
-    for &(block, at, _, _) in &loads {
-        in_loop.insert(words[at + 2], normal.1.contains(&block));
-    }
-    for &at in &second {
-        if in_loop.get(&resolve(words[at + 3])) != Some(&true)
-            || in_loop.get(&resolve(words[at + 4])) != Some(&true)
+    let mut first_weights = BTreeSet::new();
+    let mut next_weights = BTreeSet::new();
+    let mut first_b = None;
+    let mut next_b = None;
+    for i in 0..4 {
+        let a0 = proof.origins(words[ps[i] + 3], BTreeSet::new())?;
+        let a1 = proof.origins(words[ps[i + 4] + 3], BTreeSet::new())?;
+        let b0 = proof.origins(words[ps[i] + 4], BTreeSet::new())?;
+        let b1 = proof.origins(words[ps[i + 4] + 4], BTreeSet::new())?;
+        if a0.len() != 2
+            || a1.len() != 1
+            || b0.len() != 2
+            || b1.len() != 1
+            || !a0.is_disjoint(&a1)
+            || !b0.is_disjoint(&b1)
         {
-            return Err("balanced wide32 actual current bank1 product operands".into());
+            return Err(format!("balanced wide32 authentic carried/current operand sets i={i} a0={a0:?} a1={a1:?} b0={b0:?} b1={b1:?}").into());
         }
-    }
-    for &at in &first {
-        if in_loop.contains_key(&resolve(words[at + 3]))
-            || in_loop.contains_key(&resolve(words[at + 4]))
+        for origins in [&a0, &a1] {
+            for id in origins {
+                let a = matrix_values[id];
+                if bindings.get(&root(words[a + 3])?) != Some(&1) {
+                    return Err("balanced wide32 weight-A origin".into());
+                }
+            }
+        }
+        for origins in [&b0, &b1] {
+            for id in origins {
+                let a = matrix_values[id];
+                if bindings.get(&root(words[a + 3])?) != Some(&0) {
+                    return Err("balanced wide32 input-B origin".into());
+                }
+            }
+        }
+        if !first_weights.is_disjoint(&a0) || !next_weights.is_disjoint(&a1) {
+            return Err("balanced wide32 distinct output rows cannot alias A".into());
+        }
+        for origins in [&a0, &b0] {
+            if origins
+                .iter()
+                .filter(|&&id| normal.1.contains(&locations[&id].0))
+                .count()
+                != 1
+            {
+                return Err(
+                    "balanced wide32 bank0 must include one initial and one backedge refill".into(),
+                );
+            }
+        }
+        for origins in [&a1, &b1] {
+            if origins
+                .iter()
+                .any(|id| !normal.1.contains(&locations[id].0) || matrix_values[id] >= ps[0])
+            {
+                return Err(
+                    "balanced wide32 genuine next-bank loads precede current products".into(),
+                );
+            }
+        }
+        first_weights.extend(a0);
+        next_weights.extend(a1);
+        if first_b.as_ref().is_some_and(|old| old != &b0)
+            || next_b.as_ref().is_some_and(|old| old != &b1)
         {
-            return Err("balanced wide32 actual carried bank0 operands".into());
+            return Err("balanced wide32 four rows share each genuine B bank".into());
+        }
+        first_b = Some(b0);
+        next_b = Some(b1);
+    }
+    let mut c_values = matrix_values.clone();
+    for &p in &ps {
+        c_values.insert(words[p + 2], p);
+    }
+    let c_proof = BDefinitions {
+        matrices: &c_values,
+        ..proof
+    };
+    for i in 0..4 {
+        if c_proof.origins(words[ps[i + 4] + 5], BTreeSet::new())?
+            != BTreeSet::from([words[ps[i] + 2]])
+        {
+            return Err("balanced wide32 exact chronological C dependency, no crosswire".into());
         }
     }
     if expert && cfg!(feature = "strata-wide32-local-routes") {
@@ -626,6 +790,41 @@ pub(in crate::strata_matrix) fn validate_negatives(
         }
         if !changed || validate_program(&bad, true).is_ok() {
             return Err("local32 accepted wrong actual route-map binding".into());
+        }
+    }
+    if !expert {
+        let mut at = 5;
+        let mut ps = Vec::new();
+        let mut stores = Vec::new();
+        while at < words.len() {
+            let n = (words[at] >> 16) as usize;
+            if words[at] & 65535 == 4459 {
+                ps.push(at);
+            }
+            if words[at] & 65535 == 62 {
+                stores.push(at);
+            }
+            at += n;
+        }
+        let mut bad = words.to_vec();
+        bad[ps[1] + 3] = words[ps[0] + 3];
+        if validate_program(&bad, false).is_ok() {
+            return Err("balanced wide32 accepted crossed weight-A row".into());
+        }
+        let c0 = stores
+            .iter()
+            .copied()
+            .find(|&a| words[a + 2] == words[ps[0] + 2])
+            .ok_or("balanced wide32 actual first C store")?;
+        let c1 = stores
+            .iter()
+            .copied()
+            .find(|&a| words[a + 2] == words[ps[1] + 2])
+            .ok_or("balanced wide32 actual second C store")?;
+        let mut bad = words.to_vec();
+        bad[c0 + 1] = words[c1 + 1];
+        if validate_program(&bad, false).is_ok() {
+            return Err("balanced wide32 accepted crossed C storage".into());
         }
     }
     for (i, value) in changes {

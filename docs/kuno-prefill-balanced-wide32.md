@@ -30,9 +30,21 @@ from individual timings. First/repeated CLEAN comparison uses the original
 45/4245/4245 public fixture and no overlapping compilation or profiling.
 Implementation and performance acceptance are pending.
 
-First sourcecae34ff4 compiled. The coverage and capability controls pass; the
-actual-module control rejects a validator that assumed physical CFG block
-serialization was product execution order. Preserve that failed CPU artifact.
-The forward validator follows real SSA C dependencies, resolving only copies
-and degenerate phis, and still requires four separate chronological two-product
-chains with carried/current operand banks. No kernel arithmetic change.
+First sourcecae34ff4 compiled; coverage/capability controls pass, but its validator
+incorrectly assumed scalar-SSA CMMA handles. Forward0e78291e still rejected the
+actual generated module. Its exported SPIR-V establishes that CubeCL uses
+Function-storage matrix variables and loads/stores, including loop backedges.
+Both failed CPU artifacts remain. The next validator uses the original carried
+kernel's genuine reaching-definition analysis to prove exact source-bank sets
+and four chronological C chains. No arithmetic/kernel direction change.
+
+The exported actual FP16 module now passes the production validator and its
+binding/geometry/INFO/store negatives, plus new actual weight-A and C-storage
+crosswire rejections. This is a small CPU harness including the production
+function with only visibility changed, linked to the actual current WGPU rlib;
+it is not whole-model, full-layout or GPU acceptance. It also found that the
+new CFG parser must end a block at OpFunctionEnd to retain the real final
+loop-backedge branch. Full418 and all-layout acceptance are still pending.
+Artifacts: balanced-wide32-app-cpu-v1/v2-20261024 (failed); actual-dense-fp16-v2
+SPIR-V/disassembly; actual-validator-v1..v6-20261024, with every failed attempt
+preserved. All under /media/jmicko/faststore/kuno-development. No GPU job yet.
