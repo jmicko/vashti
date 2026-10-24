@@ -2,13 +2,13 @@
 
 **Active Kuno handoff (2026-10-24 UTC): complete local-route bundle accepted; extend small/medium matrix coverage next.**
 
-**Source work in progress:** global small/medium arithmetic, authentic partial
-input, half publication, host selectors and exact native grammars are composed;
-first CPU compile pending. Three independent mathematical controls pass, not
-full app/compiler/GPU acceptance. Planned395 AppCPU and63 full runtime;116 new
-single-slot GPU controls are written, required new packed multi-slot GPU cases
-still pending. NO GPU/speed run until complete. Read the updated small/medium
-contract; do not mistake the proposal history below for current source state.
+**Source work in progress:** source526ebcd1 passes395 AppCPU, including48
+new actual shader layouts. The required four genuine packed multi-slot cases
+are now composed alongside116 single-slot/F64 controls (final1103 GPU incl.
+all983 retained). Final combined-source compile,18/63 runtime,8+9 metadata,
+10 native and all live GPU acceptance remain pending. Exact per-layout
+resources will be frozen from actual emitted modules before live acceptance.
+No GPU/speed run yet; no performance claim. Read the small/medium contract.
 
 Read [accepted983 result](kuno-prefill-wide32-local-routes.md),
 [completed959 audit correction](kuno-prefill-wide32-guarded.md), and

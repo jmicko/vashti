@@ -635,6 +635,11 @@ mod tests {
 
 #[path = "strata_matrix_cohort_pair_probe.rs"]
 mod pair_probe;
+#[cfg(feature = "strata-global-small-products")]
+#[path = "strata_matrix_global_small_pair_probe.rs"]
+mod global_small_pair_probe;
+#[cfg(feature = "strata-global-small-products")]
+pub(crate) use global_small_pair_probe::cases as public_global_small_pairs;
 #[path = "strata_routed_expert_probe.rs"]
 mod public_oracle;
 pub(crate) use pair_probe::cases as public_pairs;

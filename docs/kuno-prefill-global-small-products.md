@@ -143,3 +143,22 @@ old exact names, runs the five new tests and actual compiler proof first, then
 all395. It is allowed to check source while the multi-slot harness is finished;
 no timing may drive direction. Keep failures/artifacts and repair the complete
 bundle rather than reverting components.
+
+## Packed multi-slot source completion
+
+Source526ebcd1 passes all395 AppCPU controls, including real48 new compiler
+layouts and negative-module proofs. No GPU/performance acceptance yet. The
+remaining four multi-slot GPU cases are now composed: real eight-group packed
+counts[1,3,7,8,9,16,17,31], both GU/DOWN and finite/compound invalid+NaN.
+They compare the actual preceding small-direct raw/ordered producer with the
+new global tile16 producer while retaining original tile8. They use one
+original full output owner, a bounded zeroizing host reference, original
+full-span GPU erasure between programs, complete status/fault/source/tail
+checks and nonzero group/image/input prefixes. Original packed-pair cases
+remain unchanged. Independent F64 controls remain in the116 single-slot cases.
+
+Final additive population is120 GPU controls (116 single-slot +4 packed),
+retaining983 =>1103;395 AppCPU retains390;18 feature-off and63 full runtime
+retains18/59; original8+9 metadata and10 native controls remain. Final source
+compilation, runtime tests, exact observed shader resources and all GPU cases
+remain pending. No speed decision or GPU run has been made for this bundle.
