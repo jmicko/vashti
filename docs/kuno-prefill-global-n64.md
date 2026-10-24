@@ -119,3 +119,50 @@ emit/share the same device program as ordinary BF16.24 layout-case emissions do
 not imply24 distinct modules; the native ISA inventory may contain two or three
 dense programs. Real21-case GPU coverage must prove GR320's actual rows/stride,
 not a distinct shader hash or fabricated branch.
+
+## Complete acceptance and result (2026-10-24 UTC)
+
+Frozen7a54656c620c89316dcb6835a70c4aec504b4cc5 / worker
+ a1534e15e60daed264f0132386d2d21c119ce2b810ebbad4fb676c7ec0e2ab6c.
+372 AppCPU,18/53 runtime,8+9 metadata and10 original native controls pass;
+original compiler populations plus24 dense/16 expert real layout/CFG emissions.
+All837 GPU controls pass, retaining792; both complete original18-script model
+chains pass, including actual new dense/expert selections, genuine unchanged
+image cohorts, original finite/ordered closure, exact physical N64 workgroup
+counter, original capacity/reuse/rolling/erasure and physical recovery. Original
+8 wide programs remain zero-spill, both QSA hashes unchanged;180 total programs.
+
+Live unitbfa891656bef4aedaf6df703a764e77a exits0 in13m47.677s, zero swap,
+29.2GiB peak. No post-hoc audit correction/replay was needed for this run.
+Root compile/source freeze and all input artifacts remain under global-n64-*.
+
+Actual all5 new N64 native programs are zero-spill: three dense emissions
+(two distinct byte hashes, legitimate BF16/GR reuse)238/241 instructions,
+54 sends,128GRF/non-SSA40; GU1285 instructions/245 sends/128GRF/non-SSA78;
+DOWN1482/281/128GRF/non-SSA78. Thus reduced register footprint did work, but
+is not sufficient for speed. Diagnostic warmup/first/repeated3.756629191/
+11.753655147/10.029326771s; normal3.727016157/11.743674263/9.906160308s.
+Repeated normal is slower than preceding9.665937322s. No CLEAN was warranted;
+target5.3515s and best previous CLEAN8.394039699s remain unchanged. Goal active,
+unmet. Retain this entire variant and preceding variants, not isolated rollback.
+
+Sampled4096-token layer: cohort13.358317ms, wideGU10.023800ms, wideDOWN4.277602ms,
+macro12.888372ms, dequant19.221638ms, copies29.167116ms. Complete repeated
+expert diagnostic5.934264413s/attention2.781501146s; normal5.832274618/
+2.771020269s. Prefix sample improves modestly, but dense attention regresses.
+Zero spills and fewer static sends alone do not establish efficient memory use.
+
+Independent00:37:52UTC recovery: Intel50,688,000B,NVIDIA compute0/display596MiB,
+all5 classified faults0, HTTP200/admission normal/completed163. No service,
+installation/release/API/driver changes. Canonical/inherited work preserved.
+
+Next concrete source difference: Strata's pinned active BF16/f16 wrapper calls
+column-major GEMM with W first/transposed and X second/nontransposed, producing
+Y^T[N,T]. Its BF16 comment and calls are in gemm.dp.cpp:760–769; f16:799–809.
+Kuno's current global kernels put X in matrixA, W in matrixB, then store row-major.
+Both compute the same algebra, but assign memory access to different hardware
+operands. The opaque library can further transform internally, so API orientation
+is verified, not a claim about oneMKL's exact machine-code tile.
+Compose both operand role changes AND column-major result publication, with
+original8-member pending/failure semantics, before any timing. Full proposal:
+[kuno-prefill-transpose-matrix.md](kuno-prefill-transpose-matrix.md).

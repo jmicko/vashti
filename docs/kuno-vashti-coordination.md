@@ -1,24 +1,35 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): complete N64 source composed; validation pending.**
+**Active Kuno handoff (2026-10-24 UTC): N64 fully accepted, all spills removed, parity unmet.**
 
-Read [the full N64 contract](kuno-prefill-global-n64.md). Dense AND expert
-M128/N64/WG512/SG16 two-C producers now compose both real operand banks,
-correct rows/64 physical grids/publication, original finite/ordered consumers,
-original prefix/tails/capacity, exact native no-lane admission and closed new
-role/grid grammar. Original4C/image/quant programs and controls retained.
-Six new AppCPU/2 runtime controls,24+16 real compiler layouts and21+24 GPU cases
-are composed. Planned372 CPU,18/53 runtime,8+9 metadata,10 original native and
-837 GPU cases. No build/GPU/speed acceptance yet. Finish complete gates before
-hardware timing. Do not choose from an isolated kernel measurement.
+Read [full accepted N64 result](kuno-prefill-global-n64.md) and
+[next coupled weights-first/transpose contract](kuno-prefill-transpose-matrix.md).
+Frozen7a54656c/worker a1534e15 passes372 CPU,18/53 runtime,8+9 metadata,
+10 original native controls,24+16 new actual compiler cases and all837 GPU
+controls, retaining792. Both original18-script model/recovery chains pass;
+new path/physical-grid counters, original image/finite/status/owner/capacity/
+reuse/rolling/erasure proofs,8 zero-spill original wide and QSA hashes intact.
 
-Last complete accepted source7f7a1271/workerb65ff90b,792 GPU controls; normal
-repeated9.665937322s, essentially unchanged; best CLEAN8.394039699s, target
-Strata5.3515s. Active goal unmet. Actual4C global GU7:96/DOWN37:204 spills and
-slower prefix costs offset faster image cohorts. Full evidence and explicit
-failed-live-unit/passing-read-only-audit distinction below. New N64 source is
-not that tested worker. No API/UI/install/release/reset/driver changes.
-Canonical Vashti/inherited pycache preserved; bounded sudo through01:47UTC.
+All5 new N64 native programs have0:0 spills:fills (dense54 sends/GU245/DOWN281).
+But diagnostic first/repeat11.753655147/10.029326771s, normal11.743674263/
+9.906160308s, slower than previous9.665937322s. No CLEAN/parity; best previous
+CLEAN8.394039699, target5.3515 unchanged. Goal ACTIVE/UNMET. Keep all variants.
+Actual zero-spill result shows spills alone are not the remaining speed gap.
+
+New verified source lead: Strata active BF16/f16 wrappers use column-major BLAS
+with W first/transposed, X second/nontransposed and Y^T[N,T]. Current Kuno CMMA
+uses X in A/W in B. Compose BOTH inverted operand mapping and column-major output
+stores, original16-token/8-column C shape plus exact8-member raw/failure halves,
+closed new identities/grammar/native gates and all proofs. Do not infer opaque
+oneMKL's actual internal tile from its API. Proposal only, no transpose source
+exists yet. Planned378 CPU,18/55 runtime,890 GPU with extra compound failure cases.
+
+N64 live unitbfa891656bef4aedaf6df703a764e77a exits0,13m47.677s,zero swap,
+29.2GiBpeak.00:37:52UTC Intel50,688,000B,NVIDIA compute0/display596MiB,
+all5 faults0,HTTP200/admission normal/completed163. GPUs physically recovered.
+Canonical/inherited work preserved; bounded sudo through01:47UTC. No API/UI/
+install/release/reset/driver changes. Full837 summary and global-n64-* artifacts
+under /media/jmicko/faststore/kuno-development. No Vashti changes required.
 
 ## Previous checkpoint
 
