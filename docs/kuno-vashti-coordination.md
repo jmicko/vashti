@@ -1,15 +1,31 @@
 # Kuno and Vashti Coordination
 
-**Current composition (2026-10-24 UTC): balanced large-matrix source candidate.**
+**Active Kuno handoff (2026-10-24 UTC): balanced large matrices validated, slower.**
 
-[New coherent dense and large-expert bundle](kuno-prefill-balanced-wide32.md)
-adds explicit512-thread/4-accumulator/two-bank carried kernels for BOTH consumers.
-All old variants/414 CPU/1441 GPU controls remain. Four new AppCPU and four
-runtime role controls, new paired dense/expert GPU populations and full model
-acceptance are pending. No speed/installation claim. The accepted row-order
-results below remain the latest measured checkpoint. Physical preflight13:41UTC
-clear/healthy, existing bounded sudo refresher3062861 still expires17:23UTC.
-Canonical/Vashti/API/install/release/driver/boot unchanged.
+Source980f37fc/worker28e0af67 passes418 full/414 feature-off same-source AppCPU,
+18/77 runtime,8+9 metadata,10 native,40 new actual matrix layouts, fresh all1534
+GPU controls (ALL preceding1441 plus93), and BOTH original18-script whole-model/
+compiler/recovery chains.218 actual compiler captures; old22 small kernels and
+both QSA hashes preserved. Read [complete result and next coherent policy](kuno-prefill-balanced-wide32.md).
+Normal first/repeated11.036851219/9.190642528s versus previous10.554253471/
+8.772859676s:4.57%/4.76% longer in individual observations. No new CLEAN, parity,
+installation or production selection. Keep the entire variant; no isolated rollback.
+Actual new dense3:6, GU28:346 and DOWN11:77 spills/fills versus old0:0.
+
+Next implement the WHOLE low-liveness shape-aware policy before live speed tests:
+large dense AND large expert cells retain original8-C/data reuse, alternating two
+weight fragments within K16 rather than long-lived operand banks. BOTH small
+macro/cohort paths get N128/four-C cells with the same short operand lifetimes,
+coherently changing exact native role identities, actual grids and counters while
+preserving all padded producers/owners/guards/ordered consumers. Source-grounded
+plan and measured evidence are in the note. Not implemented yet. Cold pipeline
+preparation remains separate; never fake inference/completion/admission to warm it.
+
+Unit exits0; independent14:49:58UTC Intel42278912B,NVIDIA compute0/desktop621MiB,
+faults0, all3 HTTP200, admission inactive/unpaused/no recovery/waiting0/completed254.
+No GPU test/worker remains. Goal ACTIVE/UNMET. Refresher3062861,parent3556 remains
+bounded to17:23:42UTC: verify identity/cache before reuse. No API/Vashti/canonical/
+install/release/driver/boot change. Inherited text/__pycache__ preserved.
 
 **Preceding accepted Kuno handoff (2026-10-24 UTC): row-ordered cohorts fully validated.**
 
