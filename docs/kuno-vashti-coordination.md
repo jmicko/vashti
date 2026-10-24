@@ -1,17 +1,26 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): full1425 banked preload accepted.**
+**Active Kuno handoff (2026-10-24 UTC): full96-position host profile accepted.**
 
-Next diagnostic source is composed:
-[fixed-public96-position host attribution](kuno-prefill-full-host-trace.md).
-It uses existing host-only native policy and original coarse profile fences,
-adds no GPU queries/synchronization, and leaves old modes/private entry/math/
-owners/scheduling unchanged. Planned408 CPU, original405 retained; no build/live
-claim yet. Three unchanged-worker Mesa trace attempts failed before completing
-a model request, all physically recovered with faults0 and normal services;
-partial captures are not speed evidence. Do not keep attempting driver tracing.
-Exact failed-artifact lineage, privacy restrictions and next validation are in
-the linked note. Original accepted preload results below remain authoritative.
+Source29a3cfe8/workerf743481a passes408 AppCPU (original405 retained),429 WGSL,
+320 matrix/48 balanced layouts and full fixed-public host-only model/recovery.
+All96 layer/chunk scopes reconstruct original counters; timestamps0, normal
+rolling, original coarse fences and privacy bounds retained. No fresh1425 math
+execution claim for diagnostic-only source; original preload acceptance below.
+Read [exact attribution and failed-wrapper lineage](kuno-prefill-full-host-trace.md).
+Raw SPIR-V bytes are nondeterministic across processes even with the SAME test
+binary: all48 repeated controls/resources pass, bytes differ. Keep initial failed
+byte-equality/parser artifacts; forward seal uses their immutable completed logs.
+
+Host-only repeated9.455969387s is diagnostic, NOT CLEAN/speed acceptance.
+4096/148 chunks spend4.167/1.477s in experts and2.129/0.298s in attention;
+QSA attention/merge0.736s already near historical Strata0.680s under different
+conventions. Next compose true loop-backedge operand carry for both balanced
+expert matrix paths, preserving complete accepted producers/owners and bounds.
+Do not infer normal copy overlap from the old serialized one-layer GPU sample.
+11:31:04UTC unit exits0; Intel42278912B,NVIDIA compute0/desktop620MiB, faults0,
+HTTP200, admission inactive/unpaused/no recovery/waiting0/completed243.
+No worker remains; goal ACTIVE/UNMET. No install/API/Vashti/driver/boot change.
 
 Source `aa38762b` / worker `c0f4692b`: same-source405 full/404 feature-off AppCPU,
 18/73 runtime,8+9 metadata,10 native, fresh all1425 GPU cases and both original

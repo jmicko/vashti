@@ -28,7 +28,8 @@ Planned new CPU controls cover exact96-position admission/negative combinations,
 original static-triple subtraction, and inert old/private collection. All405
 preceding selected AppCPU controls remain selected: planned408. Build the same
 67-feature variant and verify unchanged GPU-kernel sources and original48 module
-bytes. Earlier sourceAA's actual1425 math controls remain historical evidence,
+resources. Raw module byte equality is not a valid cross-process invariant;
+see the completed controls below. Earlier sourceAA's actual1425 math controls remain historical evidence,
 not a claim of a fresh numerical run for a diagnostic-only worker. Live validation
 must check all96 unique positions, completed model requests/correct outputs,
 timestamp_calls0, genuine rolling counters, original phase/capacity/private
@@ -63,3 +64,60 @@ unchanged original helper for45/4245/4245. `--public-prefill-short-check` now
 means45/45/45. Recent conditional CLEAN drivers used that short flag but never
 reached their trigger; their postcondition would reject the wrong token counts.
 Do not mutate historical scripts/receipts or relabel an instrumented run CLEAN.
+
+## Completed full-host acceptance (2026-10-24 UTC)
+
+Source29a3cfe88a160bf6560d9c3f2e99e2a665e9686a, worker
+f743481a8a049edb59533dc63708e00fce84572d05c4ffa753dc568997ea56ed:
+all408 selected AppCPU controls pass, retaining405. Offline429 WGSL,320 matrix
+layouts and48 balanced layouts pass. No math/vendor/kernel sources changed.
+This diagnostic build does NOT claim a new execution of all1425 GPU cases;
+that remains sourceaa38762b/workerc0f469 acceptance.
+
+The first CPU wrapper failed AFTER408 passing tests on an invalid byte-equality
+assumption. Repeating the48 actual layout controls with the SAME test binary
+905cc38d6e51866608966f2ee9c72792241ed5153ce6025f19dfa3ea49ebfac3 proves all48
+raw modules differ across processes, beginning with unordered capabilities and
+metadata/constants; all resource tables and actual compiler controls agree.
+The repeat wrapper's parser then missed a first record attached to the Rust test
+name. Both failures remain preserved. The forward CPU seal reads those SAME
+completed logs, corrects the parser, makes no test-rerun claim and retracts the
+invalid determinism guard. Neither failure is a numerical GPU failure.
+
+Protected kuno-full-host-trace-v1-20261024 exits0, with all96 exact positions,
+zero GPU timestamp calls, genuine normal rolling and original capacity/counter/
+private erasure/recovery checks. Per-layer deltas reconstruct the original third
+profile exactly for all required phase and routing/copy/rolling triples.
+Warm/first/repeated73/4245/4245 timings3.391659505/11.105432450/9.455969387s,
+each4 outputs, load77.568215302s. These retain original coarse fences and are
+NOT CLEAN throughput, a speed gain or a sustained decode test.
+
+| Chunk | Layer wall | Experts | Attention | Routed-copy bytes |
+| --- | ---: | ---: | ---: | ---: |
+|4096 inputs|7.047191161s|4.167109340s|2.128657350s|17594880000|
+|148 inputs|2.176520374s|1.477232829s|0.297533596s|9750784000|
+
+Total experts5.644342169s, attention2.426190946s; nested QSA attention/merge
+0.735516941s is already near the historical Strata diagnostic0.680s, under
+DIFFERENT timer conventions. Native host capture0.500274045s; original native
+completion wait3.737579802s includes GPU work, not CPU compute. Command encoding
+summed0.275511338s is not the whole expert bottleneck. Keep overlapping/nested
+intervals separate. Layer24 is0.094852393s expert work, whereas QSA layer31
+is0.105635686s; the tail's148 inputs still route10118 groups and9.75GB. Do not
+multiply the old layer24 GPU sample by96 or interpret its serialized copy times
+as proof of failed overlap under the normal rolling path.
+
+Next candidate: genuine loop-backedge operand carry in BOTH balanced macro and
+cohort consumers, preserving accepted producers and chronological accumulations.
+The accepted preload only groups two banks within each K32 iteration. This new
+profile supports targeting experts; it does not establish the speed of that
+unimplemented candidate. No change to installed engine or public/private API.
+
+Artifacts under /media/jmicko/faststore/kuno-development:
+full-host-trace-app-cpu-v2-safe-20261024.json, same-binary module repeat/difference
+logs, full-host-trace-build-receipt-20261024.json,
+full-host-trace-v1-safe-summary-20261024.json (all96 scopes), freeze and driver
+log, original protected engine receipt and final-state JSON.11:31:04UTC:
+Intel42278912B,NVIDIA compute0/desktop620MiB,all5fault classes0, all3HTTP200,
+admission inactive/unpaused/no recovery/waiting0/completed243. No worker remains.
+Goal ACTIVE/UNMET; CLEAN8.394039699s and Strata5.3515s remain unchanged.
