@@ -265,7 +265,7 @@ pub(super) fn one(
         let tile = if count <= 8 { 8 } else { 16 };
         image.resize(count.div_ceil(tile) * tile * f.columns / 2, 0);
     }
-    if matches!(family,"small-direct-padded-global-regular"|"small-direct-balanced-global-regular"|"small-direct-local-prefetch-small-regular") {
+    if matches!(family,"small-direct-padded-global-regular"|"small-direct-balanced-global-regular"|"small-direct-local-prefetch-small-regular"|"small-direct-small-local-carry-regular") {
         if !(32..256).contains(&count) {return Err("public padded-global fixture range".into());}
         image.resize(count.div_ceil(32)*32*f.columns/2,0);
     }
@@ -338,12 +338,17 @@ pub(super) fn one(
             #[cfg(not(feature="strata-global-small-products"))]
             let global_cohort=false;
             #[cfg(feature="strata-small-full-walk")]
-            let full_walk_cohort=matches!(family,"small-direct-full-walk-cohort"|"small-direct-full-walk-cohort-reference"|"small-direct-balanced-global-cohort"|"small-direct-balanced-global-cohort-reference"|"small-direct-local-prefetch-small-cohort"|"small-direct-local-prefetch-small-cohort-reference");
+            let full_walk_cohort=matches!(family,"small-direct-full-walk-cohort"|"small-direct-full-walk-cohort-reference"|"small-direct-balanced-global-cohort"|"small-direct-balanced-global-cohort-reference"|"small-direct-local-prefetch-small-cohort"|"small-direct-local-prefetch-small-cohort-reference"|"small-direct-small-local-carry-cohort"|"small-direct-small-local-carry-cohort-reference");
             #[cfg(not(feature="strata-small-full-walk"))]
             let full_walk_cohort=false;
             if full_walk_cohort {
                 #[cfg(feature="strata-small-full-walk")]
-                if family=="small-direct-local-prefetch-small-cohort" {
+                if matches!(family,"small-direct-small-local-carry-cohort"|"small-direct-small-local-carry-cohort-reference") {
+                    #[cfg(feature="strata-small-local-carry")]
+                    crate::strata_matrix::cohorts::local_small::launch_mode(client,selected,&words,down,16,family=="small-direct-small-local-carry-cohort")?;
+                    #[cfg(not(feature="strata-small-local-carry"))]
+                    return Err("small local carry cohort disabled".into());
+                }else if family=="small-direct-local-prefetch-small-cohort" {
                     #[cfg(feature="strata-local-prefetch")]
                     crate::strata_matrix::cohorts::local_small::launch(client,selected,&words,down,16)?;
                     #[cfg(not(feature="strata-local-prefetch"))]

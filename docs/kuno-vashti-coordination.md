@@ -1,5 +1,18 @@
 # Kuno and Vashti Coordination
 
+**Current composition (2026-10-24 UTC): small temporal-carry bundle composed.**
+
+[Complete N128 small-expert carry](kuno-prefill-small-local-carry.md) composes
+BOTH macro and cohort consumers with the retained genuine four-C K32 arithmetic.
+The complete accepted large eight-C path stays. Original explicit numerical/
+compiler entries remain carry=false; production uses a genuine compile-time
+specialization selected by the new feature. Same authentic native roles, scalar
+ABI, N128 grids, padding, six owners, guards and publishers; no runtime-name
+widening. New actual subcounters,48 additional layouts, planned422/421 AppCPU
+and1867 fresh GPU cases. No compilation/live/speed claim yet. Every older
+variant/control remains. The completed acceptance below remains authoritative.
+No API/Vashti/canonical/install/release/driver/boot change.
+
 **Current handoff (2026-10-24 UTC): complete local-prefetch policy validated.**
 
 Source16054c83 / workere23a3bf3 passes421 full/418 feature-off same-source

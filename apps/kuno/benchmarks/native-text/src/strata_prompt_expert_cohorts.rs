@@ -454,7 +454,7 @@ pub(super) fn enqueue_unit(
                             #[cfg(feature="strata-balanced-global")]
                             {
                                 #[cfg(feature="strata-local-prefetch")]
-                                {crate::strata_matrix::cohorts::local_small::launch}
+                                {crate::strata_matrix::cohorts::local_small::launch_selected}
                                 #[cfg(not(feature="strata-local-prefetch"))]
                                 {crate::strata_matrix::cohorts::balanced_global::launch}
                             }

@@ -47,6 +47,7 @@ cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
+strata-small-local-carry = ["strata-local-prefetch"]
 strata-local-prefetch = ["strata-balanced-wide32", "cubecl-wgpu/kuno-local-prefetch"]
 strata-balanced-wide32 = ["strata-cohort-row-order", "cubecl-wgpu/kuno-balanced-wide32"]
 strata-small-full-walk = ["strata-global-small-products", "cubecl-wgpu/kuno-small-full-walk"]

@@ -60,6 +60,7 @@ pub(crate) fn expert_local_cohort(
     m31: u32,
     #[comptime] down: bool,
     #[comptime] tile: usize,
+    #[comptime] carry: bool,
 ) {
     let slot = usize::cast_from(CUBE_POS_Z);
     let mut group = 0u32;
@@ -203,18 +204,22 @@ pub(crate) fn expert_local_cohort(
         prefix,
         down,
         16usize,
+        carry,
     );
 }
 pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
+    definitions_mode(false)
+}
+pub(crate) fn definitions_mode(carry: bool) -> Vec<(&'static str, KernelDefinition)> {
     [
         ("local_small_cohort16_gu", false, 16),
         ("local_small_cohort16_down", true, 16),
     ]
-    .map(|(name, down, tile)| (name, definition(down, tile)))
+    .map(|(name, down, tile)| (name, definition(down, tile, carry)))
     .into_iter()
     .collect()
 }
-fn definition(down: bool, tile: usize) -> KernelDefinition {
+fn definition(down: bool, tile: usize, carry: bool) -> KernelDefinition {
     let mut b = KernelBuilder::default();
     AddressType::U32.register(&mut b.scope);
     let t = Vector::<f16, Const<4>>::as_type(&b.scope);
@@ -285,6 +290,7 @@ fn definition(down: bool, tile: usize) -> KernelDefinition {
         scalars[47].clone().into(),
         down,
         tile,
+        carry,
     );
     b.build(KernelSettings::default().cube_dim(CubeDim::new_1d(64)))
 }
@@ -296,6 +302,37 @@ pub(crate) fn launch(
     down: bool,
     tile: usize,
 ) -> Result<()> {
+    launch_mode(client, h, words, down, tile, false)
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_selected(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    words: &[u32; 48],
+    down: bool,
+    tile: usize,
+) -> Result<()> {
+    launch_mode(
+        client,
+        h,
+        words,
+        down,
+        tile,
+        cfg!(feature = "strata-small-local-carry"),
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_mode(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    words: &[u32; 48],
+    down: bool,
+    tile: usize,
+    carry: bool,
+) -> Result<()> {
+    if carry && !cfg!(feature = "strata-small-local-carry") {
+        return Err(Error::InvalidBufferLength);
+    }
     crate::strata_matrix::native::compatible(client, false)?;
     let padded = crate::strata_prompt::experts::cohorts::validate_words(words)?;
     let [input, weight, output, map, status, fault] = h;
@@ -407,6 +444,7 @@ pub(crate) fn launch(
         (),
         down,
         tile,
+        carry,
     );
     unsafe {
         launcher.launch_unchecked(
@@ -417,6 +455,16 @@ pub(crate) fn launch(
             ),
             kernel,
             client,
+        );
+    }
+    if carry {
+        crate::strata_prefill_profile::count(
+            if down {
+                "expert_small_local_carry_cohort_down_launches"
+            } else {
+                "expert_small_local_carry_cohort_gu_launches"
+            },
+            1,
         );
     }
     crate::strata_prefill_profile::count(

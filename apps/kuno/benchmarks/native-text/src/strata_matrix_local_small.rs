@@ -1,4 +1,4 @@
-// Pure-global two-C cells: 16 members x16 output rows per SG16.
+// Pure-global four-C cells: 16 members x32 output rows per SG16.
 // Original real grid, padded producers, independent8-half publication and ABI.
 use super::*;
 const PADDED_GLOBAL: bool = true;
@@ -22,6 +22,7 @@ pub(crate) fn product(
     gu_prefix: usize,
     #[comptime] down: bool,
     #[comptime] tile: usize,
+    #[comptime] carry: bool,
 ) {
     let sg = usize::cast_from(PLANE_POS);
     let lane = usize::cast_from(UNIT_POS_PLANE);
@@ -69,22 +70,18 @@ pub(crate) fn product(
         cmma::MatrixLayout::Undefined,
         0.0,
     );
-    crate::strata_matrix::local_products::compute::<f16>(
+    crate::strata_matrix::small_local_products::compute(
         input,
         weight,
         &c0,
-        &c0,
-        &c1,
         &c1,
         &c2,
-        &c2,
-        &c3,
         &c3,
         input_member_base + token,
         row,
         columns,
         weight_first,
-        false,
+        carry,
     );
     if all_good {
         let mut first = (gu_prefix + token) * rows + row;
@@ -193,6 +190,7 @@ pub(crate) fn expert_local_macro32_gu(
     count: usize,
     weight_first: usize,
     group: usize,
+    #[comptime] carry: bool,
 ) {
     // Workgroup-uniform guards precede every map-derived index and barrier.
     let mut header_good = false;
@@ -243,6 +241,7 @@ pub(crate) fn expert_local_macro32_gu(
         0usize,
         false,
         32usize,
+        carry,
     );
 }
 
@@ -260,6 +259,7 @@ pub(crate) fn expert_local_macro32_down(
     count: usize,
     weight_first: usize,
     group: usize,
+    #[comptime] carry: bool,
 ) {
     // Workgroup-uniform guards precede every map-derived index and barrier.
     let mut header_good = false;
@@ -310,6 +310,7 @@ pub(crate) fn expert_local_macro32_down(
         0usize,
         true,
         32usize,
+        carry,
     );
 }
 
@@ -327,6 +328,7 @@ pub(crate) fn expert_local_macro64_gu(
     count: usize,
     weight_first: usize,
     group: usize,
+    #[comptime] carry: bool,
 ) {
     // Workgroup-uniform guards precede every map-derived index and barrier.
     let mut header_good = false;
@@ -377,6 +379,7 @@ pub(crate) fn expert_local_macro64_gu(
         0usize,
         false,
         64usize,
+        carry,
     );
 }
 
@@ -394,6 +397,7 @@ pub(crate) fn expert_local_macro64_down(
     count: usize,
     weight_first: usize,
     group: usize,
+    #[comptime] carry: bool,
 ) {
     // Workgroup-uniform guards precede every map-derived index and barrier.
     let mut header_good = false;
@@ -444,6 +448,7 @@ pub(crate) fn expert_local_macro64_down(
         0usize,
         true,
         64usize,
+        carry,
     );
 }
 
@@ -458,6 +463,56 @@ pub(crate) fn try_expert(
     group: usize,
     down: bool,
 ) -> Result<bool> {
+    try_expert_mode(
+        client,
+        h,
+        count,
+        columns,
+        rows,
+        weight_first,
+        group,
+        down,
+        false,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_selected(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+) -> Result<bool> {
+    try_expert_mode(
+        client,
+        h,
+        count,
+        columns,
+        rows,
+        weight_first,
+        group,
+        down,
+        cfg!(feature = "strata-small-local-carry"),
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_expert_mode(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    count: usize,
+    columns: usize,
+    rows: usize,
+    weight_first: usize,
+    group: usize,
+    down: bool,
+    carry: bool,
+) -> Result<bool> {
+    if carry && !cfg!(feature = "strata-small-local-carry") {
+        return Err(Error::InvalidBufferLength);
+    }
     if !(32..256).contains(&count) {
         return Ok(false);
     }
@@ -531,6 +586,7 @@ pub(crate) fn try_expert(
                 count,
                 weight_first,
                 group,
+                carry,
             ),
             (32, true) => expert_local_macro32_down::launch_unchecked::<WgpuRuntime>(
                 client,
@@ -547,6 +603,7 @@ pub(crate) fn try_expert(
                 count,
                 weight_first,
                 group,
+                carry,
             ),
             (64, false) => expert_local_macro64_gu::launch_unchecked::<WgpuRuntime>(
                 client,
@@ -563,6 +620,7 @@ pub(crate) fn try_expert(
                 count,
                 weight_first,
                 group,
+                carry,
             ),
             (64, true) => expert_local_macro64_down::launch_unchecked::<WgpuRuntime>(
                 client,
@@ -579,9 +637,20 @@ pub(crate) fn try_expert(
                 count,
                 weight_first,
                 group,
+                carry,
             ),
             _ => unreachable!(),
         }
+    }
+    if carry {
+        crate::strata_prefill_profile::count(
+            if tile == 64 {
+                "expert_small_local_carry_macro64_products"
+            } else {
+                "expert_small_local_carry_macro32_products"
+            },
+            1,
+        );
     }
     if PADDED_GLOBAL {
         crate::strata_prefill_profile::count(
@@ -632,6 +701,9 @@ pub(crate) fn try_expert(
 }
 
 pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
+    definitions_mode(false)
+}
+pub(crate) fn definitions_mode(carry: bool) -> Vec<(&'static str, KernelDefinition)> {
     let mut out = Vec::new();
     for tile in [32usize, 64] {
         for down in [false, true] {
@@ -662,6 +734,7 @@ pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
                     a[2].clone().into(),
                     a[3].clone().into(),
                     a[4].clone().into(),
+                    carry,
                 ),
                 (32, true) => expert_local_macro32_down::expand(
                     &mut b.scope,
@@ -676,6 +749,7 @@ pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
                     a[2].clone().into(),
                     a[3].clone().into(),
                     a[4].clone().into(),
+                    carry,
                 ),
                 (64, false) => expert_local_macro64_gu::expand(
                     &mut b.scope,
@@ -690,6 +764,7 @@ pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
                     a[2].clone().into(),
                     a[3].clone().into(),
                     a[4].clone().into(),
+                    carry,
                 ),
                 (64, true) => expert_local_macro64_down::expand(
                     &mut b.scope,
@@ -704,6 +779,7 @@ pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
                     a[2].clone().into(),
                     a[3].clone().into(),
                     a[4].clone().into(),
+                    carry,
                 ),
                 _ => unreachable!(),
             }
@@ -756,7 +832,7 @@ pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
 mod validation {
     include!("strata_matrix_local_small_validation.rs");
 }
-pub(crate) use validation::validate_sources;
+pub(crate) use validation::{validate_sources, validate_sources_mode};
 pub(crate) fn profile_names() -> [&'static str; 5] {
     [
         core::any::type_name::<expert_local_macro32_gu::ExpertLocalMacro32Gu<WgpuRuntime>>(),
@@ -774,3 +850,10 @@ mod probe {
     include!("strata_matrix_local_small_probe.rs");
 }
 pub(crate) use probe::cases as public_numeric;
+
+#[cfg(feature = "strata-small-local-carry")]
+mod carry_probe {
+    include!("strata_matrix_small_local_carry_probe.rs");
+}
+#[cfg(feature = "strata-small-local-carry")]
+pub(crate) use carry_probe::cases as public_carry_numeric;

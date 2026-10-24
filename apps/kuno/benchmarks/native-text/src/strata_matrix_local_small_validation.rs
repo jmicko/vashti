@@ -1,10 +1,15 @@
 use super::*;
 pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    validate_sources_mode(false)
+}
+pub(crate) fn validate_sources_mode(
+    carry: bool,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     use cubecl::wgpu::{AutoCompiler, AutoRepresentation};
     use cubecl::{Compiler, ExecutionMode, WgpuCompilationOptions};
     use std::io::Write;
     for mask in 0..8u8 {
-        let defs = definitions()
+        let defs = definitions_mode(carry)
             .into_iter()
             .map(|(n, d)| {
                 (
@@ -15,7 +20,7 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 )
             })
             .chain(
-                crate::strata_matrix::cohorts::local_small::definitions()
+                crate::strata_matrix::cohorts::local_small::definitions_mode(carry)
                     .into_iter()
                     .map(|(n, d)| (n, d, true, 16usize)),
             );
@@ -51,7 +56,11 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 return Err("small full walk authentic SG16".into());
             }
             #[cfg(test)]
-            if let Some(dir) = std::env::var_os("KUNO_PUBLIC_LOCAL_PREFETCH_MODULE_DIR") {
+            if let Some(dir) = std::env::var_os(if carry {
+                "KUNO_PUBLIC_SMALL_LOCAL_CARRY_MODULE_DIR"
+            } else {
+                "KUNO_PUBLIC_LOCAL_PREFETCH_MODULE_DIR"
+            }) {
                 let path = std::path::PathBuf::from(dir);
                 // Fixed compiler definitions only: no request, activation,
                 // weight contents or GPU data is present in these modules.
@@ -62,25 +71,45 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     .collect::<Vec<_>>();
                 std::fs::write(file, bytes)?;
             }
-            crate::strata_matrix::local_validation::validate_program(
-                &words,
-                true,
-                Some((
-                    tile,
-                    cohort,
-                    if name.ends_with("_down") { 640 } else { 2560 },
-                )),
-            )?;
-            #[cfg(test)]
-            crate::strata_matrix::local_validation::negatives(
-                &words,
-                true,
-                Some((
-                    tile,
-                    cohort,
-                    if name.ends_with("_down") { 640 } else { 2560 },
-                )),
-            )?;
+            let shape = Some((
+                tile,
+                cohort,
+                if name.ends_with("_down") { 640 } else { 2560 },
+            ));
+            if carry {
+                #[cfg(feature = "strata-small-local-carry")]
+                {
+                    crate::strata_matrix::small_local_carry_validation::validate_program(
+                        &words, true, shape,
+                    )?;
+                    #[cfg(test)]
+                    crate::strata_matrix::small_local_carry_validation::negatives(
+                        &words, true, shape,
+                    )?;
+                }
+                #[cfg(not(feature = "strata-small-local-carry"))]
+                return Err("small local carry feature disabled".into());
+            } else {
+                crate::strata_matrix::local_validation::validate_program(
+                    &words,
+                    true,
+                    Some((
+                        tile,
+                        cohort,
+                        if name.ends_with("_down") { 640 } else { 2560 },
+                    )),
+                )?;
+                #[cfg(test)]
+                crate::strata_matrix::local_validation::negatives(
+                    &words,
+                    true,
+                    Some((
+                        tile,
+                        cohort,
+                        if name.ends_with("_down") { 640 } else { 2560 },
+                    )),
+                )?;
+            }
             let mut cmd = std::process::Command::new("spirv-val");
             cmd.args(["--target-env", "vulkan1.3"]);
             if mask & 1 != 0 {
@@ -102,7 +131,11 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             }
             println!(
                 "{}_shader_accepted name={name} layout={mask} shared_bytes={} workgroup={} subgroup=16 weights_first=true checked_original_halves=true",
-                "strata_local_small",
+                if carry {
+                    "strata_small_local_carry"
+                } else {
+                    "strata_local_small"
+                },
                 k.shared_size,
                 tile * 4
             );

@@ -713,3 +713,9 @@ pub(crate) use balanced_pair_probe::cases as public_balanced_pairs;
 mod local_small_pair_probe;
 #[cfg(feature="strata-local-prefetch")]
 pub(crate) use local_small_pair_probe::cases as public_local_small_pairs;
+
+#[cfg(feature="strata-small-local-carry")]
+#[path="strata_matrix_small_local_carry_pair_probe.rs"]
+mod small_local_carry_pair_probe;
+#[cfg(feature="strata-small-local-carry")]
+pub(crate) use small_local_carry_pair_probe::cases as public_small_local_carry_pairs;
