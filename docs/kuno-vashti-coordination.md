@@ -1,6 +1,37 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): balanced subgroup bundle full1425 accepted.**
+**Active Kuno handoff (2026-10-24 UTC): full1425 banked preload accepted.**
+
+Source `aa38762b` / worker `c0f4692b`: same-source405 full/404 feature-off AppCPU,
+18/73 runtime,8+9 metadata,10 native, fresh all1425 GPU cases and both original
+18-script model/recovery chains pass. No GPU numerical receipt reuse for this
+changed worker. All original ownership/capacity/finite/status/reuse/rolling/
+erasure controls retained. Actual213-program ISA,22 zero-spill small programs,
+unchanged original QSA hashes, authentic real K32 preloads/SSA chains/resources.
+Normal first/repeat11.106082964/9.320359240s; diagnostic11.089457881/9.368816478s.
+Small observed normal repeated change1.131% versus9.427012698s; not a variance-
+controlled speed claim. Sample macro15.822->12.782ms/cohort14.076->12.257ms;
+copy29.168/dequant19.147ms unchanged. No new CLEAN, parity or installation claim.
+
+Read [complete preload result and next attribution work](kuno-prefill-balanced-preload.md).
+The new path preloads two K16 banks within each K32 iteration; no loop-backedge
+carry is claimed. Preserve the entire variant. Current GPU timestamp sample is
+ONLY layer24 of the4096-token chunk, excluding other layers and the148-token tail.
+Next broaden fixed-public attribution while preserving actual normal scheduling,
+original modes and all privacy/owner/metadata bounds, before another small tile
+change. Distinct queues, mapped sources and disjoint-slot dependencies already
+exist. Actual raw bank storage64MiB/two roots; per-layer summed6GiB is not a new
+allocation. A read-only robustness lead was rejected, no guards/driver changed.
+
+Complete unit exits0;10:23:24UTC Intel50688000B,NVIDIA compute0/desktop621MiB,
+faults0, HTTP200, admission inactive/unpaused/no recovery/waiting0/completed239.
+Independent10:26:43UTC confirms recovery,desktop632MiB; no GPU worker remains.
+Goal ACTIVE/UNMET. Refresher2814185 identity-verified/stopped; new2936238 on
+Demons shell3556 bounded09:55..13:55UTC. Verify live identity/cache before reuse.
+Worktree/branch unchanged, inherited text/__pycache__ preserved. Canonical/Vashti/
+API/install/release/driver/boot untouched; no frontend handoff.
+
+**Preceding source composition checkpoint:**
 
 Next complete source candidate is now composed:
 [two-bank balanced preload contract](kuno-prefill-balanced-preload.md). It keeps
