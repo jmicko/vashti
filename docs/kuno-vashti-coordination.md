@@ -1,6 +1,34 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): full1103 accepted; next full-walk bundle in CPU validation.**
+**Active Kuno handoff (2026-10-24 UTC): full1223 accepted; paused for user GPU use.**
+
+Latest complete source `b2621286610dced4cc5f8dc06bc53a7edfa6f4ef` /
+worker `832e35b85dc0dabba09c5b2a1084b1a346319b89827d083b1ea747506185d696`
+passes 398/395 AppCPU, 18/67 runtime, 8+9 metadata, 10 native and all
+1223 GPU controls, retaining all original 1103. Both original 18-script
+full-model/recovery chains and original owner/capacity/status/finite/erasure
+guards pass. Full 203-program ISA export exists. Four additional macro
+programs spill 80:80; retained macros and both old/new cohort pairs do not.
+Normal first/repeated 4245-token prefill 13.220987042/10.299127723s;
+diagnostic 13.268106496/10.402017969s. Better than preceding global-small,
+slower than local-route 9.360428477s. No new CLEAN or parity claim; best Kuno
+CLEAN 8.394039699s and Strata CLEAN 5.3515s remain unchanged. Keep variants.
+
+Complete driver exits 0, invocation `8d8f4790492d4a72aab005f5a13eb659`
+terminal. Independent 06:14:31 UTC check: Intel 50,688,000B, NVIDIA compute0 /
+desktop571MiB, all five kernel fault counts0, all three services HTTP200,
+admission inactive/unpaused/no recovery/waiting0. Refresher PID2712660 stopped.
+User requested a pause to use GPUs; no new GPU work. Goal PAUSED/UNMET.
+Canonical Vashti, installed services and APIs untouched. No frontend handoff.
+Worktree/branch unchanged; inherited `text/__pycache__/` preserved.
+
+Read [completed full-walk result and next source leads](kuno-prefill-small-full-walk.md)
+for exact artifacts, same-binary V5 CPU acceptance, register pressure and the
+unimplemented coupled padded-producer/global-consumer idea. Next session must
+obtain current GPU availability before running tests. The older chronological
+handoff snapshots below are retained; their active/pending states are historical.
+
+**Preceding handoff: full1103 accepted; full-walk CPU validation pending.**
 
 **Latest completed bundle:** source d36a393f / worker50bfab9e passes395
 AppCPU plus390 feature-off,18/63 runtime,8+9 metadata,10 native and all1103

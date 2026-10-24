@@ -1,5 +1,64 @@
 # Full arithmetic walks for partial small expert tiles
 
+## Completed checkpoint and user-requested pause (2026-10-24 UTC)
+
+Frozen source `b2621286610dced4cc5f8dc06bc53a7edfa6f4ef`, worker
+`832e35b85dc0dabba09c5b2a1084b1a346319b89827d083b1ea747506185d696`:
+the complete bundle now passes 398 AppCPU, 395 feature-off AppCPU,
+18 feature-off/67 full runtime, 8+9 metadata, 10 native controls, all
+48 new emitted shader layouts, and all 1223 GPU controls (1103 retained,
+116 new full-owner/F64 and four new packed previous/new controls).
+Both original 18-script full-model/recovery chains pass, including original
+capacity, ownership, finite/status, reuse, rolling and erasure proofs.
+No API, installation, service configuration or Vashti changes were made.
+
+Normal warm/first/repeated prefill: 4.949937043/13.220987042/10.299127723s.
+Diagnostic: 4.938631303/13.268106496/10.402017969s. Large requests are the
+same 4245-token public fixture. This improves the preceding global-small
+normal repeated 11.620150934s, but remains slower than local-route 9.360428477s;
+it does not replace the best CLEAN 8.394039699s or match Strata CLEAN 5.3515s.
+No new CLEAN run was triggered. Retain complete variants; no isolated rollback.
+
+The actual 203-program ISA export contains 12 old/new small programs. The
+four additional macro programs have 80:80 spills:fills, while the retained
+four macros and both old/new cohort pairs have zero spills/fills. Macro
+function basenames overlap across namespaces: use exact hashes/compiled
+program records rather than attributing results by basename alone. The
+original two QSA hashes remain unchanged. Register pressure in the combined
+eight-accumulator path is a concrete next investigation, not a speed claim.
+
+CPU V4 compiled the final source and passed the three new controls, but an
+existing wide-pipeline test collided with the test-only compiler export
+filename across contexts. V5 scopes export to the new controls and reuses
+the exact frozen V4 test binary; all 398 and preceding 395 controls pass.
+This is not a duplicate-compilation claim. All failed earlier logs remain.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`small-full-walk-app-cpu-v5-safe-20261024.json`, root build receipt/freeze,
+`strata-parity-small-full-walk-20261024-expert-cohorts-public-summary.json`,
+`small-full-walk-{profile,normal}-safe-phases-20261024.json`,
+`small-full-walk-complete-isa-export-20261024.json`, complete driver log,
+`small-full-walk-unit-terminal-20261024.log` and
+`small-full-walk-pause-state-20261024.json`. Complete driver exits 0;
+unit invocation `8d8f4790492d4a72aab005f5a13eb659` is terminal.
+
+Independent pause check at 06:14:31 UTC: Intel 50,688,000B, NVIDIA zero
+compute processes/571MiB desktop memory, all five classified kernel faults
+zero, Kuno/Ollama/Vashti HTTP 200, admission inactive/unpaused, no recovery
+required or waiting requests. Bounded sudo refresher PID2712660 stopped.
+User requested GPUs back and goal paused; do not launch another GPU test.
+
+Source-only next lead, not implemented: the two genuine 4096x2560 FP16 input
+views are already 20,971,520B each. BOTH gather and hidden-activation producers
+could explicitly initialize authentic padding for medium/partial tiles, with
+matching closed native writer/reader authorization and global-only consumers.
+Spare arena capacity or initialization at allocation is not valid per-reuse
+padding evidence. Preserve original real counts/grids/phases/owners. Consider
+this together with accumulator register pressure; do not select isolated parts.
+
+The chronological source/CPU checkpoints below are preserved as history;
+their pending statements are superseded by this completed checkpoint.
+
 Next coupled internal bundle after source d36a393f/full1103 acceptance. No new
 performance claim. Keep all earlier variants and395 AppCPU/1103 GPU controls.
 No API/UI/installed configuration, precision, original capacity, ownership,
