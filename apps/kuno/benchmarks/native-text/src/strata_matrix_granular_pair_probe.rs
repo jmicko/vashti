@@ -8,6 +8,15 @@ use crate::{
 };
 use zeroize::Zeroizing;
 type Checked<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+fn carried_reference(
+    client: &ComputeClient<WgpuRuntime>,
+    h: [Handle; 6],
+    words: &[u32; 48],
+    down: bool,
+    tile: usize,
+) -> Result<()> {
+    local_small::launch_mode(client, h, words, down, tile, true)
+}
 const WINDOW_WORDS: usize = 4 * 1024 * 1024;
 // A public oracle only: never attached to a private inference request. The
 // largest original DOWN owner is400MiB. Keep its reference in scrubbed host
@@ -254,12 +263,16 @@ fn one(
     // Tile8 is unchanged; only genuine tile16 switches to the new product.
     for tile in [8usize, 16] {
         words[11] = tile as u32;
-        let previous = if tile == 8 {
+        let previous: fn(
+            &ComputeClient<WgpuRuntime>,
+            [Handle; 6],
+            &[u32; 48],
+            bool,
+            usize,
+        ) -> Result<()> = if tile == 8 {
             small_direct::launch
         } else {
-            |client, h, words, down, tile| {
-                local_small::launch_mode(client, h, words, down, tile, true)
-            }
+            carried_reference
         };
         previous(
             client,

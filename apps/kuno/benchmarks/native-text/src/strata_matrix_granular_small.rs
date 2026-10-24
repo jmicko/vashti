@@ -733,7 +733,7 @@ pub(crate) fn profile_names() -> [&'static str; 5] {
         core::any::type_name::<expert_granular_macro64_down::ExpertGranularMacro64Down<WgpuRuntime>>(
         ),
         core::any::type_name::<
-            crate::strata_matrix::cohorts::granular_small::expert_local_cohort::ExpertLocalCohort<
+            crate::strata_matrix::cohorts::granular_small::expert_granular_cohort::ExpertGranularCohort<
                 WgpuRuntime,
             >,
         >(),
@@ -743,8 +743,3 @@ mod probe {
     include!("strata_matrix_granular_small_probe.rs");
 }
 pub(crate) use probe::cases as public_numeric;
-
-#[cfg(feature = "strata-small-local-carry")]
-mod carry_probe {
-    include!("strata_matrix_small_local_carry_probe.rs");
-}

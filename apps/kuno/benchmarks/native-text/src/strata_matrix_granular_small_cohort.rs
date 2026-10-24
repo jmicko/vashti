@@ -1,5 +1,5 @@
-//! Additive contiguous raw GU and pending ordered-DOWN cohort publication.
-//! All original group guards, K16 products, source owners and launch ABI remain.
+// Additive contiguous raw GU and pending ordered-DOWN cohort publication.
+// All original group guards, K16 products, source owners and launch ABI remain.
 use super::*;
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
