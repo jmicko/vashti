@@ -18,6 +18,7 @@ fn program(
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut values: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     let mut matrix_results = BTreeMap::new();
+    let mut locations = BTreeMap::new();
     let mut actual_definitions: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     let mut product_inputs = BTreeMap::new();
     let mut shared_writes = Vec::new();
@@ -36,6 +37,7 @@ fn program(
             )
         {
             actual_definitions.insert(words[at + 2], words[at..at + n].to_vec());
+            locations.insert(words[at + 2], (block, at));
         }
         match op {
             16 if n == 6 && words[at + 2] == 17 => {
@@ -193,36 +195,110 @@ fn program(
             "full walk must retain ALL C fragments through each chronological K loop".into(),
         );
     }
-    fn origins(
-        id: u32,
-        values: &BTreeMap<u32, Vec<u32>>,
-        matrices: &BTreeMap<u32, usize>,
-        seen: &mut BTreeSet<u32>,
-        actual_definitions: &BTreeMap<u32, Vec<u32>>,
-    ) -> std::result::Result<BTreeSet<u32>, Box<dyn std::error::Error>> {
-        if matrices.contains_key(&id) {
-            return Ok(BTreeSet::from([id]));
+    struct BDefinitions<'a> {
+        words: &'a [u32],
+        blocks: &'a BTreeMap<u32, Vec<usize>>,
+        edges: &'a BTreeMap<u32, Vec<u32>>,
+        region: &'a BTreeSet<u32>,
+        defs: &'a BTreeMap<u32, Vec<u32>>,
+        matrices: &'a BTreeMap<u32, usize>,
+        aliases: &'a BTreeMap<u32, Vec<u32>>,
+        classes: &'a BTreeMap<u32, u32>,
+        parents: &'a BTreeMap<u32, u32>,
+        locations: &'a BTreeMap<u32, (u32, usize)>,
+    }
+    impl BDefinitions<'_> {
+        fn root(&self, mut id: u32) -> std::result::Result<u32, Box<dyn std::error::Error>> {
+            let mut seen = BTreeSet::new();
+            while let Some(&p) = self.parents.get(&id) {
+                if !seen.insert(id) {
+                    return Err("full walk matrix pointer cycle".into());
+                }
+                id = p;
+            }
+            Ok(id)
         }
-        if !seen.insert(id) {
-            return Err("full walk B matrix SSA cycle".into());
+        fn reaching(
+            &self,
+            ptr: u32,
+            block: u32,
+            before: usize,
+            mut seen: BTreeSet<u32>,
+        ) -> std::result::Result<BTreeSet<u32>, Box<dyn std::error::Error>> {
+            // Reject a previous iteration's store: every B load must be assigned
+            // on every path in THIS K iteration, including the first iteration.
+            if !seen.insert(block) {
+                return Err("full walk B load depends on a previous iteration".into());
+            }
+            for &a in self
+                .blocks
+                .get(&block)
+                .ok_or("full walk B missing load block")?
+                .iter()
+                .rev()
+            {
+                if a < before && self.words[a] & 65535 == 62 && self.root(self.words[a + 1])? == ptr
+                {
+                    return Ok(BTreeSet::from([self.words[a + 2]]));
+                }
+            }
+            let predecessors = self
+                .edges
+                .iter()
+                .filter(|(_, es)| es.contains(&block))
+                .map(|(&b, _)| b)
+                .collect::<Vec<_>>();
+            if predecessors.is_empty() || predecessors.iter().any(|b| !self.region.contains(b)) {
+                return Err("full walk B has an uninitialized current-iteration path".into());
+            }
+            let mut stores = BTreeSet::new();
+            for b in predecessors {
+                stores.extend(self.reaching(ptr, b, usize::MAX, seen.clone())?);
+            }
+            Ok(stores)
         }
-        let inputs = values.get(&id).ok_or_else(|| {
-            format!(
-                "full walk unrecognized actual B value id={id} definition={:?}",
-                actual_definitions.get(&id)
-            )
-        })?;
-        let mut result = BTreeSet::new();
-        for &i in inputs {
-            result.extend(origins(
-                i,
-                values,
-                matrices,
-                &mut seen.clone(),
-                actual_definitions,
-            )?);
+        fn origins(
+            &self,
+            id: u32,
+            mut seen: BTreeSet<u32>,
+        ) -> std::result::Result<BTreeSet<u32>, Box<dyn std::error::Error>> {
+            if self.matrices.contains_key(&id) {
+                return Ok(BTreeSet::from([id]));
+            }
+            if !seen.insert(id) {
+                return Err("full walk B matrix value cycle".into());
+            }
+            let mut result = BTreeSet::new();
+            if let Some(inputs) = self.aliases.get(&id) {
+                for &i in inputs {
+                    result.extend(self.origins(i, seen.clone())?);
+                }
+                return Ok(result);
+            }
+            let d = self
+                .defs
+                .get(&id)
+                .ok_or_else(|| format!("full walk B missing definition id={id}"))?;
+            if d[0] & 65535 != 61 || d.len() != 4 {
+                return Err(
+                    format!("full walk B unsupported definition id={id} words={d:?}").into(),
+                );
+            }
+            let ptr = self.root(d[3])?;
+            if self.classes.get(&ptr) != Some(&7) {
+                return Err(
+                    "full walk B load is not original function-local matrix storage".into(),
+                );
+            }
+            let &(block, at) = self
+                .locations
+                .get(&id)
+                .ok_or("full walk B missing actual load location")?;
+            for value in self.reaching(ptr, block, at, BTreeSet::new())? {
+                result.extend(self.origins(value, seen.clone())?);
+            }
+            Ok(result)
         }
-        Ok(result)
     }
     let mut pure = 0;
     let mut partial = 0;
@@ -262,15 +338,21 @@ fn program(
                 return Err("full walk one A reused across genuine B values".into());
             }
         }
+        let b_definitions = BDefinitions {
+            words,
+            blocks: &blocks,
+            edges: &edges,
+            region: &region.0,
+            defs: &actual_definitions,
+            matrices: &matrix_results,
+            aliases: &values,
+            classes: &classes,
+            parents: &parents,
+            locations: &locations,
+        };
         let mut b_values = BTreeMap::<BTreeSet<u32>, usize>::new();
         for &p in &ps {
-            let b = origins(
-                product_inputs[&p],
-                &values,
-                &matrix_results,
-                &mut BTreeSet::new(),
-                &actual_definitions,
-            )?;
+            let b = b_definitions.origins(product_inputs[&p], BTreeSet::new())?;
             *b_values.entry(b).or_default() += 1;
         }
         if b_values.len() != if cohort { 1 } else { 2 } || b_values.values().any(|n| *n != 4) {
@@ -454,6 +536,19 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)?.unwrap_or(words);
             if wgpu::hal::vulkan::kuno_cooperative_subgroup(&words) != Some(16) {
                 return Err("small full walk authentic SG16".into());
+            }
+            #[cfg(test)]
+            if let Some(dir) = std::env::var_os("KUNO_PUBLIC_FULL_WALK_MODULE_DIR") {
+                let path = std::path::PathBuf::from(dir);
+                // Fixed compiler definitions only: no request, activation,
+                // weight contents or GPU data is present in these modules.
+                std::fs::write(
+                    path.join(format!("{name}-layout{mask}.spv")),
+                    words
+                        .iter()
+                        .flat_map(|w| w.to_le_bytes())
+                        .collect::<Vec<_>>(),
+                )?;
             }
             program(&words, cohort, tile)?;
             #[cfg(test)]
