@@ -1,5 +1,75 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-24 UTC): full wide32 runs finished; final audit pending, local-route candidate implemented.**
+
+Read [full wide32 implementation/results and preserved failures](kuno-prefill-wide32-guarded.md)
+and [the coupled local-route contract](kuno-prefill-wide32-local-routes.md).
+Worktree `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/strata-rust-port`; source candidate d1b4d3f1. Canonical Vashti untouched.
+Goal ACTIVE/UNMET: Strata CLEAN first/repeat5.5006/5.3515s; prior best Kuno CLEAN
+12.471177197/8.394039699s unchanged. No isolated-component speed rollback.
+
+Frozen preceding d081b38a / workerb85d4648 passes387 AppCPU,18/59 runtime,
+8+9 metadata,10 original native. Protected invocation305dee630d794bb49183ad8b9898349c
+finished operator checks and both original18-script full-model/recovery chains,
+then EXITED1 at final wrapper line691 (dense path-partition assertion).
+Do not call the unit successful or claim a final959 audit/ISA export exists.
+Diagnostic first/repeat11.502265204/9.424782167s; normal11.453113618/9.369922453s.
+Normal is modestly improved from preceding9.811339312s but not the clean target.
+No CLEAN rerun. These are complete normal/diagnostic results, not isolated ones.
+
+**First next action after sudo:** inspect actual frozen dense counters and
+sampled phases using prepared read-only
+`/media/jmicko/faststore/kuno-development/inspect-wide32-completed-safe-20261024.py`.
+Original failure asserts BOTH new-wide32>0 and old-transpose>0. Fused HC/GR may
+bypass the GR320 fallback; explanation still needs actual receipt confirmation.
+Preserve original failed wrapper/freeze/log, then if warranted make a narrowly
+reviewed separate read-only acceptance pass over SAME immutable receipts.
+Do not relaunch GPUs to fix an audit assumption. Final exports were not written.
+
+**New complete source candidate d1b4d3f1:** feature `strata-wide32-local-routes`
+(`--wide32-local-routes`, requires complete wide32 bundle). Instead of reading
+shared sticky fault, subgroup All checks its own32 real routes. Couple this
+with checked fallback remapping to EXACT SAME per-subgroup32x32 cell; retaining
+old whole-WG64x64 subtiles under local branch decisions would be incorrect.
+Old feature absent retains preceding mapping and fault branch. No extra
+production dispatch/owner/flag; original8KiB fallback and all original8-member
+finite/status/invalid-sentinel rules remain. Prior faults stay sticky without
+forcing other valid subgroups into checked arithmetic.
+
+Confirmed source-level opportunity: original actual-SPIRV AtomicOr-only proof
+refuses ANY fault read. New actual compiler controls invoke that SAME production
+classifier, requiring original binding5 only for the new variant and0 for old.
+No backend hazard guard is weakened. Actual branch CFG/map tracing and negative
+mutations are composed. Whole-model impact is UNMEASURED, not a promised gain.
+New six sentinel/nonfinite positions16,24,32,63,127,255 add24 paired GPU cases
+(original959 retained =>983). New three CPU controls =>390 in BOTH off/on builds.
+Three actual repository mathematical test functions compiled/executed separately
+pass, including exhaustive65536 mixed branch masks; this is NOT full app/shader
+compilation. Rust syntax and Python build-selector parse checks also pass.
+
+Sudo expired during the completed21m46s run. One unprivileged full-build attempt
+failed immediately on root-owned Cargo dependency fingerprints; no workarounds
+or cache ownership changes. Preserved under `local32-user-cpu-20261024` with
+3-control source/binary/log/receipt and failed full-build log. Demons `shell`
+is waiting at `sudo -v`; user was asked once asynchronously to refresh it.
+Prepared root CPU-only driver `build-local32-cpu-20261024.py` builds BOTH old/new
+feature sets and retains all387 names plus3, actual compiler proof first.
+Invoke in bounded swap0/core0 unit with explicit cargo PATH and per-process
+Git safe.directory for this exact worktree; give CURRENT committed HEAD.
+Do not call source build/390/983 passed before execution. No GPU job running.
+
+Latest physical check02:33:05UTC: Intel50,688,000B, NVIDIA compute0/display596MiB,
+all5 kernel fault classes0; Kuno/Ollama/Vashti HTTP200, admission normal/completed172.
+Both GPU runs terminal, installed services recovered. Artifact root:
+`/media/jmicko/faststore/kuno-development`, current log
+`wide32-seeded2-driver-20261024.log`, final state
+`global-wide32-final-state-20261024.json`. Bounded sudo refresher ended01:47UTC;
+none remains running. Preserve inherited `text/__pycache__/`. No API/UI/service/
+settings/install/release/reset/driver change; no Vashti integration needed.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-24 UTC): complete transpose accepted, parity unmet.**
 
 Read [accepted full890 result](kuno-prefill-transpose-matrix.md) and

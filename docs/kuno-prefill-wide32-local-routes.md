@@ -56,3 +56,16 @@ shader names may grant access/dependency authority.
 Only complete numerical and full-model/recovery evidence can accept the
 candidate. Speed interpretation remains the whole first/repeated comparison;
 the unchanged clean Strata target is5.5006/5.3515s. No performance claim yet.
+
+
+## Source checkpoint
+
+Implemented d1b4d3f1, original variant retained by feature-off selection. Three
+independent mathematical controls compile and pass (65536 mixed branch masks,
+all256 bad-route positions across two tiles, original8-member status/finite
+rules). Actual full application/compiler controls and983 GPU cases are pending.
+Unprivileged full build stopped immediately at a root-owned Cargo fingerprint;
+sudo was requested once and Demons shell is waiting. Do not weaken file or GPU
+privacy protections to bypass it. No GPU process remains from this candidate.
+Prepared bounded root CPU driver builds both feature modes and runs390 exact
+controls per mode before a new worker freeze or GPU authorization is used.
