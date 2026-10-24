@@ -409,6 +409,24 @@ async fn serve(
             );
             return Ok(());
         }
+        // Exercise the new complete producer/reference family first. Every
+        // original control still follows; a probe setup failure can be fixed
+        // without waiting through the entire original numeric population.
+        #[cfg(feature="strata-regular-cohorts")]
+        let regular_cohort_producer_checks=crate::strata_prompt::experts::regular::public_producers(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_regular_cohort_producer_error {e}");"public_regular_cohort_producer_failed"})?;
+        #[cfg(feature="strata-regular-cohorts")]
+        eprintln!("public_regular_cohort_control_complete family=producer cases={}",regular_cohort_producer_checks.len());
+        #[cfg(feature="strata-regular-cohorts")]
+        let regular_cohort_dequant_checks=crate::strata_prompt::experts::regular::public_multi_dequant(&client,&mut arena,&file)
+            .map_err(|e|{eprintln!("public_regular_cohort_dequant_error {e}");"public_regular_cohort_dequant_failed"})?;
+        #[cfg(feature="strata-regular-cohorts")]
+        eprintln!("public_regular_cohort_control_complete family=dequant cases={}",regular_cohort_dequant_checks.len());
+        #[cfg(feature="strata-regular-cohorts")]
+        let regular_cohort_matrix_checks=crate::strata_matrix::cohorts::public_regular_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_regular_cohort_matrix_error {e}");"public_regular_cohort_matrix_failed"})?;
+        #[cfg(feature="strata-regular-cohorts")]
+        eprintln!("public_regular_cohort_control_complete family=matrix cases={}",regular_cohort_matrix_checks.len());
         #[cfg(feature = "strata-native-prepared")]
         let native_prepared_checks = crate::strata_native_prepared_probe::cases(&target_device)
             .map_err(|_| "public_native_prepared_admission_failed")?;
@@ -736,15 +754,6 @@ async fn serve(
         let cohort_multi_dequant_checks=crate::strata_prompt::experts::cohorts::public_multi_dequant(&client,&mut arena,&file).map_err(|e|{eprintln!("public_cohort_multi_dequant_error {e}");"public_cohort_multi_dequant_failed"})?;
         #[cfg(not(feature="strata-expert-cohorts"))]
         let cohort_multi_dequant_checks:Vec<serde_json::Value>=Vec::new();
-        #[cfg(feature="strata-regular-cohorts")]
-        let regular_cohort_producer_checks=crate::strata_prompt::experts::regular::public_producers(&client,&mut arena)
-            .map_err(|e|{eprintln!("public_regular_cohort_producer_error {e}");"public_regular_cohort_producer_failed"})?;
-        #[cfg(feature="strata-regular-cohorts")]
-        let regular_cohort_dequant_checks=crate::strata_prompt::experts::regular::public_multi_dequant(&client,&mut arena,&file)
-            .map_err(|e|{eprintln!("public_regular_cohort_dequant_error {e}");"public_regular_cohort_dequant_failed"})?;
-        #[cfg(feature="strata-regular-cohorts")]
-        let regular_cohort_matrix_checks=crate::strata_matrix::cohorts::public_regular_pairs(&client,&mut arena)
-            .map_err(|e|{eprintln!("public_regular_cohort_matrix_error {e}");"public_regular_cohort_matrix_failed"})?;
         let attention_checks =
             crate::strata_qsa::selection::public_numeric(&mut arena).map_err(|error| {
                 // This branch accepts only compiled public diagnostic inputs.

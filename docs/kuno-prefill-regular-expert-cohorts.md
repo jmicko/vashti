@@ -142,3 +142,24 @@ for the final PART sink at its first binding. Correct it to prove established
 owner identity and exact first-bound output span; local metadata cannot prove
 an unstated sink ID. Actual graph ownership/charging and whole GPU/model consumer
 checks remain mandatory. No GPU/math/speed execution yet. Revalidate final source.
+
+Final e7718887 passes fresh442/435 AppCPU,18/96 runtime,9/10/10 selector
+metadata,10 native metadata,437 WGSL/336 matrix layouts. Workerccc0114a.
+Fresh HOST source/copy/audit passes, with clean physical recovery. Initial
+whole supervisorv2 stops at a stale checker matrix_layouts320 expectation;
+actual336 is old320 plus new16. Forward checkerv3 changes only that count;
+all read-only preflight passes and fresh numerical execution begins.
+
+The v3 physical run reaches the new paired-matrix control, after the new6
+producer and6 original-GGUF dequant calls return, then fails in the probe's
+private upload: `private write requires full owned same-stream span`. It used
+`resident_util::handle`, a logical trimmed view, while uploading the whole
+padded owner. Correct the probe to use `arena.handle(...).clone()` for uploads;
+keep logical views for matrices and preserve the strict private-write API.
+No arithmetic/kernel or production engine/scheduling change. Move the complete
+new24-control family to the front of the SAME public numeric entry, preserving
+every original control, so setup failures are seen early. Add compiled-public
+completion labels only. No full aggregate GPU receipt or speed result exists.
+V3 releases all GPU memory/admission: Intel42278912B,NVIDIA0,five faults0,
+all3HTTP200,admission unpaused/no recovery/wait0/completed271. Preserve failed
+worker/checker/artifacts. Final corrected source needs complete acceptance.

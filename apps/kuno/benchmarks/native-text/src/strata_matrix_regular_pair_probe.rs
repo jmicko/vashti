@@ -264,7 +264,9 @@ fn one(
         packed[..real].copy_from_slice(&input[start..start + real]);
         client
             .write_private(
-                u::handle(arena, ri)?,
+                // Private upload requires the FULL retained owner, including
+                // allocator padding; matrix inputs still use the logical view.
+                arena.handle(ri)?.clone(),
                 packed.iter().copied().flat_map(u32::to_le_bytes).collect(),
             )
             .map_err(u::fault)?;
