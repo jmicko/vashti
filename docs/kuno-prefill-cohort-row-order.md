@@ -88,3 +88,11 @@ Original18/73 runtime,8+9 metadata,10 native and BOTH original18-script full-mod
 compiler/recovery chains remain required. Actual row-order layer/group counters
 must equal real successful grouping and actual model counts. Compilation/live
 acceptance and all speed claims are pending at this source checkpoint.
+
+First CPU source88c53361 compiles, and all four new grouping/equivalence/budget/
+rejection controls pass. The real-plan control correctly rejects a strict batch
+reduction assumption for its148-row fixture: that fixture already has477 small
+groups in60 batches, exactly the lower bound. Keep the assertion; use the SAME
+public generator's4096-row mixed fixture (405 small groups in55 original versus
+51 sorted batches) to test actual fragmentation. This is a fixture correction,
+not an engine rollback or a weakened production law. Original failed log remains.

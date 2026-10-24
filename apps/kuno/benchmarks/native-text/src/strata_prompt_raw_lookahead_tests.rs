@@ -228,10 +228,10 @@ fn raw_lookahead_cursor_flag_and_full_reserved_metadata_erase_inside_original_ei
 #[test]
 fn reordered_real_maps_fill_cohorts_without_changing_any_source_slot_or_release_law() {
     use crate::strata_prompt::groups;
-    let raw = groups::row_order_tests::packet(148);
+    let raw = groups::row_order_tests::packet(4096);
     let mut totals = Vec::new();
-    for map in [groups::group(&raw, 148).unwrap(), groups::group_for_prefill(&raw, 148).unwrap()] {
-        let n = groups::validate(&map, 148).unwrap();
+    for map in [groups::group(&raw, 4096).unwrap(), groups::group_for_prefill(&raw, 4096).unwrap()] {
+        let n = groups::validate(&map, 4096).unwrap();
         let members = &map[516..516+n];
         let host = (0..n).map(|g| map[4+g] % 3 != 1).collect::<Vec<_>>();
         let mut plan = Plan::new(members, &host).unwrap();
