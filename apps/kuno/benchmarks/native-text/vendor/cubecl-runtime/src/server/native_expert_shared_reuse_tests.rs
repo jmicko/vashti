@@ -484,9 +484,9 @@ mod local_wide32{
  #[test]
  fn local_wide32_genuine_prefix_grid_retains_original_checker_ordered_layout_tail_and_logical_blocks(){
   for m in [256,257,287,383,384,4096]{let h=owners();let mut g=begin_images(&h,m,true);
-   wide32_prefix(&mut g,&h,m,false);tail(&mut g,&h,m,false,false);assert!(g.finish().is_err());
+   local_wide32_prefix(&mut g,&h,m,false);tail(&mut g,&h,m,false,false);assert!(g.finish().is_err());
    g.launch("StrataPromptExpertF16SwigluCheckGu",false,&CubeCount::Static((m*5).div_ceil(4),1,1),&checker(&h,m)).unwrap();
-   wide32_prefix(&mut g,&h,m,true);tail(&mut g,&h,m,true,true);let c=g.finish().unwrap();assert_eq!(c.logical_phases,6);assert_eq!(c.direct_gu_prefixes,1);assert_eq!(c.gu_checks,1);assert_eq!(c.wide_blocks,2*(m/128)as usize);
+   local_wide32_prefix(&mut g,&h,m,true);tail(&mut g,&h,m,true,true);let c=g.finish().unwrap();assert_eq!(c.logical_phases,6);assert_eq!(c.direct_gu_prefixes,1);assert_eq!(c.gu_checks,1);assert_eq!(c.wide_blocks,2*(m/128)as usize);
   }
  }
  #[test]

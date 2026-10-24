@@ -47,3 +47,11 @@ rejected; dynamic INFO validation remains for other paths. No kernel/math change
 A small CPU harness includes this actual production validator with only visibility
 and test cfg adjusted; all45 generated modules available from the stopped first
 run pass with their negative mutations. Full421/all88 acceptance still pending.
+
+
+Forward source86c4994a passes421 full/418 off AppCPU and all88 new layouts;
+release worker builds and passes the complete offline shader set and feature-off
+18 runtime controls. The full runtime harness then finds two stale helper call
+names in the new large-role TEST fixture. Production runtime and shaders are
+unchanged. Fix those calls, retain the failed logs, and reseal the complete
+same-source build/tests before any GPU work. No live test has run yet.
