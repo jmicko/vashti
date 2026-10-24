@@ -202,7 +202,7 @@ fn program(
         })
         .map(|(_, c)| c)
         .collect::<Vec<_>>();
-    let raw_count = 2;
+    let raw_count = if PRELOAD {4}else{2};
     let expected_k_loops = if cohort || PADDED_GLOBAL || cfg!(feature = "strata-single-k-walk") { 1 } else { 2 };
     if innermost.len() != expected_k_loops || innermost.iter().any(|r| r.1 != raw_count) {
         return Err(
@@ -339,18 +339,22 @@ fn program(
             .iter()
             .filter(|p| classes.get(&root(p.3).unwrap()) == Some(&4))
             .count();
-        if weights.len() != 2
-            || globals != 1
+        if weights.len() != 2*if PRELOAD {2}else{1}
+            || globals != if PRELOAD {2}else{1}
             || shared != 0
-            || ls.len() != 2 + globals + shared
+            || ls.len() != 2*if PRELOAD {2}else{1} + globals + shared
         {
             return Err("full walk actual global weights and complete/masked B loads".into());
         }
+        if PRELOAD {
+            if ls.iter().any(|l| l.1>=ps[0]) {return Err("preload all six real global operands must precede first current-bank product".into());}
+        }else{
         for i in 0..2 {
             let n = 1;
             if weights[i] >= ps[i * n] || (i > 0 && weights[i] <= ps[i * n - 1]) {
                 return Err("full walk one A reused across genuine B values".into());
             }
+        }
         }
         let b_definitions = BDefinitions {
             words,
@@ -369,12 +373,26 @@ fn program(
             let b = b_definitions.origins(product_inputs[&p], BTreeSet::new())?;
             *b_values.entry(b).or_default() += 1;
         }
-        if b_values.len() != 1 || b_values.values().any(|n| *n != 2) {
+        if b_values.len() != if PRELOAD {2}else{1} || b_values.values().any(|n| *n != 2) {
             return Err("full walk independent B SSA values and four products each".into());
         }
         for(i,&p)in ps.iter().enumerate(){
             let a=b_definitions.origins(product_a_inputs[&p],BTreeSet::new())?;
             if a!=BTreeSet::from([words[weights[i]+2]]) {return Err("balanced matrix A must be the corresponding distinct chronological weight load".into());}
+        }
+        if PRELOAD {
+            let origin=|at:usize|b_definitions.origins(product_inputs[&at],BTreeSet::new());
+            if origin(ps[0])?!=origin(ps[1])? || origin(ps[2])?!=origin(ps[3])? || origin(ps[0])?==origin(ps[2])? {
+                return Err("preload first/next bank input fragments must be distinct and each reused by its own two C cells".into());
+            }
+            let mut accumulator_results=matrix_results.clone();
+            for &p in &ps {accumulator_results.insert(words[p+2],p);}
+            let accumulator_definitions=BDefinitions{matrices:&accumulator_results,..b_definitions};
+            for i in 0..2 {
+                if accumulator_definitions.origins(words[ps[i+2]+5],BTreeSet::new())?!=BTreeSet::from([words[ps[i]+2]]) {
+                    return Err("preload next K16 must consume the corresponding first-bank C result, without accumulator crosswire".into());
+                }
+            }
         }
         let header = region_headers[&region.0];
         let mut flow: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -515,9 +533,17 @@ fn negatives(
     }
     let mut ps=Vec::new();let mut at=5;
     while at<words.len(){let n=(words[at]>>16)as usize;if words[at]&65535==4459{ps.push((at,n));}at+=n;}
-    if ps.len()!=2 {return Err("balanced negatives need both real products".into());}
+    if ps.len()!=if PRELOAD {4}else{2} {return Err("balanced negatives need every real product".into());}
     let mut w=words.to_vec();w[ps[1].0+3]=w[ps[0].0+3];
     if program(&w,cohort,tile).is_ok(){return Err("balanced matrix accepted A1 to A0 alias".into());}
+    if PRELOAD {
+        let mut w=words.to_vec();w[ps[2].0+4]=w[ps[0].0+4];
+        if program(&w,cohort,tile).is_ok(){return Err("preload accepted next-bank B aliased to current bank".into());}
+        let mut w=words.to_vec();w[ps[2].0+5]=w[ps[3].0+5];
+        if program(&w,cohort,tile).is_ok(){return Err("preload accepted next-bank accumulator crosswire".into());}
+        let mut w=words.to_vec();w[ps[2].0+3]=w[ps[0].0+3];
+        if program(&w,cohort,tile).is_ok(){return Err("preload accepted next-bank A aliased to previous K".into());}
+    }
     let mut w=words.to_vec();w.drain(ps[1].0..ps[1].0+ps[1].1);
     if program(&w,cohort,tile).is_ok(){return Err("balanced matrix accepted missing second product".into());}
 

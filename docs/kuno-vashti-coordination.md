@@ -2,6 +2,15 @@
 
 **Active Kuno handoff (2026-10-24 UTC): balanced subgroup bundle full1425 accepted.**
 
+Next complete source candidate is now composed:
+[two-bank balanced preload contract](kuno-prefill-balanced-preload.md). It keeps
+the native ABI/authority/owners/geometry and all original variants, but preloads
+genuine next-K16 operands before current matrix products in BOTH macro/cohort
+paths. Feature-off retains the original single-bank body. Planned405/404 AppCPU,
+unchanged18/73 runtime,8+9 metadata,10 native and fresh all1425 GPU controls, both
+whole-model modes and original recovery chains. No compilation or speed claim
+yet; existing accepted results below remain authoritative.
+
 Source `ff74ce03` (complete bundle79b19229), worker `7ac74538`:404/401 AppCPU,
 18/73 runtime,8+9 metadata,10 native, all1425 GPU cases and both original18-script
 whole-model/recovery chains pass. All1305 preceding GPU controls retained.

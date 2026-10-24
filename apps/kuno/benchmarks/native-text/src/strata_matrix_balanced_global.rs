@@ -2,9 +2,24 @@
 // Original real grid, padded producers, independent8-half publication and ABI.
 use super::*;
 const PADDED_GLOBAL:bool=true;
+const PRELOAD:bool=cfg!(feature="strata-balanced-preload");
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn product(
+ input:&Array<Vector<f16,Const<4>>>,weight:&Array<Vector<f16,Const<4>>>,
+ output:&mut Array<f32>,map:&Array<u32>,status:&mut Array<u32>,fault:&mut Array<Atomic<u32>>,
+ columns:usize,rows:usize,count:usize,weight_first:usize,group:usize,
+ input_member_base:usize,gu_prefix:usize,#[comptime] down:bool,#[comptime] tile:usize,
+){
+ if comptime!(PRELOAD) {
+  preload::product_preload(input,weight,output,map,status,fault,columns,rows,count,weight_first,group,input_member_base,gu_prefix,down,tile);
+ }else{
+  product_single(input,weight,output,map,status,fault,columns,rows,count,weight_first,group,input_member_base,gu_prefix,down,tile);
+ }
+}
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn product_single(
  input:&Array<Vector<f16,Const<4>>>,weight:&Array<Vector<f16,Const<4>>>,
  output:&mut Array<f32>,map:&Array<u32>,status:&mut Array<u32>,fault:&mut Array<Atomic<u32>>,
  columns:usize,rows:usize,count:usize,weight_first:usize,group:usize,
@@ -42,6 +57,61 @@ pub(crate) fn product(
   crate::strata_matrix::global_small::publish(&c0,&mut scratch,output,map,status,fault,token,row,count,gu_prefix,group,down);
   crate::strata_matrix::global_small::publish(&c1,&mut scratch,output,map,status,fault,token,row+8,count,gu_prefix,group,down);
  }
+}
+mod preload {use super::*;
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn product_preload(
+ input:&Array<Vector<f16,Const<4>>>,weight:&Array<Vector<f16,Const<4>>>,
+ output:&mut Array<f32>,map:&Array<u32>,status:&mut Array<u32>,fault:&mut Array<Atomic<u32>>,
+ columns:usize,rows:usize,count:usize,weight_first:usize,group:usize,
+ input_member_base:usize,gu_prefix:usize,#[comptime] down:bool,#[comptime] tile:usize,
+){
+ let sg=usize::cast_from(PLANE_POS);let lane=usize::cast_from(UNIT_POS_PLANE);
+ let token=usize::cast_from(CUBE_POS_Y)*comptime!(tile)+(sg/4)*16;
+ let row=usize::cast_from(CUBE_POS_X)*64+(sg%4)*16;
+ if token>=count {terminate!();}
+ let prefix=usize::cast_from(map[1028+group]);let max_route=usize::cast_from(map[0])*10;
+ let mut good=false;
+ if token+16<=count {good=usize::cast_from(map[1540+prefix+token+lane])<max_route;}
+ let all_good=plane_all(good);
+ // Both admitted roles have K divisible by32. Reject before any bank read.
+ if columns%32!=0 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+ let a00=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let a01=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let a10=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let a11=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let b0=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::B,8usize,16usize,16usize,cmma::MatrixLayout::ColMajor)};
+ let b1=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::B,8usize,16usize,16usize,cmma::MatrixLayout::ColMajor)};
+ let c0=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
+ let c1=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
+ let mut k=0usize;
+ while k<columns {
+  cmma::load(&b0,&input.to_slice().slice(((input_member_base+token)*columns+k)/4,input.len()),u32::cast_from(columns));
+  cmma::load(&a00,&weight.to_slice().slice((weight_first+row*columns+k)/4,weight.len()),u32::cast_from(columns));
+  cmma::load(&a01,&weight.to_slice().slice((weight_first+(row+8)*columns+k)/4,weight.len()),u32::cast_from(columns));
+  // Independent next-K operands are genuinely live before current products.
+  cmma::load(&b1,&input.to_slice().slice(((input_member_base+token)*columns+k+16)/4,input.len()),u32::cast_from(columns));
+  cmma::load(&a10,&weight.to_slice().slice((weight_first+row*columns+k+16)/4,weight.len()),u32::cast_from(columns));
+  cmma::load(&a11,&weight.to_slice().slice((weight_first+(row+8)*columns+k+16)/4,weight.len()),u32::cast_from(columns));
+  cmma::execute::<f16,f16,f32,f32>(&a00,&b0,&c0,&c0);
+  cmma::execute::<f16,f16,f32,f32>(&a01,&b0,&c1,&c1);
+  cmma::execute::<f16,f16,f32,f32>(&a10,&b1,&c0,&c0);
+  cmma::execute::<f16,f16,f32,f32>(&a11,&b1,&c1,&c1);
+  k+=32;
+ }
+ if all_good {
+  let mut first=(gu_prefix+token)*rows+row;
+  if comptime!(down){first=(prefix+token)*rows+row;}
+  cmma::store(&mut output.slice_mut(first,output.len()),&c0,u32::cast_from(rows),cmma::MatrixLayout::ColMajor);
+  cmma::store(&mut output.slice_mut(first+8,output.len()),&c1,u32::cast_from(rows),cmma::MatrixLayout::ColMajor);
+  if comptime!(down)&&row==0 {let route=usize::cast_from(map[1540+prefix+token+lane]);status[comptime!(crate::strata_prompt::groups::ROUTES)+route]=2;}
+ }else{
+  let mut scratch=SharedMemory::<f32>::new(comptime!(tile*32));
+  crate::strata_matrix::global_small::publish(&c0,&mut scratch,output,map,status,fault,token,row,count,gu_prefix,group,down);
+  crate::strata_matrix::global_small::publish(&c1,&mut scratch,output,map,status,fault,token,row+8,count,gu_prefix,group,down);
+ }
+}
 }
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
@@ -437,6 +507,7 @@ pub(crate) fn try_expert(
         }
     }
     if PADDED_GLOBAL {crate::strata_prefill_profile::count(if tile==64 {"expert_balanced_global_macro64_products"}else{"expert_balanced_global_macro32_products"},1);}
+    if PRELOAD {crate::strata_prefill_profile::count(if tile==64 {"expert_balanced_preload_macro64_products"}else{"expert_balanced_preload_macro32_products"},1);}
     crate::strata_prefill_profile::count(
         if tile == 64 {
             "expert_full_walk_macro64_products"
@@ -580,3 +651,21 @@ pub(crate) fn profile_names()->[&'static str;5]{[
 ]}
 mod probe{include!("strata_matrix_balanced_global_probe.rs");}
 pub(crate) use probe::cases as public_numeric;
+
+#[cfg(all(test,feature="strata-balanced-preload"))]
+mod preload_tests {
+ use super::*;
+ #[test]fn two_K16_banks_cover_admitted_columns_once_without_a_final_read_past_extent(){
+  for columns in [640usize,2560]{
+   let mut contributions=vec![0u8;columns/16];
+   for k in (0..columns).step_by(32){
+    assert!(k+32<=columns);
+    for bank in [0usize,16]{let first=k+bank;assert!(first+16<=columns);contributions[first/16]+=1;}
+   }
+   assert!(contributions.into_iter().all(|n|n==1));
+   let ordered=(0..columns).step_by(32).flat_map(|k|[k,k+16]).collect::<Vec<_>>();
+   assert_eq!(ordered,(0..columns).step_by(16).collect::<Vec<_>>());
+  }
+ }
+
+}

@@ -418,6 +418,7 @@ pub(crate) fn launch(
         );
     }
     crate::strata_prefill_profile::count(if down {"expert_balanced_global_cohort_down_launches"}else{"expert_balanced_global_cohort_gu_launches"},1);
+    if cfg!(feature="strata-balanced-preload"){crate::strata_prefill_profile::count(if down {"expert_balanced_preload_cohort_down_launches"}else{"expert_balanced_preload_cohort_gu_launches"},1);}
     crate::strata_prefill_profile::count(
         if down {
             "expert_balanced_cohort_down_launches"
