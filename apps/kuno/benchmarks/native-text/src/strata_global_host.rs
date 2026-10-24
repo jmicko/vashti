@@ -1,5 +1,10 @@
 //! Variable global HOST complement, using the original nonlocal Vulkan heap and
 //! sole CubeCL immutable registry. No fixed 432-page or uniform-bank assumption.
+#[cfg(feature="strata-host-expert-blobs")]
+#[path="strata_host_blob_cpu_audit.rs"]
+mod blob_cpu_audit;
+#[path="strata_host_blob_loader.rs"]
+mod blob_loader;
 #[path = "strata_global_exchange.rs"]
 pub(crate) mod exchange;
 #[cfg(feature = "strata-parallel-loading")]
@@ -75,8 +80,16 @@ pub(crate) struct Host {
     logical: u64,
     physical: u64,
     cpu_borrow: std::sync::atomic::AtomicBool,
+    packed: bool,
+}
+fn base_page_role(packed:bool,layer:usize,role:usize)->KResult<usize>{
+    if layer>=crate::strata_global_plan::LAYERS || role>=3 {return Err(fail());}
+    Ok(if packed {crate::strata_global_plan::PACKED_HOST_ROLE}else{role})
 }
 impl Host {
+    fn base_role(&self,layer:usize,role:usize)->KResult<usize>{
+        base_page_role(self.packed,layer,role)
+    }
     /// Static original-weight ownership only. No mapping, device query, source
     /// reconstruction or private route/usage state enters this diagnostic.
     pub(crate) fn compiled_public_capacity(&self) -> KResult<serde_json::Value> {
@@ -107,6 +120,7 @@ impl Host {
         plan.check_binding(graph)?;
         if self.closed
             || self.instance != plan.instance()
+            || self.packed != plan.has_host_blobs()
             || layer >= 48
             || cells.len() > 80
             || self
@@ -131,6 +145,7 @@ impl Host {
                 let GlobalSource::Host { piece, .. } = plan.source(layer, cell, role)? else {
                     return Err(fail());
                 };
+                let role=self.base_role(layer,role)?;
                 if guard.maps.iter().any(|(r, p, _)| *r == role && *p == piece) {
                     continue;
                 }
@@ -182,15 +197,9 @@ impl Host {
         Ok(guard)
     }
     pub(crate) fn reservation(plan: &GlobalPlan) -> KResult<u64> {
-        let physical = plan
-            .layers
-            .iter()
-            .flat_map(|l| l.roles.iter().flatten())
-            .filter(|p| p.tier == Tier::Host)
-            .try_fold(0u64, |n, p| {
-                n.checked_add(envelope(p.logical_bytes)?)
-                    .ok_or(Error::ArithmeticOverflow)
-            })?;
+        let physical = plan.host_roots()?.iter().try_fold(0u64,|n,p|{
+            n.checked_add(envelope(p.logical_bytes)?).ok_or(Error::ArithmeticOverflow)
+        })?;
         let embedding =
             crate::strata_shared_weights::tiles(crate::strata_shared_weights::Tensor::Embedding)
                 .iter()
@@ -220,12 +229,7 @@ impl Host {
             return Err(fail());
         }
         plan.check_binding(graph)?;
-        let count = plan
-            .layers
-            .iter()
-            .flat_map(|l| l.roles.iter().flatten())
-            .filter(|p| p.tier == Tier::Host)
-            .count()
+        let count = plan.host_roots()?.len()
             .checked_add(
                 crate::strata_shared_weights::tiles(
                     crate::strata_shared_weights::Tensor::Embedding,
@@ -248,6 +252,7 @@ impl Host {
             logical: 0,
             physical: 0,
             cpu_borrow: std::sync::atomic::AtomicBool::new(false),
+            packed: plan.has_host_blobs(),
         };
         if count == 0 {
             return Ok(host);
@@ -278,6 +283,9 @@ impl Host {
                 .map_err(|_| Error::LimitExceeded("global HOST source window"))?;
             window.resize(SOURCE_WINDOW as usize, 0);
         }
+        if plan.has_host_blobs() {
+            host.load_blob_pages(plan,graph,&mut charges)?;
+        } else {
         for (layer, l) in plan.layers.iter().enumerate() {
             for (role, pieces) in l.roles.iter().enumerate() {
                 let name = [
@@ -379,6 +387,7 @@ impl Host {
                 }
             }
         }
+        }
         let embedding = graph.tensor(crate::strata_shared_weights::Tensor::Embedding.name())?;
         crate::strata_shared_weights::Weights::validate_graph(graph)?;
         for (piece, tile) in
@@ -416,7 +425,7 @@ impl Host {
         if host.pages.len() != count
             || host.logical
                 != plan
-                    .host_logical_bytes
+                    .host_registered_bytes()
                     .checked_add(crate::strata_shared_weights::embedding_bytes())
                     .ok_or(Error::ArithmeticOverflow)?
             || host.physical > pool_bytes
@@ -479,7 +488,7 @@ impl Host {
         role: usize,
     ) -> KResult<Option<(cubecl_runtime::server::Handle, u64, u64)>> {
         plan.check_binding(graph)?;
-        if self.closed || self.instance != plan.instance() {
+        if self.closed || self.instance != plan.instance() || self.packed != plan.has_host_blobs() {
             return Err(fail());
         }
         let GlobalSource::Host {
@@ -490,6 +499,7 @@ impl Host {
         else {
             return Ok(None);
         };
+        let role=self.base_role(layer,role)?;
         let p = self
             .pages
             .iter()
@@ -639,6 +649,7 @@ impl CpuLayer<'_> {
         else {
             return Err(fail());
         };
+        let role=self.host.base_role(layer,role)?;
         let map = self
             .maps
             .iter()
@@ -811,4 +822,17 @@ mod embedding_owner_tests {
         assert_ne!(EMBEDDING_LAYER, crate::strata_global_plan::LAYERS);
         assert!(EMBEDDING_LAYER > 47); // cannot alias expert or optional shadow tags
     }
+}
+
+#[cfg(test)]
+mod blob_mapping_tests {
+ use super::*;
+ #[test]
+ fn host_blob_cpu_map_key_deduplicates_base_roles_without_shadow_or_embedding_aliases(){
+  for layer in 0..48 {for role in 0..3 {
+   assert_eq!(base_page_role(false,layer,role).unwrap(),role);
+   assert_eq!(base_page_role(true,layer,role).unwrap(),3);
+  }}
+  for (l,r) in [(48,0),(49,0),(0,3),(usize::MAX,0)]{assert!(base_page_role(true,l,r).is_err());assert!(base_page_role(false,l,r).is_err());}
+ }
 }

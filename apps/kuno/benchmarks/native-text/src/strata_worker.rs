@@ -42,44 +42,48 @@ mod pipeline_profile_cpu_tests;
 /// Called before any runtime thread exists. Inherited experiment configuration
 /// cannot enable public diagnostics or alter the installed execution policy.
 pub(crate) fn run(path: &Path) -> Result<()> {
-    run_mode(path, false, None, false, false, false, false, false, false)
+    run_mode(path, false, None, false, false, false, false, false, false, false)
 }
 /// Dedicated laboratory entry: its only request is compiled public text, never
 /// stdin. Only this entry reports static engine phase labels for diagnosis.
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, false, false, false, false, false, false)
+    run_mode(path, true, None, false, false, false, false, false, false, false)
 }
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
-    run_mode(path, true, Some(profile), false, false, false, false, false, false)
+    run_mode(path, true, Some(profile), false, false, false, false, false, false, false)
 }
 #[cfg(feature = "strata-public-host-clock")]
 pub(crate) fn public_prefill_host_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(true), false, false, false, false, true, false)
+    run_mode(path, true, Some(true), false, false, false, false, true, false, false)
 }
 /// Bounded fixed-public last-request host trace across both chunks and all layers.
 #[cfg(feature = "strata-public-host-clock")]
 pub(crate) fn public_prefill_host_trace(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(true), false, false, false, false, true, true)
+    run_mode(path, true, Some(true), false, false, false, false, true, true, false)
 }
 
 
 /// Three identical compiled-public short requests exercise cold and two warm
 /// prefix paths. Ordinary request erasure and final session close are unchanged.
 pub(crate) fn public_prefill_short_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, true, false, false, false, false)
+    run_mode(path, true, Some(false), false, true, false, false, false, false, false)
 }
 pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, false, false, false, false)
+    run_mode(path, true, None, true, false, false, false, false, false, false)
 }
 /// Fixed-public original expert matrices only; no Session or private input.
 pub(crate) fn public_matrix_timing_check(path: &Path) -> Result<()> {
-    run_mode(path, true, None, true, false, true, false, false, false)
+    run_mode(path, true, None, true, false, true, false, false, false, false)
 }
 /// Explicit compiled-public terminal negative check. It never reads stdin and
 /// cannot be selected through KNT2 or the inference API. An actual submitted
 /// prefix is interrupted; owning process exit is part of this check's recovery.
 pub(crate) fn public_rolling_failure_check(path: &Path) -> Result<()> {
-    run_mode(path, true, Some(false), false, false, false, true, false, false)
+    run_mode(path, true, Some(false), false, false, false, true, false, false, false)
+}
+#[cfg(feature="strata-host-expert-blobs")]
+pub(crate) fn public_host_blob_check(path:&Path)->Result<()>{
+    run_mode(path,true,Some(true),false,false,false,false,false,false,true)
 }
 fn public_prompt(repeats: usize) -> Vec<u8> {
     let mut text = String::from(
@@ -91,6 +95,9 @@ fn public_prompt(repeats: usize) -> Vec<u8> {
     text.push_str("<|im_end|>\n<|im_start|>user\nWhat is 17 times 19? Reply with the numerical answer.\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
     text.into_bytes()
 }
+fn host_blob_mode_allowed(public:bool,prefill:Option<bool>,matrix:bool,short:bool,timing:bool,rolling:bool,host_clock:bool,full_trace:bool)->bool{
+    cfg!(feature="strata-host-expert-blobs") && public && prefill==Some(true) && !matrix && !short && !timing && !rolling && !host_clock && !full_trace
+}
 fn run_mode(
     path: &Path,
     public_check: bool,
@@ -101,7 +108,9 @@ fn run_mode(
     rolling_failure: bool,
     host_clock_only: bool,
     full_host_trace: bool,
+    host_blob_audit: bool,
 ) -> Result<()> {
+    if host_blob_audit && !host_blob_mode_allowed(public_check,prefill_check,matrix_check,short_check,matrix_timing,rolling_failure,host_clock_only,full_host_trace){return Err("public_host_blob_configuration");}
     if full_host_trace && !host_clock_only {return Err("public_full_host_trace_configuration");}
     if rolling_failure
         && (!public_check
@@ -905,6 +914,16 @@ async fn serve(
                 .map_err(|_| "public_prefill_capacity_unavailable")?;
             eprintln!("public_prefill_capacity {capacity}");
         }
+        if host_blob_audit {
+            #[cfg(feature="strata-host-expert-blobs")]
+            {
+                let audit=session.compiled_public_host_blob_probe().map_err(|_|"public_host_blob_audit_failed")?;
+                eprintln!("public_host_blob_audit {audit}");
+                return Ok(());
+            }
+            #[cfg(not(feature="strata-host-expert-blobs"))]
+            return Err("public_host_blob_feature_disabled");
+        }
         while let Some(request) = current.take() {
             let prompt_count = request.geometry().map_err(|_| "native_request_invalid")?.0;
             crate::strata_prefill_profile::begin();
@@ -1102,4 +1121,16 @@ fn prepare(mut request: wire::Generate, tokenizer: &Qwen35Tokenizer) -> Result<e
         return Err("native_context_exceeded");
     }
     Ok(prepared)
+}
+
+#[cfg(test)]
+mod host_blob_entry_tests {
+ #[test]
+ fn host_blob_probe_only_enters_an_explicit_public_mode_without_private_or_other_diagnostics(){
+  for bits in 0..128u32 {for p in [None,Some(false),Some(true)] {
+   let b=|i|bits&(1<<i)!=0;
+   let allowed=super::host_blob_mode_allowed(b(0),p,b(1),b(2),b(3),b(4),b(5),b(6));
+   assert_eq!(allowed,cfg!(feature="strata-host-expert-blobs") && bits==1 && p==Some(true));
+  }}
+ }
 }

@@ -1248,6 +1248,12 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature="strata-host-expert-blobs")]
+    if std::env::args().nth(1).as_deref()==Some("--public-host-expert-blobs-check") {
+        let args=std::env::args().collect::<Vec<_>>();
+        if args.len()!=3{return Err("usage: --public-host-expert-blobs-check SETTINGS".into());}
+        return strata_worker::public_host_blob_check(std::path::Path::new(&args[2])).map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--public-prefill-rolling-failure-check") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {

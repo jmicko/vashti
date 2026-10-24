@@ -10,6 +10,12 @@ use cubecl_runtime::server::{Handle, KernelArguments};
 use kuno_text::{Error, Result, model::BoundGraph};
 use std::collections::HashMap;
 
+#[cfg(feature="strata-host-expert-blobs")]
+#[path="strata_host_blob_probe.rs"]
+mod host_blob_probe;
+#[cfg(feature="strata-host-expert-blobs")]
+#[path="strata_host_blob_copies.rs"]
+mod host_blob_copies;
 #[path = "strata_cache_placement.rs"]
 mod placement;
 #[path = "strata_prompt_layer_sources.rs"]
@@ -184,6 +190,8 @@ impl Sources {
             "expert_resident_backing_bytes":gpu.bytes(),
             "expert_gpu_roots":gpu.roots().len(),
             "expert_host_logical_bytes":self.plan.host_logical_bytes,
+            "host_expert_blob_layout":self.plan.has_host_blobs(),
+            "expert_host_registered_bytes":self.plan.host_registered_bytes(),
             "expert_host_plan_piece_bytes":self.plan.host_piece_bytes,
             "source_table_buffers":self.tables.len(),
             "source_table_bytes":source_table_bytes,
@@ -626,11 +634,24 @@ impl Sources {
                 .checked_add(expected as u64)
                 .ok_or(Error::ArithmeticOverflow)?;
         }
+        #[cfg(feature="strata-host-expert-blobs")]
+        let original_segments=copies.len();
+        #[cfg(feature="strata-host-expert-blobs")]
+        let copies=host_blob_copies::coalesce(copies,destination.stream)?;
         if !copies.is_empty() {
             let bytes = copies.iter().try_fold(0u64, |sum, copy| {
                 sum.checked_add(copy.bytes).ok_or(Error::ArithmeticOverflow)
             })?;
             let segments = copies.len() as u64;
+            #[cfg(feature="strata-host-expert-blobs")]
+            {
+                crate::strata_prefill_profile::count("expert_host_blob_saved_segments",(original_segments-copies.len())as u64);
+                if original_segments==3 && copies.len()==1 {
+                    crate::strata_prefill_profile::count("expert_host_blob_stage_groups",1);
+                    crate::strata_prefill_profile::count("expert_host_blob_stage_bytes",bytes);
+                }
+            }
+
             client
                 .stage_public_host_copies(copies)
                 .map_err(crate::resident_util::fault)?;

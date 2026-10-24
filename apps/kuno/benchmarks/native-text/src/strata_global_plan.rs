@@ -17,6 +17,9 @@ pub(crate) const MAX_PIECE_BYTES: u64 = 128 * 1024 * 1024;
 // remain bounded16MiB and never mirror an entire root/model in system RAM.
 pub(crate) const MAX_GPU_CHUNK_BYTES: u64 = 512 * 1024 * 1024;
 pub(crate) const PUBLIC_UPLOAD_WINDOW: u64 = 16 * 1024 * 1024;
+#[path="strata_host_blob_plan.rs"]
+mod host_blob_plan;
+pub(crate) use host_blob_plan::{HostRoot,PACKED_HOST_ROLE};
 const PROFILE: &[u8] = include_bytes!("../fixtures/strata-bank-profile/expert-profile.bin");
 fn reject() -> Error {
     Error::InvalidFormat("Strata global expert allocation")
@@ -148,6 +151,7 @@ pub(crate) struct Plan {
     pub resident_piece_bytes: u64,
     pub host_logical_bytes: u64,
     pub host_piece_bytes: u64,
+    host_blobs: Option<host_blob_plan::HostBlobs>,
 }
 fn ranked_profile() -> Result<Vec<RankedPair>> {
     if PROFILE.len() != 24 + RANKED_PAIRS * 4 + RANKED_PAIRS * 4 || &PROFILE[..4] != b"STRP" {
@@ -290,6 +294,8 @@ impl Plan {
             }
         }
         let mut plan = Self::from_roles(roles, budget, alignment)?;
+        #[cfg(feature="strata-host-expert-blobs")]
+        plan.enable_host_blobs(alignment)?;
         plan.binding = Some(graph.binding_id());
         Ok(plan)
     }
@@ -451,6 +457,7 @@ impl Plan {
             resident_piece_bytes,
             host_logical_bytes,
             host_piece_bytes,
+            host_blobs: None,
         })
     }
     pub(crate) fn source(&self, layer: usize, expert: usize, role: usize) -> Result<Source> {
@@ -477,6 +484,7 @@ impl Plan {
                 bytes,
             })
         } else {
+            if let Some(layout)=&self.host_blobs {return layout.source(layer,virtual_slot,role);}
             let a = l.address(expert, role)?;
             Ok(Source::Host {
                 piece: a.piece,

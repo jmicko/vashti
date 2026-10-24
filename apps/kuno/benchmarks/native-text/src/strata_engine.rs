@@ -542,6 +542,11 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
             .compiled_public_capacity(self.graph)
             .map_err(|_| Failure::Inference)
     }
+    #[cfg(feature="strata-host-expert-blobs")]
+    pub(crate) fn compiled_public_host_blob_probe(&self)->Result<serde_json::Value,Failure>{
+        if !crate::strata_prefill_profile::compiled_public_enabled() || self.state!=State::Cold || !self.runtime_owned || self.close_attempted {return Err(Failure::Rejected);}
+        self.executor.as_ref().and_then(|e|e.strata_global_sources.as_ref()).ok_or(Failure::Inference)?.compiled_public_host_blob_probe(self.graph).map_err(|_|Failure::Inference)
+    }
     pub(crate) fn run(
         &mut self,
         request: Request,

@@ -47,6 +47,7 @@ cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
+strata-host-expert-blobs = ["strata-small-granular"]
 strata-small-granular = ["strata-small-local-carry", "cubecl-wgpu/kuno-small-granular"]
 strata-small-local-carry = ["strata-local-prefetch"]
 strata-local-prefetch = ["strata-balanced-wide32", "cubecl-wgpu/kuno-local-prefetch"]

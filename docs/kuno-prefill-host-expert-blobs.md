@@ -1,7 +1,7 @@
 # Contiguous HOST expert blobs
 
-Next source plan after complete granular acceptance source2391584c. NOT yet
-implemented, compiled or measured. Keep the full accepted granular/interleaved
+Coherent source candidate after complete granular acceptance source2391584c.
+Implemented for CPU/compiler review; NOT yet compiled, physically validated or measured. Keep the full accepted granular/interleaved
 candidate and every previous variant. Target remains Strata clean first/repeat
 5.5006/5.3515s, same model/context/public fixture. No API, Vashti, install,
 release, driver or reset change.
@@ -109,3 +109,49 @@ Then both original complete model/counter/owner/erasure/recovery chains, genuine
 new producer counts and the original CLEAN first/repeat gate. Same model,
 context, prompt/seed and sampling remain fixed. Keep all old capacities and
 thresholds; a sample or expected memcpy reduction is not speed acceptance.
+
+
+## Initial composed source checkpoint
+
+`strata-host-expert-blobs` / `--host-expert-blobs` requires the entire accepted
+granular bundle. Legacy plan constructors remain role-major; the real graph
+constructor selects packed HOST chunks only under this flag. Complete-expert
+256B strides stay within original128MiB HOST roots. HOST registered spans and
+backing/setup/metadata quotes include real gaps; original source bytes and GPU
+resident prefix remain unchanged. Each packed page has ONE original registry
+owner with a private canonical base-role tag. CPU map lookup deduplicates this
+root; shadow/embedding lookup remains independent. Existing adaptive rebase
+revokes all base pages by layer, and its inventory resolves through the same
+actual HOST role method, retaining whole-root ownership and aligned role ranges.
+
+Live original header SHA verified against the pinned digest: all144 routed role
+tensors are in original shard0 (the second shard contains the PLE embedding).
+The loader independently requires all three roles in each packed page to share
+the same authenticated shard. No mixed-source provenance fiction/schema change.
+Scoped readers fill FINAL registered spans, retaining original reader join and
+full-backing initialization/cache flush/publication. No request-time repack.
+
+The actual raw-bank factory resolves current sources first, then the new pure
+coalescer validates all original bindings/ranges, merges only genuinely adjacent
+same-root spans, and revalidates the result. Backend registry lookup, phases,
+limits, owning stream, copy scheduling and completion remain unchanged. Actual
+copy/byte and new saved-segment/blob-group counters reflect submitted ranges.
+
+Dedicated `--public-host-expert-blobs-check SETTINGS` accepts no request text.
+It loads the real normal cold Session, verifies EVERY loaded HOST role byte
+against original GGUF through bounded windows and actual scoped CPU maps, then
+checks real HOST->both original raw banks at all packed-root boundary experts.
+It exercises rejected changed owner/view/stream/role-size/cell/range requests,
+checks copied role bytes and neighboring zeros, restores/zero-audits both full
+raw roots and sanitizes tracked transient I/O. Original checked Session.close
+still owns detach/complete erasure, including on error. No extra GPU roots or
+private entry diagnostics; physical rebase itself is NOT claimed by this probe.
+Its live execution/Cold-owner cleanup still require validation before timing.
+
+Planned initial CPU additions: three actual plan/range/alignment/quote controls,
+three exact real-registry-metadata coalescing/negative controls, one actual CPU
+map-key/shadow exclusion control, two composed reader/padding/failure-join
+controls and one exhaustive explicit-public-entry guard. Expected435 full/
+425 feature-off selected AppCPU; freeze after actual compilation/test listing.
+Original18/91 runtime,8+9+10 metadata/native and every shader/resource control
+remain required. No new vendor feature or matrix/dequant shader change.
