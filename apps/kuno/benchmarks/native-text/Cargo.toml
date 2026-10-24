@@ -47,6 +47,7 @@ cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
+strata-regular-cohorts = ["strata-host-expert-blobs", "strata-dequant-direct8", "strata-global-image-experts", "strata-raw-lookahead", "strata-native-expert-bulk", "cubecl-wgpu/kuno-regular-cohorts"]
 strata-host-expert-blobs = ["strata-small-granular"]
 strata-small-granular = ["strata-small-local-carry", "cubecl-wgpu/kuno-small-granular"]
 strata-small-local-carry = ["strata-local-prefetch"]

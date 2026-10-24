@@ -7,6 +7,16 @@ use cubecl_runtime::server::native_expert_grammar::{NativeStrataExpertGrammar, N
 // Original cohorts retain six to eight dispatches. Only a completely validated
 // packed cohort can contain three GU and three DOWN tiles (ten dispatches).
 fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
+    if c.regular_cohort_groups>512 || c.regular_cohort_batches>512 || c.regular_cohort_launches>512*6
+        || (!cfg!(feature="kuno-regular-cohorts") && (c.regular_cohort_groups!=0 || c.regular_cohort_batches!=0 || c.regular_cohort_launches!=0))
+        || c.regular_cohort_groups<c.regular_cohort_batches
+        || c.regular_cohort_groups>8*c.regular_cohort_batches
+        || c.regular_cohort_launches!=6*c.regular_cohort_batches
+        || c.regular_cohort_groups.checked_add(c.quant_cohort_groups).is_none_or(|n|n>c.cohort_groups)
+        || c.regular_cohort_batches.checked_add(c.quant_cohort_batches).is_none_or(|n|n>c.cohort_batches)
+        || c.regular_cohort_launches.checked_add(c.quant_cohort_launches).is_none_or(|n|n>c.cohort_launches) {
+        return false;
+    }
     if c.quant_cohort_groups > c.cohort_groups
         || c.quant_cohort_batches > c.cohort_batches
         || c.quant_cohort_launches > c.cohort_launches
@@ -17,9 +27,9 @@ fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
         || c.quant_cohort_launches > c.quant_cohort_batches * 10 {
         return false;
     }
-    let old_batches = c.cohort_batches - c.quant_cohort_batches;
-    let old_groups = c.cohort_groups - c.quant_cohort_groups;
-    let old_launches = c.cohort_launches - c.quant_cohort_launches;
+    let old_batches = c.cohort_batches - c.quant_cohort_batches - c.regular_cohort_batches;
+    let old_groups = c.cohort_groups - c.quant_cohort_groups - c.regular_cohort_groups;
+    let old_launches = c.cohort_launches - c.quant_cohort_launches - c.regular_cohort_launches;
     old_groups >= old_batches && old_groups <= old_batches * 8
         && old_launches >= old_batches * 6 && old_launches <= old_batches * 8
 }
@@ -168,6 +178,9 @@ impl Book {
                 || counts.quant_cohort_groups != 0 || counts.quant_cohort_launches != 0
                 || counts.quant_cohort_batches != 0 {
                 return Err(fault("native cohort empty grammar evidence"));
+            }
+            if counts.regular_cohort_groups!=0 || counts.regular_cohort_batches!=0 || counts.regular_cohort_launches!=0 {
+                return Err(fault("native cohort empty regular grammar evidence"));
             }
             return Ok(());
         }
@@ -667,4 +680,19 @@ mod tests {
         assert_eq!((w.nodes, w.compute), (0, 0));
         assert!(Book::metadata_bytes() <= 1024);
     }
+}
+
+#[cfg(test)]
+mod regular_population_tests {
+ use super::*;
+ #[test]
+ fn regular_population_is_a_separate_exact_six_launch_partition_with_no_old_or_quant_credit(){
+  let mut c=NativeStrataExpertGrammarCounts{cohort_groups:8,cohort_batches:1,cohort_launches:6,regular_cohort_groups:8,regular_cohort_batches:1,regular_cohort_launches:6,..Default::default()};
+  assert_eq!(cohort_launch_population(&c),cfg!(feature="kuno-regular-cohorts"));
+  for groups in [0,9,usize::MAX]{c.regular_cohort_groups=groups;assert!(!cohort_launch_population(&c));}c.regular_cohort_groups=8;
+  for launches in [0,5,7,usize::MAX]{c.regular_cohort_launches=launches;assert!(!cohort_launch_population(&c));}c.regular_cohort_launches=6;
+  c.quant_cohort_groups=1;c.quant_cohort_batches=1;c.quant_cohort_launches=6;assert!(!cohort_launch_population(&c));
+  c.quant_cohort_groups=0;c.quant_cohort_batches=0;c.quant_cohort_launches=0;
+  c.regular_cohort_batches=usize::MAX;assert!(!cohort_launch_population(&c));
+ }
 }

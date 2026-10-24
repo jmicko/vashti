@@ -736,6 +736,15 @@ async fn serve(
         let cohort_multi_dequant_checks=crate::strata_prompt::experts::cohorts::public_multi_dequant(&client,&mut arena,&file).map_err(|e|{eprintln!("public_cohort_multi_dequant_error {e}");"public_cohort_multi_dequant_failed"})?;
         #[cfg(not(feature="strata-expert-cohorts"))]
         let cohort_multi_dequant_checks:Vec<serde_json::Value>=Vec::new();
+        #[cfg(feature="strata-regular-cohorts")]
+        let regular_cohort_producer_checks=crate::strata_prompt::experts::regular::public_producers(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_regular_cohort_producer_error {e}");"public_regular_cohort_producer_failed"})?;
+        #[cfg(feature="strata-regular-cohorts")]
+        let regular_cohort_dequant_checks=crate::strata_prompt::experts::regular::public_multi_dequant(&client,&mut arena,&file)
+            .map_err(|e|{eprintln!("public_regular_cohort_dequant_error {e}");"public_regular_cohort_dequant_failed"})?;
+        #[cfg(feature="strata-regular-cohorts")]
+        let regular_cohort_matrix_checks=crate::strata_matrix::cohorts::public_regular_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_regular_cohort_matrix_error {e}");"public_regular_cohort_matrix_failed"})?;
         let attention_checks =
             crate::strata_qsa::selection::public_numeric(&mut arena).map_err(|error| {
                 // This branch accepts only compiled public diagnostic inputs.
@@ -829,6 +838,13 @@ async fn serve(
              report["small_granular_selected"]=cfg!(feature="strata-small-granular").into();
              report["granular_checks"]=granular_checks.into();
              report["granular_pair_checks"]=granular_pair_checks.into();
+             report["regular_cohorts_selected"]=cfg!(feature="strata-regular-cohorts").into();
+             #[cfg(feature="strata-regular-cohorts")] {
+                report["regular_cohort_producer_checks"]=regular_cohort_producer_checks.into();
+                report["regular_cohort_dequant_checks"]=regular_cohort_dequant_checks.into();
+                report["regular_cohort_matrix_checks"]=regular_cohort_matrix_checks.into();
+             }
+
              report}
 
         );

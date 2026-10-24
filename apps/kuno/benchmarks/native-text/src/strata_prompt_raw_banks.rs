@@ -9,6 +9,7 @@ const LEGACY_GROUPS: usize = 4;
 // All original group boundaries are <=512. Keep the upload-unit kind in its
 // existing two-u16 record rather than adding another routing allocation.
 const LEGACY_UNIT: u16 = 1 << 15;
+const REGULAR_UNIT: u16 = 1 << 14;
 // Replacement for the mutually exclusive original miss-ring's8KiB scratch
 // inside the unchanged complete native batch's24MiB host envelope.
 pub(super) const HOST_BYTES: usize = 8192;
@@ -19,6 +20,7 @@ pub(super) struct Unit {
     pub end: usize,
     pub bank: usize,
     pub legacy: bool,
+    pub regular: bool,
 }
 fn reject() -> Error {
     Error::InvalidFormat("native whole raw bank unit plan")
@@ -40,6 +42,13 @@ impl Plan {
         Self::with_lookahead(members, streamed, cfg!(feature = "strata-raw-lookahead"))
     }
     fn with_lookahead(members: &[u32], streamed: &[bool], lookahead: bool) -> Result<Self> {
+        Self::with_policy(members, streamed, lookahead, false)
+    }
+    #[cfg(feature = "strata-regular-cohorts")]
+    pub(super) fn new_regular(members: &[u32], streamed: &[bool]) -> Result<Self> {
+        Self::with_policy(members, streamed, true, true)
+    }
+    fn with_policy(members: &[u32], streamed: &[bool], lookahead: bool, regular_cohorts: bool) -> Result<Self> {
         if members.is_empty()
             || members.len() > GROUPS
             || members.len() != streamed.len()
@@ -75,15 +84,32 @@ impl Plan {
                 while end < members.len() && end < first + SLOTS && members[end] < 32 {
                     end += 1;
                 }
+            } else if regular_cohorts && members[first] < 256 {
+                let mut minimum = members[first].div_ceil(16);
+                let mut maximum = minimum;
+                while end < members.len() && end < first + SLOTS && (32..256).contains(&members[end]) {
+                    let blocks = members[end].div_ceil(16);
+                    let lo = minimum.min(blocks);
+                    let hi = maximum.max(blocks);
+                    // A fixed maximum-Y dispatch has at most twice its active
+                    // tile work. Keep order; never reorder or skip a group.
+                    if hi > 2 * lo { break; }
+                    minimum = lo;
+                    maximum = hi;
+                    end += 1;
+                }
             } else if lookahead {
-                while end < members.len() && end < first + LEGACY_GROUPS && members[end] >= 32 {
+                while end < members.len() && end < first + LEGACY_GROUPS
+                    && members[end] >= if regular_cohorts { 256 } else { 32 } {
                     end += 1;
                 }
             }
-            let legacy = lookahead && members[first] >= 32;
+            let regular = regular_cohorts && (32..256).contains(&members[first]);
+            let legacy = lookahead && members[first] >= 32 && !regular;
             units.push([
                 first as u16,
-                end as u16 | if legacy { LEGACY_UNIT } else { 0 },
+                end as u16 | if legacy { LEGACY_UNIT } else { 0 }
+                    | if regular { REGULAR_UNIT } else { 0 },
             ]);
             let mut next_slot = 0;
             for &host in &streamed[first..end] {
@@ -119,9 +145,10 @@ impl Plan {
         Ok(Unit {
             index,
             first: first as usize,
-            end: (end & !LEGACY_UNIT) as usize,
+            end: (end & !(LEGACY_UNIT | REGULAR_UNIT)) as usize,
             bank: index % 2,
             legacy: end & LEGACY_UNIT != 0,
+            regular: end & REGULAR_UNIT != 0,
         })
     }
     fn authenticate(&self, unit: Unit) -> Result<()> {

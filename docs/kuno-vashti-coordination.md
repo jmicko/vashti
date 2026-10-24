@@ -1,6 +1,17 @@
 # Kuno and Vashti Coordination
 
-**Current handoff (2026-10-24 UTC): complete HOST blobs validated; neutral speed.**
+**Current source work (2026-10-24 UTC): regular expert cohorts composed, not validated.**
+
+Read [the complete regular-cohort source policy](kuno-prefill-regular-expert-cohorts.md).
+Distinct32..255 producers/INFO/matrices/native grammar, original two-bank owner
+lifecycle, honest subset/workgroup counters and public original-reference probes
+are composed together. Original1..31 and >=256 paths/caps preserved. No compile,
+GPU correctness or speed result yet. Next freeze and validate entire bundle,
+then both complete model chains and original CLEAN gate. No API/Vashti/install/
+release/driver/reset changes. Prior HOST result below remains latest measured.
+
+
+**Preceding validated handoff (2026-10-24 UTC): complete HOST blobs; neutral speed.**
 
 Runtime sourcee2279c48 / worker1e77aa78 passes435 full/425 feature-off AppCPU,
 18/91 runtime,8+9+10 original metadata/native,30 new counter metadata, all old

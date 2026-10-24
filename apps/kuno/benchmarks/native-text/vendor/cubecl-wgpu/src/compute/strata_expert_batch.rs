@@ -311,6 +311,9 @@ impl WgpuServer {
             receipt.quant_cohort_groups = logical.quant_cohort_groups;
             receipt.quant_cohort_launches = logical.quant_cohort_launches;
             receipt.quant_cohort_batches = logical.quant_cohort_batches;
+            receipt.regular_cohort_groups=logical.regular_cohort_groups;
+            receipt.regular_cohort_batches=logical.regular_cohort_batches;
+            receipt.regular_cohort_launches=logical.regular_cohort_launches;
             receipt.logical_phases = logical.logical_phases;
             receipt.matrix_pieces = logical.matrix_pieces;
             receipt.wide_prefixes = logical.wide_prefixes;

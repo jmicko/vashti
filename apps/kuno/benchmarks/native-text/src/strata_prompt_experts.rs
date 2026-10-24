@@ -4,6 +4,9 @@
 //! chunk/queue scheduling remains part of the complete prefill port.
 use super::*;
 use crate::{quant_matvec as q, strata_global_sources::Sources};
+#[cfg(feature="strata-regular-cohorts")]
+#[path="strata_prompt_regular_cohorts.rs"]
+pub(crate) mod regular;
 use kuno_text::model::BoundGraph;
 #[cfg(any(test, feature = "strata-prefill-miss-ring"))]
 #[path = "strata_prompt_miss_ring.rs"]
@@ -533,6 +536,9 @@ pub(crate) fn enqueue(
                     ("expert_native_cohort_groups",receipt.cohort_groups),
                     ("expert_native_cohort_launches",receipt.cohort_launches),
                     ("expert_native_cohort_batches",receipt.cohort_batches),
+                    ("expert_native_regular_cohort_groups",receipt.regular_cohort_groups),
+                    ("expert_native_regular_cohort_batches",receipt.regular_cohort_batches),
+                    ("expert_native_regular_cohort_launches",receipt.regular_cohort_launches),
                     #[cfg(feature="strata-small-quantized-matrix")]
                     ("expert_native_quant_cohort_groups",receipt.quant_cohort_groups),
                     #[cfg(feature="strata-small-quantized-matrix")]
@@ -682,7 +688,11 @@ fn enqueue_original(
         }
         #[cfg(feature = "strata-expert-cohorts")]
         if raw_banks.is_some() {
-            raw_plan=Some(raw_banks::Plan::new(&map[516..516+groups],&modes)?);
+            #[cfg(feature="strata-regular-cohorts")]
+            let plan=raw_banks::Plan::new_regular(&map[516..516+groups],&modes)?;
+            #[cfg(not(feature="strata-regular-cohorts"))]
+            let plan=raw_banks::Plan::new(&map[516..516+groups],&modes)?;
+            raw_plan=Some(plan);
             (raw,None)
         } else {
             (raw,Some(miss_ring::Ring::new(&modes)?))
@@ -715,6 +725,16 @@ fn enqueue_original(
             if map[516+group]<32 {
                 let plan=raw_plan.as_mut().unwrap();
                 cohorts::enqueue_unit(client,geometry,owners,fault,count,map,stage,&layer_sources,unit.first,plan.slots(unit)?)?;
+                client.native_strata_expert_unit_end().map_err(crate::resident_util::fault)?;
+                plan.consumed(unit)?;
+                prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
+                group=unit.end;
+                continue;
+            }
+            #[cfg(feature="strata-regular-cohorts")]
+            if unit.regular {
+                let plan=raw_plan.as_mut().unwrap();
+                regular::enqueue_unit(client,geometry,owners,fault,count,map,stage,&layer_sources,unit.first,plan.slots(unit)?)?;
                 client.native_strata_expert_unit_end().map_err(crate::resident_util::fault)?;
                 plan.consumed(unit)?;
                 prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
@@ -1120,6 +1140,8 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     .collect::<Vec<_>>();
     #[cfg(feature = "strata-expert-cohorts")]
     let original = original.into_iter().chain(cohorts::sources()).collect();
+    #[cfg(feature="strata-regular-cohorts")]
+    let original=original.into_iter().chain(regular::sources()).collect();
     original
 }
 

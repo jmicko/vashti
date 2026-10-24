@@ -2951,6 +2951,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             ]);
             #[cfg(feature = "strata-expert-cohorts")]
             let definitions = definitions.into_iter().chain(cohorts::definitions());
+            #[cfg(feature="strata-regular-cohorts")]
+            let definitions=definitions.into_iter().chain(cohorts::regular::definitions());
             for (name, definition) in definitions {
                 let mut compiler = AutoCompiler::SpirV(Default::default());
                 let mut options = WgpuCompilationOptions {
@@ -2972,6 +2974,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     return Err("matrix compiler representation".into());
                 };
                 let expected_shared = native::compiled_shared_bytes(name, layout_mask & 4 != 0);
+                #[cfg(feature="strata-regular-cohorts")]
+                let expected_shared=if name.starts_with("regular_cohort16_"){Some(1024)}else{expected_shared};
                 #[cfg(feature = "strata-expert-cohorts")]
                 let expected_shared = if name.starts_with("expert_cohort") {
                     Some(if name.contains("cohort8") { 2048 } else { 4096 })
@@ -3017,6 +3021,18 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let canonical = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&canonical)?
                     .unwrap_or(canonical);
                 let words = &canonical;
+                #[cfg(feature="strata-regular-cohorts")]
+                if name.starts_with("regular_cohort16_") {
+                    let shape=Some((16usize,true,if name.ends_with("_down"){640}else{2560}));
+                    granular_validation::validate_program(words,true,shape)?;
+                    #[cfg(test)]
+                    granular_validation::negatives(words,true,shape)?;
+                    println!("strata_regular_cohort_shader_accepted name={name} layout={layout_mask} shared_bytes={} workgroup=32 subgroup=16 original_granular_products=true",kernel.shared_size);
+                    #[cfg(test)]
+                    if let Some(dir)=std::env::var_os("KUNO_PUBLIC_REGULAR_COHORT_MODULE_DIR") {
+                        std::fs::write(std::path::PathBuf::from(dir).join(format!("{name}-layout{layout_mask}.spv")),words.iter().flat_map(|w|w.to_le_bytes()).collect::<Vec<_>>())?;
+                    }
+                }
                 if wgpu::hal::vulkan::kuno_cooperative_subgroup(words) != Some(16) {
                     return Err("matrix pipeline subgroup geometry".into());
                 }

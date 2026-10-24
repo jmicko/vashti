@@ -1,6 +1,8 @@
-# Regular expert cohorts: next coherent source plan
+# Regular expert cohorts: complete source bundle, acceptance pending
 
-NOT implemented, compiled or measured. Read the completed
+The complete regular-cohort source bundle is composed, including public
+original-reference probes and distinct native completion/counter roles. It has
+NOT yet compiled or run on a GPU. No speed result exists. Read the completed
 [HOST blob result](kuno-prefill-host-expert-blobs.md) first. Preserve the ENTIRE
 accepted HOST/granular bundle and every previous selectable variant. Target
 remains Strata CLEAN first/repeat5.5006/5.3515s with the exact current public
@@ -80,3 +82,43 @@ genuine guarded K32 carry, exact native roles/grids and counters together.
 Two subgroups still require the ORIGINAL256-F32/1024B publication scratch;
 do not falsely price512B. Occupancy and speed remain unproven. Prefer auditing
 regular-group batching first rather than another isolated small-tile edit.
+
+## Composed source policy (2026-10-24 UTC, unvalidated)
+
+Feature `strata-regular-cohorts` / builder `--regular-cohorts` requires the entire
+accepted HOST/granular/direct8/global-image/raw-lookahead/native-bulk bundle.
+Original1..31 cohort grammar remains strict. New exact regular producers,
+INFO schema, guarded matrices and native grammar admit32..255 members only;
+>=256 retains original legacy units. Original two banks/eight raw slots and
+20MiB X/5MiB H/80MiB working owners are unchanged. Eight images are75MiB and
+at most2048 packed rows, within original4096. No extra runtime buffer owner.
+
+Regular raw-bank units retain group ordering and greedily take up to8 adjacent
+eligible groups while maximum row-block count is at most twice the minimum.
+The genuine grid is rows/64 x ceil(max-members/16) x slots; individual guards
+skip inactive Y tiles. Actual physical and active-tile workgroups are counted
+separately; the plan bounds physical grid waste to2x active tile work. Original
+four-C interleaved K32 granular products and eight-member publication remain.
+Actual workgroup32/SG16/publication1024B still require compiler/resource proof.
+
+The whole source includes gather, eight-slot original GGUF dequant, GU,
+validating activation, ordered DOWN, exact six-phase scope, all original
+owners/streams, unit-end retirement, honest new subset counters and capacity
+feature label. Old producer identities do not receive new regular launch credit.
+No API/consumer/installed service change; required Vashti changes:none.
+
+Public probes are composed but UNEXECUTED:6 paired original gather/activation,
+6 original GGUF dtype/mixed HOST/GPU/all-eight-slot dequant,12 full paired
+regular-matrix cases against genuine existing per-expert granular GU/DOWN.
+Counts include32/33/63/64/65/127/128/255, eight255 groups and partial3 groups,
+with finite and nonfinite/invalid routes. Whole output/status/fault/source owners
+and all original numerical controls remain required. GU reference packing is
+scrubbed CPU memory; DOWN uses one original400MiB output owner. No additional
+GPU output or increased512MiB probe budget. New metadata tests are not GPU proof.
+
+Next freeze source, compile, run7 new plus all435 prior AppCPU controls, the
+same-source feature-off435 controls, exact new native grammar/selector controls,
+all original compiler/resource and fresh GPU numerical acceptance. Then both
+complete model chains and the unchanged original CLEAN gate. Do not claim
+Strata itself batches experts; this is our source-grounded hypothesis. Preserve
+failures and whole variants without isolated speed-based component rollbacks.

@@ -191,6 +191,7 @@ impl Sources {
             "expert_gpu_roots":gpu.roots().len(),
             "expert_host_logical_bytes":self.plan.host_logical_bytes,
             "host_expert_blob_layout":self.plan.has_host_blobs(),
+            "regular_expert_cohorts":cfg!(feature="strata-regular-cohorts"),
             "expert_host_registered_bytes":self.plan.host_registered_bytes(),
             "expert_host_plan_piece_bytes":self.plan.host_piece_bytes,
             "source_table_buffers":self.tables.len(),

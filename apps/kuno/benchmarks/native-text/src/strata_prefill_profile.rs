@@ -82,6 +82,8 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-regular-cohorts")]
+    if name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::"){return 6;}
     #[cfg(feature="strata-small-granular")]
     {if name.contains("::strata_matrix::native::granular_small::"){return 4;}if name.contains("::strata_matrix::cohorts::granular_small::"){return 6;}}
     #[cfg(feature="strata-local-prefetch")]
@@ -160,6 +162,16 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-regular-cohorts")]
+    {
+        if name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::"){return 1;}
+        match name {
+            "StrataExpertRegularCohortGuDirect8Image"|"StrataExpertRegularCohortDownDirect8Image"=>return 0,
+            "StrataExpertRegularCohortGather"=>return 2,
+            "StrataExpertRegularCohortActivate"=>return 3,
+            _=>{}
+        }
+    }
     #[cfg(feature="strata-small-granular")]
     if name.contains("::strata_matrix::native::granular_small::")||name.contains("::strata_matrix::cohorts::granular_small::"){return 1;}
     #[cfg(feature="strata-local-prefetch")]
@@ -1053,3 +1065,13 @@ mod balanced_wide32_profile_tests{
 }
 #[cfg(all(test,feature="strata-local-prefetch"))]
 pub(crate) fn local_prefetch_test_classes(name:&str)->(usize,usize){(native_class(name),matrix_family(name))}
+
+#[cfg(all(test,feature="strata-regular-cohorts"))]
+mod regular_classes {
+ #[test]
+ fn genuine_regular_cohort_programs_keep_honest_public_matrix_and_operator_classes(){
+  let name=core::any::type_name::<crate::strata_matrix::cohorts::regular::expert_regular_cohort::ExpertRegularCohort<cubecl::wgpu::WgpuRuntime>>();
+  assert_eq!(super::matrix_family(name),6);assert_eq!(super::native_class(name),1);
+  for (n,c)in [("StrataExpertRegularCohortGuDirect8Image",0),("StrataExpertRegularCohortDownDirect8Image",0),("StrataExpertRegularCohortGather",2),("StrataExpertRegularCohortActivate",3)]{assert_eq!(super::native_class(n),c);}
+ }
+}

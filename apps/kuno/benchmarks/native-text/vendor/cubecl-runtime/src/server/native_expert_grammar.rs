@@ -8,6 +8,9 @@ use cubecl_common::stream_id::StreamId;
 #[cfg(feature="kuno-expert-cohorts")]
 #[path="native_expert_cohort_grammar.rs"]
 mod cohort;
+#[cfg(feature="kuno-regular-cohorts")]
+#[path="native_expert_regular_cohort_grammar.rs"]
+mod regular_cohort;
 
 const MAX_MEMBERS: u32 = 4096;
 const MIN_WIDE_MEMBERS: u32 = if cfg!(feature = "kuno-native-expert-medium") {
@@ -85,6 +88,9 @@ pub struct NativeStrataExpertGrammarCounts {
     pub quant_cohort_groups: usize,
     pub quant_cohort_launches: usize,
     pub quant_cohort_batches: usize,
+    pub regular_cohort_groups:usize,
+    pub regular_cohort_batches:usize,
+    pub regular_cohort_launches:usize,
     pub launches: usize,
     pub logical_phases: usize,
     pub matrix_pieces: usize,
@@ -100,6 +106,8 @@ pub struct NativeStrataExpertGrammar {
     groups: usize,
     #[cfg(feature="kuno-expert-cohorts")]
     cohort:Option<cohort::Cohort>,
+    #[cfg(feature="kuno-regular-cohorts")]
+    regular_cohort:Option<regular_cohort::Cohort>,
     group: Option<Group>,
     pending: Option<Pending>,
     resident_images: Option<bool>,
@@ -461,6 +469,29 @@ impl NativeStrataExpertGrammar {
         }
         let padded_producer = cfg!(feature="kuno-padded-global") && matches!(original_name,"StrataPromptExpertGatherPad32"|"StrataPromptExpertF16SwigluPad32"|"StrataPromptExpertF16SwigluCheckGuPad32");
         let name=super::native_expert_batch::native_strata_expert_padded_identity(original_name);
+        #[cfg(feature="kuno-regular-cohorts")]
+        if self.regular_cohort.is_some() || name=="StrataExpertRegularCohortGather" {
+            if self.phase!=0 || self.pending.is_some() || self.gu_deferred || self.cohort.is_some() {
+                return Err(batch_fault("native regular cohort interrupted original group"));
+            }
+            if self.regular_cohort.is_none(){self.regular_cohort=Some(regular_cohort::Cohort::start(self.groups,args)?);}
+            let cohort=self.regular_cohort.as_mut().unwrap();
+            let done=cohort.launch(name,release,count,args)?;
+            self.counts.launches+=1;self.counts.cohort_launches+=1;
+            self.counts.regular_cohort_launches+=1;
+            if done {
+                let groups=cohort.groups();
+                self.groups+=groups;self.counts.cohort_groups+=groups;self.counts.cohort_batches+=1;
+                self.counts.regular_cohort_groups+=groups;self.counts.regular_cohort_batches+=1;
+                self.counts.logical_phases+=groups*6;self.counts.matrix_pieces+=groups*2;self.counts.gu_checks+=groups;
+                self.regular_cohort=None;
+            }
+            return Ok(());
+        }
+        // New/disabled/nested regular roles cannot fall into any legacy grammar.
+        if name.contains("::regular::") || name.starts_with("StrataExpertRegularCohort") {
+            return Err(batch_fault("native regular cohort role outside its genuine scope"));
+        }
         #[cfg(feature="kuno-expert-cohorts")]
         if self.cohort.is_some() || name=="StrataExpertCohortGather" {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred {return Err(batch_fault("native expert cohort interrupted original group"));}
@@ -679,6 +710,8 @@ impl NativeStrataExpertGrammar {
     pub fn finish(&self) -> Result<NativeStrataExpertGrammarCounts, ServerError> {
         #[cfg(feature="kuno-expert-cohorts")]
         if self.cohort.is_some(){return Err(batch_fault("native expert incomplete cohort"));}
+        #[cfg(feature="kuno-regular-cohorts")]
+        if self.regular_cohort.is_some(){return Err(batch_fault("native expert incomplete regular cohort"));}
         if self.phase != 0
             || self.pending.is_some()
             || self.gu_deferred
