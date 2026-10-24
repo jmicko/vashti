@@ -1,6 +1,43 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): padded bundle full1305 accepted; next subgroup geometry.**
+**Active Kuno handoff (2026-10-24 UTC): balanced subgroup bundle full1425 accepted.**
+
+Source `ff74ce03` (complete bundle79b19229), worker `7ac74538`:404/401 AppCPU,
+18/73 runtime,8+9 metadata,10 native, all1425 GPU cases and both original18-script
+whole-model/recovery chains pass. All1305 preceding GPU controls retained.
+Actual213-program ISA export and old QSA hashes pass; all22 small macro/cohort
+programs are zero-spill, including six new programs with actualWG128/256/64 and
+scratch4096/8192/2048B. Normal first/repeat11.217620306/9.427012698s; diagnostic
+11.376132225/9.530366557s. Normal repeated improves7.104% over preceding10.14796s;
+sampled macro25.876->15.822ms/cohort19.911->14.076ms, copy29.174/dequant19.257ms
+unchanged. Same73-token warm and4245-token long fixtures,4 outputs; no sustained
+decode claim. Still slower than prior local-route/best CLEAN/Strata. No new CLEAN.
+
+Read [full acceptance, exact hashes and failed-attempt lineage](kuno-prefill-balanced-global.md).
+V4 numeric900s timeout recovered on an independent follow-up. V5 numeric1800s
+run passes actual GPU controls/recovery, then old model counter law rejects the
+new cohort counter family. V6 fixes the validator's distinct producer partition,
+retains all original laws/18 scripts and explicitly reuses the SAME source/worker
+V5 numeric receipt/compiler capture by exact hashes; both model modes are freshly
+run. Do not claim a second numeric GPU execution or relabel failed V4/V5 units.
+All original failed artifacts remain. No Rust/worker change during V5/V6.
+
+V6 complete unit exits0;09:35:59UTC Intel50688000B,NVIDIA compute0/desktop643MiB,
+all5 faults0, HTTP200, admission inactive/unpaused/no recovery/waiting0/completed236.
+Independent09:39:35UTC confirms recovery (desktop665MiB). No live GPU worker.
+Goal controller re-read ACTIVE/UNMET; older chat summary saying paused was stale.
+Manual/goal work may continue with current GPU permission. Bounded refresh
+PID2814185 remains within its06:20..10:20UTC four-hour deadline; verify live sudo
+and process identity before extending/replacing it. Worktree/branch unchanged,
+canonical/Vashti/API/install/release/driver/boot untouched. No frontend handoff.
+
+Next source lead is an explicit two-bank chronological K16 operand pipeline for
+BOTH new macro and cohort paths, composing real preloads, bounds, existing padded
+producers/geometry/publication/native authority together. Not implemented or a
+speed claim. Preserve complete variants and all prior controls; do not abandon
+coupled pieces from isolated timings. Copy/dequant remain measured major costs.
+
+**Preceding padded-global checkpoint:**
 
 Latest source `1d678407` / worker `d5ab4b7e` passes401/398 AppCPU,18/69
 runtime,8+9 metadata,10 native, all1305 GPU controls and both original18-script
