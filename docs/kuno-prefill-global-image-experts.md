@@ -95,3 +95,78 @@ original small/direct tails, matching the production path, and the existing
 independent F64/full-owner oracle must recognize those genuine complete8 raw
 fragments. Other oracle families and every tolerance remain unchanged. No GPU
 or timing result exists for this new variant yet; full rebuild remains required.
+
+## Complete validation and measured result (2026-10-23)
+
+Frozen source7f7a127111c1f3790e382f7ebc304b68c4dd79a7; worker
+b65ff90b60a55f926e4fe7253d0459ed414c483bdf726275c6a9a542b451015b.
+366 AppCPU,18/51 runtime,8+9 metadata,10 original native controls and all
+original compiler populations pass, plus16 genuine new shader/CFG layouts.
+All792 GPU controls pass their numerical/full-owner/source/status/fault checks:
+original768 retained plus24 genuine old/new expert cases, including real128-half
+weight prefix, noncontiguous routes,383-member direct tails and poisoned values.
+Operator cases inspect raw/pending publication; actual validating activation and
+ordered finite/inverse closure are exercised by the original separate consumer
+controls and both complete model chains, not by an invented oracle consumer.
+
+Both original18-script model chains pass. Image production and matching image
+matrix consumers are selected in all three requests; actual production quant
+launches/compact bytes are0 while quantized numerical/compiler controls remain
+compiled and executed independently. New global GU/DOWN prefix counts match the
+actual original prefix population. Original rolling/reencoding/reuse/capacity,
+finite-consumer and erasure checks pass. All8 original wide programs remain
+zero-spill and both QSA ISA hashes remain unchanged.175 total ISA programs.
+
+Diagnostic warmup/first/repeated3.737803327/11.797574348/9.740969385s;
+normal3.774674971/11.823474772/9.665937322s. The short first warmup includes cold
+shader work, so its reduction is not a measured warm small-prompt improvement.
+The repeated complete prompt is essentially unchanged from preceding9.737173969s;
+no parity or meaningful gain, no CLEAN run. Best earlier complete FP16 control
+normal8.854793s and latest CLEAN8.394039699s remain faster. Strata clean repeated
+reference5.3515s remains the goal; it is ACTIVE and UNMET.
+
+Confirmed offset: fixed public layer24/4096 matrix cohort32.921752->13.364053ms,
+but genuine dequant7.961387->19.242787ms (the expected real FP16 image cost).
+New global wide GU11.019530ms versus original shared5.886924ms; DOWN4.876562ms
+versus2.686351ms. Actual global GU128GRF has7:96 spills:fills/462 sends and
+DOWN37:204/527 sends. These are substantial new register-pressure costs, not
+proof that global operands are inherently slower. Whole repeated diagnostic
+expert5.980507601s and attention2.481291469s; normal5.904979469/2.483092488s.
+Per-layer timestamps are samples and must not be multiplied into a claimed
+whole-prompt speedup. Keep this complete variant and original variants.
+
+### Explicit audit limitation and preserved failure
+
+Live unitcc6902ce3fb24d78a5a038f57d1d744b exits1 AFTER all original operator,
+model and physical-recovery stages. Its outer audit retained one stale quant
+expectation: sampled compact_copy must be nonzero. This image path correctly
+has compact_copy=[0,0] and genuine dequant/matrix work. Original failed unit,
+wrapper/log/freeze are preserved in development global-image-experts-compact-
+profile-rejection-20261023; runtime13m50.580s, zero swap,31.0GiB peak. Never
+report this live unit as exit0 or silently rerun hardware to hide the error.
+
+Separate read-only auditbd8e5113255e4ef5abe4a436fee3aa94 exits0,228ms. It uses
+the SAME completed immutable operator/profile/normal receipts and original
+source/worker hashes; requires zero compact class, genuine profiled dequant,
+real image/quant partition and all original guards. Its AST contains no
+subprocess.run/Popen and cannot launch a worker/GPU run. Only completed-receipt
+existence and the explicit class expectation change, with original49/new2
+runtime-name and original363 CPU-prefix checks independently pinned. Both
+original18-script chains stay preserved and checked. A separate CPU-only helper
+check uses6 real prior public profiles and rejects24 corrupted counters.
+The accepted792 proof explicitly records the live-unit failure and no hardware
+reexecution for the metadata correction.
+
+Public evidence under development:
+- global-image-experts-root-{build-receipt,acceptance-freeze}-20261023.json
+- strata-parity-global-image-experts-20261023-expert-cohorts-public-summary.json
+- global-image-experts-{profile,normal}-safe-phases-20261023.json
+- global-image-experts-complete-isa-export-20261023.json
+- global-image-experts-completed-audit-{provenance-20261023.json,20261023.log}
+- global-image-experts-final-state-20261023.json
+
+Independent23:57:16UTC recovery: Intel50,688,000B,NVIDIA compute0/display593MiB,
+all5 classified kernel faults0, HTTP200 Kuno/Ollama/Vashti, normal admission/
+completed160. Installed binaries/settings unchanged. Canonical Vashti and
+inherited pycache preserved. No installation/release/reset/driver change.
+Next complete proposal: [N64 register footprint](kuno-prefill-global-n64.md).

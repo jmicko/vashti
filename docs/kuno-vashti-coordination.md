@@ -1,31 +1,40 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-23): direct-global accepted, expert-image composition next.**
+**Active Kuno handoff (2026-10-23): full image/global expert variant accepted; register pressure confirmed.**
 
-Read [accepted direct-global evidence](kuno-prefill-global-register.md) and
-[next coupled expert contract](kuno-prefill-global-image-experts.md).
-Frozen9638aeb8/workerfa039774 passes363 CPU,18/49 runtime,8+9 metadata,
-10 original native controls,24 new shader layouts and all768 GPU controls,
-both original full-model proof chains and physical recovery. Diagnostic
-11.783730901/9.814627812s; normal11.837493501/9.737173969s. Three new programs
-128GRFs with3:7/1:4/3:7 spills:fills; original8 wide zero-spill/QSA unchanged.
-No substantial full-request gain. Goal ACTIVE/UNMET, clean target5.3515s,
-latest Kuno CLEAN8.394039699s. Keep all variants; no speed-driven rollback.
+Read [complete result and preserved audit failure](kuno-prefill-global-image-experts.md)
+and [next coherent N64 contract](kuno-prefill-global-n64.md).
+Frozen7f7a1271 / workerb65ff90b passes366 CPU,18/51 runtime,8+9 metadata,
+10 original native controls,16 new compiler layouts and all792 GPU cases,
+retaining768. Both original18-script whole-model/recovery chains pass, real image
+cohorts/global prefixes selected, production quant/compact counts0, original
+capacity/reuse/rolling/erasure/QSA hashes/8 zero-spill wide controls intact.
+Diagnostic first/repeat11.797574348/9.740969385s; normal11.823474772/9.665937322s.
+Essentially unchanged, no CLEAN or parity. Best CLEAN8.394039699, target5.3515.
+Goal ACTIVE/UNMET. Keep complete variants; no isolated speed-driven rollback.
 
-Expert phase still about6s; next complete variant couples original FP16-image
-cohort producer/consumer with direct-global register-bank large-expert products,
-original GU finite activation/ordered DOWN finisher, original tails/owners and
-all admission/capacity/erasure proofs. Keep quantized controls and source. A
-counter-only GR-prefix credit correction and complete new expert source are
-composed, not yet built; they are not the frozen GPU-tested worker. Planned
-366 CPU,18/51 runtime,8+9 metadata,16 new layout proofs and792 GPU cases. No API/UI/install/release changes.
+Actual offset measured: cohort matrix32.921752->13.364053ms, but dequant
+7.961387->19.242787ms and new wide GU11.019530/DOWN4.876562ms versus old shared
+5.886924/2.686351ms. Native new GU7:96 and DOWN37:204 spills:fills at128GRF.
+Next compose M128/N64 two-C global banks for dense AND expert products, matching
+new launch grids/publication/native SG recognition/closed grammar/counters and
+all numerical/compiler/full-model/recovery proofs. Original4C programs remain.
+This is a proposal, no N64 source exists yet. Do not assume its speed benefit.
 
-Profiler column clarification: Strata's256 means register allocation capacity
-per thread, not actual live-register use. Its measured no-spill/mostlyzero-SLM
-properties remain valid. Full details/rejections preserved in linked docs.
-Independent23:16:51UTC: Intel50,688,000B,NVIDIA compute0, all5 faults0, HTTP200,
-normal admission/completed157. Sudo bounded through01:47UTC Oct24. Canonical
-Vashti/inherited pycache preserved. GPU resources are authorized and recovered.
+Live GPU unitcc6902ce3fb24d78a5a038f57d1d744b exits1 only AFTER both full chains,
+due to a stale quant compact_copy>0 audit assertion. Preserved failed unit/log/
+wrapper;13m50.580s, zero swap,31GiBpeak. Separate read-only completed-receipt
+unitbd8e5113255e4ef5abe4a436fee3aa94 exits0, accepting SAME immutable receipts,
+all792 controls and real image/zero-compact law; no worker/GPU relaunch in AST.
+Proof explicitly records live-unit failure. Never relabel original unit exit0.
+Earlier preflight population failure and interrupted CPU/oracle checkpoints kept.
+
+Independent23:57:16UTC: Intel50,688,000B,NVIDIA compute0/display593MiB,
+all5 faults0, HTTP200/admission normal/completed160. GPUs physically recovered.
+Bounded sudo refresh through01:47UTC Oct24 remains alive. Canonical Vashti and
+inherited pycache preserved. No API/config/UI/installation/release/reset/driver
+change. Artifacts global-image-experts-* and full792 public summary under
+/media/jmicko/faststore/kuno-development. Backend-only; no Vashti changes needed.
 
 ## Previous checkpoint
 
