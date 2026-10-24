@@ -35,3 +35,15 @@ role/grid/owner/phase/forgery controls. All88 new generated matrix layouts get
 real operand-origin, current-iteration and publication/negative audits. Fresh
 1747 GPU controls retain1534 and add93 large +116 small +4 multi-slot pairs.
 Both original full-model/compiler/recovery chains and original CLEAN gate remain.
+
+First sourcea8e4e66e compiles. All40 new large module layouts pass, then the
+small validator stops at the first cohort-GU module: its stride is a constant
+expression in vec4-half pointer units, not a scalar INFO load. All preceding
+macro modules passed. Preserve this failed CPU artifact. The forward validator
+requires the exact role K/4 (2560/4 for GU,640/4 for DOWN), proves the actual
+StorageBuffer pointer is vec4 of16-bit floats, and evaluates only the supported
+constant/shift/copy expression. Wrong stride and vector-width mutations are
+rejected; dynamic INFO validation remains for other paths. No kernel/math change.
+A small CPU harness includes this actual production validator with only visibility
+and test cfg adjusted; all45 generated modules available from the stopped first
+run pass with their negative mutations. Full421/all88 acceptance still pending.

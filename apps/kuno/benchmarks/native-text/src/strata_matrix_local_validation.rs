@@ -2,11 +2,11 @@ use super::*;
 pub(crate) fn validate_program(
     words: &[u32],
     expert: bool,
-    small: Option<(usize, bool)>,
+    small: Option<(usize, bool, u32)>,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     use std::collections::{BTreeMap, BTreeSet};
     let raw = if small.is_some() { 4 } else { 8 };
-    let wg_expected = small.map_or(256, |(tile, _)| tile * 4) as u32;
+    let wg_expected = small.map_or(256, |(tile, _, _)| tile * 4) as u32;
     let (mut parents, mut classes, mut bindings, mut defs) = (
         BTreeMap::new(),
         BTreeMap::new(),
@@ -17,6 +17,13 @@ pub(crate) fn validate_program(
     let (mut loads, mut stores, mut products) = (Vec::new(), Vec::new(), Vec::new());
     let mut matrix_uses = BTreeMap::new();
     let mut operand_roles = Vec::new();
+    let mut value_ops = BTreeMap::new();
+    let (mut float_widths, mut vectors, mut pointer_types, mut value_types) = (
+        BTreeMap::new(),
+        BTreeMap::new(),
+        BTreeMap::new(),
+        BTreeMap::new(),
+    );
     let mut store_layouts = Vec::new();
     let (mut at, mut block, mut wg, mut barriers, mut atomics) = (5, None, false, 0, 0);
     while at < words.len() {
@@ -25,7 +32,19 @@ pub(crate) fn validate_program(
         if n == 0 || at + n > words.len() {
             return Err("global wide32 opcode extent".into());
         }
+        if matches!(op, 65 | 66 | 67 | 83 | 124) {
+            value_types.insert(words[at + 2], words[at + 1]);
+        }
         match op {
+            22 if n == 3 => {
+                float_widths.insert(words[at + 1], words[at + 2]);
+            }
+            23 if n == 4 => {
+                vectors.insert(words[at + 1], (words[at + 2], words[at + 3]));
+            }
+            32 if n == 4 => {
+                pointer_types.insert(words[at + 1], (words[at + 2], words[at + 3]));
+            }
             16 if n == 6 && words[at + 2] == 17 => {
                 wg = words[at + 3..at + 6] == [wg_expected, 1, 1]
             }
@@ -70,6 +89,9 @@ pub(crate) fn validate_program(
             224 => barriers += 1,
             227..=242 => atomics += 1,
             _ => {}
+        }
+        if matches!(op, 43 | 83 | 113 | 114 | 124 | 194) {
+            value_ops.insert(words[at + 2], op);
         }
         // Only value-producing instructions relevant to authentic dynamic strides.
         if matches!(
@@ -166,6 +188,28 @@ pub(crate) fn validate_program(
     {
         return Err("transpose actual column-major output/fallback stores".into());
     }
+    fn constant(
+        id: u32,
+        defs: &BTreeMap<u32, Vec<u32>>,
+        ops: &BTreeMap<u32, u32>,
+        depth: usize,
+    ) -> Option<u32> {
+        if depth > 16 {
+            return None;
+        }
+        let d = defs.get(&id)?;
+        match ops.get(&id)? {
+            43 if d.len() == 1 => Some(d[0]),
+            83 | 113 | 114 | 124 if d.len() == 1 => constant(d[0], defs, ops, depth + 1),
+            194 if d.len() == 2 => constant(d[0], defs, ops, depth + 1)?.checked_shr(constant(
+                d[1],
+                defs,
+                ops,
+                depth + 1,
+            )?),
+            _ => None,
+        }
+    }
     let mut input_loads = 0;
     let mut weight_loads = 0;
     for &(_, _, ptr, stride) in &loads {
@@ -196,14 +240,19 @@ pub(crate) fn validate_program(
                 );
             }
         }
-        if !uniform
-            && !(small.is_some_and(|(_, cohort)| cohort)
-                && defs
-                    .get(&stride)
-                    .and_then(|d| d.first())
-                    .is_some_and(|v| matches!(*v, 640 | 2560)))
-        {
-            return Err("global wide32 stride is not authentic dynamic scalar INFO".into());
+        let constant_cohort_stride = small.is_some_and(|(_, cohort, columns)| {
+            if !cohort || constant(stride, &defs, &value_ops, 0) != Some(columns / 4) {
+                return false;
+            }
+            value_types
+                .get(&ptr)
+                .and_then(|ty| pointer_types.get(ty))
+                .filter(|(class, _)| *class == 12)
+                .and_then(|(_, ty)| vectors.get(ty))
+                .is_some_and(|(scalar, width)| *width == 4 && float_widths.get(scalar) == Some(&16))
+        });
+        if !uniform && !constant_cohort_stride {
+            return Err("local prefetch authentic dynamic INFO or exact vec4 cohort stride".into());
         }
     }
     if input_loads
@@ -662,7 +711,7 @@ pub(crate) fn validate_program(
 pub(crate) fn negatives(
     words: &[u32],
     expert: bool,
-    small: Option<(usize, bool)>,
+    small: Option<(usize, bool, u32)>,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut mutations = Vec::new();
     let mut at = 5;
@@ -697,6 +746,30 @@ pub(crate) fn negatives(
             break;
         }
         at += n;
+    }
+    if small.is_some_and(|(_, cohort, _)| cohort) {
+        let mut at = 5;
+        let mut floats = std::collections::BTreeSet::new();
+        let mut actual = None;
+        while at < words.len() {
+            let n = (words[at] >> 16) as usize;
+            let op = words[at] & 65535;
+            if op == 22 && n == 3 && words[at + 2] == 16 {
+                floats.insert(words[at + 1]);
+            }
+            if op == 23 && n == 4 && words[at + 3] == 4 && floats.contains(&words[at + 2]) {
+                actual = Some(at + 3);
+            }
+            if op == 4457 {
+                mutations.push((at + 5, zero.ok_or("local prefetch actual zero stride")?));
+                break;
+            }
+            at += n;
+        }
+        mutations.push((
+            actual.ok_or("local prefetch actual vec4 half pointer unit")?,
+            3,
+        ));
     }
     for (i, v) in mutations {
         let mut bad = words.to_vec();

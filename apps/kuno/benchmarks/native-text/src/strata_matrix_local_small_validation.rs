@@ -65,10 +65,22 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             crate::strata_matrix::local_validation::validate_program(
                 &words,
                 true,
-                Some((tile, cohort)),
+                Some((
+                    tile,
+                    cohort,
+                    if name.ends_with("_down") { 640 } else { 2560 },
+                )),
             )?;
             #[cfg(test)]
-            crate::strata_matrix::local_validation::negatives(&words, true, Some((tile, cohort)))?;
+            crate::strata_matrix::local_validation::negatives(
+                &words,
+                true,
+                Some((
+                    tile,
+                    cohort,
+                    if name.ends_with("_down") { 640 } else { 2560 },
+                )),
+            )?;
             let mut cmd = std::process::Command::new("spirv-val");
             cmd.args(["--target-env", "vulkan1.3"]);
             if mask & 1 != 0 {
