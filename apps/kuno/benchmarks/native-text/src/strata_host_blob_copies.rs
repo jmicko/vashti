@@ -57,7 +57,9 @@ mod tests {
             PublicExternalBudget {
                 backing_bytes: 4096,
                 buffers: 3,
-                metadata_bytes: 65536,
+                // The original registry reserves its bounded kernel-ID masks
+                // even for this three-registration metadata-only fixture.
+                metadata_bytes: cubecl_runtime::public_external::MAX_METADATA_BYTES,
             },
             stream,
         )
