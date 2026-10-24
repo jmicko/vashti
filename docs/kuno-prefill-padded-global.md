@@ -1,5 +1,54 @@
 # Authenticated padded medium inputs and pure-global matrix products
 
+## Completed acceptance (2026-10-24 UTC)
+
+Source `1d678407b298f33bdbd00043b2d875606515cd45`, worker
+`d5ab4b7e2e3871e006bb20c5186d6ce192c6b51691d56884d620cc18e53ab500`:
+401/398 AppCPU,18/69 runtime,8+9 metadata,10 native, all1305 GPU controls
+and both original18-script full-model/recovery chains pass. All1223 preceding
+GPU controls remain. New32 macro layouts plus16 retained cohort layouts pass
+actual SPIR-V/CFG/provenance/negative validation. Actual publication scratch
+is1024/2048B for the new macro32/64, with no input stage. All12 compiled old/
+new macro programs have zero spills/fills; the complete207-program ISA export
+and original two QSA hashes are verified. Actual new producer counters equal
+the full-macro semantic counters in both full-model modes.
+
+Normal warm/first/repeated:4.741365704/12.924652607/10.147959844s;
+diagnostic4.721734699/12.925523716/10.252907898s, same4245-token fixture.
+Normal/diagnostic load81.202777476/80.493126585s. This is a modest gain from
+single-K normal10.519329404s, but does not beat local-route9.360428477s,
+best CLEAN8.394039699s, or Strata CLEAN5.3515s. No new CLEAN triggered.
+Keep all complete variants; no isolated rollback or installation selection.
+Diagnostic macro236 calls34.292184->25.875936ms, cohort278 calls19.910562ms
+(essentially unchanged). Other sampled families are unchanged. Intervals may
+overlap; do not sum them as wall time. Next investigate a coupled smaller
+per-subgroup output cell and more subgroups for BOTH macro/cohort products.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`padded-global-app-cpu-v1-20261024`, `padded-global-off-app-cpu-v1-20261024`,
+`padded-global-runtime-cpu-v1-safe-20261024.json`, original root build receipt/
+freeze, `padded-global-v3-preflight-safe-20261024.json`, V3 acceptance freeze,
+`strata-parity-padded-global-v3-20261024-expert-cohorts-public-summary.json`,
+`padded-global-v3-{profile,normal}-safe-phases-20261024.json`,
+`padded-global-v3-complete-isa-export-20261024.json`, complete driver log and
+`padded-global-v3-final-state-20261024.json`. V3 exits0. All failed artifacts
+remain: first wrapper matched the suffix of401-summary as another1-test result;
+V2 corrected this but retained three obsolete runtime-difference counts. Exact
+V3 read-only preflight validates all prerequisites before GPU launch. Its first
+shell attempt correctly failed the swap/core protection check; protected audit
+then passed. No CPU compilation/test rerun for the corrected V3 acceptance.
+
+07:50:59UTC recovery: Intel50,688,000B, NVIDIA compute0/desktop656MiB, all
+five kernel faults0, all three services HTTP200, admission inactive/unpaused/
+no recovery/waiting0/completed230. No installed service, API, Vashti, reset,
+driver or reboot changes. Goal remains paused in controller and unmet; user
+authorized continued manual work. Bounded refresher remains within its4h limit.
+
+Read-only reference recheck: existing matched benchmark uses4096+148 chunks,
+identical to Kuno; this was already recorded in the quant-producer note.
+Existing Xe2/128-GRF versus Xe3/256-GRF research also remains unchanged.
+Do not spend another benchmark or driver update on either assumption.
+
 Internal candidate after completed single-K source a9d31cc7. The user returned
 GPU access and authorized continued speed work. No public API, Vashti, installed
 configuration, driver or reboot change. Preserve every prior complete variant.

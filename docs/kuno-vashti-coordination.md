@@ -1,6 +1,29 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): single-K complete; next padded producer/consumer bundle.**
+**Active Kuno handoff (2026-10-24 UTC): padded bundle full1305 accepted; next subgroup geometry.**
+
+Latest source `1d678407` / worker `d5ab4b7e` passes401/398 AppCPU,18/69
+runtime,8+9 metadata,10 native, all1305 GPU controls and both original18-script
+model/recovery chains. New padded producers and pure-global consumers both
+execute; exact native authority and complete input extents are required. All
+preceding1223 GPU controls retained;207-program ISA export, old QSA hashes and
+zero-spill old/new macros pass. Normal first/repeated12.924652607/10.147959844s,
+diagnostic12.925523716/10.252907898s: modest improvement from single-K10.5193s,
+still behind prior local-route/best CLEAN/Strata. No new CLEAN or installation.
+Macro sample34.292->25.876ms, cohort19.911ms unchanged. Keep complete variants.
+Next compose smaller per-subgroup output cells/more independent subgroups for
+both macro and cohort, retaining authenticated padding and original publication.
+
+Read [full1305 result and exact failed/accepted artifact lineage](kuno-prefill-padded-global.md).
+V3 protected driver exits0; all failed wrapper/preflight artifacts preserved,
+both actual CPU binaries and worker reused without recompilation for V3.
+07:50:59UTC Intel50,688,000B, NVIDIA compute0/desktop656MiB, faults0, HTTP200,
+admission inactive/unpaused/no recovery/waiting0. No GPU job remains. User
+authorized continued work; controller remains paused/unmet. Source isolation,
+bounded sudo refresh and canonical/Vashti/API/install boundaries unchanged.
+Prior snapshots below are historical.
+
+**Preceding single-K checkpoint:**
 
 Latest tested source `a9d31cc7` / worker `67b1fc84`: both same-source398 CPU
 variants,18/67 runtime,8+9 metadata,10 native, all1223 GPU controls,203-program
