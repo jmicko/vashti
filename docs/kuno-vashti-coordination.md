@@ -1,6 +1,53 @@
 # Kuno and Vashti Coordination
 
-**Current handoff (2026-10-24 UTC): granular/interleaved small policy accepted.**
+**Current handoff (2026-10-24 UTC): complete HOST blobs validated; neutral speed.**
+
+Runtime sourcee2279c48 / worker1e77aa78 passes435 full/425 feature-off AppCPU,
+18/91 runtime,8+9+10 original metadata/native,30 new counter metadata, all old
+shader/resource controls and fresh ALL1987 GPU math controls. Both complete
+original18-script model/compiler/counter/owner/erasure/recovery chains pass.
+No numerical reuse: unequal exported SPIRV sets were not proven equivalent.
+Fresh240 compiler captures; six genuine granular programs zero-spill, both
+original QSA ISA hashes unchanged. Other compiler chunks need not be identical.
+[Exact results, limitations, failures and artifacts](kuno-prefill-host-expert-blobs.md).
+
+Real cold public source audit checks EVERY25.8780928GB HOST expert byte against
+original GGUF,12593 experts/350 scoped CPU maps,435 actual raw-bank boundary
+copies and2610 negatives.907084800 payload bytes compare; both full raw roots
+zero-audited, checked close/CLOSED and physical recovery pass. No extra roots.
+Physical adaptive rebase NOT tested. Original paths/aligned inventory retained.
+Same11983 resident pairs/24.4142336GB GPU and26.215808GB total HOST bytes.
+HOST roots288->234; repeated submitted copy ranges39873->13291, same13291
+misses/27.345664GB. Full blob source/loader/CPU-map/rebase/shadow/owner/copy
+variant composed together; keep EVERY old variant and the complete new one.
+
+Normal first/repeat10.880471877/8.852502616s; sampled10.963030043/8.998811837s.
+Normal repeat0.18% shorter than prior8.868221228s, sampled longer: single runs,
+no variance control or speed win. Original normal trigger8.854793s retained;
+ONE original CLEAN45/4245/4245 passes, profiles empty, first/repeat
+12.766184520/8.427964917s versus prior11.817666824/8.323282816s. Strata
+5.5006/5.3515s remains unmet. No favorable retry/threshold/precision change.
+Normal repeated experts5.225996740s/attention2.420706493s. Sample copy28.420ms,
+dequant17.731ms, macro19.272ms/cohort7.050ms; do not sum/scale into normal wall.
+
+Next READ and compose [regular expert cohorts](kuno-prefill-regular-expert-cohorts.md)
+as a full producer/consumer/INFO/native-owner/counter policy BEFORE timing.
+Actual cohort code currently limits groups to1..31; regular32..255 groups use
+individual GEMMs. Existing packed row4096 /8-slot /20MiB X /5MiB H /75MiB image
+bounds suggest a batching lead (8x padded256=2048), but every actual view/type/
+stride/lifetime must be proved. Never just raise the original32 boundary or
+expand existing grammar. Group>=256 and old tile8 stay. Two-C smaller cells
+are a secondary hypothesis. Do not claim oneMKL's opaque tile is known, or
+that Kuno lacks its already genuine dedicated transfer queue.
+
+Full supervisor exits0, no worker remains. Independent20:27:19UTC:
+Intel42278912B,NVIDIA compute0/desktop621MiB, five fault classes0, all3HTTP200,
+admission inactive/unpaused/no recovery/waiting0/completed269. Same boot/kernel.
+Goal ACTIVE/UNMET. Refresher3184527,parent3556, bounded to20:55:17UTC; verify
+identity/cache before reuse. No API/Vashti/canonical/install/release/driver/
+reset/boot changes. Inherited text/__pycache__ preserved.
+
+**Preceding handoff (2026-10-24 UTC): granular/interleaved small policy accepted.**
 
 Source2391584c / worker1c708939 passes425 full/422 feature-off AppCPU,18/91
 runtime,8+9+10 original metadata/native,24 new counter controls,all48 actual new

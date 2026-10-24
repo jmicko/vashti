@@ -1,10 +1,83 @@
 # Contiguous HOST expert blobs
 
-Coherent source candidate after complete granular acceptance source2391584c.
-Implemented for CPU/compiler review; NOT yet compiled, physically validated or measured. Keep the full accepted granular/interleaved
+Complete validated source candidate after granular acceptance source2391584c.
+Frozen sourcee2279c48 / worker1e77aa78 passes fresh source, numerical and full
+model/recovery checks below. No measured prompt-processing gain. Keep the full accepted granular/interleaved
 candidate and every previous variant. Target remains Strata clean first/repeat
 5.5006/5.3515s, same model/context/public fixture. No API, Vashti, install,
 release, driver or reset change.
+
+## Completed acceptance, 2026-10-24 UTC
+
+Runtime source `e2279c48cdd87cd66d8942d0b484e151cd09975a`, worker SHA256
+`1e77aa78662be507f9b079e00243d688f5ecc3b3bbcf78f935ba10fdcc1ed4a5`.
+Full variant/legacy constructors remain selectable. Nothing installed or released.
+
+- All435 selected AppCPU controls pass: previous425 plus ten new controls.
+  Same-source feature-off425 also pass. Original18/91 runtime,8+9 selector,
+  ten native metadata and30 new synthetic counter controls pass. Actual old
+  shader/resource controls and all48 granular layouts pass.
+- Fresh ALL1987 GPU math controls pass, with BOTH complete original18-script
+  model/compiler/counter/owner/erasure/recovery chains. No numerical receipt
+  reuse. The unused reuse prototype was rejected before execution: exported
+  SPIRV sets were not byte-identical, and equivalence was not established.
+  Keep the old receipts and failed/prototype artifacts; do not relabel them.
+- Fresh compiler capture has240 programs, six genuine granular programs with
+  zero spills/fills. Both QSA reference/optimized ISA hashes remain exact.
+  Do not claim all old/small compiler chunks are byte-identical.
+- Real cold public Session audit compares EVERY25878092800 HOST expert byte
+  with original GGUF, covering12593 experts through350 actual scoped CPU maps.
+  Pinned-model logical padding is zero. All435 real registered-HOST to original
+  raw-bank boundary cases pass, including907084800 payload bytes and2610
+  rejected view/stream/owner/role-size/cell/extent cases. Both whole raw roots
+  are restored and all67108864 bytes zero-checked;1403217408 transient I/O bytes
+  are zero-audited. Checked Session.close, CLOSED frame and physical recovery
+  pass. No extra GPU roots. Physical adaptive rebase was NOT performed.
+
+Actual source quotes remain11983 resident experts/24414233600 GPU bytes and
+25878092800 HOST expert bytes;26215808000 HOST bytes including embedding.
+Registered HOST roots288->234; all original limits/grants remain. Repeated
+fixture still has13291 streamed groups and27345664000 transferred bytes.
+Submitted HOST copy ranges39873->13291, with26582 saved ranges and13291 genuine
+whole-blob groups. These are submitted ranges, not claimed hardware DMA counts.
+
+| Scope | Warm prompt | First4245 | Repeated4245 | Initial load |
+| --- | ---: | ---: | ---: | ---: |
+| Normal host schedule | 3.791275980s/73 tokens | 10.880471877s | 8.852502616s | 78.715295570s |
+| Sampled | 3.812114518s/73 tokens | 10.963030043s | 8.998811837s | 80.304535593s |
+| Original CLEAN | 6.552246114s/45 tokens | 12.766184520s | 8.427964917s | 76.999806388s |
+
+All requests produce four checked output tokens; no sustained decode claim.
+These are individual observations, without variance control or disk-cold load
+control. Normal repeat is0.18% shorter than previous8.868221228s; sampled repeat
+is longer. CLEAN12.766184520/8.427964917s is longer than preceding complete
+branch CLEAN11.817666824/8.323282816s. No speed win or parity. Strata CLEAN
+5.5006/5.3515s remains unmet. The original normal trigger8.854793s was retained;
+8.852502616s triggered ONE original CLEAN, not a favorable retry.
+
+New normal repeated expert/attention intervals5.225996740/2.420706493s. Sample
+layer24/main4096: copy28.419784ms, dequant17.730710ms, macro19.271555ms,
+cohort7.049892ms, wideGU8.025676ms/wideDOWN3.354319ms. Sample intervals cannot
+be summed/scaled into normal wall time. Next audit
+[regular expert cohorts](kuno-prefill-regular-expert-cohorts.md), composing the
+whole producer/consumer/native-grammar/counter pipeline before timing.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`host-blobs-root-build-receipt-20261024.json`,
+`host-blobs-real-bytes-safe-20261024.json`,
+`host-blobs-v1-{acceptance-freeze,complete-isa-export,normal-safe-phases,profile-safe-phases,original-clean-safe,final-state}-20261024.json`,
+`host-blobs-independent-final-state-20261024.json`, and protected
+`strata-parity-host-blobs-v1-20261024-{host-source,operators,profile,normal,clean}`.
+Full supervisor `kuno-host-blobs-complete-v1-20261024` exits0. Final independent
+state is recorded separately; all five fault classes zero, HTTP200 on all three
+services, no recovery latch/queue/pause, Intel42278912B and NVIDIA compute0.
+
+Preserved initial failures: source5770d07d did not forward the public diagnostic
+selector into serve and had an untyped test bitmask; d1637f2a fixes forwarding,
+3875ed8d completes bitmask typing. Its copy fixture then exceeded its own64KiB
+registry metadata quote. e2279c48 correctly charges the original bounded1MiB
+metadata cap in the test fixture; no production limit changed. Full AppCPUv4/
+offv1 and worker/recovery receipts bind the final e2279c48 source.
 
 ## Confirmed difference and motivation
 
