@@ -466,7 +466,8 @@ fn program(
             }
         }
     }
-    if pure != 1 || partial != if cohort { 0 } else { 1 } {
+    let expected_pure = usize::from(cohort || !cfg!(feature = "strata-single-k-walk"));
+    if pure != expected_pure || partial != if cohort { 0 } else { 1 } {
         return Err("full walk genuine complete and masked product paths".into());
     }
 

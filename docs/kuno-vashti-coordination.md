@@ -1,6 +1,23 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): full1223 accepted; paused for user GPU use.**
+**Active Kuno handoff (2026-10-24 UTC): resumed; single-K-loop candidate validating.**
+
+User returned GPU access. Explicit `strata-single-k-walk` feature preserves
+the original full-walk variant feature-off and all original identities/ABI,
+owners/resources/guards/publication. All four macro roles now share one
+eight-C K loop for both real and partial input; the existing masked helper
+still uses direct global loads for complete16-row blocks. The actual first
+emitted module confirms one loop and passes all original CFG/SSA/alias/store/
+handoff negatives under the updated exact single-loop expectation. Full398,
+original feature-off398, full1223 GPU and whole-model comparison are next.
+No speed claim. The first CPU build exposed a CubeCL boolean expansion type
+error (fixed); the second rejected only the old pure-loop population law.
+Both logs remain. Standalone debug2 over the actual serialized module passes.
+06:21:23UTC live state: both GPUs clear, all5 faults0, all services HTTP200,
+admission normal. New sudo refresh is bounded to four hours, PID2814185.
+Goal controller still reports paused; manual work is authorized by “keep going.”
+
+**Preceding completed checkpoint (paused for user GPU use):**
 
 Latest complete source `b2621286610dced4cc5f8dc06bc53a7edfa6f4ef` /
 worker `832e35b85dc0dabba09c5b2a1084b1a346319b89827d083b1ea747506185d696`
