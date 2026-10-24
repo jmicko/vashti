@@ -16,7 +16,9 @@ with authentic masked inputs plus original8-half publication. No rollback.
 Full results, preserved CPU wrapper failures and artifacts in small/medium doc.
 Next coherent design: [single full arithmetic walk](kuno-prefill-small-full-walk.md);
 compose partial input staging, all-C math, publication and exact native roles
-together, retaining every existing variant/control. Not yet implemented.
+together, retaining every existing variant/control. Complete new source is
+now composed (three AppCPU/four runtime/120 GPU additions:398/67/1223);
+first compilation and acceptance pending. No new GPU run or speed claim.
 Complete unit2528d58ded784cd4b9ff6772cadf415d exits0;05:00:40UTC Intel50,688,000B,
 NVIDIA compute0/display575MiB, all5 faults0, HTTP200/admission normal/completed178.
 No GPU job remains; no installed services changed. Bounded sudo refresher

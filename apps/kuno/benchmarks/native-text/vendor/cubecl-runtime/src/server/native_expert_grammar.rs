@@ -165,7 +165,7 @@ fn global_n64_prefix(name:&str)->bool {
  global_n64_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_n64_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
-    if name.contains("::global_small::") {return false;}
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::")) {return false;}
     if name.contains("::global_wide32::") {return global_wide32_generated(name,module,ty);}
     if name.contains("::global_transpose::") {return global_transpose_generated(name,module,ty);}
     if name.contains("::global_n64::") {return global_n64_generated(name,module,ty);}

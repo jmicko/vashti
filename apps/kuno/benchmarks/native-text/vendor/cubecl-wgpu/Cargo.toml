@@ -34,6 +34,7 @@ repository = "https://github.com/tracel-ai/cubecl/tree/main/crates/cubecl-wgpu"
 resolver = "2"
 
 [features]
+kuno-small-full-walk = ["kuno-global-small-products", "cubecl-runtime/kuno-small-full-walk"]
 kuno-global-small-products = ["kuno-global-wide32", "cubecl-runtime/kuno-global-small-products"]
 kuno-global-register-n64 = ["kuno-global-image-experts", "cubecl-runtime/kuno-global-register-n64"]
 kuno-global-transpose = ["kuno-global-register-n64", "cubecl-runtime/kuno-global-transpose"]

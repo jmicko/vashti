@@ -305,3 +305,7 @@ mod quant;
 #[cfg(feature="kuno-global-small-products")]
 #[path="native_expert_cohort_global_small_tests.rs"]
 mod global_small;
+
+#[cfg(feature="kuno-small-full-walk")]
+#[path="native_expert_cohort_full_walk_tests.rs"]
+mod full_walk;

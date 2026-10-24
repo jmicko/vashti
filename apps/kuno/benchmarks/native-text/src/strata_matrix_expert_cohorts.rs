@@ -3,6 +3,9 @@
 #[cfg(feature="strata-global-small-products")]
 #[path="strata_matrix_global_small_cohort.rs"]
 pub(crate) mod global_small;
+#[cfg(feature="strata-small-full-walk")]
+#[path="strata_matrix_small_full_walk_cohort.rs"]
+pub(crate) mod small_full_walk;
 #[cfg(feature="strata-expert-ordered-output")]
 #[path="strata_matrix_ordered_cohorts.rs"]
 pub(crate) mod ordered;
@@ -687,3 +690,8 @@ pub(crate) fn public_numeric(
         unused,
     )
 }
+
+#[cfg(feature="strata-small-full-walk")]
+#[path="strata_matrix_small_full_walk_pair_probe.rs"]mod full_walk_pair_probe;
+#[cfg(feature="strata-small-full-walk")]
+pub(crate) use full_walk_pair_probe::cases as public_full_walk_pairs;

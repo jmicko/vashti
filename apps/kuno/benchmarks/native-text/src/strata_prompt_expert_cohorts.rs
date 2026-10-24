@@ -448,7 +448,12 @@ pub(super) fn enqueue_unit(
                 #[cfg(feature="strata-small-direct-publish")]
                 let product=if cfg!(feature="strata-global-small-products") && tile==16 {
                     #[cfg(feature="strata-global-small-products")]
-                    {crate::strata_matrix::cohorts::global_small::launch}
+                    {if cfg!(feature="strata-small-full-walk") {
+                        #[cfg(feature="strata-small-full-walk")]
+                        {crate::strata_matrix::cohorts::small_full_walk::launch}
+                        #[cfg(not(feature="strata-small-full-walk"))]
+                        {crate::strata_matrix::cohorts::global_small::launch}
+                    }else{crate::strata_matrix::cohorts::global_small::launch}}
                     #[cfg(not(feature="strata-global-small-products"))]
                     {crate::strata_matrix::cohorts::small_direct::launch}
                 } else {crate::strata_matrix::cohorts::small_direct::launch};

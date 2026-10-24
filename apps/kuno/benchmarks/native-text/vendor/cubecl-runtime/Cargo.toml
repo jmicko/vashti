@@ -36,6 +36,7 @@ repository = "https://github.com/tracel-ai/cubecl/tree/main/crates/cubecl-runtim
 resolver = "2"
 
 [features]
+kuno-small-full-walk = ["kuno-global-small-products"]
 kuno-global-small-products = ["kuno-global-wide32"]
 kuno-global-register-n64 = ["kuno-global-image-experts"]
 kuno-global-transpose = ["kuno-global-register-n64"]

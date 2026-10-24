@@ -70,17 +70,18 @@ pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
 /// Exact new full-small identities. No wide/tail/cohort or legacy aliases.
 pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
  if !cfg!(feature="kuno-global-small-products"){return None;}
- let (_,suffix)=name.split_once("::strata_matrix::native::global_small::")?;
+ let suffix=if let Some((_,s))=name.split_once("::strata_matrix::native::global_small::"){s}
+ else if cfg!(feature="kuno-small-full-walk"){name.split_once("::strata_matrix::native::small_full_walk::")?.1}else{return None;};
  let roles=if down{[("expert_global_macro32_down::ExpertGlobalMacro32Down",32),("expert_global_macro64_down::ExpertGlobalMacro64Down",64)]}else{[("expert_global_macro32_gu::ExpertGlobalMacro32Gu",32),("expert_global_macro64_gu::ExpertGlobalMacro64Gu",64)]};
  roles.into_iter().find_map(|(role,tile)|suffix.strip_prefix(role).filter(|s|native_strata_generated_type_suffix(s)).map(|_|tile))
 }
 pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
- cfg!(feature="kuno-global-small-products") && name.split_once("::strata_matrix::cohorts::global_small::expert_global_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertGlobalCohort").is_some_and(native_strata_generated_type_suffix))
+ cfg!(feature="kuno-global-small-products") && name.split_once("::strata_matrix::cohorts::global_small::expert_global_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertGlobalCohort").is_some_and(native_strata_generated_type_suffix)) || (cfg!(feature="kuno-small-full-walk") && name.split_once("::strata_matrix::cohorts::small_full_walk::expert_full_walk_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertFullWalkCohort").is_some_and(native_strata_generated_type_suffix)))
 }
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     let name=native_strata_expert_dequant_identity(name);
-    if name.contains("::global_small::") {
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::")) {
         return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();
     }
     if name.contains("::global_wide32::"){return false;}

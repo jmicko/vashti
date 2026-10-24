@@ -47,6 +47,7 @@ cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
+strata-small-full-walk = ["strata-global-small-products", "cubecl-wgpu/kuno-small-full-walk"]
 strata-global-small-products = ["strata-wide32-local-routes", "cubecl-wgpu/kuno-global-small-products"]
 strata-wide32-local-routes = ["strata-global-wide32"]
 strata-global-register-n64 = ["strata-global-image-experts", "cubecl-wgpu/kuno-global-register-n64"]

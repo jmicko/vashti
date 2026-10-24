@@ -79,6 +79,10 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-small-full-walk")]
+    {if name.contains("::strata_matrix::native::small_full_walk::"){return 4;}
+     if name.contains("::strata_matrix::cohorts::small_full_walk::"){return 6;}}
+
     #[cfg(feature="strata-global-small-products")]
     {
         if name.contains("::strata_matrix::native::global_small::"){return 4;}
@@ -141,6 +145,9 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-small-full-walk")]
+    if name.contains("::strata_matrix::native::small_full_walk::") || name.contains("::strata_matrix::cohorts::small_full_walk::"){return 1;}
+
     #[cfg(feature="strata-global-small-products")]
     if name.contains("::strata_matrix::native::global_small::") || name.contains("::strata_matrix::cohorts::global_small::"){return 1;}
     #[cfg(feature="strata-global-wide32")]
@@ -968,5 +975,12 @@ mod global_small_profile_tests{
  #[test]
  fn actual_global_small_generated_names_keep_original_matrix_families(){
   for(i,name)in crate::strata_matrix::global_small::profile_names().into_iter().enumerate(){assert_eq!(native_class(name),1);assert_eq!(matrix_family(name),if i<4{4}else{6});}
+ }
+}
+
+#[cfg(all(test,feature="strata-small-full-walk"))]mod small_full_walk_profile_tests{
+ use super::*;
+ #[test]fn actual_full_walk_generated_names_keep_original_macro_and_cohort_classes(){
+  for(i,n)in crate::strata_matrix::small_full_walk::profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);assert_eq!(matrix_family(n),if i==4{6}else{4});}
  }
 }

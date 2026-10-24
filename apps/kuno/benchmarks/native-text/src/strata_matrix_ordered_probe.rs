@@ -333,7 +333,15 @@ pub(super) fn one(
             let global_cohort=family=="small-direct-global-cohort" || family=="small-direct-global-cohort-reference";
             #[cfg(not(feature="strata-global-small-products"))]
             let global_cohort=false;
-            if global_cohort {
+            #[cfg(feature="strata-small-full-walk")]
+            let full_walk_cohort=family=="small-direct-full-walk-cohort" || family=="small-direct-full-walk-cohort-reference";
+            #[cfg(not(feature="strata-small-full-walk"))]
+            let full_walk_cohort=false;
+            if full_walk_cohort {
+                #[cfg(feature="strata-small-full-walk")]
+                if family=="small-direct-full-walk-cohort"{crate::strata_matrix::cohorts::small_full_walk::launch(client,selected,&words,down,16)?;}
+                else{crate::strata_matrix::cohorts::global_small::launch(client,selected,&words,down,16)?;}
+            }else             if global_cohort {
                 #[cfg(feature="strata-global-small-products")]
                 if family=="small-direct-global-cohort" {
                     crate::strata_matrix::cohorts::global_small::launch(client,selected,&words,down,16)?;
@@ -366,7 +374,7 @@ pub(super) fn one(
                 }
                 Ok(())
             })?;
-            if family=="small-direct-cohort" || family.starts_with("small-direct-global-cohort") {ordered}else{true}
+            if family=="small-direct-cohort" || (family.starts_with("small-direct-global-cohort") || family.starts_with("small-direct-full-walk-cohort")) {ordered}else{true}
         }
         #[cfg(not(feature = "strata-expert-cohorts"))]
         {

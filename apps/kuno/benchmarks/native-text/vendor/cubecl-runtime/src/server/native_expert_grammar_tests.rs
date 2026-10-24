@@ -905,3 +905,7 @@ mod small_direct;
 #[cfg(feature="kuno-global-small-products")]
 #[path="native_expert_global_small_tests.rs"]
 mod global_small;
+
+#[cfg(feature="kuno-small-full-walk")]
+#[path="native_expert_full_walk_tests.rs"]
+mod full_walk;

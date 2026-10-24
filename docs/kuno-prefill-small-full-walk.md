@@ -46,3 +46,24 @@ packed numerical coverage without replacing original global-small producers.
 Finalize exact additive populations before live execution. Then run the same
 full-model/recovery chains and actual old/new producer partitions. No speed
 selection or isolated rollback before this full bundle is composed and passes.
+
+## Source composition checkpoint
+
+The entire new source candidate is composed: full eight/four-C arithmetic,
+independent B matrix values loaded before reuse of the original512B/SG stage,
+original publisher, six distinct real entries, production selectors, exact
+native namespace/ABI authentication, profile classification and real counters.
+New compiler controls inspect actual CFG/product populations, independent B
+SSA and actual shared-store/load/barrier chronology, retain genuine original
+WG/descriptor negatives and add a real B1-to-B0 alias mutation. Exact original
+shared2048/4096/1024B remains required. No compilation/GPU acceptance yet.
+
+Final additive populations: three AppCPU (masked-stage mathematical control,
+actual complete compiler/negative proof and actual generated profile names),
+retaining395 =>398; four genuine metadata controls retaining63 =>67 full
+runtime;116 complete-owner/F64 plus4 packed previous/new GPU cases retaining
+1103 =>1223. All old global-small callbacks still launch the old genuine
+producers. New paired references use accepted global-small tile16/macros;
+tile8 and wide tails are untouched. Original18 feature-off runtime,8+9
+metadata and10 native still required. Neither full compilation nor live runs
+have executed for this new bundle. Do not interpret speed until complete.
