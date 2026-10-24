@@ -2,6 +2,7 @@
 // Original real grid, padded producers, independent8-half publication and ABI.
 use super::*;
 const PADDED_GLOBAL:bool=true;
+const CARRY:bool=cfg!(feature="strata-balanced-carry");
 const PRELOAD:bool=cfg!(feature="strata-balanced-preload");
 #[cube]
 #[allow(clippy::too_many_arguments)]
@@ -11,7 +12,9 @@ pub(crate) fn product(
  columns:usize,rows:usize,count:usize,weight_first:usize,group:usize,
  input_member_base:usize,gu_prefix:usize,#[comptime] down:bool,#[comptime] tile:usize,
 ){
- if comptime!(PRELOAD) {
+ if comptime!(CARRY) {
+  carry::product_carry(input,weight,output,map,status,fault,columns,rows,count,weight_first,group,input_member_base,gu_prefix,down,tile);
+ }else if comptime!(PRELOAD) {
   preload::product_preload(input,weight,output,map,status,fault,columns,rows,count,weight_first,group,input_member_base,gu_prefix,down,tile);
  }else{
   product_single(input,weight,output,map,status,fault,columns,rows,count,weight_first,group,input_member_base,gu_prefix,down,tile);
@@ -96,6 +99,69 @@ pub(super) fn product_preload(
   cmma::load(&a11,&weight.to_slice().slice((weight_first+(row+8)*columns+k+16)/4,weight.len()),u32::cast_from(columns));
   cmma::execute::<f16,f16,f32,f32>(&a00,&b0,&c0,&c0);
   cmma::execute::<f16,f16,f32,f32>(&a01,&b0,&c1,&c1);
+  cmma::execute::<f16,f16,f32,f32>(&a10,&b1,&c0,&c0);
+  cmma::execute::<f16,f16,f32,f32>(&a11,&b1,&c1,&c1);
+  k+=32;
+ }
+ if all_good {
+  let mut first=(gu_prefix+token)*rows+row;
+  if comptime!(down){first=(prefix+token)*rows+row;}
+  cmma::store(&mut output.slice_mut(first,output.len()),&c0,u32::cast_from(rows),cmma::MatrixLayout::ColMajor);
+  cmma::store(&mut output.slice_mut(first+8,output.len()),&c1,u32::cast_from(rows),cmma::MatrixLayout::ColMajor);
+  if comptime!(down)&&row==0 {let route=usize::cast_from(map[1540+prefix+token+lane]);status[comptime!(crate::strata_prompt::groups::ROUTES)+route]=2;}
+ }else{
+  let mut scratch=SharedMemory::<f32>::new(comptime!(tile*32));
+  crate::strata_matrix::global_small::publish(&c0,&mut scratch,output,map,status,fault,token,row,count,gu_prefix,group,down);
+  crate::strata_matrix::global_small::publish(&c1,&mut scratch,output,map,status,fault,token,row+8,count,gu_prefix,group,down);
+ }
+}
+}
+mod carry {use super::*;
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn product_carry(
+ input:&Array<Vector<f16,Const<4>>>,weight:&Array<Vector<f16,Const<4>>>,
+ output:&mut Array<f32>,map:&Array<u32>,status:&mut Array<u32>,fault:&mut Array<Atomic<u32>>,
+ columns:usize,rows:usize,count:usize,weight_first:usize,group:usize,
+ input_member_base:usize,gu_prefix:usize,#[comptime] down:bool,#[comptime] tile:usize,
+){
+ let sg=usize::cast_from(PLANE_POS);let lane=usize::cast_from(UNIT_POS_PLANE);
+ let token=usize::cast_from(CUBE_POS_Y)*comptime!(tile)+(sg/4)*16;
+ let row=usize::cast_from(CUBE_POS_X)*64+(sg%4)*16;
+ if token>=count {terminate!();}
+ let prefix=usize::cast_from(map[1028+group]);let max_route=usize::cast_from(map[0])*10;
+ let mut good=false;
+ if token+16<=count {good=usize::cast_from(map[1540+prefix+token+lane])<max_route;}
+ let all_good=plane_all(good);
+ // Both admitted roles have K divisible by32. Reject before any bank read.
+ if columns%32!=0 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+ let a00=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let a01=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let a10=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let a11=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::A,8usize,16usize,16usize,cmma::MatrixLayout::RowMajor)};
+ let b0=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::B,8usize,16usize,16usize,cmma::MatrixLayout::ColMajor)};
+ let b1=unsafe{cmma::Matrix::<f16>::uninitialized(cmma::MatrixIdent::B,8usize,16usize,16usize,cmma::MatrixLayout::ColMajor)};
+ let c0=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
+ let c1=cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator,8usize,16usize,16usize,cmma::MatrixLayout::Undefined,0.0);
+ // Bank0 is initialized before the loop and remains live across its backedge.
+ cmma::load(&b0,&input.to_slice().slice(((input_member_base+token)*columns)/4,input.len()),u32::cast_from(columns));
+ cmma::load(&a00,&weight.to_slice().slice((weight_first+row*columns)/4,weight.len()),u32::cast_from(columns));
+ cmma::load(&a01,&weight.to_slice().slice((weight_first+(row+8)*columns)/4,weight.len()),u32::cast_from(columns));
+ let mut k=0usize;
+ while k<columns {
+  // Independent next-K operands are genuinely live before current products.
+  cmma::load(&b1,&input.to_slice().slice(((input_member_base+token)*columns+k+16)/4,input.len()),u32::cast_from(columns));
+  cmma::load(&a10,&weight.to_slice().slice((weight_first+row*columns+k+16)/4,weight.len()),u32::cast_from(columns));
+  cmma::load(&a11,&weight.to_slice().slice((weight_first+(row+8)*columns+k+16)/4,weight.len()),u32::cast_from(columns));
+  cmma::execute::<f16,f16,f32,f32>(&a00,&b0,&c0,&c0);
+  cmma::execute::<f16,f16,f32,f32>(&a01,&b0,&c1,&c1);
+  // Current bank0 has been consumed. Prefetch its NEXT iteration now,
+  // before bank1 products, but never read the final descriptor extent.
+  if k+32<columns {
+   cmma::load(&b0,&input.to_slice().slice(((input_member_base+token)*columns+k+32)/4,input.len()),u32::cast_from(columns));
+   cmma::load(&a00,&weight.to_slice().slice((weight_first+row*columns+k+32)/4,weight.len()),u32::cast_from(columns));
+   cmma::load(&a01,&weight.to_slice().slice((weight_first+(row+8)*columns+k+32)/4,weight.len()),u32::cast_from(columns));
+  }
   cmma::execute::<f16,f16,f32,f32>(&a10,&b1,&c0,&c0);
   cmma::execute::<f16,f16,f32,f32>(&a11,&b1,&c1,&c1);
   k+=32;
@@ -507,6 +573,7 @@ pub(crate) fn try_expert(
         }
     }
     if PADDED_GLOBAL {crate::strata_prefill_profile::count(if tile==64 {"expert_balanced_global_macro64_products"}else{"expert_balanced_global_macro32_products"},1);}
+    if CARRY {crate::strata_prefill_profile::count(if tile==64 {"expert_balanced_carry_macro64_products"}else{"expert_balanced_carry_macro32_products"},1);}
     if PRELOAD {crate::strata_prefill_profile::count(if tile==64 {"expert_balanced_preload_macro64_products"}else{"expert_balanced_preload_macro32_products"},1);}
     crate::strata_prefill_profile::count(
         if tile == 64 {
@@ -668,4 +735,23 @@ mod preload_tests {
   }
  }
 
+}
+
+#[cfg(all(test,feature="strata-balanced-carry"))]
+mod carry_tests {
+ #[test]
+ fn carried_bank_schedule_initializes_every_real_operand_and_never_reads_final_extent() {
+  for columns in [640usize,2560] {
+   let mut bank0=0;let mut loaded=vec![0];let mut used=Vec::new();
+   for k in (0..columns).step_by(32) {
+    assert_eq!(bank0,k);
+    let bank1=k+16;assert!(bank1+16<=columns);loaded.push(bank1);
+    used.push(bank0);
+    if k+32<columns {bank0=k+32;assert!(bank0+16<=columns);loaded.push(bank0);}
+    used.push(bank1);
+   }
+   assert_eq!(used,(0..columns).step_by(16).collect::<Vec<_>>());
+   loaded.sort_unstable();assert_eq!(loaded,used);
+  }
+ }
 }

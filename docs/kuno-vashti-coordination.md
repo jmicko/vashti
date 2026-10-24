@@ -15,8 +15,9 @@ byte-equality/parser artifacts; forward seal uses their immutable completed logs
 Host-only repeated9.455969387s is diagnostic, NOT CLEAN/speed acceptance.
 4096/148 chunks spend4.167/1.477s in experts and2.129/0.298s in attention;
 QSA attention/merge0.736s already near historical Strata0.680s under different
-conventions. Next compose true loop-backedge operand carry for both balanced
-expert matrix paths, preserving complete accepted producers/owners and bounds.
+conventions. Next composed candidate is [true loop-backedge operand carry](kuno-prefill-balanced-carry.md)
+for both balanced expert matrix paths, preserving complete accepted producers/
+owners and bounds. No compilation, GPU or speed acceptance yet.
 Do not infer normal copy overlap from the old serialized one-layer GPU sample.
 11:31:04UTC unit exits0; Intel42278912B,NVIDIA compute0/desktop620MiB, faults0,
 HTTP200, admission inactive/unpaused/no recovery/waiting0/completed243.

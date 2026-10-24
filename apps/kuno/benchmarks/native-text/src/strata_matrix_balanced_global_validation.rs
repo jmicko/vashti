@@ -242,6 +242,7 @@ fn program(
             // Reject a previous iteration's store: every B load must be assigned
             // on every path in THIS K iteration, including the first iteration.
             if !seen.insert(block) {
+                if CARRY {return Ok(BTreeSet::new());}
                 return Err("full walk B load depends on a previous iteration".into());
             }
             for &a in self
@@ -262,7 +263,7 @@ fn program(
                 .filter(|(_, es)| es.contains(&block))
                 .map(|(&b, _)| b)
                 .collect::<Vec<_>>();
-            if predecessors.is_empty() || predecessors.iter().any(|b| !self.region.contains(b)) {
+            if predecessors.is_empty() || (!CARRY && predecessors.iter().any(|b| !self.region.contains(b))) {
                 return Err("full walk B has an uninitialized current-iteration path".into());
             }
             let mut stores = BTreeSet::new();
@@ -280,6 +281,7 @@ fn program(
                 return Ok(BTreeSet::from([id]));
             }
             if !seen.insert(id) {
+                if CARRY {return Ok(BTreeSet::new());}
                 return Err("full walk B matrix value cycle".into());
             }
             let mut result = BTreeSet::new();
@@ -346,9 +348,9 @@ fn program(
         {
             return Err("full walk actual global weights and complete/masked B loads".into());
         }
-        if PRELOAD {
+        if PRELOAD && !CARRY {
             if ls.iter().any(|l| l.1>=ps[0]) {return Err("preload all six real global operands must precede first current-bank product".into());}
-        }else{
+        }else if !CARRY {
         for i in 0..2 {
             let n = 1;
             if weights[i] >= ps[i * n] || (i > 0 && weights[i] <= ps[i * n - 1]) {
@@ -376,9 +378,31 @@ fn program(
         if b_values.len() != if PRELOAD {2}else{1} || b_values.values().any(|n| *n != 2) {
             return Err("full walk independent B SSA values and four products each".into());
         }
-        for(i,&p)in ps.iter().enumerate(){
-            let a=b_definitions.origins(product_a_inputs[&p],BTreeSet::new())?;
-            if a!=BTreeSet::from([words[weights[i]+2]]) {return Err("balanced matrix A must be the corresponding distinct chronological weight load".into());}
+        if CARRY {
+            let initial=loads.iter().filter(|l|!region.0.contains(&l.0)).collect::<Vec<_>>();
+            let initial_a=initial.iter().filter(|l|bindings.get(&root(l.3).unwrap())==Some(&1)).collect::<Vec<_>>();
+            let initial_b=initial.iter().filter(|l|bindings.get(&root(l.3).unwrap())==Some(&0)).collect::<Vec<_>>();
+            if loads.len()!=9 || initial_a.len()!=2 || initial_b.len()!=1 {
+                return Err("carry requires authentic initial A0/A1/B0 and six in-loop loads".into());
+            }
+            for(i,&p)in ps.iter().enumerate(){
+                let expected=if i<2 {BTreeSet::from([words[initial_a[i].1+2],words[weights[i+2]+2]])}else{BTreeSet::from([words[weights[i-2]+2]])};
+                if b_definitions.origins(product_a_inputs[&p],BTreeSet::new())?!=expected {
+                    return Err("carry A must reach initial/next-iteration bank0 or current bank1, never a crossed or fabricated operand".into());
+                }
+            }
+            let initial_b=words[initial_b[0].1+2];
+            let in_b=ls.iter().filter(|l|bindings.get(&root(l.3).unwrap())==Some(&0)).collect::<Vec<_>>();
+            let b0=BTreeSet::from([initial_b,words[in_b[1].1+2]]);
+            let b1=BTreeSet::from([words[in_b[0].1+2]]);
+            if b_definitions.origins(product_inputs[&ps[0]],BTreeSet::new())?!=b0 || b_definitions.origins(product_inputs[&ps[2]],BTreeSet::new())?!=b1 {
+                return Err("carry authentic B0 initial/backedge and B1 current origins".into());
+            }
+        }else{
+            for(i,&p)in ps.iter().enumerate(){
+                let a=b_definitions.origins(product_a_inputs[&p],BTreeSet::new())?;
+                if a!=BTreeSet::from([words[weights[i]+2]]) {return Err("balanced matrix A must be the corresponding distinct chronological weight load".into());}
+            }
         }
         if PRELOAD {
             let origin=|at:usize|b_definitions.origins(product_inputs[&at],BTreeSet::new());
@@ -431,6 +455,15 @@ fn program(
             reachable(from, to, None) && !reachable(from, to, Some(guard))
         };
         let entry = blocks[&header][0];
+        if CARRY {
+            // Evaluate instruction CFG with the backedge cut. Conditional reload
+            // blocks can be physically after their consuming product block.
+            let bank1=ls.iter().filter(|l|l.1<ps[0]).collect::<Vec<_>>();
+            let bank0=ls.iter().filter(|l|l.1>=ps[0]).collect::<Vec<_>>();
+            if bank1.len()!=3 || bank0.len()!=3 || bank1.iter().any(|l|!must_pass(entry,ps[0],l.1)) || bank0.iter().any(|l|!reachable(ps[1],l.1,None)||!reachable(l.1,ps[2],None)) || !must_pass(entry,ps[2],ps[1]) {
+                return Err("carry requires bank1 prefetch before current products and conditional bank0 refill between product pairs".into());
+            }
+        }
         let bs = barrier_sites
             .iter()
             .filter(|p| region.0.contains(&p.0))
@@ -440,7 +473,7 @@ fn program(
             if !bs.is_empty() {
                 return Err("full walk pure global K loop has a barrier".into());
             }
-            if b_values.keys().any(|ids| ids.len() != 1) {
+            if (!CARRY && b_values.keys().any(|ids| ids.len() != 1)) || (CARRY && b_values.keys().map(|ids|ids.len()).collect::<BTreeSet<_>>()!=BTreeSet::from([1,2])) {
                 return Err("full walk pure B load identity".into());
             }
         } else {
