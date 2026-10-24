@@ -301,3 +301,7 @@ mod small_direct;
 #[cfg(all(feature="kuno-small-quantized-matrix",feature="kuno-expert-ordered-output"))]
 #[path="native_expert_cohort_quant_tests.rs"]
 mod quant;
+
+#[cfg(feature="kuno-global-small-products")]
+#[path="native_expert_cohort_global_small_tests.rs"]
+mod global_small;

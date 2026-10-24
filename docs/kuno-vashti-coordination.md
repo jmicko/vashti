@@ -2,6 +2,14 @@
 
 **Active Kuno handoff (2026-10-24 UTC): complete local-route bundle accepted; extend small/medium matrix coverage next.**
 
+**Source work in progress:** global small/medium arithmetic, authentic partial
+input, half publication, host selectors and exact native grammars are composed;
+first CPU compile pending. Three independent mathematical controls pass, not
+full app/compiler/GPU acceptance. Planned395 AppCPU and63 full runtime;116 new
+single-slot GPU controls are written, required new packed multi-slot GPU cases
+still pending. NO GPU/speed run until complete. Read the updated small/medium
+contract; do not mistake the proposal history below for current source state.
+
 Read [accepted983 result](kuno-prefill-wide32-local-routes.md),
 [completed959 audit correction](kuno-prefill-wide32-guarded.md), and
 [next complete small/medium proposal](kuno-prefill-global-small-products.md).
@@ -38,8 +46,8 @@ summary/ISA/phase exports now exist. Do not relabel the original failed live uni
 NEXT: compose global weights-first/column-major products for BOTH medium/full-
 small macros and cohort16 with genuine smaller WG/larger subgroup cells,
 masked actual partial-input staging, original independent8-half publication,
-new exact native role/grid guards, real counters and all proofs. Proposal only;
-no new small/medium source exists yet. Keep cohort tile8 and original wide tails
+new exact native role/grid guards, real counters and all proofs. The complete source candidate is now composed;
+compilation/acceptance and new multi-slot GPU coverage are pending. Keep cohort tile8 and original wide tails
 on their complete prior paths. Do not weaken capacity/ownership/math/erasure or
 abandon coupled components from isolated speed. Full details in linked contract.
 Confirmed Strata DQ=2 equals Kuno;96/384 is its separate raw ring, not DQ slots.

@@ -84,6 +84,10 @@ fn compact_role_words(w: &[u32; 48], down: bool) -> Option<u32> {
 }
 
 fn matrix_variant(name: &str, down: bool) -> Option<bool> {
+    if name.contains("::global_small::") {
+        return (super::super::native_expert_batch::native_strata_global_small_cohort(name)
+            && (!down || cfg!(feature="kuno-expert-ordered-output"))).then_some(down);
+    }
     // The new function has a DOWN comptime flag in its genuine kernel ID;
     // INFO/role/owners/grid below still bind that phase. Its DOWN writes the
     // ordered layout despite not having an `ordered` namespace component.
@@ -331,7 +335,8 @@ impl Cohort {
             let arrays = if quant { 7 } else { 6 };
             let metadata = 24 + arrays;
             let columns_per_workgroup = if quant { quant_matrix_width(name).ok_or_else(|| batch_fault("native quant matrix identity"))? } else {64};
-            if args.buffers.len() != arrays
+            if (super::super::native_expert_batch::native_strata_global_small_cohort(name) && (tile!=16 || quant))
+                || args.buffers.len() != arrays
                 || !args.read_dependencies.is_empty()
                 || args.info.data.len() != metadata
                 || args.info.dynamic_metadata_offset != metadata

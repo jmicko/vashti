@@ -901,3 +901,7 @@ mod direct8;
 #[cfg(all(feature="kuno-small-direct-publish",feature="kuno-expert-ordered-output"))]
 #[path="native_expert_small_direct_tests.rs"]
 mod small_direct;
+
+#[cfg(feature="kuno-global-small-products")]
+#[path="native_expert_global_small_tests.rs"]
+mod global_small;

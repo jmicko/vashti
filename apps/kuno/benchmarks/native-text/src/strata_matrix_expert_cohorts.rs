@@ -1,5 +1,8 @@
 //! Genuine cross-expert narrow CMMA. Each group's original8/16-row tile,
 //! chronologicalK16 arithmetic, FP16 inputs and routed publication are retained.
+#[cfg(feature="strata-global-small-products")]
+#[path="strata_matrix_global_small_cohort.rs"]
+pub(crate) mod global_small;
 #[cfg(feature="strata-expert-ordered-output")]
 #[path="strata_matrix_ordered_cohorts.rs"]
 pub(crate) mod ordered;

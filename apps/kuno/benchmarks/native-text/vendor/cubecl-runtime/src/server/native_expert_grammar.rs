@@ -1,7 +1,7 @@
 //! Closed native expert grammar: six logical phases, authentic matrix pieces.
 //! No resource lookup, device authority, completion or request cache lives here.
 use super::native_expert_batch::{batch_fault, native_strata_expert_operator,
-    native_strata_small_direct_generated, native_strata_small_direct_matrix};
+    native_strata_small_direct_generated, native_strata_small_direct_matrix, native_strata_global_small_tile};
 use super::{Binding, CubeCount, KernelArguments, MetadataBindingInfo, ServerError};
 use crate::memory_management::ManagedMemoryId;
 use cubecl_common::stream_id::StreamId;
@@ -165,6 +165,7 @@ fn global_n64_prefix(name:&str)->bool {
  global_n64_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_n64_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
+    if name.contains("::global_small::") {return false;}
     if name.contains("::global_wide32::") {return global_wide32_generated(name,module,ty);}
     if name.contains("::global_transpose::") {return global_transpose_generated(name,module,ty);}
     if name.contains("::global_n64::") {return global_n64_generated(name,module,ty);}
@@ -264,7 +265,7 @@ fn is_tail(name: &str, down: bool) -> bool {
     }
 }
 fn ordered_down_layout(name: &str) -> bool {
-    name.contains("::ordered::") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
+    native_strata_global_small_tile(name,true).is_some() || name.contains("::ordered::") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
         name, "expert_tail_down", "ExpertTailDown")
 }
 fn matrix(
@@ -522,7 +523,13 @@ impl NativeStrataExpertGrammar {
                         || (name.contains("::expert_narrow::") && params.count >= 32)) {
                     return Err(batch_fault("native small direct member geometry"));
                 }
-                let tile = if name.contains("::expert_macro64::")
+                let global_small = native_strata_global_small_tile(name,down);
+                let tile = if let Some(tile)=global_small {
+                    if !if tile==32 {(32..64).contains(&params.count)} else {(64..256).contains(&params.count)} {
+                        return Err(batch_fault("native global small original full member geometry"));
+                    }
+                    tile
+                } else if name.contains("::expert_macro64::")
                     || name.contains("::native::ordered::expert_macro64_deep::") {
                     if !(64..256).contains(&params.count) {
                         return Err(batch_fault("native expert macro64 member geometry"));
@@ -543,7 +550,7 @@ impl NativeStrataExpertGrammar {
                     self.gu_views = Some(views);
                     // Keep the original wide-prefix counter unchanged: this
                     // is a full small matrix, not a new wide prefix.
-                    self.gu_deferred = native_strata_small_direct_matrix(name);
+                    self.gu_deferred = native_strata_small_direct_matrix(name) || global_small.is_some();
                 }
                 self.counts.matrix_pieces += 1;
                 self.advance();

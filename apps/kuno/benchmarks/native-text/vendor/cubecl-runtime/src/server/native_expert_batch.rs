@@ -67,8 +67,22 @@ pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
         .any(|(module, ty)| native_strata_small_direct_generated(name, module, ty))
 }
 
+/// Exact new full-small identities. No wide/tail/cohort or legacy aliases.
+pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
+ if !cfg!(feature="kuno-global-small-products"){return None;}
+ let (_,suffix)=name.split_once("::strata_matrix::native::global_small::")?;
+ let roles=if down{[("expert_global_macro32_down::ExpertGlobalMacro32Down",32),("expert_global_macro64_down::ExpertGlobalMacro64Down",64)]}else{[("expert_global_macro32_gu::ExpertGlobalMacro32Gu",32),("expert_global_macro64_gu::ExpertGlobalMacro64Gu",64)]};
+ roles.into_iter().find_map(|(role,tile)|suffix.strip_prefix(role).filter(|s|native_strata_generated_type_suffix(s)).map(|_|tile))
+}
+pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
+ cfg!(feature="kuno-global-small-products") && name.split_once("::strata_matrix::cohorts::global_small::expert_global_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertGlobalCohort").is_some_and(native_strata_generated_type_suffix))
+}
+
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     let name=native_strata_expert_dequant_identity(name);
+    if name.contains("::global_small::") {
+        return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();
+    }
     if name.contains("::global_wide32::"){return false;}
     // Packed cohorts have a distinct seven-buffer grammar and never belong to
     // the six-buffer regular family, even through a nested legacy name.

@@ -96,7 +96,8 @@ fn fixture(count: usize, down: bool, control: Control) -> ProbeResult<Fixture> {
         cfg!(feature = "strata-narrow-global") && [1, 3, 7, 8, 9, 15, 16, 17, 31].contains(&count);
     let macro64 =
         cfg!(feature = "strata-expert-macro64") && [64, 65, 127, 128, 129, 255].contains(&count);
-    if !original && !medium && !narrow && !macro64 {
+    let global_small = cfg!(feature="strata-global-small-products") && count==63;
+    if !original && !medium && !narrow && !macro64 && !global_small {
         return Err("public CubeK expert count".into());
     }
     let (columns, rows) = if down { (640, 2560) } else { (2560, 1280) };
@@ -328,7 +329,18 @@ pub(super) fn one(
             let small_cohort=family=="small-direct-cohort" && ordered;
             #[cfg(not(feature="strata-small-direct-publish"))]
             let small_cohort=false;
-            if small_cohort {
+            #[cfg(feature="strata-global-small-products")]
+            let global_cohort=family=="small-direct-global-cohort" || family=="small-direct-global-cohort-reference";
+            #[cfg(not(feature="strata-global-small-products"))]
+            let global_cohort=false;
+            if global_cohort {
+                #[cfg(feature="strata-global-small-products")]
+                if family=="small-direct-global-cohort" {
+                    crate::strata_matrix::cohorts::global_small::launch(client,selected,&words,down,16)?;
+                } else {
+                    crate::strata_matrix::cohorts::small_direct::launch(client,selected,&words,down,words[11]as usize)?;
+                }
+            } else if small_cohort {
                 #[cfg(feature="strata-small-direct-publish")]
                 crate::strata_matrix::cohorts::small_direct::launch(client,selected,&words,down,words[11]as usize)?;
             } else if ordered && down {
@@ -354,7 +366,7 @@ pub(super) fn one(
                 }
                 Ok(())
             })?;
-            if family=="small-direct-cohort" {ordered}else{true}
+            if family=="small-direct-cohort" || family.starts_with("small-direct-global-cohort") {ordered}else{true}
         }
         #[cfg(not(feature = "strata-expert-cohorts"))]
         {

@@ -183,6 +183,8 @@ pub(crate) async fn request_device(
 #[path = "strata_matrix_register_prefetch.rs"]
 mod register_prefetch;
 
+#[cfg(feature="strata-global-small-products")]
+pub(crate) use native::global_small;
 #[cfg(feature="strata-small-direct-publish")]
 pub(crate) use native::small_direct;
 #[cfg(feature="strata-small-direct-publish")]
@@ -195,6 +197,8 @@ mod native {
     use super::*;
     #[cfg(feature="strata-small-direct-publish")]
     pub(crate) mod small_direct {include!("strata_matrix_small_direct.rs");}
+    #[cfg(feature="strata-global-small-products")]
+    pub(crate) mod global_small {include!("strata_matrix_global_small.rs");}
     #[cfg(feature="strata-expert-ordered-output")]
     pub(super) mod ordered { include!("strata_matrix_ordered.rs"); }
     use cubecl::ir::{ElemType, FloatKind, features::MmaConfig};
@@ -2738,6 +2742,8 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-global-small-products")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && global_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-wide32")]
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::global_wide32::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-transpose")]
@@ -2814,6 +2820,8 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-global-small-products")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && global_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-wide32")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::global_wide32::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-transpose")]
@@ -3025,6 +3033,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         native_wide::validate_asymmetric_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native_wide::validate_global_register_sources()?;
+        #[cfg(feature="strata-global-small-products")]
+        global_small::validate_sources()?;
         #[cfg(feature="strata-global-wide32")]
         native_wide::global_wide32::validate_global_wide32_sources()?;
         #[cfg(feature="strata-global-transpose")]

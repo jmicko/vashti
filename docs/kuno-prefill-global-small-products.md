@@ -1,7 +1,7 @@
 # Complete global small and medium expert products
 
-PROPOSAL ONLY, after accepted8a2652ec/full983. No source implementation or
-performance claim yet. Compose the whole producer/consumer/launch/grammar
+SOURCE COMPOSED after accepted8a2652ec/full983; compilation and complete
+acceptance remain pending. No performance claim. Compose the whole producer/consumer/launch/grammar
 bundle before interpreting speed. Keep every prior variant and all390 CPU/
 983 GPU controls. No API, Vashti, installation, capacity, precision, ownership,
 status, privacy or erasure change. Target stays the same clean Strata comparison.
@@ -106,3 +106,40 @@ Export actual ISA/spills and preserve original eight wide/two QSA controls.
 Assess complete first/repeated normal/diagnostic results; run original CLEAN
 when promising. Retain components and investigate remaining reference
 differences even if this complete candidate alone does not close the gap.
+
+
+## Implementation checkpoint before first CPU build
+
+New feature `strata-global-small-products` / `--global-small-products` requires
+local-route bundle, propagating `kuno-global-small-products` through native
+runtime. New `native::global_small` has four exact macro32/64 GU/DOWN entries;
+packed `cohorts::global_small::expert_global_cohort` retains the original48-u32
+scalar ABI and authentic comptime DOWN role/header validation. Real WG32/WG64
+and genuine original grids are coupled to the new code and closed grammars.
+Original namespaces cannot alias these entries. GU checking/ordered DOWN and
+all old limits/owners remain. Original tile8 and wide tails are unchanged.
+
+Normal macros use eight C fragments/direct global operands. Checked branches
+use two C fragments over the SAME subgroup cell, with fully initialized masked
+16-member/K16 input staging only when the original input is partial. Cohort16
+normal uses four C fragments; its checked branch reads authentic padded original
+input. Its publisher independently preserves full8 halves under partial16.
+Expected bounded macro scratch<=2048B WG32/4096B WG64, cohort<=2048B; actual
+per-layout sizes still need emitted-module verification before freezing.
+
+Five new AppCPU controls (including actual compiler/CFG/provenance/AtomicOr/
+negative-module proof), four genuine native metadata controls and116 additive
+single-slot GPU/F64 paired controls are written. The original390 AppCPU/983 GPU
+remain. Three new mathematical test functions compiled separately and pass;
+that is NOT full application or emitted-shader compilation. Current planned
+AppCPU395, full-runtime63;116 new GPU controls would total1099, but the required
+new genuine multi-slot packed-group GPU coverage is STILL PENDING. Do not freeze
+or run live speed before this is complete. No new GPU run has been started.
+
+Source files `strata_matrix_global_small{,_cohort,_validation,_tests,_probe}.rs`,
+additive feature/host/profile/native-grammar changes and four native test cases.
+Prepared CPU-only driver `build-global-small-app-cpu-20261024.py` retains all390
+old exact names, runs the five new tests and actual compiler proof first, then
+all395. It is allowed to check source while the multi-slot harness is finished;
+no timing may drive direction. Keep failures/artifacts and repair the complete
+bundle rather than reverting components.
