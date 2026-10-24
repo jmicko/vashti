@@ -1139,7 +1139,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     })
     .collect::<Vec<_>>();
     #[cfg(feature = "strata-expert-cohorts")]
-    let original = original.into_iter().chain(cohorts::sources()).collect();
+    let original = original.into_iter().chain(cohorts::sources()).collect::<Vec<_>>();
     #[cfg(feature="strata-regular-cohorts")]
     let original=original.into_iter().chain(regular::sources()).collect();
     original
