@@ -2,6 +2,7 @@
 //! Retains the original full owned output, without offset private uploads or
 //! an output-sized host staging allocation. Independent full-owner scan follows.
 use cubecl::prelude::*;
+use cubecl::ir::ElemType;
 use cubecl::server::Handle;
 use cubecl::wgpu::WgpuRuntime;
 type R<T> = std::result::Result<T,Box<dyn std::error::Error>>;
