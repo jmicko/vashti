@@ -150,8 +150,8 @@ pub(in crate::strata_matrix) fn validate_program(
             return Err("global wide32 stride is not authentic dynamic scalar INFO".into());
         }
     }
-    if input_loads != if expert {8}else{2} || weight_loads != if expert{7}else{4} {
-        return Err("global wide32 actual three input B and six weight A loads".into());
+    if input_loads != if expert {5}else{2} || weight_loads != if expert{10}else{4} {
+        return Err("global wide32 original weight-A/input-B fragment populations".into());
     }
     let (mut global_stores, mut fallback_stores) = (0, 0);
     for ptr in stores {
@@ -297,11 +297,12 @@ pub(in crate::strata_matrix) fn validate_negatives(words:&[u32],expert:bool)->st
   if op==16&&n==6&&words[at+2]==17{changes.push((at+3,1024));}
   if op==71&&n==4&&words[at+2]==33&&words[at+3]==0{changes.push((at+3,9));}
   if op==71&&n==4&&words[at+2]==33&&words[at+3]==if expert{6}else{3}{changes.push((at+3,10));}
-  if expert&&op==334{changes.push((at,(n as u32)<<16|335));}
+
   at+=n;
  }
  at=5;while at<words.len(){let n=(words[at]>>16)as usize;if words[at]&65535==4458{changes.push((at+3,zero.ok_or("wide32 actual zero constant")?));break;}at+=n;}
  if changes.len()<4{return Err("wide32 actual negative inventory".into());}
+ if expert{let mut bad=words.to_vec();let mut at=5;while at<bad.len(){let n=(bad[at]>>16)as usize;if bad[at]&65535==334{bad[at]=(n as u32)<<16|335;}at+=n;}if validate_program(&bad,true).is_ok(){return Err("wide32 accepted non-all fault selection".into());}}
  for(i,value)in changes{let mut bad=words.to_vec();bad[i]=value;if validate_program(&bad,expert).is_ok(){return Err("wide32 accepted wrong grid/binding/INFO/store/fault-uniformity".into());}}
  Ok(())
 }
