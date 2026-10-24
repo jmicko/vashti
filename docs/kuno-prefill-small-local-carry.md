@@ -3,6 +3,11 @@
 Backend-only candidate composed after the complete local-prefetch acceptance.
 No compilation, numerical execution, timing or installation claim yet.
 
+Initial source a7fd8ded fails compilation because the new shared module did not
+explicitly import `half::f16`; its parent scope does not export that concrete
+type. Preserve the failed full-build log. Add the explicit import and rebuild
+the same complete candidate. No GPU test has started.
+
 The accepted N128/four-C small macro and cohort consumers have zero spills but
 are slower than the earlier N64/two-C carried consumers. Their K16 arithmetic
 uses only current-iteration operands. This candidate combines the N128 owner

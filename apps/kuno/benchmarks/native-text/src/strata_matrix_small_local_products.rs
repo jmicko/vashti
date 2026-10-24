@@ -1,5 +1,6 @@
 //! The same genuine N128/four-C owner with selectable temporal operand carry.
 use super::*;
+use half::f16;
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::strata_matrix) fn compute(
