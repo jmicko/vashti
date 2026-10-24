@@ -1130,7 +1130,7 @@ mod host_blob_entry_tests {
  #[test]
  fn host_blob_probe_only_enters_an_explicit_public_mode_without_private_or_other_diagnostics(){
   for bits in 0..128u32 {for p in [None,Some(false),Some(true)] {
-   let b=|i|bits&(1u32<<i)!=0;
+   let b=|i:u32|bits&(1u32<<i)!=0u32;
    let allowed=super::host_blob_mode_allowed(b(0),p,b(1),b(2),b(3),b(4),b(5),b(6));
    assert_eq!(allowed,cfg!(feature="strata-host-expert-blobs") && bits==1 && p==Some(true));
   }}
