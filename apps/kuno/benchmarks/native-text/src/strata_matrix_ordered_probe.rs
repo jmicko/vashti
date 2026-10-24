@@ -276,7 +276,7 @@ pub(super) fn one(
     });
     if let Some((first,bits))=sentinel_first {
         let bytes=bits.to_le_bytes().repeat(f.rows);
-        client.write_private(read_window(arena.handle(output)?.clone(),first*4,f.rows*4)?,bytes)?;
+        client.write_private(read_window(arena.handle(output)?,first*4,f.rows*4)?,bytes)?;
         cubecl::future::block_on(client.sanitize_transient_io_audited())?;
     }
     let handles = [input, weight, output, map, status, fault]
