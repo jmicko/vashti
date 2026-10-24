@@ -257,7 +257,8 @@ pub(crate) fn product(
             // kept behind the feature-off selection. Avoid merging eight C
             // matrices from two independent K loops into publication.
             let mut separate_full_loop = false;
-            if comptime!(!cfg!(feature = "strata-single-k-walk")) {
+            if comptime!(PADDED_GLOBAL) {separate_full_loop = true;}
+            if comptime!(!cfg!(feature = "strata-single-k-walk") && !PADDED_GLOBAL) {
                 separate_full_loop = token + 32 <= count;
             }
             if separate_full_loop {
@@ -851,7 +852,7 @@ pub(crate) fn try_expert(
         || rows != if down { 2560 } else { 1280 }
         || !macro_compatible(client, &h[0], &h[1], count, rows, columns, weight_first)
         || h.iter().any(|v| v.stream != h[0].stream)
-        || (count * columns * 2) as u64 > h[0].size_in_used()
+        || ((if PADDED_GLOBAL {count.div_ceil(32)*32} else {count}) * columns * 2) as u64 > h[0].size_in_used()
         || weight_first
             .checked_add(rows * columns)
             .is_none_or(|n| (n as u64) * 2 > h[1].size_in_used())
@@ -954,6 +955,7 @@ pub(crate) fn try_expert(
             _ => unreachable!(),
         }
     }
+    if PADDED_GLOBAL {crate::strata_prefill_profile::count(if tile==64 {"expert_padded_global_macro64_products"}else{"expert_padded_global_macro32_products"},1);}
     crate::strata_prefill_profile::count(
         if tile == 64 {
             "expert_full_walk_macro64_products"
@@ -1049,10 +1051,10 @@ pub(crate) fn definitions() -> Vec<(&'static str, KernelDefinition)> {
                 _ => unreachable!(),
             }
             let name = match (tile, down) {
-                (32, false) => "small_full_walk_macro32_gu",
-                (32, true) => "small_full_walk_macro32_down",
-                (64, false) => "small_full_walk_macro64_gu",
-                _ => "small_full_walk_macro64_down",
+                (32, false) => if PADDED_GLOBAL {"padded_global_macro32_gu"}else{"small_full_walk_macro32_gu"},
+                (32, true) => if PADDED_GLOBAL {"padded_global_macro32_down"}else{"small_full_walk_macro32_down"},
+                (64, false) => if PADDED_GLOBAL {"padded_global_macro64_gu"}else{"small_full_walk_macro64_gu"},
+                _ => if PADDED_GLOBAL {"padded_global_macro64_down"}else{"small_full_walk_macro64_down"},
             };
             assert!(b.scope.pop_errors().is_empty());
             out.push((

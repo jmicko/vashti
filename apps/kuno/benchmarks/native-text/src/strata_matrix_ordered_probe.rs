@@ -265,6 +265,10 @@ pub(super) fn one(
         let tile = if count <= 8 { 8 } else { 16 };
         image.resize(count.div_ceil(tile) * tile * f.columns / 2, 0);
     }
+    if family=="small-direct-padded-global-regular" {
+        if !(32..256).contains(&count) {return Err("public padded-global fixture range".into());}
+        image.resize(count.div_ceil(32)*32*f.columns/2,0);
+    }
     let input = arena.upload_u32(&image)?;
     let weight = arena.upload_u32(&f.weight_image)?;
     let output_words=(if down{abi::PART_BYTES}else{abi::GU_BYTES})as usize/4;

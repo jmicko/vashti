@@ -53,6 +53,7 @@ struct Group {
     index: u32,
     members: u32,
     prompt: u32,
+    padded32: bool,
     input: View,
     map: View,
     fault: View,
@@ -165,7 +166,7 @@ fn global_n64_prefix(name:&str)->bool {
  global_n64_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_n64_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
-    if (name.contains("::global_small::") || name.contains("::small_full_walk::")) {return false;}
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::")) {return false;}
     if name.contains("::global_wide32::") {return global_wide32_generated(name,module,ty);}
     if name.contains("::global_transpose::") {return global_transpose_generated(name,module,ty);}
     if name.contains("::global_n64::") {return global_n64_generated(name,module,ty);}
@@ -434,7 +435,8 @@ impl NativeStrataExpertGrammar {
                 return Err(batch_fault("native expert direct8 authentic WG32 role/shape/grid"));
             }
         }
-        let name=original_name;
+        let padded_producer = cfg!(feature="kuno-padded-global") && matches!(original_name,"StrataPromptExpertGatherPad32"|"StrataPromptExpertF16SwigluPad32"|"StrataPromptExpertF16SwigluCheckGuPad32");
+        let name=super::native_expert_batch::native_strata_expert_padded_identity(original_name);
         #[cfg(feature="kuno-expert-cohorts")]
         if self.cohort.is_some() || name=="StrataExpertCohortGather" {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred {return Err(batch_fault("native expert cohort interrupted original group"));}
@@ -523,6 +525,10 @@ impl NativeStrataExpertGrammar {
                         || (name.contains("::expert_narrow::") && params.count >= 32)) {
                     return Err(batch_fault("native small direct member geometry"));
                 }
+                if super::native_expert_batch::native_strata_padded_global(name)
+                    && (!group.padded32 || u64::from(params.count.div_ceil(32)*32)*u64::from(params.columns)*2>views[0].used()) {
+                    return Err(batch_fault("padded global requires authentic producer and complete initialized input extent"));
+                }
                 let global_small = native_strata_global_small_tile(name,down);
                 let tile = if let Some(tile)=global_small {
                     if !if tile==32 {(32..64).contains(&params.count)} else {(64..256).contains(&params.count)} {
@@ -597,6 +603,7 @@ impl NativeStrataExpertGrammar {
                 self.counts.gu_checks += 1;
                 self.gu_deferred = false;
             }
+            if self.phase==4 {if let Some(g)=self.group.as_mut(){g.padded32=padded_producer;}}
             if !native_strata_expert_operator(name, release, self.phase) {
                 return Err(batch_fault(
                     "native expert original six-logical-phase order",
@@ -634,6 +641,7 @@ impl NativeStrataExpertGrammar {
                     index: self.groups as u32,
                     members,
                     prompt,
+                    padded32: padded_producer,
                     input: View::new(&args.buffers[2])?,
                     map: View::new(&args.buffers[0])?,
                     fault: View::new(&args.buffers[3])?,

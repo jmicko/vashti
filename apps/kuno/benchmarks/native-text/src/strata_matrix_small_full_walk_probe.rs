@@ -81,7 +81,7 @@ pub(crate) fn cases(
                     count,
                     down,
                     control,
-                    "small-direct-full-walk-regular",
+                    if PADDED_GLOBAL {"small-direct-padded-global-regular"}else{"small-direct-full-walk-regular"},
                     "actual_full_walk_producer",
                     if selected { new } else { old },
                     true,
@@ -100,6 +100,7 @@ pub(crate) fn cases(
             }
         }
     }
+    if PADDED_GLOBAL {return Ok(reports);}
     let controls = [
         (9, Finite),
         (15, Finite),

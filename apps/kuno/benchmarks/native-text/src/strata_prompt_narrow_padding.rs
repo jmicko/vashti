@@ -13,12 +13,13 @@ pub(super) fn source(mut source: String, activate: bool) -> String {
         )
     };
     assert_eq!(source.matches(needle).count(), 1);
+    let limit=if cfg!(feature="strata-padded-global") {256}else{32};
     let code = format!(
         r#"{needle}
     // STRATA_NARROW_GLOBAL_PADDED_PRODUCER
     let real=map[516u+p.group];
-    if real<32u {{
-        let tile=select(16u,8u,real<=8u);let padded=((real+tile-1u)/tile)*tile;
+    if real<{limit}u {{
+        let tile=select(select(16u,8u,real<=8u),32u,real>=32u);let padded=((real+tile-1u)/tile)*tile;
         let row_words={words};let first=real*row_words;let end=padded*row_words;
         if end>arrayLength(&{output}) {{atomicOr(&fault[0],128u);return;}}
         // Original grid/real count stays authoritative, including tiny groups.
@@ -34,6 +35,15 @@ pub(super) fn source(mut source: String, activate: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature="strata-padded-global")]
+    #[test]
+    fn actual_padded32_names_bind_both_producers_with_bounded_medium_initialization() {
+        for(op,name)in [(Op::Gather,"StrataPromptExpertGatherPad32"),(Op::ActivateCheckGu,"StrataPromptExpertF16SwigluCheckGuPad32")] {
+            assert_eq!(op.name(),name);let s=op.source();assert!(s.contains("if real<256u"));
+            assert!(s.contains("32u,real>=32u"));assert!(s.contains("if end>arrayLength("));
+            assert!(s.contains("at<end;at+=stride"));
+        }
+    }
     #[test]
     fn actual_both_producers_only_add_disjoint_bounded_padding_and_keep_old_grid() {
         for op in [Op::Gather, Op::Activate, Op::ActivateCheckGu] {
@@ -64,8 +74,8 @@ mod tests {
         for real in 1usize..=4096 {
             for row_words in [1280usize, 320] {
                 let original_grid = (real * row_words).div_ceil(256);
-                let tile = if real <= 8 { 8 } else { 16 };
-                let padded = if real < 32 {
+                let tile = if real <= 8 {8} else if real < 32 {16} else {32};
+                let padded = if real < if cfg!(feature="strata-padded-global") {256} else {32} {
                     real.div_ceil(tile) * tile
                 } else {
                     real

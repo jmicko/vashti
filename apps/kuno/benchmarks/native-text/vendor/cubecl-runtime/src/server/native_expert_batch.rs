@@ -34,6 +34,22 @@ pub(crate) fn native_strata_expert_dequant_identity(name:&str)->&str {
     name
 }
 
+/// Only these exact new producers certify 32-row initialization. Keep this
+/// separate from dequant identity: release/phase guards still see real roles.
+pub(crate) fn native_strata_expert_padded_identity(name:&str)->&str {
+ #[cfg(feature="kuno-padded-global")]
+ match name {
+  "StrataPromptExpertGatherPad32"=>return "StrataPromptExpertGather",
+  "StrataPromptExpertF16SwigluPad32"=>return "StrataPromptExpertF16Swiglu",
+  "StrataPromptExpertF16SwigluCheckGuPad32"=>return "StrataPromptExpertF16SwigluCheckGu",
+  _=>{}
+ }
+ name
+}
+pub(crate) fn native_strata_padded_global(name:&str)->bool {
+ cfg!(feature="kuno-padded-global") && name.contains("::strata_matrix::native::padded_global::")
+}
+
 /// Genuine new small-matrix entries. Keep this closed before the legacy
 /// substring classifier: disabled or nested new namespaces grant no authority.
 pub(crate) fn native_strata_generated_type_suffix(s: &str) -> bool {
@@ -71,7 +87,8 @@ pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
 pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
  if !cfg!(feature="kuno-global-small-products"){return None;}
  let suffix=if let Some((_,s))=name.split_once("::strata_matrix::native::global_small::"){s}
- else if cfg!(feature="kuno-small-full-walk"){name.split_once("::strata_matrix::native::small_full_walk::")?.1}else{return None;};
+ else if cfg!(feature="kuno-small-full-walk") && name.contains("::strata_matrix::native::small_full_walk::"){name.split_once("::strata_matrix::native::small_full_walk::")?.1}
+ else if native_strata_padded_global(name){name.split_once("::strata_matrix::native::padded_global::")?.1}else{return None;};
  let roles=if down{[("expert_global_macro32_down::ExpertGlobalMacro32Down",32),("expert_global_macro64_down::ExpertGlobalMacro64Down",64)]}else{[("expert_global_macro32_gu::ExpertGlobalMacro32Gu",32),("expert_global_macro64_gu::ExpertGlobalMacro64Gu",64)]};
  roles.into_iter().find_map(|(role,tile)|suffix.strip_prefix(role).filter(|s|native_strata_generated_type_suffix(s)).map(|_|tile))
 }
@@ -80,8 +97,8 @@ pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
 }
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
-    let name=native_strata_expert_dequant_identity(name);
-    if (name.contains("::global_small::") || name.contains("::small_full_walk::")) {
+    let name=native_strata_expert_padded_identity(native_strata_expert_dequant_identity(name));
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::")) {
         return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();
     }
     if name.contains("::global_wide32::"){return false;}

@@ -909,3 +909,7 @@ mod global_small;
 #[cfg(feature="kuno-small-full-walk")]
 #[path="native_expert_full_walk_tests.rs"]
 mod full_walk;
+
+#[cfg(feature="kuno-padded-global")]
+#[path="native_expert_padded_global_tests.rs"]
+mod padded_global;

@@ -187,6 +187,8 @@ mod register_prefetch;
 pub(crate) use native::global_small;
 #[cfg(feature="strata-small-full-walk")]
 pub(crate) use native::small_full_walk;
+#[cfg(feature="strata-padded-global")]
+pub(crate) use native::padded_global;
 #[cfg(feature="strata-small-direct-publish")]
 pub(crate) use native::small_direct;
 #[cfg(feature="strata-small-direct-publish")]
@@ -202,7 +204,9 @@ mod native {
     #[cfg(feature="strata-global-small-products")]
     pub(crate) mod global_small {include!("strata_matrix_global_small.rs");}
     #[cfg(feature="strata-small-full-walk")]
-    pub(crate) mod small_full_walk {include!("strata_matrix_small_full_walk.rs");}
+    pub(crate) mod small_full_walk {const PADDED_GLOBAL:bool=false;include!("strata_matrix_small_full_walk.rs");}
+    #[cfg(feature="strata-padded-global")]
+    pub(crate) mod padded_global {const PADDED_GLOBAL:bool=true;include!("strata_matrix_small_full_walk.rs");}
     #[cfg(feature="strata-expert-ordered-output")]
     pub(super) mod ordered { include!("strata_matrix_ordered.rs"); }
     use cubecl::ir::{ElemType, FloatKind, features::MmaConfig};
@@ -2746,6 +2750,8 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-padded-global")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && padded_global::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-small-full-walk")]
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && small_full_walk::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-small-products")]
@@ -2826,6 +2832,8 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-padded-global")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && padded_global::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-small-full-walk")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && small_full_walk::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-small-products")]
@@ -3045,6 +3053,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         global_small::validate_sources()?;
         #[cfg(feature="strata-small-full-walk")]
         small_full_walk::validate_sources()?;
+        #[cfg(feature="strata-padded-global")]
+        padded_global::validate_sources()?;
         #[cfg(feature="strata-global-wide32")]
         native_wide::global_wide32::validate_global_wide32_sources()?;
         #[cfg(feature="strata-global-transpose")]

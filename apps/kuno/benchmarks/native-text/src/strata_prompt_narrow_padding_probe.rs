@@ -49,25 +49,25 @@ fn one(
     count: usize,
     activate: bool,
 ) -> Checked<serde_json::Value> {
-    const TOTAL: usize = 32;
-    let mut raw = Zeroizing::new(vec![0u32; groups::LOGICAL + TOTAL * 10]);
-    raw[..3].copy_from_slice(&[TOTAL as u32, 0, TOTAL as u32]);
-    for token in 0..TOTAL {
+    let total=count.next_power_of_two().max(32);
+    let mut raw = Zeroizing::new(vec![0u32; groups::LOGICAL + total * 10]);
+    raw[..3].copy_from_slice(&[total as u32, 0, total as u32]);
+    for token in 0..total {
         for rank in 0..10 {
             let route = token * 10 + rank;
-            let chosen = token >= TOTAL - count && rank == token % 10;
+            let chosen = token >= total - count && rank == token % 10;
             let logical = if chosen { 400 } else { 1 + rank };
             raw[groups::LOGICAL + route] = logical as u32;
             raw[1540 + route] = ((logical * 13 + 17) % 512) as u32;
         }
     }
-    let map = groups::group(&raw, TOTAL)?;
-    let n = groups::validate(&map, TOTAL)?;
+    let map = groups::group(&raw, total)?;
+    let n = groups::validate(&map, total)?;
     let group = n - 1;
     if map[516 + group] as usize != count {
         return Err("public narrow authentic map".into());
     }
-    let tile = if count <= 8 { 8 } else { 16 };
+    let tile = if count<=8 {8} else if count<32 {16} else {32};
     let padded = count.div_ceil(tile) * tile;
     let row_words = if activate { 320 } else { 1280 };
     let logical = padded * 1280 + 256;
@@ -76,7 +76,7 @@ fn one(
         if activate {
             groups::GU_BYTES as usize / 4
         } else {
-            TOTAL * 2560
+            total * 2560
         }
     ]);
     for (i, x) in source.iter_mut().enumerate() {
@@ -98,11 +98,11 @@ fn one(
         Op::Gather
     };
     let mut words = [0u32; 16];
-    words[0] = TOTAL as u32;
+    words[0] = total as u32;
     words[1] = 2560;
     words[2] = 1280;
     words[4] = group as u32;
-    let grid = member_dispatches(count, TOTAL)?[usize::from(activate)];
+    let grid = member_dispatches(count, total)?[usize::from(activate)];
     for (output, status, fault, baseline) in [
         (original, status0, fault0, true),
         (selected, status1, fault1, false),
@@ -206,5 +206,16 @@ pub(crate) fn cases(
             out.push(report);
         }
     }
+    Ok(out)
+}
+
+#[cfg(feature="strata-padded-global")]
+pub(crate) fn medium_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+    if !arena.public_owned_zero_audit_enabled() || arena.buffer_count()!=0 {return Err("medium padding requires empty public arena".into());}
+    let mut out=Vec::new();
+    for activate in [false,true] {for count in [32,33,63,64,65,127,128,129,255] {
+        let result=one(client,arena,count,activate);arena.reset()?;let mut r=result?;
+        r["reset_and_owned_erasure"]=true.into();out.push(r);
+    }}
     Ok(out)
 }

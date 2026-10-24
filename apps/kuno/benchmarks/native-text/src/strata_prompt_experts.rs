@@ -244,6 +244,13 @@ impl KernelMetadata for Op {
         )
     }
     fn name(&self) -> &'static str {
+        #[cfg(feature="strata-padded-global")]
+        match self {
+            Self::Gather=>return "StrataPromptExpertGatherPad32",
+            Self::Activate=>return "StrataPromptExpertF16SwigluPad32",
+            Self::ActivateCheckGu=>return "StrataPromptExpertF16SwigluCheckGuPad32",
+            _=>{}
+        }
         #[cfg(feature="strata-dequant-direct8")]
         match self {
             Self::Dequant{..}|Self::SlotDequant{resident:false,..}=>return "StrataPromptExpertF16Direct8Image",
@@ -255,7 +262,7 @@ impl KernelMetadata for Op {
     }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
-            .info((*self, "prompt-owned-routes-v4-vector8", cfg!(feature="strata-dequant-quad32"),cfg!(feature="strata-dequant-direct8")))
+            .info((*self, "prompt-owned-routes-v4-vector8", cfg!(feature="strata-dequant-quad32"),cfg!(feature="strata-dequant-direct8"),cfg!(feature="strata-padded-global")))
             .cube_dim(CubeDim::new_1d(self.lanes()))
     }
     fn address_type(&self) -> StorageType {
@@ -332,6 +339,8 @@ mod narrow_padding;
 #[cfg(feature = "strata-narrow-global")]
 #[path = "strata_prompt_narrow_padding_probe.rs"]
 mod narrow_padding_probe;
+#[cfg(feature="strata-padded-global")]
+pub(crate) use narrow_padding_probe::medium_cases as public_medium_padding;
 #[cfg(any(test, feature = "strata-dequant-record32"))]
 #[path = "strata_prompt_dequant_record32.rs"]
 mod record32;
@@ -1689,10 +1698,10 @@ mod direct_gu_activation_tests {
         ] {
             assert_eq!(checked.matches(&format!("if !finite({part}) {{{part}=0.0;gu[{index}]=0.0;atomicOr(&fault[0],128u);}}")).count(),1);
         }
-        assert_eq!(Op::Activate.name(), "StrataPromptExpertF16Swiglu");
+        assert_eq!(Op::Activate.name(), if cfg!(feature="strata-padded-global") {"StrataPromptExpertF16SwigluPad32"}else{"StrataPromptExpertF16Swiglu"});
         assert_eq!(
             Op::ActivateCheckGu.name(),
-            "StrataPromptExpertF16SwigluCheckGu"
+            if cfg!(feature="strata-padded-global") {"StrataPromptExpertF16SwigluCheckGuPad32"}else{"StrataPromptExpertF16SwigluCheckGu"}
         );
     }
 }

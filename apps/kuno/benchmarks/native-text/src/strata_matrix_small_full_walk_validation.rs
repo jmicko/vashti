@@ -192,7 +192,7 @@ fn program(
         .map(|(_, c)| c)
         .collect::<Vec<_>>();
     let raw_count = if cohort { 4 } else { 8 };
-    let expected_k_loops = if cohort || cfg!(feature = "strata-single-k-walk") { 1 } else { 2 };
+    let expected_k_loops = if cohort || PADDED_GLOBAL || cfg!(feature = "strata-single-k-walk") { 1 } else { 2 };
     if innermost.len() != expected_k_loops || innermost.iter().any(|r| r.1 != raw_count) {
         return Err(
             "full walk must retain ALL C fragments through each chronological K loop".into(),
@@ -466,8 +466,8 @@ fn program(
             }
         }
     }
-    let expected_pure = usize::from(cohort || !cfg!(feature = "strata-single-k-walk"));
-    if pure != expected_pure || partial != if cohort { 0 } else { 1 } {
+    let expected_pure = usize::from(cohort || PADDED_GLOBAL || !cfg!(feature = "strata-single-k-walk"));
+    if pure != expected_pure || partial != if cohort || PADDED_GLOBAL { 0 } else { 1 } {
         return Err("full walk genuine complete and masked product paths".into());
     }
 
@@ -574,6 +574,9 @@ fn negatives(
                 );
             }
         }
+        // Pure-global candidate has no staged B or stage-reuse handoff.
+        // All original stage negatives still execute in the retained module.
+        if PADDED_GLOBAL {return Ok(());}
         let (mut cls, mut par) = (BTreeMap::new(), BTreeMap::new());
         let mut at = 5;
         while at < words.len() {
@@ -666,9 +669,9 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 != if cohort {
                     1024
                 } else if tile == 64 {
-                    4096
+                    if PADDED_GLOBAL {2048} else {4096}
                 } else {
-                    2048
+                    if PADDED_GLOBAL {1024} else {2048}
                 }
             {
                 return Err(
@@ -723,7 +726,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 return Err("small full walk validated actual module".into());
             }
             println!(
-                "strata_small_full_walk_shader_accepted name={name} layout={mask} shared_bytes={} workgroup={} subgroup=16 weights_first=true checked_original_halves=true",
+                "{}_shader_accepted name={name} layout={mask} shared_bytes={} workgroup={} subgroup=16 weights_first=true checked_original_halves=true",
+                if PADDED_GLOBAL {"strata_padded_global"} else {"strata_small_full_walk"},
                 k.shared_size,
                 if tile == 64 { 64 } else { 32 }
             );
