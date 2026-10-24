@@ -192,7 +192,8 @@ fn program(
         .map(|(_, c)| c)
         .collect::<Vec<_>>();
     let raw_count = if cohort { 4 } else { 8 };
-    if innermost.len() != if cohort { 1 } else { 2 } || innermost.iter().any(|r| r.1 != raw_count) {
+    let expected_k_loops = if cohort || cfg!(feature = "strata-single-k-walk") { 1 } else { 2 };
+    if innermost.len() != expected_k_loops || innermost.iter().any(|r| r.1 != raw_count) {
         return Err(
             "full walk must retain ALL C fragments through each chronological K loop".into(),
         );

@@ -252,7 +252,16 @@ pub(crate) fn product(
             c30
         };
         if comptime!(tile != 16) {
-            if token + 32 <= count {
+            // A single accumulator loop also covers wholly real tiles: masked_b
+            // loads them directly from global input. The preceding variant is
+            // kept behind the feature-off selection. Avoid merging eight C
+            // matrices from two independent K loops into publication.
+            let separate_full_loop = if comptime!(cfg!(feature = "strata-single-k-walk")) {
+                false
+            } else {
+                token + 32 <= count
+            };
+            if separate_full_loop {
                 crate::strata_matrix::native_wide::global_wide32::compute::<f16>(
                     input,
                     weight,

@@ -1,5 +1,20 @@
 # Full arithmetic walks for partial small expert tiles
 
+## Resumed candidate: one accumulator loop (2026-10-24 UTC)
+
+The user has returned both GPUs. Next internal candidate is the explicit
+`strata-single-k-walk` / `--single-k-walk` feature, requiring the entire
+full-walk bundle. It preserves all original launch identities, ABI, owners,
+resources, guards, publication and cohort code. Only the macro computation
+selection changes: both full and partial tiles use the same chronological
+eight-C loop. Its existing masked B helper still directly loads each wholly
+real 16-row input block and stages only partial blocks. The original separate
+full/partial loops remain feature-off, not rolled back or replaced globally.
+The actual shader proof must now find exactly ONE eight-product K loop for
+macros, with all prior CFG/reaching-definition/B-alias/handoff negatives.
+This tests whether merging eight accumulator values across separate loops
+caused the observed 80:80 register spills. No speed or acceptance claim yet.
+
 ## Completed checkpoint and user-requested pause (2026-10-24 UTC)
 
 Frozen source `b2621286610dced4cc5f8dc06bc53a7edfa6f4ef`, worker
