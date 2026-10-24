@@ -1,15 +1,43 @@
 # Kuno and Vashti Coordination
 
-**Current composition (2026-10-24 UTC): whole low-liveness policy composed.**
+**Current handoff (2026-10-24 UTC): complete local-prefetch policy validated.**
 
-[Complete local-prefetch policy](kuno-prefill-local-prefetch.md) now composes
-large dense/expert8-C plus macro/cohort4-C/N128 consumers using one short-lived
-alternating-A core. Exact new native roles, actual N128 grids, authentic padded
-producers and original owners/guards/checkers/ordered consumers are wired.
-All older variants remain. Planned421/418 AppCPU,18/86 runtime,88 new actual
-layouts, fresh1747 GPU controls and both original full-model acceptance chains.
-No compilation/live/speed acceptance yet. The preceding fully validated result
-below is still authoritative. No API/Vashti/install/release/driver/boot change.
+Source16054c83 / workere23a3bf3 passes421 full/418 feature-off same-source
+AppCPU,18/86 runtime,8+9 metadata,10 native,all88 new actual layouts and fresh
+all1747 GPU controls. Both original full model/compiler/owner/erasure/recovery
+chains pass. [Exact result, preserved failure and next source lead](kuno-prefill-local-prefetch.md).
+Actual228 compiler programs; all10 new programs have zero spills/fills, old22
+small programs and both QSA hashes retained. Keep ALL complete variants.
+
+Normal first/repeated11.365037066/9.308575798s; sampled11.265344339/9.334742040s.
+No speed gain: normal repeated6.11% longer than row-order8.772859676s, in single
+observations. No new CLEAN; best preceding CLEAN8.323282816s versus Strata5.3515s
+still unmet. No installation or production selection. Large kernels return to
+earlier zero-spill code/cost; macro26.529ms versus17.329ms and cohort7.892ms
+versus6.684ms identify the remaining small-kernel schedule lead. Copy/dequant
+and attention stay essentially unchanged. Do not sum overlapping sampled costs.
+
+V1 completes fresh1747 and three model requests, then a legacy counter helper
+rejects the genuine new cohort counts before writing its profile receipt.
+Preserve failed unit/artifacts. V2 appends exact new counter laws and passes15
+CPU metadata controls, retains original model-chain scripts/guards, and imports
+ONLY the completed numerical result from the SAME unchanged source/worker.
+Its receipt explicitly says fresh_public_numerical_execution=false and pins
+the original receipt SHA; do not claim a second fresh numerical execution.
+V2 whole-model/compiler/recovery unit exits0. Details in linked note.
+
+Next compose temporal K-bank pipelining for BOTH N128/four-C small macro and
+cohort consumers together, retaining the complete accepted large eight-C path.
+Audit/reuse the retained four-C K32 carried arithmetic in its new small context;
+preserve padding, genuine grids/roles, publishers, guards, owners and all old
+variants. Register pressure/gain is unproven; next source is NOT implemented.
+Cold pipeline preparation remains a separate lead, not a repeated-prompt fix.
+
+Independent16:30:55UTC: Intel42278912B,NVIDIA compute0/desktop621MiB,faults0,
+all3HTTP200, admission inactive/unpaused/no recovery/waiting0/completed258.
+No GPU worker remains. Goal ACTIVE/UNMET. Refresher3062861,parent3556 remains
+bounded to17:23:42UTC; verify identity/cache before reuse. No API/Vashti/canonical/
+install/release/driver/boot change. Inherited text/__pycache__ preserved.
 
 **Preceding fully validated handoff (2026-10-24 UTC): balanced large matrices validated, slower.**
 
