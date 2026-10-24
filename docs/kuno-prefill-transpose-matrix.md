@@ -1,6 +1,7 @@
 # Coupled weights-first transposed global matrices
 
-Proposed next complete variant after accepted7a54656c, not implemented/tested.
+Implemented and fully accepted after7a54656c; see complete result below.
+Source1d5d0adb, full890 passes; performance parity remains unmet.
 Backend-only benchmark feature; no model/API/configuration/Vashti/install/driver
 change. Preserve complete N64/image/four-C/quant variants and their evidence.
 
@@ -82,3 +83,67 @@ whole-model chains, original precision/status/finite/owner/capacity/reuse/rollin
 erasure proofs, actual new path counters, compiled ISA and physical recovery.
 Then interpret full normal/diagnostic timing; a promising candidate gets original
 CLEAN45/4245/4245 comparison, target5.3515s unchanged. No component speed rollback.
+
+## Complete implementation and acceptance (2026-10-24 UTC)
+
+Implemented source1d5d0adbfab04c073a0ca624a583a7a0b277e004, worker
+ed422fac9c0b814b898d6d675b1afb891c046907120a4c724869e63711723ab6.
+Explicit feature/build switch `strata-global-transpose`/`--global-transpose`
+composes every preceding feature. Earlier N64/global/image/quant variants remain.
+
+All378 AppCPU,18 feature-off/55 full-runtime,8+9 actual-linked metadata and
+10 original actual native-module controls pass. All original372/53 populations
+remain in exact inventories. Actual24 dense and16 expert layout/CFG controls
+prove weight-A/row-major and input-B/column-major bindings, both genuine K16
+banks, dynamic original INFO strides, column-major global/fallback stores,
+publication barriers outside the product loop, SG16 and closed native negatives.
+All890 GPU controls pass, retaining original837, adding21 dense/F64/bitwise cases
+and32 expert paired original-owner/F64 cases. Compound invalid-low/high8 halves
+with nonfinite column0 pass both roles and original/new launchers. Original
+single-feature status oracle was generalized through bad_feature() without
+changing its results for any original variant. Both original18-script whole-
+model/recovery chains pass, including new dense/prefix path and physical N64
+workgroup counters, original finite/status/owner/capacity/reuse/rolling/erasure
+proofs, original8 zero-spill wide kernels and both unchanged QSA ISA hashes.
+
+Live unit `kuno-global-transpose-20261024.service`, invocation
+712b4a7531b149efa62fb398e5b94c0c, exits0 after14m31.687s;31.7GiB peak,zero swap.
+All5 new native programs have0:0 spills:fills. Dense3 emissions (2 distinct
+bodies)210/213 instructions,54 sends,128GRF/nonSSA40; expertGU1426 instructions,
+237 sends,128GRF/nonSSA78; DOWN1721 instructions,289 sends,128GRF/nonSSA78.
+This static code size does not establish the normal-path runtime cost by itself.
+Total185 compiler programs exported, original kernels retained.
+
+Diagnostic warm/first/repeat3.720783658/11.774986433/9.923692816s;
+normal3.740463393/11.728492252/9.811339312s. Essentially unchanged from N64
+normal9.906160308s and preceding global-image9.665937322s. No original CLEAN
+comparison warranted; best prior CLEAN8.394039699s, target5.3515s unchanged.
+Goal ACTIVE/UNMET. This accepted full variant is retained, not selected as a
+speed solution or grounds to abandon coupled changes.
+
+Repeated expert/attention wall phases: diagnostic5.912646619/2.694233784s;
+normal5.810345400/2.689034279s. Sample layer24/start0/count4096 diagnostic matrix
+classes: cohort12.685091ms, macro12.881445ms, wideGU10.169481ms,
+wideDOWN4.423539ms, tailGU3.932030ms, tailDOWN1.377338ms;
+dequant19.231235ms, ordered_copy29.148009ms. Native timestamp intervals must not
+be assumed to be disjoint wall-time contributions. OrderedCopy denotes actual
+graph copy nodes (including raw uploads), not the ordered inverse-sum shader.
+Repeated request has26673 groups,13382 resident/13291 streamed,39873 real
+host-copy segments,2344 prefixes per role,574980 actual N64 workgroups and950
+dense products. Do not infer active PCIe throughput from idle sysfs readings.
+
+Independent01:12:08UTC state: same boot/kernel7.0.0-38-generic; Intel50,688,000B,
+NVIDIA compute0/display596MiB, all5 classified faults0; Kuno/Ollama/VashtiHTTP200;
+admission normal/activefalse/waiting0/completed166. No services/settings/installed
+binaries/driver/API/Vashti changes. Canonical checkout and inherited pycache
+preserved. Bounded sudo refresh remains through01:47UTC, not indefinite.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`:
+`build-global-transpose-root-20261024.py`, root build/CPU/runtime/metadata receipts,
+`check-global-transpose-connected-20261024.py`, immutable acceptance freeze,
+`strata-parity-global-transpose-20261024-expert-cohorts-public-summary.json`,
+`global-transpose-complete-isa-export-20261024.json`, both safe-phase exports and
+`global-transpose-final-state-20261024.json`. Original18-script forward manifest
+1543a5e9ba3d8f36fbbc1bc385c36907085e3db9d66660c2c37f89daacd1802e unchanged.
+
+Next coherent candidate: [wider pure arithmetic plus checked failure branch](kuno-prefill-wide32-guarded.md).

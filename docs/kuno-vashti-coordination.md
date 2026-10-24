@@ -1,5 +1,38 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-24 UTC): complete transpose accepted, parity unmet.**
+
+Read [accepted full890 result](kuno-prefill-transpose-matrix.md) and
+[next complete wider-matrix/ordered-guard proposal](kuno-prefill-wide32-guarded.md).
+Frozen1d5d0adb / workered422fac passes378 CPU,18/55 runtime,8+9 metadata,
+10 original native,24+16 new actual compiler/CFG cases and890 GPU controls,
+retaining all837. Both original18-script full-model/recovery chains pass;
+original capacity/reuse/rolling/erasure and8 zero-spill wide/QSA hashes intact.
+The new low/high8-member invalid-route+nonfinite compound cases pass both roles.
+
+All5 new kernels remain zero-spill, but whole normal first/repeat
+11.728492252/9.811339312s, diagnostic11.774986433/9.923692816s: essentially
+unchanged, no CLEAN/parity. Best prior CLEAN8.394039699s, target5.3515s unchanged.
+Goal ACTIVE/UNMET. Retain all complete variants; no isolated speed rollback.
+
+New next proposal composes larger32x32-per-subgroup eight-C matrices, bounded
+operand liveness, genuine N128/WG256 geometry, ordered route guard plus pure
+normal arithmetic/checked original-half fallback, original GR320 N64 fallback,
+closed grammar/physical-launch counts, original consumers and all proofs.
+This is NOT implemented. Pending status is never accepted output; invalid-route
+storage must remain untouched even when previously nonzero. Eight-KiB fallback
+scratch remains a compiled expert resource; do not claim0SLM or opaque oneMKL
+exact tiling. No established B70 large-GRF environment override or driver change.
+
+Live unit712b4a7531b149efa62fb398e5b94c0c exits0,14m31.687s,31.7GiB peak,zero
+swap.01:12:08UTC Intel50,688,000B,NVIDIA compute0/display596MiB, all5 faults0,
+HTTP200/admission normal/completed166. GPUs physically recovered. Source and
+complete public artifacts global-transpose-* under kuno-development. Canonical
+checkout/inherited pycache preserved. No API/UI/service/settings/install/release/
+reset/driver change. Bounded sudo still through01:47UTC. No Vashti work needed.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-24 UTC): N64 fully accepted, all spills removed, parity unmet.**
 
 Read [full accepted N64 result](kuno-prefill-global-n64.md) and
