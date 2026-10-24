@@ -103,6 +103,7 @@ pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) ->
     if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::")) {
         return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();
     }
+    if name.contains("::balanced_wide32::"){return false;}
     if name.contains("::global_wide32::"){return false;}
     // Packed cohorts have a distinct seven-buffer grammar and never belong to
     // the six-buffer regular family, even through a nested legacy name.

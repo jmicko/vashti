@@ -2315,3 +2315,7 @@ pub(crate) mod global_transpose;
 #[cfg(feature="strata-global-wide32")]
 #[path="strata_matrix_global_wide32_experts.rs"]
 pub(crate) mod global_wide32;
+
+#[cfg(feature="strata-balanced-wide32")]
+#[path="strata_matrix_balanced_wide32_experts.rs"]
+pub(crate) mod balanced_wide32;

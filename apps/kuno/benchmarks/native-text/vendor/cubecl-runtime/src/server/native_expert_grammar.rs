@@ -132,6 +132,17 @@ fn global_register_generated(name:&str,module:&str,ty:&str)->bool {
  name.split_once("::strata_matrix::native_expert_wide::global_register::")
   .is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
 }
+fn balanced_wide32_generated(name:&str,module:&str,ty:&str)->bool {
+ if !cfg!(feature="kuno-balanced-wide32"){return false;}
+ let actual=match(module,ty){
+ ("expert_wide_gu_direct","ExpertWideGuDirect")=>"expert_balanced_wide32_gu::ExpertBalancedWide32Gu",
+ ("expert_wide_down","ExpertWideDown")=>"expert_balanced_wide32_down::ExpertBalancedWide32Down",
+ _=>return false};
+ name.split_once("::strata_matrix::native_expert_wide::balanced_wide32::").is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
+}
+fn balanced_wide32_prefix(name:&str)->bool {
+ balanced_wide32_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || balanced_wide32_generated(name,"expert_wide_down","ExpertWideDown")
+}
 fn global_wide32_generated(name:&str,module:&str,ty:&str)->bool {
  if !cfg!(feature="kuno-global-wide32"){return false;}
  let actual=match(module,ty){
@@ -167,6 +178,7 @@ fn global_n64_prefix(name:&str)->bool {
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
     if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::")) {return false;}
+    if name.contains("::balanced_wide32::") {return balanced_wide32_generated(name,module,ty);}
     if name.contains("::global_wide32::") {return global_wide32_generated(name,module,ty);}
     if name.contains("::global_transpose::") {return global_transpose_generated(name,module,ty);}
     if name.contains("::global_n64::") {return global_n64_generated(name,module,ty);}
@@ -266,7 +278,7 @@ fn is_tail(name: &str, down: bool) -> bool {
     }
 }
 fn ordered_down_layout(name: &str) -> bool {
-    native_strata_global_small_tile(name,true).is_some() || name.contains("::ordered::") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
+    native_strata_global_small_tile(name,true).is_some() || name.contains("::ordered::") || balanced_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
         name, "expert_tail_down", "ExpertTailDown")
 }
 fn matrix(

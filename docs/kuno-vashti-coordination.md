@@ -1,6 +1,17 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): row-ordered cohorts fully validated.**
+**Current composition (2026-10-24 UTC): balanced large-matrix source candidate.**
+
+[New coherent dense and large-expert bundle](kuno-prefill-balanced-wide32.md)
+adds explicit512-thread/4-accumulator/two-bank carried kernels for BOTH consumers.
+All old variants/414 CPU/1441 GPU controls remain. Four new AppCPU and four
+runtime role controls, new paired dense/expert GPU populations and full model
+acceptance are pending. No speed/installation claim. The accepted row-order
+results below remain the latest measured checkpoint. Physical preflight13:41UTC
+clear/healthy, existing bounded sudo refresher3062861 still expires17:23UTC.
+Canonical/Vashti/API/install/release/driver/boot unchanged.
+
+**Preceding accepted Kuno handoff (2026-10-24 UTC): row-ordered cohorts fully validated.**
 
 Source148758ae/worker19c9456a passes414 full/409 off same-source AppCPU,18/73
 runtime,8+9 metadata,10 native, all original1425 plus16 actual sorted-map GPU

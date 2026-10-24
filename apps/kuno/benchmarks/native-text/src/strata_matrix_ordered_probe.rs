@@ -412,8 +412,8 @@ pub(super) fn one(
     let small_selected=family.starts_with("small-direct-") && ordered;
     // New global-register controls deliberately use the same complete8 direct
     // tail publication as the production path. All old families keep policy.
-    let global_direct_tail=matches!(family,"global-register-direct-gu"|"global-register-ordered-down"|"global-n64-direct-gu"|"global-n64-ordered-down"|"global-transpose-direct-gu"|"global-transpose-ordered-down"|"global-wide32-direct-gu"|"global-wide32-ordered-down");
-    let direct_gu = family == "shared-reuse-direct-gu" || family=="global-register-direct-gu" || family=="global-n64-direct-gu" || family=="global-transpose-direct-gu" || family=="global-wide32-direct-gu" || (small_selected && !down);
+    let global_direct_tail=matches!(family,"global-register-direct-gu"|"global-register-ordered-down"|"global-n64-direct-gu"|"global-n64-ordered-down"|"global-transpose-direct-gu"|"global-transpose-ordered-down"|"global-wide32-direct-gu"|"global-wide32-ordered-down"|"balanced-wide32-direct-gu"|"balanced-wide32-ordered-down");
+    let direct_gu = family == "shared-reuse-direct-gu" || family=="global-register-direct-gu" || family=="global-n64-direct-gu" || family=="global-transpose-direct-gu" || family=="global-wide32-direct-gu" || family=="balanced-wide32-direct-gu" || (small_selected && !down);
     let direct_member = |member: usize| {
         (ordered || direct_gu)
             && if small_selected || global_direct_tail {member/8*8+8<=count} else {member < wide_prefix}

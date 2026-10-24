@@ -220,6 +220,7 @@ fn direct_global_register_module(words: &[u32]) -> bool {
         return false;
     }
     let (mut entry_ok, mut forbidden, mut products) = (false, false, 0);
+    let mut balanced_wide32=false;
     let mut n64=false;
     let mut transpose=false;
     let (mut bindings, mut vars, mut parents, mut loads, mut stores) =
@@ -245,9 +246,10 @@ fn direct_global_register_module(words: &[u32]) -> bool {
                         name.push(b);
                     }
                 }
+                balanced_wide32=name==b"dense_balanced_wide32_store_f_";
                 transpose=name==b"dense_global_transpose_store_f_";
                 n64=name==b"dense_global_n64_store_f_" || transpose;
-                entry_ok = name == b"dense_global_register_store_f_" || n64;
+                entry_ok = name == b"dense_global_register_store_f_" || n64 || balanced_wide32;
             }
             71 if n == 4 && words[at + 2] == 33 => bindings.push((words[at + 1], words[at + 3])),
             59 if n >= 4 => {
@@ -263,7 +265,7 @@ fn direct_global_register_module(words: &[u32]) -> bool {
         }
         at += n;
     }
-    if !entry_ok || forbidden || products != if n64{4}else{8} || loads.len() != if n64{9}else{12} || stores.len() != if n64{2}else{4} {
+    if !entry_ok || forbidden || products != if n64{4}else{8} || loads.len() != if balanced_wide32{15}else if n64{9}else{12} || stores.len() != if n64{2}else{4} {
         return false;
     }
     let binding = |v: u32| bindings.iter().find(|x| x.0 == v).map(|x| x.1);
@@ -307,8 +309,8 @@ fn direct_global_register_module(words: &[u32]) -> bool {
             _ => return false,
         }
     }
-    a == if transpose{3}else{6}
-        && b == if transpose{6}else if n64{3}else{6}
+    a == if balanced_wide32{3}else if transpose{3}else{6}
+        && b == if balanced_wide32{12}else if transpose{6}else if n64{3}else{6}
         && stores
             .into_iter()
             .all(|p| root(p).is_some_and(|r| class(r) == Some(12) && binding(r) == Some(2)))

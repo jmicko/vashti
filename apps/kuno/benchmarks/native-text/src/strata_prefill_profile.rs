@@ -95,6 +95,8 @@ fn matrix_family(name: &str) -> usize {
         if name.contains("::strata_matrix::native::global_small::"){return 4;}
         if name.contains("::strata_matrix::cohorts::global_small::"){return 6;}
     }
+    #[cfg(feature="strata-balanced-wide32")]
+    {if name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_gu::ExpertBalancedWide32Gu<"){return 0;}if name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_down::ExpertBalancedWide32Down<"){return 1;}}
     #[cfg(feature="strata-global-wide32")]
     {if name.contains("::native_expert_wide::global_wide32::expert_global_wide32_gu::ExpertGlobalWide32Gu<"){return 0;}if name.contains("::native_expert_wide::global_wide32::expert_global_wide32_down::ExpertGlobalWide32Down<"){return 1;}}
     #[cfg(feature="strata-global-register-n64")]
@@ -163,6 +165,8 @@ fn native_class(name: &str) -> usize {
 
     #[cfg(feature="strata-global-small-products")]
     if name.contains("::strata_matrix::native::global_small::") || name.contains("::strata_matrix::cohorts::global_small::"){return 1;}
+    #[cfg(feature="strata-balanced-wide32")]
+    if name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_gu::ExpertBalancedWide32Gu<") || name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_down::ExpertBalancedWide32Down<") || name.contains("::native_wide::balanced_wide32::dense_balanced_wide32_store::DenseBalancedWide32Store<"){return 1;}
     #[cfg(feature="strata-global-wide32")]
     if name.contains("::native_expert_wide::global_wide32::expert_global_wide32_gu::ExpertGlobalWide32Gu<") || name.contains("::native_expert_wide::global_wide32::expert_global_wide32_down::ExpertGlobalWide32Down<") || name.contains("::native_wide::global_wide32::dense_global_wide32_store::DenseGlobalWide32Store<"){return 1;}
     #[cfg(feature="strata-global-register-n64")]
@@ -1026,3 +1030,12 @@ mod padded_global_profile_tests {
 mod full_host_trace {use super::*;include!("strata_prefill_full_host_trace.rs");}
 pub(crate) use full_host_trace::FullHostLayer;
 use full_host_trace::full_host_selected;
+
+#[cfg(all(test,feature="strata-balanced-wide32"))]
+mod balanced_wide32_profile_tests{
+ use super::*;
+ #[test]
+ fn actual_wide32_generated_producers_keep_original_matrix_and_expert_family_classes(){
+  for(i,n)in crate::strata_matrix::balanced_wide32_profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);if i<2{assert_eq!(matrix_family(n),i);}}
+ }
+}

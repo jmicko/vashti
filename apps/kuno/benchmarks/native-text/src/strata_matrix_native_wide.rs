@@ -1383,3 +1383,7 @@ pub(super) mod global_transpose;
 #[cfg(feature="strata-global-wide32")]
 #[path="strata_matrix_dense_global_wide32.rs"]
 pub(super) mod global_wide32;
+
+#[cfg(feature="strata-balanced-wide32")]
+#[path="strata_matrix_dense_balanced_wide32.rs"]
+pub(crate) mod balanced_wide32;
