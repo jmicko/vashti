@@ -243,6 +243,19 @@ impl Cohort {
         {
             return Err(batch_fault("native expert cohort immutable original INFO"));
         }
+        // The backend also checks these at resource admission. Keep this
+        // distinct grammar closed over EVERY actual source and dependency,
+        // including prototype gate/up bindings, not only its persistent views.
+        if args
+            .buffers
+            .iter()
+            .chain(&args.read_dependencies)
+            .any(|v| v.stream != self.map.stream)
+        {
+            return Err(batch_fault(
+                "native regular cohort all source/dependency streams",
+            ));
+        }
         let z = w[9];
         if matrix {
             let quant = false;

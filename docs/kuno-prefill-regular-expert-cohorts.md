@@ -131,3 +131,14 @@ source CPU control proves disjoint real/padding writes. Original old producers
 are untouched. Initial3cdb3da3 compile failed inference at shader-list joining;
 72933c8d fixes it. Its CPU run is preserved, superseded before GPU execution
 by this padding correction; no pre-correction GPU or speed claim.
+
+At aeeb8fff, fresh442 full/435 feature-off AppCPU and all16 new actual matrix
+layouts pass; worker builds and offline437 WGSL/336 matrix layouts pass. Native
+runtime18 baseline passes; full96 finds2 new-control failures (94 pass). Keep
+this failed receipt. One exposes missing all-buffer/read-dependency stream
+validation inside the distinct grammar (live backend already checks it); add
+that validation explicitly. The other incorrectly demands a pre-known identity
+for the final PART sink at its first binding. Correct it to prove established
+owner identity and exact first-bound output span; local metadata cannot prove
+an unstated sink ID. Actual graph ownership/charging and whole GPU/model consumer
+checks remain mandatory. No GPU/math/speed execution yet. Revalidate final source.

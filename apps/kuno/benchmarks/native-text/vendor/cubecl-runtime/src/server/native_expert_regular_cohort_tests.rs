@@ -235,8 +235,19 @@ fn regular_cohort_requires_real_maximum_grid_and_every_same_original_matrix_owne
         for owner in 0..6 {
             let mut p = program(&[33, 255]);
             let size = View::new(&p[index].args.buffers[owner]).unwrap().used();
-            p[index].args.buffers[owner] = Handle::new(StreamId::current(), size).binding();
-            assert!(run(&p).is_err());
+            if index == 5 && owner == 2 {
+                // The final PART sink is first established here: this local
+                // grammar cannot know a caller's unstated expected allocation.
+                // Actual graph resource admission owns/charges this handle;
+                // whole GPU/model checks prove the original consumer wiring.
+                p[index].args.buffers[owner] = Handle::new(StreamId::current(), size).binding();
+                assert!(run(&p).is_ok());
+                // Reject an incorrect full output span and stale array ABI.
+                p[index].args.buffers[owner] = Handle::new(StreamId::current(), size - 4).binding();
+            } else {
+                p[index].args.buffers[owner] = Handle::new(StreamId::current(), size).binding();
+            }
+            assert!(run(&p).is_err(), "matrix {index} owner {owner}");
         }
         for field in [1usize, 2, 4, 5, 9, 10, 11, 16, 48, 54] {
             let mut p = program(&[33, 255]);
@@ -283,7 +294,7 @@ fn regular_cohort_common_info_cannot_alias_raw_slots_rows_or_spare_records() {
             let mut p = program(&[33, 255]);
             p[index].args.buffers[owner].stream.value =
                 p[index].args.buffers[owner].stream.value.wrapping_add(1);
-            assert!(run(&p).is_err());
+            assert!(run(&p).is_err(), "phase {index} source {owner}");
         }
     }
 }
