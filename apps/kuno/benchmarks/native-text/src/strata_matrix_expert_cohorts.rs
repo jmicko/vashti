@@ -719,3 +719,12 @@ pub(crate) use local_small_pair_probe::cases as public_local_small_pairs;
 mod small_local_carry_pair_probe;
 #[cfg(feature="strata-small-local-carry")]
 pub(crate) use small_local_carry_pair_probe::cases as public_small_local_carry_pairs;
+
+#[cfg(feature="strata-small-granular")]
+pub(crate) mod granular_small {use super::*;include!("strata_matrix_granular_small_cohort.rs");}
+
+#[cfg(feature="strata-small-granular")]
+#[path="strata_matrix_granular_pair_probe.rs"]
+mod granular_pair_probe;
+#[cfg(feature="strata-small-granular")]
+pub(crate) use granular_pair_probe::cases as public_granular_pairs;

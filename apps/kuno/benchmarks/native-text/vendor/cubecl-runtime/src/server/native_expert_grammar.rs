@@ -188,7 +188,7 @@ fn global_n64_prefix(name:&str)->bool {
  global_n64_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_n64_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
-    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::")) {return false;}
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::") || name.contains("::granular_small::")) {return false;}
     if name.contains("::local_wide32::") {return local_wide32_generated(name,module,ty);}
     if name.contains("::balanced_wide32::") {return balanced_wide32_generated(name,module,ty);}
     if name.contains("::global_wide32::") {return global_wide32_generated(name,module,ty);}
@@ -573,7 +573,7 @@ impl NativeStrataExpertGrammar {
                     8
                 };
                 let n = if super::native_expert_batch::native_strata_local_n128(name) {128} else if name.contains("::expert::") { 16 } else { 64 };
-                if !grid(count, params.rows.div_ceil(n), params.count.div_ceil(tile)) {
+                if !grid(count, params.rows.div_ceil(n), params.count.div_ceil(if super::native_expert_batch::native_strata_granular_m16(name) {16} else {tile})) {
                     return Err(batch_fault("native expert grammar original full dispatch"));
                 }
                 if !down {

@@ -47,6 +47,7 @@ pub(crate) fn native_strata_expert_padded_identity(name:&str)->&str {
  name
 }
 pub(crate) fn native_strata_padded_global(name:&str)->bool {
+ if name.contains("::granular_small::") {return granular_tile(name,false).is_some() || granular_tile(name,true).is_some();}
  (cfg!(feature="kuno-padded-global") && name.contains("::strata_matrix::native::padded_global::")) || (cfg!(feature="kuno-balanced-global") && name.contains("::strata_matrix::native::balanced_global::")) || (cfg!(feature="kuno-local-prefetch") && name.contains("::strata_matrix::native::local_small::"))
 }
 
@@ -83,8 +84,36 @@ pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
         .any(|(module, ty)| native_strata_small_direct_generated(name, module, ty))
 }
 
+/// Physical M16/N64 only for the genuine granular entry identities.
+fn granular_role(name: &str, namespace: &str, role: &str) -> bool {
+    cfg!(feature = "kuno-small-granular") && name.split_once(namespace)
+        .filter(|(prefix, _)| !prefix.contains("::strata_matrix::"))
+        .is_some_and(|(_, suffix)| suffix.strip_prefix(role)
+            .is_some_and(native_strata_generated_type_suffix))
+}
+fn granular_tile(name: &str, down: bool) -> Option<u32> {
+    let roles = if down {
+        [("expert_granular_macro32_down::ExpertGranularMacro32Down",32),
+         ("expert_granular_macro64_down::ExpertGranularMacro64Down",64)]
+    } else {
+        [("expert_granular_macro32_gu::ExpertGranularMacro32Gu",32),
+         ("expert_granular_macro64_gu::ExpertGranularMacro64Gu",64)]
+    };
+    roles.into_iter().find_map(|(role,tile)|granular_role(name,
+        "::strata_matrix::native::granular_small::",role).then_some(tile))
+}
+fn granular_cohort(name: &str) -> bool {
+    granular_role(name,"::strata_matrix::cohorts::granular_small::",
+        "expert_granular_cohort::ExpertGranularCohort")
+}
+pub(crate) fn native_strata_granular_m16(name: &str) -> bool {
+    granular_tile(name,false).is_some() || granular_tile(name,true).is_some()
+        || granular_cohort(name)
+}
+
 /// Exact new full-small identities. No wide/tail/cohort or legacy aliases.
 pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
+ if name.contains("::granular_small::") {return granular_tile(name,down);}
  if !cfg!(feature="kuno-global-small-products"){return None;}
  if cfg!(feature="kuno-local-prefetch") {
   if let Some((_,s))=name.split_once("::strata_matrix::native::local_small::") {
@@ -100,6 +129,7 @@ pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
  roles.into_iter().find_map(|(role,tile)|suffix.strip_prefix(role).filter(|s|native_strata_generated_type_suffix(s)).map(|_|tile))
 }
 pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
+ if name.contains("::granular_small::") {return granular_cohort(name);}
  if cfg!(feature="kuno-local-prefetch") && name.split_once("::strata_matrix::cohorts::local_small::expert_local_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertLocalCohort").is_some_and(native_strata_generated_type_suffix)){return true;}
 
  if cfg!(feature="kuno-balanced-global") && name.split_once("::strata_matrix::cohorts::balanced_global::expert_balanced_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertBalancedCohort").is_some_and(native_strata_generated_type_suffix)){return true;}
@@ -108,7 +138,7 @@ pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     let name=native_strata_expert_padded_identity(native_strata_expert_dequant_identity(name));
-    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::")) {
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::") || name.contains("::granular_small::")) {
         return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();
     }
     if name.contains("::local_wide32::"){return false;}

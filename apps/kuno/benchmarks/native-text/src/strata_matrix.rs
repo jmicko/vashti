@@ -191,6 +191,8 @@ pub(crate) use native::small_full_walk;
 pub(crate) use native::padded_global;
 #[cfg(feature="strata-balanced-global")]
 pub(crate) use native::balanced_global;
+#[cfg(feature="strata-small-granular")]
+pub(crate) use native::granular_small;
 #[cfg(feature="strata-local-prefetch")]
 pub(crate) use native::local_small;
 #[cfg(feature="strata-small-direct-publish")]
@@ -213,6 +215,8 @@ mod native {
     pub(crate) mod padded_global {const PADDED_GLOBAL:bool=true;include!("strata_matrix_small_full_walk.rs");}
     #[cfg(feature="strata-balanced-global")]
     pub(crate) mod balanced_global {include!("strata_matrix_balanced_global.rs");}
+    #[cfg(feature="strata-small-granular")]
+    pub(crate) mod granular_small {include!("strata_matrix_granular_small.rs");}
     #[cfg(feature="strata-local-prefetch")]
     pub(crate) mod local_small {include!("strata_matrix_local_small.rs");}
     #[cfg(feature="strata-expert-ordered-output")]
@@ -2762,6 +2766,8 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-small-granular")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && granular_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-local-prefetch")]
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && local_small::try_selected(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-balanced-global")]
@@ -2852,6 +2858,8 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-small-granular")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && granular_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-local-prefetch")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && local_small::try_selected(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-balanced-global")]
@@ -3085,6 +3093,7 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         padded_global::validate_sources()?;
         #[cfg(feature="strata-local-prefetch")]
         {
+         #[cfg(feature="strata-small-granular")] granular_small::validate_sources()?;
          #[cfg(feature="strata-small-local-carry")] local_small::validate_sources_mode(true)?;
          local_small::validate_sources()?;native_wide::local_wide32::validate_local_wide32_sources()?;native_expert_wide::local_wide32::validate_sources()?;}
         #[cfg(feature="strata-balanced-global")]
@@ -3635,5 +3644,41 @@ mod small_local_carry_tests {
  #[test]
  fn small_local_carry_actual_all48_layouts_prove_true_banks_and_chronological_c() {
   super::local_small::validate_sources_mode(true).unwrap();
+ }
+}
+
+#[cfg(feature="strata-small-granular")]
+#[path="strata_matrix_granular_products.rs"]
+mod granular_products;
+
+#[cfg(feature="strata-small-granular")]
+#[path="strata_matrix_granular_validation.rs"]
+mod granular_validation;
+#[cfg(all(test,feature="strata-small-granular"))]
+mod granular_tests {
+ #[test]
+ fn small_granular_all48_actual_layouts_prove_interleaving_scratch_and_c() {
+  super::granular_small::validate_sources().unwrap();
+ }
+ #[test]
+ fn small_granular_physical_cells_cover_original_logical_categories() {
+  for count in 32usize..256 { for rows in [1280usize,2560] {
+   let mut seen=vec![0u8;count*rows];
+   for y in 0..count.div_ceil(16) {for x in 0..rows/64 {for sg in 0..2 {for m in 0..16 {for n in 0..32 {
+    let token=y*16+m;let row=x*64+sg*32+n;
+    if token<count {seen[token*rows+row]+=1;}
+   }}}}}
+   assert!(seen.iter().all(|&n|n==1));
+  }}
+  // Both independent eight-member halves reuse their subgroup's128 f32.
+  let ranges=[0usize..128,128..256];assert_eq!(ranges[0].end,ranges[1].start);
+  assert_eq!(ranges[1].end*4,1024);
+ }
+ #[test]
+ fn small_granular_genuine_profile_roles_are_separate_from_legacy() {
+  for (i,n) in super::granular_small::profile_names().into_iter().enumerate() {
+   let (class,family)=crate::strata_prefill_profile::local_prefetch_test_classes(n);
+   assert_eq!((class,family),(1,if i<4 {4}else{6}));
+  }
  }
 }

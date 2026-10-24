@@ -82,6 +82,8 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-small-granular")]
+    {if name.contains("::strata_matrix::native::granular_small::"){return 4;}if name.contains("::strata_matrix::cohorts::granular_small::"){return 6;}}
     #[cfg(feature="strata-local-prefetch")]
     {if name.contains("::strata_matrix::native::local_small::"){return 4;}if name.contains("::strata_matrix::cohorts::local_small::"){return 6;}}
     #[cfg(feature="strata-balanced-global")]
@@ -158,6 +160,8 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-small-granular")]
+    if name.contains("::strata_matrix::native::granular_small::")||name.contains("::strata_matrix::cohorts::granular_small::"){return 1;}
     #[cfg(feature="strata-local-prefetch")]
     if name.contains("::strata_matrix::native::local_small::")||name.contains("::strata_matrix::cohorts::local_small::"){return 1;}
     #[cfg(feature="strata-balanced-global")]

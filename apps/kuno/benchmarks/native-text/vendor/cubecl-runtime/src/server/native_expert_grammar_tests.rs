@@ -919,3 +919,7 @@ mod padded_global;
 
 #[cfg(feature="kuno-local-prefetch")]
 #[path="native_expert_local_small_tests.rs"]mod local_small;
+
+#[cfg(feature="kuno-small-granular")]
+#[path="native_expert_granular_small_tests.rs"]
+mod granular_small;

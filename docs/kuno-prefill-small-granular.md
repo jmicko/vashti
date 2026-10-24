@@ -1,6 +1,6 @@
 # Complete granular small-expert pipeline
 
-Next source plan after accepted source94613ad7/full1867. Not implemented,
+Source candidate composed after accepted source94613ad7/full1867. Not yet
 compiled or measured. Keep all previous complete variants. No API, model,
 Vashti, install, release, driver or boot change.
 
@@ -97,3 +97,24 @@ Then both original full model/compiler/owner/counter/erasure/recovery chains,
 actual native spill/instruction inventories and the original CLEAN first/repeat
 gate. Keep the entire candidate when diagnosing results. Do not abandon one
 of the coupled liveness/granularity pieces based on an isolated timing.
+
+
+## Composed source checkpoint (2026-10-24)
+
+Feature `strata-small-granular` depends on the whole preceding carry bundle and
+forwards `cubecl-wgpu/kuno-small-granular` to the exact runtime classifier. The
+builder requires explicit `--small-granular` plus the existing complete flags.
+New genuine namespaces are `native::granular_small` and
+`cohorts::granular_small`. Logical macro32/64 guards remain; both physical
+shapes are M16/N64/WG32, publication allocation256 F32. Original six-role
+and cohort48-u32 owner/phase contracts remain. All old entry functions remain
+available to the original numerical controls.
+
+Both consumers call one four-A/two-B interleaved K32 core. All per-cell K16
+reductions retain ascending order. New public controls compare actual preceding
+true-carried and granular programs, including four mixed eight-slot pairs.
+These fixtures contain fixed public data only and are not private request logs.
+Additional plan: three AppCPU cases (coverage/scratch, genuine profile roles,
+48 emitted layout proofs), three regular native grammar cases and two cohort
+cases. Planned total425 AppCPU,422 feature-off,18/91 runtime,1987 fresh GPU.
+CPU/compiler and live outcomes remain pending; no speed or acceptance claim.
