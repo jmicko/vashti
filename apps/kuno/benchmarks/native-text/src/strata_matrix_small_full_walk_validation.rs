@@ -159,6 +159,7 @@ fn program(
         );
     }
     let mut regions = Vec::new();
+    let mut region_headers = BTreeMap::new();
     for (header, merge) in loops {
         let (mut seen, mut todo) = (BTreeSet::new(), vec![header]);
         while let Some(b) = todo.pop() {
@@ -175,6 +176,7 @@ fn program(
         }
         let count = products.iter().filter(|p| seen.contains(&p.0)).count();
         if count > 0 {
+            region_headers.insert(seen.clone(), header);
             regions.push((seen, count));
         }
     }
@@ -364,6 +366,43 @@ fn program(
                 return Err("full walk B stage overwrite aliases earlier matrix value".into());
             }
         }
+        let header = region_headers[&region.0];
+        let mut flow: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for b in &region.0 {
+            let ins = &blocks[b];
+            for pair in ins.windows(2) {
+                flow.insert(pair[0], vec![pair[1]]);
+            }
+            flow.insert(
+                *ins.last().ok_or("full walk empty matrix block")?,
+                edges[b]
+                    .iter()
+                    .filter(|n| region.0.contains(n) && **n != header)
+                    .map(|n| blocks[n][0])
+                    .collect(),
+            );
+        }
+        let reachable = |from: usize, to: usize, skip: Option<usize>| {
+            let (mut seen, mut todo) = (BTreeSet::new(), vec![from]);
+            while let Some(a) = todo.pop() {
+                if Some(a) == skip || !seen.insert(a) {
+                    continue;
+                }
+                if a == to {
+                    return true;
+                }
+                if let Some(ns) = flow.get(&a) {
+                    todo.extend(ns.iter().copied());
+                }
+            }
+            false
+        };
+        // Actual instruction CFG, not physical SPIR-V block placement. Helpers'
+        // branch blocks may be serialized after their consuming product block.
+        let must_pass = |from: usize, to: usize, guard: usize| {
+            reachable(from, to, None) && !reachable(from, to, Some(guard))
+        };
+        let entry = blocks[&header][0];
         let bs = barrier_sites
             .iter()
             .filter(|p| region.0.contains(&p.0))
@@ -391,17 +430,30 @@ fn program(
                 .filter(|p| region.0.contains(&p.0) && classes.get(&root(p.2).unwrap()) == Some(&4))
                 .map(|p| p.1)
                 .collect::<Vec<_>>();
-            if ws.len() != 8
-                || !(ws[3] < bs[0].1
-                    && bs[0].1 < sl[0]
-                    && sl[0] < bs[1].1
-                    && bs[1].1 < ws[4]
-                    && ws[7] < bs[2].1
-                    && bs[2].1 < sl[1]
-                    && sl[1] < bs[3].1
-                    && bs[3].1 < ps[0])
-            {
-                return Err("full walk actual fully unrolled stage initialization/load-before-overwrite chronology".into());
+            let initialized = ws.len() == 8
+                && (0..2).all(|i| {
+                    let before = bs[i * 2].1;
+                    let after = bs[i * 2 + 1].1;
+                    ws[i * 4..i * 4 + 4]
+                        .iter()
+                        .all(|&w| must_pass(entry, before, w))
+                        && must_pass(entry, sl[i], before)
+                        && must_pass(entry, after, sl[i])
+                        && must_pass(sl[i], ps[0], after)
+                });
+            // Physical block order does not identify which B stage executes
+            // first. Require one actual iteration order and a handoff before
+            // EVERY subsequent store into the aliased stage.
+            let forward = ws.len() == 8 && reachable(sl[0], ws[4], None);
+            let reverse = ws.len() == 8 && reachable(sl[1], ws[0], None);
+            let reuse_safe = forward != reverse
+                && if forward {
+                    ws[4..].iter().all(|&w| must_pass(sl[0], w, bs[1].1))
+                } else {
+                    ws[..4].iter().all(|&w| must_pass(sl[1], w, bs[3].1))
+                };
+            if !initialized || !reuse_safe {
+                return Err(format!("full walk actual CFG stage initialization/load-before-overwrite chronology stores={ws:?} barriers={bs:?} shared_loads={sl:?} first_product={:?}",ps.first()).into());
             }
         }
         for b in &region.0 {
@@ -458,21 +510,110 @@ fn negatives(
             }
             at += n;
         }
+        let mut definitions = BTreeMap::new();
+        let mut at = 5;
+        while at < words.len() {
+            let n = (words[at] >> 16) as usize;
+            if matches!(words[at] & 65535, 61 | 83 | 4457) {
+                definitions.insert(words[at + 2], words[at..at + n].to_vec());
+            }
+            at += n;
+        }
+        let key = |mut id: u32| -> std::result::Result<(u32, u32), Box<dyn std::error::Error>> {
+            let mut seen = BTreeSet::new();
+            loop {
+                if !seen.insert(id) {
+                    return Err("full walk negative matrix alias cycle".into());
+                }
+                let d = definitions
+                    .get(&id)
+                    .ok_or("full walk negative actual B definition")?;
+                match d[0] & 65535 {
+                    61 => return Ok((61, d[3])),
+                    4457 => return Ok((4457, id)),
+                    83 => id = d[3],
+                    _ => return Err("full walk negative unsupported B identity".into()),
+                }
+            }
+        };
         let first = words[products[0] + 4];
         let second = words[products[1] + 4];
-        if first == second {
-            return Err("full walk negative needs genuine independent B values".into());
+        if key(first)? == key(second)? {
+            return Err("full walk negative needs genuine independent B storage/SSA".into());
         }
         let mut changed = words.to_vec();
         let mut edits = 0;
-        for a in products {
-            if changed[a + 4] == second {
+        for &a in products.iter().take(8) {
+            if key(changed[a + 4])? == key(second)? {
                 changed[a + 4] = first;
                 edits += 1;
             }
         }
         if edits != 4 || program(&changed, cohort, tile).is_ok() {
             return Err("full walk accepted real B1-to-B0 matrix alias mutation".into());
+        }
+        if key(second)?.0 == 61 {
+            let ptr = key(second)?.1;
+            let mut broken = words[..5].to_vec();
+            let mut at = 5;
+            let mut removed = 0;
+            while at < words.len() {
+                let n = (words[at] >> 16) as usize;
+                if words[at] & 65535 == 62 && words[at + 1] == ptr {
+                    removed += 1;
+                } else {
+                    broken.extend_from_slice(&words[at..at + n]);
+                }
+                at += n;
+            }
+            if removed == 0 || program(&broken, cohort, tile).is_ok() {
+                return Err(
+                    "full walk accepted missing actual current-iteration matrix assignments".into(),
+                );
+            }
+        }
+        let (mut cls, mut par) = (BTreeMap::new(), BTreeMap::new());
+        let mut at = 5;
+        while at < words.len() {
+            let n = (words[at] >> 16) as usize;
+            match words[at] & 65535 {
+                59 => {
+                    cls.insert(words[at + 2], words[at + 3]);
+                }
+                65 | 66 | 67 | 83 | 124 => {
+                    par.insert(words[at + 2], words[at + 3]);
+                }
+                _ => {}
+            }
+            at += n;
+        }
+        let root = |mut id: u32| {
+            let mut seen = BTreeSet::new();
+            while let Some(&p) = par.get(&id) {
+                assert!(seen.insert(id));
+                id = p;
+            }
+            id
+        };
+        let mut at = 5;
+        let mut after_shared = false;
+        let mut erased = None;
+        while at < words.len() {
+            let n = (words[at] >> 16) as usize;
+            let op = words[at] & 65535;
+            if op == 4457 && cls.get(&root(words[at + 3])) == Some(&4) {
+                after_shared = true;
+            } else if after_shared && op == 224 {
+                erased = Some((at, n));
+                break;
+            }
+            at += n;
+        }
+        let (at, n) = erased.ok_or("full walk negative needs actual post-load subgroup handoff")?;
+        let mut broken = words.to_vec();
+        broken.drain(at..at + n);
+        if program(&broken, cohort, tile).is_ok() {
+            return Err("full walk accepted removed actual stage-reuse handoff".into());
         }
     }
 

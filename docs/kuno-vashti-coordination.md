@@ -1,6 +1,6 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): complete local-route bundle accepted; extend small/medium matrix coverage next.**
+**Active Kuno handoff (2026-10-24 UTC): full1103 accepted; next full-walk bundle in CPU validation.**
 
 **Latest completed bundle:** source d36a393f / worker50bfab9e passes395
 AppCPU plus390 feature-off,18/63 runtime,8+9 metadata,10 native and all1103
@@ -22,8 +22,11 @@ first compilation passes, but its new B-SSA proof rejects an unrecognized
 actual B value. Strict provenance diagnostic added; no GPU run/speed claim.
 Actual B definition is Function-storage OpLoad. Exact same-iteration CFG
 reaching-store proof added, retaining all predecessor/uninitialized/alias
-rejections; v3 compilation pending. One standalone actual masked-stage
-mathematical test passes; no full app/shader/GPU acceptance yet.
+rejections. V3 compiles, then finds physical block-order assumption. Exact
+per-iteration instruction-CFG proof now passes FIRST serialized real module
+and genuine WG/descriptor/B-alias/missing-store/removed-handoff negatives;
+all48/full398 still pending. One actual masked-stage math control passes.
+V4 full CPU validation next; no new GPU acceptance or timing yet.
 Complete unit2528d58ded784cd4b9ff6772cadf415d exits0;05:00:40UTC Intel50,688,000B,
 NVIDIA compute0/display575MiB, all5 faults0, HTTP200/admission normal/completed178.
 No GPU job remains; no installed services changed. Bounded sudo refresher

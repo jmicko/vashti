@@ -87,3 +87,22 @@ artifact directory for faster standalone proof debugging; private worker
 builds omit this export entirely. These contain no request/model/GPU data.
 One actual repository masked-stage mathematical test passes separately; this
 is not full app/shader/GPU acceptance. V3 compile/proof is next.
+
+V3 compiled successfully and resolved genuine Function-local matrix origins,
+then rejected a chronology assertion that assumed physical SPIR-V block order.
+The actual helper branch blocks are serialized after their consuming product
+block; execution order comes from CFG edges. The proof now uses exact
+instruction reachability inside one K iteration (excluding its backedge),
+requires every store before its stage load, both subgroup handoffs, and a
+handoff before EVERY write that reuses either stage in actual CFG order.
+It retains independent actual B-origin sets and exact owner/WG/SG/resources.
+
+A standalone Rust checker compiles the exact production proof-function prefix
+against the SAME cached production AtomicOr classifier and the already
+serialized public module; no source normalization or GPU work. First
+macro32-GU/layout0 module eb5d5fb26f6cd7dcccbf84cd136e12387f1ad496c0d6c0c3712b71049de469ee
+passes positive proof and genuine descriptor/WG/B-alias/missing-matrix-store/
+removed-stage-handoff negatives (`full-walk-ssa-debug7-20261024`). This is ONE
+module, not all48 layouts or full398 acceptance. Earlier debug attempts kept.
+The metadata-only source checker makes future proof diagnostics fast without
+repeated whole-worker compilation. V4 full398 compilation/acceptance is next.
