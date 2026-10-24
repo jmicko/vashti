@@ -14,6 +14,9 @@ host capture essentially unchanged, not additive wall intervals. Next inspect
 partial tiles' repeated two-C K loops and compose full eight/four-C arithmetic
 with authentic masked inputs plus original8-half publication. No rollback.
 Full results, preserved CPU wrapper failures and artifacts in small/medium doc.
+Next coherent design: [single full arithmetic walk](kuno-prefill-small-full-walk.md);
+compose partial input staging, all-C math, publication and exact native roles
+together, retaining every existing variant/control. Not yet implemented.
 Complete unit2528d58ded784cd4b9ff6772cadf415d exits0;05:00:40UTC Intel50,688,000B,
 NVIDIA compute0/display575MiB, all5 faults0, HTTP200/admission normal/completed178.
 No GPU job remains; no installed services changed. Bounded sudo refresher
