@@ -36,6 +36,7 @@ resolver = "2"
 [features]
 kuno-small-full-walk = ["kuno-global-small-products", "cubecl-runtime/kuno-small-full-walk"]
 kuno-padded-global = ["kuno-small-full-walk", "cubecl-runtime/kuno-padded-global"]
+kuno-balanced-global = ["kuno-padded-global", "cubecl-runtime/kuno-balanced-global"]
 kuno-global-small-products = ["kuno-global-wide32", "cubecl-runtime/kuno-global-small-products"]
 kuno-global-register-n64 = ["kuno-global-image-experts", "cubecl-runtime/kuno-global-register-n64"]
 kuno-global-transpose = ["kuno-global-register-n64", "cubecl-runtime/kuno-global-transpose"]

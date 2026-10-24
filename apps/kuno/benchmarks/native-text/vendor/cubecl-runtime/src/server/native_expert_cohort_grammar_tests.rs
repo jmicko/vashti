@@ -309,3 +309,6 @@ mod global_small;
 #[cfg(feature="kuno-small-full-walk")]
 #[path="native_expert_cohort_full_walk_tests.rs"]
 mod full_walk;
+
+#[cfg(feature="kuno-balanced-global")]
+#[path="native_expert_cohort_balanced_global_tests.rs"]mod balanced_global;

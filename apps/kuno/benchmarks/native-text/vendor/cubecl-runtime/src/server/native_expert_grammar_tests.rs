@@ -913,3 +913,6 @@ mod full_walk;
 #[cfg(feature="kuno-padded-global")]
 #[path="native_expert_padded_global_tests.rs"]
 mod padded_global;
+
+#[cfg(feature="kuno-balanced-global")]
+#[path="native_expert_balanced_global_tests.rs"]mod balanced_global;

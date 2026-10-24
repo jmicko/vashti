@@ -38,6 +38,7 @@ resolver = "2"
 [features]
 kuno-small-full-walk = ["kuno-global-small-products"]
 kuno-padded-global = ["kuno-small-full-walk"]
+kuno-balanced-global = ["kuno-padded-global"]
 kuno-global-small-products = ["kuno-global-wide32"]
 kuno-global-register-n64 = ["kuno-global-image-experts"]
 kuno-global-transpose = ["kuno-global-register-n64"]

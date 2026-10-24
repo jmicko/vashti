@@ -265,7 +265,7 @@ pub(super) fn one(
         let tile = if count <= 8 { 8 } else { 16 };
         image.resize(count.div_ceil(tile) * tile * f.columns / 2, 0);
     }
-    if family=="small-direct-padded-global-regular" {
+    if matches!(family,"small-direct-padded-global-regular"|"small-direct-balanced-global-regular") {
         if !(32..256).contains(&count) {return Err("public padded-global fixture range".into());}
         image.resize(count.div_ceil(32)*32*f.columns/2,0);
     }
@@ -338,13 +338,19 @@ pub(super) fn one(
             #[cfg(not(feature="strata-global-small-products"))]
             let global_cohort=false;
             #[cfg(feature="strata-small-full-walk")]
-            let full_walk_cohort=family=="small-direct-full-walk-cohort" || family=="small-direct-full-walk-cohort-reference";
+            let full_walk_cohort=matches!(family,"small-direct-full-walk-cohort"|"small-direct-full-walk-cohort-reference"|"small-direct-balanced-global-cohort"|"small-direct-balanced-global-cohort-reference");
             #[cfg(not(feature="strata-small-full-walk"))]
             let full_walk_cohort=false;
             if full_walk_cohort {
                 #[cfg(feature="strata-small-full-walk")]
-                if family=="small-direct-full-walk-cohort"{crate::strata_matrix::cohorts::small_full_walk::launch(client,selected,&words,down,16)?;}
-                else{crate::strata_matrix::cohorts::global_small::launch(client,selected,&words,down,16)?;}
+                if family=="small-direct-balanced-global-cohort" {
+                    #[cfg(feature="strata-balanced-global")]
+                    crate::strata_matrix::cohorts::balanced_global::launch(client,selected,&words,down,16)?;
+                    #[cfg(not(feature="strata-balanced-global"))]
+                    return Err("balanced cohort disabled".into());
+                }else if matches!(family,"small-direct-full-walk-cohort"|"small-direct-balanced-global-cohort-reference") {
+                    crate::strata_matrix::cohorts::small_full_walk::launch(client,selected,&words,down,16)?;
+                }else{crate::strata_matrix::cohorts::global_small::launch(client,selected,&words,down,16)?;}
             }else             if global_cohort {
                 #[cfg(feature="strata-global-small-products")]
                 if family=="small-direct-global-cohort" {

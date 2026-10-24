@@ -79,6 +79,8 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-balanced-global")]
+    {if name.contains("::strata_matrix::native::balanced_global::"){return 4;}if name.contains("::strata_matrix::cohorts::balanced_global::"){return 6;}}
     #[cfg(feature="strata-padded-global")]
     if name.contains("::strata_matrix::native::padded_global::") {return 4;}
     #[cfg(feature="strata-small-full-walk")]
@@ -147,6 +149,8 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-balanced-global")]
+    if name.contains("::strata_matrix::native::balanced_global::")||name.contains("::strata_matrix::cohorts::balanced_global::"){return 1;}
     #[cfg(feature="strata-padded-global")]
     let name=match name {"StrataPromptExpertGatherPad32"=>"StrataPromptExpertGather","StrataPromptExpertF16SwigluPad32"=>"StrataPromptExpertF16Swiglu","StrataPromptExpertF16SwigluCheckGuPad32"=>"StrataPromptExpertF16SwigluCheckGu",_=>name};
     #[cfg(feature="strata-padded-global")]
@@ -997,5 +1001,12 @@ mod padded_global_profile_tests {
  #[test] fn actual_padded_producers_and_macro_names_retain_original_semantic_classes(){
   for n in crate::strata_matrix::padded_global::profile_names().into_iter().take(4){assert_eq!(native_class(n),1);assert_eq!(matrix_family(n),4);}
   for(a,b)in [("StrataPromptExpertGatherPad32","StrataPromptExpertGather"),("StrataPromptExpertF16SwigluCheckGuPad32","StrataPromptExpertF16SwigluCheckGu")] {assert_eq!(native_class(a),native_class(b));}
+ }
+}
+
+#[cfg(all(test,feature="strata-balanced-global"))]mod balanced_global_profile_tests {
+ use super::*;
+ #[test]fn actual_two_C_macro_and_packed_names_keep_original_semantic_classes(){
+  for(i,n)in crate::strata_matrix::balanced_global::profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);assert_eq!(matrix_family(n),if i==4{6}else{4});}
  }
 }
