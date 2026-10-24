@@ -6,7 +6,7 @@ Read [full wide32 implementation/results and preserved failures](kuno-prefill-wi
 and [the coupled local-route contract](kuno-prefill-wide32-local-routes.md).
 Worktree `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/strata-rust-port`; source candidate d1b4d3f1. Canonical Vashti untouched.
-Goal ACTIVE/UNMET: Strata CLEAN first/repeat5.5006/5.3515s; prior best Kuno CLEAN
+Goal BLOCKED on expired sudo / UNMET: Strata CLEAN first/repeat5.5006/5.3515s; prior best Kuno CLEAN
 12.471177197/8.394039699s unchanged. No isolated-component speed rollback.
 
 Frozen preceding d081b38a / workerb85d4648 passes387 AppCPU,18/59 runtime,
@@ -53,6 +53,10 @@ failed immediately on root-owned Cargo dependency fingerprints; no workarounds
 or cache ownership changes. Preserved under `local32-user-cpu-20261024` with
 3-control source/binary/log/receipt and failed full-build log. Demons `shell`
 is waiting at `sudo -v`; user was asked once asynchronously to refresh it.
+The same sudo blocker was revalidated across three consecutive goal turns.
+The password prompt is live; no GPU/build job is running. Further useful
+unprivileged source review is complete, so automatic work is blocked until
+the credential is refreshed and the user resumes.
 Prepared root CPU-only driver `build-local32-cpu-20261024.py` builds BOTH old/new
 feature sets and retains all387 names plus3, actual compiler proof first.
 Invoke in bounded swap0/core0 unit with explicit cargo PATH and per-process
