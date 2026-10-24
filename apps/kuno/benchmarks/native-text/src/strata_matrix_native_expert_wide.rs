@@ -2319,3 +2319,7 @@ pub(crate) mod global_wide32;
 #[cfg(feature="strata-balanced-wide32")]
 #[path="strata_matrix_balanced_wide32_experts.rs"]
 pub(crate) mod balanced_wide32;
+
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_local_wide32_experts.rs"]
+pub(crate) mod local_wide32;

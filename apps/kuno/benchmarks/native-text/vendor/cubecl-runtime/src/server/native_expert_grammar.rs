@@ -141,7 +141,18 @@ fn balanced_wide32_generated(name:&str,module:&str,ty:&str)->bool {
  name.split_once("::strata_matrix::native_expert_wide::balanced_wide32::").is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
 }
 fn balanced_wide32_prefix(name:&str)->bool {
- balanced_wide32_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || balanced_wide32_generated(name,"expert_wide_down","ExpertWideDown")
+ balanced_wide32_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || local_wide32_generated(name,"expert_wide_down","ExpertWideDown") || balanced_wide32_generated(name,"expert_wide_down","ExpertWideDown")
+}
+fn local_wide32_generated(name:&str,module:&str,ty:&str)->bool {
+ if !cfg!(feature="kuno-local-prefetch"){return false;}
+ let actual=match(module,ty){
+ ("expert_wide_gu_direct","ExpertWideGuDirect")=>"expert_local_wide32_gu::ExpertLocalWide32Gu",
+ ("expert_wide_down","ExpertWideDown")=>"expert_local_wide32_down::ExpertLocalWide32Down",
+ _=>return false};
+ name.split_once("::strata_matrix::native_expert_wide::local_wide32::").is_some_and(|(_,s)|s.strip_prefix(actual).is_some_and(super::native_expert_batch::native_strata_generated_type_suffix))
+}
+fn local_wide32_prefix(name:&str)->bool {
+ local_wide32_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || local_wide32_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn global_wide32_generated(name:&str,module:&str,ty:&str)->bool {
  if !cfg!(feature="kuno-global-wide32"){return false;}
@@ -177,7 +188,8 @@ fn global_n64_prefix(name:&str)->bool {
  global_n64_generated(name,"expert_wide_gu_direct","ExpertWideGuDirect") || global_n64_generated(name,"expert_wide_down","ExpertWideDown")
 }
 fn generated(name: &str, module: &str, ty: &str) -> bool {
-    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::")) {return false;}
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::")) {return false;}
+    if name.contains("::local_wide32::") {return local_wide32_generated(name,module,ty);}
     if name.contains("::balanced_wide32::") {return balanced_wide32_generated(name,module,ty);}
     if name.contains("::global_wide32::") {return global_wide32_generated(name,module,ty);}
     if name.contains("::global_transpose::") {return global_transpose_generated(name,module,ty);}
@@ -278,7 +290,7 @@ fn is_tail(name: &str, down: bool) -> bool {
     }
 }
 fn ordered_down_layout(name: &str) -> bool {
-    native_strata_global_small_tile(name,true).is_some() || name.contains("::ordered::") || balanced_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
+    native_strata_global_small_tile(name,true).is_some() || name.contains("::ordered::") || local_wide32_generated(name,"expert_wide_down","ExpertWideDown") || balanced_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_wide32_generated(name,"expert_wide_down","ExpertWideDown") || global_transpose_generated(name,"expert_wide_down","ExpertWideDown") || global_n64_generated(name,"expert_wide_down","ExpertWideDown") || global_register_generated(name,"expert_wide_down","ExpertWideDown") || native_strata_small_direct_generated(
         name, "expert_tail_down", "ExpertTailDown")
 }
 fn matrix(
@@ -560,7 +572,7 @@ impl NativeStrataExpertGrammar {
                 } else {
                     8
                 };
-                let n = if name.contains("::expert::") { 16 } else { 64 };
+                let n = if super::native_expert_batch::native_strata_local_n128(name) {128} else if name.contains("::expert::") { 16 } else { 64 };
                 if !grid(count, params.rows.div_ceil(n), params.count.div_ceil(tile)) {
                     return Err(batch_fault("native expert grammar original full dispatch"));
                 }

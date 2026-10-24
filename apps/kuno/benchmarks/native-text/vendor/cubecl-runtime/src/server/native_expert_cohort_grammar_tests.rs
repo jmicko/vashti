@@ -312,3 +312,6 @@ mod full_walk;
 
 #[cfg(feature="kuno-balanced-global")]
 #[path="native_expert_cohort_balanced_global_tests.rs"]mod balanced_global;
+
+#[cfg(feature="kuno-local-prefetch")]
+#[path="native_expert_cohort_local_small_tests.rs"]mod local_small;

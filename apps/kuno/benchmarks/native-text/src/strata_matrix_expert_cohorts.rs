@@ -1,5 +1,8 @@
 //! Genuine cross-expert narrow CMMA. Each group's original8/16-row tile,
 //! chronologicalK16 arithmetic, FP16 inputs and routed publication are retained.
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_local_small_cohort.rs"]
+pub(crate) mod local_small;
 #[cfg(feature="strata-balanced-global")]
 #[path="strata_matrix_balanced_global_cohort.rs"]
 pub(crate) mod balanced_global;
@@ -704,3 +707,9 @@ pub(crate) use full_walk_pair_probe::cases as public_full_walk_pairs;
 mod balanced_pair_probe;
 #[cfg(feature="strata-balanced-global")]
 pub(crate) use balanced_pair_probe::cases as public_balanced_pairs;
+
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_local_small_pair_probe.rs"]
+mod local_small_pair_probe;
+#[cfg(feature="strata-local-prefetch")]
+pub(crate) use local_small_pair_probe::cases as public_local_small_pairs;

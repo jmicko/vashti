@@ -84,7 +84,7 @@ fn compact_role_words(w: &[u32; 48], down: bool) -> Option<u32> {
 }
 
 fn matrix_variant(name: &str, down: bool) -> Option<bool> {
-    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::balanced_global::")) {
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::balanced_global::") || name.contains("::local_small::")) {
         return (super::super::native_expert_batch::native_strata_global_small_cohort(name)
             && (!down || cfg!(feature="kuno-expert-ordered-output"))).then_some(down);
     }
@@ -334,7 +334,7 @@ impl Cohort {
             let quant = self.quantized();
             let arrays = if quant { 7 } else { 6 };
             let metadata = 24 + arrays;
-            let columns_per_workgroup = if quant { quant_matrix_width(name).ok_or_else(|| batch_fault("native quant matrix identity"))? } else {64};
+            let columns_per_workgroup = if quant { quant_matrix_width(name).ok_or_else(|| batch_fault("native quant matrix identity"))? } else if super::super::native_expert_batch::native_strata_local_n128(name) {128} else {64};
             if (super::super::native_expert_batch::native_strata_global_small_cohort(name) && (tile!=16 || quant))
                 || args.buffers.len() != arrays
                 || !args.read_dependencies.is_empty()

@@ -191,6 +191,8 @@ pub(crate) use native::small_full_walk;
 pub(crate) use native::padded_global;
 #[cfg(feature="strata-balanced-global")]
 pub(crate) use native::balanced_global;
+#[cfg(feature="strata-local-prefetch")]
+pub(crate) use native::local_small;
 #[cfg(feature="strata-small-direct-publish")]
 pub(crate) use native::small_direct;
 #[cfg(feature="strata-small-direct-publish")]
@@ -211,6 +213,8 @@ mod native {
     pub(crate) mod padded_global {const PADDED_GLOBAL:bool=true;include!("strata_matrix_small_full_walk.rs");}
     #[cfg(feature="strata-balanced-global")]
     pub(crate) mod balanced_global {include!("strata_matrix_balanced_global.rs");}
+    #[cfg(feature="strata-local-prefetch")]
+    pub(crate) mod local_small {include!("strata_matrix_local_small.rs");}
     #[cfg(feature="strata-expert-ordered-output")]
     pub(super) mod ordered { include!("strata_matrix_ordered.rs"); }
     use cubecl::ir::{ElemType, FloatKind, features::MmaConfig};
@@ -1578,6 +1582,8 @@ mod native {
         out_stride: usize,
         bfloat: bool,
     ) -> Result<()> {
+        #[cfg(feature="strata-local-prefetch")]
+        if super::native_wide::local_wide32::try_local_wide32_dense(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? || super::native_wide::local_wide32::try_local_wide32_split(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? {return Ok(());}
         #[cfg(feature="strata-balanced-wide32")]
         if super::native_wide::balanced_wide32::try_balanced_wide32_dense(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? || super::native_wide::balanced_wide32::try_balanced_wide32_split(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? {return Ok(());}
         #[cfg(feature="strata-global-wide32")]
@@ -2756,6 +2762,8 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-local-prefetch")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && local_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-balanced-global")]
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && balanced_global::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-padded-global")]
@@ -2764,6 +2772,8 @@ pub(crate) fn expert(
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && small_full_walk::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-small-products")]
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && global_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
+        #[cfg(feature="strata-local-prefetch")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::local_wide32::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-balanced-wide32")]
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::balanced_wide32::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-wide32")]
@@ -2842,6 +2852,8 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-local-prefetch")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && local_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-balanced-global")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && balanced_global::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-padded-global")]
@@ -2850,6 +2862,8 @@ pub(crate) fn expert_ordered(
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && small_full_walk::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-small-products")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && global_small::try_expert(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
+        #[cfg(feature="strata-local-prefetch")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::local_wide32::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-balanced-wide32")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::balanced_wide32::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-wide32")]
@@ -3069,6 +3083,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         small_full_walk::validate_sources()?;
         #[cfg(feature="strata-padded-global")]
         padded_global::validate_sources()?;
+        #[cfg(feature="strata-local-prefetch")]
+        {local_small::validate_sources()?;native_wide::local_wide32::validate_local_wide32_sources()?;native_expert_wide::local_wide32::validate_sources()?;}
         #[cfg(feature="strata-balanced-global")]
         balanced_global::validate_sources()?;
         #[cfg(feature="strata-balanced-wide32")]
@@ -3576,3 +3592,31 @@ pub(crate) use native_wide::balanced_wide32::balanced_wide32_available as public
 pub(crate) fn balanced_wide32_profile_names()->[&'static str;3]{
  [core::any::type_name::<native_expert_wide::balanced_wide32::expert_balanced_wide32_gu::ExpertBalancedWide32Gu<WgpuRuntime>>(),core::any::type_name::<native_expert_wide::balanced_wide32::expert_balanced_wide32_down::ExpertBalancedWide32Down<WgpuRuntime>>(),native_wide::balanced_wide32::profile_name()]
 }
+
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_local_products.rs"]
+mod local_products;
+
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_local_validation.rs"]
+mod local_validation;
+#[cfg(all(test,feature="strata-local-prefetch"))]
+#[path="strata_matrix_local_prefetch_tests.rs"]
+mod local_prefetch_tests;
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_local_wide32_probe.rs"]
+mod local_wide32_probe;
+#[cfg(feature="strata-local-prefetch")]
+pub(crate) use local_wide32_probe::cases as public_local_wide32_numeric;
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_local_wide32_expert_probe.rs"]
+mod local_wide32_expert_probe;
+#[cfg(feature="strata-local-prefetch")]
+pub(crate) use local_wide32_expert_probe::cases as public_local_wide32_expert_numeric;
+#[cfg(feature="strata-local-prefetch")]
+pub(crate) use native_wide::local_wide32::local_wide32_available as public_local_wide32_available;
+#[cfg(all(test,feature="strata-local-prefetch"))]
+pub(crate) fn local_wide32_profile_names()->[&'static str;3]{[
+ core::any::type_name::<native_expert_wide::local_wide32::expert_local_wide32_gu::ExpertLocalWide32Gu<WgpuRuntime>>(),
+ core::any::type_name::<native_expert_wide::local_wide32::expert_local_wide32_down::ExpertLocalWide32Down<WgpuRuntime>>(),
+ native_wide::local_wide32::profile_name()]}

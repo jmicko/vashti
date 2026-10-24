@@ -1387,3 +1387,7 @@ pub(super) mod global_wide32;
 #[cfg(feature="strata-balanced-wide32")]
 #[path="strata_matrix_dense_balanced_wide32.rs"]
 pub(crate) mod balanced_wide32;
+
+#[cfg(feature="strata-local-prefetch")]
+#[path="strata_matrix_dense_local_wide32.rs"]
+pub(crate) mod local_wide32;

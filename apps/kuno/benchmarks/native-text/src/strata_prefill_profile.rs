@@ -82,6 +82,8 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-local-prefetch")]
+    {if name.contains("::strata_matrix::native::local_small::"){return 4;}if name.contains("::strata_matrix::cohorts::local_small::"){return 6;}}
     #[cfg(feature="strata-balanced-global")]
     {if name.contains("::strata_matrix::native::balanced_global::"){return 4;}if name.contains("::strata_matrix::cohorts::balanced_global::"){return 6;}}
     #[cfg(feature="strata-padded-global")]
@@ -95,6 +97,8 @@ fn matrix_family(name: &str) -> usize {
         if name.contains("::strata_matrix::native::global_small::"){return 4;}
         if name.contains("::strata_matrix::cohorts::global_small::"){return 6;}
     }
+    #[cfg(feature="strata-local-prefetch")]
+    {if name.contains("::native_expert_wide::local_wide32::expert_local_wide32_gu::ExpertLocalWide32Gu<"){return 0;}if name.contains("::native_expert_wide::local_wide32::expert_local_wide32_down::ExpertLocalWide32Down<"){return 1;}}
     #[cfg(feature="strata-balanced-wide32")]
     {if name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_gu::ExpertBalancedWide32Gu<"){return 0;}if name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_down::ExpertBalancedWide32Down<"){return 1;}}
     #[cfg(feature="strata-global-wide32")]
@@ -154,6 +158,8 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-local-prefetch")]
+    if name.contains("::strata_matrix::native::local_small::")||name.contains("::strata_matrix::cohorts::local_small::"){return 1;}
     #[cfg(feature="strata-balanced-global")]
     if name.contains("::strata_matrix::native::balanced_global::")||name.contains("::strata_matrix::cohorts::balanced_global::"){return 1;}
     #[cfg(feature="strata-padded-global")]
@@ -165,6 +171,8 @@ fn native_class(name: &str) -> usize {
 
     #[cfg(feature="strata-global-small-products")]
     if name.contains("::strata_matrix::native::global_small::") || name.contains("::strata_matrix::cohorts::global_small::"){return 1;}
+    #[cfg(feature="strata-local-prefetch")]
+    if name.contains("::native_expert_wide::local_wide32::expert_local_wide32_gu::ExpertLocalWide32Gu<") || name.contains("::native_expert_wide::local_wide32::expert_local_wide32_down::ExpertLocalWide32Down<") || name.contains("::native_wide::local_wide32::dense_local_wide32_store::DenseLocalWide32Store<"){return 1;}
     #[cfg(feature="strata-balanced-wide32")]
     if name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_gu::ExpertBalancedWide32Gu<") || name.contains("::native_expert_wide::balanced_wide32::expert_balanced_wide32_down::ExpertBalancedWide32Down<") || name.contains("::native_wide::balanced_wide32::dense_balanced_wide32_store::DenseBalancedWide32Store<"){return 1;}
     #[cfg(feature="strata-global-wide32")]
@@ -1039,3 +1047,5 @@ mod balanced_wide32_profile_tests{
   for(i,n)in crate::strata_matrix::balanced_wide32_profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);if i<2{assert_eq!(matrix_family(n),i);}}
  }
 }
+#[cfg(all(test,feature="strata-local-prefetch"))]
+pub(crate) fn local_prefetch_test_classes(name:&str)->(usize,usize){(native_class(name),matrix_family(name))}

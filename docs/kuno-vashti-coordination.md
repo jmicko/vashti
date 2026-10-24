@@ -1,6 +1,17 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): balanced large matrices validated, slower.**
+**Current composition (2026-10-24 UTC): whole low-liveness policy composed.**
+
+[Complete local-prefetch policy](kuno-prefill-local-prefetch.md) now composes
+large dense/expert8-C plus macro/cohort4-C/N128 consumers using one short-lived
+alternating-A core. Exact new native roles, actual N128 grids, authentic padded
+producers and original owners/guards/checkers/ordered consumers are wired.
+All older variants remain. Planned421/418 AppCPU,18/86 runtime,88 new actual
+layouts, fresh1747 GPU controls and both original full-model acceptance chains.
+No compilation/live/speed acceptance yet. The preceding fully validated result
+below is still authoritative. No API/Vashti/install/release/driver/boot change.
+
+**Preceding fully validated handoff (2026-10-24 UTC): balanced large matrices validated, slower.**
 
 Source980f37fc/worker28e0af67 passes418 full/414 feature-off same-source AppCPU,
 18/77 runtime,8+9 metadata,10 native,40 new actual matrix layouts, fresh all1534

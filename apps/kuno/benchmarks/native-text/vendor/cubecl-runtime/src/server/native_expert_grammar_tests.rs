@@ -916,3 +916,6 @@ mod padded_global;
 
 #[cfg(feature="kuno-balanced-global")]
 #[path="native_expert_balanced_global_tests.rs"]mod balanced_global;
+
+#[cfg(feature="kuno-local-prefetch")]
+#[path="native_expert_local_small_tests.rs"]mod local_small;

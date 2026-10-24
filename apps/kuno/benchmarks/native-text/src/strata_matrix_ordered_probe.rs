@@ -265,7 +265,7 @@ pub(super) fn one(
         let tile = if count <= 8 { 8 } else { 16 };
         image.resize(count.div_ceil(tile) * tile * f.columns / 2, 0);
     }
-    if matches!(family,"small-direct-padded-global-regular"|"small-direct-balanced-global-regular") {
+    if matches!(family,"small-direct-padded-global-regular"|"small-direct-balanced-global-regular"|"small-direct-local-prefetch-small-regular") {
         if !(32..256).contains(&count) {return Err("public padded-global fixture range".into());}
         image.resize(count.div_ceil(32)*32*f.columns/2,0);
     }
@@ -338,17 +338,22 @@ pub(super) fn one(
             #[cfg(not(feature="strata-global-small-products"))]
             let global_cohort=false;
             #[cfg(feature="strata-small-full-walk")]
-            let full_walk_cohort=matches!(family,"small-direct-full-walk-cohort"|"small-direct-full-walk-cohort-reference"|"small-direct-balanced-global-cohort"|"small-direct-balanced-global-cohort-reference");
+            let full_walk_cohort=matches!(family,"small-direct-full-walk-cohort"|"small-direct-full-walk-cohort-reference"|"small-direct-balanced-global-cohort"|"small-direct-balanced-global-cohort-reference"|"small-direct-local-prefetch-small-cohort"|"small-direct-local-prefetch-small-cohort-reference");
             #[cfg(not(feature="strata-small-full-walk"))]
             let full_walk_cohort=false;
             if full_walk_cohort {
                 #[cfg(feature="strata-small-full-walk")]
-                if family=="small-direct-balanced-global-cohort" {
+                if family=="small-direct-local-prefetch-small-cohort" {
+                    #[cfg(feature="strata-local-prefetch")]
+                    crate::strata_matrix::cohorts::local_small::launch(client,selected,&words,down,16)?;
+                    #[cfg(not(feature="strata-local-prefetch"))]
+                    return Err("local-prefetch cohort disabled".into());
+                }else if family=="small-direct-balanced-global-cohort" {
                     #[cfg(feature="strata-balanced-global")]
                     crate::strata_matrix::cohorts::balanced_global::launch(client,selected,&words,down,16)?;
                     #[cfg(not(feature="strata-balanced-global"))]
                     return Err("balanced cohort disabled".into());
-                }else if matches!(family,"small-direct-full-walk-cohort"|"small-direct-balanced-global-cohort-reference") {
+                }else if matches!(family,"small-direct-full-walk-cohort"|"small-direct-balanced-global-cohort-reference"|"small-direct-local-prefetch-small-cohort-reference") {
                     crate::strata_matrix::cohorts::small_full_walk::launch(client,selected,&words,down,16)?;
                 }else{crate::strata_matrix::cohorts::global_small::launch(client,selected,&words,down,16)?;}
             }else             if global_cohort {
@@ -412,8 +417,8 @@ pub(super) fn one(
     let small_selected=family.starts_with("small-direct-") && ordered;
     // New global-register controls deliberately use the same complete8 direct
     // tail publication as the production path. All old families keep policy.
-    let global_direct_tail=matches!(family,"global-register-direct-gu"|"global-register-ordered-down"|"global-n64-direct-gu"|"global-n64-ordered-down"|"global-transpose-direct-gu"|"global-transpose-ordered-down"|"global-wide32-direct-gu"|"global-wide32-ordered-down"|"balanced-wide32-direct-gu"|"balanced-wide32-ordered-down");
-    let direct_gu = family == "shared-reuse-direct-gu" || family=="global-register-direct-gu" || family=="global-n64-direct-gu" || family=="global-transpose-direct-gu" || family=="global-wide32-direct-gu" || family=="balanced-wide32-direct-gu" || (small_selected && !down);
+    let global_direct_tail=matches!(family,"global-register-direct-gu"|"global-register-ordered-down"|"global-n64-direct-gu"|"global-n64-ordered-down"|"global-transpose-direct-gu"|"global-transpose-ordered-down"|"global-wide32-direct-gu"|"global-wide32-ordered-down"|"balanced-wide32-direct-gu"|"balanced-wide32-ordered-down"|"local-wide32-direct-gu"|"local-wide32-ordered-down");
+    let direct_gu = family == "shared-reuse-direct-gu" || family=="global-register-direct-gu" || family=="global-n64-direct-gu" || family=="global-transpose-direct-gu" || family=="global-wide32-direct-gu" || family=="balanced-wide32-direct-gu" || family=="local-wide32-direct-gu" || (small_selected && !down);
     let direct_member = |member: usize| {
         (ordered || direct_gu)
             && if small_selected || global_direct_tail {member/8*8+8<=count} else {member < wide_prefix}

@@ -47,7 +47,7 @@ pub(crate) fn native_strata_expert_padded_identity(name:&str)->&str {
  name
 }
 pub(crate) fn native_strata_padded_global(name:&str)->bool {
- (cfg!(feature="kuno-padded-global") && name.contains("::strata_matrix::native::padded_global::")) || (cfg!(feature="kuno-balanced-global") && name.contains("::strata_matrix::native::balanced_global::"))
+ (cfg!(feature="kuno-padded-global") && name.contains("::strata_matrix::native::padded_global::")) || (cfg!(feature="kuno-balanced-global") && name.contains("::strata_matrix::native::balanced_global::")) || (cfg!(feature="kuno-local-prefetch") && name.contains("::strata_matrix::native::local_small::"))
 }
 
 /// Genuine new small-matrix entries. Keep this closed before the legacy
@@ -86,6 +86,12 @@ pub(crate) fn native_strata_small_direct_matrix(name: &str) -> bool {
 /// Exact new full-small identities. No wide/tail/cohort or legacy aliases.
 pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
  if !cfg!(feature="kuno-global-small-products"){return None;}
+ if cfg!(feature="kuno-local-prefetch") {
+  if let Some((_,s))=name.split_once("::strata_matrix::native::local_small::") {
+   let roles=if down{[("expert_local_macro32_down::ExpertLocalMacro32Down",32),("expert_local_macro64_down::ExpertLocalMacro64Down",64)]}else{[("expert_local_macro32_gu::ExpertLocalMacro32Gu",32),("expert_local_macro64_gu::ExpertLocalMacro64Gu",64)]};
+   return roles.into_iter().find_map(|(role,tile)|s.strip_prefix(role).filter(|s|native_strata_generated_type_suffix(s)).map(|_|tile));
+  }
+ }
  let suffix=if let Some((_,s))=name.split_once("::strata_matrix::native::global_small::"){s}
  else if cfg!(feature="kuno-small-full-walk") && name.contains("::strata_matrix::native::small_full_walk::"){name.split_once("::strata_matrix::native::small_full_walk::")?.1}
  else if cfg!(feature="kuno-balanced-global") && name.contains("::strata_matrix::native::balanced_global::"){name.split_once("::strata_matrix::native::balanced_global::")?.1}
@@ -94,15 +100,18 @@ pub(crate) fn native_strata_global_small_tile(name:&str,down:bool)->Option<u32>{
  roles.into_iter().find_map(|(role,tile)|suffix.strip_prefix(role).filter(|s|native_strata_generated_type_suffix(s)).map(|_|tile))
 }
 pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
+ if cfg!(feature="kuno-local-prefetch") && name.split_once("::strata_matrix::cohorts::local_small::expert_local_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertLocalCohort").is_some_and(native_strata_generated_type_suffix)){return true;}
+
  if cfg!(feature="kuno-balanced-global") && name.split_once("::strata_matrix::cohorts::balanced_global::expert_balanced_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertBalancedCohort").is_some_and(native_strata_generated_type_suffix)){return true;}
  cfg!(feature="kuno-global-small-products") && name.split_once("::strata_matrix::cohorts::global_small::expert_global_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertGlobalCohort").is_some_and(native_strata_generated_type_suffix)) || (cfg!(feature="kuno-small-full-walk") && name.split_once("::strata_matrix::cohorts::small_full_walk::expert_full_walk_cohort::").is_some_and(|(_,s)|s.strip_prefix("ExpertFullWalkCohort").is_some_and(native_strata_generated_type_suffix)))
 }
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
     let name=native_strata_expert_padded_identity(native_strata_expert_dequant_identity(name));
-    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::")) {
+    if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::")) {
         return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();
     }
+    if name.contains("::local_wide32::"){return false;}
     if name.contains("::balanced_wide32::"){return false;}
     if name.contains("::global_wide32::"){return false;}
     // Packed cohorts have a distinct seven-buffer grammar and never belong to
@@ -723,4 +732,10 @@ mod tests {
         // owners normally; the tape Drop also wipes the new terminal bit.
         assert!(handle.memory.is_free());
     }
+}
+
+/// Width is selected only after exact role classification, never by a suffix
+/// hint alone. Old role names and grids keep N64.
+pub(crate) fn native_strata_local_n128(name:&str)->bool {
+ cfg!(feature="kuno-local-prefetch") && ((name.contains("::strata_matrix::native::local_small::") && (native_strata_global_small_tile(name,false).is_some()||native_strata_global_small_tile(name,true).is_some())) || (name.contains("::strata_matrix::cohorts::local_small::") && native_strata_global_small_cohort(name)))
 }
