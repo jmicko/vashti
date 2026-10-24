@@ -1,5 +1,56 @@
 # Full arithmetic walks for partial small expert tiles
 
+## Completed single-K-loop result (2026-10-24 UTC)
+
+Source `a9d31cc7361c7c431bbcd8776c65cf3df03c17cb`, worker
+`67b1fc84d153fba053585aea4f52864c96ca579b7388f80e4268f1a83a010c8f`:
+398 actual CPU tests pass both with and without `strata-single-k-walk` at
+the same source. All48 actual shader layouts,18/67 runtime,8+9 metadata,
+10 native, all1223 GPU cases, both original18-script full-model/recovery
+chains, original capacities/owners/finite/status/reuse/rolling/erasure pass.
+The actual203-program ISA export confirms all four candidate macros now use
+one K loop and ZERO spills/fills, versus80:80 for the preceding full-walk
+macros. Original old/global-small and cohort programs remain tested.
+
+This does NOT yield a speed improvement. Normal warm/first/repeated:
+4.774381882/13.403245365/10.519329404s. Diagnostic:
+4.796025527/13.336205452/10.625751577s. Load118.909212374s normal,
+80.752793249s diagnostic; no startup improvement claimed. No new CLEAN.
+Best Kuno CLEAN8.394039699s and Strata CLEAN5.3515s remain unchanged.
+
+Same diagnostic layer/count sample: macro236 calls29.425250->34.292184ms;
+cohort278 calls19.890199->19.897852ms; dequant542 calls19.235029->19.251381ms;
+ordered-copy608 calls29.140709->29.175397ms. Other matrix families unchanged
+within this sample. These intervals may overlap; do not sum as wall time.
+Removing cross-loop accumulator merges fixes register spilling, while the
+remaining per-K global/masked input selection costs more than it saves in
+this complete comparison. Retain the feature and whole preceding variants.
+Next coupled direction is explicitly initialized padded producers with
+matching native writer/reader authority and pure-global partial-tile math.
+Do not merely permit reads into unused arena bytes or drop invalid-route/
+finite/status/publication checks. No isolated rollback based on this result.
+
+Artifacts under the same development base: `single-k-walk-app-cpu-v3-20261024`
+and `single-k-walk-off-app-cpu-v1-20261024` (both398),
+`single-k-walk-v2-root-build-receipt-20261024.json` and acceptance freeze,
+`strata-parity-single-k-walk-v2-20261024-expert-cohorts-public-summary.json`,
+`single-k-walk-v2-{profile,normal}-safe-phases-20261024.json`,
+`single-k-walk-v2-complete-isa-export-20261024.json`, complete-driver log,
+unit-terminal log and `single-k-walk-v2-final-state-20261024.json`.
+Complete driver exits0. All prior failed CPU/debug/wrapper attempts remain.
+V1 wrapper stopped before GPU execution because it compared an old395-test
+list against the new feature-off398 receipt. V2 reuses BOTH actual completed
+398 binaries/selection files after exact same-source/hash checks; it does not
+claim new executions or modify earlier failed artifacts. Its feature population
+is64. Standalone debug1 lacked root Rust toolchain env; debug2 passes the real
+serialized module and all negative mutations before the full compilation.
+
+06:56:06UTC recovery: Intel50,688,000B, NVIDIA compute0/desktop589MiB,
+all five kernel faults0, all three services HTTP200, admission inactive,
+unpaused/no recovery/waiting0/completed227. No installed service, API, Vashti,
+driver or reboot changes. Goal remains unmet; manual work continues under
+the user's return of GPU access. Controller remains paused.
+
 ## Resumed candidate: one accumulator loop (2026-10-24 UTC)
 
 The user has returned both GPUs. Next internal candidate is the explicit

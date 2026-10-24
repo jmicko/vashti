@@ -1,6 +1,25 @@
 # Kuno and Vashti Coordination
 
-**Active Kuno handoff (2026-10-24 UTC): resumed; single-K-loop candidate validating.**
+**Active Kuno handoff (2026-10-24 UTC): single-K complete; next padded producer/consumer bundle.**
+
+Latest tested source `a9d31cc7` / worker `67b1fc84`: both same-source398 CPU
+variants,18/67 runtime,8+9 metadata,10 native, all1223 GPU controls,203-program
+ISA export and both original18-script model/recovery chains pass. All four
+candidate macros now have ONE K loop and ZERO spills/fills (previous80:80).
+Normal first/repeat13.403245365/10.519329404s, diagnostic13.336205452/
+10.625751577s: no overall gain against previous10.299127723s or best CLEAN.
+Macro sample29.425->34.292ms while cohort/dequant/copy remain unchanged.
+Keep all variants. Removing spills alone is insufficient; investigate genuine
+padded X/H producers and matching authenticated global-only consumers next.
+Full result, exact hashes, preserved failed harness attempts and artifact paths
+are in [the full-walk note](kuno-prefill-small-full-walk.md). V2 driver exits0.
+06:56:06UTC Intel50,688,000B, NVIDIA compute0/desktop589MiB, all5 faults0,
+all3 services HTTP200, admission inactive/unpaused/no recovery/waiting0.
+No GPU job remains. Manual work continues; controller still paused/unmet.
+No API/Vashti/installed service/driver/reboot changes. Bounded refresh still
+within its four-hour deadline. Prior snapshots below are historical.
+
+**Previous resumed checkpoint:**
 
 User returned GPU access. Explicit `strata-single-k-walk` feature preserves
 the original full-walk variant feature-off and all original identities/ABI,
