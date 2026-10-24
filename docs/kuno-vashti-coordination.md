@@ -2,13 +2,24 @@
 
 **Active Kuno handoff (2026-10-24 UTC): complete local-route bundle accepted; extend small/medium matrix coverage next.**
 
-**Source work in progress:** source526ebcd1 passes395 AppCPU, including48
-new actual shader layouts. The required four genuine packed multi-slot cases
-are now composed alongside116 single-slot/F64 controls (final1103 GPU incl.
-all983 retained). Final combined-source compile,18/63 runtime,8+9 metadata,
-10 native and all live GPU acceptance remain pending. Exact per-layout
-resources will be frozen from actual emitted modules before live acceptance.
-No GPU/speed run yet; no performance claim. Read the small/medium contract.
+**Latest completed bundle:** source d36a393f / worker50bfab9e passes395
+AppCPU plus390 feature-off,18/63 runtime,8+9 metadata,10 native and all1103
+GPU cases. Both original18-script full-model/recovery chains and original
+capacity/ownership/reuse/rolling/erasure/finite/status guards pass. All six
+new kernels are zero-spill; actual shared2048/4096/1024B. Complete-bundle normal
+first/repeat13.525956001/11.620150934s is slower than preceding11.411931752/
+9.360428477s. No CLEAN, parity unmet. Retain the whole bundle and variants.
+Sample macro12.887->55.220ms/cohort13.355->22.373ms; other GPU families and
+host capture essentially unchanged, not additive wall intervals. Next inspect
+partial tiles' repeated two-C K loops and compose full eight/four-C arithmetic
+with authentic masked inputs plus original8-half publication. No rollback.
+Full results, preserved CPU wrapper failures and artifacts in small/medium doc.
+Complete unit2528d58ded784cd4b9ff6772cadf415d exits0;05:00:40UTC Intel50,688,000B,
+NVIDIA compute0/display575MiB, all5 faults0, HTTP200/admission normal/completed178.
+No GPU job remains; no installed services changed. Bounded sudo refresher
+PID2712660 still within its four-hour03:40UTC deadline. Canonical Vashti untouched.
+Verified clean-reference source/receipt/image environment selects STAGE8/DQ2,
+not the conditional96/384 raw ring (48 actual expert layers,11608 resident slots).
 
 Read [accepted983 result](kuno-prefill-wide32-local-routes.md),
 [completed959 audit correction](kuno-prefill-wide32-guarded.md), and

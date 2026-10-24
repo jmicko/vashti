@@ -162,3 +162,75 @@ retaining983 =>1103;395 AppCPU retains390;18 feature-off and63 full runtime
 retains18/59; original8+9 metadata and10 native controls remain. Final source
 compilation, runtime tests, exact observed shader resources and all GPU cases
 remain pending. No speed decision or GPU run has been made for this bundle.
+
+## Complete accepted result (2026-10-24 UTC)
+
+Frozen source `d36a393f418f34a2f0858bbc39b9a82c5fe8e09c`, worker
+`50bfab9e6e91944df987a6894013e8b5999eccda7a84e683aeefbf90fa305f59`.
+All395 AppCPU plus original390 feature-off,18/63 runtime,8+9 metadata,10 native,
+all original compiler layouts and1103 GPU controls pass. The120 added cases
+include116 independent full-owner/F64 and4 genuine packed eight-slot cases.
+Both original18-script full-model/recovery chains, all original capacity,
+logical/physical producer partitions, ownership, rolling/reuse and erasure
+checks pass. Exact actual shared sizes across all8 layouts: macro32=2048B,
+macro64=4096B, cohort16=1024B. The six new native ISA programs are zero-spill
+at128 GRF; full197-program export preserves original wide/QSA controls.
+
+Diagnostic warm/first/repeat3.759350146/13.620531729/11.691707270s; normal
+3.761780781/13.525956001/11.620150934s. This is a complete-bundle regression
+versus preceding normal11.411931752/9.360428477s. No CLEAN rerun; normal does
+not beat the retained8.854793s trigger. Strata CLEAN5.5006/5.3515s and best
+prior Kuno CLEAN12.471177197/8.394039699s remain unchanged; goal ACTIVE/UNMET.
+Retain the complete bundle and prior variants. Do not revert coupled pieces
+based on isolated measurements. Installed services were not changed.
+
+Actual sampled layer24/count4096 matrix families: macro236 calls,12.887171ms
+preceding ->55.219568ms; cohort278 calls,13.354772->22.373058ms. Wide GU/DOWN,
+tails, dequant19.258208ms and OrderedCopy29.157433ms remain essentially
+unchanged. Host capture also remains comparable. Intervals may overlap; do not
+sum them as wall cost. Production actually selects4218 macro32 and6532 macro64
+products,767640 physical macro WGs and3460 new tile16 launches PER ROLE in
+each large request;4463 original tile8 launches per role remain.
+
+The retained fallback computes two C fragments at a time and repeats the K
+loop for feature/member subtiles. A partial subgroup takes this path even
+when every real route is valid. This is a source-confirmed candidate for the
+new arithmetic cost, not yet an isolated causal timing proof. Next compose
+one full8-C/4-C chronological arithmetic walk for both complete and partial
+tiles, authentic masked input loads and original independent8-half publisher;
+keep the full raw fast stores. See the next coupled design before coding.
+
+Protected complete unit `kuno-global-small-complete-20261024`, invocation
+`2528d58ded784cd4b9ff6772cadf415d`, terminal exit0.05:00:40UTC: Intel50,688,000B,
+NVIDIA compute0/display575MiB, all five kernel fault classes0; Kuno/Ollama/
+Vashti HTTP200, admission normal/completed178. Both GPU runs terminal.
+Bounded four-hour refresher PID2712660 started about03:40UTC; do not extend
+indefinitely. No driver/reset/reboot/API/UI/config/install/release changes.
+
+Preserved CPU wrapper failures: initial final-build invocation supplied a
+wrong source SHA and failed before compilation. Next wrapper incorrectly
+expected `... ok` on the same line under `--nocapture`; actual shader test
+passed. V3 completed all395 invocations, then its resource parser missed the
+first marker after the libtest prefix. V4 separately reuses the same completed
+395 log and binary hash, parses all48 actual markers, and completes390 off.
+No numerical tolerance/guard was changed; original failures and logs remain.
+
+Artifacts under `/media/jmicko/faststore/kuno-development`: full source/build/
+freeze `global-small-root-*`, accepted worker `strata-parity-global-small-20261024`,
+`global-small-final-v4-app-cpu-safe-20261024.json`, original v3 full395 logs,
+`global-small-complete-driver-20261024.log`, full1103 public summary,
+`global-small-{profile,normal}-safe-phases-20261024.json`,
+`global-small-complete-isa-export-20261024.json`,
+`global-small-{completed-operators-isa,diagnostic-comparison}-safe-20261024.json`,
+`global-small-final-state-20261024.json`. All original18 scripts are retained
+through an exact path-only forward copy; additive helper honestly partitions
+old tile8/new tile16 producers while retaining every original image-owner law.
+
+Read-only pinned-reference evidence `global-small-reference-routed-ring-evidence-20261024.json`
+checks actual clean ready receipt, explicit client and immutable container
+image environment, native pack index and source. Model has48 expert layers
+(not97;97 is a large request's repeated layer execution count),512 experts
+each. Reference resident slots11608/24576 imply nonresident share>=0.527669,
+well above the0.10 default stream-all threshold; no client/image override.
+Thus this clean comparison uses raw routed STAGE8 and decoded DQ2. The
+conditional96/384 raw ring is not an active reference advantage here.
