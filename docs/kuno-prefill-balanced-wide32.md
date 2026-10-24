@@ -29,3 +29,10 @@ actual Intel compiler evidence. Do not select or abandon coupled components
 from individual timings. First/repeated CLEAN comparison uses the original
 45/4245/4245 public fixture and no overlapping compilation or profiling.
 Implementation and performance acceptance are pending.
+
+First sourcecae34ff4 compiled. The coverage and capability controls pass; the
+actual-module control rejects a validator that assumed physical CFG block
+serialization was product execution order. Preserve that failed CPU artifact.
+The forward validator follows real SSA C dependencies, resolving only copies
+and degenerate phis, and still requires four separate chronological two-product
+chains with carried/current operand banks. No kernel arithmetic change.

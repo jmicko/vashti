@@ -256,38 +256,83 @@ pub(in crate::strata_matrix) fn validate_program(
     {
         return Err("balanced wide32 authentic two input-B loop operands".into());
     }
-    // SPIR-V products have a common matrix type and unique result IDs; follow
-    // actual c operand rather than trusting source names or physical code order.
+    // CFG block serialization is not execution order. Resolve only actual copy
+    // instructions and degenerate phis; preserve genuine loop-carried phis.
+    fn value_root(
+        id: u32,
+        defs: &BTreeMap<u32, Vec<u32>>,
+        ops: &BTreeMap<u32, u32>,
+        depth: usize,
+    ) -> u32 {
+        if depth > 64 {
+            return id;
+        }
+        if let Some(d) = defs.get(&id) {
+            if ops.get(&id) == Some(&83) {
+                return value_root(d[0], defs, ops, depth + 1);
+            }
+            if ops.get(&id) == Some(&245) && d.len() >= 2 {
+                let first = value_root(d[0], defs, ops, depth + 1);
+                if d.iter()
+                    .step_by(2)
+                    .all(|&v| v != id && value_root(v, defs, ops, depth + 1) == first)
+                {
+                    return first;
+                }
+            }
+        }
+        id
+    }
+    let mut value_ops = BTreeMap::new();
+    let mut at = 5;
+    while at < words.len() {
+        let n = (words[at] >> 16) as usize;
+        if n >= 4 {
+            value_ops.insert(words[at + 2], words[at] & 65535);
+        }
+        at += n;
+    }
+    let resolve = |id| value_root(id, &defs, &value_ops, 0);
     let ps = products
         .iter()
         .filter(|p| normal.1.contains(&p.0))
         .map(|p| p.1)
         .collect::<Vec<_>>();
-    let first = ps[..4]
+    let results = ps.iter().map(|&a| words[a + 2]).collect::<BTreeSet<_>>();
+    let first = ps
         .iter()
-        .map(|&a| words[a + 2])
-        .collect::<BTreeSet<_>>();
-    let second = ps[4..]
+        .copied()
+        .filter(|&a| !results.contains(&resolve(words[a + 5])))
+        .collect::<Vec<_>>();
+    let second = ps
         .iter()
-        .map(|&a| words[a + 5])
+        .copied()
+        .filter(|&a| results.contains(&resolve(words[a + 5])))
+        .collect::<Vec<_>>();
+    let first_results = first.iter().map(|&a| words[a + 2]).collect::<BTreeSet<_>>();
+    let second_inputs = second
+        .iter()
+        .map(|&a| resolve(words[a + 5]))
         .collect::<BTreeSet<_>>();
-    if first.len() != 4 || second != first {
-        return Err("balanced wide32 four exact chronological accumulator chains".into());
+    if results.len() != 8 || first.len() != 4 || second.len() != 4 || first_results != second_inputs
+    {
+        return Err(format!("balanced wide32 four exact chronological accumulator chains: products={:?} first={first_results:?} second={second_inputs:?}",ps.iter().map(|&a|words[a+2..a+6].to_vec()).collect::<Vec<_>>()).into());
     }
     let mut in_loop = BTreeMap::new();
     for &(block, at, _, _) in &loads {
         in_loop.insert(words[at + 2], normal.1.contains(&block));
     }
-    // Bank1's four A and one B are loaded this iteration. Bank0 has loop-carried
-    // phi operands, and cannot be replaced by a second use of bank1.
-    for &at in &ps[4..] {
-        if in_loop.get(&words[at + 3]) != Some(&true) || in_loop.get(&words[at + 4]) != Some(&true)
+    for &at in &second {
+        if in_loop.get(&resolve(words[at + 3])) != Some(&true)
+            || in_loop.get(&resolve(words[at + 4])) != Some(&true)
         {
             return Err("balanced wide32 actual current bank1 product operands".into());
         }
     }
-    for &at in &ps[..4] {
-        if in_loop.contains_key(&words[at + 3]) || in_loop.contains_key(&words[at + 4]) {
+    for &at in &first {
+        if in_loop.contains_key(&resolve(words[at + 3]))
+            || in_loop.contains_key(&resolve(words[at + 4]))
+        {
             return Err("balanced wide32 actual carried bank0 operands".into());
         }
     }
@@ -454,6 +499,17 @@ pub(in crate::strata_matrix) fn validate_sources()
             let words = wgpu::hal::vulkan::kuno_cooperative_fp16_preserve(&words)?.unwrap_or(words);
             if wgpu::hal::vulkan::kuno_cooperative_subgroup(&words) != Some(16) {
                 return Err("balanced wide32 actual SG16".into());
+            }
+            if let Ok(dir) = std::env::var("KUNO_PUBLIC_BALANCED_WIDE32_MODULE_DIR") {
+                let path =
+                    std::path::Path::new(&dir).join(format!("balanced-wide32-{name}-{mask}.spv"));
+                std::fs::write(
+                    path,
+                    words
+                        .iter()
+                        .flat_map(|w| w.to_le_bytes())
+                        .collect::<Vec<_>>(),
+                )?;
             }
             validate_program(&words, false)?;
             #[cfg(test)]

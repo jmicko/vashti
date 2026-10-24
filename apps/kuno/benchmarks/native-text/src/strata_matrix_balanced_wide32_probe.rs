@@ -209,7 +209,7 @@ pub(crate) fn cases(
         if errors != 0 {
             return Err("direct original F64 numerical tolerance".into());
         }
-        reports.push(serde_json::json!({"family":"dense-balanced-wide32-m128n128k16-finite-paired","bfloat":bf,"rows":rows,"columns":columns,"count":count,"first":first,"stride":stride,"weight_first":weight_first,"control":control,
+        reports.push(serde_json::json!({"family":"dense-balanced-wide32-m128n128k32-finite-paired","bfloat":bf,"rows":rows,"columns":columns,"count":count,"first":first,"stride":stride,"weight_first":weight_first,"control":control,
             "bit_mismatches":0,"f64_mismatches":errors,"max_abs":max_abs,"original_shared_gpu_and_f64_both_checked":true,
             "actual_direct_producer_and_finite_consumer":true,"full_owner_holes_sources_and_fault_checked":true,"fabricated_prompt_or_batch_scope":false,"new_payload_allocations":0,"actual_balanced_wide32_banks_and_consumers":rows!=320,"original_gr320_n64_fallback":rows==320,"workgroup":if rows==320{512}else{512},"subgroup":16,"shared_bytes":0,"output_tile":[128,if rows==320{64}else{128}],"stage_k":if rows==320{32}else{32},"prefix_count":count/128*128,"suffix_count":count%128}));
         arena.reset()?;
