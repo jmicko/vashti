@@ -1562,6 +1562,8 @@ mod native {
         out_stride: usize,
         bfloat: bool,
     ) -> Result<()> {
+        #[cfg(feature="strata-global-register-n64")]
+        if super::native_wide::global_n64::try_global_n64_dense(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? || super::native_wide::global_n64::try_global_n64_split(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? {return Ok(());}
         #[cfg(feature="strata-deep-matrix")]
         if super::native_wide::try_global_register_dense(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)?
             || super::native_wide::try_global_register_split(client,h.clone(),count,columns,rows,weight_first,out_first,out_stride,bfloat)? {return Ok(());}
@@ -2732,6 +2734,8 @@ pub(crate) fn expert(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-global-register-n64")]
+        if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::global_n64::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-image-experts")]
         if !down && client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
             && native_expert_wide::global_register::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {
@@ -2802,6 +2806,8 @@ pub(crate) fn expert_ordered(
     }
     #[cfg(feature = "strata-intel-core")]
     {
+        #[cfg(feature="strata-global-register-n64")]
+        if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)? && native_expert_wide::global_n64::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {return Ok(());}
         #[cfg(feature="strata-global-image-experts")]
         if client.native_strata_expert_capture_open().map_err(crate::resident_util::fault)?
             && native_expert_wide::global_register::try_expert_mode(client,h.clone(),count,columns,rows,weight_first,group,down)? {
@@ -3007,6 +3013,10 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         native_wide::validate_asymmetric_sources()?;
         #[cfg(feature="strata-deep-matrix")]
         native_wide::validate_global_register_sources()?;
+        #[cfg(feature="strata-global-register-n64")]
+        native_wide::global_n64::validate_global_n64_sources()?;
+        #[cfg(feature="strata-global-register-n64")]
+        native_expert_wide::global_n64::validate_sources()?;
         #[cfg(feature="strata-global-image-experts")]
         native_expert_wide::global_register::validate_sources()?;
         #[cfg(feature="strata-deep-matrix")]
@@ -3425,4 +3435,22 @@ pub(crate) use global_image_expert_probe::cases as public_global_image_expert_nu
 #[cfg(all(test,feature="strata-global-image-experts"))]
 pub(crate) fn global_image_profile_names()->[&'static str;2] {
  [core::any::type_name::<native_expert_wide::global_register::expert_global_register_gu::ExpertGlobalRegisterGu<WgpuRuntime>>(),core::any::type_name::<native_expert_wide::global_register::expert_global_register_down::ExpertGlobalRegisterDown<WgpuRuntime>>()]
+}
+
+#[cfg(feature="strata-global-register-n64")]
+#[path="strata_matrix_global_n64_probe.rs"]
+mod global_n64_probe;
+#[cfg(feature="strata-global-register-n64")]
+pub(crate) use global_n64_probe::cases as public_global_n64_numeric;
+#[cfg(feature="strata-global-register-n64")]
+pub(crate) use native_wide::global_n64::global_n64_available as public_global_n64_available;
+#[cfg(feature="strata-global-register-n64")]
+#[path="strata_matrix_global_n64_expert_probe.rs"]
+mod global_n64_expert_probe;
+#[cfg(feature="strata-global-register-n64")]
+pub(crate) use global_n64_expert_probe::cases as public_global_n64_expert_numeric;
+
+#[cfg(all(test,feature="strata-global-register-n64"))]
+pub(crate) fn global_n64_profile_names()->[&'static str;3]{
+ [core::any::type_name::<native_expert_wide::global_n64::expert_global_n64_gu::ExpertGlobalN64Gu<WgpuRuntime>>(),core::any::type_name::<native_expert_wide::global_n64::expert_global_n64_down::ExpertGlobalN64Down<WgpuRuntime>>(),native_wide::global_n64::profile_name()]
 }

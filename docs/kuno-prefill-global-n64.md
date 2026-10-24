@@ -90,3 +90,20 @@ only then use complete normal/diagnostic timings. A promising complete candidate
 gets the original matched CLEAN45/4245/4245 client; no changed reference target,
 seed/context/chunk policy or instrumented-versus-clean comparison. Keep old
 source/evidence regardless of a speed report and diagnose remaining differences.
+
+## Complete source composition (2026-10-24 UTC)
+
+New source now contains both dense and expert M128/N64 producers and both real
+operand banks, authentic full GR320 N64 rows, original dense finite consumer,
+original small/direct expert publication and tails, exact physical X launch and
+closed role/INFO/owner grammar, anonymous path/workgroup counters, exact new
+native no-lane dense recognition,24+16 actual layout/CFG proofs and additive
+21+24 full-owner GPU/F64 cases. Original four-C kernels/proofs remain unchanged.
+
+Planned exact populations:372 AppCPU (original366 plus3 dense,2 expert and1 real
+profile-identity tests),18/53 runtime (original51 plus2 new exact-grid grammar
+controls),8+9 metadata,10 original native controls and837 GPU cases. Native
+negative controls additionally mutate actual new dense modules in every layout.
+Original logical M128 wide_blocks credit remains unchanged; the new anonymous
+expert_global_n64_workgroups separately counts real(rows/64)*(prefix/128).
+This is source composition only: no build, GPU or performance acceptance yet.

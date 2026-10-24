@@ -79,6 +79,9 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-global-register-n64")]
+    {if name.contains("::native_expert_wide::global_n64::expert_global_n64_gu::ExpertGlobalN64Gu<"){return 0;}if name.contains("::native_expert_wide::global_n64::expert_global_n64_down::ExpertGlobalN64Down<"){return 1;}}
+
     #[cfg(feature="strata-global-image-experts")]
     {
         if name.contains("::native_expert_wide::global_register::expert_global_register_gu::ExpertGlobalRegisterGu<") {return 0;}
@@ -127,6 +130,9 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-global-register-n64")]
+    if name.contains("::native_expert_wide::global_n64::expert_global_n64_gu::ExpertGlobalN64Gu<") || name.contains("::native_expert_wide::global_n64::expert_global_n64_down::ExpertGlobalN64Down<") || name.contains("::native_wide::global_n64::dense_global_n64_store::DenseGlobalN64Store<"){return 1;}
+
     #[cfg(feature="strata-global-image-experts")]
     if name.contains("::native_expert_wide::global_register::expert_global_register_gu::ExpertGlobalRegisterGu<")
         || name.contains("::native_expert_wide::global_register::expert_global_register_down::ExpertGlobalRegisterDown<") {return 1;}
@@ -907,5 +913,14 @@ mod global_image_expert_profile_tests {
  fn actual_global_image_entries_are_matrices_in_original_gu_down_families(){
   let names=crate::strata_matrix::global_image_profile_names();
   for(i,n)in names.into_iter().enumerate(){assert_eq!(native_class(n),1);assert_eq!(matrix_family(n),i);}
+ }
+}
+
+#[cfg(all(test,feature="strata-global-register-n64"))]
+mod global_n64_profile_tests{
+ use super::*;
+ #[test]
+ fn actual_n64_generated_producers_keep_original_matrix_and_expert_family_classes(){
+  for(i,n)in crate::strata_matrix::global_n64_profile_names().into_iter().enumerate(){assert_eq!(native_class(n),1);if i<2{assert_eq!(matrix_family(n),i);}}
  }
 }

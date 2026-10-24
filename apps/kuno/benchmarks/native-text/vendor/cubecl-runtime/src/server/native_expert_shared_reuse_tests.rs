@@ -334,3 +334,30 @@ mod global_register {
   assert!(begin_images(&h,287,true).launch(GU,false,&CubeCount::Static(10,2,1),&a).is_err());
  }
 }
+
+#[cfg(feature="kuno-global-register-n64")]
+mod global_n64{
+ use super::*;
+ const GU:&str="probe::strata_matrix::native_expert_wide::global_n64::expert_global_n64_gu::ExpertGlobalN64Gu<Runtime>";
+ const DOWN:&str="probe::strata_matrix::native_expert_wide::global_n64::expert_global_n64_down::ExpertGlobalN64Down<Runtime>";
+ fn n64prefix(grammar:&mut NativeStrataExpertGrammar,h:&[Handle;7],m:u32,down:bool){grammar.launch(if down{DOWN}else{GU},false,&CubeCount::Static(if down{40}else{20},m/128,1),&matrix_args(h,m,down,true,false)).unwrap();}
+ #[test]
+ fn n64_genuine_prefix_grid_retains_original_checker_ordered_layout_tail_and_logical_blocks(){
+  for m in [256,257,287,383,384,4096]{let h=owners();let mut g=begin_images(&h,m,true);
+   n64prefix(&mut g,&h,m,false);tail(&mut g,&h,m,false,false);assert!(g.finish().is_err());
+   g.launch("StrataPromptExpertF16SwigluCheckGu",false,&CubeCount::Static((m*5).div_ceil(4),1,1),&checker(&h,m)).unwrap();
+   n64prefix(&mut g,&h,m,true);tail(&mut g,&h,m,true,true);let c=g.finish().unwrap();assert_eq!(c.logical_phases,6);assert_eq!(c.direct_gu_prefixes,1);assert_eq!(c.gu_checks,1);assert_eq!(c.wide_blocks,2*(m/128)as usize);
+  }
+ }
+ #[test]
+ fn n64_exact_new_roles_reject_old_grid_forged_name_info_and_changed_owner(){
+  assert!(is_direct_gu(GU)&&is_wide(DOWN,true)&&ordered_down_layout(DOWN));
+  for suffix in ["expert_wide_gu_direct::ExpertWideGuDirect<Runtime>","expert_global_n64_gu::ExpertGlobalN64GuFake<Runtime>","deep::expert_global_n64_gu::ExpertGlobalN64Gu<Runtime>","expert_global_n64_down::ExpertGlobalN64Down<Runtime>::extra"]{
+   let n=format!("probe::strata_matrix::native_expert_wide::global_n64::{suffix}");assert!(!is_direct_gu(&n)&&!is_wide(&n,true)&&!is_wide(&n,false)&&!is_tail(&n,true)&&!is_tail(&n,false));
+  }
+  let h=owners();let m=287;
+  for index in 0..8{let mut a=matrix_args(&h,m,false,true,false);let v=word(&a.info,index).unwrap();set_word(&mut a.info,index,v+1);assert!(begin_images(&h,m,true).launch(GU,false,&CubeCount::Static(20,2,1),&a).is_err());}
+  assert!(begin_images(&h,m,true).launch(GU,false,&CubeCount::Static(10,2,1),&matrix_args(&h,m,false,true,false)).is_err());
+  let mut a=matrix_args(&h,m,false,true,false);a.buffers[2]=Handle::new(h[0].stream,1).binding();assert!(begin_images(&h,m,true).launch(GU,false,&CubeCount::Static(20,2,1),&a).is_err());
+ }
+}

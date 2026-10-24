@@ -1,5 +1,27 @@
 # Kuno and Vashti Coordination
 
+**Active Kuno handoff (2026-10-24 UTC): complete N64 source composed; validation pending.**
+
+Read [the full N64 contract](kuno-prefill-global-n64.md). Dense AND expert
+M128/N64/WG512/SG16 two-C producers now compose both real operand banks,
+correct rows/64 physical grids/publication, original finite/ordered consumers,
+original prefix/tails/capacity, exact native no-lane admission and closed new
+role/grid grammar. Original4C/image/quant programs and controls retained.
+Six new AppCPU/2 runtime controls,24+16 real compiler layouts and21+24 GPU cases
+are composed. Planned372 CPU,18/53 runtime,8+9 metadata,10 original native and
+837 GPU cases. No build/GPU/speed acceptance yet. Finish complete gates before
+hardware timing. Do not choose from an isolated kernel measurement.
+
+Last complete accepted source7f7a1271/workerb65ff90b,792 GPU controls; normal
+repeated9.665937322s, essentially unchanged; best CLEAN8.394039699s, target
+Strata5.3515s. Active goal unmet. Actual4C global GU7:96/DOWN37:204 spills and
+slower prefix costs offset faster image cohorts. Full evidence and explicit
+failed-live-unit/passing-read-only-audit distinction below. New N64 source is
+not that tested worker. No API/UI/install/release/reset/driver changes.
+Canonical Vashti/inherited pycache preserved; bounded sudo through01:47UTC.
+
+## Previous checkpoint
+
 **Active Kuno handoff (2026-10-23): full image/global expert variant accepted; register pressure confirmed.**
 
 Read [complete result and preserved audit failure](kuno-prefill-global-image-experts.md)

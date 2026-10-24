@@ -34,6 +34,7 @@ repository = "https://github.com/tracel-ai/cubecl/tree/main/crates/cubecl-wgpu"
 resolver = "2"
 
 [features]
+kuno-global-register-n64 = ["kuno-global-image-experts", "cubecl-runtime/kuno-global-register-n64"]
 kuno-global-image-experts = ["kuno-wide-shared-reuse", "cubecl-runtime/kuno-global-image-experts"]
 kuno-deep-matrix = ["kuno-strata-shared", "cubecl-runtime/kuno-deep-matrix"]
 kuno-wide-shared-reuse = ["kuno-strata-shared", "cubecl-runtime/kuno-wide-shared-reuse"]

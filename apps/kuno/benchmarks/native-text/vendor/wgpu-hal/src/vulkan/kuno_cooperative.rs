@@ -220,6 +220,7 @@ fn direct_global_register_module(words: &[u32]) -> bool {
         return false;
     }
     let (mut entry_ok, mut forbidden, mut products) = (false, false, 0);
+    let mut n64=false;
     let (mut bindings, mut vars, mut parents, mut loads, mut stores) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut at = 5;
@@ -243,7 +244,8 @@ fn direct_global_register_module(words: &[u32]) -> bool {
                         name.push(b);
                     }
                 }
-                entry_ok = name == b"dense_global_register_store_f_";
+                n64=name==b"dense_global_n64_store_f_";
+                entry_ok = name == b"dense_global_register_store_f_" || n64;
             }
             71 if n == 4 && words[at + 2] == 33 => bindings.push((words[at + 1], words[at + 3])),
             59 if n >= 4 => {
@@ -259,7 +261,7 @@ fn direct_global_register_module(words: &[u32]) -> bool {
         }
         at += n;
     }
-    if !entry_ok || forbidden || products != 8 || loads.len() != 12 || stores.len() != 4 {
+    if !entry_ok || forbidden || products != if n64{4}else{8} || loads.len() != if n64{9}else{12} || stores.len() != if n64{2}else{4} {
         return false;
     }
     let binding = |v: u32| bindings.iter().find(|x| x.0 == v).map(|x| x.1);
@@ -304,7 +306,7 @@ fn direct_global_register_module(words: &[u32]) -> bool {
         }
     }
     a == 6
-        && b == 6
+        && b == if n64{3}else{6}
         && stores
             .into_iter()
             .all(|p| root(p).is_some_and(|r| class(r) == Some(12) && binding(r) == Some(2)))

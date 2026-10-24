@@ -36,6 +36,7 @@ repository = "https://github.com/tracel-ai/cubecl/tree/main/crates/cubecl-runtim
 resolver = "2"
 
 [features]
+kuno-global-register-n64 = ["kuno-global-image-experts"]
 kuno-global-image-experts = ["kuno-wide-shared-reuse", "kuno-expert-ordered-output"]
 kuno-deep-matrix = ["std"]
 kuno-wide-shared-reuse = ["std"]

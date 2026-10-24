@@ -1371,3 +1371,7 @@ pub(super) mod tests {
         }
     }
 }
+
+#[cfg(feature="strata-global-register-n64")]
+#[path="strata_matrix_dense_global_n64.rs"]
+pub(super) mod global_n64;
