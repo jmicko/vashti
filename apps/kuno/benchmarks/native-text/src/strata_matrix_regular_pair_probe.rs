@@ -160,6 +160,7 @@ fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     dual: bool,
+    large: bool,
     down: bool,
     poison: bool,
     counts: &[usize],
@@ -206,7 +207,7 @@ fn one(
             return Err("public cohort paired authentic group fixture".into());
         }
         words[16 + i * 4..20 + i * 4].copy_from_slice(&[(first + i) as u32, n as u32, prefix, 8]);
-        prefix += n.div_ceil(16) as u32 * 16;
+        prefix += n.div_ceil(if large {32}else{16}) as u32 * if large {32}else{16};
     }
     let mut image = Zeroizing::new(vec![
         0u32;
@@ -256,7 +257,7 @@ fn one(
     // Pad32 input owner, updated through scrubbed transient uploads. The DOWN
     // reference already writes original ordered PART; GU's local rows are
     // packed into a zeroizing host oracle, without a second GPU output owner.
-    let ri = arena.allocate_zeroed(256 * cols as usize / 2)?;
+    let ri = arena.allocate_zeroed((if large {4096}else{256}) * cols as usize / 2)?;
     let mut reference = Zeroizing::new(if down {Vec::new()}else{vec![0u32; arena.layout(a)?.owned_words]});
     for (i, &members) in counts.iter().enumerate() {
         let mut packed = Zeroizing::new(vec![0u32; arena.layout(ri)?.owned_words]);
@@ -271,23 +272,26 @@ fn one(
                 packed.iter().copied().flat_map(u32::to_le_bytes).collect(),
             )
             .map_err(u::fault)?;
-        let selected = crate::strata_matrix::native::granular_small::try_expert(
-            client,
-            [
-                u::handle(arena, ri)?,
-                u::handle(arena, weight)?,
-                u::handle(arena, a)?,
-                u::handle(arena, map_id)?,
-                u::handle(arena, sa)?,
-                u::handle(arena, fa)?,
-            ],
-            members,
-            cols as usize,
-            rows as usize,
-            i * 4_915_200 + if down { 3_276_800 } else { 0 },
-            first + i,
-            down,
-        )?;
+        let handles=[u::handle(arena,ri)?,u::handle(arena,weight)?,u::handle(arena,a)?,
+            u::handle(arena,map_id)?,u::handle(arena,sa)?,u::handle(arena,fa)?];
+        let wf=i*4_915_200+if down {3_276_800}else{0};
+        let selected=if large {
+            #[cfg(feature="strata-large-cohorts")]
+            {
+                if down {
+                    crate::strata_matrix::native_expert_wide::ordered::try_expert_mode_small_tail(
+                        client,handles,members,cols as usize,rows as usize,wf,first+i,true,false)?
+                } else {
+                    crate::strata_matrix::native_expert_wide::try_expert_mode_small_tail(
+                        client,handles,members,cols as usize,rows as usize,wf,first+i,false,true)?
+                }
+            }
+            #[cfg(not(feature="strata-large-cohorts"))]
+            {return Err("large cohort probe feature disabled".into());}
+        }else{
+            crate::strata_matrix::native::granular_small::try_expert(
+                client,handles,members,cols as usize,rows as usize,wf,first+i,down)?
+        };
         if !selected {
             return Err("public regular cohort actual preceding reference not selected".into());
         }
@@ -308,24 +312,24 @@ fn one(
         reference = snapshot(arena, a)?;
     }
     erase_output(client, arena, a)?;
-    #[cfg(feature="strata-small-dual-cells")]
-    let product=if dual {dual_regular::launch}else{regular::launch};
-    #[cfg(not(feature="strata-small-dual-cells"))]
-    let product={assert!(!dual);regular::launch};
-    product(
-        client,
-        [
-            u::handle(arena, src)?,
-            u::handle(arena, weight)?,
-            u::handle(arena, a)?,
-            u::handle(arena, map_id)?,
-            u::handle(arena, sb)?,
-            u::handle(arena, fb)?,
-        ],
-        &words,
-        down,
-        16,
-    )?;
+    let handles=[u::handle(arena,src)?,u::handle(arena,weight)?,u::handle(arena,a)?,
+        u::handle(arena,map_id)?,u::handle(arena,sb)?,u::handle(arena,fb)?];
+    if large {
+        #[cfg(feature="strata-large-cohorts")]
+        for tile in [128,8,16,32] {
+            if large::part_rows(&words,tile)==0 {continue;}
+            words[11]=tile as u32;
+            large::launch(client,handles.clone(),&words,down,tile)?;
+        }
+        #[cfg(not(feature="strata-large-cohorts"))]
+        return Err("large cohort probe feature disabled".into());
+    } else {
+        #[cfg(feature="strata-small-dual-cells")]
+        let product=if dual {dual_regular::launch}else{regular::launch};
+        #[cfg(not(feature="strata-small-dual-cells"))]
+        let product={assert!(!dual);regular::launch};
+        product(client,handles,&words,down,16)?;
+    }
     cubecl::future::block_on(client.sync()).map_err(u::fault)?;
     let checked = compare_reference(arena, a, &reference)?;
     let reference_bytes = reference.capacity() * 4;
@@ -354,8 +358,8 @@ fn one(
         }
     }
     Ok(
-        serde_json::json!({"family":"regular-packed-cohort-original-per-expert-pair",
-        "actual_previous_per_expert_granular_reference":true,"actual_new_regular_cohort":!dual,
+        serde_json::json!({"family":if large {"large-packed-cohort-original-wide-prefix-tail-pair"}else{"regular-packed-cohort-original-per-expert-pair"},
+        "actual_previous_per_expert_granular_reference":!large,"actual_new_regular_cohort":!dual&&!large,"actual_large_wide_prefix_tail":large,
         "down":down,"groups":slots,"counts":counts,"poison_and_invalid_route":poison,
         "actual_dual_cells":dual,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,
         "bit_mismatches":0,"full_output_words_checked":checked,
@@ -370,25 +374,28 @@ pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
 ) -> Checked<Vec<serde_json::Value>> {
-    cases_mode(client,arena,false)
+    cases_mode(client,arena,false,false)
 }
 #[cfg(feature="strata-small-dual-cells")]
 pub(crate) fn dual_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
-    cases_mode(client,arena,true)
+    cases_mode(client,arena,true,false)
 }
-fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bool)->Checked<Vec<serde_json::Value>> {
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) fn large_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+    cases_mode(client,arena,false,true)
+}
+fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bool,large:bool)->Checked<Vec<serde_json::Value>> {
     if !arena.public_owned_zero_audit_enabled() || arena.buffer_count() != 0 {
         return Err("public cohort pair original empty audit arena required".into());
     }
     let mut reports = Vec::new();
-    for counts in [
-        &[32usize, 33, 63, 64, 65, 127, 128, 255][..],
-        &[255usize; 8][..],
-        &[32usize, 33, 255][..],
-    ] {
+    let fixtures:Vec<&[usize]>=if large {
+        vec![&[256,257,264,265,287,288,383,511],&[512;8],&[4095],&[4096]]
+    }else{vec![&[32,33,63,64,65,127,128,255],&[255;8],&[32,33,255]]};
+    for counts in fixtures {
         for down in [false, true] {
             for poison in [false, true] {
-                let result = one(client, arena, dual, down, poison, counts).map_err(
+                let result = one(client, arena, dual, large, down, poison, counts).map_err(
                     |e| -> Box<dyn std::error::Error> {
                         format!(
                             "public regular paired down={down} poison={poison} groups={}: {e}",

@@ -7,6 +7,7 @@ fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
+    large: bool,
     dtype: u32,
     table: &Handle,
 ) -> Checked<serde_json::Value> {
@@ -96,11 +97,11 @@ fn one(
         client,
         addresses.into_iter().flat_map(u32::to_le_bytes).collect(),
     )?;
-    const TOTAL: usize = 256;
-    let counts = [32usize, 33, 63, 64, 65, 127, 128, 255];
-    let mut raw_routes = Zeroizing::new(vec![0u32; groups::LOGICAL + TOTAL * 10]);
-    raw_routes[..3].copy_from_slice(&[TOTAL as u32, 0, TOTAL as u32]);
-    for token in 0..TOTAL {
+    let total_tokens=if large {512}else{256};
+    let counts=if large {[256usize,257,264,265,287,288,383,511]}else{[32,33,63,64,65,127,128,255]};
+    let mut raw_routes = Zeroizing::new(vec![0u32; groups::LOGICAL + total_tokens * 10]);
+    raw_routes[..3].copy_from_slice(&[total_tokens as u32, 0, total_tokens as u32]);
+    for token in 0..total_tokens {
         for rank in 0..10 {
             let route = token * 10 + rank;
             let logical = if rank < 8 && token < counts[rank] {
@@ -116,8 +117,8 @@ fn one(
             };
         }
     }
-    let map = groups::group(&raw_routes, TOTAL)?;
-    let first = groups::validate(&map, TOTAL)? - 8;
+    let map = groups::group(&raw_routes, total_tokens)?;
+    let first = groups::validate(&map, total_tokens)? - 8;
     let map_id = arena.upload_u32(&map)?;
     let raw_words = Zeroizing::new(
         raw.chunks_exact(4)
@@ -128,7 +129,7 @@ fn one(
     let output = arena.allocate_zeroed(storage::WORKING_BYTES as usize / 4)?;
     let fault = arena.allocate_zeroed(1)?;
     let mut words = Zeroizing::new([0u32; 48]);
-    words[0] = TOTAL as u32;
+    words[0] = total_tokens as u32;
     words[4] = first as u32;
     words[1] = cols as u32;
     words[2] = if down { rows as u32 } else { 2 * rows as u32 };
@@ -138,7 +139,7 @@ fn one(
     words[7] = (gu_bytes / 4) as u32;
     words[8] = (stride / 4) as u32;
     words[9] = 8;
-    words[10] = 255;
+    words[10] = *counts.iter().max().unwrap() as u32;
     let mut prefix = 0u32;
     for slot in 0..8 {
         words[16 + slot * 4..20 + slot * 4].copy_from_slice(&[
@@ -147,9 +148,12 @@ fn one(
             prefix,
             if slot % 2 == 0 { slot as u32 / 2 } else { 8 },
         ]);
-        prefix += counts[slot].div_ceil(16) as u32 * 16;
+        prefix += counts[slot].div_ceil(if large {32}else{16}) as u32 * if large {32}else{16};
     }
-    validate_words(&words)?;
+    if large {
+        #[cfg(feature="strata-large-cohorts")] crate::strata_prompt::experts::large::validate_words(&words)?;
+        #[cfg(not(feature="strata-large-cohorts"))] return Err("large image probe disabled".into());
+    }else{validate_words(&words)?;}
     let mut args = KernelArguments::new().with_buffer(handles[0].clone().binding());
     if !down {
         args = args.with_buffer(handles[1].clone().binding());
@@ -164,6 +168,14 @@ fn one(
             address_handle.binding(),
         ])
         .with_read_dependencies(handles.iter().cloned().map(Handle::binding).collect());
+    if large {
+        #[cfg(feature="strata-large-cohorts")]
+        {
+            use crate::strata_prompt::experts::large::{self,LargeOp};
+            large::launch(client,LargeOp::Image{dtype,down},[
+                (words[1] as usize*words[2] as usize/Op::selected_dequant_values()).div_ceil(Op::selected_dequant_lanes()),1,8],args,&words)?;
+        }
+    }else{
     launch(
         client,
         RegularOp::Image { dtype, down },
@@ -176,6 +188,7 @@ fn one(
         args,
         &words,
     )?;
+    }
     cubecl::future::block_on(client.sync()).map_err(u::fault)?;
     for (id, reference) in [(output, &*expected), (raw_id, &*raw_words), (map_id, &*map)] {
         let whole = arena.handle(id)?.clone();
@@ -223,7 +236,7 @@ fn one(
         return Err("public cohort multi-slot source fault".into());
     }
     Ok(
-        serde_json::json!({"family":"regular-cohort-multi-original-dequant","dtype":dtype,"down":down,"groups":8,"distinct_original_model_experts":8,"actual_direct8":cfg!(feature="strata-dequant-direct8"),"values_per_invocation":Op::selected_dequant_values(),"workgroup_invocations":Op::selected_dequant_lanes(),"simultaneous_host_gpu_roles":true,"mixed_gate_up_residency":!down,"all_output_image_slots_0_through_7":true,"resident_sentinel8":true,"original_map_builder_and_validator":true,"bit_mismatches":0,"full_owner_sources_and_unused_image_tail_checked":true}),
+        serde_json::json!({"family":if large {"large-cohort-multi-original-dequant"}else{"regular-cohort-multi-original-dequant"},"dtype":dtype,"down":down,"groups":8,"distinct_original_model_experts":8,"actual_direct8":cfg!(feature="strata-dequant-direct8"),"values_per_invocation":Op::selected_dequant_values(),"workgroup_invocations":Op::selected_dequant_lanes(),"simultaneous_host_gpu_roles":true,"mixed_gate_up_residency":!down,"all_output_image_slots_0_through_7":true,"resident_sentinel8":true,"original_map_builder_and_validator":true,"bit_mismatches":0,"full_owner_sources_and_unused_image_tail_checked":true}),
     )
 }
 pub(crate) fn cases(
@@ -231,6 +244,11 @@ pub(crate) fn cases(
     arena: &mut PrivateArena,
     file: &kuno_text::GgufFile,
 ) -> Checked<Vec<serde_json::Value>> {
+    cases_mode(client,arena,file,false)
+}
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) fn large_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,file:&kuno_text::GgufFile)->Checked<Vec<serde_json::Value>> {cases_mode(client,arena,file,true)}
+fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,file:&kuno_text::GgufFile,large:bool)->Checked<Vec<serde_json::Value>> {
     if !arena.public_owned_zero_audit_enabled() || arena.buffer_count() != 0 {
         return Err("public cohort multi-DQ original empty audit arena".into());
     }
@@ -252,7 +270,7 @@ pub(crate) fn cases(
         q::IQ4_NL,
         q::Q2_0,
     ] {
-        let result = one(client, arena, file, dtype, &table);
+        let result = one(client, arena, file, large, dtype, &table);
         arena.reset()?;
         results.push(result?);
     }

@@ -4,17 +4,24 @@ use super::transient_io::{NativeExpertBatchScope, NativeExpertCohortStamp, fault
 use cubecl_core::server::ServerError;
 use cubecl_runtime::server::native_expert_grammar::{NativeStrataExpertGrammar, NativeStrataExpertGrammarCounts};
 
-// Original cohorts retain six to eight dispatches. Only a completely validated
-// packed cohort can contain three GU and three DOWN tiles (ten dispatches).
+// Original cohorts retain six to eight dispatches. Quant cohorts admit ten;
+// distinct large cohorts admit twelve with all original prefix/tail families.
 fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
+    if c.large_cohort_groups>512 || c.large_cohort_batches>512 || c.large_cohort_launches>512*12
+        || (!cfg!(feature="kuno-large-cohorts") && (c.large_cohort_groups!=0 || c.large_cohort_batches!=0 || c.large_cohort_launches!=0))
+        || c.large_cohort_groups<c.large_cohort_batches
+        || c.large_cohort_groups>8*c.large_cohort_batches
+        || c.large_cohort_launches<6*c.large_cohort_batches
+        || c.large_cohort_launches>12*c.large_cohort_batches
+        || c.large_cohort_launches%2!=0 {return false;}
     if c.regular_cohort_groups>512 || c.regular_cohort_batches>512 || c.regular_cohort_launches>512*6
         || (!cfg!(feature="kuno-regular-cohorts") && (c.regular_cohort_groups!=0 || c.regular_cohort_batches!=0 || c.regular_cohort_launches!=0))
         || c.regular_cohort_groups<c.regular_cohort_batches
         || c.regular_cohort_groups>8*c.regular_cohort_batches
         || c.regular_cohort_launches!=6*c.regular_cohort_batches
-        || c.regular_cohort_groups.checked_add(c.quant_cohort_groups).is_none_or(|n|n>c.cohort_groups)
-        || c.regular_cohort_batches.checked_add(c.quant_cohort_batches).is_none_or(|n|n>c.cohort_batches)
-        || c.regular_cohort_launches.checked_add(c.quant_cohort_launches).is_none_or(|n|n>c.cohort_launches) {
+        || c.regular_cohort_groups.checked_add(c.quant_cohort_groups).and_then(|n|n.checked_add(c.large_cohort_groups)).is_none_or(|n|n>c.cohort_groups)
+        || c.regular_cohort_batches.checked_add(c.quant_cohort_batches).and_then(|n|n.checked_add(c.large_cohort_batches)).is_none_or(|n|n>c.cohort_batches)
+        || c.regular_cohort_launches.checked_add(c.quant_cohort_launches).and_then(|n|n.checked_add(c.large_cohort_launches)).is_none_or(|n|n>c.cohort_launches) {
         return false;
     }
     if c.quant_cohort_groups > c.cohort_groups
@@ -27,16 +34,16 @@ fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
         || c.quant_cohort_launches > c.quant_cohort_batches * 10 {
         return false;
     }
-    let old_batches = c.cohort_batches - c.quant_cohort_batches - c.regular_cohort_batches;
-    let old_groups = c.cohort_groups - c.quant_cohort_groups - c.regular_cohort_groups;
-    let old_launches = c.cohort_launches - c.quant_cohort_launches - c.regular_cohort_launches;
+    let old_batches = c.cohort_batches - c.quant_cohort_batches - c.regular_cohort_batches - c.large_cohort_batches;
+    let old_groups = c.cohort_groups - c.quant_cohort_groups - c.regular_cohort_groups - c.large_cohort_groups;
+    let old_launches = c.cohort_launches - c.quant_cohort_launches - c.regular_cohort_launches - c.large_cohort_launches;
     old_groups >= old_batches && old_groups <= old_batches * 8
         && old_launches >= old_batches * 6 && old_launches <= old_batches * 8
 }
 
 /// Existing compiled-public fixed-layer profile only. These aggregate labels
 /// identify actual scoped grammar, recording and original driver-pool events.
-pub const NATIVE_COHORT_SELECTION_LABELS: [&str; 22] = [
+pub const NATIVE_COHORT_SELECTION_LABELS: [&str; 25] = [
     "grammar_admissions",
     "admitted_cohort_groups",
     "admitted_cohort_batches",
@@ -59,11 +66,23 @@ pub const NATIVE_COHORT_SELECTION_LABELS: [&str; 22] = [
     "adopted_pool_compute",
     "adopted_pool_below1024",
     "reused_recording_count",
+    "admitted_large_cohort_groups",
+    "admitted_large_cohort_batches",
+    "admitted_large_cohort_launches",
 ];
-static PUBLIC_TOTALS: [core::sync::atomic::AtomicU64; 22] =
-    [const { core::sync::atomic::AtomicU64::new(0) }; 22];
-pub fn native_strata_cohort_selection_stats() -> [u64; 22] {
+static PUBLIC_TOTALS: [core::sync::atomic::AtomicU64; 25] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; 25];
+pub fn native_strata_cohort_selection_stats() -> [u64; 25] {
     core::array::from_fn(|i| PUBLIC_TOTALS[i].load(core::sync::atomic::Ordering::Relaxed))
+}
+
+// The complete grammar is the sole source of admission populations. Preserve
+// existing aggregate indices and append the actual large subset separately.
+fn admission_credits(c: &NativeStrataExpertGrammarCounts) -> [(usize,u64);8] {
+    [(0,1),(1,c.cohort_groups as u64),(2,c.cohort_batches as u64),
+        (3,c.cohort_launches as u64),(4,c.launches as u64),
+        (22,c.large_cohort_groups as u64),(23,c.large_cohort_batches as u64),
+        (24,c.large_cohort_launches as u64)]
 }
 /// Never collect private request shapes. The getter remains readable after the
 /// original public sampler closes, so its existing collector can compute deltas.
@@ -182,6 +201,7 @@ impl Book {
             if counts.regular_cohort_groups!=0 || counts.regular_cohort_batches!=0 || counts.regular_cohort_launches!=0 {
                 return Err(fault("native cohort empty regular grammar evidence"));
             }
+            if counts.large_cohort_groups!=0 || counts.large_cohort_batches!=0 || counts.large_cohort_launches!=0 {return Err(fault("native cohort empty large grammar evidence"));}
             return Ok(());
         }
         if self.pending.is_some()
@@ -211,13 +231,7 @@ impl Book {
             first,
             launches: counts.launches,
         });
-        credit(&[
-            (0, 1),
-            (1, counts.cohort_groups as u64),
-            (2, counts.cohort_batches as u64),
-            (3, counts.cohort_launches as u64),
-            (4, counts.launches as u64),
-        ]);
+        credit(&admission_credits(&counts));
         Ok(())
     }
     pub(super) fn pending_first(&self) -> Option<usize> {
@@ -695,4 +709,24 @@ mod regular_population_tests {
   c.quant_cohort_groups=0;c.quant_cohort_batches=0;c.quant_cohort_launches=0;
   c.regular_cohort_batches=usize::MAX;assert!(!cohort_launch_population(&c));
  }
+}
+
+#[cfg(all(test,feature="kuno-large-cohorts"))]
+#[test]
+fn large_cohort_population_is_distinct_bounded_and_does_not_count_regular_twice() {
+    for launches in [6,8,10,12] {
+        let mut c=NativeStrataExpertGrammarCounts{cohort_groups:8,cohort_batches:1,cohort_launches:launches,
+            large_cohort_groups:8,large_cohort_batches:1,large_cohort_launches:launches,..Default::default()};
+        assert!(cohort_launch_population(&c));
+        assert_eq!(&admission_credits(&c)[5..],&[(22,8),(23,1),(24,launches as u64)]);
+        c.regular_cohort_groups=8;c.regular_cohort_batches=1;c.regular_cohort_launches=6;
+        assert!(!cohort_launch_population(&c));
+        c.cohort_groups+=8;c.cohort_batches+=1;c.cohort_launches+=6;
+        assert!(cohort_launch_population(&c));
+    }
+    for launches in [0,5,7,13,usize::MAX] {
+        let c=NativeStrataExpertGrammarCounts{cohort_groups:8,cohort_batches:1,cohort_launches:launches,
+            large_cohort_groups:8,large_cohort_batches:1,large_cohort_launches:launches,..Default::default()};
+        assert!(!cohort_launch_population(&c));
+    }
 }

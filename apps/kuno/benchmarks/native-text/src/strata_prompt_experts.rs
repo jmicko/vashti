@@ -2,6 +2,9 @@
 //! original global Sources, the real router map and the parent private owners.
 //! An eight-slot transfer ring and paired FP16 products are connected. Full
 //! chunk/queue scheduling remains part of the complete prefill port.
+#[cfg(feature="strata-large-cohorts")]
+#[path="strata_prompt_large_cohorts.rs"]
+pub(crate) mod large;
 use super::*;
 use crate::{quant_matvec as q, strata_global_sources::Sources};
 #[cfg(feature="strata-regular-cohorts")]
@@ -536,6 +539,9 @@ pub(crate) fn enqueue(
                     ("expert_native_cohort_groups",receipt.cohort_groups),
                     ("expert_native_cohort_launches",receipt.cohort_launches),
                     ("expert_native_cohort_batches",receipt.cohort_batches),
+                    ("expert_native_large_cohort_groups",receipt.large_cohort_groups),
+                    ("expert_native_large_cohort_batches",receipt.large_cohort_batches),
+                    ("expert_native_large_cohort_launches",receipt.large_cohort_launches),
                     ("expert_native_regular_cohort_groups",receipt.regular_cohort_groups),
                     ("expert_native_regular_cohort_batches",receipt.regular_cohort_batches),
                     ("expert_native_regular_cohort_launches",receipt.regular_cohort_launches),
@@ -688,10 +694,12 @@ fn enqueue_original(
         }
         #[cfg(feature = "strata-expert-cohorts")]
         if raw_banks.is_some() {
-            #[cfg(feature="strata-regular-cohorts")]
+            #[cfg(all(feature="strata-regular-cohorts",not(feature="strata-large-cohorts")))]
             let plan=raw_banks::Plan::new_regular(&map[516..516+groups],&modes)?;
             #[cfg(not(feature="strata-regular-cohorts"))]
             let plan=raw_banks::Plan::new(&map[516..516+groups],&modes)?;
+            #[cfg(feature="strata-large-cohorts")]
+            let plan=raw_banks::Plan::new_large(&map[516..516+groups],&modes)?;
             raw_plan=Some(plan);
             (raw,None)
         } else {
@@ -725,6 +733,16 @@ fn enqueue_original(
             if map[516+group]<32 {
                 let plan=raw_plan.as_mut().unwrap();
                 cohorts::enqueue_unit(client,geometry,owners,fault,count,map,stage,&layer_sources,unit.first,plan.slots(unit)?)?;
+                client.native_strata_expert_unit_end().map_err(crate::resident_util::fault)?;
+                plan.consumed(unit)?;
+                prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
+                group=unit.end;
+                continue;
+            }
+            #[cfg(feature="strata-large-cohorts")]
+            if unit.large {
+                let plan=raw_plan.as_mut().unwrap();
+                large::enqueue_unit(client,geometry,owners,fault,count,map,stage,&layer_sources,unit.first,plan.slots(unit)?)?;
                 client.native_strata_expert_unit_end().map_err(crate::resident_util::fault)?;
                 plan.consumed(unit)?;
                 prefetch_raw_units(client,plan,raw_banks.as_ref().unwrap(),&layer_sources,map,role_bytes)?;
@@ -1141,7 +1159,9 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     #[cfg(feature = "strata-expert-cohorts")]
     let original = original.into_iter().chain(cohorts::sources()).collect::<Vec<_>>();
     #[cfg(feature="strata-regular-cohorts")]
-    let original=original.into_iter().chain(regular::sources()).collect();
+    let original=original.into_iter().chain(regular::sources()).collect::<Vec<_>>();
+    #[cfg(feature="strata-large-cohorts")]
+    let original=original.into_iter().chain(large::sources()).collect::<Vec<_>>();
     original
 }
 

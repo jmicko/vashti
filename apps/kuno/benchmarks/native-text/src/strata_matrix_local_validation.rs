@@ -4,6 +4,14 @@ pub(crate) fn validate_program(
     expert: bool,
     small: Option<(usize, bool, u32)>,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    validate_program_mode(words,expert,small,None)
+}
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) fn validate_large_cohort_prefix(words:&[u32],columns:u32)->std::result::Result<(),Box<dyn std::error::Error>> {
+    if ![640,2560].contains(&columns) {return Err("large prefix fixed expert axes".into());}
+    validate_program_mode(words,true,None,Some(columns))
+}
+fn validate_program_mode(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>,large_columns:Option<u32>)->std::result::Result<(),Box<dyn std::error::Error>> {
     use std::collections::{BTreeMap, BTreeSet};
     let raw = if small.is_some() { 4 } else { 8 };
     let wg_expected = small.map_or(256, |(tile, _, _)| tile * 4) as u32;
@@ -244,8 +252,9 @@ pub(crate) fn validate_program(
                 );
             }
         }
-        let constant_cohort_stride = small.is_some_and(|(_, cohort, columns)| {
-            if !cohort || constant(stride, &defs, &value_ops, 0) != Some(columns / 4) {
+        let cohort_columns=small.filter(|(_,cohort,_)|*cohort).map(|(_,_,columns)|columns).or(large_columns);
+        let constant_cohort_stride = cohort_columns.is_some_and(|columns| {
+            if constant(stride, &defs, &value_ops, 0) != Some(columns / 4) {
                 return false;
             }
             value_types
@@ -255,7 +264,7 @@ pub(crate) fn validate_program(
                 .and_then(|(_, ty)| vectors.get(ty))
                 .is_some_and(|(scalar, width)| *width == 4 && float_widths.get(scalar) == Some(&16))
         });
-        if if small.is_some_and(|(_, cohort, _)| cohort) {
+        if if cohort_columns.is_some() {
             !constant_cohort_stride
         } else {
             !uniform
@@ -721,6 +730,12 @@ pub(crate) fn negatives(
     expert: bool,
     small: Option<(usize, bool, u32)>,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    negatives_mode(words,expert,small,None)
+}
+#[cfg(all(test,feature="strata-large-cohorts"))]
+pub(crate) fn large_prefix_negatives(words:&[u32],columns:u32)->std::result::Result<(),Box<dyn std::error::Error>> {negatives_mode(words,true,None,Some(columns))}
+#[cfg(test)]
+fn negatives_mode(words:&[u32],expert:bool,small:Option<(usize,bool,u32)>,large_columns:Option<u32>)->std::result::Result<(),Box<dyn std::error::Error>> {
     let mut mutations = Vec::new();
     let mut at = 5;
     let mut zero = None;
@@ -755,7 +770,7 @@ pub(crate) fn negatives(
         }
         at += n;
     }
-    if small.is_some_and(|(_, cohort, _)| cohort) {
+    if small.is_some_and(|(_, cohort, _)| cohort) || large_columns.is_some() {
         let mut at = 5;
         let mut floats = std::collections::BTreeSet::new();
         let mut actual = None;
@@ -782,14 +797,14 @@ pub(crate) fn negatives(
     for (i, v) in mutations {
         let mut bad = words.to_vec();
         bad[i] = v;
-        if validate_program(&bad, expert, small).is_ok() {
+        if validate_program_mode(&bad, expert, small,large_columns).is_ok() {
             return Err("local prefetch accepted geometry/binding/layout corruption".into());
         }
     }
     let row = if small.is_some() { 1 } else { 2 };
     let mut bad = words.to_vec();
     bad[ps[row] + 3] = words[ps[0] + 3];
-    if validate_program(&bad, expert, small).is_ok() {
+    if validate_program_mode(&bad, expert, small,large_columns).is_ok() {
         return Err("local prefetch accepted weight-row crosswire".into());
     }
     let a = stores
@@ -804,7 +819,7 @@ pub(crate) fn negatives(
         .ok_or("local prefetch other C store")?;
     let mut bad = words.to_vec();
     bad[a + 1] = words[b + 1];
-    if validate_program(&bad, expert, small).is_ok() {
+    if validate_program_mode(&bad, expert, small,large_columns).is_ok() {
         return Err("local prefetch accepted C crosswire".into());
     }
     Ok(())

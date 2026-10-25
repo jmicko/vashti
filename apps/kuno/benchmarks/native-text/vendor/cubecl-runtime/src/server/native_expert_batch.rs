@@ -123,6 +123,12 @@ pub(crate) fn native_strata_regular_cohort(name:&str)->bool {
   .is_some_and(|(_,suffix)|suffix.strip_prefix("ExpertRegularCohort")
     .is_some_and(native_strata_generated_type_suffix))
 }
+pub(crate) fn native_strata_large_cohort(name:&str)->bool {
+ cfg!(feature="kuno-large-cohorts") && name.split_once("::strata_matrix::cohorts::large::expert_large_cohort::")
+  .filter(|(prefix,_)|!prefix.contains("::strata_matrix::"))
+  .is_some_and(|(_,suffix)|suffix.strip_prefix("ExpertLargeCohort")
+    .is_some_and(native_strata_generated_type_suffix))
+}
 pub(crate) fn native_strata_granular_m16(name: &str) -> bool {
     granular_tile(name,false).is_some() || granular_tile(name,true).is_some()
         || granular_cohort(name)
@@ -155,6 +161,7 @@ pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
 }
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
+    if name.contains("::cohorts::large::") || name.starts_with("StrataExpertLargeCohort") {return false;}
     if name.contains("::regular::") || name.contains("::dual_regular::") || name.contains("::dual_small::") || name.starts_with("StrataExpertRegularCohort"){return false;}
     let name=native_strata_expert_padded_identity(native_strata_expert_dequant_identity(name));
     if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::") || name.contains("::granular_small::")) {
@@ -231,6 +238,9 @@ pub struct NativeStrataExpertBatchReceipt {
     pub quant_cohort_groups: usize,
     pub quant_cohort_launches: usize,
     pub quant_cohort_batches: usize,
+    pub large_cohort_groups:usize,
+    pub large_cohort_batches:usize,
+    pub large_cohort_launches:usize,
     pub regular_cohort_groups:usize,
     pub regular_cohort_batches:usize,
     pub regular_cohort_launches:usize,

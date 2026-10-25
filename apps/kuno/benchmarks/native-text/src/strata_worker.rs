@@ -412,6 +412,15 @@ async fn serve(
         // Exercise the new complete producer/reference family first. Every
         // original control still follows; a probe setup failure can be fixed
         // without waiting through the entire original numeric population.
+        #[cfg(feature="strata-large-cohorts")]
+        let large_producer_checks=crate::strata_prompt::experts::regular::public_large_producers(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_large_cohort_producer_error {e}");"public_large_cohort_producer_failed"})?;
+        #[cfg(feature="strata-large-cohorts")]
+        let large_dequant_checks=crate::strata_prompt::experts::regular::public_large_multi_dequant(&client,&mut arena,&file)
+            .map_err(|e|{eprintln!("public_large_cohort_dequant_error {e}");"public_large_cohort_dequant_failed"})?;
+        #[cfg(feature="strata-large-cohorts")]
+        let large_matrix_checks=crate::strata_matrix::cohorts::public_large_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_large_cohort_matrix_error {e}");"public_large_cohort_matrix_failed"})?;
         #[cfg(feature="strata-small-dual-cells")]
         let dual_regular_checks=crate::strata_matrix::cohorts::public_dual_regular_pairs(&client,&mut arena)
             .map_err(|e|{eprintln!("public_dual_regular_error {e}");"public_dual_regular_failed"})?;
@@ -853,6 +862,8 @@ async fn serve(
              report["small_granular_selected"]=cfg!(feature="strata-small-granular").into();
              report["granular_checks"]=granular_checks.into();
              report["granular_pair_checks"]=granular_pair_checks.into();
+             report["large_cohorts_selected"]=cfg!(feature="strata-large-cohorts").into();
+             #[cfg(feature="strata-large-cohorts")] {report["large_cohort_producer_checks"]=large_producer_checks.into();report["large_cohort_matrix_checks"]=large_matrix_checks.into();report["large_cohort_dequant_checks"]=large_dequant_checks.into();}
              report["regular_cohorts_selected"]=cfg!(feature="strata-regular-cohorts").into();
              #[cfg(feature="strata-regular-cohorts")] {
                 #[cfg(feature="strata-small-dual-cells")]

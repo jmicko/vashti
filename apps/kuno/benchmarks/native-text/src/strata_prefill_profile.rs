@@ -82,6 +82,8 @@ const MATRIX_FAMILIES: [&str; 8] = [
 ];
 const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-large-cohorts")]
+    if name.contains("::strata_matrix::cohorts::large::expert_large_cohort::"){return 6;}
     #[cfg(feature="strata-small-dual-cells")]
     if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 6;}
     #[cfg(feature="strata-regular-cohorts")]
@@ -166,6 +168,16 @@ impl NativeSelection {
 fn native_class(name: &str) -> usize {
     #[cfg(feature="strata-small-dual-cells")]
     if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 1;}
+    #[cfg(feature="strata-large-cohorts")]
+    {
+        if name.contains("::strata_matrix::cohorts::large::expert_large_cohort::"){return 1;}
+        match name {
+            "StrataExpertLargeCohortGuDirect8Image"|"StrataExpertLargeCohortDownDirect8Image"=>return 0,
+            "StrataExpertLargeCohortGather"=>return 2,
+            "StrataExpertLargeCohortActivate"=>return 3,
+            _=>{}
+        }
+    }
     #[cfg(feature="strata-regular-cohorts")]
     {
         if name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::"){return 1;}
@@ -438,7 +450,7 @@ pub(crate) struct NativeExpertLayer {
     #[cfg(feature = "strata-copy-cohorts")]
     compact_before: [u64; 2],
     #[cfg(feature = "strata-expert-cohorts")]
-    cohort_before: [u64; 22],
+    cohort_before: [u64; 25],
 }
 impl NativeExpertLayer {
     pub(crate) fn new(start: usize, count: usize, layer: usize) -> Self {
@@ -453,7 +465,7 @@ impl NativeExpertLayer {
                 #[cfg(feature = "strata-copy-cohorts")]
                 compact_before: [0; 2],
                 #[cfg(feature = "strata-expert-cohorts")]
-                cohort_before: [0; 22],
+                cohort_before: [0; 25],
             };
         }
         let selected = NativeSelection {
@@ -483,7 +495,7 @@ impl NativeExpertLayer {
                 #[cfg(feature = "strata-copy-cohorts")]
                 compact_before: [0; 2],
                 #[cfg(feature = "strata-expert-cohorts")]
-                cohort_before: [0; 22],
+                cohort_before: [0; 25],
             };
         }
         let before = native_totals();
@@ -1092,4 +1104,14 @@ mod dual_profile_tests {
    assert!(!source.contains("\"expert_regular_cohort_"));assert!(!source.contains("\"expert_granular_small_cohort_"));assert!(!source.contains("\"expert_local_cohort_"));
   }
  }
+}
+
+#[cfg(all(test,feature="strata-large-cohorts"))]
+#[test]
+fn large_cohort_real_family_and_all_producers_are_profiled() {
+    let name=core::any::type_name::<crate::strata_matrix::cohorts::large::expert_large_cohort::ExpertLargeCohort<cubecl::wgpu::WgpuRuntime>>();
+    assert_eq!(native_class(name),1);assert_eq!(matrix_family(name),6);
+    for (name,class) in [("StrataExpertLargeCohortGuDirect8Image",0),
+        ("StrataExpertLargeCohortDownDirect8Image",0),("StrataExpertLargeCohortGather",2),
+        ("StrataExpertLargeCohortActivate",3)] {assert_eq!(native_class(name),class);}
 }

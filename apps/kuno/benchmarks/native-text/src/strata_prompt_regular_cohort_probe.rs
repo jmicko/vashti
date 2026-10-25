@@ -30,15 +30,16 @@ fn read(arena: &PrivateArena, id: BufferId) -> Checked<Zeroizing<Vec<u32>>> {
 fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
+    large: bool,
     activate: bool,
     mixed: bool,
     poison: bool,
 ) -> Checked<serde_json::Value> {
-    const TOTAL: usize = 256;
-    let counts = [32usize, 33, 63, 64, 65, 127, 128, 255];
-    let mut raw = Zeroizing::new(vec![0u32; groups::LOGICAL + TOTAL * 10]);
-    raw[..3].copy_from_slice(&[TOTAL as u32, 0, TOTAL as u32]);
-    for token in 0..TOTAL {
+    let total_tokens=if large {512}else{256};
+    let counts = if large {[256usize,257,264,265,287,288,383,511]}else{[32,33,63,64,65,127,128,255]};
+    let mut raw = Zeroizing::new(vec![0u32; groups::LOGICAL + total_tokens * 10]);
+    raw[..3].copy_from_slice(&[total_tokens as u32, 0, total_tokens as u32]);
+    for token in 0..total_tokens {
         for rank in 0..10 {
             let route = token * 10 + rank;
             let logical = if rank < 8 && token < counts[rank] {
@@ -50,15 +51,15 @@ fn one(
             raw[1540 + route] = ((logical * 13 + 17) % 512) as u32;
         }
     }
-    let mut map = groups::group(&raw, TOTAL)?;
-    let total = groups::validate(&map, TOTAL)?;
+    let mut map = groups::group(&raw, total_tokens)?;
+    let total = groups::validate(&map, total_tokens)?;
     let first = total - 8;
     if poison {
         let offset = map[1028 + first + 6] as usize;
-        map[1540 + offset] = (TOTAL * 10) as u32;
+        map[1540 + offset] = (total_tokens * 10) as u32;
     }
     let mut words = Zeroizing::new([0u32; WORDS]);
-    words[0] = TOTAL as u32;
+    words[0] = total_tokens as u32;
     words[1] = 2560;
     words[2] = 1280;
     words[4] = first as u32;
@@ -66,7 +67,7 @@ fn one(
     words[7] = 100;
     words[8] = 300;
     words[9] = 8;
-    words[10] = 255;
+    words[10] = *counts.iter().max().unwrap() as u32;
     words[12] = u32::from(mixed);
     let mut prefix = 0;
     for (i, members) in counts.into_iter().enumerate() {
@@ -79,14 +80,17 @@ fn one(
             prefix,
             8,
         ]);
-        let tile = 16;
+        let tile = if large {32}else{16};
         prefix += members.div_ceil(tile) as u32 * tile as u32;
     }
-    validate_words(&words)?;
+    if large {
+        #[cfg(feature="strata-large-cohorts")] crate::strata_prompt::experts::large::validate_words(&words)?;
+        #[cfg(not(feature="strata-large-cohorts"))] return Err("large probe feature disabled".into());
+    }else{validate_words(&words)?;}
     let source_words = if activate {
         groups::GU_BYTES as usize / 4
     } else {
-        TOTAL * 2560 / if mixed { 2 } else { 1 }
+        total_tokens * 2560 / if mixed { 2 } else { 1 }
     };
     let mut source = Zeroizing::new(
         (0..source_words)
@@ -147,7 +151,7 @@ fn one(
         }
         args = args.with_buffer(u::handle(arena, fault0)?.binding());
         let mut old = [0u32; 16];
-        old[0] = TOTAL as u32;
+        old[0] = total_tokens as u32;
         old[1] = 2560;
         old[2] = 1280;
         old[4] = group as u32;
@@ -157,7 +161,7 @@ fn one(
                 .map(|v| u64::from(v[0]) | (u64::from(v[1]) << 32))
                 .collect(),
         ));
-        let grid = member_dispatches(counts[i], TOTAL)?[usize::from(activate)];
+        let grid = member_dispatches(counts[i], total_tokens)?[usize::from(activate)];
         unsafe {
             client.launch_unchecked(
                 Box::new(original_op),
@@ -175,6 +179,14 @@ fn one(
         args = args.with_buffer(u::handle(arena, status1)?.binding());
     }
     args = args.with_buffer(u::handle(arena, fault1)?.binding());
+    if large {
+        #[cfg(feature="strata-large-cohorts")]
+        {
+            use crate::strata_prompt::experts::large::{self,LargeOp};
+            large::launch(client,if activate {LargeOp::Activate}else{LargeOp::Gather},
+                [(words[10] as usize*if activate {320usize}else{1280usize}).div_ceil(256),1,8],args,&words)?;
+        }
+    }else{
     launch(
         client,
         if activate {
@@ -183,13 +195,14 @@ fn one(
             RegularOp::Gather
         },
         [
-            (255 * if activate { 320usize } else { 1280usize }).div_ceil(256),
+            (words[10] as usize * if activate { 320usize } else { 1280usize }).div_ceil(256),
             1,
             8,
         ],
         args,
         &words,
     )?;
+    }
     cubecl::future::block_on(client.sync()).map_err(u::fault)?;
     let a = read(arena, original)?;
     let b = read(arena, selected)?;
@@ -231,20 +244,25 @@ fn one(
         return Err("public cohort route owner changed".into());
     }
     Ok(
-        serde_json::json!({"family":"regular-cohort-paired-original-producer","activate":activate,"mixed_f16_input":mixed,"nonfinite_and_invalid_route":poison,"groups":8,"counts":counts,"original_map_builder_and_validator":true,"actual_original_and_cohort_gpu_programs":true,"bit_mismatches":0,"full_output_words_checked":a.len(),"full_owner_status_fault_sources_and_tail_checked":true,"disjoint_x_hidden":true}),
+        serde_json::json!({"family":if large {"large-cohort-paired-original-producer"}else{"regular-cohort-paired-original-producer"},"activate":activate,"mixed_f16_input":mixed,"nonfinite_and_invalid_route":poison,"groups":8,"counts":counts,"original_map_builder_and_validator":true,"actual_original_and_cohort_gpu_programs":true,"bit_mismatches":0,"full_output_words_checked":a.len(),"full_owner_status_fault_sources_and_tail_checked":true,"disjoint_x_hidden":true}),
     )
 }
 pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
 ) -> Checked<Vec<serde_json::Value>> {
+    cases_mode(client,arena,false)
+}
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) fn large_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {cases_mode(client,arena,true)}
+fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,large:bool)->Checked<Vec<serde_json::Value>> {
     if !arena.public_owned_zero_audit_enabled() || arena.buffer_count() != 0 {
         return Err("public cohort original empty audit arena required".into());
     }
     let mut reports = Vec::new();
     for (activate, mixed) in [(false, false), (false, true), (true, false)] {
         for poison in [false, true] {
-            let result = one(client, arena, activate, mixed, poison);
+            let result = one(client, arena, large, activate, mixed, poison);
             arena.reset()?;
             reports.push(result?);
         }

@@ -38,7 +38,7 @@ pub(super) const SHARED_BYTES: usize = 49152;
 pub(super) const DIRECT_GU_SHARED_BYTES: usize = SHARED_BYTES;
 
 #[cube]
-fn header_valid(map: &Array<u32>, count: usize, group: usize) -> bool {
+pub(crate) fn header_valid(map: &Array<u32>, count: usize, group: usize) -> bool {
     let total = usize::cast_from(map[0]);
     let mut valid = false;
     if total >= 1

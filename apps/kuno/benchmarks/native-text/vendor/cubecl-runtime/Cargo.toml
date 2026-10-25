@@ -36,6 +36,7 @@ repository = "https://github.com/tracel-ai/cubecl/tree/main/crates/cubecl-runtim
 resolver = "2"
 
 [features]
+kuno-large-cohorts = ["kuno-regular-cohorts"]
 kuno-small-dual-cells = ["kuno-regular-cohorts"]
 kuno-regular-cohorts = ["kuno-small-granular", "kuno-dequant-direct8", "kuno-global-image-experts"]
 kuno-small-granular = ["kuno-local-prefetch"]

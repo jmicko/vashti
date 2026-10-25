@@ -746,3 +746,9 @@ pub(crate) use regular_pair_probe::cases as public_regular_pairs;
 pub(crate) use regular_pair_probe::dual_cases as public_dual_regular_pairs;
 #[cfg(feature="strata-small-dual-cells")]
 pub(crate) use granular_pair_probe::dual_cases as public_dual_small_pairs;
+
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) mod large {use super::*;include!("strata_matrix_large_cohort.rs");}
+
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) use regular_pair_probe::large_cases as public_large_pairs;

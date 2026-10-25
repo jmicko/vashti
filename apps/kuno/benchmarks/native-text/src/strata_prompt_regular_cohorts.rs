@@ -581,3 +581,9 @@ pub(crate) use probe::cases as public_producers;
 #[path = "strata_prompt_regular_multi_dequant_probe.rs"]
 mod multi_dequant;
 pub(crate) use multi_dequant::cases as public_multi_dequant;
+
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) use probe::large_cases as public_large_producers;
+
+#[cfg(feature="strata-large-cohorts")]
+pub(crate) use multi_dequant::large_cases as public_large_multi_dequant;

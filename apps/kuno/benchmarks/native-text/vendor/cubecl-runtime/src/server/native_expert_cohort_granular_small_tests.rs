@@ -30,3 +30,31 @@ fn dual_small_refuses_old_grid_tile8_aliases_and_changed_owners(){
  let mut p=dual_program();p[3].name=DUAL;assert!(run(&p).is_err());
  for name in ["probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohortFake<R>","probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>::tail","probe::strata_matrix::nested::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>"]{assert_eq!(matrix_variant(name,false),None);}
 }
+
+#[cfg(feature="kuno-small-dual-cells")]
+#[test]
+fn dual_small_outer_grammar_accepts_genuine_scope_and_rejects_forged_or_unscoped_consumers() {
+    let outer = |entries: &[Entry]| -> Result<NativeStrataExpertGrammarCounts,ServerError> {
+        let mut grammar=NativeStrataExpertGrammar::default();
+        for e in entries {grammar.launch(e.name,e.release,&e.count,&e.args)?;}
+        grammar.finish()
+    };
+    let accepted=outer(&dual_program()).unwrap();
+    assert_eq!((accepted.cohort_groups,accepted.cohort_batches,accepted.cohort_launches),(2,1,8));
+    assert_eq!(accepted.regular_cohort_groups,0);
+    let p=dual_program();
+    for index in [4usize,7] {
+        let e=&p[index];let mut outside=NativeStrataExpertGrammar::default();
+        assert!(outside.launch(e.name,e.release,&e.count,&e.args).is_err());
+        let mut old_grid=dual_program();
+        let CubeCount::Static(x,y,z)=old_grid[index].count else {panic!("literal grid")};
+        old_grid[index].count=CubeCount::Static(x/2,y,z);assert!(outer(&old_grid).is_err());
+        for name in [
+            "probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohortFake<R>",
+            "probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>::tail",
+            "probe::strata_matrix::nested::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>",
+        ] {
+            let mut forged=dual_program();forged[index].name=name;assert!(outer(&forged).is_err());
+        }
+    }
+}
