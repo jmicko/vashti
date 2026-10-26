@@ -328,3 +328,129 @@ fn dual_regular_refuses_old_grid_nested_aliases_and_changed_phase_owners(){
  for name in ["probe::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohortFake<R>","probe::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohort<R>::tail","probe::strata_matrix::nested::strata_matrix::cohorts::dual_regular::expert_dual_regular_cohort::ExpertDualRegularCohort<R>"] {assert_eq!(matrix_variant(name,false),None);}
  let mut p=dual_program();p[5].args.buffers[0]=Handle::new(StreamId::current(),H).binding();assert!(run(&p).is_err());
 }
+
+const QUAD:&str="probe::strata_matrix::cohorts::quad_regular::expert_quad_regular_cohort::ExpertQuadRegularCohort<Runtime>";
+#[cfg(feature="kuno-regular-four-cell")]
+fn quad_program()->Vec<Entry>{let mut p=program(&[32,33,63,64,65,127,128,255]);for e in &mut p{if e.name==REGULAR{e.name=QUAD;}}p}
+#[cfg(feature="kuno-regular-four-cell")]
+#[test]
+fn quad_regular_accepts_only_original_owners_with_its_real_n64_grid(){
+ run(&quad_program()).unwrap();assert_eq!(matrix_variant(QUAD,true),Some(true));
+ for index in [3usize,5]{let mut p=quad_program();let CubeCount::Static(x,y,z)=p[index].count else{panic!("literal grid")};p[index].count=CubeCount::Static(x*2,y,z);assert!(run(&p).is_err());}
+ let mut p=quad_program();p[5].args.buffers[0]=Handle::new(StreamId::current(),H).binding();assert!(run(&p).is_err());
+}
+#[cfg(feature="kuno-regular-four-cell")]
+#[test]
+fn quad_regular_does_not_admit_generated_name_aliases(){
+ for name in ["probe::strata_matrix::cohorts::quad_regular::expert_quad_regular_cohort::ExpertQuadRegularCohortFake<R>","probe::strata_matrix::cohorts::quad_regular::expert_quad_regular_cohort::ExpertQuadRegularCohort<R>::tail","probe::strata_matrix::nested::strata_matrix::cohorts::quad_regular::expert_quad_regular_cohort::ExpertQuadRegularCohort<R>"]{assert_eq!(matrix_variant(name,false),None);assert_eq!(matrix_variant(name,true),None);let mut p=quad_program();p[3].name=name;assert!(run(&p).is_err());}
+}
+#[cfg(not(feature="kuno-regular-four-cell"))]
+#[test]
+fn quad_regular_disabled_identity_cannot_enter_historical_regular_grammar(){assert_eq!(matrix_variant(QUAD,false),None);assert_eq!(matrix_variant(QUAD,true),None);}
+
+// A genuine256-token/top10 layer with sixteen160-member REG groups. The
+// packed layer producer must leave these segments row-major; C4 changes cell
+// reuse, not the REG operand format or actual owning views.
+#[cfg(feature="kuno-regular-four-cell")]
+fn quad_layer_program(packed_large: bool) -> Vec<Entry> {
+    let phase = Handle::new(StreamId::current(),780*1024*1024);
+    let persistent = Handle::new(StreamId::current(),756*1024*1024);
+    let view = |owner: &Handle, first: u64, bytes: u64| owner.clone()
+        .offset_start(first).offset_end(owner.size()-first-bytes).binding();
+    let map = view(&phase,80*1024*1024+GU_BYTES+PART_BYTES+512*1024+3*256,MAP_BYTES);
+    let x_first = 80*1024*1024+GU_BYTES+PART_BYTES+4*(131072+65536+65536+131072)+6*256;
+    let x = view(&phase,x_first,56832*2560*2);
+    let h = view(&persistent,20*1024*1024,H);
+    let input = Handle::new(StreamId::current(),WORKING).binding();
+    let fault = Handle::new(StreamId::current(),4).binding();
+    let mut out = vec![Entry {
+        name: if packed_large {"StrataExpertLayerPackedGather"} else {"StrataExpertLayerGather"},
+        release:false,
+        count:CubeCount::Static(5,2560,1),
+        args:KernelArguments::new().with_buffers(vec![map.clone(),input,x.clone(),h.clone(),fault.clone()])
+            .with_info(MetadataBindingInfo::custom(packed(&[256,16,0,2560,u32::from(packed_large),0,0,0]))),
+    }];
+    for batch in 0..2 {
+        let mut p = program(&[160;8]);
+        let old_map = View::new(&p[0].args.buffers[0]).unwrap();
+        let old_x = View::new(&p[0].args.buffers[2]).unwrap();
+        let old_fault = View::new(&p[0].args.buffers[3]).unwrap();
+        let old_h = View::new(&p[4].args.buffers[2]).unwrap();
+        p.remove(0);
+        for e in &mut p {
+            set_word(&mut e.args.info,0,256);
+            set_word(&mut e.args.info,4,batch*8);
+            set_word(&mut e.args.info,13,1);
+            for slot in 0..8 {set_word(&mut e.args.info,16+slot*4,batch*8+slot as u32);}
+            for binding in &mut e.args.buffers {
+                let old=View::new(binding).unwrap();
+                *binding=if old==old_map {map.clone()} else if old==old_x {x.clone()}
+                    else if old==old_h {h.clone()} else if old==old_fault {fault.clone()}
+                    else {binding.clone()};
+            }
+            if e.name==REGULAR {
+                e.name=QUAD;
+                for (i,b) in e.args.buffers.iter().enumerate() {
+                    let n=(b.size_in_used()/if i<2 {8}else{4}) as u32;
+                    set_word(&mut e.args.info,48+i,n);set_word(&mut e.args.info,54+i,n);
+                }
+            }
+        }
+        out.extend(p);
+    }
+    out
+}
+#[cfg(feature="kuno-regular-four-cell")]
+fn run_quad_layer(p: &[Entry], complete: bool) -> Result<NativeStrataExpertGrammarCounts,ServerError> {
+    let mut g=NativeStrataExpertGrammar::default();
+    for e in p {g.launch(e.name,e.release,&e.count,&e.args)?;}
+    if complete {g.finish_batch()} else {g.finish()}
+}
+#[cfg(all(feature="kuno-regular-four-cell",feature="kuno-large-packed-tiles"))]
+#[test]
+fn quad_regular_complete_layers_keep_original_reg_format_after_both_layer_producers() {
+    for packed in [false,true] {
+        let p=quad_layer_program(packed);
+        let c=run_quad_layer(&p,true).unwrap();
+        assert_eq!(c.layer_gather_launches,1);
+        assert_eq!(c.regular_cohort_groups,16);
+        assert_eq!(c.regular_cohort_batches,2);
+        assert_eq!(c.regular_cohort_launches,10);
+        assert_eq!(c.large_cohort_groups,0);
+        assert_eq!(c.logical_phases,96);
+        assert_eq!(c.launches,11);
+        for e in &p[1..] {assert_eq!(word(&e.args.info,14).unwrap(),0);}
+        assert!(run_quad_layer(&p[..6],false).is_ok());
+        assert!(run_quad_layer(&p[..6],true).is_err());
+        for phase in 0..p.len() {
+            let mut omitted=quad_layer_program(packed);omitted.remove(phase);
+            assert!(run_quad_layer(&omitted,true).is_err());
+            let mut wrong=quad_layer_program(packed);wrong[phase].release=!wrong[phase].release;
+            assert!(run_quad_layer(&wrong,true).is_err());
+        }
+    }
+}
+#[cfg(all(feature="kuno-regular-four-cell",feature="kuno-large-packed-tiles"))]
+#[test]
+fn quad_regular_packed_layer_cannot_gain_large_format_or_cross_family_authority() {
+    for phase in 1..quad_layer_program(true).len() {
+        for format in [1,2] {
+            let mut p=quad_layer_program(true);set_word(&mut p[phase].args.info,14,format);
+            assert!(run_quad_layer(&p,true).is_err());
+        }
+        for reserved in [13usize,15] {
+            let mut p=quad_layer_program(true);set_word(&mut p[phase].args.info,reserved,if reserved==13 {0}else{1});
+            assert!(run_quad_layer(&p,true).is_err());
+        }
+    }
+    let mut outside=quad_layer_program(true);outside.remove(0);
+    assert!(run_quad_layer(&outside,true).is_err());
+    for name in [
+        "probe::strata_matrix::cohorts::large::expert_large_cohort::ExpertLargeCohort<R>",
+        "probe::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::ExpertLargePackedCohort<R>",
+        "probe::strata_matrix::cohorts::dual_small::expert_dual_small_cohort::ExpertDualSmallCohort<R>",
+    ] {
+        let mut wrong=quad_layer_program(true);wrong[3].name=name;
+        assert!(run_quad_layer(&wrong,true).is_err());
+    }
+}

@@ -85,7 +85,7 @@ fn compact_role_words(w: &[u32; 48], down: bool) -> Option<u32> {
 }
 
 fn matrix_variant(name: &str, down: bool) -> Option<bool> {
-    if name.contains("::regular::") || name.contains("::dual_regular::"){return None;}
+    if name.contains("::regular::") || name.contains("::dual_regular::") || name.contains("::quad_regular::"){return None;}
     if name.contains("::dual_small::"){return (super::super::native_expert_batch::native_strata_dual_cohort(name,false) && (!down || cfg!(feature="kuno-expert-ordered-output"))).then_some(down);}
     if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::balanced_global::") || name.contains("::local_small::") || name.contains("::granular_small::")) {
         return (super::super::native_expert_batch::native_strata_global_small_cohort(name)
