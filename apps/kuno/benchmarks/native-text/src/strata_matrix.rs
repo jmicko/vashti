@@ -193,6 +193,8 @@ pub(crate) use native::padded_global;
 pub(crate) use native::balanced_global;
 #[cfg(feature="strata-small-granular")]
 pub(crate) use native::granular_small;
+#[cfg(feature="strata-regular-four-cell")]
+pub(crate) mod quad_products {use super::*;include!("strata_matrix_quad_products.rs");}
 #[cfg(feature="strata-small-dual-cells")]
 pub(crate) mod dual_products {use super::*;include!("strata_matrix_dual_products.rs");}
 #[cfg(feature="strata-small-dual-cells")]
@@ -2959,6 +2961,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
             let definitions=definitions.into_iter().chain(cohorts::regular::definitions());
             #[cfg(feature="strata-small-dual-cells")]
             let definitions=definitions.into_iter().chain(cohorts::dual_regular::definitions()).chain(cohorts::dual_small::definitions());
+            #[cfg(feature="strata-regular-four-cell")]
+            let definitions=definitions.into_iter().chain(cohorts::quad_regular::definitions());
             for (name, definition) in definitions {
                 let mut compiler = AutoCompiler::SpirV(Default::default());
                 let mut options = WgpuCompilationOptions {
@@ -2984,6 +2988,8 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                 let expected_shared=if name.starts_with("regular_cohort16_"){Some(1024)}else{expected_shared};
                 #[cfg(feature="strata-small-dual-cells")]
                 let expected_shared=if name.starts_with("dual_regular_cohort16_")||name.starts_with("dual_small_cohort16_"){Some(1024)}else{expected_shared};
+                #[cfg(feature="strata-regular-four-cell")]
+                let expected_shared=if name.starts_with("quad_regular_cohort16_"){Some(1024)}else{expected_shared};
                 #[cfg(feature = "strata-expert-cohorts")]
                 let expected_shared = if name.starts_with("expert_cohort") {
                     Some(if name.contains("cohort8") { 2048 } else { 4096 })
@@ -3052,6 +3058,14 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
                     if let Some(dir)=std::env::var_os("KUNO_PUBLIC_DUAL_COHORT_MODULE_DIR") {
                         std::fs::write(std::path::PathBuf::from(dir).join(format!("{name}-layout{layout_mask}.spv")),words.iter().flat_map(|w|w.to_le_bytes()).collect::<Vec<_>>())?;
                     }
+                }
+                #[cfg(feature="strata-regular-four-cell")]
+                if name.starts_with("quad_regular_cohort16_") {
+                    let shape=Some((16usize,true,if name.ends_with("_down"){640}else{2560}));
+                    quad_validation::validate_program(words,true,shape)?;
+                    #[cfg(test)]
+                    quad_validation::negatives(words,true,shape)?;
+                    println!("strata_quad_regular_shader_accepted name={name} layout={layout_mask} shared_bytes={} workgroup=32 subgroup=16 accumulators=4 full_A_K32_carry=true",kernel.shared_size);
                 }
                 if wgpu::hal::vulkan::kuno_cooperative_subgroup(words) != Some(16) {
                     return Err("matrix pipeline subgroup geometry".into());
@@ -3689,6 +3703,9 @@ mod small_local_carry_tests {
 #[path="strata_matrix_granular_products.rs"]
 mod granular_products;
 
+#[cfg(feature="strata-regular-four-cell")]
+#[path="strata_matrix_quad_validation.rs"]
+mod quad_validation;
 #[cfg(feature="strata-small-granular")]
 #[path="strata_matrix_granular_validation.rs"]
 mod granular_validation;
@@ -3724,3 +3741,7 @@ mod granular_tests {
 #[cfg(all(test,feature="strata-small-dual-cells"))]
 #[path="strata_matrix_dual_cpu_tests.rs"]
 mod dual_cpu_tests;
+
+#[cfg(all(test,feature="strata-regular-four-cell"))]
+#[path="strata_matrix_quad_cpu_tests.rs"]
+mod quad_cpu_tests;

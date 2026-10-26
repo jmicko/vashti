@@ -464,7 +464,9 @@ pub(super) fn enqueue_unit(
         }
         words[5] = if down { 2 } else { 0 };
         words[11] = 16;
-        #[cfg(feature="strata-small-dual-cells")]
+        #[cfg(feature="strata-regular-four-cell")]
+        let product=crate::strata_matrix::cohorts::quad_regular::launch;
+        #[cfg(all(feature="strata-small-dual-cells",not(feature="strata-regular-four-cell")))]
         let product=crate::strata_matrix::cohorts::dual_regular::launch;
         #[cfg(not(feature="strata-small-dual-cells"))]
         let product=crate::strata_matrix::cohorts::regular::launch;
