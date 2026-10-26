@@ -58,7 +58,15 @@ fn dual_consumers_preserve_initialized_packing_images_and_all_existing_producers
             s[s.find("    let slot =").unwrap()..s.find("    crate::strata_matrix::").unwrap()]
                 .to_owned()
         };
-        assert_eq!(body(new), body(old));
+        let added = body(new);
+        let (head, input) = added.split_once("    let mut input_prefix=prefix;").unwrap();
+        let (guard, tail) = input.split_once("    let weight_first").unwrap();
+        for check in ["h13>comptime!", "h14!=0 || h15!=0", "map[43008+group]",
+            "map[43520]", "global>total", "extent>total-global",
+            "global+extent!=next", "input.len()!=36372480", "input_prefix=global"] {
+            assert!(guard.contains(check), "missing layer input guard {check}");
+        }
+        assert_eq!(format!("{head}    let weight_first{tail}"), body(old));
         assert!(new.contains(" / 32) as u32"));
     }
     let product = include_str!("strata_matrix_dual_small.rs");

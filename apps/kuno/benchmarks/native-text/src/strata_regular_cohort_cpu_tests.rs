@@ -90,7 +90,7 @@ fn regular_cohort_info_rejects_changed_prefix_spare_slot_and_unknown_common_meta
         (9, 9),
         (10, 254),
         (12, 2),
-        (13, 1),
+        (13, 2),
         (14, 1),
         (15, 1),
     ] {
@@ -98,6 +98,9 @@ fn regular_cohort_info_rejects_changed_prefix_spare_slot_and_unknown_common_meta
         bad[i] = v;
         assert!(validate_words(&bad).is_err(), "field {i}");
     }
+    let mut publication = w;
+    publication[13] = 1;
+    assert_eq!(validate_words(&publication).is_ok(), cfg!(feature = "strata-layer-gather"));
     for i in 0..8 {
         for (field, value) in [(0, 999), (1, 31), (1, 256), (2, w[18 + i * 4] + 16), (3, 9)] {
             let mut bad = w;

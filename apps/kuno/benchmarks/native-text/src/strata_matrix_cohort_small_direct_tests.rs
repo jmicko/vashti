@@ -24,7 +24,18 @@ fn small_direct_cohort_preserves_every_original_guard_and_chronological_product(
         .unwrap()
         .0;
     let compact = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    assert_eq!(compact(&old), compact(new));
+    // The complete original guards/products remain exact after projecting out
+    // only the new global-X input selection. Output publication stays local.
+    let (head, input) = new.split_once("    let mut input_prefix=prefix;").unwrap();
+    let (guard, tail) = input.split_once("    let weight_first").unwrap();
+    for check in ["h13>comptime!", "h14!=0 || h15!=0", "map[43008+group]",
+        "map[43520]", "global>total", "extent>total-global",
+        "global+extent!=next", "input.len()!=36372480", "input_prefix=global"] {
+        assert!(guard.contains(check), "missing layer input guard {check}");
+    }
+    let original_input = format!("{head}    let weight_first{tail}")
+        .replace("input_prefix", "prefix");
+    assert_eq!(compact(&old), compact(&original_input));
     let selected = include_str!("strata_matrix_cohort_small_direct.rs");
     assert_eq!(
         selected

@@ -45,7 +45,15 @@ fn row_order_preserves_every_original_route_source_cell_and_within_expert_order(
         }
         assert!(keys.windows(2).all(|p| p[0] < p[1]));
         assert_eq!(&old[..4], &new[..4]);
+        #[cfg(not(feature = "strata-layer-gather"))]
         assert!(new[MEMBERS + count * 10..].iter().all(|&v| v == 0));
+        #[cfg(feature = "strata-layer-gather")]
+        {
+            assert!(new[MEMBERS + count * 10..LAYER_PREFIX].iter().all(|&v| v == 0));
+            validate_layer(&old, count).unwrap();
+            validate_layer(&new, count).unwrap();
+            assert!(new[LAYER_PREFIX + 513..].iter().all(|&v| v == 0));
+        }
         if count >= 148 { assert_ne!(old.as_slice(), new.as_slice()); }
     }
 }

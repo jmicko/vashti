@@ -2,6 +2,18 @@
 
 ## Resumed focused validation, 2026-10-25
 
+Complete v3 application run executed all456 selected identities:452 passed and
+four historical layout/source-comparison controls failed. The entire actual
+generic and LARGE compiler validation passed in this run. The four failures
+were updated together: regular INFO word13 now has the same explicit-mode
+negative/positive coverage as small INFO; ordered-map unused space excludes only
+the new validated prefix table; small-direct and dual comparisons project out
+only the independently checked global-X selection while retaining exact original
+guards/products/publication. All four updated controls pass in focused runs
+(`compatibility-v1..v4.log`). Their identities and the full452 original population
+remain unchanged. This follow-up changes tests only, not the frozen328625a4
+inference implementation. Full fresh on/off release validation remains required.
+
 The complete application check exposed the historical reserved-word13 negative;
 word13 is now the explicit0/1 publication mode. That test retains its identity
 and all previous negative cases, rejects2 and reserved14/15, and verifies mode1
