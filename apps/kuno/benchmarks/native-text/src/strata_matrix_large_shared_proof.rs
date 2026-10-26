@@ -628,7 +628,10 @@ fn linear(id:u32,defs:&Definitions,parents:&std::collections::BTreeMap<u32,u32>,
 }
 fn constant_value(id:u32,defs:&Definitions)->Option<u32> {
     match defs.get(&id)? { (43,d) if d.len()==1=>Some(d[0]),
-        (83|113|114|124,d) if d.len()==1=>constant_value(d[0],defs),_=>None }
+        (83|113|114|124,d) if d.len()==1=>constant_value(d[0],defs),
+        (194,d) if d.len()==2=>constant_value(d[0],defs)?.checked_shr(constant_value(d[1],defs)?),
+        (196,d) if d.len()==2=>constant_value(d[0],defs)?.checked_shl(constant_value(d[1],defs)?),
+        _=>None }
 }
 fn dependencies(id:u32,defs:&Definitions)->std::collections::BTreeSet<u32> {
     let(mut seen,mut todo)=(std::collections::BTreeSet::new(),vec![id]);
@@ -859,18 +862,28 @@ fn validate_panel_program(
 #[cfg(test)]
 pub(super) fn negatives(words:&[u32],columns:u32)->std::result::Result<(),Box<dyn std::error::Error>> {
     let mut offsets=Vec::new();let mut products=Vec::new();let mut stores=Vec::new();
-    let mut zero=None;let mut four=None;let mut subgroup=None;let mut at=5;
+    let mut constants=Definitions::new();let mut uints=std::collections::BTreeSet::new();let mut at=5;
     while at<words.len() {
         let n=(words[at]>>16) as usize;let op=words[at]&65535;
-        if op==43 && n==4 {match words[at+3] {0=>zero=Some(words[at+2]),3=>subgroup=Some(words[at+2]),4=>four=Some(words[at+2]),_=>{}}}
+        if op==21 && n==4 && words[at+2]==32 && words[at+3]==0 {uints.insert(words[at+1]);}
+        if matches!(op,43|83|113|114|124|194|196) {
+            constants.insert(words[at+2],(op,words[at+3..at+n].to_vec()));
+        }
         if op==4459 {products.push(at);}
         if op==62 {stores.push(at);}
         at+=n;
     }
-    let zero=zero.ok_or("shared negative actualzero")?;
-    let four=four.ok_or("shared negative actualfour")?;
-    let subgroup=subgroup.ok_or("shared negative actualsubgroup")?;
-    at=5;
+    let (mut zero,mut subgroup)=(None,None);at=5;
+    while at<words.len() {
+        let n=(words[at]>>16) as usize;
+        if words[at]&65535==43 && n==4 && uints.contains(&words[at+1]) {
+            match words[at+3] {0=>zero=Some(words[at+2]),3=>subgroup=Some(words[at+2]),_=>{}}
+        }
+        at+=n;
+    }
+    let zero=zero.ok_or("shared negative actual uint32zero")?;
+    let subgroup=subgroup.ok_or("shared negative actual uint32subgroup")?;
+    let (mut shared_strides,mut fallback_strides)=(0,0);at=5;
     while at<words.len() {
         let n=(words[at]>>16) as usize;let op=words[at]&65535;
         match op {
@@ -878,14 +891,28 @@ pub(super) fn negatives(words:&[u32],columns:u32)->std::result::Result<(),Box<dy
             71 if n==4 && words[at+2]==33 && words[at+3]<=2=>offsets.push((at+3,9)),
             71 if n==4 && words[at+2]==11 && words[at+3]==41=>offsets.push((at+3,40)),
             43 if n==4 && words[at+3]==2048=>offsets.push((at+3,1024)),
-            224=>offsets.push((at+1,subgroup)),
+            // SG fallback fences are ALREADY scope3: only genuine WG scope2
+            // fences may receive this negative. Different constant IDs with
+            // the same scope are not semantic corruption.
+            224 if constant_value(words[at+1],&constants)==Some(2)=>offsets.push((at+1,subgroup)),
             124=>offsets.push((at,(n as u32)<<16|115)),
-            4457=>offsets.push((at+5,four)),
+            4457=>{
+                let actual=constant_value(words[at+5],&constants).ok_or("shared negative actual constant CMMA stride")?;
+                match actual {8=>shared_strides+=1,4=>fallback_strides+=1,_=>return Err("shared negative unexpected authentic stride".into())}
+                // The old fallback is16>>2 ==4. Replacing that SSA expression
+                // with another constant4 is EQUIVALENT and must be accepted.
+                // Zero is genuinely wrong for BOTH original4 and new8 strides;
+                // retain every one of the15 original stride mutations.
+                if constant_value(zero,&constants)==Some(actual) {return Err("shared stride negative is semantically equivalent".into());}
+                println!("strata_large_shared_stride_negative offset={} instruction={:?} original_stride_id={} original_stride_value={} replacement_stride_id={} replacement_stride_value=0",at+5,&words[at..at+n],words[at+5],actual,zero);
+                offsets.push((at+5,zero));
+            }
             4458=>offsets.push((at+3,zero)),
             _=>{}
         }
         at+=n;
     }
+    if (shared_strides,fallback_strides)!=(6,9) {return Err("shared negatives retain all6new+9original stride controls".into());}
     let mut rejected=0;
     for (offset,value) in offsets {
         if words[offset]==value {continue;}
@@ -903,4 +930,18 @@ pub(super) fn negatives(words:&[u32],columns:u32)->std::result::Result<(),Box<dy
     if validate(&bad,columns).is_ok() {return Err("shared proof accepted crossed C owner".into());}
     if rejected<20 {return Err("shared proof required actual mutation population".into());}
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn shared_stride_negatives_compare_semantic_values_not_ssa_ids() {
+    // Actual failure premise: OpShiftRightLogical(16,2) and OpConstant4
+    // have different result IDs but the same legitimate fallback stride.
+    let defs=Definitions::from([
+        (1,(43,vec![16])),(2,(43,vec![2])),(3,(194,vec![1,2])),
+        (147,(43,vec![4])),(148,(43,vec![0])),(149,(43,vec![8])),
+    ]);
+    assert_eq!(constant_value(3,&defs),Some(4));
+    assert_eq!(constant_value(3,&defs),constant_value(147,&defs));
+    for authentic in [3,147,149] {assert_ne!(constant_value(authentic,&defs),constant_value(148,&defs));}
 }
