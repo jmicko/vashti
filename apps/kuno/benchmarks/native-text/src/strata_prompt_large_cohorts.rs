@@ -484,7 +484,9 @@ pub(super) fn enqueue_unit(
         for tile in [128,8,16,32] {
             if crate::strata_matrix::cohorts::large::part_rows(&words,tile)==0 {continue;}
             words[11]=tile as u32;
-            #[cfg(feature="strata-large-packed-tiles")]
+            #[cfg(feature="strata-large-shared-panels")]
+            use crate::strata_matrix::cohorts::large_shared as selected_matrix;
+            #[cfg(all(feature="strata-large-packed-tiles",not(feature="strata-large-shared-panels")))]
             use crate::strata_matrix::cohorts::large_packed as selected_matrix;
             #[cfg(not(feature="strata-large-packed-tiles"))]
             use crate::strata_matrix::cohorts::large as selected_matrix;

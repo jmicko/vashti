@@ -98,7 +98,23 @@ fn quad_matrix_name(name:&str)->bool {
     }
     depth==0
 }
+#[cfg(feature="strata-large-shared-panels")]
+fn shared_large_matrix_name(name:&str)->bool {
+    let Some((prefix,suffix))=name.split_once("::strata_matrix::cohorts::large_shared::expert_large_shared_cohort::")else{return false;};
+    if prefix.contains("::strata_matrix::"){return false;}
+    let Some(suffix)=suffix.strip_prefix("ExpertLargeSharedCohort")else{return false;};
+    if suffix.is_empty(){return true;}
+    if !suffix.starts_with('<') || !suffix.ends_with('>'){return false;}
+    let mut depth=0usize;
+    for (i,b)in suffix.bytes().enumerate(){
+        if b==b'<'{depth+=1;}
+        if b==b'>'{if depth==0{return false;}depth-=1;if depth==0 && i+1!=suffix.len(){return false;}}
+    }
+    depth==0
+}
 fn matrix_tier(name: &str) -> usize {
+    #[cfg(feature="strata-large-shared-panels")]
+    if shared_large_matrix_name(name){return 2;}
     #[cfg(feature="strata-regular-four-cell")]
     if quad_matrix_name(name){return 1;}
     if name.contains("::strata_matrix::cohorts::dual_small::") { 0 }
@@ -108,6 +124,8 @@ fn matrix_tier(name: &str) -> usize {
     else { 3 }
 }
 fn matrix_family(name: &str) -> usize {
+    #[cfg(feature="strata-large-shared-panels")]
+    if shared_large_matrix_name(name){return 6;}
     #[cfg(feature="strata-regular-four-cell")]
     if quad_matrix_name(name){return 6;}
     #[cfg(feature="strata-large-cohorts")]
@@ -194,6 +212,8 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-large-shared-panels")]
+    if shared_large_matrix_name(name){return 1;}
     #[cfg(feature="strata-regular-four-cell")]
     if quad_matrix_name(name){return 1;}
     #[cfg(feature="strata-large-packed-tiles")]
@@ -1183,4 +1203,25 @@ fn quad_regular_genuine_products_have_honest_matrix_profiles(){
  let source=include_str!("strata_matrix_quad_regular_cohort.rs");
  assert!(source.contains("expert_quad_regular_cohort_matrix_workgroups"));
  assert!(!source.contains("expert_dual_regular_cohort_matrix_workgroups"));
+}
+
+#[cfg(all(test,feature="strata-large-shared-panels"))]
+#[test]
+fn shared_large_genuine_prefix_has_exact_large_matrix_profile_identity() {
+    let name=core::any::type_name::<crate::strata_matrix::cohorts::large_shared::expert_large_shared_cohort::ExpertLargeSharedCohort<cubecl::wgpu::WgpuRuntime>>();
+    assert!(shared_large_matrix_name(name));
+    assert_eq!(matrix_tier(name),2);assert_eq!(matrix_family(name),6);assert_eq!(native_class(name),1);
+    for bad in [
+        "probe::strata_matrix::cohorts::large_shared::expert_large_shared_cohort::ExpertLargeSharedCohortFake<R>",
+        "probe::strata_matrix::cohorts::large_shared::expert_large_shared_cohort::ExpertLargeSharedCohort<R>::tail",
+        "probe::strata_matrix::nested::strata_matrix::cohorts::large_shared::expert_large_shared_cohort::ExpertLargeSharedCohort<R>",
+        "probe::strata_matrix::cohorts::large_shared::expert_large_shared_cohort::ExpertLargeSharedCohort<R",
+    ] {
+        assert!(!shared_large_matrix_name(bad));
+        assert_ne!(matrix_tier(bad),2);assert_ne!(matrix_family(bad),6);assert_ne!(native_class(bad),1);
+    }
+    // Actual residual programs retain their old identity and profiling credit.
+    let packed=core::any::type_name::<crate::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::ExpertLargePackedCohort<cubecl::wgpu::WgpuRuntime>>();
+    assert!(!shared_large_matrix_name(packed));
+    assert_eq!(matrix_tier(packed),2);assert_eq!(matrix_family(packed),6);assert_eq!(native_class(packed),1);
 }

@@ -774,3 +774,11 @@ pub(crate) use large_packed_pair_probe::cases as public_large_packed_pairs;
 
 #[cfg(feature="strata-regular-four-cell")]
 pub(crate) use regular_pair_probe::quad_cases as public_quad_regular_pairs;
+
+#[cfg(feature="strata-large-shared-panels")]
+pub(crate) mod large_shared {
+    use super::*;
+    include!("strata_matrix_large_shared_cohort.rs");
+}
+#[cfg(feature="strata-large-shared-panels")]
+pub(crate) use large_packed_pair_probe::shared_cases as public_large_shared_pairs;

@@ -49,6 +49,7 @@ cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 [features]
 # Complete paired LARGE producers/consumers; never mix formats in one layer.
 strata-large-packed-tiles = ["strata-layer-gather", "cubecl-wgpu/kuno-large-packed-tiles"]
+strata-large-shared-panels = ["strata-large-packed-tiles", "cubecl-wgpu/kuno-large-shared-panels"]
 strata-large-cohorts = ["strata-regular-cohorts", "strata-wide32-local-routes", "cubecl-wgpu/kuno-large-cohorts"]
 strata-layer-gather = ["strata-large-cohorts", "strata-small-dual-cells", "cubecl-wgpu/kuno-layer-gather"]
 strata-small-dual-cells = ["strata-regular-cohorts", "cubecl-wgpu/kuno-small-dual-cells"]

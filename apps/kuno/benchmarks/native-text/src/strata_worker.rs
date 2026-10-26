@@ -409,6 +409,9 @@ async fn serve(
             );
             return Ok(());
         }
+        #[cfg(feature="strata-large-shared-panels")]
+        let shared_large_matrix_checks=crate::strata_matrix::cohorts::public_large_shared_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_shared_large_matrix_error {e}");"public_shared_large_matrix_failed"})?;
         #[cfg(feature="strata-regular-four-cell")]
         let quad_regular_checks=crate::strata_matrix::cohorts::public_quad_regular_pairs(&client,&mut arena)
             .map_err(|e|{eprintln!("public_quad_regular_error {e}");"public_quad_regular_failed"})?;
@@ -891,6 +894,8 @@ async fn serve(
              report["granular_pair_checks"]=granular_pair_checks.into();
              #[cfg(feature="strata-regular-four-cell")]
              {report["quad_regular_checks"]=quad_regular_checks.into();report["quad_regular_selected"]=true.into();}
+             #[cfg(feature="strata-large-shared-panels")]
+             {report["shared_large_matrix_checks"]=shared_large_matrix_checks.into();report["shared_large_selected"]=true.into();}
              report["layer_gather_selected"]=cfg!(feature="strata-layer-gather").into();
              #[cfg(feature="strata-layer-gather")]
              {report["layer_gather_checks"]=layer_gather_checks.into();report["layer_activation_checks"]=layer_activation_checks.into();report["layer_small_checks"]=layer_small_checks.into();report["layer_regular_large_checks"]=layer_regular_large_checks.into();}

@@ -3145,6 +3145,7 @@ pub(crate) fn validate_sources() -> std::result::Result<(), Box<dyn std::error::
         {
          #[cfg(feature="strata-large-cohorts")] cohorts::large::validate_sources()?;
          #[cfg(feature="strata-large-packed-tiles")] cohorts::large_packed::validate_sources()?;
+         #[cfg(feature="strata-large-shared-panels")] cohorts::large_shared::validate_sources()?;
          #[cfg(feature="strata-small-granular")] granular_small::validate_sources()?;
          #[cfg(feature="strata-small-local-carry")] local_small::validate_sources_mode(true)?;
          local_small::validate_sources()?;native_wide::local_wide32::validate_local_wide32_sources()?;native_expert_wide::local_wide32::validate_sources()?;}
