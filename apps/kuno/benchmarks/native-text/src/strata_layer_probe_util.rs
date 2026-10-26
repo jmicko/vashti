@@ -43,10 +43,10 @@ pub(crate) fn input(
         copy[1] = n as u32;
         copy[4] = src as u32;
         copy[6] = dst as u32;
-        let args = cubecl::prelude::KernelArguments::new()
+        let args = cubecl_runtime::server::KernelArguments::new()
             .with_buffers(vec![u::handle(arena, packed_owner)?.binding(),
                                u::handle(arena, id)?.binding()])
-            .with_info(cubecl::prelude::MetadataBindingInfo::custom(
+            .with_info(cubecl_runtime::server::MetadataBindingInfo::custom(
                 copy.chunks_exact(2).map(|p| u64::from(p[0]) | (u64::from(p[1]) << 32)).collect(),
             ));
         // SAFETY: exact initialized disjoint owners, original bit-copy kernel,
