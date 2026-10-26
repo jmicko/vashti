@@ -789,7 +789,7 @@ fn validate_panel_program(
         while let Some(b)=todo.pop() {if b==stop||!seen.insert(b){continue;}if let Some(next)=edges.get(&b){todo.extend(next);}}
         seen
     };
-    let mut eligibility=false;
+    let mut eligibility=None;
     for ins in blocks.values() {
         let Some(&(branch,250))=ins.last() else {continue;};
         let Some(&(merge,_))=ins.iter().rev().find(|(_,op)|*op==247) else {continue;};
@@ -825,9 +825,33 @@ fn validate_panel_program(
         // map[route_prefix+WGtile128+1540+lane+round16], with exactly
         // eight routes per lane, never a subgroup-position-dependent base.
         if base_constant!=1540 {continue;}
-        eligibility=true;
+        eligibility=Some(condition);
     }
-    if !eligibility {return Err("shared panel exact same128 immutable routes and subgroup-All fast/fallback CFG".into());}
+    let eligibility=eligibility.ok_or("shared panel exact same128 immutable routes and subgroup-All fast/fallback CFG")?;
+    // No invocation-local exit may strand peers before their first WG barrier.
+    // Fault-publication UNIT_POS==0 subbranches are allowed only on paths from
+    // which NEITHER successor can reach the fast K16 loop.
+    for ins in blocks.values() {
+        let Some(&(branch,250))=ins.last() else {continue;};
+        if words[branch+1]==eligibility {continue;}
+        let yes=reachable(words[branch+2],0).contains(&header);
+        let no=reachable(words[branch+3],0).contains(&header);
+        if yes==no {continue;}
+        for id in dependencies(words[branch+1],defs) {
+            if let Some((61,d))=defs.get(&id) {
+                if builtins.get(&root(d[0])?).is_some_and(|b|matches!(*b,27|28|29|40|41)) {
+                    return Err("shared panel invocation-local terminating/header branch before WG barriers".into());
+                }
+            }
+        }
+    }
+    for (&block,ins) in blocks {
+        for &(at,op) in ins {
+            if op==224 && constant_value(words[at+1],defs)==Some(2) && !region.contains(&block) {
+                return Err("shared panel unexpected WG barrier outside the single fast K16 lifetime".into());
+            }
+        }
+    }
     if classes.get(&slab)!=Some(&4) {return Err("shared panel slab storage class".into());}
     Ok(())
 }
