@@ -413,6 +413,12 @@ async fn serve(
         // original control still follows; a probe setup failure can be fixed
         // without waiting through the entire original numeric population.
         #[cfg(feature="strata-large-packed-tiles")]
+        let packed_large_dequant_checks=crate::strata_prompt::experts::regular::pub_packed_large_dequant(&client,&mut arena,&file)
+            .map_err(|e|{eprintln!("public_packed_large_dequant_error {e}");"public_packed_large_dequant_failed"})?;
+        #[cfg(feature="strata-large-packed-tiles")]
+        let packed_large_activation_checks=crate::strata_prompt::experts::regular::pub_packed_large_activations(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_packed_large_activation_error {e}");"public_packed_large_activation_failed"})?;
+        #[cfg(feature="strata-large-packed-tiles")]
         let packed_large_matrix_checks=crate::strata_matrix::cohorts::public_large_packed_pairs(&client,&mut arena)
             .map_err(|e|{eprintln!("public_packed_large_matrix_error {e}");"public_packed_large_matrix_failed"})?;
         #[cfg(feature="strata-large-packed-tiles")]
@@ -885,7 +891,7 @@ async fn serve(
              {report["layer_gather_checks"]=layer_gather_checks.into();report["layer_activation_checks"]=layer_activation_checks.into();report["layer_small_checks"]=layer_small_checks.into();report["layer_regular_large_checks"]=layer_regular_large_checks.into();}
              report["large_cohorts_selected"]=cfg!(feature="strata-large-cohorts").into();
              #[cfg(feature="strata-large-packed-tiles")]
-             {report["packed_layer_gather_checks"]=packed_layer_gather_checks.into();report["packed_large_matrix_checks"]=packed_large_matrix_checks.into();}
+             {report["packed_layer_gather_checks"]=packed_layer_gather_checks.into();report["packed_large_matrix_checks"]=packed_large_matrix_checks.into();report["packed_large_dequant_checks"]=packed_large_dequant_checks.into();report["packed_large_activation_checks"]=packed_large_activation_checks.into();}
              #[cfg(feature="strata-large-cohorts")] {report["large_cohort_producer_checks"]=large_producer_checks.into();report["large_cohort_matrix_checks"]=large_matrix_checks.into();report["large_cohort_dequant_checks"]=large_dequant_checks.into();}
              report["regular_cohorts_selected"]=cfg!(feature="strata-regular-cohorts").into();
              #[cfg(feature="strata-regular-cohorts")] {
