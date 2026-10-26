@@ -11,6 +11,7 @@ pub(crate) fn input(
     map: &[u32],
     words: &[u32; 48],
     packed: &[u32],
+    packed_owner: BufferId,
     down: bool,
 ) -> Checked<Option<(BufferId, Zeroizing<Vec<u32>>)>> {
     if down {
@@ -24,7 +25,39 @@ pub(crate) fn input(
         let dst = map[g::LAYER_PREFIX + group] as usize * 1280;
         global[dst..dst + n * 1280].copy_from_slice(&packed[src..src + n * 1280]);
     }
-    let id = arena.upload_u32(&global)?;
+    // The layer owner exceeds the original128MiB transient-upload bound.
+    // Reuse the already uploaded, retained local input and original bit-copy
+    // kernel. No oversized staging owner, additional MAIN or public upload.
+    let id = arena.allocate_zeroed(global.len())?;
+    let client = arena.client()?;
+    if arena.layout(packed_owner)?.logical_words != packed.len() {
+        return Err("layer local input owner extent".into());
+    }
+    for slot in 0..words[9] as usize {
+        let group = words[16 + slot * 4] as usize;
+        let n = words[17 + slot * 4] as usize * 1280;
+        let src = words[18 + slot * 4] as usize * 1280;
+        let dst = map[g::LAYER_PREFIX + group] as usize * 1280;
+        let mut copy = [0u32; 16];
+        copy[0] = 1;
+        copy[1] = n as u32;
+        copy[4] = src as u32;
+        copy[6] = dst as u32;
+        let args = cubecl::prelude::KernelArguments::new()
+            .with_buffers(vec![u::handle(arena, packed_owner)?.binding(),
+                               u::handle(arena, id)?.binding()])
+            .with_info(cubecl::prelude::MetadataBindingInfo::custom(
+                copy.chunks_exact(2).map(|p| u64::from(p[0]) | (u64::from(p[1]) << 32)).collect(),
+            ));
+        // SAFETY: exact initialized disjoint owners, original bit-copy kernel,
+        // bounded original local interval and independently built global prefix.
+        unsafe {
+            client.launch_unchecked(Box::new(crate::strata_prompt::Kernel::Copy),
+                cubecl::prelude::CubeCount::Static(n.div_ceil(256) as u32, 1, 1), args);
+        }
+    }
+    cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+    source(arena, id, &global)?;
     Ok(Some((id, global)))
 }
 pub(crate) fn source(arena: &PrivateArena, id: BufferId, expected: &[u32]) -> Checked<()> {

@@ -255,7 +255,7 @@ fn one(
     let fa = arena.allocate_zeroed(1)?;
     let fb = arena.allocate_zeroed(1)?;
     #[cfg(feature="strata-layer-gather")]
-    let layer_input=if layer {crate::strata_prompt::layer_gather::probe_util::input(arena,&map,&words,&input,down)?} else {None};
+    let layer_input=if layer {crate::strata_prompt::layer_gather::probe_util::input(arena,&map,&words,&input,src,down)?} else {None};
     #[cfg(not(feature="strata-layer-gather"))]
     assert!(!layer);
     // Genuine preceding per-expert granular programs. One reusable original
@@ -431,7 +431,7 @@ pub(crate) fn layer_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateA
  for (large,counts) in [(false,&[32usize,33,63,64,65,127,128,255][..]),(true,&[256,257,264,265,287,288,383,511][..]),(true,&[4095][..]),(true,&[4096][..])] {
   for down in [false,true] {for poison in [false,true] {
    let r=one(client,arena,!large,true,large,down,poison,counts);
-   arena.reset()?;reports.push(r?);
+   match r {Ok(report)=>{arena.reset()?;reports.push(report);},Err(error)=>{let _=arena.reset();return Err(format!("layer regular/large large={large} down={down} poison={poison}: {error}").into());}}
   }}
  }
  Ok(reports)

@@ -264,7 +264,7 @@ fn one(
     // Both programs receive the same authentic mixed eight-slot packed ABI.
     // Tile8 is unchanged; only genuine tile16 switches to the new product.
     #[cfg(feature="strata-layer-gather")]
-    let layer_input=if layer {crate::strata_prompt::layer_gather::probe_util::input(arena,&map,&words,&input,down)?} else {None};
+    let layer_input=if layer {crate::strata_prompt::layer_gather::probe_util::input(arena,&map,&words,&input,src,down)?} else {None};
     #[cfg(not(feature="strata-layer-gather"))]
     assert!(!layer);
     for tile in [8usize, 16] {
@@ -389,7 +389,8 @@ pub(crate) fn layer_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateA
  if !arena.public_owned_zero_audit_enabled()||arena.buffer_count()!=0 {return Err("layer small matrix empty audited arena required".into());}
  let mut reports=Vec::new();
  for down in [false,true] {for poison in [false,true] {
-  let r=one(client,arena,true,true,down,poison);arena.reset()?;reports.push(r?);
+  let r=one(client,arena,true,true,down,poison);
+  match r {Ok(report)=>{arena.reset()?;reports.push(report);},Err(error)=>{let _=arena.reset();return Err(format!("layer small down={down} poison={poison}: {error}").into());}}
  }}
  Ok(reports)
 }
