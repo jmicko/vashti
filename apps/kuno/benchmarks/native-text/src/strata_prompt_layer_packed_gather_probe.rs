@@ -8,6 +8,28 @@ use cubecl::prelude::ArrayArg;
 use zeroize::Zeroizing;
 type Checked<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const WINDOW: usize = 4 * 1024 * 1024;
+// Pure fixed-public fixture construction, shared by the GPU oracle and CPU
+// guard regression. Ranks3 and4 use disjoint consecutive regular experts;
+// routing twice to one logical expert is forbidden by the original grouper.
+fn fixture_routes(count: usize) -> Zeroizing<Vec<u32>> {
+    let mut raw = Zeroizing::new(vec![0u32; groups::LOGICAL + count * 10]);
+    raw[..3].copy_from_slice(&[count as u32, 0, count as u32]);
+    for token in 0..count {
+        for rank in 0..10 {
+            let route = token * 10 + rank;
+            let logical = if rank < 3 {
+                rank
+            } else if rank < 5 {
+                3 + (token * 2 + rank - 3) % 20
+            } else {
+                23 + (token * 11 + rank * 13) % 489
+            };
+            raw[groups::LOGICAL + route] = logical as u32;
+            raw[1540 + route] = ((logical * 13 + 17) % 512) as u32;
+        }
+    }
+    raw
+}
 fn scrub(arena: &PrivateArena) -> Checked<()> {
     let r = cubecl::future::block_on(arena.client()?.sanitize_transient_io_audited())?;
     let bytes = r.upload_bytes + r.uniform_bytes + r.readback_bytes;
@@ -43,22 +65,7 @@ fn one(
     half: bool,
     poison: bool,
 ) -> Checked<serde_json::Value> {
-    let mut raw = Zeroizing::new(vec![0u32; groups::LOGICAL + count * 10]);
-    raw[..3].copy_from_slice(&[count as u32, 0, count as u32]);
-    for token in 0..count {
-        for rank in 0..10 {
-            let route = token * 10 + rank;
-            let logical = if rank < 3 {
-                rank
-            } else if rank < 5 {
-                3 + token % 20
-            } else {
-                23 + (token * 11 + rank * 13) % 489
-            };
-            raw[groups::LOGICAL + route] = logical as u32;
-            raw[1540 + route] = ((logical * 13 + 17) % 512) as u32;
-        }
-    }
+    let raw = fixture_routes(count);
     let mut map = groups::group(&raw, count)?;
     let (n, padded) = groups::validate_layer(&map, count)?;
     if poison {
@@ -210,4 +217,71 @@ pub(crate) fn cases(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn packed_layer_gather_actual_fixture_retains_original_grouping_tiers_and_permutation_bounds() {
+        for (count, expected_tiers) in [(512, [489, 20, 3]), (4096, [0, 489, 23])] {
+            let raw = fixture_routes(count);
+            // The real original builder/validator must accept the exact packet
+            // consumed by the GPU fixture, including its no-duplicate rule.
+            let map = groups::group(&raw, count).unwrap();
+            let (n, padded) = groups::validate_layer(&map, count).unwrap();
+            assert_eq!(n, 512);
+            assert!(padded <= groups::LAYER_PADDED_ROWS);
+            let inverse = groups::ordered_inverse(&map, count).unwrap();
+            let mut tiers = [0usize; 3];
+            let mut prefix = 0usize;
+            for group in 0..n {
+                let members = map[516 + group] as usize;
+                let rows = members.div_ceil(32) * 32;
+                tiers[if members < 32 {
+                    0
+                } else if members < 256 {
+                    1
+                } else {
+                    2
+                }] += 1;
+                assert_eq!(map[groups::LAYER_PREFIX + group] as usize, prefix);
+                let first = prefix * 1280;
+                let end = (prefix + rows) * 1280;
+                assert!(end <= groups::LAYER_X_BYTES as usize / 4);
+                if members >= 256 {
+                    // Independent16x16-half tile enumeration used by the host
+                    // oracle. Each full tile has16 rows x8 packed words; its
+                    // source corners and complete physical range stay inside
+                    // this group's own Pad32 segment, including all gutters.
+                    let mut cursor = first;
+                    for row in (0..rows).step_by(16) {
+                        for column in (0..1280).step_by(8) {
+                            assert!(first + row * 1280 + column >= first);
+                            assert!(first + (row + 15) * 1280 + column + 7 < end);
+                            assert!(cursor + 128 <= end);
+                            cursor += 128;
+                        }
+                    }
+                    assert_eq!(cursor, end);
+                }
+                for member in 0..members {
+                    let ordinal = map[1028 + group] as usize + member;
+                    let route = map[1540 + ordinal] as usize;
+                    assert!(route < count * 10);
+                    assert_eq!(inverse[route] as usize, ordinal);
+                    assert_eq!(raw[1540 + route], map[4 + group]);
+                }
+                prefix += rows;
+            }
+            assert_eq!(prefix, padded);
+            assert_eq!(tiers, expected_tiers);
+            // Reproduce the rejected old fixture at one token; weakening the
+            // grouper to accept it would now fail this regression too.
+            let mut duplicate = fixture_routes(count);
+            duplicate[groups::LOGICAL + 4] = duplicate[groups::LOGICAL + 3];
+            duplicate[1540 + 4] = duplicate[1540 + 3];
+            assert!(groups::group(&duplicate, count).is_err());
+        }
+    }
 }
