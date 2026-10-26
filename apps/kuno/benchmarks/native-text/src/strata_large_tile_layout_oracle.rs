@@ -325,6 +325,76 @@ mod tests {
     }
 
     #[test]
+    fn hoisted_prefix_vector_bases_follow_independent_tile_order_for_every_k16() {
+        // Build the independent inverse of one actual row block by tile
+        // enumeration. Parent block offsets stay separate from that oracle.
+        let inverse = |block: usize, columns: usize| {
+            let mut inverse = vec![usize::MAX; block * columns];
+            for (physical, &(row, column)) in tile_order(block, columns, block).iter().enumerate() {
+                inverse[row * columns + column] = physical;
+            }
+            inverse
+        };
+        for (columns, output_rows, role_first, owner_rows) in [
+            (GU_COLUMNS, 1280, 0, 56_832),
+            (H_COLUMNS, 2560, DOWN_HALF_FIRST, 4096),
+        ] {
+            let input_inverse = inverse(16, columns);
+            let weight_inverse = inverse(8, columns);
+            for prefix in [0, 32, 256, 3072, 32_768, 52_736] {
+                for members in [256, 257, 383, 511, 4095, 4096] {
+                    if prefix + pad32(members) > owner_rows {
+                        continue;
+                    }
+                    // Exactly the full128-member prefix consumed by the fast
+                    // branch. Residual consumers remain a separate old path.
+                    for token in (0..members / 128 * 128).step_by(32) {
+                        let rows = [prefix + token, prefix + token + 16];
+                        let mut addresses = rows.map(|r| half_offset(r, 0, columns, 16).unwrap() / 4);
+                        for k in (0..columns).step_by(16) {
+                            for (i, &row) in rows.iter().enumerate() {
+                                let parent = (row / 16) * (16 * columns);
+                                let expected_half = parent + input_inverse[(row % 16) * columns + k];
+                                assert_eq!(addresses[i] * 4, expected_half);
+                                assert!(addresses[i] + 64 <= owner_rows * columns / 4);
+                                addresses[i] += 64;
+                            }
+                        }
+                    }
+                }
+            }
+            for slot in 0..8 {
+                let parent = slot * HALF_PER_IMAGE_SLOT + role_first;
+                for output in (0..output_rows).step_by(32) {
+                    let rows = [output, output + 8, output + 16, output + 24];
+                    let mut addresses = rows.map(|r| (parent + half_offset(r, 0, columns, 8).unwrap()) / 4);
+                    for k in (0..columns).step_by(16) {
+                        for (i, &row) in rows.iter().enumerate() {
+                            let row_block = (row / 8) * (8 * columns);
+                            let expected_half = parent + row_block + weight_inverse[(row % 8) * columns + k];
+                            assert_eq!(addresses[i] * 4, expected_half);
+                            assert!(addresses[i] + 32 <= (parent + output_rows * columns) / 4);
+                            addresses[i] += 32;
+                        }
+                    }
+                }
+            }
+        }
+        // Tie the address-equivalence oracle to the real producer/consumer
+        // source boundary: no row permutation remains inside the fast K loop.
+        // Actual compiler/SPIR-V controls still gate the generated program.
+        let source = include_str!("strata_matrix_large_packed_operands.rs");
+        let compute = source.split_once("pub(in crate::strata_matrix) fn compute<").unwrap().1
+            .split_once("/// Parent/group offsets").unwrap().0;
+        let (prepare, loop_body) = compute.split_once("while k < columns {").unwrap();
+        assert_eq!(prepare.matches("input_half(").count(), 2);
+        assert_eq!(prepare.matches("weight_half(").count(), 4);
+        assert!(!loop_body.contains("input_half(") && !loop_body.contains("weight_half("));
+        assert_eq!(loop_body.matches("+= 64;").count(), 2);
+        assert_eq!(loop_body.matches("+= 32;").count(), 4);
+    }
+
+    #[test]
     fn parent_prefix_equivalence_requires_original_alignment_and_checked_extent() {
         for block in [8, 16] {
             for columns in [H_COLUMNS, GU_COLUMNS] {

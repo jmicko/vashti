@@ -72,9 +72,18 @@ pub(in crate::strata_matrix) fn compute<F: Float>(
             cmma::MatrixLayout::ColMajor,
         )
     };
+    // Resolve the size-preserving row/parent permutation once. Every iteration
+    // advances one complete K16 tile: B16 inputs advance256 halves (64 vec4),
+    // while B8 weights advance128 halves (32 vec4). Keep each fragment's own
+    // row-block base; neighboring blocks are separated by B*K, not B*16.
+    let mut bf = input_half(token, 0usize, columns) / 4;
+    let mut bf1 = input_half(token + 16, 0usize, columns) / 4;
+    let mut af0 = (weight_first + weight_half(out_row, 0usize, columns)) / 4;
+    let mut af1 = (weight_first + weight_half(out_row + 8, 0usize, columns)) / 4;
+    let mut af2 = (weight_first + weight_half(out_row + 16, 0usize, columns)) / 4;
+    let mut af3 = (weight_first + weight_half(out_row + 24, 0usize, columns)) / 4;
     let mut k = 0usize;
     while k < columns {
-        let bf = input_half(token,k,columns) / 4;
         cmma::load(
             &b0,
             &input.to_slice().slice(bf, input.len()),
@@ -83,7 +92,7 @@ pub(in crate::strata_matrix) fn compute<F: Float>(
         if comptime!(pair) {
             cmma::load(
                 &b1,
-                &input.to_slice().slice(input_half(token + 16,k,columns) / 4, input.len()),
+                &input.to_slice().slice(bf1, input.len()),
                 16u32,
             );
         }
@@ -91,13 +100,13 @@ pub(in crate::strata_matrix) fn compute<F: Float>(
             &a0,
             &weight
                 .to_slice()
-                .slice((weight_first + weight_half(out_row,k,columns)) / 4, weight.len()),
+                .slice(af0, weight.len()),
             16u32,
         );
         cmma::load(
             &a1,
             &weight.to_slice().slice(
-                (weight_first + weight_half(out_row + 8,k,columns)) / 4,
+                af1,
                 weight.len(),
             ),
             16u32,
@@ -106,7 +115,7 @@ pub(in crate::strata_matrix) fn compute<F: Float>(
         cmma::load(
             &a0,
             &weight.to_slice().slice(
-                (weight_first + weight_half(out_row + 16,k,columns)) / 4,
+                af2,
                 weight.len(),
             ),
             16u32,
@@ -115,13 +124,19 @@ pub(in crate::strata_matrix) fn compute<F: Float>(
         cmma::load(
             &a1,
             &weight.to_slice().slice(
-                (weight_first + weight_half(out_row + 24,k,columns)) / 4,
+                af3,
                 weight.len(),
             ),
             16u32,
         );
         row::<F>(&a0, &b0, &b1, c20, c21, pair);
         row::<F>(&a1, &b0, &b1, c30, c31, pair);
+        bf += 64;
+        bf1 += 64;
+        af0 += 32;
+        af1 += 32;
+        af2 += 32;
+        af3 += 32;
         k += 16;
     }
 }
