@@ -1143,3 +1143,13 @@ fn large_cohort_real_family_and_all_producers_are_profiled() {
         ("StrataExpertLargeCohortDownDirect8Image",0),("StrataExpertLargeCohortGather",2),
         ("StrataExpertLargeCohortActivate",3)] {assert_eq!(native_class(name),class);}
 }
+
+#[cfg(all(test,feature="strata-large-packed-tiles"))]
+#[test]
+fn packed_large_actual_programs_remain_in_real_matrix_and_producer_totals() {
+    let name=core::any::type_name::<crate::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::ExpertLargePackedCohort<cubecl::wgpu::WgpuRuntime>>();
+    assert_eq!(matrix_tier(name),2);assert_eq!(matrix_family(name),6);assert_eq!(native_class(name),1);
+    for (name,class) in [("StrataExpertLargePackedCohortGuDirect8Image",0),("StrataExpertLargePackedCohortDownDirect8Image",0),("StrataExpertLayerPackedGather",2),("StrataExpertLargePackedCohortActivate",3)] {
+        assert_eq!(native_class(name),class);
+    }
+}

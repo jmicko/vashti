@@ -214,10 +214,10 @@ mod probe;
 #[path = "strata_layer_probe_util.rs"]
 pub(crate) mod probe_util;
 pub(crate) use probe::cases as public_producers;
-#[cfg(feature="strata-large-packed-tiles")]
-#[path="strata_prompt_layer_packed_gather_probe.rs"]
+#[cfg(feature = "strata-large-packed-tiles")]
+#[path = "strata_prompt_layer_packed_gather_probe.rs"]
 mod packed_probe;
-#[cfg(feature="strata-large-packed-tiles")]
+#[cfg(feature = "strata-large-packed-tiles")]
 pub(crate) use packed_probe::cases as public_packed_producers;
 #[cfg(test)]
 mod tests {
@@ -235,6 +235,25 @@ mod tests {
         assert_eq!(groups::LAYER_X_BYTES, 277 * 1024 * 1024 + 512 * 1024);
         assert!(groups::LAYER_PADDED_ROWS <= 65535);
         assert!(source.contains("let row=id.y;let i=row*1280u+id.x;"));
+    }
+    #[cfg(feature = "strata-large-packed-tiles")]
+    #[test]
+    fn packed_layer_gather_actual_wgsl_keeps_original_owner_shape_and_distinct_format() {
+        let all = sources();
+        assert_eq!(all.len(), 2);
+        let source = &all[1].source;
+        let module = wgpu::naga::front::wgsl::parse_str(source).unwrap();
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        assert!(source.contains("p.spare.x!=1u"));
+        assert!(source.contains("if members>=256u"));
+        assert!(source.contains("arrayLength(&packed)!=72744960u"));
+        assert_eq!(PackedGather.name(), "StrataExpertLayerPackedGather");
+        assert_eq!(Gather.name(), "StrataExpertLayerGather");
     }
     #[test]
     fn layer_gather_explicit_physical_charge_preserves_expert_budget() {
