@@ -537,7 +537,8 @@ impl NativeStrataExpertGrammar {
             return Ok(());
         }
         if name.contains("::cohorts::large::") || name.starts_with("StrataExpertLargeCohort")
-            || name.contains("::large_packed::") || name.starts_with("StrataExpertLargePackedCohort") {
+            || name.contains("::large_packed::") || name.contains("::large_shared::")
+            || name.starts_with("StrataExpertLargePackedCohort") {
             return Err(batch_fault("native large cohort role outside its genuine scope"));
         }
         #[cfg(feature="kuno-large-cohorts")]

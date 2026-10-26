@@ -518,3 +518,6 @@ fn packed_roles_are_rejected_when_feature_is_disabled() {
         assert!(run_layer(&p,true).is_err());
     }
 }
+
+#[path="native_expert_large_shared_tests.rs"]
+mod shared_panels;

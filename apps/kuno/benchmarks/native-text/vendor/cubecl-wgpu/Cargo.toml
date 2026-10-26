@@ -37,6 +37,7 @@ resolver = "2"
 kuno-large-cohorts = ["kuno-regular-cohorts", "cubecl-runtime/kuno-large-cohorts"]
 kuno-layer-gather = ["kuno-large-cohorts", "cubecl-runtime/kuno-layer-gather"]
 kuno-large-packed-tiles = ["kuno-layer-gather", "cubecl-runtime/kuno-large-packed-tiles"]
+kuno-large-shared-panels = ["kuno-large-packed-tiles", "cubecl-runtime/kuno-large-shared-panels"]
 kuno-small-dual-cells = ["kuno-regular-cohorts", "cubecl-runtime/kuno-small-dual-cells"]
 kuno-regular-four-cell = ["kuno-layer-gather", "kuno-small-dual-cells", "cubecl-runtime/kuno-regular-four-cell"]
 kuno-regular-cohorts = ["kuno-small-granular", "kuno-dequant-direct8", "kuno-global-image-experts", "cubecl-runtime/kuno-regular-cohorts"]

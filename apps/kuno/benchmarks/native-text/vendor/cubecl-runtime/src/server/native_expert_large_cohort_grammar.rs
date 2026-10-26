@@ -53,6 +53,16 @@ fn matrix_format_variant(name: &str, down: bool, packed: bool) -> Option<bool> {
     };
     (authentic && (!down || cfg!(feature = "kuno-expert-ordered-output"))).then_some(down)
 }
+// Shared staging applies ONLY to the full128-member prefix. Keep the old
+// packed type predicate unchanged: the original8/16/32 tails retain their real
+// identities and this new name receives no tail or row-major format credit.
+fn matrix_phase_variant(name: &str, down: bool, packed: bool, tile: u32) -> Option<bool> {
+    matrix_format_variant(name, down, packed).or_else(|| {
+        (packed && tile == 128
+            && super::super::native_expert_batch::native_strata_large_shared_cohort(name)
+            && (!down || cfg!(feature = "kuno-expert-ordered-output"))).then_some(down)
+    })
+}
 fn producer_variant(name: &str, expected: &str, packed: bool) -> bool {
     if !packed { return name == expected; }
     cfg!(feature = "kuno-large-packed-tiles") && matches!((expected, name),
@@ -236,7 +246,7 @@ impl Cohort {
         let matrix = expected.starts_with("matrix");
         let down = expected == "matrix-down" || expected == "StrataExpertLargeCohortDownImage";
         let ordered = if matrix {
-            matrix_format_variant(name, down, self.words[14] == 1)
+            matrix_phase_variant(name, down, self.words[14] == 1, tile)
         } else {
             None
         };
@@ -294,7 +304,7 @@ impl Cohort {
                     16 if (9..32).contains(&tail)=>tail.div_ceil(16),
                     32 if tail>=32=>tail.div_ceil(32),_=>0}
             }).fold(0,|a,b|if w[13]==1 {a+b}else{a.max(b)});
-            if matrix_format_variant(name, down, self.words[14] == 1).is_none()
+            if matrix_phase_variant(name, down, self.words[14] == 1, tile).is_none()
                 || ![128,8,16,32].contains(&tile)
                 || part_rows==0
                 || args.buffers.len() != arrays
