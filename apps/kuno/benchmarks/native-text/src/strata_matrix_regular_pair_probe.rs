@@ -166,6 +166,22 @@ fn one(
     poison: bool,
     counts: &[usize],
 ) -> Checked<serde_json::Value> {
+    one_mode(client, arena, dual, layer, large, down, poison, counts, false)
+}
+fn one_mode(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    dual: bool,
+    layer: bool,
+    large: bool,
+    down: bool,
+    poison: bool,
+    counts: &[usize],
+    quad: bool,
+) -> Checked<serde_json::Value> {
+    if quad && (dual || large) {
+        return Err("quad regular fixture cannot alias other matrix families".into());
+    }
     let slots = counts.len();
     let total = 4096usize;
     let mut raw = Zeroizing::new(vec![0u32; g::LOGICAL + total * 10]);
@@ -334,10 +350,24 @@ fn one(
         #[cfg(not(feature="strata-large-cohorts"))]
         return Err("large cohort probe feature disabled".into());
     } else {
-        #[cfg(feature="strata-small-dual-cells")]
-        let product=if dual {dual_regular::launch}else{regular::launch};
+        #[cfg(feature="strata-regular-four-cell")]
+        let product=if quad {quad_regular::launch}else if dual {dual_regular::launch}else{regular::launch};
+        #[cfg(all(feature="strata-small-dual-cells",not(feature="strata-regular-four-cell")))]
+        let product={assert!(!quad);if dual {dual_regular::launch}else{regular::launch}};
         #[cfg(not(feature="strata-small-dual-cells"))]
-        let product={assert!(!dual);regular::launch};
+        let product={assert!(!dual && !quad);regular::launch};
+        // A real global-X GU control must not accidentally read the same
+        // prefix as the old local cohort. Its leading filler groups make
+        // every selected group's global prefix nonzero and distinct.
+        #[cfg(feature="strata-layer-gather")]
+        if quad && layer && !down {
+            for slot in 0..slots {
+                let global=map[g::LAYER_PREFIX+first+slot];
+                if global==0 || global==words[18+slot*4] {
+                    return Err("quad global GU fixture must use distinct nonzero layer prefixes".into());
+                }
+            }
+        }
         product(client,handles,&words,down,16)?;
     }
     cubecl::future::block_on(client.sync()).map_err(u::fault)?;
@@ -369,7 +399,7 @@ fn one(
     }
     #[cfg(feature="strata-layer-gather")]
     if let Some((id,expected))=&layer_input {crate::strata_prompt::layer_gather::probe_util::source(arena,*id,expected)?;}
-    Ok(
+    let mut report =
         serde_json::json!({"family":if large {"large-packed-cohort-original-wide-prefix-tail-pair"}else{"regular-packed-cohort-original-per-expert-pair"},
         "actual_previous_per_expert_granular_reference":!large,"actual_new_regular_cohort":!dual&&!large,"actual_large_wide_prefix_tail":large,
         "down":down,"groups":slots,"counts":counts,"poison_and_invalid_route":poison,
@@ -379,8 +409,14 @@ fn one(
         "single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,
         "zeroizing_host_reference_bytes":reference_bytes,"host_reference_limit_bytes":REFERENCE_BYTES,
         "readback_window_bytes":WINDOW_WORDS*4,"original_arena_budget_bytes":arena.budget_bytes(),
-        "actual_arena_charged_bytes":arena.charged_bytes()}),
-    )
+        "actual_arena_charged_bytes":arena.charged_bytes()});
+    if quad {
+        report["family"]="regular-quad-full-bank-cohort-original-per-expert-pair".into();
+        report["actual_quad_cells"]=true.into();
+        report["actual_full_eight_a_two_b_k32_banks"]=true.into();
+        report["global_gu_input_nonzero_prefix_checked"]=(layer && !down).into();
+    }
+    Ok(report)
 }
 pub(crate) fn cases(
     client: &ComputeClient<WgpuRuntime>,
@@ -435,4 +471,22 @@ pub(crate) fn layer_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateA
   }}
  }
  Ok(reports)
+}
+
+#[cfg(feature="strata-regular-four-cell")]
+pub(crate) fn quad_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+    if !arena.public_owned_zero_audit_enabled() || arena.buffer_count()!=0 {
+        return Err("quad matrix empty audited arena required".into());
+    }
+    let mut reports=Vec::new();
+    // Keep ordinary and global operands as separate actual GPU pairs. The
+    // complete feature requires layer-gather, yielding exactly eight controls.
+    for layer in [false,true] {for down in [false,true] {for poison in [false,true] {
+        let result=one_mode(client,arena,false,layer,false,down,poison,&[32,33,63,64,65,127,128,255],true);
+        match result {
+            Ok(report)=>{arena.reset()?;reports.push(report);},
+            Err(error)=>{let _=arena.reset();return Err(format!("quad layer={layer} down={down} poison={poison}: {error}").into());}
+        }
+    }}}
+    Ok(reports)
 }
