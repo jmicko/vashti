@@ -262,13 +262,6 @@ fn one(
     let sb = arena.upload_u32(&status)?;
     let fa = arena.allocate_zeroed(1)?;
     let fb = arena.allocate_zeroed(1)?;
-    // The old row-major pair builds and audits global X before its reference,
-    // which checkpoints its initial input/75MiB image/status uploads. This new
-    // fixture intentionally defers packed global X until after the reference.
-    // Retire and fully audit those already-completed staging buffers now, before
-    // another20MiB reference upload plus16MiB readback can exceed the original
-    // 128MiB transient budget. All source/output arena owners remain retained.
-    sanitize(arena)?;
     // Genuine preceding per-expert granular programs. One reusable original
     // Pad32 input owner, updated through scrubbed transient uploads. The DOWN
     // reference already writes original ordered PART; GU's local rows are
@@ -336,8 +329,8 @@ fn one(
     crate::strata_prompt::layer_gather::probe_util::source(arena,weight,&image)?;
     input=pack_input(&input,&words)?;
     image=pack_weight(&image,&words,down)?;
-    overwrite(client,arena,src,&input)?;
-    overwrite(client,arena,weight,&image)?;
+    overwrite(client,arena,src,&input,ri)?;
+    overwrite(client,arena,weight,&image,ri)?;
     words[13]=1;words[14]=1;
     let layer_input=packed_global_input(arena,&map,&words,&input,src,down)?;
     let selected_src=layer_input.as_ref().map_or(src,|(id,_)|*id);
@@ -438,15 +431,49 @@ fn pack_weight(source:&[u32],words:&[u32;48],down:bool)->Checked<Zeroizing<Vec<u
     }
     Ok(packed)
 }
-fn overwrite(client:&ComputeClient<WgpuRuntime>,arena:&PrivateArena,id:BufferId,data:&[u32])->Checked<()> {
-    let layout=arena.layout(id)?;
-    if data.len()!=layout.logical_words || layout.owned_bytes>128*1024*1024 {
-        return Err("packed pair retained bounded source owner".into());
+// Reuse the now-completed reference input owner as a bounded upload packet.
+// Directly rewriting the75MiB image would reserve a128MiB staging allocation;
+// a subsequent readback/audit can exhaust the unchanged transient-I/O budget.
+fn staging_windows(words:usize,packet:usize)->Checked<impl Iterator<Item=(usize,usize)>> {
+    if words==0 || words>128*1024*1024/4 || packet==0 || packet>20*1024*1024/4 {
+        return Err("packed pair bounded staging geometry".into());
     }
-    client.write_private(arena.handle(id)?.clone(),data.iter().copied()
-        .chain(std::iter::repeat_n(0,layout.owned_words-data.len()))
-        .flat_map(u32::to_le_bytes).collect()).map_err(|cause|device_fault("packed_source_write",cause))?;
-    cubecl::future::block_on(client.sync()).map_err(|cause|device_fault("packed_source_write_sync",cause))?;
+    Ok((0..words).step_by(packet).map(move|first|(first,packet.min(words-first))))
+}
+fn overwrite(client:&ComputeClient<WgpuRuntime>,arena:&PrivateArena,id:BufferId,data:&[u32],staging:BufferId)->Checked<()> {
+    let layout=arena.layout(id)?;let packet=arena.layout(staging)?;
+    let target=arena.handle(id)?.clone();let source=arena.handle(staging)?.clone();
+    if id==staging || data.len()!=layout.logical_words || layout.owned_bytes>128*1024*1024
+        || source.stream!=target.stream
+        || source.clone().binding().memory.allocation_id()==target.clone().binding().memory.allocation_id()
+        || [&source,&target].iter().any(|h|h.offset_start.unwrap_or(0)!=0 || h.offset_end.unwrap_or(0)!=0 || h.size()!=h.size_in_used())
+        || source.size_in_used()!=packet.owned_bytes as u64
+        || target.size_in_used()!=layout.owned_bytes as u64 {
+        return Err("packed pair retained disjoint bounded source owners".into());
+    }
+    let windows=staging_windows(data.len(),packet.owned_words)?;
+    let mut upload=Zeroizing::new(vec![0u32;packet.owned_words]);
+    for (first,n) in windows {
+        // Every upload initializes the FULL old reference owner, including the
+        // final packet's zero tail. Its original contents were already verified
+        // after every original per-expert reference before intentional reuse.
+        upload.fill(0);upload[..n].copy_from_slice(&data[first..first+n]);
+        client.write_private(source.clone(),upload.iter().copied().flat_map(u32::to_le_bytes).collect())
+            .map_err(|cause|device_fault("packed_packet_write",cause))?;
+        let mut copy=[0u32;16];copy[0]=1;copy[1]=u32::try_from(n)?;copy[6]=u32::try_from(first)?;
+        let args=cubecl_runtime::server::KernelArguments::new()
+            .with_buffers(vec![source.clone().binding(),target.clone().binding()])
+            .with_info(cubecl_runtime::server::MetadataBindingInfo::custom(
+                copy.chunks_exact(2).map(|p|u64::from(p[0])|(u64::from(p[1])<<32)).collect()));
+        // SAFETY: same-stream original retained disjoint full owners; the
+        // checked window lies inside both packet and target logical extents.
+        unsafe {client.launch_unchecked(Box::new(crate::strata_prompt::Kernel::Copy),
+            CubeCount::Static(n.div_ceil(256) as u32,1,1),args);}
+        cubecl::future::block_on(client.sync()).map_err(|cause|device_fault("packed_packet_copy_sync",cause))?;
+        // The copy completed before its packet upload/uniform stages are
+        // erased and fully audited; no MAIN/source owner is released here.
+        sanitize(arena)?;
+    }
     crate::strata_prompt::layer_gather::probe_util::source(arena,id,data)
 }
 fn packed_global_input(
@@ -496,6 +523,29 @@ pub(crate) fn cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn packed_pair_staging_keeps_original_owner_and_transient_bounds() {
+        for packet in [5*1024*1024/4,20*1024*1024/4] {
+            for words in [1,packet-1,packet,packet+1,75*1024*1024/4,128*1024*1024/4] {
+                let mut end=0;
+                for (first,n) in staging_windows(words,packet).unwrap() {
+                    assert_eq!(first,end);assert!(n>0 && n<=packet);end+=n;
+                    assert!(end<=words);
+                    // The actual ledger rounds the FULL packet to a power of
+                    // two and reserves another full audit copy. Even with four
+                    // original4096-byte INFO pages, both packets fit128MiB.
+                    let stage=(packet*4).next_power_of_two();
+                    assert!(2*stage+4*4096<128*1024*1024);
+                    let mut full=vec![0u32;packet];full[..n].fill(7);
+                    assert!(full[n..].iter().all(|&v|v==0));
+                }
+                assert_eq!(end,words);
+            }
+        }
+        for (words,packet) in [(0,1),(1,0),(128*1024*1024/4+1,1),(1,20*1024*1024/4+1)] {
+            assert!(staging_windows(words,packet).is_err());
+        }
+    }
     #[test]
     fn packed_pair_host_input_includes_gutters_and_nonzero_group_prefix() {
         for columns in [32usize,640,2560] {
