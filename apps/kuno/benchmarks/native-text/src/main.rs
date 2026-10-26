@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 //! Public synthetic Rust-authored kernel probe, not a model engine wrapper.
 #[cfg(all(test,feature="strata-large-packed-tiles"))]
-mod strata_large_tile_layout;
+mod strata_large_tile_layout_oracle;
 mod adaptive_experts;
 mod bank96_probe;
 mod bank_slots;

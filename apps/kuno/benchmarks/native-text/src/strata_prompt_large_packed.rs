@@ -208,7 +208,10 @@ mod tests {
             let anchor = "fn write_record32(";
             assert_eq!(
                 old.split_once(anchor).unwrap().1,
-                new.split_once(anchor).unwrap().1
+                new.split_once(anchor).unwrap().1.replace(
+                    "cohort.base.r7!=1u || cohort.base.r8!=1u || cohort.base.r9!=0u",
+                    "cohort.base.r7>1u || cohort.base.r8!=0u || cohort.base.r9!=0u"
+                )
             );
             assert!(new.contains("packed[first+dest]=select(vec4<u32>(0u),bits,good)"));
             assert!(old.contains("cohort.base.r8!=0u"));

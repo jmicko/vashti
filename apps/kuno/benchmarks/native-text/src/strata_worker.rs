@@ -412,6 +412,9 @@ async fn serve(
         // Exercise the new complete producer/reference family first. Every
         // original control still follows; a probe setup failure can be fixed
         // without waiting through the entire original numeric population.
+        #[cfg(feature="strata-large-packed-tiles")]
+        let packed_layer_gather_checks=crate::strata_prompt::layer_gather::public_packed_producers(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_packed_layer_gather_error {e}");"public_packed_layer_gather_failed"})?;
         #[cfg(feature="strata-layer-gather")]
         let layer_gather_checks=crate::strata_prompt::layer_gather::public_producers(&client,&mut arena)
             .map_err(|e|{eprintln!("public_layer_gather_error {e}");"public_layer_gather_failed"})?;
@@ -878,6 +881,8 @@ async fn serve(
              #[cfg(feature="strata-layer-gather")]
              {report["layer_gather_checks"]=layer_gather_checks.into();report["layer_activation_checks"]=layer_activation_checks.into();report["layer_small_checks"]=layer_small_checks.into();report["layer_regular_large_checks"]=layer_regular_large_checks.into();}
              report["large_cohorts_selected"]=cfg!(feature="strata-large-cohorts").into();
+             #[cfg(feature="strata-large-packed-tiles")]
+             {report["packed_layer_gather_checks"]=packed_layer_gather_checks.into();}
              #[cfg(feature="strata-large-cohorts")] {report["large_cohort_producer_checks"]=large_producer_checks.into();report["large_cohort_matrix_checks"]=large_matrix_checks.into();report["large_cohort_dequant_checks"]=large_dequant_checks.into();}
              report["regular_cohorts_selected"]=cfg!(feature="strata-regular-cohorts").into();
              #[cfg(feature="strata-regular-cohorts")] {

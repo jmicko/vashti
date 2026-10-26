@@ -214,6 +214,11 @@ mod probe;
 #[path = "strata_layer_probe_util.rs"]
 pub(crate) mod probe_util;
 pub(crate) use probe::cases as public_producers;
+#[cfg(feature="strata-large-packed-tiles")]
+#[path="strata_prompt_layer_packed_gather_probe.rs"]
+mod packed_probe;
+#[cfg(feature="strata-large-packed-tiles")]
+pub(crate) use packed_probe::cases as public_packed_producers;
 #[cfg(test)]
 mod tests {
     use super::*;
