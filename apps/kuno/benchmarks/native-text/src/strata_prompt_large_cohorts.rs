@@ -1,6 +1,9 @@
 //! Distinct large256..4096-member expert cohorts. Original map/source/math guards, real parent
 //! owners and native range/timeline hazards remain authoritative.
 use super::*;
+#[cfg(feature="strata-large-packed-tiles")]
+#[path="strata_prompt_large_packed.rs"]
+pub(crate) mod packed;
 use zeroize::Zeroizing;
 pub(crate) const MAX: usize = 8;
 pub(crate) const WORDS: usize = 48;
@@ -215,6 +218,12 @@ pub(crate) fn launch(
     }
     Ok(())
 }
+fn launch_selected(client:&ComputeClient<WgpuRuntime>,op:LargeOp,grid:[usize;3],args:KernelArguments,words:&[u32;WORDS])->Result<()> {
+    #[cfg(feature="strata-large-packed-tiles")]
+    {packed::launch(client,op,grid,args,words)}
+    #[cfg(not(feature="strata-large-packed-tiles"))]
+    {launch(client,op,grid,args,words)}
+}
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     let mut ops = vec![LargeOp::Gather, LargeOp::Activate];
     ops.extend(
@@ -346,6 +355,10 @@ pub(super) fn enqueue_unit(
     }
     words[9] = n as u32;
     words[13]=u32::from(cfg!(feature="strata-layer-gather"));
+    words[14]=u32::from(cfg!(feature="strata-large-packed-tiles"));
+    #[cfg(feature="strata-large-packed-tiles")]
+    packed::validate_words(&words)?;
+    #[cfg(not(feature="strata-large-packed-tiles"))]
     validate_words(&words)?;
     #[cfg(any(
         not(feature = "strata-small-quantized-matrix"),
@@ -434,7 +447,7 @@ pub(super) fn enqueue_unit(
             not(feature = "strata-small-quantized-matrix"),
             feature = "strata-global-image-experts"
         ))]
-        launch(
+        launch_selected(
             client,
             LargeOp::Image {
                 dtype: p.dtype(),
@@ -471,7 +484,11 @@ pub(super) fn enqueue_unit(
         for tile in [128,8,16,32] {
             if crate::strata_matrix::cohorts::large::part_rows(&words,tile)==0 {continue;}
             words[11]=tile as u32;
-            crate::strata_matrix::cohorts::large::launch(client,[
+            #[cfg(feature="strata-large-packed-tiles")]
+            use crate::strata_matrix::cohorts::large_packed as selected_matrix;
+            #[cfg(not(feature="strata-large-packed-tiles"))]
+            use crate::strata_matrix::cohorts::large as selected_matrix;
+            selected_matrix::launch(client,[
                 if down {h.clone()}else{x.clone()},stage[1].clone(),
                 if down {owners[3].clone()}else{owners[2].clone()},
                 owners[0].clone(),owners[6].clone(),fault.clone()],&words,down,tile)?;
@@ -489,7 +506,7 @@ pub(super) fn enqueue_unit(
                 owners[6].clone().binding(),
                 fault.clone().binding(),
             ]);
-            launch(
+            launch_selected(
                 client,
                 LargeOp::Activate,
                 [if words[13]==1 {(rows*320).div_ceil(256)}else{(words[10] as usize*320).div_ceil(256)}, 1, if words[13]==1 {1}else{n}],

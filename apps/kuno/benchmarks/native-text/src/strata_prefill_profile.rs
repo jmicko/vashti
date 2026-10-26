@@ -88,12 +88,12 @@ fn matrix_tier(name: &str) -> usize {
     if name.contains("::strata_matrix::cohorts::dual_small::") { 0 }
     else if name.contains("::strata_matrix::cohorts::dual_regular::")
         || name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::") { 1 }
-    else if name.contains("::strata_matrix::cohorts::large::expert_large_cohort::") { 2 }
+    else if (name.contains("::strata_matrix::cohorts::large::expert_large_cohort::") || name.contains("::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::")) { 2 }
     else { 3 }
 }
 fn matrix_family(name: &str) -> usize {
     #[cfg(feature="strata-large-cohorts")]
-    if name.contains("::strata_matrix::cohorts::large::expert_large_cohort::"){return 6;}
+    if (name.contains("::strata_matrix::cohorts::large::expert_large_cohort::") || name.contains("::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::")){return 6;}
     #[cfg(feature="strata-small-dual-cells")]
     if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 6;}
     #[cfg(feature="strata-regular-cohorts")]
@@ -176,11 +176,19 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    #[cfg(feature="strata-large-packed-tiles")]
+    match name {
+        "StrataExpertLargePackedCohortGuDirect8Image"|"StrataExpertLargePackedCohortDownDirect8Image"=>return 0,
+        "StrataExpertLargePackedCohortGather"|"StrataExpertLayerPackedGather"=>return 2,
+        "StrataExpertLargePackedCohortActivate"=>return 3,
+        _=>{}
+    }
+
     #[cfg(feature="strata-small-dual-cells")]
     if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 1;}
     #[cfg(feature="strata-large-cohorts")]
     {
-        if name.contains("::strata_matrix::cohorts::large::expert_large_cohort::"){return 1;}
+        if (name.contains("::strata_matrix::cohorts::large::expert_large_cohort::") || name.contains("::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::")){return 1;}
         match name {
             "StrataExpertLargeCohortGuDirect8Image"|"StrataExpertLargeCohortDownDirect8Image"=>return 0,
             "StrataExpertLargeCohortGather"=>return 2,

@@ -1170,6 +1170,8 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     let original=original.into_iter().chain(regular::sources()).collect::<Vec<_>>();
     #[cfg(feature="strata-large-cohorts")]
     let original=original.into_iter().chain(large::sources()).collect::<Vec<_>>();
+    #[cfg(feature="strata-large-packed-tiles")]
+    let original=original.into_iter().chain(large::packed::sources()).collect::<Vec<_>>();
     #[cfg(feature="strata-layer-gather")]
     let original=original.into_iter().chain(super::layer_gather::sources()).collect::<Vec<_>>();
     original

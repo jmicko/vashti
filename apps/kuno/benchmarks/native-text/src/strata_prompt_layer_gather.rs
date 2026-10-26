@@ -31,6 +31,40 @@ impl CubeTask<AutoCompiler> for Gather {
         })
     }
 }
+#[cfg(feature = "strata-large-packed-tiles")]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct PackedGather;
+#[cfg(feature = "strata-large-packed-tiles")]
+impl KernelMetadata for PackedGather {
+    fn name(&self) -> &'static str {
+        "StrataExpertLayerPackedGather"
+    }
+    fn id(&self) -> KernelId {
+        KernelId::new::<Self>().cube_dim(CubeDim::new_1d(256))
+    }
+    fn address_type(&self) -> StorageType {
+        StorageType::Scalar(ElemType::UInt(UIntKind::U32))
+    }
+}
+#[cfg(feature = "strata-large-packed-tiles")]
+impl CubeTask<AutoCompiler> for PackedGather {
+    fn compile(
+        &self,
+        _: &mut AutoCompiler,
+        _: &cubecl::WgpuCompilationOptions,
+        _: ExecutionMode,
+        _: StorageType,
+    ) -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
+        Ok(CompiledKernel {
+            entrypoint_name: "main".into(),
+            debug_name: None,
+            source: include_str!("strata_prompt_layer_packed_gather.wgsl").into(),
+            repr: None,
+            cube_dim: CubeDim::new_1d(256),
+            debug_info: None,
+        })
+    }
+}
 pub(crate) fn x() -> Result<Handle> {
     STAGES.with(|s| {
         s.borrow()
@@ -62,11 +96,18 @@ pub(crate) fn enqueue(
         group_count as u32,
         u32::from(mixed.is_some()),
         padded as u32,
-        0,
+        u32::from(cfg!(feature = "strata-large-packed-tiles")),
         0,
         0,
         0,
     ];
+    #[cfg(feature = "strata-large-packed-tiles")]
+    launch_packed(
+        client,
+        [owners[0].clone(), source, x, h, fault.clone()],
+        &words,
+    )?;
+    #[cfg(not(feature = "strata-large-packed-tiles"))]
     launch(
         client,
         [owners[0].clone(), source, x, h, fault.clone()],
@@ -88,13 +129,31 @@ pub(crate) fn launch(
     handles: [Handle; 5],
     words: &[u32; 8],
 ) -> Result<()> {
+    launch_inner(client, handles, words, false)
+}
+#[cfg(feature = "strata-large-packed-tiles")]
+pub(crate) fn launch_packed(
+    client: &ComputeClient<WgpuRuntime>,
+    handles: [Handle; 5],
+    words: &[u32; 8],
+) -> Result<()> {
+    launch_inner(client, handles, words, true)
+}
+fn launch_inner(
+    client: &ComputeClient<WgpuRuntime>,
+    handles: [Handle; 5],
+    words: &[u32; 8],
+    packed: bool,
+) -> Result<()> {
     if !(1..=4096).contains(&words[0])
         || !(1..=512).contains(&words[1])
         || words[2] > 1
         || words[3] < words[0] * 10
         || words[3] > groups::LAYER_PADDED_ROWS as u32
         || words[3] % 32 != 0
-        || words[4..].iter().any(|&v| v != 0)
+        || words[4] != u32::from(packed)
+        || words[5..].iter().any(|&v| v != 0)
+        || (packed && !cfg!(feature = "strata-large-packed-tiles"))
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -106,13 +165,27 @@ pub(crate) fn launch(
                 .map(|p| u64::from(p[0]) | (u64::from(p[1]) << 32))
                 .collect(),
         ));
+    let task: Box<dyn CubeTask<AutoCompiler>> = {
+        #[cfg(feature = "strata-large-packed-tiles")]
+        {
+            if packed {
+                Box::new(PackedGather)
+            } else {
+                Box::new(Gather)
+            }
+        }
+        #[cfg(not(feature = "strata-large-packed-tiles"))]
+        {
+            Box::new(Gather)
+        }
+    };
     unsafe {
-        client.launch_unchecked(Box::new(Gather), CubeCount::Static(5, words[3], 1), args);
+        client.launch_unchecked(task, CubeCount::Static(5, words[3], 1), args);
     }
     Ok(())
 }
 pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
-    vec![
+    let sources = vec![
         Gather
             .compile(
                 &mut AutoCompiler::Wgsl(Default::default()),
@@ -121,7 +194,20 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
                 StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
             )
             .unwrap(),
-    ]
+    ];
+    #[cfg(feature = "strata-large-packed-tiles")]
+    let sources = sources
+        .into_iter()
+        .chain([PackedGather
+            .compile(
+                &mut AutoCompiler::Wgsl(Default::default()),
+                &Default::default(),
+                ExecutionMode::Unchecked,
+                StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+            )
+            .unwrap()])
+        .collect();
+    sources
 }
 #[path = "strata_prompt_layer_gather_probe.rs"]
 mod probe;
