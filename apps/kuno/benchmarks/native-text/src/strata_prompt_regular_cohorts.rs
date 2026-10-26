@@ -597,3 +597,15 @@ pub(crate) use multi_dequant::large_cases as public_large_multi_dequant;
 
 #[cfg(feature="strata-layer-gather")]
 pub(crate) use probe::layer_activate_cases as public_layer_activations;
+
+#[cfg(feature="strata-large-packed-tiles")]
+#[path="strata_prompt_large_packed_dequant_probe.rs"]
+mod packed_large_dequant;
+#[cfg(feature="strata-large-packed-tiles")]
+pub(crate) use packed_large_dequant::cases as pub_packed_large_dequant;
+
+#[cfg(feature="strata-large-packed-tiles")]
+#[path="strata_prompt_large_packed_activation_probe.rs"]
+mod packed_large_activations;
+#[cfg(feature="strata-large-packed-tiles")]
+pub(crate) use packed_large_activations::cases as pub_packed_large_activations;
