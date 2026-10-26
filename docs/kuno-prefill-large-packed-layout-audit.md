@@ -19,7 +19,7 @@ rustc --edition=2024 --test -O \
 
 The independent reference visits row tiles, reduction tiles, rows inside each
 tile, and contiguous reduction columns. It does not use the candidate address
-formula to construct expected physical order. Six additive tests plus the
+formula to construct expected physical order. Seven additive tests plus the
 included draft helper's original test passed on 2026-10-26 UTC.
 
 Coverage includes exhaustive element bijections/inverses for B8/B16 and reduction
@@ -27,7 +27,9 @@ extents16/32/640/2560; exact 2/4/8-half vector alignment and ordering; all eight
 full GU/DOWN image slots without gaps or overlaps; every original A/B stride16
 fragment; a mixed count512,5120-route global X owner spanning small/regular/LARGE
 boundaries and partial Pad32 groups; exact zero gutters; activation/H cohort
-prefixes and untouched owner suffix; nonzero-parent prefix equivalence and
+prefixes and untouched owner suffix; the actual flattened activation dispatch's
+permuted zero-loop schedule (each gutter word exactly once); actual direct8
+producer vector-address formula; nonzero-parent prefix equivalence and
 checked-overflow negatives. Public synthetic bit patterns include high bits and
 are compared without float conversion.
 

@@ -90,6 +90,14 @@ mod tests {
             let order = tile_order(rows, columns, 8);
             for (physical_vector, original_eight) in order.chunks_exact(8).enumerate() {
                 let (row, column) = original_eight[0];
+                // Exact selected direct8 producer schedule, expressed in its
+                // vec4<u32> units, against independently enumerated tile order.
+                let i = row * (columns / 8) + column / 8;
+                let packed_row = i / (columns / 8);
+                let packed_col = i % (columns / 8);
+                let producer_dest = (packed_row / 8) * columns
+                    + (packed_col / 2) * 16 + (packed_row % 8) * 2 + packed_col % 2;
+                assert_eq!(producer_dest, physical_vector);
                 for slot in 0..8 {
                     let parent_half = slot * HALF_PER_IMAGE_SLOT + role_first;
                     let candidate_half = half_offset(row, column, columns, 8).unwrap();
@@ -226,6 +234,56 @@ mod tests {
         assert!(actual[used_rows * words_per_row..].iter().all(|&x| x == POISON));
         // A group's H prefix is the cohort prefix, not its global-X prefix.
         assert_ne!(half_offset(32, 16, H_COLUMNS, 16), half_offset(1024, 16, H_COLUMNS, 16));
+    }
+
+    #[test]
+    fn flattened_activation_dispatch_zeroes_each_permuted_pad_word_once() {
+        let groups = [256, 257, 511, 769];
+        let max_members = *groups.iter().max().unwrap();
+        let used_rows = groups.iter().map(|&n| pad32(n)).sum::<usize>();
+        let words_per_row = H_COLUMNS / 2;
+        let dispatch_threads = (used_rows * words_per_row).div_ceil(256) * 256;
+        let stride = (max_members * words_per_row).div_ceil(256) * 256;
+        let mut zero_visits = vec![0_u8; 4096 * words_per_row];
+        // This follows the actual flattened X dispatch: find one group's
+        // Pad32 interval, remap actual_id.x to that group's local id.x, then
+        // run the zero loop BEFORE the real-row early return.
+        for actual_id in 0..dispatch_threads {
+            let mut prefix = 0;
+            for &members in &groups {
+                let padded = pad32(members);
+                let first = prefix * words_per_row;
+                let end = first + padded * words_per_row;
+                if (first..end).contains(&actual_id) {
+                    let local_id = actual_id - first;
+                    let zero_first = members * words_per_row;
+                    let zero_end = padded * words_per_row;
+                    for at in (zero_first + local_id..zero_end).step_by(stride) {
+                        // Exact packed_hidden_pair u32 schedule; compare below
+                        // to physical-order enumeration, without this formula.
+                        let row = at / words_per_row;
+                        let pair = at % words_per_row;
+                        let packed = (row / 16) * 5120 + (pair / 8) * 128
+                            + (row % 16) * 8 + pair % 8;
+                        zero_visits[first + packed] += 1;
+                    }
+                    break;
+                }
+                prefix += padded;
+            }
+        }
+        let mut expected = vec![0_u8; zero_visits.len()];
+        let mut prefix = 0;
+        for &members in &groups {
+            let padded = pad32(members);
+            for (word, pair) in tile_order(padded, H_COLUMNS, 16).chunks_exact(2).enumerate() {
+                if pair[0].0 >= members {
+                    expected[prefix * words_per_row + word] = 1;
+                }
+            }
+            prefix += padded;
+        }
+        assert_eq!(zero_visits, expected);
     }
 
     #[test]
