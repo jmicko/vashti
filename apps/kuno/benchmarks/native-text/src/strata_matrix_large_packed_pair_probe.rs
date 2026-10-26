@@ -14,8 +14,15 @@ const WINDOW_WORDS: usize = 4 * 1024 * 1024;
 // largest original DOWN owner is400MiB. Keep its reference in scrubbed host
 // memory rather than charging a second400MiB GPU owner to the original arena.
 const REFERENCE_BYTES: usize = 400 * 1024 * 1024;
+// Only this compiled-public numeric fixture calls these diagnostics. The
+// private worker protocol and global error logging are deliberately unchanged.
+fn device_fault(stage:&'static str,cause:impl std::fmt::Debug+std::fmt::Display)->kuno_text::Error {
+    eprintln!("public_packed_matrix_stage stage={stage} cause={cause:?}");
+    u::fault(cause)
+}
 fn sanitize(arena: &PrivateArena) -> Checked<()> {
-    let receipt = cubecl::future::block_on(arena.client()?.sanitize_transient_io_audited())?;
+    let receipt = cubecl::future::block_on(arena.client()?.sanitize_transient_io_audited())
+        .map_err(|cause|device_fault("sanitize_io",cause))?;
     let bytes = receipt
         .upload_bytes
         .checked_add(receipt.uniform_bytes)
@@ -114,7 +121,7 @@ fn erase_output(
         CubeDim::new_1d(64),
         unsafe { ArrayArg::from_raw_parts(owner, layout.owned_words) },
     );
-    cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+    cubecl::future::block_on(client.sync()).map_err(|cause|device_fault("erase_output_sync",cause))?;
     for start in (0..layout.owned_words).step_by(WINDOW_WORDS) {
         let (view, count) = window(arena, id, start)?;
         let data = u::read_handle_prefix_u32(arena, view, count)?;
@@ -255,6 +262,13 @@ fn one(
     let sb = arena.upload_u32(&status)?;
     let fa = arena.allocate_zeroed(1)?;
     let fb = arena.allocate_zeroed(1)?;
+    // The old row-major pair builds and audits global X before its reference,
+    // which checkpoints its initial input/75MiB image/status uploads. This new
+    // fixture intentionally defers packed global X until after the reference.
+    // Retire and fully audit those already-completed staging buffers now, before
+    // another20MiB reference upload plus16MiB readback can exceed the original
+    // 128MiB transient budget. All source/output arena owners remain retained.
+    sanitize(arena)?;
     // Genuine preceding per-expert granular programs. One reusable original
     // Pad32 input owner, updated through scrubbed transient uploads. The DOWN
     // reference already writes original ordered PART; GU's local rows are
@@ -262,6 +276,7 @@ fn one(
     let ri = arena.allocate_zeroed((if large {4096}else{256}) * cols as usize / 2)?;
     let mut reference = Zeroizing::new(if down {Vec::new()}else{vec![0u32; arena.layout(a)?.owned_words]});
     for (i, &members) in counts.iter().enumerate() {
+        eprintln!("public_packed_matrix_stage stage=reference_begin slot={i} members={members} down={down} poison={poison}");
         let mut packed = Zeroizing::new(vec![0u32; arena.layout(ri)?.owned_words]);
         let start = words[18 + i * 4] as usize * cols as usize / 2;
         let real = members * cols as usize / 2;
@@ -273,7 +288,7 @@ fn one(
                 arena.handle(ri)?.clone(),
                 packed.iter().copied().flat_map(u32::to_le_bytes).collect(),
             )
-            .map_err(u::fault)?;
+            .map_err(|cause|device_fault("reference_input_write",cause))?;
         let handles=[u::handle(arena,ri)?,u::handle(arena,weight)?,u::handle(arena,a)?,
             u::handle(arena,map_id)?,u::handle(arena,sa)?,u::handle(arena,fa)?];
         let wf=i*4_915_200+if down {3_276_800}else{0};
@@ -297,7 +312,7 @@ fn one(
         if !selected {
             return Err("public regular cohort actual preceding reference not selected".into());
         }
-        cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+        cubecl::future::block_on(client.sync()).map_err(|cause|device_fault("reference_sync",cause))?;
         // Include every padding word in the input source check before reuse.
         let uploaded = snapshot(arena, ri)?;
         if *uploaded != *packed {
@@ -333,6 +348,7 @@ fn one(
         for tile in [128,8,16,32] {
             if large_packed::part_rows(&words,tile)==0 {continue;}
             words[11]=tile as u32;
+            eprintln!("public_packed_matrix_stage stage=selected_launch tile={tile} down={down} poison={poison}");
             large_packed::launch(client,handles.clone(),&words,down,tile)?;
         }
         #[cfg(not(feature="strata-large-cohorts"))]
@@ -344,7 +360,7 @@ fn one(
         let product={assert!(!dual);regular::launch};
         product(client,handles,&words,down,16)?;
     }
-    cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+    cubecl::future::block_on(client.sync()).map_err(|cause|device_fault("selected_sync",cause))?;
     let checked = compare_reference(arena, a, &reference)?;
     let reference_bytes = reference.capacity() * 4;
     drop(reference);
@@ -429,8 +445,8 @@ fn overwrite(client:&ComputeClient<WgpuRuntime>,arena:&PrivateArena,id:BufferId,
     }
     client.write_private(arena.handle(id)?.clone(),data.iter().copied()
         .chain(std::iter::repeat_n(0,layout.owned_words-data.len()))
-        .flat_map(u32::to_le_bytes).collect()).map_err(u::fault)?;
-    cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+        .flat_map(u32::to_le_bytes).collect()).map_err(|cause|device_fault("packed_source_write",cause))?;
+    cubecl::future::block_on(client.sync()).map_err(|cause|device_fault("packed_source_write_sync",cause))?;
     crate::strata_prompt::layer_gather::probe_util::source(arena,id,data)
 }
 fn packed_global_input(
@@ -457,7 +473,7 @@ fn packed_global_input(
         unsafe {client.launch_unchecked(Box::new(crate::strata_prompt::Kernel::Copy),
             CubeCount::Static(n.div_ceil(256) as u32,1,1),args);}
     }
-    cubecl::future::block_on(client.sync()).map_err(u::fault)?;
+    cubecl::future::block_on(client.sync()).map_err(|cause|device_fault("packed_global_copy_sync",cause))?;
     crate::strata_prompt::layer_gather::probe_util::source(arena,id,&global)?;
     Ok(Some((id,global)))
 }
