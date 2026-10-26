@@ -614,7 +614,11 @@ mod tests {
             (6, 0),
             (7, 99),
             (8, 199),
-            (13, 1),
+            // Word13 now selects a genuine layer publication when enabled;
+            // larger values and the remaining reserved words still reject.
+            (13, 2),
+            (14, 1),
+            (15, 1),
             (4, u32::MAX),
             (6, u32::MAX),
             (18, u32::MAX - 7),
@@ -623,6 +627,9 @@ mod tests {
             w[at] = value;
             assert!(validate_words(&w).is_err(), "field {at} value {value}");
         }
+        let mut publication = baseline;
+        publication[13] = 1;
+        assert_eq!(validate_words(&publication).is_ok(), cfg!(feature = "strata-layer-gather"));
         let mut w = baseline;
         w[9] = 7;
         assert!(validate_words(&w).is_err());
