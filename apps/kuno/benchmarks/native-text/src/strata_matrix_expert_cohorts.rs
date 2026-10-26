@@ -757,3 +757,9 @@ pub(crate) use regular_pair_probe::large_cases as public_large_pairs;
 pub(crate) use regular_pair_probe::layer_cases as public_layer_regular_large_pairs;
 #[cfg(feature="strata-layer-gather")]
 pub(crate) use granular_pair_probe::layer_cases as public_layer_small_pairs;
+
+#[cfg(feature="strata-large-packed-tiles")]
+pub(crate) mod large_packed {
+    use super::*;
+    include!("strata_matrix_large_packed_cohort.rs");
+}

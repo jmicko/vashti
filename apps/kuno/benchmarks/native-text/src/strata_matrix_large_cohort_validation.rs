@@ -27,6 +27,10 @@ pub(crate) fn validate_sources() -> std::result::Result<(),Box<dyn std::error::E
         if prefix {
             let columns=if name.ends_with("_down"){640}else{2560};
             crate::strata_matrix::local_validation::validate_large_cohort_prefix(&words,columns)?;
+            #[cfg(feature="strata-large-packed-tiles")]
+            if crate::strata_matrix::local_validation::validate_large_packed_cohort_prefix(&words,columns).is_ok() {
+                return Err("original row-major prefix accepted as packed operands".into());
+            }
             #[cfg(test)]
             crate::strata_matrix::local_validation::large_prefix_negatives(&words,columns)?;
         }
