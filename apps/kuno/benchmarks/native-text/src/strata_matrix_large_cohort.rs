@@ -74,8 +74,10 @@ pub(crate) fn expert_large_cohort(
 ) {
     let mut slot = usize::cast_from(CUBE_POS_Z);
     let mut tile_index=usize::cast_from(CUBE_POS_Y);
+    if h13==1 && (CUBE_POS_Z!=0 || h9<1 || h9>8) {
+        if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
+    }
     if h13==1 {
-        if CUBE_POS_Z!=0 || h9<1 || h9>8 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
         let mut remaining=tile_index;slot=8;
         if h9>0 {
             let n=m1;let tail=n%128;
@@ -149,7 +151,9 @@ pub(crate) fn expert_large_cohort(
             if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
             if slot==8 {if remaining<usize::cast_from(tiles) {slot=7;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
         }
-        if slot==8 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+    }
+    if h13==1 && slot==8 {
+        if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
     }
     let mut group = 0u32;
     let mut count = 0u32;
@@ -281,21 +285,24 @@ pub(crate) fn expert_large_cohort(
     if h13>comptime!(if cfg!(feature="strata-layer-gather") {1u32}else{0u32}) || h14!=0 || h15!=0 {
         if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
     }
-    if h13==1 {
+    // Only GU reads global X. Keep each terminating guard at the outer
+    // kernel scope: nested early exits otherwise form invalid SPIR-V CFG.
+    if comptime!(!down) {
         let global=usize::cast_from(map[43008+group]);
         let total=usize::cast_from(map[43520]);
         let extent=(members+31)/32*32;
-        if total>56832 || global%32!=0 || global>total || extent>total-global {
+        if h13==1 && (total>56832 || global%32!=0 || global>total) {
             if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
         }
-        if group==0 {if global!=0 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}}
-        if group+1<usize::cast_from(map[3]) {
-            if usize::cast_from(map[43008+group+1])!=global+extent {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
-        } else {if global+extent!=total {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}}
-        if comptime!(!down) {
-            if input.len()!=36372480 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
-            input_prefix=global;
+        if h13==1 && extent>total-global {
+            if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
         }
+        let mut next=total;
+        if group+1<usize::cast_from(map[3]) {next=usize::cast_from(map[43008+group+1]);}
+        if h13==1 && ((group==0 && global!=0) || global+extent!=next || input.len()!=36372480) {
+            if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
+        }
+        if h13==1 {input_prefix=global;}
     }
     let weight_first = slot*4915200 + comptime!(if down {3276800usize}else{0usize});
     if comptime!(tile==128) {

@@ -2,6 +2,22 @@
 
 ## Resumed focused validation, 2026-10-25
 
+The complete application check exposed the historical reserved-word13 negative;
+word13 is now the explicit0/1 publication mode. That test retains its identity
+and all previous negative cases, rejects2 and reserved14/15, and verifies mode1
+is accepted only with the feature. Initial source37599424 and this correction
+d4ddf28e are preserved. Full CPU attempts v1/v2 stopped before GPU execution.
+
+Actual matrix SPIR-V validation then rejected nested terminating branches in
+the new GU global-prefix checks and the flat LARGE slot selector. The fix keeps
+the same guards at the kernel's outer scope; the flat selection itself contains
+no nested early exits. DOWN continues using its original local H and performs
+no irrelevant global-X reads. No validator, finite check, arithmetic or source
+ownership requirement was relaxed. All64 actual LARGE prefix/tail layouts now
+pass (`large-matrix-v5.log`); full generic matrix validation is still running.
+Failed public SPIR-V and validator diagnostics are retained in
+`layer-gather-validator-diagnostic-20261025/`, with no private content.
+
 The user returned both GPUs and refreshed sudo. Focused compile attempt3 found
 one test-only module path error in the allocation assertion; it now uses the
 explicit `crate::strata_prompt::layout` path. Attempt4 builds and all four new
