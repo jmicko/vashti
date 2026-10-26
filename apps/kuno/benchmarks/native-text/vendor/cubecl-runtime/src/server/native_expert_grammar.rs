@@ -476,6 +476,20 @@ impl NativeStrataExpertGrammar {
             self.layer=Some(layer_gather::Layer::start(release,count,args)?);
             self.counts.layer_gather_launches+=1;self.counts.launches+=1;return Ok(());
         }
+        #[cfg(feature="kuno-large-packed-tiles")]
+        if name == "StrataExpertLayerPackedGather" {
+            if self.layer.is_some() || self.groups != 0 || self.phase != 0 || self.pending.is_some()
+                || self.cohort.is_some() || self.regular_cohort.is_some() || self.large_cohort.is_some() {
+                return Err(batch_fault("packed layer gather must open an untouched genuine batch"));
+            }
+            self.layer = Some(layer_gather::Layer::start_packed(release, count, args)?);
+            self.counts.layer_gather_launches += 1;
+            self.counts.launches += 1;
+            return Ok(());
+        }
+        if name.starts_with("StrataExpertLayerPackedGather") {
+            return Err(batch_fault("packed layer producer outside its genuine scope"));
+        }
         let original_name=super::native_expert_batch::native_strata_expert_dequant_identity(name);
         if original_name!=name {
             let down=self.phase==2;
@@ -490,8 +504,10 @@ impl NativeStrataExpertGrammar {
         let padded_producer = cfg!(feature="kuno-padded-global") && matches!(original_name,"StrataPromptExpertGatherPad32"|"StrataPromptExpertF16SwigluPad32"|"StrataPromptExpertF16SwigluCheckGuPad32");
         let name=super::native_expert_batch::native_strata_expert_padded_identity(original_name);
         #[cfg(feature="kuno-large-cohorts")]
-        if self.large_cohort.is_some() || name=="StrataExpertLargeCohortGather" || {
-            #[cfg(feature="kuno-layer-gather")] {self.layer.is_some() && matches!(name,"StrataExpertLargeCohortGuDirect8Image"|"StrataExpertLargeCohortGuQuad32Image"|"StrataExpertLargeCohortGuImage")}
+        if self.large_cohort.is_some() || name=="StrataExpertLargeCohortGather"
+            || (cfg!(feature="kuno-large-packed-tiles") && name=="StrataExpertLargePackedCohortGather") || {
+            #[cfg(feature="kuno-layer-gather")] {self.layer.is_some() && (matches!(name,"StrataExpertLargeCohortGuDirect8Image"|"StrataExpertLargeCohortGuQuad32Image"|"StrataExpertLargeCohortGuImage")
+                || (cfg!(feature="kuno-large-packed-tiles") && name=="StrataExpertLargePackedCohortGuDirect8Image"))}
             #[cfg(not(feature="kuno-layer-gather"))] {false}
         } {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred || self.cohort.is_some() || self.regular_cohort.is_some() {
@@ -500,7 +516,7 @@ impl NativeStrataExpertGrammar {
             if self.large_cohort.is_none() {
                 #[cfg(feature="kuno-layer-gather")]
                 let started=if let Some(layer)=&self.layer {
-                    if name=="StrataExpertLargeCohortGather" {return Err(batch_fault("layer scope forbids unit gather"));}
+                    if matches!(name,"StrataExpertLargeCohortGather"|"StrataExpertLargePackedCohortGather") {return Err(batch_fault("layer scope forbids unit gather"));}
                     large_cohort::Cohort::start_layer(self.groups,args,layer)?
                 }else{large_cohort::Cohort::start(self.groups,args)?};
                 #[cfg(not(feature="kuno-layer-gather"))]
@@ -520,7 +536,8 @@ impl NativeStrataExpertGrammar {
             }
             return Ok(());
         }
-        if name.contains("::cohorts::large::") || name.starts_with("StrataExpertLargeCohort") {
+        if name.contains("::cohorts::large::") || name.starts_with("StrataExpertLargeCohort")
+            || name.contains("::large_packed::") || name.starts_with("StrataExpertLargePackedCohort") {
             return Err(batch_fault("native large cohort role outside its genuine scope"));
         }
         #[cfg(feature="kuno-large-cohorts")]

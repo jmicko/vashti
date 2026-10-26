@@ -26,24 +26,38 @@ pub(super) struct Cohort {
     ordered_down: Option<bool>,
 }
 
-// The large family has ONLY direct8 FP16 producers and one matrix family.
+// These private comparisons do not alias public program identities. The
+// immutable INFO format selects one exact producer/consumer family throughout
+// the cohort; old and packed roles never certify each other's operands.
 fn image_variant(name: &str, expected: &str) -> Option<u8> {
-    matches!(
-        (expected, name),
-        (
-            "StrataExpertLargeCohortGuImage",
-            "StrataExpertLargeCohortGuDirect8Image"
-        ) | (
-            "StrataExpertLargeCohortDownImage",
-            "StrataExpertLargeCohortDownDirect8Image"
-        )
-    )
-    .then_some(2)
+    matches!((expected, name),
+        ("StrataExpertLargeCohortGuImage", "StrataExpertLargeCohortGuDirect8Image")
+        | ("StrataExpertLargeCohortDownImage", "StrataExpertLargeCohortDownDirect8Image"))
+        .then_some(2)
 }
+fn packed_image_variant(name: &str, expected: &str) -> Option<u8> {
+    (cfg!(feature = "kuno-large-packed-tiles") && matches!((expected, name),
+        ("StrataExpertLargeCohortGuImage", "StrataExpertLargePackedCohortGuDirect8Image")
+        | ("StrataExpertLargeCohortDownImage", "StrataExpertLargePackedCohortDownDirect8Image")))
+        .then_some(2)
+}
+#[cfg(test)]
 fn matrix_variant(name: &str, down: bool) -> Option<bool> {
-    (super::super::native_expert_batch::native_strata_large_cohort(name)
-        && (!down || cfg!(feature = "kuno-expert-ordered-output")))
-    .then_some(down)
+    matrix_format_variant(name, down, false)
+}
+fn matrix_format_variant(name: &str, down: bool, packed: bool) -> Option<bool> {
+    let authentic = if packed {
+        super::super::native_expert_batch::native_strata_large_packed_cohort(name)
+    } else {
+        super::super::native_expert_batch::native_strata_large_cohort(name)
+    };
+    (authentic && (!down || cfg!(feature = "kuno-expert-ordered-output"))).then_some(down)
+}
+fn producer_variant(name: &str, expected: &str, packed: bool) -> bool {
+    if !packed { return name == expected; }
+    cfg!(feature = "kuno-large-packed-tiles") && matches!((expected, name),
+        ("StrataExpertLargeCohortGather", "StrataExpertLargePackedCohortGather")
+        | ("StrataExpertLargeCohortActivate", "StrataExpertLargePackedCohortActivate"))
 }
 struct Words([u32; 48]);
 impl core::ops::Deref for Words {
@@ -101,7 +115,9 @@ impl Cohort {
             || w[8] <= 2 * w[6]
             || u64::from(w[8]) * 4 * 8 > RAW
             || w[12] > 1
-            || w[13] != u32::from(layer_h.is_some()) || w[14..16] != [0; 2]
+            || w[13] != u32::from(layer_h.is_some())
+            || w[15] != 0
+            || (w[14] != 0 && !(cfg!(feature = "kuno-large-packed-tiles") && w[14] == 1 && layer_h.is_some()))
         {
             return Err(batch_fault("native expert cohort header/INFO capacity"));
         }
@@ -220,7 +236,7 @@ impl Cohort {
         let matrix = expected.starts_with("matrix");
         let down = expected == "matrix-down" || expected == "StrataExpertLargeCohortDownImage";
         let ordered = if matrix {
-            matrix_variant(name, down)
+            matrix_format_variant(name, down, self.words[14] == 1)
         } else {
             None
         };
@@ -229,7 +245,8 @@ impl Cohort {
             "StrataExpertLargeCohortGuImage" | "StrataExpertLargeCohortDownImage"
         );
         let quad = if image {
-            image_variant(name, expected)
+            if self.words[14] == 1 { packed_image_variant(name, expected) }
+            else { image_variant(name, expected) }
         } else {
             None
         };
@@ -239,7 +256,7 @@ impl Cohort {
             } else if image {
                 quad.is_none()
             } else {
-                name != expected
+                !producer_variant(name, expected, self.words[14] == 1)
             }
         {
             return Err(batch_fault("native expert cohort authentic phase/order"));
@@ -277,7 +294,7 @@ impl Cohort {
                     16 if (9..32).contains(&tail)=>tail.div_ceil(16),
                     32 if tail>=32=>tail.div_ceil(32),_=>0}
             }).fold(0,|a,b|if w[13]==1 {a+b}else{a.max(b)});
-            if !super::super::native_expert_batch::native_strata_large_cohort(name)
+            if matrix_format_variant(name, down, self.words[14] == 1).is_none()
                 || ![128,8,16,32].contains(&tile)
                 || part_rows==0
                 || args.buffers.len() != arrays

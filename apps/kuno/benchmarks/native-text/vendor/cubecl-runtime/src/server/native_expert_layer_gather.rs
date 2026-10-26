@@ -10,12 +10,29 @@ pub(super) struct Layer {
     pub(super) prompt: u32,
     pub(super) half: u32,
     pub(super) groups: usize,
+    packed_large: bool,
 }
 impl Layer {
     pub(super) fn start(
         release: bool,
         count: &CubeCount,
         args: &KernelArguments,
+    ) -> Result<Self, ServerError> {
+        Self::start_inner(release, count, args, false)
+    }
+    #[cfg(feature = "kuno-large-packed-tiles")]
+    pub(super) fn start_packed(
+        release: bool,
+        count: &CubeCount,
+        args: &KernelArguments,
+    ) -> Result<Self, ServerError> {
+        Self::start_inner(release, count, args, true)
+    }
+    fn start_inner(
+        release: bool,
+        count: &CubeCount,
+        args: &KernelArguments,
+        packed_large: bool,
     ) -> Result<Self, ServerError> {
         if release
             || args.buffers.len() != 5
@@ -38,7 +55,8 @@ impl Layer {
             || padded < n * 10
             || padded > 56832
             || padded % 32 != 0
-            || (4..8).any(|i| word(&args.info, i).map_or(true, |v| v != 0))
+            || word(&args.info, 4)? != u32::from(packed_large)
+            || (5..8).any(|i| word(&args.info, i).map_or(true, |v| v != 0))
             || !grid(count, 5, padded)
         {
             return Err(batch_fault("layer gather exact producer geometry"));
@@ -88,12 +106,17 @@ impl Layer {
             prompt: n,
             half,
             groups: groups as usize,
+            packed_large,
         })
     }
     pub(super) fn unit_args(&self, args: &KernelArguments) -> Result<KernelArguments, ServerError> {
         if args.info.dynamic_metadata_offset != 0 || !args.info.native_parameters.is_empty() || word(&args.info, 0)? != self.prompt
             || word(&args.info, 13)? != 1
             || word(&args.info, 12)? != self.half
+            // Large-only packing is sealed by the genuine layer producer.
+            // Small/regular cohorts retain their original row-major segments.
+            || word(&args.info, 14)? != u32::from(self.packed_large && word(&args.info, 17)? >= 256)
+            || word(&args.info, 15)? != 0
         {
             return Err(batch_fault("layer cohort original publication mismatch"));
         }

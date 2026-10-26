@@ -129,6 +129,15 @@ pub(crate) fn native_strata_large_cohort(name:&str)->bool {
   .is_some_and(|(_,suffix)|suffix.strip_prefix("ExpertLargeCohort")
     .is_some_and(native_strata_generated_type_suffix))
 }
+/// A distinct generated matrix family. Neither a legacy role nor a nested or
+/// disabled packed namespace grants packed operand authority.
+pub(crate) fn native_strata_large_packed_cohort(name: &str) -> bool {
+    cfg!(feature = "kuno-large-packed-tiles")
+        && name.split_once("::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::")
+            .filter(|(prefix, _)| !prefix.contains("::strata_matrix::"))
+            .is_some_and(|(_, suffix)| suffix.strip_prefix("ExpertLargePackedCohort")
+                .is_some_and(native_strata_generated_type_suffix))
+}
 pub(crate) fn native_strata_granular_m16(name: &str) -> bool {
     granular_tile(name,false).is_some() || granular_tile(name,true).is_some()
         || granular_cohort(name)
@@ -161,7 +170,9 @@ pub(crate) fn native_strata_global_small_cohort(name:&str)->bool{
 }
 
 pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) -> bool {
-    if name.contains("::cohorts::large::") || name.starts_with("StrataExpertLargeCohort") {return false;}
+    if name.contains("::cohorts::large::") || name.starts_with("StrataExpertLargeCohort")
+        || name.contains("::large_packed::") || name.starts_with("StrataExpertLargePackedCohort")
+        || name.starts_with("StrataExpertLayerPackedGather") {return false;}
     if name.contains("::regular::") || name.contains("::dual_regular::") || name.contains("::dual_small::") || name.starts_with("StrataExpertRegularCohort"){return false;}
     let name=native_strata_expert_padded_identity(native_strata_expert_dequant_identity(name));
     if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::") || name.contains("::granular_small::")) {
