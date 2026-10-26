@@ -763,3 +763,9 @@ pub(crate) mod large_packed {
     use super::*;
     include!("strata_matrix_large_packed_cohort.rs");
 }
+
+#[cfg(feature="strata-large-packed-tiles")]
+#[path="strata_matrix_large_packed_pair_probe.rs"]
+mod large_packed_pair_probe;
+#[cfg(feature="strata-large-packed-tiles")]
+pub(crate) use large_packed_pair_probe::cases as public_large_packed_pairs;
