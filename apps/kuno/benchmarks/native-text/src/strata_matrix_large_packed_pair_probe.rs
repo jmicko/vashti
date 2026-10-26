@@ -171,6 +171,14 @@ fn one(
     poison: bool,
     counts: &[usize],
 ) -> Checked<serde_json::Value> {
+    one_mode(client,arena,down,poison,counts,false,None)
+}
+#[allow(clippy::too_many_arguments)]
+fn one_mode(
+    client: &ComputeClient<WgpuRuntime>, arena: &mut PrivateArena,
+    down: bool, poison: bool, counts: &[usize], shared: bool,
+    invalid_route: Option<usize>,
+) -> Checked<serde_json::Value> {
     let (dual,layer,large)=(false,true,true);
     let slots = counts.len();
     let total = 4096usize;
@@ -190,9 +198,11 @@ fn one(
     }
     let mut map = g::group(&raw, total)?;
     let first = g::validate(&map, total)? - slots;
-    if poison {
+    if poison || invalid_route.is_some() {
         let offset = map[1028 + first + slots - 1] as usize;
-        map[1540 + offset] = g::ROUTES as u32;
+        let invalid=invalid_route.unwrap_or(0);
+        if invalid>=128 || invalid>=counts[slots-1] {return Err("shared prefix invalid-route fixture extent".into());}
+        map[1540 + offset + invalid] = g::ROUTES as u32;
     }
     let cols = if down { 640 } else { 2560 };
     let rows = if down { 2560 } else { 1280 };
@@ -342,7 +352,12 @@ fn one(
             if large_packed::part_rows(&words,tile)==0 {continue;}
             words[11]=tile as u32;
             eprintln!("public_packed_matrix_stage stage=selected_launch tile={tile} down={down} poison={poison}");
-            large_packed::launch(client,handles.clone(),&words,down,tile)?;
+            if shared {
+                #[cfg(feature="strata-large-shared-panels")]
+                large_shared::launch(client,handles.clone(),&words,down,tile)?;
+                #[cfg(not(feature="strata-large-shared-panels"))]
+                return Err("shared large matrix probe feature disabled".into());
+            } else {large_packed::launch(client,handles.clone(),&words,down,tile)?;}
         }
         #[cfg(not(feature="strata-large-cohorts"))]
         return Err("large cohort probe feature disabled".into());
@@ -382,8 +397,7 @@ fn one(
     }
     #[cfg(feature="strata-layer-gather")]
     if let Some((id,expected))=&layer_input {crate::strata_prompt::layer_gather::probe_util::source(arena,*id,expected)?;}
-    Ok(
-        serde_json::json!({"family":"large-packed-tile-original-wide-prefix-tail-pair",
+    let mut report=serde_json::json!({"family":"large-packed-tile-original-wide-prefix-tail-pair",
         "actual_original_per_expert_reference":true,"actual_large_tiled_operands":true,"actual_new_regular_cohort":!dual&&!large,"actual_large_wide_prefix_tail":large,
         "down":down,"groups":slots,"counts":counts,"poison_and_invalid_route":poison,
         "actual_dual_cells":dual,"layer_gather_input":layer,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,
@@ -393,8 +407,16 @@ fn one(
         "single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,
         "zeroizing_host_reference_bytes":reference_bytes,"host_reference_limit_bytes":REFERENCE_BYTES,
         "readback_window_bytes":WINDOW_WORDS*4,"original_arena_budget_bytes":arena.budget_bytes(),
-        "actual_arena_charged_bytes":arena.charged_bytes()}),
-    )
+        "actual_arena_charged_bytes":arena.charged_bytes()});
+    if shared {
+        report["family"]=serde_json::json!("large-shared-k16-original-wide-prefix-tail-pair");
+        report["actual_shared_large_prefix"]=serde_json::json!(true);
+        report["shared_panel_bytes"]=serde_json::json!(8192);
+        report["shared_f32_stride"]=serde_json::json!(8);
+        report["mixed_invalid_route_offset"]=serde_json::json!(invalid_route);
+        report["all_subgroups_same_128_routes"]=serde_json::json!(true);
+    }
+    Ok(report)
 }
 
 // Independent CPU bit permutation; no dequantization or arithmetic change. Each
@@ -517,6 +539,30 @@ pub(crate) fn cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)-
                 Err(error)=>{let _=arena.reset();return Err(format!("packed large matrix down={down} poison={poison}: {error}").into());}}
         }}
     }
+    Ok(reports)
+}
+
+#[cfg(feature="strata-large-shared-panels")]
+pub(crate) fn shared_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+    if !arena.public_owned_zero_audit_enabled() || arena.buffer_count()!=0 {
+        return Err("shared matrix original empty audit arena required".into());
+    }
+    let mut reports=Vec::new();
+    for counts in [&[256usize,257,264,265,287,288,383,511][..],&[512;8][..],&[4095][..],&[4096][..]] {
+        for down in [false,true] {for poison in [false,true] {
+            let result=one_mode(client,arena,down,poison,counts,true,None);
+            match result {Ok(report)=>{arena.reset()?;reports.push(report);},
+                Err(error)=>{let _=arena.reset();return Err(format!("shared large matrix down={down} poison={poison}: {error}").into());}}
+        }}
+    }
+    // Invalid8-member halves in near/far SG member partitions. Unaffected SGs
+    // must follow the WG-uniform fallback while preserving raw valid halves.
+    for down in [false,true] {for invalid in [0usize,8,96,104] {
+        let result=one_mode(client,arena,down,false,&[256],true,Some(invalid));
+        match result {Ok(report)=>{arena.reset()?;reports.push(report);},
+            Err(error)=>{let _=arena.reset();return Err(format!("shared large mixed route down={down} invalid={invalid}: {error}").into());}}
+    }}
+    if reports.len()!=24 {return Err("shared large exact24 actual controls".into());}
     Ok(reports)
 }
 

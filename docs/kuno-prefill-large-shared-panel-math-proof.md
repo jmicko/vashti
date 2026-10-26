@@ -1,0 +1,23 @@
+# Shared LARGE matrix source bundle
+
+This source-only matrix portion composes on `ea5597df3806503b9aa79848ba01d2cc907407ac` and implements the contract in `kuno-prefill-large-shared-panel.md`. It does not alter installed Kuno, drivers, the frozen acceptance candidate, or any GPU/service state.
+
+`large_shared::expert_large_shared_cohort::ExpertLargeSharedCohort` is a new tile128-only matrix identity. Its public launcher has the same signature as `large_packed::launch`; tiles8/16/32 immediately delegate to that original launcher, retaining their genuine old programs and counters. Only the new prefix increments `expert_large_shared_cohort_{matrix_launches,prefix_launches,matrix_workgroups}` alongside original generic LARGE totals.
+
+The prefix authenticates the existing format1/layer1 global GU owner or original DOWN cohort owner before entering the math. Every subgroup checks the same128 immutable routes. An invalid route sends the entire workgroup through the original fallback, whose source body is checked byte-for-byte against the old packed implementation after removing its relocated scratch declaration. Existing independent8-member publication, finite/status/fault behavior remains intact.
+
+There is one physical2048-element f32 shared slab. In the valid path, each thread makes four unique packed vec4f16 reads, reinterprets each into vec2f32 with `OpBitcast`, and stores its eight scalar bit-pair components. Its disjoint fallback lifetime uses the same slab for original f32 accumulator publication. Mixed f32-pointee/f16-matrix CMMA loads use stride8 in f32 units. The six operands, eight C chains and chronological K16 execute order remain unchanged. Two workgroup barriers protect every panel iteration.
+
+The dedicated closed SPIR-V validator is `strata_matrix_large_shared_proof.rs`. It retains the previous complete matrix-origin, chronological C-owner, CFG/fallback/publication checks and separately proves the new physical shared slab, staging bitcasts and complete unique writes, four actual source vector loads, six shared CMMA loads with exact stride and subgroup panel addresses, and workgroup-scoped barriers enclosing all eight products. The actual fast/fallback predicate must derive from all eight lane-strided map reads, without SubgroupId/LocalInvocationIndex dependence. The old global/packed proofs must reject the new program. Corruption controls cover geometry, owners, layout, slab size, bitcasts, barriers, lane identity, matrix strides and crossed A/B/C state.
+
+`validate_sources()` registers two genuine prefix programs under each of the eight original layout masks (16 configurations), runs the new proof, checks8192 shared bytes/SG16 and invokes `spirv-val`. Only after these validations does it emit `strata_large_shared_panel_proof_accepted` with the actual checked staging, shared-load, stride, barrier, product and route populations. That marker has not yet been observed from a compiled shader.
+
+The existing packed paired-probe entry remains unchanged by default. Its optional shared mode adds24 separate records: the original four counts shapes × two roles × finite/poison modes (16), plus one256-member group × two roles × invalid route offsets0/8/96/104 (8). All use format1/layer1 and authentic global input owners. They compare against the untouched original per-expert GPU programs and retain whole-output, status/fault, source-owner, padding, zeroization and arena/readback limits. No separate fake CPU floating-point oracle replaces the original accepted F64/GPU controls.
+
+## Checks actually run on this source checkpoint
+
+- `rustc --edition=2024 --test .../strata_matrix_large_shared_panel_oracle.rs` and its six tests: PASS,0.27s. Independent inverse tile decoding covers all role K16 panels and unique source/shared-pair mappings; other tests cover all six CMMA views/eight output tiles, global GU prefix distinction, WG-uniform malformed-route cases, all65536 half payloads and scratch lifetime, and exact original fallback/source wiring.
+- All new source files plus the adapted paired-probe file parse with `rustfmt --emit stdout --config skip_children=true`.
+- The dedicated SPIR-V proof itself type-checks in a standalone rustc wrapper with only its external descriptor-classifier signature stubbed. This checks Rust types; it is not proof execution, shader compilation, or genuine native classification.
+
+No Cargo build, actual16-layout compilation, GPU numeric acceptance, whole-model acceptance, native send/spill/GRF measurement or speed test has run for this candidate. Those are required for the complete composed bundle, preserving the previous2125 controls. Source traffic and compiler markers alone do not establish a performance gain.
