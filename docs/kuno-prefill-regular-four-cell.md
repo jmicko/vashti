@@ -93,7 +93,7 @@ roles, and checks the real launcher's genuine quad counters rather than dual
 counter credit. Those static identity tests do not replace actual model laws.
 Full model validation must require actual quad GU/DOWN launches to account for
 all regular batches, old dual-REG launches to be0, and physical/active workgroups
-to reflect64 output columns per workgroup (GU40 +DOWN10) using real padded/group
+to reflect64 output columns per workgroup (GU20 +DOWN40, sum60) using real padded/group
 counts. Preserve original generic cohort phase/source/owner/capacity/recovery
 laws, packed-LARGE counter equalities and both complete model profiles.
 
