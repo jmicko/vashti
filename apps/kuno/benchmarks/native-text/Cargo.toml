@@ -48,6 +48,7 @@ cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 
 [features]
 strata-large-cohorts = ["strata-regular-cohorts", "strata-wide32-local-routes", "cubecl-wgpu/kuno-large-cohorts"]
+strata-layer-gather = ["strata-large-cohorts", "strata-small-dual-cells", "cubecl-wgpu/kuno-layer-gather"]
 strata-small-dual-cells = ["strata-regular-cohorts", "cubecl-wgpu/kuno-small-dual-cells"]
 strata-regular-cohorts = ["strata-host-expert-blobs", "strata-dequant-direct8", "strata-global-image-experts", "strata-raw-lookahead", "strata-native-expert-bulk", "cubecl-wgpu/kuno-regular-cohorts"]
 strata-host-expert-blobs = ["strata-small-granular"]

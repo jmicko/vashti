@@ -31,6 +31,9 @@ pub(crate) mod storage;
 #[cfg(feature="strata-gr-register-norm")]
 #[path="strata_prompt_gr_register.rs"]
 pub(crate) mod register_norm;
+#[cfg(feature="strata-layer-gather")]
+#[path="strata_prompt_layer_gather.rs"]
+pub(crate) mod layer_gather;
 thread_local! {static STAGES:RefCell<Option<storage::Storage>>=const{RefCell::new(None)};}
 // Preserve the original error variant while locating the first explicit
 // prompt-layout guard in fixed-public completion checks. No sizes or contents.

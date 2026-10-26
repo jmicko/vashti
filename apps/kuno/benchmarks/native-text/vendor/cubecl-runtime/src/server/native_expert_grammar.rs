@@ -15,6 +15,9 @@ mod regular_cohort;
 #[path="native_expert_large_cohort_grammar.rs"]
 mod large_cohort;
 
+#[cfg(feature="kuno-layer-gather")]
+#[path="native_expert_layer_gather.rs"]
+mod layer_gather;
 const MAX_MEMBERS: u32 = 4096;
 const MIN_WIDE_MEMBERS: u32 = if cfg!(feature = "kuno-native-expert-medium") {
     128
@@ -97,6 +100,7 @@ pub struct NativeStrataExpertGrammarCounts {
     pub regular_cohort_groups:usize,
     pub regular_cohort_batches:usize,
     pub regular_cohort_launches:usize,
+    pub layer_gather_launches:usize,
     pub launches: usize,
     pub logical_phases: usize,
     pub matrix_pieces: usize,
@@ -110,6 +114,8 @@ pub struct NativeStrataExpertGrammarCounts {
 pub struct NativeStrataExpertGrammar {
     phase: usize,
     groups: usize,
+    #[cfg(feature="kuno-layer-gather")]
+    layer:Option<layer_gather::Layer>,
     #[cfg(feature="kuno-expert-cohorts")]
     cohort:Option<cohort::Cohort>,
     #[cfg(feature="kuno-regular-cohorts")]
@@ -464,6 +470,12 @@ impl NativeStrataExpertGrammar {
         count: &CubeCount,
         args: &KernelArguments,
     ) -> Result<(), ServerError> {
+        #[cfg(feature="kuno-layer-gather")]
+        if name=="StrataExpertLayerGather" {
+            if self.layer.is_some()||self.groups!=0||self.phase!=0||self.pending.is_some()||self.cohort.is_some()||self.regular_cohort.is_some()||self.large_cohort.is_some(){return Err(batch_fault("layer gather must open an untouched genuine batch"));}
+            self.layer=Some(layer_gather::Layer::start(release,count,args)?);
+            self.counts.layer_gather_launches+=1;self.counts.launches+=1;return Ok(());
+        }
         let original_name=super::native_expert_batch::native_strata_expert_dequant_identity(name);
         if original_name!=name {
             let down=self.phase==2;
@@ -478,11 +490,23 @@ impl NativeStrataExpertGrammar {
         let padded_producer = cfg!(feature="kuno-padded-global") && matches!(original_name,"StrataPromptExpertGatherPad32"|"StrataPromptExpertF16SwigluPad32"|"StrataPromptExpertF16SwigluCheckGuPad32");
         let name=super::native_expert_batch::native_strata_expert_padded_identity(original_name);
         #[cfg(feature="kuno-large-cohorts")]
-        if self.large_cohort.is_some() || name=="StrataExpertLargeCohortGather" {
+        if self.large_cohort.is_some() || name=="StrataExpertLargeCohortGather" || {
+            #[cfg(feature="kuno-layer-gather")] {self.layer.is_some() && matches!(name,"StrataExpertLargeCohortGuDirect8Image"|"StrataExpertLargeCohortGuQuad32Image"|"StrataExpertLargeCohortGuImage")}
+            #[cfg(not(feature="kuno-layer-gather"))] {false}
+        } {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred || self.cohort.is_some() || self.regular_cohort.is_some() {
                 return Err(batch_fault("native large cohort interrupted original group"));
             }
-            if self.large_cohort.is_none(){self.large_cohort=Some(large_cohort::Cohort::start(self.groups,args)?);}
+            if self.large_cohort.is_none() {
+                #[cfg(feature="kuno-layer-gather")]
+                let started=if let Some(layer)=&self.layer {
+                    if name=="StrataExpertLargeCohortGather" {return Err(batch_fault("layer scope forbids unit gather"));}
+                    large_cohort::Cohort::start_layer(self.groups,args,layer)?
+                }else{large_cohort::Cohort::start(self.groups,args)?};
+                #[cfg(not(feature="kuno-layer-gather"))]
+                let started=large_cohort::Cohort::start(self.groups,args)?;
+                self.large_cohort=Some(started);
+            }
             let cohort=self.large_cohort.as_mut().unwrap();
             let done=cohort.launch(name,release,count,args)?;
             self.counts.launches+=1;self.counts.cohort_launches+=1;
@@ -502,11 +526,23 @@ impl NativeStrataExpertGrammar {
         #[cfg(feature="kuno-large-cohorts")]
         if self.large_cohort.is_some() {return Err(batch_fault("native large cohort interrupted"));}
         #[cfg(feature="kuno-regular-cohorts")]
-        if self.regular_cohort.is_some() || name=="StrataExpertRegularCohortGather" {
+        if self.regular_cohort.is_some() || name=="StrataExpertRegularCohortGather" || {
+            #[cfg(feature="kuno-layer-gather")] {self.layer.is_some() && matches!(name,"StrataExpertRegularCohortGuDirect8Image"|"StrataExpertRegularCohortGuQuad32Image"|"StrataExpertRegularCohortGuImage")}
+            #[cfg(not(feature="kuno-layer-gather"))] {false}
+        } {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred || self.cohort.is_some() {
                 return Err(batch_fault("native regular cohort interrupted original group"));
             }
-            if self.regular_cohort.is_none(){self.regular_cohort=Some(regular_cohort::Cohort::start(self.groups,args)?);}
+            if self.regular_cohort.is_none() {
+                #[cfg(feature="kuno-layer-gather")]
+                let started=if let Some(layer)=&self.layer {
+                    if name=="StrataExpertRegularCohortGather" {return Err(batch_fault("layer scope forbids unit gather"));}
+                    regular_cohort::Cohort::start_layer(self.groups,args,layer)?
+                }else{regular_cohort::Cohort::start(self.groups,args)?};
+                #[cfg(not(feature="kuno-layer-gather"))]
+                let started=regular_cohort::Cohort::start(self.groups,args)?;
+                self.regular_cohort=Some(started);
+            }
             let cohort=self.regular_cohort.as_mut().unwrap();
             let done=cohort.launch(name,release,count,args)?;
             self.counts.launches+=1;self.counts.cohort_launches+=1;
@@ -525,9 +561,21 @@ impl NativeStrataExpertGrammar {
             return Err(batch_fault("native regular cohort role outside its genuine scope"));
         }
         #[cfg(feature="kuno-expert-cohorts")]
-        if self.cohort.is_some() || name=="StrataExpertCohortGather" {
+        if self.cohort.is_some() || name=="StrataExpertCohortGather" || {
+            #[cfg(feature="kuno-layer-gather")] {self.layer.is_some() && matches!(name,"StrataExpertCohortGuDirect8Image"|"StrataExpertCohortGuQuad32Image"|"StrataExpertCohortGuImage")}
+            #[cfg(not(feature="kuno-layer-gather"))] {false}
+        } {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred {return Err(batch_fault("native expert cohort interrupted original group"));}
-            if self.cohort.is_none(){self.cohort=Some(cohort::Cohort::start(self.groups,args)?);}
+            if self.cohort.is_none() {
+                #[cfg(feature="kuno-layer-gather")]
+                let started=if let Some(layer)=&self.layer {
+                    if name=="StrataExpertCohortGather" {return Err(batch_fault("layer scope forbids unit gather"));}
+                    cohort::Cohort::start_layer(self.groups,args,layer)?
+                }else{cohort::Cohort::start(self.groups,args)?};
+                #[cfg(not(feature="kuno-layer-gather"))]
+                let started=cohort::Cohort::start(self.groups,args)?;
+                self.cohort=Some(started);
+            }
             let cohort=self.cohort.as_mut().unwrap();
             let done=cohort.launch(name,release,count,args)?;
             self.counts.launches+=1;self.counts.cohort_launches+=1;
@@ -550,6 +598,8 @@ impl NativeStrataExpertGrammar {
         if name.contains("::dual_small::") {
             return Err(batch_fault("native dual small cohort role outside its genuine scope"));
         }
+        #[cfg(feature="kuno-layer-gather")]
+        if self.layer.is_some(){return Err(batch_fault("layer scope forbids legacy producer or consumer"));}
         if self.groups >= 512 {
             return Err(batch_fault("native expert grammar group capacity"));
         }
@@ -745,6 +795,12 @@ impl NativeStrataExpertGrammar {
         self.counts.launches += 1;
         Ok(())
     }
+    pub fn finish_batch(&self)->Result<NativeStrataExpertGrammarCounts,ServerError>{
+        let counts=self.finish()?;
+        #[cfg(feature="kuno-layer-gather")]
+        if let Some(layer)=&self.layer {if self.groups!=layer.groups||counts.layer_gather_launches!=1{return Err(batch_fault("layer gather incomplete entire expert layer"));}}
+        Ok(counts)
+    }
     pub fn finish(&self) -> Result<NativeStrataExpertGrammarCounts, ServerError> {
         #[cfg(feature="kuno-expert-cohorts")]
         if self.cohort.is_some(){return Err(batch_fault("native expert incomplete cohort"));}
@@ -758,7 +814,7 @@ impl NativeStrataExpertGrammar {
             || self.groups == 0
             || self.counts.logical_phases != self.groups * 6
             || self.counts.matrix_pieces != self.groups * 2 + self.counts.tail_pieces
-            || self.counts.launches != (self.groups-self.counts.cohort_groups) * 4 + self.counts.matrix_pieces-self.counts.cohort_groups*2+self.counts.cohort_launches
+            || self.counts.launches != (self.groups-self.counts.cohort_groups) * 4 + self.counts.matrix_pieces-self.counts.cohort_groups*2+self.counts.cohort_launches+self.counts.layer_gather_launches
         {
             return Err(batch_fault(
                 "native expert incomplete original matrix phase",

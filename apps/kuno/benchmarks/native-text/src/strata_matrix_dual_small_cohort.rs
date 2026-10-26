@@ -186,6 +186,26 @@ pub(crate) fn expert_dual_small_cohort(
     {
         terminate!();
     }
+    let mut input_prefix=prefix;
+    if h13>comptime!(if cfg!(feature="strata-layer-gather") {1u32}else{0u32}) || h14!=0 || h15!=0 {
+        if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
+    }
+    if h13==1 {
+        let global=usize::cast_from(map[43008+group]);
+        let total=usize::cast_from(map[43520]);
+        let extent=(members+31)/32*32;
+        if total>56832 || global%32!=0 || global>total || extent>total-global {
+            if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
+        }
+        if group==0 {if global!=0 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}}
+        if group+1<usize::cast_from(map[3]) {
+            if usize::cast_from(map[43008+group+1])!=global+extent {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+        } else {if global+extent!=total {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}}
+        if comptime!(!down) {
+            if input.len()!=36372480 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+            input_prefix=global;
+        }
+    }
     let weight_first = slot * 4915200 + comptime!(if down { 3276800usize } else { 0usize });
     crate::strata_matrix::dual_small::product(
         input,
@@ -199,7 +219,7 @@ pub(crate) fn expert_dual_small_cohort(
         members,
         weight_first,
         group,
-        prefix,
+        input_prefix,
         prefix,
         down,
         16usize,

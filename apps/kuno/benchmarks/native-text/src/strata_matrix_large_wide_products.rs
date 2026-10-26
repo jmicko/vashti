@@ -114,6 +114,8 @@ pub(super) fn wide(
     weight_first: u32,
     group: u32,
     packed_prefix: u32,
+    input_prefix: u32,
+    tile_index: u32,
     piece_members: u32,
     #[comptime] down: bool,
 ) {
@@ -123,6 +125,7 @@ pub(super) fn wide(
     let group = usize::cast_from(group);
     let weight_first = usize::cast_from(weight_first);
     let packed_prefix = usize::cast_from(packed_prefix);
+    let input_prefix=usize::cast_from(input_prefix);
     if !plane_all(crate::strata_matrix::native_expert_wide::header_valid(map, count, group))
         || packed_prefix > 4096 || ((count+31)/32)*32 > 4096-packed_prefix
         || usize::cast_from(piece_members) != count / 128 * 128
@@ -140,7 +143,7 @@ pub(super) fn wide(
     let raw_good = if comptime!(cfg!(feature = "strata-wide32-local-routes")) {
         let sg = usize::cast_from(PLANE_POS);
         let lane = usize::cast_from(UNIT_POS_PLANE);
-        let token = usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32;
+        let token = usize::cast_from(tile_index) * 128 + (sg / 4) * 32;
         let prefix = usize::cast_from(map[1028 + group]);
         let total = usize::cast_from(map[0]) * 10;
         let low = usize::cast_from(map[1540 + prefix + token + lane]);
@@ -215,7 +218,7 @@ pub(super) fn wide(
             0.0,
         );
         let sg = usize::cast_from(PLANE_POS);
-        let token = usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32;
+        let token = usize::cast_from(tile_index) * 128 + (sg / 4) * 32;
         let row = usize::cast_from(CUBE_POS_X) * 128 + (sg % 4) * 32;
         crate::strata_matrix::native_wide::local_wide32::compute::<f16>(
             input,
@@ -228,7 +231,7 @@ pub(super) fn wide(
             &c21,
             &c30,
             &c31,
-            token + packed_prefix,
+            token + input_prefix,
             row,
             columns,
             weight_first,
@@ -380,9 +383,9 @@ pub(super) fn wide(
                 );
                 let sg = usize::cast_from(PLANE_POS);
                 let token = if comptime!(cfg!(feature = "strata-wide32-local-routes")) {
-                    usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32 + tile_m * 16
+                    usize::cast_from(tile_index) * 128 + (sg / 4) * 32 + tile_m * 16
                 } else {
-                    usize::cast_from(CUBE_POS_Y) * 128 + tile_m * 64 + (sg / 4) * 16
+                    usize::cast_from(tile_index) * 128 + tile_m * 64 + (sg / 4) * 16
                 };
                 let row = if comptime!(cfg!(feature = "strata-wide32-local-routes")) {
                     usize::cast_from(CUBE_POS_X) * 128 + (sg % 4) * 32 + tile_n * 16
@@ -395,7 +398,7 @@ pub(super) fn wide(
                     &a00,
                     &a01,
                     &b0,
-                    token + packed_prefix,
+                    token + input_prefix,
                     row,
                     0usize,
                     columns,
@@ -409,7 +412,7 @@ pub(super) fn wide(
                         &a10,
                         &a11,
                         &b1,
-                        token + packed_prefix,
+                        token + input_prefix,
                         row,
                         k + 16,
                         columns,
@@ -425,7 +428,7 @@ pub(super) fn wide(
                             &a00,
                             &a01,
                             &b0,
-                            token + packed_prefix,
+                            token + input_prefix,
                             row,
                             k + 32,
                             columns,

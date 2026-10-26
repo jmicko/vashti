@@ -50,7 +50,7 @@ const fn end(words: &[usize], scale: usize) -> u64 {
     }
     cursor
 }
-pub(crate) const fn unrounded_roots() -> [u64; 3] {
+const fn unrounded_roots_for(layer:bool) -> [u64;3] {
     let n = allocation::DEFAULT_ROWS;
     let mut phase = end(&PLE, n);
     let gdn = end(&GDN, n);
@@ -66,14 +66,16 @@ pub(crate) const fn unrounded_roots() -> [u64; 3] {
         + groups::PART_BYTES
         + 4 * (groups::RAW_WORDS + groups::MAP_WORDS + groups::PROB_WORDS + groups::STATUS_WORDS)
             as u64
-        + 6 * 256;
+        + 6 * 256
+        + if layer {groups::LAYER_X_BYTES + 256} else {0};
     if moe > phase {
         phase = moe;
     }
     [end(&persistent(n), 1), phase, allocation::RAW_RING_BYTES]
 }
-pub(crate) const fn root_sizes() -> [u64; 3] {
-    let sizes = unrounded_roots();
+pub(crate) const fn unrounded_roots()->[u64;3]{unrounded_roots_for(cfg!(feature="strata-layer-gather"))}
+const fn root_sizes_for(layer:bool) -> [u64;3] {
+    let sizes=unrounded_roots_for(layer);
     let granule = crate::private_arena::NATIVE_GRANULE as u64;
     [
         sizes[0].div_ceil(granule) * granule,
@@ -81,3 +83,6 @@ pub(crate) const fn root_sizes() -> [u64; 3] {
         sizes[2],
     ]
 }
+
+pub(crate) const fn root_sizes()->[u64;3]{root_sizes_for(cfg!(feature="strata-layer-gather"))}
+pub(crate) const fn layer_extra_bytes()->u64 {if cfg!(feature="strata-layer-gather") {root_sizes_for(true)[1]-root_sizes_for(false)[1]}else{0}}

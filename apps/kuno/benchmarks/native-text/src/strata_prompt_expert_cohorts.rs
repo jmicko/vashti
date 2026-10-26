@@ -217,7 +217,7 @@ pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
         || words[8] <= 2 * words[6]
         || u64::from(words[8]) * 4 * 8 > allocation::RAW_RING_BYTES
         || words[12] > 1
-        || words[13..16] != [0; 3]
+        || words[13] > u32::from(cfg!(feature="strata-layer-gather")) || words[14..16] != [0; 2]
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -342,6 +342,7 @@ pub(super) fn enqueue_unit(
         words[10]=words[10].max(members as u32);
     }
     words[9]=n as u32;
+    words[13]=u32::from(cfg!(feature="strata-layer-gather"));
     validate_words(&words)?;
     crate::strata_prefill_profile::count("expert_narrow_global_groups", n as u64);
     #[cfg(any(not(feature = "strata-small-quantized-matrix"),feature="strata-global-image-experts"))]
@@ -359,13 +360,18 @@ pub(super) fn enqueue_unit(
 
     }
 
-    let x = view(&stage[0], 0, X_BYTES)?;
+    let x = {
+        #[cfg(feature="strata-layer-gather")] {super::super::layer_gather::x()?}
+        #[cfg(not(feature="strata-layer-gather"))] {view(&stage[0],0,X_BYTES)?}
+    };
     let h = view(&stage[0], X_BYTES, H_BYTES)?;
     if stage[1].size_in_used() != storage::WORKING_BYTES
         || IMAGE_BYTES * MAX as u64 > stage[1].size_in_used()
     {
         return Err(Error::InvalidBufferLength);
     }
+    #[cfg(not(feature="strata-layer-gather"))]
+    {
     let args = KernelArguments::new().with_buffers(vec![
         owners[0].clone().binding(),
         mixed.unwrap_or_else(|| owners[1].clone()).binding(),
@@ -379,6 +385,7 @@ pub(super) fn enqueue_unit(
         args,
         &words,
     )?;
+    }
     let ps = geometry.projections();
     for down in [false, true] {
         let p = ps[if down { 2 } else { 0 }];
@@ -525,7 +532,7 @@ pub(super) fn enqueue_unit(
         (if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { "expert_small_quant_compact_slots_capacity" } else { "expert_cohort_image_slots_capacity" }, MAX as u64),
         (if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { "expert_small_quant_compact_bytes_capacity" } else { "expert_cohort_image_bytes_capacity" },
             MAX as u64 * if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { stride as u64 } else { IMAGE_BYTES }),
-        ("expert_cohort_x_owner_bytes", X_BYTES),
+        ("expert_cohort_x_owner_bytes", if cfg!(feature="strata-layer-gather") {0}else{X_BYTES}),
         ("expert_cohort_h_owner_bytes", H_BYTES),
         ("expert_cohort_logical_phases", (n * 6) as u64),
         ("expert_cohort_fp16_image_bytes", if (cfg!(feature = "strata-small-quantized-matrix") && !cfg!(feature="strata-global-image-experts")) { 0 } else { n as u64 * IMAGE_BYTES }),

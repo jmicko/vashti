@@ -160,6 +160,7 @@ fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     dual: bool,
+    layer: bool,
     large: bool,
     down: bool,
     poison: bool,
@@ -253,6 +254,10 @@ fn one(
     let sb = arena.upload_u32(&status)?;
     let fa = arena.allocate_zeroed(1)?;
     let fb = arena.allocate_zeroed(1)?;
+    #[cfg(feature="strata-layer-gather")]
+    let layer_input=if layer {crate::strata_prompt::layer_gather::probe_util::input(arena,&map,&words,&input,down)?} else {None};
+    #[cfg(not(feature="strata-layer-gather"))]
+    assert!(!layer);
     // Genuine preceding per-expert granular programs. One reusable original
     // Pad32 input owner, updated through scrubbed transient uploads. The DOWN
     // reference already writes original ordered PART; GU's local rows are
@@ -312,7 +317,12 @@ fn one(
         reference = snapshot(arena, a)?;
     }
     erase_output(client, arena, a)?;
-    let handles=[u::handle(arena,src)?,u::handle(arena,weight)?,u::handle(arena,a)?,
+    words[13]=u32::from(layer);
+    #[cfg(feature="strata-layer-gather")]
+    let selected_src=layer_input.as_ref().map_or(src,|(id,_)|*id);
+    #[cfg(not(feature="strata-layer-gather"))]
+    let selected_src=src;
+    let handles=[u::handle(arena,selected_src)?,u::handle(arena,weight)?,u::handle(arena,a)?,
         u::handle(arena,map_id)?,u::handle(arena,sb)?,u::handle(arena,fb)?];
     if large {
         #[cfg(feature="strata-large-cohorts")]
@@ -357,11 +367,13 @@ fn one(
             }
         }
     }
+    #[cfg(feature="strata-layer-gather")]
+    if let Some((id,expected))=&layer_input {crate::strata_prompt::layer_gather::probe_util::source(arena,*id,expected)?;}
     Ok(
         serde_json::json!({"family":if large {"large-packed-cohort-original-wide-prefix-tail-pair"}else{"regular-packed-cohort-original-per-expert-pair"},
         "actual_previous_per_expert_granular_reference":!large,"actual_new_regular_cohort":!dual&&!large,"actual_large_wide_prefix_tail":large,
         "down":down,"groups":slots,"counts":counts,"poison_and_invalid_route":poison,
-        "actual_dual_cells":dual,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,
+        "actual_dual_cells":dual,"layer_gather_input":layer,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,
         "bit_mismatches":0,"full_output_words_checked":checked,
         "full_owner_status_fault_sources_and_tail_checked":true,
         "single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,
@@ -395,7 +407,7 @@ fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bo
     for counts in fixtures {
         for down in [false, true] {
             for poison in [false, true] {
-                let result = one(client, arena, dual, large, down, poison, counts).map_err(
+                let result = one(client, arena, dual, false, large, down, poison, counts).map_err(
                     |e| -> Box<dyn std::error::Error> {
                         format!(
                             "public regular paired down={down} poison={poison} groups={}: {e}",
@@ -410,4 +422,17 @@ fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bo
         }
     }
     Ok(reports)
+}
+
+#[cfg(feature="strata-layer-gather")]
+pub(crate) fn layer_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+ if !arena.public_owned_zero_audit_enabled()||arena.buffer_count()!=0 {return Err("layer matrix empty audited arena required".into());}
+ let mut reports=Vec::new();
+ for (large,counts) in [(false,&[32usize,33,63,64,65,127,128,255][..]),(true,&[256,257,264,265,287,288,383,511][..]),(true,&[4095][..]),(true,&[4096][..])] {
+  for down in [false,true] {for poison in [false,true] {
+   let r=one(client,arena,!large,true,large,down,poison,counts);
+   arena.reset()?;reports.push(r?);
+  }}
+ }
+ Ok(reports)
 }

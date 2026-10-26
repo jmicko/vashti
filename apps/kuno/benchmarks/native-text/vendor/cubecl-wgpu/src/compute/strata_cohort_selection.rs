@@ -7,6 +7,16 @@ use cubecl_runtime::server::native_expert_grammar::{NativeStrataExpertGrammar, N
 // Original cohorts retain six to eight dispatches. Quant cohorts admit ten;
 // distinct large cohorts admit twelve with all original prefix/tail families.
 fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
+    // Compare old logical per-unit schema only after accounting for the actual
+    // one-per-layer producer. No credit is added to published physical counts.
+    let mut canonical=*c;
+    if c.layer_gather_launches!=0 {
+        if !cfg!(feature="kuno-layer-gather") || c.layer_gather_launches!=1 || c.quant_cohort_batches!=0 || c.cohort_groups!=c.logical_phases/6 {return false;}
+        canonical.cohort_launches+=c.cohort_batches;
+        canonical.regular_cohort_launches+=c.regular_cohort_batches;
+        canonical.large_cohort_launches+=c.large_cohort_batches;
+    }
+    let c=&canonical;
     if c.large_cohort_groups>512 || c.large_cohort_batches>512 || c.large_cohort_launches>512*12
         || (!cfg!(feature="kuno-large-cohorts") && (c.large_cohort_groups!=0 || c.large_cohort_batches!=0 || c.large_cohort_launches!=0))
         || c.large_cohort_groups<c.large_cohort_batches
@@ -43,7 +53,8 @@ fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
 
 /// Existing compiled-public fixed-layer profile only. These aggregate labels
 /// identify actual scoped grammar, recording and original driver-pool events.
-pub const NATIVE_COHORT_SELECTION_LABELS: [&str; 25] = [
+const COUNTERS:usize=25+cfg!(feature="kuno-layer-gather") as usize;
+pub const NATIVE_COHORT_SELECTION_LABELS: [&str; COUNTERS] = [
     "grammar_admissions",
     "admitted_cohort_groups",
     "admitted_cohort_batches",
@@ -69,10 +80,12 @@ pub const NATIVE_COHORT_SELECTION_LABELS: [&str; 25] = [
     "admitted_large_cohort_groups",
     "admitted_large_cohort_batches",
     "admitted_large_cohort_launches",
+    #[cfg(feature="kuno-layer-gather")]
+    "admitted_layer_gather_launches",
 ];
-static PUBLIC_TOTALS: [core::sync::atomic::AtomicU64; 25] =
-    [const { core::sync::atomic::AtomicU64::new(0) }; 25];
-pub fn native_strata_cohort_selection_stats() -> [u64; 25] {
+static PUBLIC_TOTALS: [core::sync::atomic::AtomicU64; COUNTERS] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; COUNTERS];
+pub fn native_strata_cohort_selection_stats() -> [u64; COUNTERS] {
     core::array::from_fn(|i| PUBLIC_TOTALS[i].load(core::sync::atomic::Ordering::Relaxed))
 }
 
@@ -191,7 +204,7 @@ impl Book {
         graph: u64,
         first: usize,
     ) -> Result<(), ServerError> {
-        let counts = grammar.finish()?;
+        let counts = grammar.finish_batch()?;
         if counts.cohort_groups == 0 {
             if counts.cohort_launches != 0 || counts.cohort_batches != 0
                 || counts.quant_cohort_groups != 0 || counts.quant_cohort_launches != 0
@@ -232,6 +245,8 @@ impl Book {
             launches: counts.launches,
         });
         credit(&admission_credits(&counts));
+        #[cfg(feature="kuno-layer-gather")]
+        credit(&[(25,counts.layer_gather_launches as u64)]);
         Ok(())
     }
     pub(super) fn pending_first(&self) -> Option<usize> {
@@ -729,4 +744,15 @@ fn large_cohort_population_is_distinct_bounded_and_does_not_count_regular_twice(
             large_cohort_groups:8,large_cohort_batches:1,large_cohort_launches:launches,..Default::default()};
         assert!(!cohort_launch_population(&c));
     }
+}
+
+#[cfg(all(test,feature="kuno-layer-gather"))]
+#[test]
+fn layer_gather_admission_uses_actual_five_phase_units_and_one_shared_producer() {
+ let c=NativeStrataExpertGrammarCounts{layer_gather_launches:1,cohort_groups:10,cohort_batches:10,cohort_launches:50,large_cohort_groups:10,large_cohort_batches:10,large_cohort_launches:50,launches:51,logical_phases:60,matrix_pieces:20,gu_checks:10,..Default::default()};
+ assert!(cohort_launch_population(&c));
+ let mut bad=c;bad.layer_gather_launches=2;assert!(!cohort_launch_population(&bad));
+ let mut bad=c;bad.large_cohort_launches=51;bad.cohort_launches=51;assert!(!cohort_launch_population(&bad));
+ let mut old=c;old.layer_gather_launches=0;assert!(!cohort_launch_population(&old));
+ assert_eq!(NATIVE_COHORT_SELECTION_LABELS[25],"admitted_layer_gather_launches");
 }

@@ -15,6 +15,9 @@ pub(crate) const RAW_WORDS: usize = 131072;
 pub(crate) const MAP_WORDS: usize = 65536;
 pub(crate) const PROB_WORDS: usize = 65536;
 pub(crate) const STATUS_WORDS: usize = 131072;
+pub(crate) const LAYER_PREFIX: usize = 43008;
+pub(crate) const LAYER_PADDED_ROWS: usize = ROUTES + 512 * 31;
+pub(crate) const LAYER_X_BYTES: u64 = (LAYER_PADDED_ROWS * 2560 * 2) as u64;
 pub(crate) const GU_BYTES: u64 = (CAPACITY * 1280 * 4) as u64;
 pub(crate) const PART_BYTES: u64 = (ROUTES * 2560 * 4) as u64;
 /// One compiled prompt ABI for actual Rust views and every native shader.
@@ -106,6 +109,12 @@ fn group_with_order(raw: &[u32], count: usize, row_order: bool) -> Result<Zeroiz
         map[MEMBERS + offsets[logical]] = route as u32;
         offsets[logical] += 1;
     }
+    #[cfg(feature="strata-layer-gather")]
+    {
+        let mut padded=0usize;
+        for g in 0..groups {map[LAYER_PREFIX+g]=padded as u32;padded+=(map[LENGTHS+g] as usize).div_ceil(32)*32;}
+        map[LAYER_PREFIX+512]=padded as u32;
+    }
     validate(&map, count)?;
     Ok(map)
 }
@@ -151,6 +160,16 @@ pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
         return Err(crate::strata_prompt::invalid_buffer_length());
     }
     Ok(groups)
+}
+#[cfg(feature="strata-layer-gather")]
+pub(crate) fn validate_layer(map:&[u32],count:usize)->Result<(usize,usize)> {
+ let groups=validate(map,count)?;let mut padded=0usize;
+ for g in 0..groups {
+  if map[LAYER_PREFIX+g] as usize!=padded {return Err(Error::InvalidBufferLength);}
+  padded+=(map[LENGTHS+g] as usize).div_ceil(32)*32;
+ }
+ if padded>LAYER_PADDED_ROWS || map[LAYER_PREFIX+512] as usize!=padded || map[LAYER_PREFIX+groups..LAYER_PREFIX+512].iter().any(|&v|v!=0) {return Err(Error::InvalidBufferLength);}
+ Ok((groups,padded))
 }
 /// Authenticated inverse of the original, fully checked grouped permutation.
 /// RAW is dead after the audited router readback; its existing private view
@@ -327,6 +346,36 @@ mod native_route_layout_tests {
         let map = group(&packet(9), 9).unwrap();
         assert!(ordered_inverse(&map, 8).is_err());
         assert!(ordered_inverse(&map[..MAP_WORDS - 1], 9).is_err());
+    }
+    #[cfg(feature="strata-layer-gather")]
+    #[test]
+    fn layer_gather_padded_prefix_preserves_routes_inverse_and_rejects_corruption() {
+        for count in [1,149,4096] {
+            let original=packet(count);
+            for sorted in [false,true] {
+                let map=group_with_order(&original,count,sorted).unwrap();
+                let (n,padded)=validate_layer(&map,count).unwrap();
+                let inverse=ordered_inverse(&map,count).unwrap();
+                let mut cursor=0;
+                for group in 0..n {
+                    assert_eq!(map[LAYER_PREFIX+group] as usize,cursor);
+                    let members=map[LENGTHS+group] as usize;
+                    for member in 0..members {
+                        let ordinal=map[OFFSETS+group] as usize+member;
+                        let route=map[MEMBERS+ordinal] as usize;
+                        assert_eq!(inverse[route] as usize,ordinal);
+                        assert_eq!(original[MEMBERS+route],map[4+group]);
+                    }
+                    cursor+=members.div_ceil(32)*32;
+                }
+                assert_eq!(cursor,padded);assert!(padded<=LAYER_PADDED_ROWS);
+                for index in [LAYER_PREFIX,LAYER_PREFIX+n-1,LAYER_PREFIX+512] {
+                    let mut bad=map.clone();bad[index]=u32::MAX;
+                    assert!(validate_layer(&bad,count).is_err());
+                }
+                if n<512 {let mut bad=map.clone();bad[LAYER_PREFIX+n]=32;assert!(validate_layer(&bad,count).is_err());}
+            }
+        }
     }
     #[test]
     fn actual_moe_descriptors_are_disjoint_from_raw_ring_and_each_other() {

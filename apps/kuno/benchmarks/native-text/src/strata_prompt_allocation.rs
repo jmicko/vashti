@@ -159,7 +159,7 @@ mod tests {
             });
             assert_eq!(actual, ROOT_SIZES);
             assert_eq!(actual.iter().sum::<u64>(), MAIN_BYTES);
-            assert_eq!(3 * ROOT_BYTES - MAIN_BYTES, 1642 * 1024 * 1024);
+            assert_eq!(3 * ROOT_BYTES - MAIN_BYTES, 1642 * 1024 * 1024 - crate::strata_prompt::layout::layer_extra_bytes());
         } else {
             assert!(layout.is_err());
         }

@@ -218,3 +218,80 @@ fn large_cohort_capacity_map_and_closed_role_negatives() {
         assert_eq!(matrix_variant(name,false),None);
     }
 }
+
+#[cfg(feature="kuno-layer-gather")]
+fn layer_program()->Vec<Entry> {
+    let phase=Handle::new(StreamId::current(),780*1024*1024);
+    let persistent=Handle::new(StreamId::current(),756*1024*1024);
+    let view=|owner:&Handle,first:u64,bytes:u64|owner.clone().offset_start(first).offset_end(owner.size()-first-bytes).binding();
+    let map=view(&phase,80*1024*1024+GU_BYTES+PART_BYTES+512*1024+3*256,MAP_BYTES);
+    let xfirst=80*1024*1024+GU_BYTES+PART_BYTES+4*(131072+65536+65536+131072)+6*256;
+    let x=view(&phase,xfirst,56832*2560*2);
+    let h=view(&persistent,20*1024*1024,H);
+    let input=Handle::new(StreamId::current(),WORKING).binding();
+    let fault=Handle::new(StreamId::current(),4).binding();
+    let mut out=vec![Entry{name:"StrataExpertLayerGather",release:false,count:CubeCount::Static(5,40960,1),args:KernelArguments::new().with_buffers(vec![map.clone(),input.clone(),x.clone(),h.clone(),fault.clone()]).with_info(MetadataBindingInfo::custom(packed(&[4096,10,0,40960,0,0,0,0])))}];
+    for group in 0..10 {
+        let mut p=program(&[4096]);
+        let old_map=View::new(&p[0].args.buffers[0]).unwrap();
+        let old_x=View::new(&p[0].args.buffers[2]).unwrap();
+        let old_fault=View::new(&p[0].args.buffers[3]).unwrap();
+        let old_h=View::new(&p.iter().find(|e|e.name=="StrataExpertLargeCohortActivate").unwrap().args.buffers[2]).unwrap();
+        p.remove(0);
+        for e in &mut p {
+            set_word(&mut e.args.info,4,group);set_word(&mut e.args.info,16,group);set_word(&mut e.args.info,13,1);
+            for binding in &mut e.args.buffers {
+                let v=View::new(binding).unwrap();
+                *binding=if v==old_map {map.clone()}else if v==old_x {x.clone()}else if v==old_h {h.clone()}else if v==old_fault {fault.clone()}else{binding.clone()};
+            }
+            if e.name==LARGE {
+                for (i,b) in e.args.buffers.iter().enumerate() {
+                    let len=(b.size_in_used()/if i<2 {8}else{4}) as u32;
+                    set_word(&mut e.args.info,48+i,len);set_word(&mut e.args.info,54+i,len);
+                }
+            }
+        }
+        out.extend(p);
+    }
+    out
+}
+#[cfg(feature="kuno-layer-gather")]
+fn run_layer(p:&[Entry],complete:bool)->Result<NativeStrataExpertGrammarCounts,ServerError> {
+    let mut g=NativeStrataExpertGrammar::default();
+    for e in p {g.launch(e.name,e.release,&e.count,&e.args)?;}
+    if complete {g.finish_batch()}else{g.finish()}
+}
+#[cfg(feature="kuno-layer-gather")]
+#[test]
+fn layer_gather_outer_grammar_retains_real_owners_and_completes_entire_layer() {
+    let p=layer_program();let c=run_layer(&p,true).unwrap();
+    assert_eq!(c.layer_gather_launches,1);assert_eq!(c.large_cohort_groups,10);
+    assert_eq!(c.large_cohort_batches,10);assert_eq!(c.large_cohort_launches,50);
+    assert_eq!(c.launches,51);assert_eq!(c.logical_phases,60);
+    assert!(run_layer(&p[..6],false).is_ok());assert!(run_layer(&p[..6],true).is_err());
+    for i in [0usize,1,2,3,4,5,50] {
+        let mut bad=layer_program();bad.remove(i);assert!(run_layer(&bad,true).is_err());
+    }
+}
+#[cfg(feature="kuno-layer-gather")]
+#[test]
+fn layer_gather_outer_grammar_rejects_local_fallback_alias_and_unbounded_grid() {
+    for (index,value) in [(0,0),(1,0),(2,2),(3,56864),(4,1)] {
+        let mut bad=layer_program();set_word(&mut bad[0].args.info,index,value);assert!(run_layer(&bad,true).is_err());
+    }
+    for grid in [CubeCount::Static(40960*5,1,1),CubeCount::Static(5,40959,1),CubeCount::Static(5,40960,2)] {
+        let mut bad=layer_program();bad[0].count=grid;assert!(run_layer(&bad,true).is_err());
+    }
+    for phase in [1usize,2,3,4,5] {
+        for index in [12usize,13] {let mut bad=layer_program();set_word(&mut bad[phase].args.info,index,if index==12 {1}else{0});assert!(run_layer(&bad,true).is_err());}
+    }
+    for binding in [0usize,2,3,4] {
+        let mut bad=layer_program();let old=&bad[0].args.buffers[binding];bad[0].args.buffers[binding]=Handle::new(old.stream,old.size_in_used()).binding();assert!(run_layer(&bad,true).is_err());
+    }
+    let mut bad=layer_program();bad[1].name="StrataExpertLargeCohortGather";assert!(run_layer(&bad,true).is_err());
+    let mut bad=layer_program();bad[1].name="StrataExpertCohortGather";assert!(run_layer(&bad,true).is_err());
+    let mut bad=layer_program();bad[0].args.buffers[1]=Handle::new(StreamId::current(),4).binding();assert!(run_layer(&bad,true).is_err());
+    let mut bad=layer_program();bad[0].args.buffers[1]=bad[0].args.buffers[3].clone();assert!(run_layer(&bad,true).is_err());
+    let mut bad=layer_program();bad[3].args.buffers[0]=bad[0].args.buffers[3].clone();assert!(run_layer(&bad,true).is_err());
+    let mut bad=layer_program();bad[0].release=true;assert!(run_layer(&bad,true).is_err());
+}

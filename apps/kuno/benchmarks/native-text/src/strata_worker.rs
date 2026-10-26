@@ -318,7 +318,7 @@ async fn serve(
             || memory.memory_heaps[heaps[0]]
                 .size
                 .saturating_sub(budget.heap_usage[heaps[0]])
-                < 31 * 1024 * 1024 * 1024 + 512 * 1024 * 1024
+                < crate::target_lab_build::NATIVE_SHARED_MAIN_BYTES + 512 * 1024 * 1024
         {
             return Err("native_gpu_memory_busy");
         }
@@ -412,6 +412,18 @@ async fn serve(
         // Exercise the new complete producer/reference family first. Every
         // original control still follows; a probe setup failure can be fixed
         // without waiting through the entire original numeric population.
+        #[cfg(feature="strata-layer-gather")]
+        let layer_gather_checks=crate::strata_prompt::layer_gather::public_producers(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_layer_gather_error {e}");"public_layer_gather_failed"})?;
+        #[cfg(feature="strata-layer-gather")]
+        let layer_activation_checks=crate::strata_prompt::experts::regular::public_layer_activations(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_layer_activation_error {e}");"public_layer_activation_failed"})?;
+        #[cfg(feature="strata-layer-gather")]
+        let layer_small_checks=crate::strata_matrix::cohorts::public_layer_small_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_layer_small_error {e}");"public_layer_small_failed"})?;
+        #[cfg(feature="strata-layer-gather")]
+        let layer_regular_large_checks=crate::strata_matrix::cohorts::public_layer_regular_large_pairs(&client,&mut arena)
+            .map_err(|e|{eprintln!("public_layer_regular_large_error {e}");"public_layer_regular_large_failed"})?;
         #[cfg(feature="strata-large-cohorts")]
         let large_producer_checks=crate::strata_prompt::experts::regular::public_large_producers(&client,&mut arena)
             .map_err(|e|{eprintln!("public_large_cohort_producer_error {e}");"public_large_cohort_producer_failed"})?;
@@ -862,6 +874,9 @@ async fn serve(
              report["small_granular_selected"]=cfg!(feature="strata-small-granular").into();
              report["granular_checks"]=granular_checks.into();
              report["granular_pair_checks"]=granular_pair_checks.into();
+             report["layer_gather_selected"]=cfg!(feature="strata-layer-gather").into();
+             #[cfg(feature="strata-layer-gather")]
+             {report["layer_gather_checks"]=layer_gather_checks.into();report["layer_activation_checks"]=layer_activation_checks.into();report["layer_small_checks"]=layer_small_checks.into();report["layer_regular_large_checks"]=layer_regular_large_checks.into();}
              report["large_cohorts_selected"]=cfg!(feature="strata-large-cohorts").into();
              #[cfg(feature="strata-large-cohorts")] {report["large_cohort_producer_checks"]=large_producer_checks.into();report["large_cohort_matrix_checks"]=large_matrix_checks.into();report["large_cohort_dequant_checks"]=large_dequant_checks.into();}
              report["regular_cohorts_selected"]=cfg!(feature="strata-regular-cohorts").into();

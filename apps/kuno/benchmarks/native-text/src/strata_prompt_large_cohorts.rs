@@ -61,6 +61,10 @@ impl LargeOp {
         source = source.replace("var<uniform> p:Params;", "var<uniform> cohort:CohortInfo;\nvar<private> p:Params;\nvar<private> cohort_prefix:u32;\nvar<private> cohort_slot:u32;");
         source.push_str(include_str!("strata_prompt_large_cohort_header.wgsl"));
         source = source.replace("fn main(@builtin(global_invocation_id) id:vec3<u32>) {", "fn main(@builtin(global_invocation_id) id:vec3<u32>) {\n    if !cohort_begin(id.z) {return;}");
+        #[cfg(feature="strata-layer-gather")]
+        if matches!(self,Self::Activate) {
+            source=source.replace("fn main(@builtin(global_invocation_id) id:vec3<u32>) {", "fn main(@builtin(global_invocation_id) actual_id:vec3<u32>) {\n    var id=actual_id;\n    if cohort.base.r7==1u {\n        if cohort.base.r3<1u || cohort.base.r3>8u {atomicOr(&fault[0],128u);return;}\n        var found=false;\n        for(var s=0u;s<8u;s++){if s<cohort.base.r3 {let v=cohort.records[s];if v.y<256u||v.y>4096u||v.z>4096u||((v.y+31u)/32u)*32u>4096u-v.z {atomicOr(&fault[0],128u);return;}let first=v.z*320u;let end=first+((v.y+31u)/32u)*32u*320u;if actual_id.x>=first&&actual_id.x<end {id=vec3<u32>(actual_id.x-first,0u,s);found=true;}}}\n        if !found {return;}\n    }");
+        }
         match self {
             Self::Gather => {
                 source = source.replace("packed[at]=0u", "packed[cohort_prefix*1280u+at]=0u");
@@ -195,6 +199,7 @@ pub(crate) fn launch(
     if matches!(op, LargeOp::Image { .. }) {
         super::quad32::check_hardware(client)?;
     }
+    if matches!(op,LargeOp::Activate) {crate::strata_prefill_profile::count("expert_large_cohort_activation_workgroups",(grid[0]*grid[1]*grid[2]) as u64);}
     args = args.with_info(MetadataBindingInfo::custom(
         words
             .chunks_exact(2)
@@ -248,7 +253,7 @@ pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
         || words[8] <= 2 * words[6]
         || u64::from(words[8]) * 4 * 8 > allocation::RAW_RING_BYTES
         || words[12] > 1
-        || words[13..16] != [0; 3]
+        || words[13] > u32::from(cfg!(feature="strata-layer-gather")) || words[14..16] != [0; 2]
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -340,6 +345,7 @@ pub(super) fn enqueue_unit(
         words[10] = words[10].max(members as u32);
     }
     words[9] = n as u32;
+    words[13]=u32::from(cfg!(feature="strata-layer-gather"));
     validate_words(&words)?;
     #[cfg(any(
         not(feature = "strata-small-quantized-matrix"),
@@ -365,13 +371,18 @@ pub(super) fn enqueue_unit(
         );
     }
 
-    let x = view(&stage[0], 0, X_BYTES)?;
+    let x = {
+        #[cfg(feature="strata-layer-gather")] {super::super::layer_gather::x()?}
+        #[cfg(not(feature="strata-layer-gather"))] {view(&stage[0],0,X_BYTES)?}
+    };
     let h = view(&stage[0], X_BYTES, H_BYTES)?;
     if stage[1].size_in_used() != storage::WORKING_BYTES
         || IMAGE_BYTES * MAX as u64 > stage[1].size_in_used()
     {
         return Err(Error::InvalidBufferLength);
     }
+    #[cfg(not(feature="strata-layer-gather"))]
+    {
     let args = KernelArguments::new().with_buffers(vec![
         owners[0].clone().binding(),
         mixed.unwrap_or_else(|| owners[1].clone()).binding(),
@@ -385,6 +396,7 @@ pub(super) fn enqueue_unit(
         args,
         &words,
     )?;
+    }
     let ps = geometry.projections();
     for down in [false, true] {
         let p = ps[if down { 2 } else { 0 }];
@@ -480,7 +492,7 @@ pub(super) fn enqueue_unit(
             launch(
                 client,
                 LargeOp::Activate,
-                [(words[10] as usize * 320).div_ceil(256), 1, n],
+                [if words[13]==1 {(rows*320).div_ceil(256)}else{(words[10] as usize*320).div_ceil(256)}, 1, if words[13]==1 {1}else{n}],
                 args,
                 &words,
             )?;
@@ -529,7 +541,7 @@ pub(super) fn enqueue_unit(
                     IMAGE_BYTES
                 },
         ),
-        ("expert_cohort_x_owner_bytes", X_BYTES),
+        ("expert_cohort_x_owner_bytes", if cfg!(feature="strata-layer-gather") {0}else{X_BYTES}),
         ("expert_cohort_h_owner_bytes", H_BYTES),
         ("expert_cohort_logical_phases", (n * 6) as u64),
         (

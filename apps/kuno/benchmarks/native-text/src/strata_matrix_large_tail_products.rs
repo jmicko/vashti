@@ -172,6 +172,8 @@ pub(super) fn macro_product<F: Float>(
     member_base: usize,
     total_count: usize,
     packed_prefix: usize,
+    input_prefix: usize,
+    tile_index: usize,
     #[comptime] down: bool,
 ) {
     let mut a = SharedMemory::<Vector<F, Const<4>>>::new(1024usize);
@@ -249,7 +251,7 @@ pub(super) fn macro_product<F: Float>(
         0.0,
     );
     let subgroup = usize::cast_from(UNIT_POS) / 16;
-    let token_base = usize::cast_from(CUBE_POS_Y) * 32;
+    let token_base = tile_index * 32;
     let row_base = usize::cast_from(CUBE_POS_X) * 64;
     // Buffer0 is fully initialized, including every masked tail, before
     // any subgroup reads it. Each lane copies eight consecutive half
@@ -263,7 +265,7 @@ pub(super) fn macro_product<F: Float>(
         rows,
         count,
         weight_first,
-        packed_prefix + member_base,
+        input_prefix + member_base,
         token_base,
         row_base,
         0,
@@ -287,7 +289,7 @@ pub(super) fn macro_product<F: Float>(
                 rows,
                 count,
                 weight_first,
-                packed_prefix + member_base,
+                input_prefix + member_base,
                 token_base,
                 row_base,
                 k + 64,
@@ -413,6 +415,8 @@ pub(super) fn narrow_product<F: Float>(
     member_base: usize,
     total_count: usize,
     packed_prefix: usize,
+    input_prefix: usize,
+    tile_index: usize,
     #[comptime] down: bool,
 ) {
     // SAFETY: the complete current operand stage is initialized before
@@ -470,7 +474,7 @@ pub(super) fn narrow_product<F: Float>(
         c0
     };
     let subgroup = usize::cast_from(UNIT_POS) / 16;
-    let token_base = usize::cast_from(CUBE_POS_Y) * tile;
+    let token_base = tile_index * tile;
     let row_base = usize::cast_from(CUBE_POS_X) * 64;
     if comptime!(direct) {
         // Authentic Gather AND activation zero every inactive row in the
@@ -481,7 +485,7 @@ pub(super) fn narrow_product<F: Float>(
                 input,
                 weight,
                 columns,
-                (packed_prefix + member_base + token_base) * columns / 4,
+                (input_prefix + member_base + token_base) * columns / 4,
                 (weight_first + (row_base + subgroup * 16) * columns) / 4,
                 &a0,
                 &a1,
@@ -493,7 +497,7 @@ pub(super) fn narrow_product<F: Float>(
         } else {
             let mut k = 0usize;
             while k < columns {
-                let af = ((packed_prefix + member_base + token_base) * columns + k) / 4;
+                let af = ((input_prefix + member_base + token_base) * columns + k) / 4;
                 let bf = (weight_first + (row_base + subgroup * 16) * columns + k) / 4;
                 cmma::load(
                     &a0,
@@ -530,7 +534,7 @@ pub(super) fn narrow_product<F: Float>(
             rows,
             count,
             weight_first,
-            packed_prefix + member_base,
+            input_prefix + member_base,
             token_base,
             row_base,
             0,
@@ -552,7 +556,7 @@ pub(super) fn narrow_product<F: Float>(
                     rows,
                     count,
                     weight_first,
-                    packed_prefix + member_base,
+                    input_prefix + member_base,
                     token_base,
                     row_base,
                     k + 64,

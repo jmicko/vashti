@@ -30,7 +30,7 @@ pub(crate) use public_numeric::slot_cases as public_scratch_dequant_numeric;
 mod bulk_budget_tests;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-enum Op {
+pub(super) enum Op {
     Gather,
     Dequant {
         dtype: u32,
@@ -536,6 +536,7 @@ pub(crate) fn enqueue(
                 );
                 for (name, value) in [
                     ("expert_native_unit_releases",receipt.unit_releases),
+                    ("expert_native_layer_gather_launches",receipt.layer_gather_launches),
                     ("expert_native_cohort_groups",receipt.cohort_groups),
                     ("expert_native_cohort_launches",receipt.cohort_launches),
                     ("expert_native_cohort_batches",receipt.cohort_batches),
@@ -712,6 +713,11 @@ fn enqueue_original(
     if let (Some(plan),Some(banks))=(raw_plan.as_mut(),raw_banks.as_ref()) {
         prefetch_raw_units(client,plan,banks,&layer_sources,map,role_bytes)?;
     }
+    #[cfg(feature="strata-layer-gather")]
+    {
+        if raw_plan.is_none() || raw_banks.is_none() {return Err(Error::InvalidFormat("layer gather requires complete cohort plan"));}
+        super::layer_gather::enqueue(client,owners,fault,count,map)?;
+    }
     #[cfg(not(feature = "strata-prefill-miss-ring"))]
     let mut issued = 0;
     let mut group = 0;
@@ -771,6 +777,8 @@ fn enqueue_original(
                 continue;
             }
         }
+        #[cfg(feature="strata-layer-gather")]
+        return Err(Error::InvalidFormat("layer gather forbids legacy unit fallback"));
         legacy_scratch_groups+=1;
         legacy_scratch_slots|=1u8<<(group%2);
         let mut timing = crate::strata_prefill_profile::CpuTimer::new();
@@ -1162,6 +1170,8 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     let original=original.into_iter().chain(regular::sources()).collect::<Vec<_>>();
     #[cfg(feature="strata-large-cohorts")]
     let original=original.into_iter().chain(large::sources()).collect::<Vec<_>>();
+    #[cfg(feature="strata-layer-gather")]
+    let original=original.into_iter().chain(super::layer_gather::sources()).collect::<Vec<_>>();
     original
 }
 

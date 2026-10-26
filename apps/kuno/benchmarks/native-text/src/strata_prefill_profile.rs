@@ -174,6 +174,8 @@ fn native_class(name: &str) -> usize {
         match name {
             "StrataExpertLargeCohortGuDirect8Image"|"StrataExpertLargeCohortDownDirect8Image"=>return 0,
             "StrataExpertLargeCohortGather"=>return 2,
+            #[cfg(feature="strata-layer-gather")]
+            "StrataExpertLayerGather"=>return 2,
             "StrataExpertLargeCohortActivate"=>return 3,
             _=>{}
         }
@@ -450,7 +452,7 @@ pub(crate) struct NativeExpertLayer {
     #[cfg(feature = "strata-copy-cohorts")]
     compact_before: [u64; 2],
     #[cfg(feature = "strata-expert-cohorts")]
-    cohort_before: [u64; 25],
+    cohort_before: [u64; 25+cfg!(feature="strata-layer-gather") as usize],
 }
 impl NativeExpertLayer {
     pub(crate) fn new(start: usize, count: usize, layer: usize) -> Self {
@@ -465,7 +467,7 @@ impl NativeExpertLayer {
                 #[cfg(feature = "strata-copy-cohorts")]
                 compact_before: [0; 2],
                 #[cfg(feature = "strata-expert-cohorts")]
-                cohort_before: [0; 25],
+                cohort_before: [0; 25+cfg!(feature="strata-layer-gather") as usize],
             };
         }
         let selected = NativeSelection {
@@ -495,7 +497,7 @@ impl NativeExpertLayer {
                 #[cfg(feature = "strata-copy-cohorts")]
                 compact_before: [0; 2],
                 #[cfg(feature = "strata-expert-cohorts")]
-                cohort_before: [0; 25],
+                cohort_before: [0; 25+cfg!(feature="strata-layer-gather") as usize],
             };
         }
         let before = native_totals();

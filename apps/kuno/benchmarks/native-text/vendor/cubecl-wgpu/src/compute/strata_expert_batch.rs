@@ -218,7 +218,7 @@ impl WgpuServer {
             }
             #[cfg(feature = "kuno-public-host-clock")]
             clock.mark(2);
-            let logical = grammar.finish()?;
+            let logical = grammar.finish_batch()?;
             #[cfg(feature="kuno-expert-cohorts")]
             self.scheduler.stream(&stream_id).admit_native_expert_cohorts(&scope,&grammar)?;
             let info = self
@@ -308,6 +308,7 @@ impl WgpuServer {
             { receipt.unit_releases = unit_releases; }
             receipt.cohort_launches=logical.cohort_launches;
             receipt.cohort_batches=logical.cohort_batches;
+            receipt.layer_gather_launches=logical.layer_gather_launches;
             receipt.quant_cohort_groups = logical.quant_cohort_groups;
             receipt.quant_cohort_launches = logical.quant_cohort_launches;
             receipt.quant_cohort_batches = logical.quant_cohort_batches;

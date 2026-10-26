@@ -8,6 +8,7 @@ const RAW: u64 = 32 * 1024 * 1024;
 pub(super) struct Cohort {
     words: [u32; 48],
     phase: usize,
+    layer_h:Option<View>,
     families: [bool; 2],
     map: View,
     fault: View,
@@ -75,7 +76,12 @@ fn same(a: &[u32; 48], b: &[u32; 48]) -> bool {
         .all(|i| a[i] == b[i])
 }
 impl Cohort {
-    pub(super) fn start(first: usize, args: &KernelArguments) -> Result<Self, ServerError> {
+    pub(super) fn start(first:usize,args:&KernelArguments)->Result<Self,ServerError>{Self::start_inner(first,args,None)}
+    #[cfg(feature="kuno-layer-gather")]
+    pub(super) fn start_layer(first:usize,args:&KernelArguments,layer:&super::layer_gather::Layer)->Result<Self,ServerError>{
+        Self::start_inner(first,&layer.unit_args(args)?,Some(layer.h))
+    }
+    fn start_inner(first: usize, args: &KernelArguments,layer_h:Option<View>) -> Result<Self, ServerError> {
         let w = values(args)?;
         if args.buffers.len() != 4
             || args.info.data.len() != 24
@@ -95,7 +101,7 @@ impl Cohort {
             || w[8] <= 2 * w[6]
             || u64::from(w[8]) * 4 * 8 > RAW
             || w[12] > 1
-            || w[13..16] != [0; 3]
+            || w[13] != u32::from(layer_h.is_some()) || w[14..16] != [0; 2]
         {
             return Err(batch_fault("native expert cohort header/INFO capacity"));
         }
@@ -140,7 +146,7 @@ impl Cohort {
         let fault = View::new(&args.buffers[3])?;
         if map.used() != MAP_BYTES
             || fault.used() != 4
-            || x.used() != X
+            || x.used() != if layer_h.is_some() {56832*2560*2}else{X}
             || x.first % 256 != 0
             || input.used() < u64::from(w[0]) * 2560 * if w[12] == 1 { 2 } else { 4 }
             || [input, x, fault].iter().any(|v| v.stream != map.stream)
@@ -149,7 +155,8 @@ impl Cohort {
         }
         Ok(Self {
             words: *w,
-            phase: 0,
+            phase: usize::from(layer_h.is_some()),
+            layer_h,
             families,
             map,
             fault,
@@ -381,9 +388,9 @@ impl Cohort {
                 || views[2].used() != H
                 || Some(views[3]) != self.status
                 || views[4] != self.fault
-                || views[2].id != self.x.id
-                || views[2].first != self.x.first + X
-                || views[2].stream != self.x.stream
+                || if let Some(h)=self.layer_h {views[2]!=h}else{
+                    views[2].id!=self.x.id || views[2].first!=self.x.first+X || views[2].stream!=self.x.stream
+                }
             {
                 return Err(batch_fault(
                     "native expert cohort disjoint authentic hidden owner",

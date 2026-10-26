@@ -8,6 +8,7 @@ const RAW: u64 = 32 * 1024 * 1024;
 pub(super) struct Cohort {
     words: [u32; 48],
     phase: usize,
+    layer_h:Option<View>,
     families: [bool; 4],
     map: View,
     fault: View,
@@ -75,7 +76,12 @@ fn same(a: &[u32; 48], b: &[u32; 48]) -> bool {
         .all(|i| a[i] == b[i])
 }
 impl Cohort {
-    pub(super) fn start(first: usize, args: &KernelArguments) -> Result<Self, ServerError> {
+    pub(super) fn start(first:usize,args:&KernelArguments)->Result<Self,ServerError>{Self::start_inner(first,args,None)}
+    #[cfg(feature="kuno-layer-gather")]
+    pub(super) fn start_layer(first:usize,args:&KernelArguments,layer:&super::layer_gather::Layer)->Result<Self,ServerError>{
+        Self::start_inner(first,&layer.unit_args(args)?,Some(layer.h))
+    }
+    fn start_inner(first: usize, args: &KernelArguments,layer_h:Option<View>) -> Result<Self, ServerError> {
         let w = values(args)?;
         if args.buffers.len() != 4
             || args.info.data.len() != 24
@@ -95,7 +101,7 @@ impl Cohort {
             || w[8] <= 2 * w[6]
             || u64::from(w[8]) * 4 * 8 > RAW
             || w[12] > 1
-            || w[13..16] != [0; 3]
+            || w[13] != u32::from(layer_h.is_some()) || w[14..16] != [0; 2]
         {
             return Err(batch_fault("native expert cohort header/INFO capacity"));
         }
@@ -142,7 +148,7 @@ impl Cohort {
         let fault = View::new(&args.buffers[3])?;
         if map.used() != MAP_BYTES
             || fault.used() != 4
-            || x.used() != X
+            || x.used() != if layer_h.is_some() {56832*2560*2}else{X}
             || x.first % 256 != 0
             || input.used() < u64::from(w[0]) * 2560 * if w[12] == 1 { 2 } else { 4 }
             || [input, x, fault].iter().any(|v| v.stream != map.stream)
@@ -151,7 +157,8 @@ impl Cohort {
         }
         Ok(Self {
             words: *w,
-            phase: 0,
+            phase: usize::from(layer_h.is_some()),
+            layer_h,
             families,
             map,
             fault,
@@ -269,7 +276,7 @@ impl Cohort {
                 match tile {128=>n/128,8 if (1..=8).contains(&tail)=>1,
                     16 if (9..32).contains(&tail)=>tail.div_ceil(16),
                     32 if tail>=32=>tail.div_ceil(32),_=>0}
-            }).max().unwrap_or(0);
+            }).fold(0,|a,b|if w[13]==1 {a+b}else{a.max(b)});
             if !super::super::native_expert_batch::native_strata_large_cohort(name)
                 || ![128,8,16,32].contains(&tile)
                 || part_rows==0
@@ -282,7 +289,7 @@ impl Cohort {
                 || w[3] != 0
                 || w[5] != if down { 2 } else { 0 }
                 || w[11] != tile
-                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/columns_per_workgroup && *y==part_rows && *c==z)
+                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/columns_per_workgroup && *y==part_rows && *c==if w[13]==1 {1}else{z})
             {
                 return Err(batch_fault("native expert cohort matrix schema/grid"));
             }
@@ -374,7 +381,9 @@ impl Cohort {
                 || w[3] != 0
                 || w[5] != 0
                 || w[11] != 0
-                || !matches!(count,CubeCount::Static(x,1,c)if *x==(w[10]*320).div_ceil(256) && *c==z)
+                || !matches!(count,CubeCount::Static(x,1,c)if *x==if w[13]==1 {
+                    (0..w[9] as usize).map(|i|w[17+i*4].div_ceil(32)*32*320).sum::<u32>().div_ceil(256)
+                }else{(w[10]*320).div_ceil(256)} && *c==if w[13]==1 {1}else{z})
             {
                 return Err(batch_fault("native expert cohort activation shape"));
             }
@@ -390,9 +399,9 @@ impl Cohort {
                 || views[2].used() != H
                 || Some(views[3]) != self.status
                 || views[4] != self.fault
-                || views[2].id != self.x.id
-                || views[2].first != self.x.first + X
-                || views[2].stream != self.x.stream
+                || if let Some(h)=self.layer_h {views[2]!=h}else{
+                    views[2].id!=self.x.id || views[2].first!=self.x.first+X || views[2].stream!=self.x.stream
+                }
             {
                 return Err(batch_fault(
                     "native expert cohort disjoint authentic hidden owner",

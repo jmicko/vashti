@@ -232,6 +232,7 @@ pub struct NativeStrataExpertBatchReceipt {
     /// Actual completed-unit tasks given terminal release metadata by the
     /// original grammar, returned only after full successful batch enqueue.
     pub unit_releases: usize,
+    pub layer_gather_launches: usize,
     pub cohort_groups:usize,
     pub cohort_launches:usize,
     pub cohort_batches:usize,

@@ -160,6 +160,15 @@ impl Storage {
     pub(crate) fn moe(&self) -> groups::Views {
         self.moe.clone()
     }
+    #[cfg(feature="strata-layer-gather")]
+    pub(crate) fn layer_x(&self) -> Result<Handle> {
+        let status=&self.moe.status;
+        let root_bytes=status.size();
+        let first=status.offset_start.unwrap_or(0)+status.size_in_used()+256;
+        let end=first.checked_add(groups::LAYER_X_BYTES).ok_or(Error::ArithmeticOverflow)?;
+        if first%256!=0 || end.checked_add(256).is_none_or(|v|v>root_bytes) {return Err(Error::InvalidBufferLength);}
+        let mut x=status.clone();x.offset_start=Some(first);x.offset_end=Some(root_bytes-end);Ok(x)
+    }
     pub(crate) fn working(&self) -> [Handle; 3] {
         self.working.clone()
     }
@@ -217,6 +226,8 @@ impl Storage {
         self.qsa.clone()
     }
     pub(crate) fn output(&self, h: &Handle) -> bool {
+        #[cfg(feature="strata-layer-gather")]
+        if self.layer_x().is_ok_and(|x|same_view(h,&x)) {return true;}
         self.gr
             .iter()
             .chain(self.mixed_images.iter())
@@ -451,7 +462,7 @@ mod overlay_tests {
             roots.iter().map(Handle::size_in_used).sum::<u64>(),
             allocation::MAIN_BYTES
         );
-        assert_eq!(allocation::MAIN_BYTES, 1430 * 1024 * 1024);
+        assert_eq!(allocation::MAIN_BYTES, 1430 * 1024 * 1024 + crate::strata_prompt::layout::layer_extra_bytes());
         assert_eq!(roots[2].size_in_used(), 32 * 1024 * 1024);
         assert_eq!(WORKING_BYTES, 80 * 1024 * 1024);
         assert_eq!(groups::GU_BYTES, 20 * 1024 * 1024);
@@ -676,7 +687,7 @@ mod mixed_image_tests {
         let s = storage();
         assert_eq!(
             allocation::ROOT_SIZES,
-            [756 * 1024 * 1024, 642 * 1024 * 1024, 32 * 1024 * 1024]
+            [756 * 1024 * 1024, 642 * 1024 * 1024 + layout::layer_extra_bytes(), 32 * 1024 * 1024]
         );
         assert_eq!(
             s.mixed_images.iter().map(Handle::size_in_used).sum::<u64>(),
@@ -855,6 +866,10 @@ mod allocation_inventory_tests {
             Storage::new(allocation::ROOT_SIZES.map(|n| Handle::new(StreamId { value: 929 }, n)))
                 .unwrap();
         let end = |h: &Handle| (h.offset_start.unwrap_or(0) + h.size_in_used() + 511) & !255;
+        #[cfg(feature="strata-layer-gather")]
+        let layer_views=vec![s.layer_x().unwrap()];
+        #[cfg(not(feature="strata-layer-gather"))]
+        let layer_views:Vec<Handle>=Vec::new();
         let actual = [
             s.gr.iter()
                 .chain(&s.mixed_images)
@@ -867,6 +882,7 @@ mod allocation_inventory_tests {
                 .chain(&s.gdn)
                 .chain(&s.qsa)
                 .chain(s.moe.handles())
+                .chain(layer_views.iter())
                 .map(end)
                 .max()
                 .unwrap(),
@@ -880,7 +896,7 @@ mod allocation_inventory_tests {
         );
         assert_eq!(
             allocation::ROOT_SIZES,
-            [756 * 1024 * 1024, 642 * 1024 * 1024, 32 * 1024 * 1024]
+            [756 * 1024 * 1024, 642 * 1024 * 1024 + layout::layer_extra_bytes(), 32 * 1024 * 1024]
         );
         if cfg!(feature = "strata-intel-core") {
             for bytes in allocation::ROOT_SIZES {

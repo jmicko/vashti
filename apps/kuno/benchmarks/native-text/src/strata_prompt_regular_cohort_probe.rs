@@ -31,6 +31,7 @@ fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     large: bool,
+    layer: bool,
     activate: bool,
     mixed: bool,
     poison: bool,
@@ -69,6 +70,7 @@ fn one(
     words[9] = 8;
     words[10] = *counts.iter().max().unwrap() as u32;
     words[12] = u32::from(mixed);
+    words[13] = u32::from(layer);
     let mut prefix = 0;
     for (i, members) in counts.into_iter().enumerate() {
         if map[516 + first + i] as usize != members {
@@ -184,7 +186,7 @@ fn one(
         {
             use crate::strata_prompt::experts::large::{self,LargeOp};
             large::launch(client,if activate {LargeOp::Activate}else{LargeOp::Gather},
-                [(words[10] as usize*if activate {320usize}else{1280usize}).div_ceil(256),1,8],args,&words)?;
+                [if layer {(prefix as usize*320).div_ceil(256)}else{(words[10] as usize*if activate {320usize}else{1280usize}).div_ceil(256)},1,if layer {1}else{8}],args,&words)?;
         }
     }else{
     launch(
@@ -244,7 +246,7 @@ fn one(
         return Err("public cohort route owner changed".into());
     }
     Ok(
-        serde_json::json!({"family":if large {"large-cohort-paired-original-producer"}else{"regular-cohort-paired-original-producer"},"activate":activate,"mixed_f16_input":mixed,"nonfinite_and_invalid_route":poison,"groups":8,"counts":counts,"original_map_builder_and_validator":true,"actual_original_and_cohort_gpu_programs":true,"bit_mismatches":0,"full_output_words_checked":a.len(),"full_owner_status_fault_sources_and_tail_checked":true,"disjoint_x_hidden":true}),
+        serde_json::json!({"family":if large {"large-cohort-paired-original-producer"}else{"regular-cohort-paired-original-producer"},"activate":activate,"flat_layer_tiles":layer,"mixed_f16_input":mixed,"nonfinite_and_invalid_route":poison,"groups":8,"counts":counts,"original_map_builder_and_validator":true,"actual_original_and_cohort_gpu_programs":true,"bit_mismatches":0,"full_output_words_checked":a.len(),"full_owner_status_fault_sources_and_tail_checked":true,"disjoint_x_hidden":true}),
     )
 }
 pub(crate) fn cases(
@@ -262,10 +264,18 @@ fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,large:b
     let mut reports = Vec::new();
     for (activate, mixed) in [(false, false), (false, true), (true, false)] {
         for poison in [false, true] {
-            let result = one(client, arena, large, activate, mixed, poison);
+            let result = one(client, arena, large, false, activate, mixed, poison);
             arena.reset()?;
             reports.push(result?);
         }
     }
     Ok(reports)
+}
+
+#[cfg(feature="strata-layer-gather")]
+pub(crate) fn layer_activate_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+ if !arena.public_owned_zero_audit_enabled()||arena.buffer_count()!=0 {return Err("layer activation empty audited arena required".into());}
+ let mut out=Vec::new();
+ for poison in [false,true] {let r=one(client,arena,true,true,true,false,poison);arena.reset()?;out.push(r?);}
+ Ok(out)
 }

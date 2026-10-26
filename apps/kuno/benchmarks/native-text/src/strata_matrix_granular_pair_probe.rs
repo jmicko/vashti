@@ -169,6 +169,7 @@ fn one(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
     dual: bool,
+    layer: bool,
     down: bool,
     poison: bool,
 ) -> Checked<serde_json::Value> {
@@ -262,6 +263,10 @@ fn one(
     // The reference is the ACTUAL preceding raw-GU/ordered-DOWN producer.
     // Both programs receive the same authentic mixed eight-slot packed ABI.
     // Tile8 is unchanged; only genuine tile16 switches to the new product.
+    #[cfg(feature="strata-layer-gather")]
+    let layer_input=if layer {crate::strata_prompt::layer_gather::probe_util::input(arena,&map,&words,&input,down)?} else {None};
+    #[cfg(not(feature="strata-layer-gather"))]
+    assert!(!layer);
     for tile in [8usize, 16] {
         words[11] = tile as u32;
         let previous: fn(
@@ -293,10 +298,15 @@ fn one(
     cubecl::future::block_on(client.sync()).map_err(u::fault)?;
     let reference = snapshot(arena, a)?;
     erase_output(client, arena, a)?;
+    words[13]=u32::from(layer);
+    #[cfg(feature="strata-layer-gather")]
+    let selected_src=layer_input.as_ref().map_or(src,|(id,_)|*id);
+    #[cfg(not(feature="strata-layer-gather"))]
+    let selected_src=src;
     for tile in [8usize, 16] {
         words[11] = tile as u32;
         let handles = [
-            u::handle(arena, src)?,
+            u::handle(arena, selected_src)?,
             u::handle(arena, weight)?,
             u::handle(arena, a)?,
             u::handle(arena, map_id)?,
@@ -340,8 +350,10 @@ fn one(
             }
         }
     }
+    #[cfg(feature="strata-layer-gather")]
+    if let Some((id,expected))=&layer_input {crate::strata_prompt::layer_gather::probe_util::source(arena,*id,expected)?;}
     Ok(
-        serde_json::json!({"family":"small-granular-packed-cohort-pair","actual_previous_small_local_carry_reference":true,"actual_new_small_granular_tile16_n64":!dual,"original_tile8_retained":true,"nonfinite_and_invalid_new_slot6":poison,"down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,"actual_dual_cells":dual,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,"nonzero_group_prefix_and_image_slot7":true,"bit_mismatches":0,"full_output_words_checked":checked,"full_owner_status_fault_sources_and_tail_checked":true,"single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,"zeroizing_host_reference_bytes":reference_bytes,"host_reference_limit_bytes":REFERENCE_BYTES,"readback_window_bytes":WINDOW_WORDS*4,"original_arena_budget_bytes":arena.budget_bytes(),"actual_arena_charged_bytes":arena.charged_bytes()}),
+        serde_json::json!({"family":"small-granular-packed-cohort-pair","actual_previous_small_local_carry_reference":true,"actual_new_small_granular_tile16_n64":!dual,"original_tile8_retained":true,"nonfinite_and_invalid_new_slot6":poison,"down":down,"groups":8,"counts":counts,"poison_and_invalid_route":poison,"actual_dual_cells":dual,"layer_gather_input":layer,"actual_previous_and_new_gpu_programs":true,"original_map_builder_and_validator":true,"nonzero_group_prefix_and_image_slot7":true,"bit_mismatches":0,"full_output_words_checked":checked,"full_owner_status_fault_sources_and_tail_checked":true,"single_original_gpu_output_owner":true,"full_output_owner_zero_verified_between_programs":true,"zeroizing_host_reference_bytes":reference_bytes,"host_reference_limit_bytes":REFERENCE_BYTES,"readback_window_bytes":WINDOW_WORDS*4,"original_arena_budget_bytes":arena.budget_bytes(),"actual_arena_charged_bytes":arena.charged_bytes()}),
     )
 }
 pub(crate) fn cases(
@@ -362,7 +374,7 @@ fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bo
     for down in [false, true] {
         for poison in [false, true] {
             let result =
-                one(client, arena, dual, down, poison).map_err(|error| -> Box<dyn std::error::Error> {
+                one(client, arena, dual, false, down, poison).map_err(|error| -> Box<dyn std::error::Error> {
                     format!("public cohort paired down={down} poison={poison}: {error}").into()
                 });
             arena.reset()?;
@@ -370,4 +382,14 @@ fn cases_mode(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena,dual:bo
         }
     }
     Ok(reports)
+}
+
+#[cfg(feature="strata-layer-gather")]
+pub(crate) fn layer_cases(client:&ComputeClient<WgpuRuntime>,arena:&mut PrivateArena)->Checked<Vec<serde_json::Value>> {
+ if !arena.public_owned_zero_audit_enabled()||arena.buffer_count()!=0 {return Err("layer small matrix empty audited arena required".into());}
+ let mut reports=Vec::new();
+ for down in [false,true] {for poison in [false,true] {
+  let r=one(client,arena,true,true,down,poison);arena.reset()?;reports.push(r?);
+ }}
+ Ok(reports)
 }

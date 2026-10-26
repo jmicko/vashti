@@ -9,7 +9,7 @@ pub(crate) fn part_rows(words:&[u32;48],tile:usize)->u32 {
         match tile {128=>n/128,8 if (1..=8).contains(&tail)=>1,
             16 if (9..32).contains(&tail)=>tail.div_ceil(16),
             32 if tail>=32=>tail.div_ceil(32),_=>0}
-    }).max().unwrap_or(0)
+    }).fold(0,|a,b|if words[13]==1 {a+b}else{a.max(b)})
 }
 
 #[cube(launch_unchecked)]
@@ -72,7 +72,85 @@ pub(crate) fn expert_large_cohort(
     #[comptime] down: bool,
     #[comptime] tile: usize,
 ) {
-    let slot = usize::cast_from(CUBE_POS_Z);
+    let mut slot = usize::cast_from(CUBE_POS_Z);
+    let mut tile_index=usize::cast_from(CUBE_POS_Y);
+    if h13==1 {
+        if CUBE_POS_Z!=0 || h9<1 || h9>8 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+        let mut remaining=tile_index;slot=8;
+        if h9>0 {
+            let n=m1;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=0;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if h9>1 {
+            let n=m5;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=1;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if h9>2 {
+            let n=m9;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=2;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if h9>3 {
+            let n=m13;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=3;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if h9>4 {
+            let n=m17;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=4;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if h9>5 {
+            let n=m21;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=5;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if h9>6 {
+            let n=m25;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=6;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if h9>7 {
+            let n=m29;let tail=n%128;
+            let mut tiles=0u32;
+            if comptime!(tile==128) {tiles=n/128;}
+            if comptime!(tile==8) {if tail>0 && tail<=8 {tiles=1;}}
+            if comptime!(tile==16) {if tail>8 && tail<32 {tiles=(tail+15)/16;}}
+            if comptime!(tile==32) {if tail>=32 {tiles=(tail+31)/32;}}
+            if slot==8 {if remaining<usize::cast_from(tiles) {slot=7;tile_index=remaining;}else{remaining-=usize::cast_from(tiles);}}
+        }
+        if slot==8 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+    }
     let mut group = 0u32;
     let mut count = 0u32;
     let mut prefix = 0u32;
@@ -198,18 +276,38 @@ pub(crate) fn expert_large_cohort(
     if comptime!(tile==8) {if tail==0 || tail>8 {terminate!();}}
     if comptime!(tile==16) {if tail<=8 || tail>=32 {terminate!();}}
     if comptime!(tile==32) {if tail<32 {terminate!();}}
-    if usize::cast_from(CUBE_POS_Y)*comptime!(tile)>=piece {terminate!();}
+    if tile_index*comptime!(tile)>=piece {terminate!();}
+    let mut input_prefix=prefix;
+    if h13>comptime!(if cfg!(feature="strata-layer-gather") {1u32}else{0u32}) || h14!=0 || h15!=0 {
+        if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
+    }
+    if h13==1 {
+        let global=usize::cast_from(map[43008+group]);
+        let total=usize::cast_from(map[43520]);
+        let extent=(members+31)/32*32;
+        if total>56832 || global%32!=0 || global>total || extent>total-global {
+            if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
+        }
+        if group==0 {if global!=0 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}}
+        if group+1<usize::cast_from(map[3]) {
+            if usize::cast_from(map[43008+group+1])!=global+extent {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+        } else {if global+extent!=total {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}}
+        if comptime!(!down) {
+            if input.len()!=36372480 {if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();}
+            input_prefix=global;
+        }
+    }
     let weight_first = slot*4915200 + comptime!(if down {3276800usize}else{0usize});
     if comptime!(tile==128) {
         wide_products::wide(input,weight,output,map,status,fault,
             u32::cast_from(columns),u32::cast_from(rows),count,u32::cast_from(weight_first),
-            u32::cast_from(group),u32::cast_from(prefix),u32::cast_from(base),down);
+            u32::cast_from(group),u32::cast_from(prefix),u32::cast_from(input_prefix),u32::cast_from(tile_index),u32::cast_from(base),down);
     } else if comptime!(tile==32) {
         tail_products::macro_product::<f16>(input,weight,columns,rows,tail,weight_first,
-            output,map,status,fault,group,base,members,prefix,down);
+            output,map,status,fault,group,base,members,prefix,input_prefix,tile_index,down);
     } else {
         tail_products::narrow_product::<f16>(input,weight,columns,rows,tail,weight_first,
-            tile,false,output,map,status,fault,group,base,members,prefix,down);
+            tile,false,output,map,status,fault,group,base,members,prefix,input_prefix,tile_index,down);
     }
 }
 
@@ -423,7 +521,7 @@ pub(crate) fn launch(
             CubeCount::Static(
                 (if down { 2560usize } else { 1280usize } / if tile==128 {128}else{64}) as u32,
                 part_rows,
-                words[9],
+                if words[13]==1 {1}else{words[9]},
             ),
             kernel,
             client,
@@ -432,10 +530,29 @@ pub(crate) fn launch(
     crate::strata_prefill_profile::count("expert_large_cohort_matrix_launches",1);
     crate::strata_prefill_profile::count(if tile==128 {"expert_large_cohort_prefix_launches"}else{"expert_large_cohort_tail_launches"},1);
     crate::strata_prefill_profile::count("expert_large_cohort_matrix_workgroups",
-        u64::from(words[2])/if tile==128 {128}else{64}*u64::from(part_rows)*u64::from(words[9]));
+        u64::from(words[2])/if tile==128 {128}else{64}*u64::from(part_rows)*u64::from(if words[13]==1 {1}else{words[9]}));
     Ok(())
 }
 
 #[path="strata_matrix_large_cohort_validation.rs"]
 mod validation;
 pub(crate) use validation::validate_sources;
+
+#[cfg(all(test,feature="strata-layer-gather"))]
+mod layer_tests {
+ use super::*;
+ #[test] fn layer_gather_flat_tiles_cover_only_real_prefix_and_tail_pairs() {
+  for counts in [vec![256usize,257,264,265,287,288,383,511],vec![512;8],vec![4095],vec![4096]] {
+   let mut words=[0u32;48];words[9]=counts.len() as u32;
+   for(i,&n)in counts.iter().enumerate(){words[17+4*i]=n as u32;}
+   for tile in [128usize,8,16,32] {
+    let per=|n:usize|match tile {128=>n/128,8 if (1..=8).contains(&(n%128))=>1,16 if (9..32).contains(&(n%128))=>(n%128).div_ceil(16),32 if n%128>=32=>(n%128).div_ceil(32),_=>0};
+    words[13]=0;assert_eq!(part_rows(&words,tile) as usize,counts.iter().copied().map(per).max().unwrap());
+    words[13]=1;let actual=part_rows(&words,tile) as usize;let expected=counts.iter().copied().map(per).sum::<usize>();assert_eq!(actual,expected);
+    let mut visits=Vec::new();
+    for y in 0..actual {let mut remaining=y;let mut found=None;for(slot,&n)in counts.iter().enumerate(){let n=per(n);if remaining<n {found=Some((slot,remaining));break;}remaining-=n;}visits.push(found.unwrap());}
+    let oracle=counts.iter().enumerate().flat_map(|(s,&n)|(0..per(n)).map(move|i|(s,i))).collect::<Vec<_>>();assert_eq!(visits,oracle);
+   }
+  }
+ }
+}

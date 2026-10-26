@@ -3,7 +3,8 @@
 //! modes retain their existing build/dispatch policies.
 use std::ffi::OsStr;
 
-pub(crate) const NATIVE_SHARED_MAIN_BYTES: u64 = 31 * 1024 * 1024 * 1024;
+pub(crate) const NATIVE_SHARED_MAIN_BYTES: u64 = 31 * 1024 * 1024 * 1024
+    + crate::strata_prompt::layout::layer_extra_bytes();
 const NATIVE_SHARED_DRIVER_MARGIN: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
