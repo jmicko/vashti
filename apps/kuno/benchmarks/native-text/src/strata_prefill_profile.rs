@@ -80,7 +80,17 @@ const MATRIX_FAMILIES: [&str; 8] = [
     "cohort",
     "other_matrix",
 ];
-const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len();
+// Additive static buckets of the SAME completed original timestamp pairs.
+// No new sampling scope, GPU query, fence, runtime selection or private output.
+const MATRIX_TIERS: [&str; 4] = ["small_cohort", "regular_cohort", "large_cohort", "other_matrix"];
+const NATIVE_TOTALS: usize = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len() + MATRIX_TIERS.len();
+fn matrix_tier(name: &str) -> usize {
+    if name.contains("::strata_matrix::cohorts::dual_small::") { 0 }
+    else if name.contains("::strata_matrix::cohorts::dual_regular::")
+        || name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::") { 1 }
+    else if name.contains("::strata_matrix::cohorts::large::expert_large_cohort::") { 2 }
+    else { 3 }
+}
 fn matrix_family(name: &str) -> usize {
     #[cfg(feature="strata-large-cohorts")]
     if name.contains("::strata_matrix::cohorts::large::expert_large_cohort::"){return 6;}
@@ -435,6 +445,9 @@ fn native_totals() -> [(u64, u64); NATIVE_TOTALS] {
             let family = &mut classes[NATIVE_CLASSES.len() + matrix_family(&name)];
             family.0 = family.0.saturating_add(calls);
             family.1 = family.1.saturating_add(ns);
+            let tier = &mut classes[NATIVE_CLASSES.len() + MATRIX_FAMILIES.len() + matrix_tier(&name)];
+            tier.0 = tier.0.saturating_add(calls);
+            tier.1 = tier.1.saturating_add(ns);
         }
     }
     classes
@@ -556,6 +569,11 @@ impl NativeExpertLayer {
                 })
                 .collect();
             record["matrix_families"] = serde_json::json!(matrix_families);
+            let matrix_tiers: BTreeMap<_, _> = MATRIX_TIERS.into_iter().enumerate().map(|(j, name)| {
+                let i = NATIVE_CLASSES.len() + MATRIX_FAMILIES.len() + j;
+                (name, [after[i].0.saturating_sub(before[i].0), after[i].1.saturating_sub(before[i].1)])
+            }).collect();
+            record["matrix_tiers"] = serde_json::json!(matrix_tiers);
             #[cfg(feature = "strata-public-host-clock")]
             {
                 let after = cubecl::wgpu::native_strata_host_capture_profile();
