@@ -1,5 +1,16 @@
 # Kuno and Vashti Coordination
 
+**Current native-engine handoff (2026-10-31):** read the
+[57-line handoff](kuno-handoff-2026-10-31.txt) and
+[worktree disposition](kuno-worktree-disposition-2026-10-31.md).
+The sole engine integration branch is
+`codex/native-level-zero-interop-public-20261027` in
+`/home/jmicko/.codex/worktrees/kuno-level-zero-tiled/vashti`.
+The retained-routing app branch is already cherry-picked there; no merge is
+needed. This main checkout remains the Vashti application workspace. Older
+engine checkpoints below are historical; the R2 candidate is built but has not
+run its runtime qualification. No GPU test or deployment is part of this handoff.
+
 This is the shared handoff between the **Build Kuno inference helper** task
 (Kuno backend) and the **Vashti** task (frontend and application integration).
 Repository contracts and decisions should survive switching tasks; neither task

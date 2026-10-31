@@ -1,0 +1,57 @@
+Kuno handoff for Claude — 2026-10-31
+
+Goal: match Strata's prompt-processing speed with the complete Kuno engine,
+while preserving correct output, thinking, tools, privacy and reliable cleanup.
+
+Use this single native-engine integration branch:
+codex/native-level-zero-interop-public-20261027
+Its checkout is:
+/home/jmicko/.codex/worktrees/kuno-level-zero-tiled/vashti
+It contains the complete assembled engine, cache, retained routing and fixes.
+Do not merge codex/native-retained-routing-app-v161: its changes are already
+cherry-picked here. That branch has no additional application code to integrate.
+The main checkout's image-flow-refinements branch remains the Vashti workspace.
+
+Latest accepted result on the current native path: first prefill 15.95 seconds,
+repeated prefill 8.45 seconds. Strata's target is 5.50 and 5.35 seconds.
+These are the same fixed public prompt workload, not tokens per second.
+An older Vulkan path recorded 7.40 seconds repeated under an older driver;
+it is historical evidence, not the current native or installed result.
+The new candidate has not been timed. We have not matched Strata.
+
+What was in progress: retain real device/session ownership across middle layers,
+keep routing transfers in bounded native buffers, and cache compiled public GPU
+code. All producer, consumer, ownership and cleanup changes are assembled.
+The latest R2 optimized build finished; its runtime qualification has not begun.
+The preceding R1 build passed numerical diagnostics but failed the full gate
+because a reporting guard omitted the routing census. R2 fixes that guard.
+This reporting failure must not be relabeled as a successful model gate.
+
+Very next step, when GPU testing is authorized: qualify the existing R2 build,
+starting with the frozen public-code helper. Then freeze and run the fresh model
+check, complete state comparison, both real abort checks and ordinary comparison.
+Keep the whole coupled implementation; do not select components by isolated speed.
+The downstream runners still contain missing or older artifact pins and must be
+updated from actual successful prerequisite receipts, not bypassed.
+R2 model settings still need root:root ownership and mode 0644 before model runs.
+
+The artifacts and runners are under:
+/media/jmicko/faststore/kuno-development
+The built candidate is native-retained-routing-v161r2-release-20261031.
+Start with run-native-code-helper-v161r2-20261031.py.
+Exact artifact pins and runner status are in RETAINED_ROUTING_V161_INTEGRATION.md
+under apps/kuno/benchmarks/native-sycl in the integration checkout.
+
+Open risks: retained routing has not passed complete runtime/state/abort checks;
+the private-serving SDK erasure qualification is still open; speed is unknown.
+Do not install this public-lab candidate for private requests or change drivers.
+Never persist private prompts, outputs, routes, images or their content hashes.
+Use the existing swap-disabled, core-dump-disabled protected test environment.
+Preserve failed evidence and verify services/admission recover after any test.
+
+Cleanup: all Kuno source and notes are committed; generated Python bytecode was
+discarded. Obsolete clean checkouts were removed without deleting their branches.
+Remaining cache/private-data workspaces are archival, not integration candidates.
+See docs/kuno-worktree-disposition-2026-10-31.md for the complete inventory.
+Main's two unrelated local configuration edits were deliberately left untouched.
+No GPU tests, installation, reset or reboot were performed during this handoff.
