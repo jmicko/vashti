@@ -11,15 +11,19 @@ use std::time::Instant;
 
 type R<T> = std::result::Result<T, String>;
 
-/// (label, tokens, K = input columns, N = output rows)
-pub(crate) const SHAPES: [(&str, usize, usize, usize); 7] = [
-    ("gdn_qkv", 4096, 2560, 10240),
-    ("gdn_gate", 4096, 2560, 6144),
-    ("gdn_out", 4096, 6144, 2560),
-    ("qsa_q", 4096, 2560, 12288),
-    ("router", 4096, 2560, 512),
-    ("shared_gate", 4096, 2560, 640),
-    ("shared_down", 4096, 640, 2560),
+/// (label, tokens, K = input columns, N = output rows, bf16)
+pub(crate) const SHAPES: [(&str, usize, usize, usize, bool); 11] = [
+    ("gdn_qkv", 4096, 2560, 10240, false),
+    ("gdn_gate", 4096, 2560, 6144, false),
+    ("gdn_out", 4096, 6144, 2560, false),
+    ("qsa_q", 4096, 2560, 12288, false),
+    ("shared_gate", 4096, 2560, 640, false),
+    ("shared_down", 4096, 640, 2560, false),
+    ("tail_qkv", 148, 2560, 10240, false),
+    ("router_bf16", 4096, 2560, 512, true),
+    ("hc_down_bf16", 4096, 10240, 320, true),
+    ("hc_up_bf16", 4096, 320, 10240, true),
+    ("alpha_bf16", 4096, 2560, 48, true),
 ];
 
 fn sync(client: &ComputeClient<WgpuRuntime>) -> R<()> {
@@ -61,18 +65,21 @@ pub(crate) fn run(client: &ComputeClient<WgpuRuntime>) -> R<()> {
     let output = client.empty(max_out * 4);
     let fault = client.create_from_slice(&0u32.to_le_bytes());
     let candidate_out = client.empty(max_out * 4);
-    for (label, tokens, k, n) in SHAPES {
-        // Correctness: candidate vs production on identical inputs.
+    for (label, tokens, k, n, bf16) in SHAPES {
+        // Correctness: candidate vs the original chain on identical inputs.
+        let bypass = |on: bool| crate::claude_gemm::BYPASS.store(on, std::sync::atomic::Ordering::Relaxed);
+        bypass(true);
         crate::strata_matrix::dense(
             client,
             [input.clone(), weight.clone(), output.clone(), fault.clone()],
-            tokens, k, n, 0, 0, n, false,
+            tokens, k, n, 0, 0, n, bf16,
         )
         .map_err(|e| format!("{label}: reference: {e:?}"))?;
+        bypass(false);
         let ran = crate::claude_gemm::try_dense(
             client,
             [input.clone(), weight.clone(), candidate_out.clone(), fault.clone()],
-            tokens, k, n, 0, 0, n, false,
+            tokens, k, n, 0, 0, n, bf16,
         )
         .map_err(|e| format!("{label}: candidate: {e:?}"))?;
         if ran {
@@ -102,7 +109,7 @@ pub(crate) fn run(client: &ComputeClient<WgpuRuntime>) -> R<()> {
                 crate::claude_gemm::try_dense(
                     client,
                     [input.clone(), weight.clone(), candidate_out.clone(), fault.clone()],
-                    tokens, k, n, 0, 0, n, false,
+                    tokens, k, n, 0, 0, n, bf16,
                 )
                 .map(|_| ())
                 .map_err(|e| format!("{label}: candidate: {e:?}"))
@@ -134,11 +141,12 @@ pub(crate) fn run(client: &ComputeClient<WgpuRuntime>) -> R<()> {
                 0,
                 0,
                 n,
-                false,
+                bf16,
             )
             .map_err(|e| format!("{label}: dense: {e:?}"))
         };
-        // Warm up (compiles pipelines), then time repeated launches.
+        // Original chain timing. Warm up (compiles pipelines), then time.
+        bypass(true);
         launch()?;
         sync(client)?;
         let reps = 20;
@@ -147,6 +155,7 @@ pub(crate) fn run(client: &ComputeClient<WgpuRuntime>) -> R<()> {
             launch()?;
         }
         sync(client)?;
+        bypass(false);
         let seconds = started.elapsed().as_secs_f64() / reps as f64;
         let tflops = 2.0 * tokens as f64 * k as f64 * n as f64 / seconds / 1e12;
         eprintln!(
