@@ -89,6 +89,24 @@ Kuno must own admission through completion of the upstream operation.
 
 ## 3. Content privacy and persistence
 
+**Intent (clarified by the owner, 2026-10-31):** Kuno is stateless *on disk*.
+The goal is that an administrator of a Vashti deployment has no easy or tempting
+way to read other users' conversations (no stored prompts, no content logs, no
+command or endpoint that prints them). It is not a defense against a malicious
+administrator, who controls the host and network. Therefore:
+
+- Never persist request content to disk, logs, or diagnostics (unchanged below).
+- Request state may live in RAM/VRAM between requests. Cross-turn prompt/prefix
+  (KV) caching in memory is desired for speed.
+- Request state must be reset for correctness before reuse, but read-back
+  verification that freed memory is zero is a test-only check
+  (`KUNO_ZERO_AUDIT=1`), not part of serving. Public model weights need no
+  erasure at close.
+- Content-free persistent caches (compiled GPU code, profiles) are allowed.
+
+Where the detailed rules below demand stricter in-memory erasure or verification,
+this intent takes precedence.
+
 Kuno and its managed workers must not persist inference content. This applies to
 normal execution, background profiling, failure recovery, and diagnostics.
 

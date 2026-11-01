@@ -254,6 +254,8 @@ impl Sources {
         };
         // Incremental ownership makes every construction failure take the same
         // completed-reader closure path as a fully constructed source set.
+        // GPU cache upload and host mirror fill stay sequential: both are bound
+        // by the same disk, so overlapping them measured no gain.
         let step = std::time::Instant::now();
         sources.gpu = Some(Cache::load(client, graph, &sources.plan)?);
         crate::resident_util::public_step("gpu_cache_load", step);

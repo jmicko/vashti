@@ -497,6 +497,16 @@ impl Drop for AuditBytes {
     }
 }
 
+/// Read-back verification of erased memory. Off by default: erasure is still
+/// issued and drained, but the GPU memory is not read back to prove it is zero
+/// (that proof costs seconds per request). Tests enable it explicitly.
+static ZERO_READBACK_AUDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn enable_zero_readback_audit() {
+    ZERO_READBACK_AUDIT.store(true, Ordering::Release);
+}
+pub(crate) fn zero_readback_audit() -> bool {
+    ZERO_READBACK_AUDIT.load(Ordering::Acquire)
+}
 trait OwnedZeroInspection {
     type Lease: AsRef<[u8]>;
     fn read_range(&mut self, slot: usize, first: usize, bytes: usize) -> Result<Self::Lease>;
@@ -1003,7 +1013,9 @@ impl PrivateArena {
             impl TransientCleanup for Native<'_> {
                 fn checkpoint(&mut self) -> Result<()> {
                     self.0
-                        .checkpoint_transient_with_audit(self.0.strict_zero_audit())
+                        .checkpoint_transient_with_audit(
+                            self.0.strict_zero_audit() && zero_readback_audit(),
+                        )
                 }
                 fn erase(&mut self, slot: usize) -> Result<()> {
                     self.0.queue_erase(slot)
@@ -1039,6 +1051,18 @@ impl PrivateArena {
             || self.handles.len() != self.ledger.spans.len()
         {
             return Err(ArenaError::Cleanup);
+        }
+        if !zero_readback_audit() {
+            // Erasure above completed; report its exact owned coverage without
+            // reading the cleared memory back.
+            let bytes = self.ledger.spans.iter().map(|s| s.owned_bytes as u64).sum::<u64>();
+            if bytes != self.ledger.charged as u64 {
+                return Err(ArenaError::Cleanup);
+            }
+            return Ok(OwnedZeroAudit {
+                bytes,
+                buffers: self.handles.len() as u64,
+            });
         }
         struct Native<'a>(&'a PrivateArena);
         impl OwnedZeroInspection for Native<'_> {

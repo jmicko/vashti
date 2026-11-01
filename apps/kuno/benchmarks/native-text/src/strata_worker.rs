@@ -196,6 +196,9 @@ fn run_mode(
     let code_cache = std::env::var_os("KUNO_CODE_CACHE_DIR")
         .map(std::path::PathBuf::from)
         .filter(|dir| dir.is_absolute() && dir.is_dir());
+    if std::env::var_os("KUNO_ZERO_AUDIT").is_some_and(|v| v == "1") {
+        crate::private_arena::enable_zero_readback_audit();
+    }
     let mut runtime_config = cubecl_runtime::config::CubeClRuntimeConfig::default();
     if let Some(dir) = &code_cache {
         runtime_config.compilation.cache =

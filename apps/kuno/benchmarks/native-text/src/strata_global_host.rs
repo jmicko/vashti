@@ -614,7 +614,13 @@ impl Host {
         }
         join(&self.device).map_err(Error::InvalidFormat)?;
         for p in &mut self.pages {
-            if let Some(b) = &p.owner.backing {
+            // Expert and embedding pages hold only public model weights; clearing
+            // 26 GB of them took ~8 s at close. Prompt shadow pages (layer LAYERS)
+            // may have been lent to request processing and are still cleared.
+            let public_weights = p.layer != crate::strata_global_plan::LAYERS;
+            if let Some(b) = &p.owner.backing
+                && !public_weights
+            {
                 let mut mapped = b.map().map_err(Error::InvalidFormat)?;
                 if !mapped.zero_and_audit() {
                     return Err(fail());
