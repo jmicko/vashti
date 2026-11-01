@@ -1200,9 +1200,21 @@ async fn serve(
             receipt[16..24].copy_from_slice(&prompt_ns.to_le_bytes());
             receipt[24..32].copy_from_slice(&total_ns.saturating_sub(prompt_ns).to_le_bytes());
             receipt[32] = u8::from(done.eos);
-            // DONE is only emitted after the engine's checked request erasure.
+            // DONE is delivered as soon as generation completes; the request's
+            // private state is then erased before the next request is read.
             wire::write_response(&mut output, wire::DONE, &receipt)
                 .map_err(|_| "native_worker_pipe_failed")?;
+            {
+                use std::io::Write;
+                output.flush().map_err(|_| "native_worker_pipe_failed")?;
+            }
+            session
+                .erase_completed(&cancel, &mut |phase| {
+                    if public_check {
+                        eprintln!("public_prefill_phase {phase}");
+                    }
+                })
+                .map_err(|_| "native_request_erasure_failed")?;
             load_ns = 0;
             if prefill_check.is_some() && public_index < 2 {
                 public_index += 1;

@@ -1205,6 +1205,7 @@ pub(crate) fn run(
                             Ok(())
                         };
                         let first = session.run(first, &cancel, &mut deliver, phases)?;
+                        session.erase_completed(&cancel, phases)?;
                         if first.outputs != emitted.len() {
                             return Err(crate::strata_engine::Failure::Inference);
                         }
@@ -1224,6 +1225,7 @@ pub(crate) fn run(
                             },
                             phases,
                         )?;
+                        session.erase_completed(&cancel, phases)?;
                         if second.outputs != emitted.len()
                             || *expected != *emitted
                             || first.eos != second.eos

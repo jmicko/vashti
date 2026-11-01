@@ -217,7 +217,11 @@ pub(crate) unsafe fn execute<'m, 'f>(
             request,
             cancel,
             phase,
-            |session, request, phase| session.run(request, cancel, emit, phase),
+            |session, request, phase| {
+                let done = session.run(request, cancel, emit, phase)?;
+                session.erase_completed(cancel, phase)?;
+                Ok(done)
+            },
         )
     }
 }
@@ -291,6 +295,8 @@ enum State {
     Loading,
     Cold,
     Running,
+    /// Generation finished; request state not yet erased.
+    Generated,
     Ready,
     Closed,
     Broken,
@@ -303,8 +309,15 @@ impl State {
         *self = Self::Running;
         Ok(())
     }
-    fn completed(&mut self) -> Result<(), Failure> {
+    fn generated(&mut self) -> Result<(), Failure> {
         if *self != Self::Running {
+            return Err(Failure::RecoveryRequired);
+        }
+        *self = Self::Generated;
+        Ok(())
+    }
+    fn completed(&mut self) -> Result<(), Failure> {
+        if *self != Self::Generated {
             return Err(Failure::RecoveryRequired);
         }
         *self = Self::Ready;
@@ -632,10 +645,39 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
             if done.outputs != *delivered {
                 return Err(Failure::Inference);
             }
-            // Retain the actual model owners while erasing completed request
-            // state. A subsequent run must consume these original receipts to
-            // bind its new geometry before prefill; public weights stay owned.
+            // Generation is complete. Request state is erased separately by
+            // `erase_completed`, so the caller can deliver DONE first; no new
+            // request can start until that erasure has succeeded.
             phase("request_private_erasure");
+            Ok(done)
+        });
+        match attempted {
+            Ok(done) => {
+                self.state.generated()?;
+                Ok(done)
+            }
+            Err(failure) => {
+                self.state = State::Broken;
+                self.close()?;
+                Err(failure)
+            }
+        }
+    }
+    /// Erase the completed request's private state, retaining the model owners.
+    /// Must follow every successful `run` before the next `run`. A subsequent
+    /// run consumes these original receipts to bind its new geometry before
+    /// prefill; public weights stay owned.
+    pub(crate) fn erase_completed(
+        &mut self,
+        cancel: &AtomicBool,
+        phase: &mut dyn FnMut(&'static str),
+    ) -> Result<(), Failure> {
+        if self.state != State::Generated || self.request_erasure.is_some() {
+            return Err(Failure::Rejected);
+        }
+        let attempted = checked(|| {
+            let t = self.target.as_mut().ok_or(Failure::Inference)?;
+            let e = self.executor.as_mut().ok_or(Failure::Inference)?;
             phase("draft_private_erasure");
             let draft_erasure = self
                 .draft
@@ -663,13 +705,11 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
                 .check_original(t)
                 .map_err(|_| Failure::RecoveryRequired)?;
             self.request_erasure = Some((target_erasure, draft_erasure));
-            Ok(done)
+            phase("request_erasure_complete");
+            Ok(())
         });
         match attempted {
-            Ok(done) => {
-                self.state.completed()?;
-                Ok(done)
-            }
+            Ok(()) => self.state.completed(),
             Err(failure) => {
                 self.state = State::Broken;
                 self.close()?;
@@ -828,16 +868,23 @@ mod tests {
         state.start(false).unwrap();
         assert!(state.start(false).is_err());
         assert!(state.start(true).is_err());
+        assert!(state.completed().is_err(), "erasure requires finished generation");
+        state.generated().unwrap();
+        assert!(state.start(true).is_err(), "no new request before erasure");
+        assert!(state.generated().is_err());
         state.completed().unwrap();
         for _ in 0..32 {
             assert!(state.start(false).is_err());
             state.start(true).unwrap();
+            assert!(state.start(true).is_err());
+            state.generated().unwrap();
             assert!(state.start(true).is_err());
             state.completed().unwrap();
         }
         for mut terminal in [State::Loading, State::Closed, State::Broken] {
             assert!(terminal.start(false).is_err());
             assert!(terminal.start(true).is_err());
+            assert!(terminal.generated().is_err());
             assert!(terminal.completed().is_err());
         }
     }
