@@ -433,6 +433,10 @@ impl Sources {
         }
         Ok(())
     }
+    /// Whether any role of this layer cell currently streams from HOST.
+    pub(crate) fn cell_streamed(&self, graph: BoundGraph<'_, '_>, layer: usize, cell: usize) -> bool {
+        (0..3).any(|role| self.effective_role(graph, layer, cell, role).is_ok_and(|r| r.3 == 1))
+    }
     fn effective_role(
         &self,
         graph: BoundGraph<'_, '_>,

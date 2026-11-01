@@ -127,6 +127,20 @@ impl OperatorProfile {
             )
         }
         .map_err(|_| fault("native public operator timestamps"))?;
+        // Fixed-public timeline: kernel names and device times only.
+        if std::env::var_os("KUNO_CLAUDE_TIMELINE").is_some() {
+            let first = ticks.iter().copied().min().unwrap_or(0);
+            let rows: Vec<String> = self
+                .names
+                .iter()
+                .zip(ticks.chunks_exact(2))
+                .map(|(name, pair)| {
+                    let at = |t: u64| ((t.wrapping_sub(first) & self.mask) as f64 * self.period / 1000.0).round() as u64;
+                    format!("[\"{}\",{},{}]", name.rsplit("::").next().unwrap_or(name).replace('"', ""), at(pair[0]), at(pair[1]))
+                })
+                .collect();
+            eprintln!("public_timeline [{}]", rows.join(","));
+        }
         let mut totals = profile_totals()
             .lock()
             .map_err(|_| fault("public operator totals"))?;
@@ -3391,7 +3405,7 @@ impl Graph {
         )
         .ok();
         let mut planner =
-            strata_schedule::Planner::for_lane(self.nodes.len(), profiling, self.compute_lane)
+            strata_schedule::Planner::for_lane(self.nodes.len(), profiling && std::env::var_os("KUNO_CLAUDE_TIMELINE").is_none(), self.compute_lane)
                 .map_err(fault)?;
         if let Some(c) = &planned_cache {
             planner
@@ -3463,6 +3477,10 @@ impl Graph {
                     std::sync::atomic::Ordering::Relaxed,
                 );
             }
+        }
+        if profiling && std::env::var_os("KUNO_CLAUDE_TIMELINE").is_some() {
+            let segs: Vec<String> = plan.segments.iter().map(|g| format!("[{},{},{},{},{}]", g.queue(), g.waits[0], g.waits[1], g.waits[2], g.signal)).collect();
+            eprintln!("public_timeline_plan {{\"nodes\":{:?},\"segments\":[{}]}}", plan.node_segments, segs.join(","));
         }
         let classes = classes.and_then(|c| c.finish().ok());
         let class_bytes = classes

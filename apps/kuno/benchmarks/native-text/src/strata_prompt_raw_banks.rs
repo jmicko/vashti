@@ -29,11 +29,19 @@ fn reject() -> Error {
 }
 pub(super) struct Plan {
     units: Zeroizing<Vec<[u16; 2]>>,
+    /// Per unit: bit0 bank, bit1 copies HOST experts. Only copying units
+    /// alternate and occupy the two banks; an all-resident unit binds the
+    /// bank of the preceding copying unit (bank 1 before any) and occupies
+    /// nothing, so it never delays a later bank refill.
+    banks: Zeroizing<Vec<u8>>,
     slots: Zeroizing<Vec<u8>>,
     issued: usize,
     consumed: usize,
     next_group: usize,
     occupied: [Option<usize>; 2],
+    /// Issued, unconsumed all-resident units binding each bank: a bank is
+    /// refilled only after its readers were enqueued.
+    readers: [usize; 2],
     live: usize,
     peak: usize,
     misses: usize,
@@ -76,7 +84,7 @@ impl Plan {
             .capacity()
             .checked_mul(size_of::<[u16; 2]>())
             .and_then(|n| n.checked_add(slots.capacity()))
-            .and_then(|n| n.checked_add(GROUPS)) // caller checks classification capacity <=512
+            .and_then(|n| n.checked_add(2 * GROUPS)) // classification (caller checks <=512) + bank bytes
             .and_then(|n| n.checked_add(size_of::<Self>() + size_of::<Vec<bool>>() + 1024))
             .ok_or_else(reject)?;
         if units.capacity() > GROUPS || slots.capacity() > GROUPS || bytes > HOST_BYTES {
@@ -144,13 +152,29 @@ impl Plan {
             }
             first = end;
         }
+        let mut banks = Zeroizing::new(Vec::new());
+        banks.try_reserve_exact(units.len()).map_err(|_| reject())?;
+        let (mut next, mut last) = (0u8, 1u8);
+        for &[first, end] in units.iter() {
+            let end = (end & !(LEGACY_UNIT | REGULAR_UNIT | LARGE_UNIT)) as usize;
+            let copies = slots[first as usize..end].iter().any(|&v| v != RESIDENT);
+            if copies {
+                banks.push(next | 2);
+                last = next;
+                next ^= 1;
+            } else {
+                banks.push(last);
+            }
+        }
         Ok(Self {
             units,
+            banks,
             slots,
             issued: 0,
             consumed: 0,
             next_group: 0,
             occupied: [None; 2],
+            readers: [0; 2],
             live: 0,
             peak: 0,
             misses,
@@ -163,15 +187,19 @@ impl Plan {
             index,
             first: first as usize,
             end: (end & !(LEGACY_UNIT | REGULAR_UNIT | LARGE_UNIT)) as usize,
-            bank: index % 2,
+            bank: usize::from(*self.banks.get(index).ok_or_else(reject)? & 1),
             legacy: end & LEGACY_UNIT != 0,
             regular: end & REGULAR_UNIT != 0,
             large: end & LARGE_UNIT != 0,
         })
     }
+    fn copies(&self, index: usize) -> bool {
+        self.banks.get(index).is_some_and(|b| b & 2 != 0)
+    }
     fn authenticate(&self, unit: Unit) -> Result<()> {
         if self.unit(unit.index)? != unit
-            || self.occupied[unit.bank] != Some(unit.index)
+            || (self.copies(unit.index) && self.occupied[unit.bank] != Some(unit.index))
+            || unit.index < self.consumed
             || unit.index >= self.issued
         {
             return Err(reject());
@@ -185,7 +213,12 @@ impl Plan {
             return Ok(None);
         }
         let unit = self.unit(self.issued)?;
-        if self.occupied[unit.bank].is_some() {
+        if !self.copies(unit.index) {
+            self.readers[unit.bank] += 1;
+            self.issued += 1;
+            return Ok(Some(unit));
+        }
+        if self.occupied[unit.bank].is_some() || self.readers[unit.bank] != 0 {
             return Ok(None);
         }
         let misses = self.slots[unit.first..unit.end]
@@ -265,7 +298,11 @@ impl Plan {
             .filter(|&&v| v != RESIDENT)
             .count();
         self.live = self.live.checked_sub(misses).ok_or_else(reject)?;
-        self.occupied[unit.bank] = None;
+        if self.copies(unit.index) {
+            self.occupied[unit.bank] = None;
+        } else {
+            self.readers[unit.bank] = self.readers[unit.bank].checked_sub(1).ok_or_else(reject)?;
+        }
         self.consumed += 1;
         self.next_group = next;
         Ok(())
@@ -276,6 +313,7 @@ impl Plan {
             || self.next_group != self.slots.len()
             || self.live != 0
             || self.occupied != [None; 2]
+            || self.readers != [0; 2]
         {
             return Err(reject());
         }
@@ -305,11 +343,13 @@ impl Plan {
     }
     fn erase(&mut self) {
         self.units.zeroize();
+        self.banks.zeroize();
         self.slots.zeroize();
         self.issued.zeroize();
         self.consumed.zeroize();
         self.next_group.zeroize();
         self.occupied.zeroize();
+        self.readers.zeroize();
         self.live.zeroize();
         self.peak.zeroize();
         self.misses.zeroize();

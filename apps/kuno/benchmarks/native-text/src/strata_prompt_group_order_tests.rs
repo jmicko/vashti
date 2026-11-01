@@ -32,7 +32,7 @@ fn row_order_preserves_every_original_route_source_cell_and_within_expert_order(
     for count in [1, 8, 32, 148, 257, ROUTE_CAPACITY] {
         let raw = packet(count);
         let old = group(&raw, count).unwrap();
-        let new = group_for_prefill(&raw, count).unwrap();
+        let new = group_for_prefill(&raw, count, &|_| false).unwrap();
         assert_eq!(route_cells(&old, count), route_cells(&new, count));
         assert_eq!(route_cells(&new, count), raw[MEMBERS..MEMBERS + count * 10]);
         let inv = ordered_inverse(&new, count).unwrap();
@@ -62,7 +62,7 @@ fn rank_ordered_weighted_results_are_bit_exact_for_both_whole_maps() {
     for count in [9, 148, 4096] {
         let raw = packet(count);
         let old = group(&raw, count).unwrap();
-        let new = group_for_prefill(&raw, count).unwrap();
+        let new = group_for_prefill(&raw, count, &|_| false).unwrap();
         let mut sums = Vec::new();
         for map in [&old, &new] {
             let inverse = ordered_inverse(map, count).unwrap();
@@ -99,7 +99,7 @@ fn rank_ordered_weighted_results_are_bit_exact_for_both_whole_maps() {
 #[test]
 fn production_policy_is_explicit_and_new_zeroizing_order_fits_original_scratch_budget() {
     let raw = packet(148);
-    assert_eq!(group_for_prefill(&raw, 148).unwrap().as_slice(), group_with_order(&raw, 148, true).unwrap().as_slice());
+    assert_eq!(group_for_prefill(&raw, 148, &|_| false).unwrap().as_slice(), group_with_order(&raw, 148, true).unwrap().as_slice());
     assert_eq!(group(&raw, 148).unwrap().as_slice(), group_with_order(&raw, 148, false).unwrap().as_slice());
     assert_eq!(ORDER_BYTES, 1024);
     // Includes BOTH raw/readback spans, both map/upload spans, inverse and
@@ -107,8 +107,8 @@ fn production_policy_is_explicit_and_new_zeroizing_order_fits_original_scratch_b
     let conservative = 2 * RAW_WORDS * 4 + 2 * MAP_WORDS * 4 + ROUTES * 4 + 2 * ROUTES + 4 * 512 * size_of::<usize>() + ORDER_BYTES;
     assert!(conservative < HOST_BYTES);
     let src = include_str!("strata_global_moe.rs");
-    assert_eq!(src.matches("groups::group_for_prefill(&raw, count)").count(), 1);
-    let group = src.find("groups::group_for_prefill(&raw, count)").unwrap();
+    assert_eq!(src.matches("groups::group_for_prefill(&raw, count, &streamed)").count(), 1);
+    let group = src.find("groups::group_for_prefill(&raw, count, &streamed)").unwrap();
     let inverse = src[group..].find("groups::ordered_inverse(&map, count)").unwrap();
     let enqueue = src[group..].find("strata_prompt::experts::enqueue(").unwrap();
     assert!(inverse < enqueue);
@@ -121,13 +121,13 @@ fn production_policy_is_explicit_and_new_zeroizing_order_fits_original_scratch_b
 #[test]
 fn row_order_keeps_all_original_packet_rejections_and_deterministic_ties() {
     let raw = packet(148);
-    let good = group_for_prefill(&raw, 148).unwrap();
-    assert_eq!(good.as_slice(), group_for_prefill(&raw, 148).unwrap().as_slice());
-    assert!(group_for_prefill(&raw, 0).is_err());
-    assert!(group_for_prefill(&raw[..raw.len()-1], 148).is_err());
+    let good = group_for_prefill(&raw, 148, &|_| false).unwrap();
+    assert_eq!(good.as_slice(), group_for_prefill(&raw, 148, &|_| false).unwrap().as_slice());
+    assert!(group_for_prefill(&raw, 0, &|_| false).is_err());
+    assert!(group_for_prefill(&raw[..raw.len()-1], 148, &|_| false).is_err());
     for (at, value) in [(0, 147), (1, 1), (2, 149), (3, 1), (LOGICAL, 512), (MEMBERS, 512), (LOGICAL + 1, raw[LOGICAL]), (MEMBERS + 480, (raw[MEMBERS + 480] + 1) % 512)] {
         let mut bad = raw.clone(); bad[at] = value;
-        assert!(group_for_prefill(&bad, 148).is_err(), "invalid field {at}");
+        assert!(group_for_prefill(&bad, 148, &|_| false).is_err(), "invalid field {at}");
         assert!(group(&bad, 148).is_err());
     }
 }

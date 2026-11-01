@@ -95,13 +95,20 @@ fn raw_lookahead_mixed_units_preserve_original_cohorts_and_never_cross_category_
         (13, 14, true),
         (14, 15, false),
     ];
+    // Copying units alternate banks; an all-resident unit reuses the bank
+    // of the preceding copying unit (bank 1 before any).
+    let mut banks = Vec::new();
+    let (mut next, mut last) = (0, 1);
+    for &(first, end, _) in &expected {
+        if host[first..end].iter().any(|&h| h) { banks.push(next); last = next; next ^= 1; } else { banks.push(last); }
+    }
     let mut plan = Plan::new(&members, &host).unwrap();
     for (index, &(first, end, legacy)) in expected.iter().enumerate() {
         while plan.issue_next().unwrap().is_some() {}
         let unit = plan.current(first).unwrap();
         assert_eq!(
             (unit.index, unit.first, unit.end, unit.bank, unit.legacy),
-            (index, first, end, index % 2, legacy)
+            (index, first, end, banks[index], legacy)
         );
         if legacy {
             for group in first..end {
@@ -230,7 +237,7 @@ fn reordered_real_maps_fill_cohorts_without_changing_any_source_slot_or_release_
     use crate::strata_prompt::groups;
     let raw = groups::row_order_tests::packet(4096);
     let mut totals = Vec::new();
-    for map in [groups::group(&raw, 4096).unwrap(), groups::group_for_prefill(&raw, 4096).unwrap()] {
+    for map in [groups::group(&raw, 4096).unwrap(), groups::group_for_prefill(&raw, 4096, &|_| false).unwrap()] {
         let n = groups::validate(&map, 4096).unwrap();
         let members = &map[516..516+n];
         let host = (0..n).map(|g| map[4+g] % 3 != 1).collect::<Vec<_>>();

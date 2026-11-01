@@ -144,6 +144,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             }
             let quality_start = self.position;
             native.run_prompt_full(self, executor, tokens, cancel)?;
+            // Public profile: cumulative snapshot per chunk (counts/ns only).
+            crate::strata_prefill_profile::report();
             if crate::claude_quality::active() {
                 crate::claude_quality::capture(
                     self.arena.client().map_err(u::fault)?,

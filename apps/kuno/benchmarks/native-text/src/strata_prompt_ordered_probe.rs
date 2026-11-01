@@ -20,7 +20,7 @@ fn grouped_policy(count: usize, row_order: bool) -> Result<Zeroizing<Vec<u32>>> 
         raw[1540 + route] = (logical * 13 + 17) % 512;
         raw[groups::LOGICAL + route] = logical;
     }
-    if row_order { groups::group_for_prefill(&raw, count) } else { groups::group(&raw, count) }
+    if row_order { groups::group_for_prefill(&raw, count, &|_| false) } else { groups::group(&raw, count) }
 }
 /// Sparse public initialization uses the genuine original copy kernel and
 /// retains BOTH real owners. Its small source avoids a400MiB host payload.

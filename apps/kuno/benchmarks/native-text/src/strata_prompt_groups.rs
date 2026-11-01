@@ -45,8 +45,10 @@ pub(crate) fn group(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
 /// Production whole-prefill policy. Original numerical fixtures and decode
 /// retain logical order; the SAME authenticated raw packet builds all prefixes,
 /// members and downstream inverse before expert staging can observe this map.
-pub(crate) fn group_for_prefill(raw: &[u32], count: usize) -> Result<Zeroizing<Vec<u32>>> {
-    let map = group_with_order(raw, count, cfg!(feature = "strata-cohort-row-order"))?;
+/// `streamed(cell)`: whether the layer's expert cell streams from HOST; it
+/// only orders groups (copy/compute overlap) and never changes the math.
+pub(crate) fn group_for_prefill(raw: &[u32], count: usize, streamed: &dyn Fn(u32) -> bool) -> Result<Zeroizing<Vec<u32>>> {
+    let map = group_with_streamed(raw, count, cfg!(feature = "strata-cohort-row-order"), Some(streamed))?;
     if cfg!(feature = "strata-cohort-row-order") {
         crate::strata_prefill_profile::count("expert_row_order_layers", 1);
         crate::strata_prefill_profile::count("expert_row_order_groups", u64::from(map[3]));
@@ -55,6 +57,9 @@ pub(crate) fn group_for_prefill(raw: &[u32], count: usize) -> Result<Zeroizing<V
 }
 const ORDER_BYTES: usize = 512 * size_of::<u16>();
 fn group_with_order(raw: &[u32], count: usize, row_order: bool) -> Result<Zeroizing<Vec<u32>>> {
+    group_with_streamed(raw, count, row_order, None)
+}
+fn group_with_streamed(raw: &[u32], count: usize, row_order: bool, streamed: Option<&dyn Fn(u32) -> bool>) -> Result<Zeroizing<Vec<u32>>> {
     if !(1..=ROUTE_CAPACITY).contains(&count)
         || raw.len() != LOGICAL + count * 10
         || raw[..4] != [count as u32, 0, count as u32, 0]
@@ -96,6 +101,15 @@ fn group_with_order(raw: &[u32], count: usize, row_order: bool) -> Result<Zeroiz
             (if n == 0 { usize::MAX } else { n }, id)
         });
     }
+    if let (true, Some(streamed)) = (row_order, streamed) {
+        if std::env::var_os("KUNO_CLAUDE_SORTED_ORDER").is_none() {
+            let mut host = Zeroizing::new([false; 512]);
+            for l in 0..512 {
+                host[l] = lengths[l] != 0 && streamed(cells[l]);
+            }
+            overlap_order(&mut order, &lengths, &host);
+        }
+    }
     let mut n = 0;
     let mut groups = 0;
     for &logical in order.iter() {
@@ -124,6 +138,72 @@ fn group_with_order(raw: &[u32], count: usize, row_order: bool) -> Result<Zeroiz
     }
     validate(&map, count)?;
     Ok(map)
+}
+/// Order groups so the copy queue (HOST-streamed experts) and the compute
+/// queue both stay busy: each tier is cut into cohort-sized runs that are
+/// all-streamed or all-resident (ascending sizes kept), and runs are merged
+/// greedily so cumulative copy time stays just ahead of cumulative compute.
+/// Unit formation, outputs and arithmetic are unchanged (outputs are reduced
+/// in route order). `order` must be sorted by length with unused experts last.
+fn overlap_order(order: &mut [u16; 512], lengths: &[usize; 512], host: &[bool; 512]) {
+    // Measured on B70 (layer 24, 4096 tokens): ~0.137 ms per streamed expert
+    // copy; compute ~0.03 ms per group + 0.0004 ms per route, plus ~0.05 ms
+    // FP16 dequantization for regular/large groups. Units: microseconds.
+    let copy_us = |id: u16| if host[usize::from(id)] { 137 } else { 0 };
+    let compute_us = |id: u16| {
+        let n = lengths[usize::from(id)];
+        30 + n * 4 / 10 + if n >= 32 { 50 } else { 0 }
+    };
+    let used = order.iter().take_while(|&&id| lengths[usize::from(id)] != 0).count();
+    let sorted = *order;
+    let tier = |id: u16| match lengths[usize::from(id)] { n if n < 32 => 0, n if n < 256 => 1, _ => 2 };
+    let mut runs: Vec<Vec<u16>> = Vec::new();
+    for t in 0..3 {
+        for streamed in [true, false] {
+            let ids: Vec<u16> = sorted[..used].iter().copied().filter(|&id| tier(id) == t && host[usize::from(id)] == streamed).collect();
+            let mut i = 0;
+            while i < ids.len() {
+                let mut end = i + 1;
+                if t < 2 {
+                    end = (i + 8).min(ids.len());
+                } else {
+                    let mut rows = lengths[usize::from(ids[i])].div_ceil(32) * 32;
+                    while end < ids.len() && end < i + 8 {
+                        let next = lengths[usize::from(ids[end])].div_ceil(32) * 32;
+                        if rows + next > 4096 { break; }
+                        rows += next;
+                        end += 1;
+                    }
+                }
+                runs.push(ids[i..end].to_vec());
+                i = end;
+            }
+        }
+    }
+    let cost = |run: &[u16]| (run.iter().map(|&id| copy_us(id)).sum::<usize>(), run.iter().map(|&id| compute_us(id)).sum::<usize>());
+    // Copy-heavy runs first in each pick, compute-heavy runs when copies lead.
+    let (mut copy_heavy, mut compute_heavy): (Vec<_>, Vec<_>) = runs.into_iter().partition(|r| { let (c, k) = cost(r); c > k });
+    copy_heavy.reverse();
+    compute_heavy.reverse();
+    // Proportional merge: both queues finish together; copies lead by about
+    // one raw bank (~2 ms) so compute rarely waits for the copy it needs.
+    let total_copy = copy_heavy.iter().chain(&compute_heavy).map(|r| cost(r).0).sum::<usize>().max(1);
+    let total_compute = copy_heavy.iter().chain(&compute_heavy).map(|r| cost(r).1).sum::<usize>().max(1);
+    let lead = 2000usize;
+    let (mut copied, mut computed, mut at) = (0usize, 0usize, 0usize);
+    let mut out = [0u16; 512];
+    while !copy_heavy.is_empty() || !compute_heavy.is_empty() {
+        // copied/total_copy <= (computed + lead)/total_compute, cross-multiplied.
+        let pick_copy = compute_heavy.is_empty()
+            || (!copy_heavy.is_empty() && copied * total_compute <= (computed + lead) * total_copy);
+        let run = if pick_copy { copy_heavy.pop().unwrap() } else { compute_heavy.pop().unwrap() };
+        let (c, k) = cost(&run);
+        copied += c;
+        computed += k;
+        out[at..at + run.len()].copy_from_slice(&run);
+        at += run.len();
+    }
+    order[..used].copy_from_slice(&out[..used]);
 }
 pub(crate) fn validate(map: &[u32], count: usize) -> Result<usize> {
     if !(1..=ROUTE_CAPACITY).contains(&count)

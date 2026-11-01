@@ -642,7 +642,8 @@ impl Workspace {
                 )
             })?;
             boundary.mark("expert_boundary_route_readback_checkpoint");
-            let map = crate::strata_prompt::groups::group_for_prefill(&raw, count).map_err(|error| {
+            let streamed = |cell: u32| sources.cell_streamed(graph, layer, cell as usize);
+            let map = crate::strata_prompt::groups::group_for_prefill(&raw, count, &streamed).map_err(|error| {
                 // Fixed compiled-public diagnostics only. No input, route,
                 // expert ID, tensor value or private-worker observation.
                 if std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
