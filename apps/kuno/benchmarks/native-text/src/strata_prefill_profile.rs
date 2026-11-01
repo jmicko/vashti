@@ -210,7 +210,7 @@ impl NativeSelection {
             && self.request == 3
             && self.start == 0
             && self.count == 4096
-            && self.layer == 24
+            && self.layer == std::env::var("KUNO_CLAUDE_TIMELINE_LAYER").ok().and_then(|v| v.parse().ok()).unwrap_or(24)
     }
 }
 fn native_class(name: &str) -> usize {

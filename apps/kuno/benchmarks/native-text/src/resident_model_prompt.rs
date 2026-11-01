@@ -319,6 +319,9 @@ impl Workspace {
         for layer in 0..LAYERS {
             u::cancel(cancel)?;
             let layer_trace = crate::strata_prefill_profile::FullHostLayer::new(start,count,layer);
+            // Public GPU timeline: sample the whole layer, not just its experts.
+            let whole_layer = std::env::var_os("KUNO_CLAUDE_TIMELINE").is_some();
+            let whole_sample = whole_layer.then(|| crate::strata_prefill_profile::NativeExpertLayer::new(start, count, layer));
             if layer == 1 {
                 if let Some((source, block)) = previous.take() {
                     p::write_handles(
@@ -411,8 +414,8 @@ impl Workspace {
             )?;
             timing.mark("gr_router")?;
             let sources = e.strata_global_sources.as_ref().ok_or_else(error)?.clone();
-            let native_sample =
-                crate::strata_prefill_profile::NativeExpertLayer::new(start, count, layer);
+            let native_sample = (!whole_layer)
+                .then(|| crate::strata_prefill_profile::NativeExpertLayer::new(start, count, layer));
             self.global_moe.as_mut().ok_or_else(error)?.enqueue_prompt(
                 m.graph,
                 &m.arena,
@@ -424,7 +427,9 @@ impl Workspace {
                 cancel,
             )?;
             timing.mark("experts")?;
-            native_sample.finish();
+            if let Some(sample) = native_sample {
+                sample.finish();
+            }
             for (name, index, width) in [
                 ("ffn_gate_shexp.weight", 6, 640),
                 ("ffn_up_shexp.weight", 7, 640),
@@ -496,6 +501,10 @@ impl Workspace {
             }
             timing.mark("shared_expert_merge")?;
             previous = Some((v[0].clone(), v[3].clone()));
+            if let Some(sample) = whole_sample {
+                cubecl::future::block_on(m.arena.client().map_err(u::fault)?.sync()).map_err(u::fault)?;
+                sample.finish();
+            }
             layer_trace.finish();
         }
         if let Some((source, block)) = previous.take() {

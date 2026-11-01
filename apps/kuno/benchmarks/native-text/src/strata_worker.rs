@@ -201,6 +201,8 @@ fn run_mode(
         && matrix_check
         && std::env::var("KUNO_LAB_PUBLIC_QSA_XMX_STAGE_ONLY").as_deref() == Ok("1");
     let worker_started = Instant::now();
+    // Model identity re-checks (stat) at most every 250 ms on hot paths.
+    kuno_text::gguf::set_identity_check_interval(std::time::Duration::from_millis(250));
     use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
     // Optional compiled-code cache: GPU code only, built from model shapes, never
     // request content. Mesa's ISA cache and CubeCL's SPIR-V cache both live under

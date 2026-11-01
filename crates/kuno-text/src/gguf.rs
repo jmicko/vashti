@@ -144,18 +144,40 @@ impl TensorInfo {
 
 struct GgufSource {
     file: Mutex<File>,
+    /// Monotonic ns (since STAT_EPOCH) of the last successful identity check.
+    checked: std::sync::atomic::AtomicU64,
     mapping: OnceLock<memmap2::Mmap>,
     file_len: u64,
     modified: Option<SystemTime>,
     data_offset: u64,
 }
 
+/// Minimum interval between identity re-checks of one source (0 = always).
+/// Serving workers verify identity thousands of times per prompt; they may
+/// set an interval, so a change is still detected within it.
+static STAT_INTERVAL_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn set_identity_check_interval(interval: std::time::Duration) {
+    STAT_INTERVAL_NS.store(interval.as_nanos().min(u64::MAX as u128) as u64, std::sync::atomic::Ordering::Relaxed);
+}
+fn stat_clock() -> u64 {
+    static EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
+    // +1 so a fresh source (checked == 0) is always verified first.
+    EPOCH.get_or_init(std::time::Instant::now).elapsed().as_nanos() as u64 + 1
+}
 impl GgufSource {
     fn check_stat(&self, file: &File) -> Result<()> {
+        use std::sync::atomic::Ordering;
+        let now = stat_clock();
+        let last = self.checked.load(Ordering::Relaxed);
+        if last != 0 && now.saturating_sub(last) < STAT_INTERVAL_NS.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let stat = file.metadata()?;
         if stat.len() != self.file_len || stat.modified().ok() != self.modified {
+            self.checked.store(0, Ordering::Relaxed);
             return Err(Error::FileChanged);
         }
+        self.checked.store(now, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -440,6 +462,7 @@ impl GgufFile {
         }
         Ok(Self {
             sources: vec![GgufSource {
+                checked: std::sync::atomic::AtomicU64::new(0),
                 mapping: OnceLock::new(),
                 file: Mutex::new(file),
                 file_len,

@@ -139,6 +139,7 @@ impl OperatorProfile {
                     format!("[\"{}\",{},{}]", name.rsplit("::").next().unwrap_or(name).replace('"', ""), at(pair[0]), at(pair[1]))
                 })
                 .collect();
+            eprintln!("public_timeline_base {}", (first as f64 * self.period / 1000.0).round() as u64);
             eprintln!("public_timeline [{}]", rows.join(","));
         }
         let mut totals = profile_totals()
@@ -3140,7 +3141,7 @@ impl Graph {
         let compute_count = self.nodes.iter().filter(|n| n.pipeline.is_some()).count();
         #[cfg(feature = "kuno-expert-cohorts")]
         let cohort_witness = self.cohort_witness(compute_count)?;
-        let profiling = profile_active() && compute_count >= 2048;
+        let profiling = profile_active() && (compute_count >= 2048 || std::env::var_os("KUNO_CLAUDE_TIMELINE").is_some());
         #[cfg(feature = "kuno-expert-cohorts")]
         let profiling = profiling || (profile_active() && cohort_witness.is_some());
         #[cfg(feature = "kuno-expert-cohorts")]
