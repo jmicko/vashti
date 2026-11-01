@@ -180,3 +180,91 @@ pub(crate) fn bench(client: &ComputeClient<WgpuRuntime>) -> std::result::Result<
     }
     Ok(())
 }
+
+/// Register-only DPAS throughput: each subgroup loads its fragments once from
+/// shared memory, then runs `iters` x 8 products into 4 (or 8) accumulators.
+#[cube(launch_unchecked)]
+pub fn dpas_peak(output: &mut Array<f32>, iters: u32, #[comptime] eight: bool) {
+    let mut s = SharedMemory::<half::f16>::new(4096usize);
+    let lane = usize::cast_from(PLANE_POS) * 16 + usize::cast_from(UNIT_POS_PLANE);
+    let mut i = lane;
+    while i < 4096 {
+        s[i] = half::f16::cast_from(i % 7) * half::f16::new(0.001);
+        i += 256;
+    }
+    sync_cube();
+    let a0 = unsafe { cmma::Matrix::<half::f16>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1 = unsafe { cmma::Matrix::<half::f16>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let b0 = unsafe { cmma::Matrix::<half::f16>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let b1 = unsafe { cmma::Matrix::<half::f16>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    cmma::load(&a0, &s.to_slice().slice(0, 4096), 16);
+    cmma::load(&a1, &s.to_slice().slice(256, 4096), 16);
+    cmma::load(&b0, &s.to_slice().slice(512, 4096), 16);
+    cmma::load(&b1, &s.to_slice().slice(1024, 4096), 16);
+    let c0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c2 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c3 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c4 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c5 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c6 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c7 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let mut n = 0u32;
+    while n < iters {
+        cmma::execute::<half::f16, half::f16, f32, f32>(&a0, &b0, &c0, &c0);
+        cmma::execute::<half::f16, half::f16, f32, f32>(&a1, &b0, &c1, &c1);
+        cmma::execute::<half::f16, half::f16, f32, f32>(&a0, &b1, &c2, &c2);
+        cmma::execute::<half::f16, half::f16, f32, f32>(&a1, &b1, &c3, &c3);
+        if comptime!(eight) {
+            cmma::execute::<half::f16, half::f16, f32, f32>(&a0, &b0, &c4, &c4);
+            cmma::execute::<half::f16, half::f16, f32, f32>(&a1, &b0, &c5, &c5);
+            cmma::execute::<half::f16, half::f16, f32, f32>(&a0, &b1, &c6, &c6);
+            cmma::execute::<half::f16, half::f16, f32, f32>(&a1, &b1, &c7, &c7);
+        }
+        n += 1;
+    }
+    let sg = usize::cast_from(CUBE_POS_X) * 16 + usize::cast_from(PLANE_POS);
+    let base = sg * 1024;
+    cmma::store(&mut output.slice_mut(base, base + 128), &c0, 16, cmma::MatrixLayout::RowMajor);
+    cmma::store(&mut output.slice_mut(base + 128, base + 256), &c1, 16, cmma::MatrixLayout::RowMajor);
+    cmma::store(&mut output.slice_mut(base + 256, base + 384), &c2, 16, cmma::MatrixLayout::RowMajor);
+    cmma::store(&mut output.slice_mut(base + 384, base + 512), &c3, 16, cmma::MatrixLayout::RowMajor);
+    if comptime!(eight) {
+        cmma::store(&mut output.slice_mut(base + 512, base + 640), &c4, 16, cmma::MatrixLayout::RowMajor);
+        cmma::store(&mut output.slice_mut(base + 640, base + 768), &c5, 16, cmma::MatrixLayout::RowMajor);
+        cmma::store(&mut output.slice_mut(base + 768, base + 896), &c6, 16, cmma::MatrixLayout::RowMajor);
+        cmma::store(&mut output.slice_mut(base + 896, base + 1024), &c7, 16, cmma::MatrixLayout::RowMajor);
+    }
+}
+
+pub(crate) fn dpas_bench(client: &ComputeClient<WgpuRuntime>) -> std::result::Result<(), String> {
+    let groups = 1024u32;
+    let out = client.empty(groups as usize * 16 * 1024 * 4);
+    for eight in [false, true] {
+        for wg in [256u32, 512] {
+            let iters = 4096u32;
+            let launch = || unsafe {
+                dpas_peak::launch_unchecked::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(groups * 256 / wg, 1, 1),
+                    CubeDim::new_1d(wg),
+                    crate::resident_util::raw_arg(out.clone(), out.size_in_used() as usize / 4).unwrap(),
+                    iters,
+                    eight,
+                );
+            };
+            launch();
+            cubecl::future::block_on(client.sync()).map_err(|e| format!("{e:?}"))?;
+            let started = std::time::Instant::now();
+            for _ in 0..5 {
+                launch();
+            }
+            cubecl::future::block_on(client.sync()).map_err(|e| format!("{e:?}"))?;
+            let s = started.elapsed().as_secs_f64() / 5.0;
+            // subgroups x iters x products x (8 x 16 x 16 x 2) flops
+            let flops = (groups * 16) as f64 * iters as f64 * if eight { 8.0 } else { 4.0 } * 4096.0;
+            eprintln!("public_dpas_peak accumulators={} wg={wg} ms={:.3} tflops={:.1}", if eight { 8 } else { 4 }, s * 1e3, flops / s / 1e12);
+        }
+    }
+    Ok(())
+}
