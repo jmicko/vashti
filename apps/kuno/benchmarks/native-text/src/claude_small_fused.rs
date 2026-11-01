@@ -21,8 +21,10 @@ pub(crate) struct Fused {
     pub(crate) down: bool,
 }
 
+/// Fixed-public quality check selects the original f16 path per request.
+pub(crate) static FORCE_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub(crate) fn disabled() -> bool {
-    std::env::var_os("KUNO_CLAUDE_SMALL_OFF").is_some()
+    FORCE_OFF.load(std::sync::atomic::Ordering::Relaxed) || std::env::var_os("KUNO_CLAUDE_SMALL_OFF").is_some()
 }
 
 impl Fused {

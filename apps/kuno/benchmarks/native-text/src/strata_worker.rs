@@ -1058,7 +1058,29 @@ async fn serve(
     let mut output = std::io::stdout().lock();
     let setup_ns = worker_started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
     wire::write_response(&mut output, wire::READY, &[]).map_err(|_| "native_worker_pipe_failed")?;
-    let first = if public_check {
+    // Fixed-public quality check: each public text with int8, then f16, small experts.
+    let quality = public_check && prefill_check == Some(false) && !short_check && crate::claude_quality::requested();
+    let quality_texts = crate::claude_quality::texts();
+    let quality_plan: Vec<(usize, bool)> = if quality {
+        crate::claude_quality::activate();
+        [false, true].iter().flat_map(|&f16| (0..quality_texts.len()).map(move |t| (t, f16))).collect()
+    } else {
+        Vec::new()
+    };
+    let quality_request = |i: usize| wire::Generate {
+        prompt: Zeroizing::new(quality_texts[quality_plan[i].0].bytes.to_vec()),
+        outputs: 1,
+        context: 32768,
+        temperature: 0.,
+        seed: 0,
+        top_k: 20,
+        top_p: 0.95,
+        min_p: 0.,
+    };
+    let mut quality_rows: Vec<Vec<(usize, u32, Vec<f32>)>> = Vec::new();
+    let first = if quality {
+        Some((prepare(quality_request(0), &tokenizer)?, false))
+    } else if public_check {
         let request = wire::Generate {
             // The long-prefix operator profile warms the ordinary prompt path
             // with73 tokens. Its two measured4245-token inputs remain exact.
@@ -1145,6 +1167,11 @@ async fn serve(
         }
         while let Some(request) = current.take() {
             let prompt_count = request.geometry().map_err(|_| "native_request_invalid")?.0;
+            #[cfg(feature = "strata-dequant-direct8")]
+            if quality {
+                crate::strata_prompt::experts::cohorts::fused::FORCE_OFF
+                    .store(quality_plan[quality_rows.len()].1, std::sync::atomic::Ordering::Relaxed);
+            }
             crate::strata_prefill_profile::begin();
             #[cfg(feature = "strata-public-host-clock")]
             if compiled_public_capacity_entry(public_check, prefill_check) {
@@ -1258,6 +1285,30 @@ async fn serve(
                 })
                 .map_err(|_| "native_request_erasure_failed")?;
             load_ns = 0;
+            if quality {
+                let mut rows = crate::claude_quality::take();
+                rows.sort_by_key(|r| r.0);
+                eprintln!("public_quality_request {}", serde_json::json!({"index":quality_rows.len(),"rows":rows.len(),"prompt_tokens":prompt_count}));
+                quality_rows.push(rows);
+                if quality_rows.len() < quality_plan.len() {
+                    current = Some(prepare(quality_request(quality_rows.len()), &tokenizer)?);
+                } else {
+                    let n = quality_texts.len();
+                    // GPU-only comparisons first; the CPU reference is slow.
+                    for (t, text) in quality_texts.iter().enumerate() {
+                        crate::claude_quality::report(&graph, text.name, &quality_rows[t], &quality_rows[n + t], None)
+                            .map_err(|_| "public_quality_report_failed")?;
+                    }
+                    for (t, text) in quality_texts.iter().enumerate().filter(|(_, x)| x.reference) {
+                        let tokens: Vec<u32> = quality_rows[t].iter().map(|r| r.1).take(crate::claude_quality::REFERENCE_TOKENS).collect();
+                        let reference = crate::claude_quality::reference(&graph, &tokens).map_err(|_| "public_quality_reference_failed")?;
+                        let cut = tokens.len();
+                        crate::claude_quality::report(&graph, text.name, &quality_rows[t][..cut], &quality_rows[n + t][..cut], Some(&reference))
+                            .map_err(|_| "public_quality_report_failed")?;
+                    }
+                }
+                continue;
+            }
             if prefill_check.is_some() && public_index < 2 {
                 public_index += 1;
                 current = Some(prepare(

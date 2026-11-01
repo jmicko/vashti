@@ -577,6 +577,16 @@ impl<'a> Qwen4Exp<'a> {
     pub fn sequence(&self, context_limit: usize) -> Result<Sequence> {
         Sequence::new(context_limit, &self.ple_hash, self.binding_id)
     }
+    /// Public-fixture evaluation: output HC mix of one unnormalized carry
+    /// (four 2560-wide streams), the input of the single output head.
+    pub fn output_mixed(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        hidden: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        self.gr_read(executor, hidden, "output_hc", false, cancel).map(|(m, _)| m)
+    }
     fn gr_read(
         &self,
         executor: &mut impl MatrixExecutor,

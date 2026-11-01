@@ -142,7 +142,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             if !p::active() {
                 return Err(error());
             }
+            let quality_start = self.position;
             native.run_prompt_full(self, executor, tokens, cancel)?;
+            if crate::claude_quality::active() {
+                crate::claude_quality::capture(
+                    self.arena.client().map_err(u::fault)?,
+                    &p::outer_workspace()?[native.prompt_final_residual(tokens.len())?],
+                    quality_start,
+                    tokens,
+                )?;
+            }
             let mut timing =
                 crate::strata_prefill_profile::Timer::new(self.arena.client().map_err(u::fault)?)?;
             if let Some(draft) = draft.as_deref_mut() {
