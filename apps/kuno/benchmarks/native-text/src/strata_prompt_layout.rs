@@ -67,7 +67,7 @@ const fn unrounded_roots_for(layer:bool) -> [u64;3] {
         + 4 * (groups::RAW_WORDS + groups::MAP_WORDS + groups::PROB_WORDS + groups::STATUS_WORDS)
             as u64
         + 6 * 256
-        + if layer {groups::LAYER_X_BYTES + 256} else {0};
+        + if layer {groups::LAYER_X_BYTES + 256 + groups::LAYER_Q_BYTES + 256} else {0};
     if moe > phase {
         phase = moe;
     }

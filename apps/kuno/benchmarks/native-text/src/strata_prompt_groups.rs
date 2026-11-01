@@ -18,6 +18,13 @@ pub(crate) const STATUS_WORDS: usize = 131072;
 pub(crate) const LAYER_PREFIX: usize = 43008;
 pub(crate) const LAYER_PADDED_ROWS: usize = ROUTES + 512 * 31;
 pub(crate) const LAYER_X_BYTES: u64 = (LAYER_PADDED_ROWS * 2560 * 2) as u64;
+/// Int8 activations (Strata's numerics): per token 2560 codes (640 words) then
+/// 80 f32 scales; per small-cohort row 640 hidden codes (160 words) + 20 scales.
+pub(crate) const XQ_WORDS_PER_ROW: usize = 720;
+pub(crate) const HQ_WORDS_PER_ROW: usize = 180;
+pub(crate) const XQ_BYTES: u64 = (CAPACITY * XQ_WORDS_PER_ROW * 4) as u64;
+pub(crate) const HQ_BYTES: u64 = (CAPACITY * HQ_WORDS_PER_ROW * 4) as u64;
+pub(crate) const LAYER_Q_BYTES: u64 = XQ_BYTES + HQ_BYTES;
 pub(crate) const GU_BYTES: u64 = (CAPACITY * 1280 * 4) as u64;
 pub(crate) const PART_BYTES: u64 = (ROUTES * 2560 * 4) as u64;
 /// One compiled prompt ABI for actual Rust views and every native shader.

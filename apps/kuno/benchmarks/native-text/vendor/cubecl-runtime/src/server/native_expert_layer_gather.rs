@@ -4,9 +4,14 @@ use alloc::vec::Vec;
 pub(super) const X_BYTES: u64 = 56832 * 2560 * 2;
 const X_FIRST: u64 =
     80 * 1024 * 1024 + GU_BYTES + PART_BYTES + 4 * (131072 + 65536 + 65536 + 131072) + 6 * 256;
+/// Int8 activation region after the layer X ([Xq | Hq], see strata_prompt_groups).
+pub(super) const XQ_BYTES: u64 = 4096 * 720 * 4;
+pub(super) const HQ_BYTES: u64 = 4096 * 180 * 4;
 pub(super) struct Layer {
     pub(super) owners: [Binding; 4],
     pub(super) h: View,
+    /// Set by the layer's single ClaudeQuantX: (Xq, Hq) views.
+    pub(super) q: Option<(View, View)>,
     pub(super) prompt: u32,
     pub(super) half: u32,
     pub(super) groups: usize,
@@ -72,7 +77,8 @@ impl Layer {
             || fault.used() != 4
             || x.used() != X_BYTES
             || x.first != X_FIRST
-            || x.size != 780 * 1024 * 1024
+            // The phase root: layer X plus the int8 activation region.
+            || x.size != 794 * 1024 * 1024
             || map.id != x.id
             || map.size != x.size
             || map.first + map.used() > x.first
@@ -103,11 +109,50 @@ impl Layer {
                 args.buffers[4].clone(),
             ],
             h,
+            q: None,
             prompt: n,
             half,
             groups: groups as usize,
             packed_large,
         })
+    }
+    /// The layer's one int8 activation quantization: whole-prompt input to Xq.
+    pub(super) fn accept_quant(&mut self, release: bool, count: &CubeCount, args: &KernelArguments) -> Result<(), ServerError> {
+        if self.q.is_some()
+            || release
+            || args.buffers.len() != 3
+            || args.info.data.len() != 4
+            || args.info.dynamic_metadata_offset != 0
+            || !args.info.native_parameters.is_empty()
+            || !args.read_dependencies.is_empty()
+            || !args.tensor_maps.is_empty()
+            || word(&args.info, 0)? != self.prompt
+            || word(&args.info, 1)? != self.half
+            || (2..8).any(|i| word(&args.info, i).map_or(true, |v| v != 0))
+            || !grid(count, (self.prompt * 80).div_ceil(256), 1)
+        {
+            return Err(batch_fault("layer int8 quantization schema"));
+        }
+        let input = View::new(&args.buffers[0])?;
+        let q = View::new(&args.buffers[1])?;
+        let fault = View::new(&args.buffers[2])?;
+        let x = View::new(&self.owners[2])?;
+        if input != View::new(&self.owners[1])?
+            || fault != View::new(&self.owners[3])?
+            || q.id != x.id
+            || q.size != x.size
+            || q.first != x.first + x.used() + 256
+            || q.used() != XQ_BYTES + HQ_BYTES
+            || q.stream != x.stream
+        {
+            return Err(batch_fault("layer int8 quantization owners"));
+        }
+        let mut xq = q;
+        xq.end = q.end + HQ_BYTES;
+        let mut hq = q;
+        hq.first = q.first + XQ_BYTES;
+        self.q = Some((xq, hq));
+        Ok(())
     }
     pub(super) fn unit_args(&self, args: &KernelArguments) -> Result<KernelArguments, ServerError> {
         if args.info.dynamic_metadata_offset != 0 || !args.info.native_parameters.is_empty() || word(&args.info, 0)? != self.prompt

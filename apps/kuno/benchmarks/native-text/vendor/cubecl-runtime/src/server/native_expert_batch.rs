@@ -325,6 +325,11 @@ pub struct NativeStrataExpertBatch<K> {
 }
 
 pub(crate) fn batch_fault(reason: &'static str) -> ServerError {
+    // Static, content-free reason (diagnostics only).
+    #[cfg(feature = "std")]
+    if std::env::var_os("KUNO_GRAMMAR_DEBUG").is_some() {
+        std::eprintln!("public_grammar_fault {reason}");
+    }
     ServerError::Generic {
         reason: reason.into(),
         backtrace: BackTrace::capture(),

@@ -221,7 +221,7 @@ fn large_cohort_capacity_map_and_closed_role_negatives() {
 
 #[cfg(feature="kuno-layer-gather")]
 fn layer_program()->Vec<Entry> {
-    let phase=Handle::new(StreamId::current(),780*1024*1024);
+    let phase=Handle::new(StreamId::current(),794*1024*1024);
     let persistent=Handle::new(StreamId::current(),756*1024*1024);
     let view=|owner:&Handle,first:u64,bytes:u64|owner.clone().offset_start(first).offset_end(owner.size()-first-bytes).binding();
     let map=view(&phase,80*1024*1024+GU_BYTES+PART_BYTES+512*1024+3*256,MAP_BYTES);

@@ -28,6 +28,8 @@ pub(super) struct Cohort {
     ordered_down: Option<bool>,
     /// Fused decode+product small path (ClaudeSmallFused*).
     fused: bool,
+    /// The layer's int8 activation owners (Xq, Hq), when quantized.
+    q: Option<(View, View)>,
 }
 
 fn image_variant(name: &str, expected: &str) -> Option<u8> {
@@ -161,7 +163,9 @@ impl Cohort {
     pub(super) fn start(first:usize,args:&KernelArguments)->Result<Self,ServerError>{Self::start_inner(first,args,None)}
     #[cfg(feature="kuno-layer-gather")]
     pub(super) fn start_layer(first:usize,args:&KernelArguments,layer:&super::layer_gather::Layer)->Result<Self,ServerError>{
-        Self::start_inner(first,&layer.unit_args(args)?,Some(layer.h))
+        let mut cohort=Self::start_inner(first,&layer.unit_args(args)?,Some(layer.h))?;
+        cohort.q=layer.q;
+        Ok(cohort)
     }
     fn start_inner(first: usize, args: &KernelArguments,layer_h:Option<View>) -> Result<Self, ServerError> {
         let w = values(args)?;
@@ -256,6 +260,7 @@ impl Cohort {
             quad_images: None,
             ordered_down: None,
             fused: false,
+            q: None,
         })
     }
     fn expected(&self) -> Option<(&'static str, bool, u32)> {
@@ -299,7 +304,7 @@ impl Cohort {
         [
             ("StrataExpertCohortGather", false, 0),
             ("ClaudeSmallFusedGu", false, 0),
-            ("StrataExpertCohortActivate", false, 0),
+            ("ClaudeActivateQ", false, 0),
             ("ClaudeSmallFusedDown", false, 0),
         ]
         .get(self.phase)
@@ -333,7 +338,7 @@ impl Cohort {
             || self.images.is_some_and(|v| v != image)
             || self.grid.is_some_and(|v| v != grid)
             || self.addresses.is_some_and(|v| v != addresses)
-            || input != if down { self.h.ok_or_else(|| batch_fault("native expert fused hidden producer missing"))? } else { self.x }
+            || input != if down { self.h.ok_or_else(|| batch_fault("native expert fused hidden producer missing"))? } else { self.q.ok_or_else(|| batch_fault("native expert fused int8 input"))?.0 }
             || output.used() != if down { PART_BYTES } else { GU_BYTES }
             || status.used() != STATUS_BYTES
         {
@@ -366,6 +371,9 @@ impl Cohort {
         args: &KernelArguments,
     ) -> Result<bool, ServerError> {
         if self.phase == 1 && !self.fused && name == "ClaudeSmallFusedGu" {
+            if self.q.is_none() {
+                return Err(batch_fault("native expert fused cohort without int8 activations"));
+            }
             self.fused = true;
         }
         let (expected, expected_release, tile) = self
@@ -411,6 +419,22 @@ impl Cohort {
         let z = w[9];
         if self.fused && expected.starts_with("ClaudeSmallFused") {
             self.launch_fused(expected == "ClaudeSmallFusedDown", count, args, &w)?;
+        } else if expected == "ClaudeActivateQ" {
+            let (_, hq) = self.q.ok_or_else(|| batch_fault("native expert int8 activation owners"))?;
+            if args.buffers.len() != 5
+                || !args.read_dependencies.is_empty()
+                || w[1] != 2560 || w[2] != 1280 || w[3] != 0 || w[5] != 0 || w[11] != 0
+                || !matches!(count, CubeCount::Static(x, 1, c) if *x == (w[10] * 20).div_ceil(256) && *c == z)
+            {
+                return Err(batch_fault("native expert int8 activation shape"));
+            }
+            let views = [0, 1, 2, 3, 4].map(|i| View::new(&args.buffers[i]));
+            let [map, gu, h, status, fault] = views;
+            let (map, gu, h, status, fault) = (map?, gu?, h?, status?, fault?);
+            if map != self.map || Some(gu) != self.gu || h != hq || Some(status) != self.status || fault != self.fault {
+                return Err(batch_fault("native expert int8 activation owners"));
+            }
+            self.h = Some(h);
         } else if matrix {
             let quant = self.quantized();
             let arrays = if quant { 7 } else { 6 };

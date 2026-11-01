@@ -73,6 +73,15 @@ pub(crate) fn x() -> Result<Handle> {
             .layer_x()
     })
 }
+/// The layer's int8 activation region ([Xq | Hq]).
+pub(crate) fn q() -> Result<Handle> {
+    STAGES.with(|s| {
+        s.borrow()
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .layer_q()
+    })
+}
 pub(crate) fn enqueue(
     client: &ComputeClient<WgpuRuntime>,
     owners: &[Handle; 7],
@@ -104,9 +113,14 @@ pub(crate) fn enqueue(
     #[cfg(feature = "strata-large-packed-tiles")]
     launch_packed(
         client,
-        [owners[0].clone(), source, x, h, fault.clone()],
+        [owners[0].clone(), source.clone(), x, h, fault.clone()],
         &words,
     )?;
+    // Int8 activations for the fused small experts (Strata's numerics).
+    #[cfg(all(feature = "strata-dequant-direct8", feature = "strata-global-image-experts"))]
+    if !super::experts::cohorts::fused::disabled() {
+        super::experts::cohorts::fused::quant_x(client, source, q()?, fault.clone(), count, mixed.is_some())?;
+    }
     #[cfg(not(feature = "strata-large-packed-tiles"))]
     launch(
         client,
@@ -259,7 +273,7 @@ mod tests {
     fn layer_gather_explicit_physical_charge_preserves_expert_budget() {
         assert_eq!(
             allocation::ROOT_SIZES,
-            [756 * 1024 * 1024, 780 * 1024 * 1024, 32 * 1024 * 1024]
+            [756 * 1024 * 1024, 794 * 1024 * 1024, 32 * 1024 * 1024]
         );
         assert_eq!(layout::layer_extra_bytes(), 138 * 1024 * 1024);
         assert_eq!(

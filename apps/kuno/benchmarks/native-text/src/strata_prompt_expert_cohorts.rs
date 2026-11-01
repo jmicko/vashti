@@ -392,7 +392,10 @@ pub(super) fn enqueue_unit(
     let ps = geometry.projections();
     #[cfg(all(feature = "strata-dequant-direct8", feature = "strata-global-image-experts", feature = "strata-layer-gather"))]
     if !fused::disabled() {
-        enqueue_fused(client, &mut words, owners, fault, stage, layer_sources, &x, &h, n, ps)?;
+        let q = super::super::layer_gather::q()?;
+        let xq = view(&q, 0, groups::XQ_BYTES)?;
+        let hq = view(&q, groups::XQ_BYTES, groups::HQ_BYTES)?;
+        enqueue_fused(client, &mut words, owners, fault, stage, layer_sources, &xq, &hq, n, ps)?;
         return Ok(());
     }
     for down in [false, true] {
@@ -560,7 +563,7 @@ fn enqueue_fused(
     words: &mut [u32; WORDS],
     owners: &[Handle; 7], fault: &Handle, stage: &[Handle; 3],
     layer_sources: &crate::strata_global_sources::PromptLayer<'_, '_, '_>,
-    x: &Handle, h: &Handle, n: usize,
+    xq: &Handle, hq: &Handle, n: usize,
     ps: [q::grouped_moe::Projection; 3],
 ) -> Result<()> {
     for down in [false, true] {
@@ -584,7 +587,7 @@ fn enqueue_fused(
             args = crate::strata_intel_core::bind(args, owners[0].stream)?;
             args = layer_sources.bind_image(args)?;
             Ok(args.with_buffers(vec![
-                if down { h.clone() } else { x.clone() }.binding(),
+                if down { hq.clone() } else { xq.clone() }.binding(),
                 if down { owners[3].clone() } else { owners[2].clone() }.binding(),
                 owners[6].clone().binding(),
             ]))
@@ -609,14 +612,24 @@ fn enqueue_fused(
             words[3] = 0;
             words[5] = 0;
             words[11] = 0;
-            let args = KernelArguments::new().with_buffers(vec![
-                owners[0].clone().binding(),
-                owners[2].clone().binding(),
-                h.clone().binding(),
-                owners[6].clone().binding(),
-                fault.clone().binding(),
-            ]);
-            launch(client, CohortOp::Activate, [(words[10] as usize * 320).div_ceil(256), 1, n], args, words)?;
+            let args = KernelArguments::new()
+                .with_buffers(vec![
+                    owners[0].clone().binding(),
+                    owners[2].clone().binding(),
+                    hq.clone().binding(),
+                    owners[6].clone().binding(),
+                    fault.clone().binding(),
+                ])
+                .with_info(MetadataBindingInfo::custom(
+                    words.chunks_exact(2).map(|v| u64::from(v[0]) | (u64::from(v[1]) << 32)).collect(),
+                ));
+            unsafe {
+                client.launch_unchecked(
+                    Box::new(fused::ActivateQ),
+                    CubeCount::Static((words[10] * 20).div_ceil(256), 1, n as u32),
+                    args,
+                );
+            }
         }
     }
     crate::strata_prefill_profile::count("expert_small_fused_groups", n as u64);

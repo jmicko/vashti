@@ -101,6 +101,8 @@ pub struct NativeStrataExpertGrammarCounts {
     pub regular_cohort_batches:usize,
     pub regular_cohort_launches:usize,
     pub layer_gather_launches:usize,
+    /// ClaudeQuantX (int8 activations), at most one per layer.
+    pub quant_x_launches: usize,
     pub launches: usize,
     pub logical_phases: usize,
     pub matrix_pieces: usize,
@@ -487,6 +489,18 @@ impl NativeStrataExpertGrammar {
             self.counts.launches += 1;
             return Ok(());
         }
+        #[cfg(feature="kuno-layer-gather")]
+        if name == "ClaudeQuantX" {
+            if self.groups != 0 || self.phase != 0 || self.pending.is_some() || self.cohort.is_some()
+                || self.regular_cohort.is_some() || self.large_cohort.is_some() {
+                return Err(batch_fault("layer int8 quantization must precede every cohort"));
+            }
+            self.layer.as_mut().ok_or_else(|| batch_fault("layer int8 quantization outside a layer"))?
+                .accept_quant(release, count, args)?;
+            self.counts.quant_x_launches += 1;
+            self.counts.launches += 1;
+            return Ok(());
+        }
         if name.starts_with("StrataExpertLayerPackedGather") {
             return Err(batch_fault("packed layer producer outside its genuine scope"));
         }
@@ -832,7 +846,7 @@ impl NativeStrataExpertGrammar {
             || self.groups == 0
             || self.counts.logical_phases != self.groups * 6
             || self.counts.matrix_pieces != self.groups * 2 + self.counts.tail_pieces
-            || self.counts.launches != (self.groups-self.counts.cohort_groups) * 4 + self.counts.matrix_pieces-self.counts.cohort_groups*2+self.counts.cohort_launches+self.counts.layer_gather_launches
+            || self.counts.launches != (self.groups-self.counts.cohort_groups) * 4 + self.counts.matrix_pieces-self.counts.cohort_groups*2+self.counts.cohort_launches+self.counts.layer_gather_launches+self.counts.quant_x_launches
         {
             return Err(batch_fault(
                 "native expert incomplete original matrix phase",

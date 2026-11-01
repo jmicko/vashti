@@ -353,7 +353,7 @@ fn quad_regular_disabled_identity_cannot_enter_historical_regular_grammar(){asse
 // reuse, not the REG operand format or actual owning views.
 #[cfg(feature="kuno-regular-four-cell")]
 fn quad_layer_program(packed_large: bool) -> Vec<Entry> {
-    let phase = Handle::new(StreamId::current(),780*1024*1024);
+    let phase = Handle::new(StreamId::current(),794*1024*1024);
     let persistent = Handle::new(StreamId::current(),756*1024*1024);
     let view = |owner: &Handle, first: u64, bytes: u64| owner.clone()
         .offset_start(first).offset_end(owner.size()-first-bytes).binding();

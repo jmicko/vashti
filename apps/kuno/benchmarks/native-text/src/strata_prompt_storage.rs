@@ -169,6 +169,16 @@ impl Storage {
         if first%256!=0 || end.checked_add(256).is_none_or(|v|v>root_bytes) {return Err(Error::InvalidBufferLength);}
         let mut x=status.clone();x.offset_start=Some(first);x.offset_end=Some(root_bytes-end);Ok(x)
     }
+    /// Int8 activation region after the layer X: [Xq | Hq].
+    #[cfg(feature="strata-layer-gather")]
+    pub(crate) fn layer_q(&self) -> Result<Handle> {
+        let x=self.layer_x()?;
+        let root_bytes=x.size();
+        let first=x.offset_start.unwrap_or(0)+x.size_in_used()+256;
+        let end=first.checked_add(groups::LAYER_Q_BYTES).ok_or(Error::ArithmeticOverflow)?;
+        if first%256!=0 || end>root_bytes {return Err(Error::InvalidBufferLength);}
+        let mut q=x;q.offset_start=Some(first);q.offset_end=Some(root_bytes-end);Ok(q)
+    }
     pub(crate) fn working(&self) -> [Handle; 3] {
         self.working.clone()
     }
