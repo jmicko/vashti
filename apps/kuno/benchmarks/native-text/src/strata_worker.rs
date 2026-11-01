@@ -149,7 +149,24 @@ fn run_mode(
         && std::env::var("KUNO_LAB_PUBLIC_QSA_XMX_STAGE_ONLY").as_deref() == Ok("1");
     let worker_started = Instant::now();
     use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
-    CubeClRuntimeConfig::set(Default::default());
+    // Optional compiled-code cache: GPU code only, built from model shapes, never
+    // request content. Mesa's ISA cache and CubeCL's SPIR-V cache both live under
+    // it. Only the fixed-public check may write it (see the filesystem policy).
+    let code_cache = std::env::var_os("KUNO_CODE_CACHE_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|dir| dir.is_absolute() && dir.is_dir());
+    let mut runtime_config = cubecl_runtime::config::CubeClRuntimeConfig::default();
+    if let Some(dir) = &code_cache {
+        runtime_config.compilation.cache =
+            Some(cubecl_runtime::config::cache::CacheConfig::File(dir.join("cubecl")));
+        // SAFETY: still single-threaded startup; no runtime thread exists yet.
+        unsafe {
+            std::env::remove_var("MESA_SHADER_CACHE_DISABLE");
+            std::env::set_var("MESA_SHADER_CACHE_DIR", dir.join("mesa"));
+            std::env::set_var("MESA_SHADER_CACHE_MAX_SIZE", "4G");
+        }
+    }
+    CubeClRuntimeConfig::set(runtime_config);
     std::panic::set_hook(Box::new(|_| eprintln!("native_worker_failed")));
     protection::protect_process().map_err(|_| "native_worker_protection_failed")?;
     protection::require_no_swap().map_err(|_| "native_worker_requires_no_swap")?;
@@ -224,7 +241,12 @@ fn run_mode(
     {
         return Err("native_settings_unsupported");
     }
-    protection::restrict_filesystem().map_err(|_| "native_worker_filesystem_protection_failed")?;
+    // Only the fixed-public check may populate a compiled shader cache; it
+    // compiles GPU code from public fixtures and writes no request content.
+    // Serving workers keep the fully read-only policy and only read cache hits.
+    let shader_cache_writer = if public_check { code_cache.clone() } else { None };
+    protection::restrict_filesystem_with_writable(shader_cache_writer.as_deref())
+        .map_err(|_| "native_worker_filesystem_protection_failed")?;
     for artifact in &settings.shards {
         verify(artifact, trust_identity)?;
     }

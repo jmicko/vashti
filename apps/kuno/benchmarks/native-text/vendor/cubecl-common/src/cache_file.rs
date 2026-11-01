@@ -253,6 +253,9 @@ impl CacheFile {
 /// when the lock is outdated.
 struct FileLock {
     is_lock: bool,
+    /// Set when the lock file cannot be created for permission reasons (a
+    /// read-only or sandboxed cache): reads proceed unlocked, nothing is removed.
+    read_only: bool,
     path_lock: PathBuf,
     lock_max_duration: Duration,
 }
@@ -271,6 +274,7 @@ impl FileLock {
         Self {
             path_lock,
             is_lock: false,
+            read_only: false,
             lock_max_duration,
         }
     }
@@ -322,6 +326,13 @@ impl FileLock {
                             std::thread::sleep(Duration::from_millis(30));
                         }
                     }
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem => {
+                        // Read-only cache (e.g. a sandboxed reader): no peer can
+                        // be writing through us, so read without a lock file.
+                        self.read_only = true;
+                        self.is_lock = true;
+                        return true;
+                    }
                     _ => {
                         if !other_error_logged {
                             let parent_exists =
@@ -358,7 +369,7 @@ impl FileLock {
     }
 
     pub fn unlock(&mut self) {
-        if self.is_lock {
+        if self.is_lock && !self.read_only {
             fs::remove_file(&self.path_lock).ok();
         }
 

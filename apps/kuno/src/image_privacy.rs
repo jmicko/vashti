@@ -71,6 +71,15 @@ pub fn require_landlock() -> Result<(), &'static str> {
 }
 
 pub fn restrict_filesystem() -> Result<(), &'static str> {
+    restrict_filesystem_with_writable(None)
+}
+
+/// As `restrict_filesystem`, but additionally permits writes beneath exactly one
+/// existing directory. Only fixed-public cache writers may pass a directory
+/// (for example a compiled shader cache); serving workers must pass `None`.
+pub fn restrict_filesystem_with_writable(
+    writable: Option<&std::path::Path>,
+) -> Result<(), &'static str> {
     require_landlock()?;
     const WRITE: u64 = 1 << 1;
     const WRITE_OPERATIONS: u64 = WRITE | (((1u64 << 15) - 1) & !((1u64 << 4) - 1));
@@ -132,6 +141,22 @@ pub fn restrict_filesystem() -> Result<(), &'static str> {
             != 0
         {
             return Err("image_device_rules_failed");
+        }
+    }
+    if let Some(directory) = writable {
+        let dir = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(directory)
+            .map_err(|_| "image_cache_rules_failed")?;
+        let rule = PathRule {
+            allowed_access: WRITE_OPERATIONS,
+            parent_fd: dir.as_raw_fd(),
+        };
+        if unsafe { libc::syscall(libc::SYS_landlock_add_rule, rules.as_raw_fd(), 1, &rule, 0) }
+            != 0
+        {
+            return Err("image_cache_rules_failed");
         }
     }
     // CUDA's pthread_setname_np path opens a newly created thread's comm with
