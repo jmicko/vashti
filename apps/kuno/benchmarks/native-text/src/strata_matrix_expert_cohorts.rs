@@ -733,6 +733,8 @@ pub(crate) use granular_pair_probe::cases as public_granular_pairs;
 pub(crate) mod regular {use super::*;include!("strata_matrix_regular_cohort.rs");}
 #[cfg(feature="strata-regular-four-cell")]
 pub(crate) mod quad_regular {use super::*;include!("strata_matrix_quad_regular_cohort.rs");}
+#[cfg(feature="strata-regular-four-cell")]
+pub(crate) mod claude_regular {use super::*;use half::f16;include!("claude_expert_regular.rs");}
 #[cfg(feature="strata-small-dual-cells")]
 pub(crate) mod dual_regular {use super::*;include!("strata_matrix_dual_regular_cohort.rs");}
 #[cfg(feature="strata-small-dual-cells")]

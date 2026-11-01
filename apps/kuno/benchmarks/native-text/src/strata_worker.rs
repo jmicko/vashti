@@ -50,6 +50,12 @@ pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
     run_mode(path, true, None, false, false, false, false, false, false, false)
 }
 static DENSE_BENCH: AtomicBool = AtomicBool::new(false);
+static REGULAR_ONLY: AtomicBool = AtomicBool::new(false);
+/// Fixed-public regular-cohort GPU numerics only (subset of the matrix check).
+pub(crate) fn public_regular_check(path: &Path) -> Result<()> {
+    REGULAR_ONLY.store(true, std::sync::atomic::Ordering::Release);
+    run_mode(path, true, None, true, false, false, false, false, false, false)
+}
 /// Fixed-public dense GEMM benchmark: synthetic data, no model load or requests.
 pub(crate) fn public_dense_bench(path: &Path) -> Result<()> {
     DENSE_BENCH.store(true, std::sync::atomic::Ordering::Release);
@@ -514,6 +520,18 @@ async fn serve(
                 "public_prefill_matrix_timing {}",
                 serde_json::json!({"cases":cases,"closed":true,"content_saved":false})
             );
+            return Ok(());
+        }
+        #[cfg(feature="strata-regular-four-cell")]
+        if REGULAR_ONLY.load(std::sync::atomic::Ordering::Acquire) {
+            let started = Instant::now();
+            let checks = crate::strata_matrix::cohorts::public_quad_regular_pairs(&client, &mut arena)
+                .map_err(|e| { eprintln!("public_quad_regular_error {e}"); "public_quad_regular_failed" })?;
+            arena.close().map_err(|_| "public_matrix_close_failed")?;
+            eprintln!("public_regular_check {}", serde_json::json!({
+                "passed": true, "reports": checks.len(), "seconds": started.elapsed().as_secs_f64(),
+                "claude_kernel": std::env::var_os("KUNO_CLAUDE_EXPERT_OFF").is_none(),
+            }));
             return Ok(());
         }
         #[cfg(feature="strata-large-shared-panels")]

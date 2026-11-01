@@ -119,6 +119,7 @@ fn matrix_tier(name: &str) -> usize {
     if quad_matrix_name(name){return 1;}
     if name.contains("::strata_matrix::cohorts::dual_small::") { 0 }
     else if name.contains("::strata_matrix::cohorts::dual_regular::")
+        || name.contains("::strata_matrix::cohorts::claude_regular::")
         || name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::") { 1 }
     else if (name.contains("::strata_matrix::cohorts::large::expert_large_cohort::") || name.contains("::strata_matrix::cohorts::large_packed::expert_large_packed_cohort::")) { 2 }
     else { 3 }
@@ -134,6 +135,7 @@ fn matrix_family(name: &str) -> usize {
     if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 6;}
     #[cfg(feature="strata-regular-cohorts")]
     if name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::"){return 6;}
+    if name.contains("::strata_matrix::cohorts::claude_regular::"){return 6;}
     #[cfg(feature="strata-small-granular")]
     {if name.contains("::strata_matrix::native::granular_small::"){return 4;}if name.contains("::strata_matrix::cohorts::granular_small::"){return 6;}}
     #[cfg(feature="strata-local-prefetch")]
@@ -212,6 +214,7 @@ impl NativeSelection {
     }
 }
 fn native_class(name: &str) -> usize {
+    if name.contains("::strata_matrix::cohorts::claude_regular::"){return 1;}
     #[cfg(feature="strata-large-shared-panels")]
     if shared_large_matrix_name(name){return 1;}
     #[cfg(feature="strata-regular-four-cell")]

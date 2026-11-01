@@ -268,7 +268,9 @@ impl Cohort {
             let quant = false;
             let arrays = if quant { 7 } else { 6 };
             let metadata = 24 + arrays;
-            let columns_per_workgroup = if super::super::native_expert_batch::native_strata_dual_cohort(name,true){32}else{64};
+            let claude = super::super::native_expert_batch::native_strata_claude_regular_cohort(name);
+            let columns_per_workgroup = if super::super::native_expert_batch::native_strata_dual_cohort(name,true){32}else if claude {128}else{64};
+            let members_per_workgroup = if claude {64} else {16};
             if !super::super::native_expert_batch::native_strata_regular_cohort(name)
                 || tile != 16
                 || args.buffers.len() != arrays
@@ -280,7 +282,7 @@ impl Cohort {
                 || w[3] != 0
                 || w[5] != if down { 2 } else { 0 }
                 || w[11] != tile
-                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/columns_per_workgroup && *y==w[10].div_ceil(16) && *c==z)
+                || !matches!(count,CubeCount::Static(x,y,c)if *x==w[2]/columns_per_workgroup && *y==w[10].div_ceil(members_per_workgroup) && *c==z)
             {
                 return Err(batch_fault("native expert cohort matrix schema/grid"));
             }

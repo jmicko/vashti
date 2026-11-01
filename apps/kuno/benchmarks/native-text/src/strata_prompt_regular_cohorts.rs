@@ -465,7 +465,11 @@ pub(super) fn enqueue_unit(
         words[5] = if down { 2 } else { 0 };
         words[11] = 16;
         #[cfg(feature="strata-regular-four-cell")]
-        let product=crate::strata_matrix::cohorts::quad_regular::launch;
+        let product=if std::env::var_os("KUNO_CLAUDE_EXPERT_OFF").is_some() {
+            crate::strata_matrix::cohorts::quad_regular::launch
+        } else {
+            crate::strata_matrix::cohorts::claude_regular::launch
+        };
         #[cfg(all(feature="strata-small-dual-cells",not(feature="strata-regular-four-cell")))]
         let product=crate::strata_matrix::cohorts::dual_regular::launch;
         #[cfg(not(feature="strata-small-dual-cells"))]

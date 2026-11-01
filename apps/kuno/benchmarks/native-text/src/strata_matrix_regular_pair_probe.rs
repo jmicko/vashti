@@ -351,7 +351,7 @@ fn one_mode(
         return Err("large cohort probe feature disabled".into());
     } else {
         #[cfg(feature="strata-regular-four-cell")]
-        let product=if quad {quad_regular::launch}else if dual {dual_regular::launch}else{regular::launch};
+        let product=if quad {if std::env::var_os("KUNO_CLAUDE_EXPERT_OFF").is_some() {quad_regular::launch} else {super::claude_regular::launch}}else if dual {dual_regular::launch}else{regular::launch};
         #[cfg(all(feature="strata-small-dual-cells",not(feature="strata-regular-four-cell")))]
         let product={assert!(!quad);if dual {dual_regular::launch}else{regular::launch}};
         #[cfg(not(feature="strata-small-dual-cells"))]

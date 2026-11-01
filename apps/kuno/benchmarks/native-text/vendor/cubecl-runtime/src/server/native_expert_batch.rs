@@ -121,7 +121,15 @@ pub(crate) fn native_strata_quad_regular_cohort(name:&str)->bool {
   .filter(|(prefix,_)|!prefix.contains("::strata_matrix::"))
   .is_some_and(|(_,suffix)|suffix.strip_prefix("ExpertQuadRegularCohort").is_some_and(native_strata_generated_type_suffix))
 }
+/// Workgroup-shared regular cohort (claude_regular): same ABI as the quad
+/// cohort, 128-row x 64-member workgroups.
+pub(crate) fn native_strata_claude_regular_cohort(name:&str)->bool {
+ cfg!(feature="kuno-regular-four-cell") && name.split_once("::strata_matrix::cohorts::claude_regular::claude_regular_cohort::")
+  .filter(|(prefix,_)|!prefix.contains("::strata_matrix::"))
+  .is_some_and(|(_,suffix)|suffix.strip_prefix("ClaudeRegularCohort").is_some_and(native_strata_generated_type_suffix))
+}
 pub(crate) fn native_strata_regular_cohort(name:&str)->bool {
+ if name.contains("::claude_regular::"){return native_strata_claude_regular_cohort(name);}
  if name.contains("::quad_regular::"){return native_strata_quad_regular_cohort(name);}
  if name.contains("::dual_regular::"){return native_strata_dual_cohort(name,true);}
  cfg!(feature="kuno-regular-cohorts") && name.split_once("::strata_matrix::cohorts::regular::expert_regular_cohort::")
@@ -189,7 +197,7 @@ pub fn native_strata_expert_operator(name: &str, release: bool, index: usize) ->
         || name.contains("::large_packed::") || name.contains("::large_shared::")
         || name.starts_with("StrataExpertLargePackedCohort")
         || name.starts_with("StrataExpertLayerPackedGather") {return false;}
-    if name.contains("::regular::") || name.contains("::dual_regular::") || name.contains("::quad_regular::") || name.contains("::dual_small::") || name.starts_with("StrataExpertRegularCohort"){return false;}
+    if name.contains("::regular::") || name.contains("::dual_regular::") || name.contains("::quad_regular::") || name.contains("::claude_regular::") || name.contains("::dual_small::") || name.starts_with("StrataExpertRegularCohort"){return false;}
     let name=native_strata_expert_padded_identity(native_strata_expert_dequant_identity(name));
     if (name.contains("::global_small::") || name.contains("::small_full_walk::") || name.contains("::padded_global::") || name.contains("::balanced_global::") || name.contains("::local_small::") || name.contains("::granular_small::")) {
         return !release && matches!(index%6,3|5) && native_strata_global_small_tile(name,index%6==5).is_some();

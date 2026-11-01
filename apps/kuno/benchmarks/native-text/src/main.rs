@@ -1305,6 +1305,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.len() != 3 { return Err("native_settings_required".into()); }
         return strata_worker::public_prefill_host_check(std::path::Path::new(&args[2])).map_err(Into::into);
     }
+    if std::env::args().nth(1).as_deref() == Some("--public-regular-check") {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.len() != 3 {
+            return Err("native_settings_required".into());
+        }
+        return strata_worker::public_regular_check(std::path::Path::new(&args[2])).map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--public-dense-bench") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {
