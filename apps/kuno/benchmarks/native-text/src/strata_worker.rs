@@ -98,6 +98,47 @@ fn public_prompt(repeats: usize) -> Vec<u8> {
 fn host_blob_mode_allowed(public:bool,prefill:Option<bool>,matrix:bool,short:bool,timing:bool,rolling:bool,host_clock:bool,full_trace:bool)->bool{
     cfg!(feature="strata-host-expert-blobs") && public && prefill==Some(true) && !matrix && !short && !timing && !rolling && !host_clock && !full_trace
 }
+/// Private RAM copy of the compiled Mesa shader cache for a serving worker.
+/// Holds GPU code only; the directory contents are removed when dropped.
+struct RamCodeCache {
+    root: std::path::PathBuf,
+}
+impl RamCodeCache {
+    fn create(source: &Path) -> Option<Self> {
+        if !source.is_dir() {
+            return None;
+        }
+        let root = std::path::PathBuf::from(format!("/dev/shm/kuno-code-{}", std::process::id()));
+        std::fs::create_dir(&root).ok()?;
+        let cache = Self { root };
+        copy_tree(source, &cache.mesa_dir()).ok()?;
+        Some(cache)
+    }
+    fn mesa_dir(&self) -> std::path::PathBuf {
+        self.root.join("mesa")
+    }
+}
+impl Drop for RamCodeCache {
+    fn drop(&mut self) {
+        // The worker may remove entries beneath its writable root, not the root
+        // itself; the empty directory is left for the launcher or reboot.
+        let _ = std::fs::remove_dir_all(self.mesa_dir());
+    }
+}
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let target = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else if kind.is_file() {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
 fn run_mode(
     path: &Path,
     public_check: bool,
@@ -167,7 +208,16 @@ fn run_mode(
         }
     }
     CubeClRuntimeConfig::set(runtime_config);
-    std::panic::set_hook(Box::new(|_| eprintln!("native_worker_failed")));
+    if public_check {
+        // Fixed-public diagnostics: report only the static source location.
+        std::panic::set_hook(Box::new(|info| {
+            let at = info.location().map(|l| format!("{}:{}", l.file(), l.line()));
+            eprintln!("native_worker_failed");
+            eprintln!("public_panic_location {}", at.unwrap_or_default());
+        }));
+    } else {
+        std::panic::set_hook(Box::new(|_| eprintln!("native_worker_failed")));
+    }
     protection::protect_process().map_err(|_| "native_worker_protection_failed")?;
     protection::require_no_swap().map_err(|_| "native_worker_requires_no_swap")?;
     for (name, _) in std::env::vars_os() {
@@ -244,8 +294,28 @@ fn run_mode(
     // Only the fixed-public check may populate a compiled shader cache; it
     // compiles GPU code from public fixtures and writes no request content.
     // Serving workers keep the fully read-only policy and only read cache hits.
-    let shader_cache_writer = if public_check { code_cache.clone() } else { None };
-    protection::restrict_filesystem_with_writable(shader_cache_writer.as_deref())
+    // Serving workers never write the persistent cache. Mesa's cache needs a
+    // writable index, so they get a private RAM copy that is removed on exit.
+    let cache_writer = public_check
+        && code_cache.as_ref().is_some_and(|dir| {
+            use std::os::unix::ffi::OsStrExt;
+            let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok();
+            path.is_some_and(|p| unsafe { libc::access(p.as_ptr(), libc::W_OK) } == 0)
+        });
+    let ram_cache = match &code_cache {
+        Some(dir) if !cache_writer => RamCodeCache::create(&dir.join("mesa")),
+        _ => None,
+    };
+    if let Some(ram) = &ram_cache {
+        // SAFETY: still single-threaded startup; no runtime thread exists yet.
+        unsafe { std::env::set_var("MESA_SHADER_CACHE_DIR", ram.mesa_dir()) };
+    }
+    let writable = if cache_writer {
+        code_cache.clone()
+    } else {
+        ram_cache.as_ref().map(|ram| ram.root.clone())
+    };
+    protection::restrict_filesystem_with_writable(writable.as_deref())
         .map_err(|_| "native_worker_filesystem_protection_failed")?;
     for artifact in &settings.shards {
         verify(artifact, trust_identity)?;

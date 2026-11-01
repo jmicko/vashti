@@ -27,7 +27,9 @@ type InMemoryCache<K, V> = RefCell<HashMap<K, Box<V>>>;
 pub struct CompilationCache<K: CacheKey, V: CacheValue> {
     toc: Cache<K, String>,
     in_memory_cache: InMemoryCache<K, V>,
-    current_chunk: File,
+    /// `None` for a read-only cache (e.g. a sandboxed reader): hits are
+    /// served from disk, new entries stay in memory only.
+    current_chunk: Option<File>,
     current_chunk_path_normalized: String,
     cache_root: PathBuf,
 }
@@ -170,12 +172,17 @@ impl<K: CacheKey, V: CacheValue> CompilationCache<K, V> {
             };
             let mut bytes = Vec::new();
             into_writer(&entry, &mut bytes).expect("Can serialize data");
-            self.current_chunk
-                .write_all(&bytes)
-                .expect("Failed to write to chunk");
+            if let Some(chunk) = self.current_chunk.as_mut()
+                && chunk.write_all(&bytes).is_err()
+            {
+                self.current_chunk = None;
+            }
 
             let mut cache = self.in_memory_cache.borrow_mut();
             cache.insert(entry.key, Box::new(entry.value));
+        }
+        if self.current_chunk.is_none() {
+            return Ok(());
         }
         self.toc
             .insert(key, self.current_chunk_path_normalized.clone())
@@ -228,10 +235,9 @@ fn normalized_path(path: &Path) -> String {
     path.replace("\\", "/")
 }
 
-fn open_chunk_writable(path: &Path) -> File {
+fn open_chunk_writable(path: &Path) -> Option<File> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("Failed to create parent");
+        fs::create_dir_all(parent).ok()?;
     }
-    let file = File::options().append(true).create(true).open(path);
-    file.expect("Failed to open write chunk")
+    File::options().append(true).create(true).open(path).ok()
 }
