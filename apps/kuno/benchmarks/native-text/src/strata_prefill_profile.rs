@@ -117,7 +117,7 @@ fn matrix_tier(name: &str) -> usize {
     if shared_large_matrix_name(name){return 2;}
     #[cfg(feature="strata-regular-four-cell")]
     if quad_matrix_name(name){return 1;}
-    if name.contains("::strata_matrix::cohorts::dual_small::") { 0 }
+    if name.contains("::strata_matrix::cohorts::dual_small::") || name.starts_with("ClaudeSmallFused") { 0 }
     else if name.contains("::strata_matrix::cohorts::dual_regular::")
         || name.contains("::strata_matrix::cohorts::claude_regular::")
         || name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::") { 1 }
@@ -135,7 +135,7 @@ fn matrix_family(name: &str) -> usize {
     if name.contains("::strata_matrix::cohorts::dual_regular::")||name.contains("::strata_matrix::cohorts::dual_small::"){return 6;}
     #[cfg(feature="strata-regular-cohorts")]
     if name.contains("::strata_matrix::cohorts::regular::expert_regular_cohort::"){return 6;}
-    if name.contains("::strata_matrix::cohorts::claude_regular::"){return 6;}
+    if name.contains("::strata_matrix::cohorts::claude_regular::") || name.starts_with("ClaudeSmallFused"){return 6;}
     #[cfg(feature="strata-small-granular")]
     {if name.contains("::strata_matrix::native::granular_small::"){return 4;}if name.contains("::strata_matrix::cohorts::granular_small::"){return 6;}}
     #[cfg(feature="strata-local-prefetch")]
@@ -305,7 +305,7 @@ fn native_class(name: &str) -> usize {
         | "StrataPromptExpertResidentDownDirect8Image"
         | "StrataExpertCohortGuDirect8Image"
         | "StrataExpertCohortDownDirect8Image" => 0,
-        "StrataPromptExpertGemm" => 1,
+        "StrataPromptExpertGemm" | "ClaudeSmallFusedGu" | "ClaudeSmallFusedDown" => 1,
         "StrataPromptExpertGather" | "StrataExpertCohortGather" => 2,
         "StrataPromptExpertF16Swiglu"
         | "StrataPromptExpertF16SwigluCheckGu"

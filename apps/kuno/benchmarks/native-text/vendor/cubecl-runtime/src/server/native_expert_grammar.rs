@@ -580,7 +580,7 @@ impl NativeStrataExpertGrammar {
         }
         #[cfg(feature="kuno-expert-cohorts")]
         if self.cohort.is_some() || name=="StrataExpertCohortGather" || {
-            #[cfg(feature="kuno-layer-gather")] {self.layer.is_some() && matches!(name,"StrataExpertCohortGuDirect8Image"|"StrataExpertCohortGuQuad32Image"|"StrataExpertCohortGuImage")}
+            #[cfg(feature="kuno-layer-gather")] {self.layer.is_some() && matches!(name,"StrataExpertCohortGuDirect8Image"|"StrataExpertCohortGuQuad32Image"|"StrataExpertCohortGuImage"|"ClaudeSmallFusedGu")}
             #[cfg(not(feature="kuno-layer-gather"))] {false}
         } {
             if self.phase!=0 || self.pending.is_some() || self.gu_deferred {return Err(batch_fault("native expert cohort interrupted original group"));}

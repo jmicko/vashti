@@ -11,6 +11,9 @@ pub(crate) use multi_dequant::cases as public_multi_dequant;
 #[cfg(feature = "strata-small-quantized-matrix")]
 #[path = "strata_prompt_cohort_compact.rs"]
 pub(crate) mod compact;
+#[cfg(feature = "strata-dequant-direct8")]
+#[path = "claude_small_fused.rs"]
+pub(crate) mod fused;
 pub(crate) const MAX: usize = 8;
 pub(crate) const WORDS: usize = 48;
 pub(crate) const X_BYTES: u64 = 20 * 1024 * 1024;
@@ -387,6 +390,11 @@ pub(super) fn enqueue_unit(
     )?;
     }
     let ps = geometry.projections();
+    #[cfg(all(feature = "strata-dequant-direct8", feature = "strata-global-image-experts", feature = "strata-layer-gather"))]
+    if !fused::disabled() {
+        enqueue_fused(client, &mut words, owners, fault, stage, layer_sources, &x, &h, n, ps)?;
+        return Ok(());
+    }
     for down in [false, true] {
         let p = ps[if down { 2 } else { 0 }];
         words[1] = if down { 640 } else { 2560 };
@@ -541,6 +549,77 @@ pub(super) fn enqueue_unit(
     }
     #[cfg(all(feature = "strata-small-quantized-matrix",not(feature="strata-global-image-experts")))]
     crate::strata_prefill_profile::count("expert_small_quant_working_owner_bytes", storage::WORKING_BYTES);
+    Ok(())
+}
+
+/// Fused small-expert path: decode+product GU, original activation, decode+product DOWN.
+#[cfg(all(feature = "strata-dequant-direct8", feature = "strata-global-image-experts", feature = "strata-layer-gather"))]
+#[allow(clippy::too_many_arguments)]
+fn enqueue_fused(
+    client: &ComputeClient<WgpuRuntime>,
+    words: &mut [u32; WORDS],
+    owners: &[Handle; 7], fault: &Handle, stage: &[Handle; 3],
+    layer_sources: &crate::strata_global_sources::PromptLayer<'_, '_, '_>,
+    x: &Handle, h: &Handle, n: usize,
+    ps: [q::grouped_moe::Projection; 3],
+) -> Result<()> {
+    for down in [false, true] {
+        let p = ps[if down { 2 } else { 0 }];
+        words[1] = if down { 640 } else { 2560 };
+        words[2] = if down { 2560 } else { 1280 };
+        words[3] = p.row_bytes() as u32;
+        words[5] = if down { 2 } else { 0 };
+        let make_args = || -> Result<KernelArguments> {
+            let mut args = KernelArguments::new()
+                .with_buffer(layer_sources.prototype(if down { 2 } else { 0 })?.binding());
+            if !down {
+                args = args.with_buffer(layer_sources.prototype(1)?.binding());
+            }
+            args = args.with_buffers(vec![
+                owners[0].clone().binding(),
+                stage[2].clone().binding(),
+                stage[1].clone().binding(),
+                fault.clone().binding(),
+            ]);
+            args = crate::strata_intel_core::bind(args, owners[0].stream)?;
+            args = layer_sources.bind_image(args)?;
+            Ok(args.with_buffers(vec![
+                if down { h.clone() } else { x.clone() }.binding(),
+                if down { owners[3].clone() } else { owners[2].clone() }.binding(),
+                owners[6].clone().binding(),
+            ]))
+        };
+        words[11] = 0;
+        let op = fused::Fused { dtype: p.dtype(), down };
+        let info = MetadataBindingInfo::custom(
+            words.chunks_exact(2).map(|v| u64::from(v[0]) | (u64::from(v[1]) << 32)).collect(),
+        );
+        unsafe {
+            client.launch_unchecked(
+                Box::new(op),
+                CubeCount::Static(op.grid_x(), 1, n as u32),
+                make_args()?.with_info(info),
+            );
+        }
+        crate::strata_prefill_profile::count(
+            if down { "expert_small_fused_down_launches" } else { "expert_small_fused_gu_launches" }, 1);
+        if !down {
+            words[1] = 2560;
+            words[2] = 1280;
+            words[3] = 0;
+            words[5] = 0;
+            words[11] = 0;
+            let args = KernelArguments::new().with_buffers(vec![
+                owners[0].clone().binding(),
+                owners[2].clone().binding(),
+                h.clone().binding(),
+                owners[6].clone().binding(),
+                fault.clone().binding(),
+            ]);
+            launch(client, CohortOp::Activate, [(words[10] as usize * 320).div_ceil(256), 1, n], args, words)?;
+        }
+    }
+    crate::strata_prefill_profile::count("expert_small_fused_groups", n as u64);
     Ok(())
 }
 

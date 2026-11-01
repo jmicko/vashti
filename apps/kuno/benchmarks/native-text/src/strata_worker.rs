@@ -530,6 +530,12 @@ async fn serve(
             #[cfg(feature="strata-large-shared-panels")]
             checks.extend(crate::strata_matrix::cohorts::public_large_shared_pairs(&client, &mut arena)
                 .map_err(|e| { eprintln!("public_shared_large_matrix_error {e}"); "public_shared_large_matrix_failed" })?);
+            #[cfg(all(feature = "strata-dequant-direct8", feature = "strata-expert-cohorts"))]
+            {
+                let fused = crate::strata_prompt::experts::cohorts::fused::public_cases(&client, &mut arena, &file)
+                    .map_err(|e| { eprintln!("public_small_fused_error {e}"); "public_small_fused_failed" })?;
+                eprintln!("public_small_fused {}", serde_json::json!(fused));
+            }
             arena.close().map_err(|_| "public_matrix_close_failed")?;
             eprintln!("public_regular_check {}", serde_json::json!({
                 "passed": true, "reports": checks.len(), "seconds": started.elapsed().as_secs_f64(),

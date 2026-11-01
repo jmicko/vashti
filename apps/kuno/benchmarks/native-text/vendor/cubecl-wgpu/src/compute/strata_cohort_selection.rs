@@ -48,7 +48,8 @@ fn cohort_launch_population(c: &NativeStrataExpertGrammarCounts) -> bool {
     let old_groups = c.cohort_groups - c.quant_cohort_groups - c.regular_cohort_groups - c.large_cohort_groups;
     let old_launches = c.cohort_launches - c.quant_cohort_launches - c.regular_cohort_launches - c.large_cohort_launches;
     old_groups >= old_batches && old_groups <= old_batches * 8
-        && old_launches >= old_batches * 6 && old_launches <= old_batches * 8
+        // Fused small cohorts: gather, GU, activate, DOWN (4).
+        && old_launches >= old_batches * 4 && old_launches <= old_batches * 8
 }
 
 /// Existing compiled-public fixed-layer profile only. These aggregate labels

@@ -26,6 +26,8 @@ pub(super) struct Cohort {
     status: Option<View>,
     quad_images: Option<u8>,
     ordered_down: Option<bool>,
+    /// Fused decode+product small path (ClaudeSmallFused*).
+    fused: bool,
 }
 
 fn image_variant(name: &str, expected: &str) -> Option<u8> {
@@ -253,9 +255,11 @@ impl Cohort {
             status: None,
             quad_images: None,
             ordered_down: None,
+            fused: false,
         })
     }
     fn expected(&self) -> Option<(&'static str, bool, u32)> {
+        if self.fused { return self.expected_fused(); }
         let mut stage = 0;
         for entry in [
             ("StrataExpertCohortGather", false, 0),
@@ -291,6 +295,69 @@ impl Cohort {
         }
         None
     }
+    fn expected_fused(&self) -> Option<(&'static str, bool, u32)> {
+        [
+            ("StrataExpertCohortGather", false, 0),
+            ("ClaudeSmallFusedGu", false, 0),
+            ("StrataExpertCohortActivate", false, 0),
+            ("ClaudeSmallFusedDown", false, 0),
+        ]
+        .get(self.phase)
+        .copied()
+    }
+    fn launch_fused(&mut self, down: bool, count: &CubeCount, args: &KernelArguments, w: &[u32; 48]) -> Result<(), ServerError> {
+        let offset = usize::from(!down);
+        let grid_x = if down { 1280 / 32 } else { 640 / 8 };
+        if args.buffers.len() != 10 + offset
+            || args.read_dependencies.is_empty()
+            || w[11] != 0
+            || w[3] == 0
+            || w[1] != if down { 640 } else { 2560 }
+            || w[2] != if down { 2560 } else { 1280 }
+            || w[5] != if down { 2 } else { 0 }
+            || !matches!(count, CubeCount::Static(x, 1, c) if *x == grid_x && *c == w[9])
+        {
+            return Err(batch_fault("native expert fused cohort role/schema/grid"));
+        }
+        let v = |i: usize| View::new(&args.buffers[i + offset]);
+        let (map, raw, image, fault, grid, addresses) = (v(1)?, v(2)?, v(3)?, v(4)?, v(5)?, v(6)?);
+        let (input, output, status) = (v(7)?, v(8)?, v(9)?);
+        if map != self.map
+            || fault != self.fault
+            || raw.used() != RAW || raw.first != 0 || raw.end != 0
+            || image.used() != WORKING
+            || grid.used() != 32768
+            || addresses.used() != 32768
+            || [raw, image, grid, addresses, input, output, status].iter().any(|v| v.stream != self.map.stream)
+            || self.raw.is_some_and(|v| v != raw)
+            || self.images.is_some_and(|v| v != image)
+            || self.grid.is_some_and(|v| v != grid)
+            || self.addresses.is_some_and(|v| v != addresses)
+            || input != if down { self.h.ok_or_else(|| batch_fault("native expert fused hidden producer missing"))? } else { self.x }
+            || output.used() != if down { PART_BYTES } else { GU_BYTES }
+            || status.used() != STATUS_BYTES
+        {
+            return Err(batch_fault("native expert fused cohort actual owners"));
+        }
+        if down {
+            if Some(status) != self.status || self.partial.is_some_and(|old| old != output) {
+                return Err(batch_fault("native expert fused DOWN owners changed"));
+            }
+            self.partial = Some(output);
+            self.ordered_down = Some(true);
+        } else {
+            if self.gu.is_some_and(|v| v != output) || self.status.is_some_and(|v| v != status) {
+                return Err(batch_fault("native expert fused GU owners changed"));
+            }
+            self.gu = Some(output);
+            self.status = Some(status);
+        }
+        self.raw = Some(raw);
+        self.images = Some(image);
+        self.grid = Some(grid);
+        self.addresses = Some(addresses);
+        Ok(())
+    }
     pub(super) fn launch(
         &mut self,
         name: &str,
@@ -298,6 +365,9 @@ impl Cohort {
         count: &CubeCount,
         args: &KernelArguments,
     ) -> Result<bool, ServerError> {
+        if self.phase == 1 && !self.fused && name == "ClaudeSmallFusedGu" {
+            self.fused = true;
+        }
         let (expected, expected_release, tile) = self
             .expected()
             .ok_or_else(|| batch_fault("native expert cohort surplus phase"))?;
@@ -339,7 +409,9 @@ impl Cohort {
             return Err(batch_fault("native expert cohort immutable original INFO"));
         }
         let z = w[9];
-        if matrix {
+        if self.fused && expected.starts_with("ClaudeSmallFused") {
+            self.launch_fused(expected == "ClaudeSmallFusedDown", count, args, &w)?;
+        } else if matrix {
             let quant = self.quantized();
             let arrays = if quant { 7 } else { 6 };
             let metadata = 24 + arrays;

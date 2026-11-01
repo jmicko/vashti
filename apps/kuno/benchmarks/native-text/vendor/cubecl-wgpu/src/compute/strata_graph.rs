@@ -488,7 +488,9 @@ pub(crate) fn register_module(
     if required_subgroup != Some(32) {
         return Err(fault("native WGSL subgroup owner requirement"));
     }
-    let required_subgroup = if wgpu::hal::vulkan::kuno_gdn_subgroup16(&words) == Some(16) {
+    let required_subgroup = if wgpu::hal::vulkan::kuno_gdn_subgroup16(&words) == Some(16)
+        || source.contains("// KUNO_SIMD16\n")
+    {
         Some(16)
     } else {
         required_subgroup
