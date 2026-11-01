@@ -24,6 +24,7 @@ mod strata_weight_q8;
 mod claude_dense_bench;
 #[cfg(feature = "strata-rust-port")]
 mod claude_gemm;
+mod claude_gemm_i8;
 mod strata_worker;
 pub(crate) use strata_expert_fused::global as strata_global_experts;
 mod strata_external_flight;

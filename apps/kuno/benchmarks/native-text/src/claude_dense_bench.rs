@@ -40,6 +40,9 @@ fn pattern(n: usize, salt: usize) -> impl Iterator<Item = f32> {
 }
 
 pub(crate) fn run(client: &ComputeClient<WgpuRuntime>) -> R<()> {
+    if std::env::var_os("KUNO_I8_BENCH").is_some() {
+        return crate::claude_gemm_i8::bench(client);
+    }
     client
         .configure_public_target_request_io_with_backlog(Default::default())
         .map_err(|e| format!("request io: {e:?}"))?;

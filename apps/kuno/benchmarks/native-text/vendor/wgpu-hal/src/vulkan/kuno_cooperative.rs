@@ -321,12 +321,31 @@ fn known_matrix_type(words: &[u32], instruction: &[u32]) -> bool {
     let rows = constant(words, instruction[4]);
     let columns = constant(words, instruction[5]);
     let usage = constant(words, instruction[6]);
+    if scope != Some(3) {
+        return false;
+    }
+    // Int8 DPAS: A 8x32 s8, B 32x16 s8, accumulator 8x16 s32.
+    let int = int_width(words, instruction[2]);
+    match (rows, columns, usage, int) {
+        (Some(8), Some(32), Some(0), Some(8)) | (Some(32), Some(16), Some(1), Some(8)) => return true,
+        (Some(8), Some(16), Some(2), Some(32)) => return true,
+        _ => {}
+    }
     let expected_width = match (rows, columns, usage) {
         (Some(8), Some(16), Some(0)) | (Some(16), Some(16), Some(1)) => 16,
         (Some(8), Some(16), Some(2)) => 32,
         _ => return false,
     };
-    scope == Some(3) && float_width(words, instruction[2]) == Some(expected_width)
+    float_width(words, instruction[2]) == Some(expected_width)
+}
+
+/// OpTypeInt width (CubeCL declares every int type with signedness 0 and
+/// carries signedness on the operations).
+fn int_width(words: &[u32], id: u32) -> Option<u32> {
+    match defining_instruction(words, id, 21)? {
+        [_, _, width, 0 | 1] => Some(*width),
+        _ => None,
+    }
 }
 
 fn constant(words: &[u32], id: u32) -> Option<u32> {
