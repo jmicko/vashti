@@ -2,7 +2,7 @@
 //! No GPU/client operations, raw pointers, path reopening or detached workers.
 use std::panic::resume_unwind;
 
-pub(super) const WORKERS: usize = 8;
+pub(super) const WORKERS: usize = 16;
 const STACK_BYTES: usize = 256 * 1024;
 // Requested stacks plus bounded per-worker bookkeeping/TLS allowance. Job
 // vectors remain inside the original separately charged global metadata cap.

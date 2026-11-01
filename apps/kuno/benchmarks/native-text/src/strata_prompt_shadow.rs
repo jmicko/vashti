@@ -4,6 +4,8 @@
 use super::*;
 use crate::strata_global_plan::{EXPERTS, LAYERS};
 use crate::strata_global_sources::Placement as CachePlacement;
+pub(crate) static HOST_ZERO_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static HOST_FILL_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(super) struct Shadow {
     pub layout: shadow_plan::Plan,
     pub first_page: usize,
@@ -21,6 +23,26 @@ impl Host {
         &mut self,
         spec: PageSpec,
         charges: &mut HeapCharges,
+        fill: impl FnOnce(&mut [u8]) -> KResult<()>,
+    ) -> KResult<()> {
+        self.allocate_page(spec, charges, false, fill)
+    }
+    /// As `allocate_original_page`, but `fill` promises to write every byte of
+    /// `[..spec.logical]` (including its own padding); only the tail beyond the
+    /// logical span is zeroed here.
+    pub(super) fn allocate_original_page_filled(
+        &mut self,
+        spec: PageSpec,
+        charges: &mut HeapCharges,
+        fill: impl FnOnce(&mut [u8]) -> KResult<()>,
+    ) -> KResult<()> {
+        self.allocate_page(spec, charges, true, fill)
+    }
+    fn allocate_page(
+        &mut self,
+        spec: PageSpec,
+        charges: &mut HeapCharges,
+        fill_covers_logical: bool,
         fill: impl FnOnce(&mut [u8]) -> KResult<()>,
     ) -> KResult<()> {
         let device = self.device.clone();
@@ -82,8 +104,24 @@ impl Host {
             return Err(fail());
         }
         let mut map = backing.map().map_err(Error::InvalidFormat)?;
-        map.bytes_mut().zeroize();
+        // Public model bytes only: a plain memset initializes padding and the
+        // fresh driver allocation before fill. Volatile per-byte zeroize is for
+        // erasing secrets and is several times slower on mapped host memory.
+        let started = std::time::Instant::now();
+        {
+            let bytes = map.bytes_mut();
+            let from = if fill_covers_logical {
+                usize::try_from(spec.logical).map_err(|_| Error::ArithmeticOverflow)?.min(bytes.len())
+            } else {
+                0
+            };
+            let tail = &mut bytes[from..];
+            unsafe { std::ptr::write_bytes(tail.as_mut_ptr(), 0, tail.len()) };
+        }
+        HOST_ZERO_NS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        let started = std::time::Instant::now();
         fill(map.bytes_mut())?;
+        HOST_FILL_NS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         map.cache(placement.coherent(), true)
             .map_err(Error::InvalidFormat)?;
         drop(map);

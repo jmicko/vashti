@@ -82,7 +82,12 @@ impl Cache {
             .positional_reader()?;
         let mut roots = Vec::with_capacity(plan.chunks.len());
         let mut bytes = 0u64;
-        for (index, chunk) in plan.chunks.iter().enumerate() {
+        let (mut read_s, mut submit_s) = (0f64, 0f64);
+        // Allocate every true persistent GPU root first. Every byte, including
+        // slot/root padding, is initialized by bounded original-model windows
+        // before any table/consumer exists.
+        let mut handles = Vec::with_capacity(plan.chunks.len());
+        for chunk in &plan.chunks {
             if chunk.physical_bytes > client.properties().memory.max_page_size {
                 return Err(Error::LimitExceeded(
                     "global cache root exceeds backend binding",
@@ -90,9 +95,6 @@ impl Cache {
             }
             let size =
                 usize::try_from(chunk.physical_bytes).map_err(|_| Error::ArithmeticOverflow)?;
-            // Allocate the true persistent GPU root without a same-sized host
-            // Vec. Every byte, including slot/root padding, is initialized by
-            // bounded original-model windows before any table/consumer exists.
             let handle = client.empty(size);
             if handle.offset_start.unwrap_or(0) != 0
                 || handle.offset_end.unwrap_or(0) != 0
@@ -102,99 +104,128 @@ impl Cache {
                 return Err(reject());
             }
             roots.push(handle.clone());
-            #[cfg(not(feature = "strata-parallel-loading"))]
-            {
-                let mut first = 0u64;
-                while first < chunk.physical_bytes {
-                    let count = (chunk.physical_bytes - first)
-                        .min(crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW)
-                        as usize;
-                    let mut window = Vec::new();
-                    window
-                        .try_reserve_exact(count)
-                        .map_err(|_| Error::LimitExceeded("global cache public load window"))?;
-                    if window.capacity() != count {
-                        return Err(reject());
-                    }
-                    window.resize(count, 0);
-                    plan.load_chunk_range(graph, index, first, &mut window)?;
-                    let view = handle
-                        .clone()
-                        .offset_start(first)
-                        .offset_end(chunk.physical_bytes - first - count as u64);
-                    client
-                        .write_public_owned_batch(vec![(view, window)])
-                        .map_err(|cause| public_load_fault("upload", cause))?;
-                    // Moved source/upload resources drain before the next window;
-                    // increasing GPU contiguity never enlarges the host envelope.
-                    cubecl_common::future::block_on(client.sync())
-                        .map_err(|cause| public_load_fault("completion", cause))?;
-                    first += count as u64;
-                }
+            handles.push(handle);
+            bytes = bytes
+                .checked_add(chunk.physical_bytes)
+                .ok_or(Error::ArithmeticOverflow)?;
+        }
+        let window_bytes = crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW;
+        // (root index, first byte) for every bounded window of every root.
+        let windows: Vec<(usize, u64)> = plan
+            .chunks
+            .iter()
+            .enumerate()
+            .flat_map(|(index, chunk)| {
+                (0..chunk.physical_bytes)
+                    .step_by(window_bytes as usize)
+                    .map(move |first| (index, first))
+            })
+            .collect();
+        let make_window = |(index, first): (usize, u64)| -> Result<Vec<u8>> {
+            let physical = plan.chunks[index].physical_bytes;
+            let count = usize::try_from((physical - first).min(window_bytes))
+                .map_err(|_| Error::ArithmeticOverflow)?;
+            let mut window = Vec::new();
+            window
+                .try_reserve_exact(count)
+                .map_err(|_| Error::LimitExceeded("global cache public load window"))?;
+            if count == 0 || window.capacity() != count {
+                return Err(reject());
             }
+            window.resize(count, 0);
             #[cfg(feature = "strata-parallel-loading")]
-            {
-                let make_window = |first: u64| -> Result<Vec<u8>> {
-                    let count = usize::try_from(
-                        (chunk.physical_bytes - first)
-                            .min(crate::strata_global_plan::PUBLIC_UPLOAD_WINDOW),
-                    )
-                    .map_err(|_| Error::ArithmeticOverflow)?;
-                    let mut window = Vec::new();
-                    window
-                        .try_reserve_exact(count)
-                        .map_err(|_| Error::LimitExceeded("global cache public load window"))?;
-                    if count == 0 || window.capacity() != count {
-                        return Err(reject());
-                    }
-                    window.resize(count, 0);
-                    plan.load_chunk_read_at(graph, &reader, index, first, &mut window)?;
-                    Ok(window)
-                };
-                let mut first = 0u64;
-                let mut window = make_window(first)?;
-                loop {
-                    let end = first
-                        .checked_add(window.len() as u64)
-                        .filter(|&end| end <= chunk.physical_bytes)
-                        .ok_or(Error::ArithmeticOverflow)?;
-                    let view = handle
-                        .clone()
-                        .offset_start(first)
-                        .offset_end(chunk.physical_bytes - end);
+            plan.load_chunk_read_at(graph, &reader, index, first, &mut window)?;
+            #[cfg(not(feature = "strata-parallel-loading"))]
+            plan.load_chunk_range(graph, index, first, &mut window)?;
+            Ok(window)
+        };
+        let view_of = |(index, first): (usize, u64), len: usize| -> Result<Handle> {
+            let physical = plan.chunks[index].physical_bytes;
+            let end = first
+                .checked_add(len as u64)
+                .filter(|&end| end <= physical)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(handles[index]
+                .clone()
+                .offset_start(first)
+                .offset_end(physical - end))
+        };
+        #[cfg(not(feature = "strata-parallel-loading"))]
+        for &at in &windows {
+            let window = make_window(at)?;
+            let view = view_of(at, window.len())?;
+            client
+                .write_public_owned_batch(vec![(view, window)])
+                .map_err(|cause| public_load_fault("upload", cause))?;
+            // Moved source/upload resources drain before the next window;
+            // increasing GPU contiguity never enlarges the host envelope.
+            cubecl_common::future::block_on(client.sync())
+                .map_err(|cause| public_load_fault("completion", cause))?;
+        }
+        #[cfg(feature = "strata-parallel-loading")]
+        {
+            // Read UPLOAD_BATCH_WINDOWS windows in parallel threads and submit
+            // them with ONE sync. The next batch is read on a background thread
+            // while the current batch is copied to staging and uploaded, across
+            // root boundaries. Bounded envelope: two batches of host windows.
+            const UPLOAD_BATCH_WINDOWS: usize = 16;
+            let read_batch = |batch: &[(usize, u64)]| -> Result<Vec<((usize, u64), Vec<u8>)>> {
+                std::thread::scope(|scope| {
+                    let workers: Vec<_> = batch
+                        .iter()
+                        .map(|&at| {
+                            let make_window = &make_window;
+                            scope.spawn(move || make_window(at).map(|w| (at, w)))
+                        })
+                        .collect();
+                    workers
+                        .into_iter()
+                        .map(|worker| worker.join().map_err(|_| reject())?)
+                        .collect()
+                })
+            };
+            let mut batches = windows.chunks(UPLOAD_BATCH_WINDOWS);
+            let t = std::time::Instant::now();
+            let mut current = batches.next().map(read_batch).transpose()?;
+            read_s += t.elapsed().as_secs_f64();
+            while let Some(ready) = current {
+                let mut writes = Vec::with_capacity(ready.len());
+                for (at, window) in ready {
+                    writes.push((view_of(at, window.len())?, window));
+                }
+                let next_batch = batches.next();
+                let t = std::time::Instant::now();
+                current = std::thread::scope(|scope| -> Result<_> {
+                    let read_batch = &read_batch;
+                    let reading = next_batch.map(|batch| scope.spawn(move || read_batch(batch)));
                     // Arm BEFORE synchronous scheduling. Setup/read errors and
                     // panics must drain actual prior work or retain its roots.
                     let mut pending = upload_completion::Pending::new(&mut roots, || {
                         cubecl_common::future::block_on(client.sync())
                     });
                     client
-                        .write_public_owned_batch(vec![(view, window)])
+                        .write_public_owned_batch(writes)
                         .map_err(|cause| public_load_fault("upload", cause))?;
-                    // sync() synchronously consumes Scheduler's moved source,
-                    // copies it to backend staging and submits the queue. Its
+                    // sync() synchronously consumes Scheduler's moved sources,
+                    // copies them to backend staging and submits the queue. Its
                     // RETURNED future owns real completion, not scheduling.
                     let completion = client.sync();
                     pending.submitted(move || cubecl_common::future::block_on(completion));
-                    // Exactly one next source window overlaps one real backend
-                    // staging window; no previous Vec remains in the scheduler.
-                    let next = if end < chunk.physical_bytes {
-                        Some(make_window(end)?)
-                    } else {
-                        None
-                    };
                     pending
                         .finish()
                         .map_err(|cause| public_load_fault("completion", cause))?;
-                    first = end;
-                    match next {
-                        Some(next) => window = next,
-                        None => break,
+                    submit_s += t.elapsed().as_secs_f64();
+                    match reading {
+                        Some(worker) => worker.join().map_err(|_| reject())?.map(Some),
+                        None => Ok(None),
                     }
-                }
+                })?;
+                read_s = t.elapsed().as_secs_f64().max(read_s);
             }
-            bytes = bytes
-                .checked_add(chunk.physical_bytes)
-                .ok_or(Error::ArithmeticOverflow)?;
+        }
+        if crate::strata_intel_core::enabled() && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
+            eprintln!("public_load_step gpu_cache_first_read {read_s:.3}");
+            eprintln!("public_load_step gpu_cache_upload_total {submit_s:.3}");
         }
         if bytes != plan.resident_piece_bytes {
             return Err(reject());

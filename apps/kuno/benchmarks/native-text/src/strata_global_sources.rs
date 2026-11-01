@@ -254,13 +254,27 @@ impl Sources {
         };
         // Incremental ownership makes every construction failure take the same
         // completed-reader closure path as a fully constructed source set.
+        let step = std::time::Instant::now();
         sources.gpu = Some(Cache::load(client, graph, &sources.plan)?);
+        crate::resident_util::public_step("gpu_cache_load", step);
+        let step = std::time::Instant::now();
         sources.host =
             Some(unsafe { Host::load(&sources.plan, graph, client, device, host_reserved)? });
+        crate::resident_util::public_step("host_mirror_load", step);
+        if crate::strata_intel_core::enabled() && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
+            use std::sync::atomic::Ordering::Relaxed;
+            eprintln!("public_load_step host_zero {:.3}", crate::public_host_expert_mirror::strata_global::host_zero_ns() as f64 / 1e9);
+            eprintln!("public_load_step host_fill {:.3}", crate::public_host_expert_mirror::strata_global::host_fill_ns() as f64 / 1e9);
+            let _ = Relaxed;
+        }
+        let step = std::time::Instant::now();
         sources.build_tables(graph, device)?;
+        crate::resident_util::public_step("build_tables", step);
+        let step = std::time::Instant::now();
         if crate::strata_global_adapt::collect_gpu_route_usage(true) {
             sources.prepare_exchange_inventory(graph)?;
         }
+        crate::resident_util::public_step("exchange_inventory", step);
         graph.verify_unchanged()?;
         Ok(sources)
     }

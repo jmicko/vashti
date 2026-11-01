@@ -2844,7 +2844,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(chunk_error!());
         }
         let client = self.arena.client().map_err(u::fault)?;
+        let step = std::time::Instant::now();
         executor.prepare_native_static_weights(self.graph)?;
+        crate::resident_util::public_step("static_weights", step);
         let budget = executor.native_expert_capacity()?;
         let plan = crate::strata_global_plan::Plan::from_graph(
             self.graph,
@@ -2861,9 +2863,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(chunk_error!())?;
         let prompt_stages = prompt_workspace.prompt_stage_handles(&self.arena)?;
         let prompt_secondary_raw = prompt_workspace.prompt_secondary_raw_handle(&self.arena)?;
+        let step = std::time::Instant::now();
         unsafe {
             executor.prepare_strata_global_sources(self.graph, plan, device, reserved)?;
         }
+        crate::resident_util::public_step("global_sources_total", step);
+        let step = std::time::Instant::now();
         executor
             .strata_global_sources
             .as_mut()
@@ -2893,6 +2898,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 sources.prepare_prompt_loan(self.graph, indices, prompt_host_grant)?;
             }
         }
+        crate::resident_util::public_step("prompt_banks", step);
         self.validate_unstarted_native_boundary(executor)?;
         executor.activate_native_core_q6_head()
     }

@@ -12,6 +12,13 @@ pub(crate) mod exchange;
 mod parallel_reads;
 #[path = "strata_prompt_shadow.rs"]
 mod shadow;
+/// Public-diagnostic load timing totals (no content).
+pub(crate) fn host_zero_ns() -> u64 {
+    shadow::HOST_ZERO_NS.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub(crate) fn host_fill_ns() -> u64 {
+    shadow::HOST_FILL_NS.load(std::sync::atomic::Ordering::Relaxed)
+}
 #[path = "strata_prompt_shadow_plan.rs"]
 pub(crate) mod shadow_plan;
 use super::*;

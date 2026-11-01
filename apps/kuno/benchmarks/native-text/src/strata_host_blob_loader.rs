@@ -12,9 +12,12 @@ fn fill_public_blob(
         n.checked_add(usize::try_from(v).map_err(|_| Error::ArithmeticOverflow)?)
             .ok_or(Error::ArithmeticOverflow)
     })?;
-    if bytes > span.len() || span[bytes..].iter().any(|&v| v != 0) {
+    if bytes > span.len() {
         return Err(Error::InvalidBufferLength);
     }
+    // Write the padding zeros here (parallel, write-only) rather than reading
+    // back a pre-zeroed span from slow mapped host memory.
+    span[bytes..].fill(0);
     let mut first = 0;
     for (role, bytes) in roles.into_iter().enumerate() {
         let end = first + bytes as usize;
@@ -66,7 +69,7 @@ impl Host {
             {
                 return Err(fail());
             }
-            self.allocate_original_page(
+            self.allocate_original_page_filled(
                 shadow::PageSpec {
                     layer: root.layer,
                     role: root.role,
@@ -127,7 +130,8 @@ mod tests {
     use super::*;
     #[test]
     fn host_blob_final_span_has_original_role_bytes_zero_padding_and_bounded_reads() {
-        let mut span = [0u8; 64];
+        // Start from non-zero bytes: the fill itself must write the padding.
+        let mut span = [0xAAu8; 64];
         let mut calls = Vec::new();
         fill_public_blob([16, 20, 24], &mut span, |r, s| {
             calls.push((r, s.len()));
@@ -149,13 +153,14 @@ mod tests {
                 .is_err()
             );
         }
+        // Stale non-zero padding is overwritten with zeros, never published.
         span[63] = 7;
-        assert!(
-            fill_public_blob([16, 20, 24], &mut span, |_, _| panic!(
-                "nonzero padding must not publish"
-            ))
-            .is_err()
-        );
+        fill_public_blob([16, 20, 24], &mut span, |_, s| {
+            s.fill(9);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(&span[60..], &[0; 4]);
     }
     #[cfg(feature = "strata-parallel-loading")]
     #[test]
