@@ -49,6 +49,12 @@ pub(crate) fn run(path: &Path) -> Result<()> {
 pub(crate) fn public_long_prompt_check(path: &Path) -> Result<()> {
     run_mode(path, true, None, false, false, false, false, false, false, false)
 }
+static DENSE_BENCH: AtomicBool = AtomicBool::new(false);
+/// Fixed-public dense GEMM benchmark: synthetic data, no model load or requests.
+pub(crate) fn public_dense_bench(path: &Path) -> Result<()> {
+    DENSE_BENCH.store(true, std::sync::atomic::Ordering::Release);
+    run_mode(path, true, None, false, false, false, false, false, false, false)
+}
 pub(crate) fn public_prefill_check(path: &Path, profile: bool) -> Result<()> {
     run_mode(path, true, Some(profile), false, false, false, false, false, false, false)
 }
@@ -434,6 +440,12 @@ async fn serve(
         },
     );
     let client = WgpuRuntime::client(&selected);
+    if public_check && DENSE_BENCH.load(std::sync::atomic::Ordering::Acquire) {
+        return crate::claude_dense_bench::run(&client).map_err(|error| {
+            eprintln!("public_dense_bench_error {error}");
+            "public_dense_bench_failed"
+        });
+    }
     let paths: Vec<_> = settings.shards.iter().map(|a| a.path.as_path()).collect();
     let file = GgufFile::open_shards(&paths, GgufLimits::default())
         .map_err(|_| "native_artifact_invalid")?;

@@ -102,8 +102,8 @@ impl WgpuServer {
                     entrypoint_name,
                     _metadata,
                 )
-                .map_err(|_| CompilationError::Generic {
-                    reason: "native graph SPIRV registration failed".into(),
+                .map_err(|error| CompilationError::Generic {
+                    reason: format!("native graph SPIRV registration failed: {error:?}"),
                     backtrace: cubecl_common::backtrace::BackTrace::capture(),
                 })?;
                 Ok(module)

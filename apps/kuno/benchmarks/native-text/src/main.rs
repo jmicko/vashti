@@ -20,6 +20,10 @@ mod strata_expert_fused;
 mod strata_prefill_profile;
 mod strata_shared_native;
 mod strata_weight_q8;
+#[cfg(feature = "strata-rust-port")]
+mod claude_dense_bench;
+#[cfg(feature = "strata-rust-port")]
+mod claude_gemm;
 mod strata_worker;
 pub(crate) use strata_expert_fused::global as strata_global_experts;
 mod strata_external_flight;
@@ -1300,6 +1304,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 { return Err("native_settings_required".into()); }
         return strata_worker::public_prefill_host_check(std::path::Path::new(&args[2])).map_err(Into::into);
+    }
+    if std::env::args().nth(1).as_deref() == Some("--public-dense-bench") {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.len() != 3 {
+            return Err("native_settings_required".into());
+        }
+        return strata_worker::public_dense_bench(std::path::Path::new(&args[2])).map_err(Into::into);
     }
     if matches!(
         std::env::args().nth(1).as_deref(),

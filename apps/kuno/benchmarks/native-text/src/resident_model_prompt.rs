@@ -369,7 +369,10 @@ impl Workspace {
                     cancel,
                 )?),
             });
-            timing.mark("attention")?;
+            timing.mark(match stages.last() {
+                Some(Stage::Gdn(..)) => "attention_gdn",
+                _ => "attention_qsa",
+            })?;
             previous = Some((v[0].clone(), v[2].clone()));
             Self::prompt_gr(
                 m,
@@ -383,6 +386,7 @@ impl Workspace {
                 0,
                 true,
             )?;
+            timing.mark("gr_ffn_input")?;
             let tensor = m
                 .graph
                 .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))?;
@@ -425,6 +429,7 @@ impl Workspace {
                     cancel,
                 )?;
             }
+            timing.mark("shared_gate_up_projections")?;
             let mut info = [0; 16];
             info[0] = count as u32;
             p::launch(
@@ -450,6 +455,7 @@ impl Workspace {
                 &BatchSpans::new(count, 0, 0, 640, 0, D),
                 cancel,
             )?;
+            timing.mark("shared_activation_down")?;
             #[cfg(feature = "strata-expert-ordered-output")]
             self.global_moe.as_mut().ok_or_else(error)?.finish_prompt_ordered_shared(
                 &m.arena, layer, v[2].clone(), v[8].clone(), v[9].clone(),
