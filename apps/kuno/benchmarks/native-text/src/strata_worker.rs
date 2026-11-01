@@ -525,8 +525,11 @@ async fn serve(
         #[cfg(feature="strata-regular-four-cell")]
         if REGULAR_ONLY.load(std::sync::atomic::Ordering::Acquire) {
             let started = Instant::now();
-            let checks = crate::strata_matrix::cohorts::public_quad_regular_pairs(&client, &mut arena)
+            let mut checks = crate::strata_matrix::cohorts::public_quad_regular_pairs(&client, &mut arena)
                 .map_err(|e| { eprintln!("public_quad_regular_error {e}"); "public_quad_regular_failed" })?;
+            #[cfg(feature="strata-large-shared-panels")]
+            checks.extend(crate::strata_matrix::cohorts::public_large_shared_pairs(&client, &mut arena)
+                .map_err(|e| { eprintln!("public_shared_large_matrix_error {e}"); "public_shared_large_matrix_failed" })?);
             arena.close().map_err(|_| "public_matrix_close_failed")?;
             eprintln!("public_regular_check {}", serde_json::json!({
                 "passed": true, "reports": checks.len(), "seconds": started.elapsed().as_secs_f64(),

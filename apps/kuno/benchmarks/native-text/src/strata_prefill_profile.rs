@@ -485,6 +485,14 @@ mod native_sample_tests {
 }
 // PUBLIC_PREFILL_NATIVE_SAMPLE_END
 
+thread_local! {
+    /// Per-operator (kernel type name) totals at sample start; names are code
+    /// identities, never request content.
+    static OPERATORS_BEFORE: std::cell::RefCell<Vec<(String, u64, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+fn operator_snapshot() -> Vec<(String, u64, u64)> {
+    cubecl::wgpu::native_strata_operator_profile().into_iter().map(|(n, c, t)| (n.to_string(), c, t)).collect()
+}
 fn native_totals() -> [(u64, u64); NATIVE_TOTALS] {
     let mut classes = [(0u64, 0u64); NATIVE_TOTALS];
     for (name, calls, ns) in cubecl::wgpu::native_strata_operator_profile() {
@@ -565,6 +573,7 @@ impl NativeExpertLayer {
             };
         }
         let before = native_totals();
+        OPERATORS_BEFORE.with(|b| *b.borrow_mut() = operator_snapshot());
         cubecl::wgpu::set_native_strata_profile_active(true);
         Self {
             before: Some(before),
@@ -625,6 +634,17 @@ impl NativeExpertLayer {
                 (name, [after[i].0.saturating_sub(before[i].0), after[i].1.saturating_sub(before[i].1)])
             }).collect();
             record["matrix_tiers"] = serde_json::json!(matrix_tiers);
+            let before_ops = OPERATORS_BEFORE.with(|b| std::mem::take(&mut *b.borrow_mut()));
+            let mut operators: Vec<(String, u64, u64)> = operator_snapshot()
+                .into_iter()
+                .map(|(name, c, t)| {
+                    let (bc, bt) = before_ops.iter().find(|(n, _, _)| *n == name).map(|(_, c, t)| (*c, *t)).unwrap_or((0, 0));
+                    (name, c.saturating_sub(bc), t.saturating_sub(bt))
+                })
+                .filter(|(_, c, _)| *c > 0)
+                .collect();
+            operators.sort_by(|a, b| b.2.cmp(&a.2));
+            record["operators"] = serde_json::json!(operators.into_iter().take(40).collect::<Vec<_>>());
             #[cfg(feature = "strata-public-host-clock")]
             {
                 let after = cubecl::wgpu::native_strata_host_capture_profile();
