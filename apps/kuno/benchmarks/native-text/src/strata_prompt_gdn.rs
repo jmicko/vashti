@@ -208,7 +208,7 @@ fn launch(
     p: [u32; 8],
 ) -> Result<()> {
     if !crate::strata_prompt::active()
-        || !(1..=4096).contains(&p[0])
+        || !(1..=crate::strata_prompt::groups::CAP_U32).contains(&p[0])
         || (op != Op::Retain
             && (p[3] == 0
                 || p[3] > 16

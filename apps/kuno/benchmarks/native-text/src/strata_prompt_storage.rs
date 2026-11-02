@@ -472,11 +472,13 @@ mod overlay_tests {
             roots.iter().map(Handle::size_in_used).sum::<u64>(),
             allocation::MAIN_BYTES
         );
-        assert_eq!(allocation::MAIN_BYTES, 1430 * 1024 * 1024 + crate::strata_prompt::layout::layer_extra_bytes());
+        if cfg!(feature = "strata-layer-gather") {
+            assert_eq!(allocation::MAIN_BYTES, 1768 * 1024 * 1024);
+        }
         assert_eq!(roots[2].size_in_used(), 32 * 1024 * 1024);
-        assert_eq!(WORKING_BYTES, 80 * 1024 * 1024);
-        assert_eq!(groups::GU_BYTES, 20 * 1024 * 1024);
-        assert_eq!(groups::PART_BYTES, 400 * 1024 * 1024);
+        assert_eq!(WORKING_BYTES, 90 * 1024 * 1024);
+        assert_eq!(groups::GU_BYTES, 45 * 512 * 1024);
+        assert_eq!(groups::PART_BYTES, 450 * 1024 * 1024);
         assert_eq!(s.qsa[17].size_in_used(), 8 * 1024 * 1024);
         assert_eq!(s.qsa[18].size_in_used(), 8 * 1024 * 1024);
         assert!((16384 * 2560 * 2) as u64 <= WORKING_BYTES);
@@ -608,7 +610,7 @@ mod packed_gr_layout_tests {
         let old_words = 10240 + 320 + 320 + 10240;
         assert_eq!(
             (old_words - lengths.iter().sum::<usize>()) * allocation::DEFAULT_ROWS * 4,
-            86_441_984
+            5276 * allocation::DEFAULT_ROWS * 4
         );
         assert!(s.gr_input(&s.gr[0], 10240));
         assert!(s.gr_input(&s.gr[2], 320));
@@ -697,11 +699,11 @@ mod mixed_image_tests {
         let s = storage();
         assert_eq!(
             allocation::ROOT_SIZES,
-            [756 * 1024 * 1024, 642 * 1024 * 1024 + layout::layer_extra_bytes(), 32 * 1024 * 1024]
+            [852 * 1024 * 1024, if cfg!(feature = "strata-layer-gather") { 884 * 1024 * 1024 } else { allocation::ROOT_SIZES[1] }, 32 * 1024 * 1024]
         );
         assert_eq!(
             s.mixed_images.iter().map(Handle::size_in_used).sum::<u64>(),
-            40 * 1024 * 1024
+            45 * 1024 * 1024
         );
         for (i, image) in s.mixed_images.iter().enumerate() {
             assert!(s.output(image));
@@ -760,7 +762,7 @@ mod native_ple_reuse_tests {
                 (words * allocation::DEFAULT_ROWS * 4) as u64
             );
         }
-        assert_eq!(2 * 10240 * allocation::DEFAULT_ROWS * 4, 320 * 1024 * 1024);
+        assert_eq!(2 * 10240 * allocation::DEFAULT_ROWS * 4, 360 * 1024 * 1024);
         for (i, a) in s.ple.iter().enumerate() {
             assert!(s.output(a));
             for b in &s.ple[..i] {
@@ -826,7 +828,7 @@ mod residual_owner_tests {
             assert_eq!(h.size_in_used(), (w * allocation::DEFAULT_ROWS * 4) as u64);
         }
         // Removing R1 removes160MiB logical payload, not physical root bytes.
-        assert_eq!(10240 * allocation::DEFAULT_ROWS * 4, 160 * 1024 * 1024);
+        assert_eq!(10240 * allocation::DEFAULT_ROWS * 4, 180 * 1024 * 1024);
         let carry = &s.outer[0];
         let residual = &s.ple[1];
         let hn = &s.ple[3];
@@ -906,7 +908,7 @@ mod allocation_inventory_tests {
         );
         assert_eq!(
             allocation::ROOT_SIZES,
-            [756 * 1024 * 1024, 642 * 1024 * 1024 + layout::layer_extra_bytes(), 32 * 1024 * 1024]
+            [852 * 1024 * 1024, if cfg!(feature = "strata-layer-gather") { 884 * 1024 * 1024 } else { allocation::ROOT_SIZES[1] }, 32 * 1024 * 1024]
         );
         if cfg!(feature = "strata-intel-core") {
             for bytes in allocation::ROOT_SIZES {

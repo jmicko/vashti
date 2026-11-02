@@ -163,7 +163,7 @@ fn launch(
     p: [u32; 12],
 ) -> Result<()> {
     if !crate::strata_prompt::active()
-        || !(1..=4096).contains(&p[0])
+        || !(1..=crate::strata_prompt::groups::CAP_U32).contains(&p[0])
         || p[1].checked_add(p[0]).is_none_or(|end| end > p[2])
         || p[2] > crate::qsa_gpu::MAX_CONTEXT as u32
         || grid.contains(&0)
@@ -345,7 +345,7 @@ pub(crate) fn norm_rope(arena: &PrivateArena, p: [u32; 12], h: [Handle; 5]) -> R
         || f32::from_bits(p[10]) <= 0.
         || p[11] != 0
     {
-        return Err(crate::strata_prompt::invalid_buffer_length());
+        return Err(Error::InvalidBufferLength);
     }
     span(&h[0], count * p[3] as usize)?;
     span(&h[1], width)?;

@@ -196,7 +196,7 @@ pub(crate) fn expert_local_macro32_gu(
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total
@@ -265,7 +265,7 @@ pub(crate) fn expert_local_macro32_down(
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total
@@ -334,7 +334,7 @@ pub(crate) fn expert_local_macro64_gu(
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total
@@ -403,7 +403,7 @@ pub(crate) fn expert_local_macro64_down(
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total

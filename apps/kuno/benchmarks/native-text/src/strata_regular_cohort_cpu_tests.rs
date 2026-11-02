@@ -79,7 +79,7 @@ fn regular_cohort_info_rejects_changed_prefix_spare_slot_and_unknown_common_meta
     validate_words(&w).unwrap();
     for (i, v) in [
         (0, 0),
-        (0, 4097),
+        (0, crate::strata_prompt::groups::CAPACITY as u32 + 1),
         (0, 31),
         (4, 8),
         (6, 101),

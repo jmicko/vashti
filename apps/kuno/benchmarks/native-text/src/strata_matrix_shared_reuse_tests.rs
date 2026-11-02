@@ -9,7 +9,7 @@ fn tokens(s: &str) -> String {
 #[test]
 fn real32k_explicit_admission_keeps_every_original_shape_and_device_condition() {
     assert_eq!((reuse::OPERAND_BYTES, reuse::LOGICAL_BYTES), (32768, 49152));
-    for count in 0..=4097 {
+    for count in 0..=crate::strata_prompt::groups::CAPACITY + 1 {
         for down in [false, true] {
             for shared in [32767, 32768, 49152, 65536] {
                 for explicit in [false, true] {
@@ -18,7 +18,7 @@ fn real32k_explicit_admission_keeps_every_original_shape_and_device_condition() 
                         128
                     } else {
                         256
-                    }..=4096)
+                    }..=crate::strata_prompt::groups::CAPACITY)
                         .contains(&count)
                         && shared >= 32768
                         && explicit;

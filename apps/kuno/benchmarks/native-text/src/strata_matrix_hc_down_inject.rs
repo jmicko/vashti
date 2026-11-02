@@ -558,7 +558,7 @@ fn hc_di_bounds(
     inject_first: usize,
 ) -> Result<()> {
     use crate::strata_prompt::storage::overlaps;
-    if !(128..=4096).contains(&count)
+    if !(128..=crate::strata_prompt::groups::CAPACITY).contains(&count)
         || h.iter().any(|v| v.stream != h[0].stream)
         || workspace.stream != h[0].stream
         || h[1].size_in_used() != 320 * 10240 * 2

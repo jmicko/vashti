@@ -127,7 +127,7 @@ pub(super) fn wide(
     let packed_prefix = usize::cast_from(packed_prefix);
     let input_prefix=usize::cast_from(input_prefix);
     if !plane_all(crate::strata_matrix::native_expert_wide::header_valid(map, count, group))
-        || packed_prefix > 4096 || ((count+31)/32)*32 > 4096-packed_prefix
+        || packed_prefix > comptime!(crate::strata_prompt::groups::CAPACITY) || ((count+31)/32)*32 > comptime!(crate::strata_prompt::groups::CAPACITY)-packed_prefix
         || usize::cast_from(piece_members) != count / 128 * 128
         || columns != comptime!(if down { 640 } else { 2560 })
         || rows != comptime!(if down { 2560 } else { 1280 })

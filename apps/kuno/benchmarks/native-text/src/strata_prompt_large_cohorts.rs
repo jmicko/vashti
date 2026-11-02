@@ -7,8 +7,8 @@ pub(crate) mod packed;
 use zeroize::Zeroizing;
 pub(crate) const MAX: usize = 8;
 pub(crate) const WORDS: usize = 48;
-pub(crate) const X_BYTES: u64 = 20 * 1024 * 1024;
-pub(crate) const H_BYTES: u64 = 5 * 1024 * 1024;
+pub(crate) const X_BYTES: u64 = (crate::strata_prompt::groups::CAPACITY * 2560 * 2) as u64;
+pub(crate) const H_BYTES: u64 = (crate::strata_prompt::groups::CAPACITY * 640 * 2) as u64;
 pub(crate) const IMAGE_BYTES: u64 = (DQ_WORDS * 4) as u64;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum LargeOp {
@@ -66,7 +66,7 @@ impl LargeOp {
         source = source.replace("fn main(@builtin(global_invocation_id) id:vec3<u32>) {", "fn main(@builtin(global_invocation_id) id:vec3<u32>) {\n    if !cohort_begin(id.z) {return;}");
         #[cfg(feature="strata-layer-gather")]
         if matches!(self,Self::Activate) {
-            source=source.replace("fn main(@builtin(global_invocation_id) id:vec3<u32>) {", "fn main(@builtin(global_invocation_id) actual_id:vec3<u32>) {\n    var id=actual_id;\n    if cohort.base.r7==1u {\n        if cohort.base.r3<1u || cohort.base.r3>8u {atomicOr(&fault[0],128u);return;}\n        var found=false;\n        for(var s=0u;s<8u;s++){if s<cohort.base.r3 {let v=cohort.records[s];if v.y<256u||v.y>4096u||v.z>4096u||((v.y+31u)/32u)*32u>4096u-v.z {atomicOr(&fault[0],128u);return;}let first=v.z*320u;let end=first+((v.y+31u)/32u)*32u*320u;if actual_id.x>=first&&actual_id.x<end {id=vec3<u32>(actual_id.x-first,0u,s);found=true;}}}\n        if !found {return;}\n    }");
+            source=source.replace("fn main(@builtin(global_invocation_id) id:vec3<u32>) {", "fn main(@builtin(global_invocation_id) actual_id:vec3<u32>) {\n    var id=actual_id;\n    if cohort.base.r7==1u {\n        if cohort.base.r3<1u || cohort.base.r3>8u {atomicOr(&fault[0],128u);return;}\n        var found=false;\n        for(var s=0u;s<8u;s++){if s<cohort.base.r3 {let v=cohort.records[s];if v.y<256u||v.y>PROMPT_MAX_ROWS||v.z>PROMPT_MAX_ROWS||((v.y+31u)/32u)*32u>PROMPT_MAX_ROWS-v.z {atomicOr(&fault[0],128u);return;}let first=v.z*320u;let end=first+((v.y+31u)/32u)*32u*320u;if actual_id.x>=first&&actual_id.x<end {id=vec3<u32>(actual_id.x-first,0u,s);found=true;}}}\n        if !found {return;}\n    }");
         }
         match self {
             Self::Gather => {
@@ -252,7 +252,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
 /// Original map contents and per-role physical source authority remain GPU/read-lease checks.
 pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
     if words[0] == 0
-        || words[0] > 4096
+        || words[0] > crate::strata_prompt::groups::CAP_U32
         || words[9] == 0
         || words[9] > 8
         || words[4] > 512 - words[9]
@@ -279,7 +279,7 @@ pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
             continue;
         }
         if group != words[4] + i as u32
-            || !(256..=4096).contains(&members)
+            || !(256..=crate::strata_prompt::groups::CAP_U32).contains(&members)
             || members > words[0]
             || prefix != rows
             || slot > 8
@@ -294,7 +294,7 @@ pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
         rows += members.div_ceil(tile) * tile;
         maximum = maximum.max(members);
     }
-    if rows > 4096 || maximum != words[10] {
+    if rows > crate::strata_prompt::groups::CAP_U32 || maximum != words[10] {
         return Err(Error::InvalidBufferLength);
     }
     Ok(rows as usize)
@@ -336,7 +336,7 @@ pub(super) fn enqueue_unit(
     for (i, &slot) in slots.iter().enumerate() {
         let group = first + i;
         let members = map[516 + group] as usize;
-        if members == 0 || !(256..=4096).contains(&members) {
+        if members == 0 || !(256..=crate::strata_prompt::groups::CAPACITY).contains(&members) {
             return Err(Error::InvalidBufferLength);
         }
         let tile = 32;

@@ -365,7 +365,7 @@ fn eligible(
 ) -> bool {
     // Keep the complete existing small/unaligned path. The library's double
     // buffering requires at least two K64 stages; actual model K is much larger.
-    (32..=4096).contains(&count)
+    (32..=crate::strata_prompt::groups::CAPACITY).contains(&count)
         && rows >= 64
         && rows.is_multiple_of(16)
         && columns >= 128

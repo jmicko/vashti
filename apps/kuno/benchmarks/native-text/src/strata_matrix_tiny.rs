@@ -67,7 +67,7 @@ fn tiny_views(
     bfloat: bool,
 ) -> Result<bool> {
     use crate::strata_prompt::storage::overlaps;
-    if !tiny_shape(columns, rows, bfloat) || !(1..=4096).contains(&count) || out_stride < rows {
+    if !tiny_shape(columns, rows, bfloat) || !(1..=crate::strata_prompt::groups::CAPACITY).contains(&count) || out_stride < rows {
         return Err(Error::InvalidBufferLength);
     }
     let output_end = out_first

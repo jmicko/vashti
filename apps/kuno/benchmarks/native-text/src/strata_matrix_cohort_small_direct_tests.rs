@@ -28,9 +28,9 @@ fn small_direct_cohort_preserves_every_original_guard_and_chronological_product(
     // only the new global-X input selection. Output publication stays local.
     let (head, input) = new.split_once("    let mut input_prefix=prefix;").unwrap();
     let (guard, tail) = input.split_once("    let weight_first").unwrap();
-    for check in ["h13>comptime!", "h14!=0 || h15!=0", "map[43008+group]",
-        "map[43520]", "global>total", "extent>total-global",
-        "global+extent!=next", "input.len()!=36372480", "input_prefix=global"] {
+    for check in ["h13>comptime!", "h14!=0 || h15!=0", "map[comptime!(crate::strata_prompt::groups::LAYER_PREFIX)+group]",
+        "map[comptime!(crate::strata_prompt::groups::LAYER_PREFIX+512)]", "global>total", "extent>total-global",
+        "global+extent!=next", "input.len()!=comptime!(crate::strata_prompt::groups::PADDED_ROWS*640)", "input_prefix=global"] {
         assert!(guard.contains(check), "missing layer input guard {check}");
     }
     let original_input = format!("{head}    let weight_first{tail}")

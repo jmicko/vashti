@@ -1,9 +1,9 @@
 //! Distinct32..255-member cohort grammar. Every INFO record, actual owning view,
 //! per-role phase and physical grid is authenticated before any enqueue.
 use super::*;
-const WORKING: u64 = 80 * 1024 * 1024;
-const X: u64 = 20 * 1024 * 1024;
-const H: u64 = 5 * 1024 * 1024;
+const WORKING: u64 = WORKING_BYTES;
+const X: u64 = X_ROWS_BYTES;
+const H: u64 = H_ROWS_BYTES;
 const RAW: u64 = 32 * 1024 * 1024;
 pub(super) struct Cohort {
     words: [u32; 48],
@@ -90,7 +90,7 @@ impl Cohort {
             || !args.read_dependencies.is_empty()
             || !args.tensor_maps.is_empty()
             || w[0] == 0
-            || w[0] > 4096
+            || w[0] > MAX_MEMBERS
             || w[4] as usize != first
             || w[9] == 0
             || w[9] > 8
@@ -137,7 +137,7 @@ impl Cohort {
             max = max.max(members);
             families[usize::from(tile == 16)] = true;
         }
-        if prefix > 4096 || w[10] != max {
+        if prefix > MAX_MEMBERS || w[10] != max {
             return Err(batch_fault("native expert cohort complete row capacity"));
         }
         let map = View::new(&args.buffers[0])?;
@@ -146,7 +146,7 @@ impl Cohort {
         let fault = View::new(&args.buffers[3])?;
         if map.used() != MAP_BYTES
             || fault.used() != 4
-            || x.used() != if layer_h.is_some() {56832*2560*2}else{X}
+            || x.used() != if layer_h.is_some() {PADDED_ROWS*2560*2}else{X}
             || x.first % 256 != 0
             || input.used() < u64::from(w[0]) * 2560 * if w[12] == 1 { 2 } else { 4 }
             || [input, x, fault].iter().any(|v| v.stream != map.stream)

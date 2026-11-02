@@ -2,6 +2,8 @@
 use super::*;
 use crate::server::Handle;
 use alloc::{vec, vec::Vec};
+/// Prompt chunk rows (4096 when these fixtures were written).
+const R32: u32 = KUNO_PROMPT_ROWS as u32;
 const LARGE: &str =
     "probe::strata_matrix::cohorts::large::expert_large_cohort::ExpertLargeCohort<Runtime>";
 struct Entry {
@@ -62,7 +64,7 @@ fn program(counts: &[u32]) -> Vec<Entry> {
     let n = counts.len() as u32;
     let maximum = *counts.iter().max().unwrap();
     let mut w = [0; 48];
-    w[..3].copy_from_slice(&[4096, 2560, 1280]);
+    w[..3].copy_from_slice(&[R32, 2560, 1280]);
     w[6..11].copy_from_slice(&[100, 100, 300, n, maximum]);
     let mut prefix = 0;
     for (i, &members) in counts.iter().enumerate() {
@@ -195,7 +197,7 @@ fn large_cohort_exact_prefix_tail_chains_and_receipts() {
 }
 #[test]
 fn large_cohort_capacity_map_and_closed_role_negatives() {
-    for counts in [vec![255],vec![0],vec![4097],vec![1025;4]] {
+    for counts in [vec![255],vec![0],vec![R32+1],vec![1153;4]] {
         let p=program(&counts);assert!(run(&p).is_err());
     }
     for index in [0usize,4,9,10,12,13,16,17,18,19,47] {
@@ -221,18 +223,18 @@ fn large_cohort_capacity_map_and_closed_role_negatives() {
 
 #[cfg(feature="kuno-layer-gather")]
 fn layer_program()->Vec<Entry> {
-    let phase=Handle::new(StreamId::current(),794*1024*1024);
-    let persistent=Handle::new(StreamId::current(),756*1024*1024);
+    let phase=Handle::new(StreamId::current(),KUNO_PHASE_ROOT_BYTES);
+    let persistent=Handle::new(StreamId::current(),KUNO_PERSISTENT_ROOT_BYTES);
     let view=|owner:&Handle,first:u64,bytes:u64|owner.clone().offset_start(first).offset_end(owner.size()-first-bytes).binding();
-    let map=view(&phase,80*1024*1024+GU_BYTES+PART_BYTES+512*1024+3*256,MAP_BYTES);
-    let xfirst=80*1024*1024+GU_BYTES+PART_BYTES+4*(131072+65536+65536+131072)+6*256;
-    let x=view(&phase,xfirst,56832*2560*2);
-    let h=view(&persistent,20*1024*1024,H);
+    let map=view(&phase,WORKING_BYTES+GU_BYTES+PART_BYTES+512*1024+3*256,MAP_BYTES);
+    let xfirst=WORKING_BYTES+GU_BYTES+PART_BYTES+4*(131072+65536+65536+131072)+6*256;
+    let x=view(&phase,xfirst,PADDED_ROWS*2560*2);
+    let h=view(&persistent,X_ROWS_BYTES,H);
     let input=Handle::new(StreamId::current(),WORKING).binding();
     let fault=Handle::new(StreamId::current(),4).binding();
-    let mut out=vec![Entry{name:"StrataExpertLayerGather",release:false,count:CubeCount::Static(5,40960,1),args:KernelArguments::new().with_buffers(vec![map.clone(),input.clone(),x.clone(),h.clone(),fault.clone()]).with_info(MetadataBindingInfo::custom(packed(&[4096,10,0,40960,0,0,0,0])))}];
+    let mut out=vec![Entry{name:"StrataExpertLayerGather",release:false,count:CubeCount::Static(5,10*R32,1),args:KernelArguments::new().with_buffers(vec![map.clone(),input.clone(),x.clone(),h.clone(),fault.clone()]).with_info(MetadataBindingInfo::custom(packed(&[R32,10,0,10*R32,0,0,0,0])))}];
     for group in 0..10 {
-        let mut p=program(&[4096]);
+        let mut p=program(&[R32]);
         let old_map=View::new(&p[0].args.buffers[0]).unwrap();
         let old_x=View::new(&p[0].args.buffers[2]).unwrap();
         let old_fault=View::new(&p[0].args.buffers[3]).unwrap();
@@ -276,10 +278,10 @@ fn layer_gather_outer_grammar_retains_real_owners_and_completes_entire_layer() {
 #[cfg(feature="kuno-layer-gather")]
 #[test]
 fn layer_gather_outer_grammar_rejects_local_fallback_alias_and_unbounded_grid() {
-    for (index,value) in [(0,0),(1,0),(2,2),(3,56864),(4,1)] {
+    for (index,value) in [(0,0),(1,0),(2,2),(3,PADDED_ROWS as u32+32),(4,1)] {
         let mut bad=layer_program();set_word(&mut bad[0].args.info,index,value);assert!(run_layer(&bad,true).is_err());
     }
-    for grid in [CubeCount::Static(40960*5,1,1),CubeCount::Static(5,40959,1),CubeCount::Static(5,40960,2)] {
+    for grid in [CubeCount::Static(10*R32*5,1,1),CubeCount::Static(5,10*R32-1,1),CubeCount::Static(5,10*R32,2)] {
         let mut bad=layer_program();bad[0].count=grid;assert!(run_layer(&bad,true).is_err());
     }
     for phase in [1usize,2,3,4,5] {
@@ -307,7 +309,7 @@ fn packed_layer_program(units: &[Vec<u32>]) -> Vec<Entry> {
     set_word(&mut layer.args.info, 4, 1);
     let groups: usize = units.iter().map(Vec::len).sum();
     let members: u32 = units.iter().flatten().sum();
-    assert_eq!(members, 40960); // Genuine 4096-token/top10 population.
+    assert_eq!(members, 10*R32); // Genuine full-chunk top10 population.
     let padded = units.iter().flatten().map(|m| m.div_ceil(32)*32).sum();
     set_word(&mut layer.args.info, 1, groups as u32);
     set_word(&mut layer.args.info, 3, padded);
@@ -372,10 +374,10 @@ fn packed_layer_program(units: &[Vec<u32>]) -> Vec<Entry> {
 #[cfg(feature="kuno-large-packed-tiles")]
 fn packed_units(tails:bool)->Vec<Vec<u32>> {
     if tails {
-        let mut units=vec![vec![4096];8];
-        units.extend([vec![257,265,288],vec![3691],vec![3691]]);
+        let mut units=vec![vec![R32];8];
+        units.extend([vec![257,265,288],vec![R32-405],vec![R32-405]]);
         units
-    } else {vec![vec![4096];10]}
+    } else {vec![vec![R32];10]}
 }
 
 #[cfg(feature="kuno-large-packed-tiles")]
@@ -452,7 +454,7 @@ fn packed_large_exact_identity_and_format_are_required_at_every_phase() {
 #[test]
 fn packed_large_never_bypasses_layer_or_original_physical_owners_and_grids() {
     for format in [0,1] {
-        let mut p=program(&[4096]);
+        let mut p=program(&[R32]);
         for e in &mut p { set_word(&mut e.args.info,14,format); }
         p[0].name="StrataExpertLargePackedCohortGather";
         assert!(run(&p).is_err());
@@ -495,8 +497,8 @@ fn packed_layer_seal_leaves_small_and_regular_segments_in_original_format() {
     let p=packed_layer_program(&packed_units(false));
     let e=&p[0];
     let layer=super::super::layer_gather::Layer::start_packed(e.release,&e.count,&e.args).unwrap();
-    for members in [1,31,32,255,256,4096] {
-        let mut args=program(&[4096]).remove(0).args;
+    for members in [1,31,32,255,256,R32] {
+        let mut args=program(&[R32]).remove(0).args;
         set_word(&mut args.info,13,1);
         set_word(&mut args.info,17,members);
         set_word(&mut args.info,14,u32::from(members>=256));

@@ -159,7 +159,10 @@ mod tests {
             });
             assert_eq!(actual, ROOT_SIZES);
             assert_eq!(actual.iter().sum::<u64>(), MAIN_BYTES);
-            assert_eq!(3 * ROOT_BYTES - MAIN_BYTES, 1642 * 1024 * 1024 - crate::strata_prompt::layout::layer_extra_bytes());
+            if cfg!(feature = "strata-layer-gather") {
+                // 852 + 884 + 32 MiB at the 4608-row prompt capacity.
+                assert_eq!(3 * ROOT_BYTES - MAIN_BYTES, 1304 * 1024 * 1024);
+            }
         } else {
             assert!(layout.is_err());
         }

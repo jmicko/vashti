@@ -132,7 +132,8 @@ pub(crate) fn public_step(label: &'static str, started: std::time::Instant) {
 pub fn fault(cause: impl std::fmt::Display) -> Error {
     if COMPILED_PUBLIC_DIAGNOSTICS.load(Ordering::Acquire) {
         let at = std::panic::Location::caller();
-        eprintln!("public_device_error {}:{} {cause}", at.file(), at.line());
+        // One line: the public stderr filter drops continuation lines.
+        eprintln!("public_device_error {}:{} {}", at.file(), at.line(), cause.to_string().replace('\n', " | "));
     }
     Error::InvalidFormat("resident graph device operation")
 }

@@ -134,7 +134,7 @@ pub(crate) fn expert_regular_cohort(
         || h4 > 512 - h9
         || h11 != comptime!(tile as u32)
         || h0 < 1
-        || h0 > 4096
+        || h0 > comptime!(crate::strata_prompt::groups::CAP_U32)
         || h1 != comptime!(if down { 640u32 } else { 2560u32 })
         || h2 != comptime!(if down { 2560u32 } else { 1280u32 })
         || h5 != comptime!(if down { 2u32 } else { 0u32 })
@@ -143,7 +143,7 @@ pub(crate) fn expert_regular_cohort(
         || members < 32
         || members >= 256
         || members > usize::cast_from(h0)
-        || prefix > 4096
+        || prefix > comptime!(crate::strata_prompt::groups::CAPACITY)
         || prefix % 16 != 0
         || raw > 8
     {
@@ -153,7 +153,7 @@ pub(crate) fn expert_regular_cohort(
         terminate!();
     }
     let padded = (members + comptime!(tile) - 1) / comptime!(tile) * comptime!(tile);
-    if padded > 4096 - prefix || map.len() != 65536 {
+    if padded > comptime!(crate::strata_prompt::groups::CAPACITY) - prefix || map.len() != 65536 {
         if UNIT_POS == 0 {
             fault[0].fetch_or(128);
         }

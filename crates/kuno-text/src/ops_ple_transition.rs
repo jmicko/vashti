@@ -79,7 +79,7 @@ use zeroize::Zeroizing;
 pub const MAX_BATCH: usize = 8;
 /// Whole-prompt chunk geometry. Shared with the GPU prompt-owner allocation;
 /// speculative decode remains independently bounded by MAX_BATCH.
-pub const MAX_PROMPT_BATCH: usize = 4096;
+pub const MAX_PROMPT_BATCH: usize = 4608;
 pub const CHANNELS: usize = 10240;
 pub const HISTORY: usize = 9;
 pub const HISTORY_WORDS: usize = CHANNELS * HISTORY;

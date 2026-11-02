@@ -1865,7 +1865,7 @@ mod tests {
                     32,
                 ),
                 (
-                    4097,
+                    crate::strata_prompt::groups::CAPACITY + 1,
                     columns,
                     rows,
                     128,

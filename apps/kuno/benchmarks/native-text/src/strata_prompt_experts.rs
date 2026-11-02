@@ -642,7 +642,7 @@ fn enqueue_original(
                 (0 | 1, q::IQ2_S | q::IQ3_S | q::IQ3_XXS | q::IQ4_XS) | (2, q::IQ4_NL | q::Q2_0)
             )
         {
-            return Err(crate::strata_prompt::invalid_buffer_length());
+            return Err(Error::InvalidBufferLength);
         }
     }
     if projections[0].dtype() != projections[1].dtype() {
@@ -1690,7 +1690,7 @@ mod member_dispatch_tests {
         }
         assert_eq!(member_dispatches(1, 4096).unwrap(), [5, 2]);
         assert_eq!(member_dispatches(4096, 4096).unwrap(), [20480, 5120]);
-        for (members, count) in [(0, 1), (2, 1), (1, 0), (4097, 4096), (1, 4097)] {
+        for (members, count) in [(0, 1), (2, 1), (1, 0), (4097, 4096), (1, crate::strata_prompt::groups::CAPACITY + 1)] {
             assert!(member_dispatches(members, count).is_err());
         }
     }

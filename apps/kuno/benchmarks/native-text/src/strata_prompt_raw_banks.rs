@@ -66,7 +66,7 @@ impl Plan {
         if members.is_empty()
             || members.len() > GROUPS
             || members.len() != streamed.len()
-            || members.iter().any(|&n| !(1..=4096).contains(&n))
+            || members.iter().any(|&n| !(1..=crate::strata_prompt::groups::CAP_U32).contains(&n))
         {
             return Err(reject());
         }
@@ -118,7 +118,7 @@ impl Plan {
                 let mut rows = members[first].div_ceil(32) * 32;
                 while end < members.len() && end-first < SLOTS && members[end]>=256 {
                     let next=members[end].div_ceil(32)*32;
-                    if rows+next>4096 {break;}
+                    if rows+next>crate::strata_prompt::groups::CAP_U32 {break;}
                     rows+=next;end+=1;
                 }
             } else if lookahead {
@@ -447,7 +447,7 @@ mod tests {
         assert!(Plan::new(&[], &[]).is_err());
         assert!(Plan::new(&[1], &[]).is_err());
         assert!(Plan::new(&[0], &[false]).is_err());
-        assert!(Plan::new(&[4097], &[false]).is_err());
+        assert!(Plan::new(&[crate::strata_prompt::groups::CAPACITY as u32 + 1], &[false]).is_err());
         assert!(Plan::new(&[1; 513], &[false; 513]).is_err());
         let mut p = Plan::new(&[1; 512], &[true; 512]).unwrap();
         p.issue_next().unwrap();

@@ -7890,7 +7890,8 @@ mod tests {
         // Original64MB includes16 head tiles; each additional tile owns2 INFO
         // records. Native adds prompt/GDN/QSA/prefix records and audited copies.
         let base = if crate::strata_intel_core::enabled() {
-            234_831_872
+            // Grows with the QSA prompt INFO records priced at CAPACITY rows.
+            235_765_760
         } else {
             64_000_000
         };

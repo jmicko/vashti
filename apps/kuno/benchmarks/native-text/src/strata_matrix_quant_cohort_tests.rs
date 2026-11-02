@@ -419,7 +419,7 @@ fn quant_cohort_source_preserves_eight_value_poison_gate_and_existing_consumers(
         "map[516 + group] != count",
         "map.len() != 65536",
         "raw > 8",
-        "packed.len() != 20971520",
+        "packed.len() != comptime!(crate::strata_prompt::groups::CAPACITY * 5120)",
         "strata_grid.len() != 8192",
     ] {
         assert!(has(k, needle));

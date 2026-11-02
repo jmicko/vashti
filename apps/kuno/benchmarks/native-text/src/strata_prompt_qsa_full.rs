@@ -436,9 +436,9 @@ mod score_batch_tests {
             score_query_view(
                 &query,
                 ScoreBatch {
-                    first: 4096,
+                    first: crate::strata_prompt::groups::CAPACITY,
                     rows: 1,
-                    start: 4096
+                    start: crate::strata_prompt::groups::CAPACITY
                 }
             )
             .is_err()
@@ -449,6 +449,6 @@ mod score_batch_tests {
         let n = crate::strata_prompt::groups::CAPACITY;
         let calls = 3 * score_batches(0, n, 32768).unwrap().count() + 2 * n.div_ceil(32) + 18;
         assert_eq!(super::super::INFO_BYTES, 12 * calls as u64 * 2048);
-        assert_eq!(super::super::INFO_BYTES, 7_913_472);
+        assert_eq!(super::super::INFO_BYTES, 8_847_360);
     }
 }

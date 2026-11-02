@@ -16,8 +16,8 @@ pub(crate) mod compact;
 pub(crate) mod fused;
 pub(crate) const MAX: usize = 8;
 pub(crate) const WORDS: usize = 48;
-pub(crate) const X_BYTES: u64 = 20 * 1024 * 1024;
-pub(crate) const H_BYTES: u64 = 5 * 1024 * 1024;
+pub(crate) const X_BYTES: u64 = (crate::strata_prompt::groups::CAPACITY * 2560 * 2) as u64;
+pub(crate) const H_BYTES: u64 = (crate::strata_prompt::groups::CAPACITY * 640 * 2) as u64;
 pub(crate) const IMAGE_BYTES: u64 = (DQ_WORDS * 4) as u64;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum CohortOp {
@@ -210,7 +210,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
 /// Original map contents and per-role physical source authority remain GPU/read-lease checks.
 pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
     if words[0] == 0
-        || words[0] > 4096
+        || words[0] > crate::strata_prompt::groups::CAP_U32
         || words[9] == 0
         || words[9] > 8
         || words[4] > 512 - words[9]
@@ -253,7 +253,7 @@ pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
         rows += members.div_ceil(tile) * tile;
         maximum = maximum.max(members);
     }
-    if rows > 4096 || maximum != words[10] {
+    if rows > crate::strata_prompt::groups::CAP_U32 || maximum != words[10] {
         return Err(Error::InvalidBufferLength);
     }
     Ok(rows as usize)
@@ -666,7 +666,7 @@ mod tests {
         assert_eq!(IMAGE_BYTES, 9_830_400);
         assert_eq!(IMAGE_BYTES * 8, 75 * 1024 * 1024);
         assert!(IMAGE_BYTES * 8 <= storage::WORKING_BYTES);
-        assert_eq!(X_BYTES + H_BYTES, 25 * 1024 * 1024);
+        assert_eq!(X_BYTES + H_BYTES, (crate::strata_prompt::groups::CAPACITY * 6400) as u64);
         assert!(X_BYTES + H_BYTES <= storage::WORKING_BYTES);
         let w = fixture();
         let rows = validate_words(&w).unwrap();
@@ -692,7 +692,7 @@ mod tests {
         assert!(validate_words(&baseline).is_ok());
         for (at, value) in [
             (0, 0),
-            (0, 4097),
+            (0, crate::strata_prompt::groups::CAPACITY as u32 + 1),
             (9, 0),
             (9, 9),
             (10, 30),
@@ -767,7 +767,7 @@ mod tests {
             .unwrap();
             assert!(s.contains("cohort_begin(id.z)"));
             assert!(s.contains("map[516u+p.group]!=v.y"));
-            assert!(s.contains("padded>4096u-min(v.z,4096u)"));
+            assert!(s.contains("padded>PROMPT_MAX_ROWS-min(v.z,PROMPT_MAX_ROWS)"));
             assert!(s.contains("v.w>8u"));
             if let CohortOp::Image { .. } = op {
                 assert!(s.contains("arrayLength(&raw)!=8388608u"));

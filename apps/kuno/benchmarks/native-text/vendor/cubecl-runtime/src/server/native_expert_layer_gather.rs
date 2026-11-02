@@ -1,12 +1,12 @@
 //! Genuine immutable whole-layer input authority, derived only from its producer.
 use super::*;
 use alloc::vec::Vec;
-pub(super) const X_BYTES: u64 = 56832 * 2560 * 2;
+pub(super) const X_BYTES: u64 = PADDED_ROWS * 2560 * 2;
 const X_FIRST: u64 =
-    80 * 1024 * 1024 + GU_BYTES + PART_BYTES + 4 * (131072 + 65536 + 65536 + 131072) + 6 * 256;
+    WORKING_BYTES + GU_BYTES + PART_BYTES + 4 * (131072 + 65536 + 65536 + 131072) + 6 * 256;
 /// Int8 activation region after the layer X ([Xq | Hq], see strata_prompt_groups).
-pub(super) const XQ_BYTES: u64 = 4096 * 720 * 4;
-pub(super) const HQ_BYTES: u64 = 4096 * 180 * 4;
+pub(super) const XQ_BYTES: u64 = ROWS * 720 * 4;
+pub(super) const HQ_BYTES: u64 = ROWS * 180 * 4;
 pub(super) struct Layer {
     pub(super) owners: [Binding; 4],
     pub(super) h: View,
@@ -53,12 +53,12 @@ impl Layer {
         let groups = word(&args.info, 1)?;
         let half = word(&args.info, 2)?;
         let padded = word(&args.info, 3)?;
-        if !(1..=4096).contains(&n)
+        if !(1..=MAX_MEMBERS).contains(&n)
             || !(1..=512).contains(&groups)
             || groups > n * 10
             || half > 1
             || padded < n * 10
-            || padded > 56832
+            || u64::from(padded) > PADDED_ROWS
             || padded % 32 != 0
             || word(&args.info, 4)? != u32::from(packed_large)
             || (5..8).any(|i| word(&args.info, i).map_or(true, |v| v != 0))
@@ -78,13 +78,13 @@ impl Layer {
             || x.used() != X_BYTES
             || x.first != X_FIRST
             // The phase root: layer X plus the int8 activation region.
-            || x.size != 794 * 1024 * 1024
+            || x.size != KUNO_PHASE_ROOT_BYTES
             || map.id != x.id
             || map.size != x.size
             || map.first + map.used() > x.first
-            || h.used() != 5 * 1024 * 1024
-            || h.first != 20 * 1024 * 1024
-            || h.size != 756 * 1024 * 1024
+            || h.used() != H_ROWS_BYTES
+            || h.first != X_ROWS_BYTES
+            || h.size != KUNO_PERSISTENT_ROOT_BYTES
             || h.id == x.id
             || input.used() < u64::from(n) * 2560 * if half == 1 { 2 } else { 4 }
             || [input, x, h, fault].iter().any(|v| v.stream != map.stream)

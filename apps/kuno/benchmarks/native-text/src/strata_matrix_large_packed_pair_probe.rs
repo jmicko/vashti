@@ -13,7 +13,8 @@ const WINDOW_WORDS: usize = 4 * 1024 * 1024;
 // A public oracle only: never attached to a private inference request. The
 // largest original DOWN owner is400MiB. Keep its reference in scrubbed host
 // memory rather than charging a second400MiB GPU owner to the original arena.
-const REFERENCE_BYTES: usize = 400 * 1024 * 1024;
+// The largest snapshotted owner is PART (all prompt routes x 2560 f32).
+const REFERENCE_BYTES: usize = crate::strata_prompt::groups::PART_BYTES as usize;
 // Only this compiled-public numeric fixture calls these diagnostics. The
 // private worker protocol and global error logging are deliberately unchanged.
 fn device_fault(stage:&'static str,cause:impl std::fmt::Debug+std::fmt::Display)->kuno_text::Error {

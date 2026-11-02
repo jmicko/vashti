@@ -2,6 +2,8 @@
 use super::*;
 use crate::server::Handle;
 use alloc::{vec, vec::Vec};
+/// Prompt chunk rows (4096 when these fixtures were written).
+const R32: u32 = KUNO_PROMPT_ROWS as u32;
 const REGULAR: &str =
     "probe::strata_matrix::cohorts::regular::expert_regular_cohort::ExpertRegularCohort<Runtime>";
 struct Entry {
@@ -62,7 +64,7 @@ fn program(counts: &[u32]) -> Vec<Entry> {
     let n = counts.len() as u32;
     let maximum = *counts.iter().max().unwrap();
     let mut w = [0; 48];
-    w[..3].copy_from_slice(&[4096, 2560, 1280]);
+    w[..3].copy_from_slice(&[R32, 2560, 1280]);
     w[6..11].copy_from_slice(&[100, 100, 300, n, maximum]);
     let mut prefix = 0;
     for (i, &members) in counts.iter().enumerate() {
@@ -353,14 +355,14 @@ fn quad_regular_disabled_identity_cannot_enter_historical_regular_grammar(){asse
 // reuse, not the REG operand format or actual owning views.
 #[cfg(feature="kuno-regular-four-cell")]
 fn quad_layer_program(packed_large: bool) -> Vec<Entry> {
-    let phase = Handle::new(StreamId::current(),794*1024*1024);
-    let persistent = Handle::new(StreamId::current(),756*1024*1024);
+    let phase = Handle::new(StreamId::current(),KUNO_PHASE_ROOT_BYTES);
+    let persistent = Handle::new(StreamId::current(),KUNO_PERSISTENT_ROOT_BYTES);
     let view = |owner: &Handle, first: u64, bytes: u64| owner.clone()
         .offset_start(first).offset_end(owner.size()-first-bytes).binding();
-    let map = view(&phase,80*1024*1024+GU_BYTES+PART_BYTES+512*1024+3*256,MAP_BYTES);
-    let x_first = 80*1024*1024+GU_BYTES+PART_BYTES+4*(131072+65536+65536+131072)+6*256;
-    let x = view(&phase,x_first,56832*2560*2);
-    let h = view(&persistent,20*1024*1024,H);
+    let map = view(&phase,WORKING_BYTES+GU_BYTES+PART_BYTES+512*1024+3*256,MAP_BYTES);
+    let x_first = WORKING_BYTES+GU_BYTES+PART_BYTES+4*(131072+65536+65536+131072)+6*256;
+    let x = view(&phase,x_first,PADDED_ROWS*2560*2);
+    let h = view(&persistent,X_ROWS_BYTES,H);
     let input = Handle::new(StreamId::current(),WORKING).binding();
     let fault = Handle::new(StreamId::current(),4).binding();
     let mut out = vec![Entry {

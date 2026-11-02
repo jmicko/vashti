@@ -72,6 +72,8 @@ impl PromptPlan {
                 * 256
         }
         .min(crate::strata_prompt::groups::CAPACITY);
+        let cap = crate::claude_quality::CHUNK_CAP.load(std::sync::atomic::Ordering::Relaxed);
+        let chunk = if cap != 0 { chunk.min(cap) } else { chunk };
         Ok(Self(Zeroizing::new([prompt, chunk])))
     }
     fn prefix(&self) -> usize {

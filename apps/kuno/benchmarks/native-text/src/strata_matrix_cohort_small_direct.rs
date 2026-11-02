@@ -134,7 +134,7 @@ pub(crate) fn expert_cohort(
         || h4 > 512 - h9
         || h11 != comptime!(tile as u32)
         || h0 < 1
-        || h0 > 4096
+        || h0 > comptime!(crate::strata_prompt::groups::CAP_U32)
         || h1 != comptime!(if down { 640u32 } else { 2560u32 })
         || h2 != comptime!(if down { 2560u32 } else { 1280u32 })
         || h5 != comptime!(if down { 2u32 } else { 0u32 })
@@ -143,7 +143,7 @@ pub(crate) fn expert_cohort(
         || members < 1
         || members >= 32
         || members > usize::cast_from(h0)
-        || prefix > 4096
+        || prefix > comptime!(crate::strata_prompt::groups::CAPACITY)
         || prefix % 8 != 0
         || raw > 8
     {
@@ -153,7 +153,7 @@ pub(crate) fn expert_cohort(
         terminate!();
     }
     let padded = (members + comptime!(tile) - 1) / comptime!(tile) * comptime!(tile);
-    if padded > 4096 - prefix || map.len() != 65536 {
+    if padded > comptime!(crate::strata_prompt::groups::CAPACITY) - prefix || map.len() != 65536 {
         if UNIT_POS == 0 {
             fault[0].fetch_or(128);
         }
@@ -193,18 +193,18 @@ pub(crate) fn expert_cohort(
     // Only GU reads global X. Keep each terminating guard at the outer
     // kernel scope: nested early exits otherwise form invalid SPIR-V CFG.
     if comptime!(!down) {
-        let global=usize::cast_from(map[43008+group]);
-        let total=usize::cast_from(map[43520]);
+        let global=usize::cast_from(map[comptime!(crate::strata_prompt::groups::LAYER_PREFIX)+group]);
+        let total=usize::cast_from(map[comptime!(crate::strata_prompt::groups::LAYER_PREFIX+512)]);
         let extent=(members+31)/32*32;
-        if h13==1 && (total>56832 || global%32!=0 || global>total) {
+        if h13==1 && (total>comptime!(crate::strata_prompt::groups::PADDED_ROWS) || global%32!=0 || global>total) {
             if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
         }
         if h13==1 && extent>total-global {
             if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
         }
         let mut next=total;
-        if group+1<usize::cast_from(map[3]) {next=usize::cast_from(map[43008+group+1]);}
-        if h13==1 && ((group==0 && global!=0) || global+extent!=next || input.len()!=36372480) {
+        if group+1<usize::cast_from(map[3]) {next=usize::cast_from(map[comptime!(crate::strata_prompt::groups::LAYER_PREFIX)+group+1]);}
+        if h13==1 && ((group==0 && global!=0) || global+extent!=next || input.len()!=comptime!(crate::strata_prompt::groups::PADDED_ROWS*640)) {
             if UNIT_POS==0 {fault[0].fetch_or(128);}terminate!();
         }
         if h13==1 {input_prefix=global;}

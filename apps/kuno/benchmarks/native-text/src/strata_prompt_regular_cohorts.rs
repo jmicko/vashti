@@ -4,8 +4,8 @@ use super::*;
 use zeroize::Zeroizing;
 pub(crate) const MAX: usize = 8;
 pub(crate) const WORDS: usize = 48;
-pub(crate) const X_BYTES: u64 = 20 * 1024 * 1024;
-pub(crate) const H_BYTES: u64 = 5 * 1024 * 1024;
+pub(crate) const X_BYTES: u64 = (crate::strata_prompt::groups::CAPACITY * 2560 * 2) as u64;
+pub(crate) const H_BYTES: u64 = (crate::strata_prompt::groups::CAPACITY * 640 * 2) as u64;
 pub(crate) const IMAGE_BYTES: u64 = (DQ_WORDS * 4) as u64;
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum RegularOp {
@@ -238,7 +238,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
 /// Original map contents and per-role physical source authority remain GPU/read-lease checks.
 pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
     if words[0] == 0
-        || words[0] > 4096
+        || words[0] > crate::strata_prompt::groups::CAP_U32
         || words[9] == 0
         || words[9] > 8
         || words[4] > 512 - words[9]
@@ -280,7 +280,7 @@ pub(crate) fn validate_words(words: &[u32; WORDS]) -> Result<usize> {
         rows += members.div_ceil(tile) * tile;
         maximum = maximum.max(members);
     }
-    if rows > 4096 || maximum != words[10] {
+    if rows > crate::strata_prompt::groups::CAP_U32 || maximum != words[10] {
         return Err(Error::InvalidBufferLength);
     }
     Ok(rows as usize)

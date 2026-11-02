@@ -87,7 +87,7 @@ impl Fused {
             "    if ss<16u || ss%16u!=0u || p.rows!={} || p.columns!={} || arrayLength(&fused_in)!={}u {{atomicOr(&fault[0],128u);return;}}\n",
             if down { 2560 } else { 1280 },
             if down { 640 } else { 2560 },
-            4096 * stride4
+            groups::CAPACITY * stride4
         ));
         b.push_str("    let members=map[516u+p.group];\n");
         b.push_str("    if sl!=li%ss {atomicOr(&fault[0],128u);}\n");
@@ -96,7 +96,7 @@ impl Fused {
         // Padded token rows: 8 (<=8 members), 16 (<=16) or 32 (<32).
         b.push_str("    let tile=select(select(32u,16u,members<=16u),8u,members<=8u);\n");
         if down {
-            b.push_str("    if cohort_prefix+tile>4096u || (route_first+members)*2560u>arrayLength(&fused_out) || arrayLength(&fused_out)!=PROMPT_PART_WORDS || arrayLength(&fused_status)!=PROMPT_STATUS_WORDS {atomicOr(&fault[0],128u);return;}\n");
+            b.push_str("    if cohort_prefix+tile>PROMPT_MAX_ROWS || (route_first+members)*2560u>arrayLength(&fused_out) || arrayLength(&fused_out)!=PROMPT_PART_WORDS || arrayLength(&fused_status)!=PROMPT_STATUS_WORDS {atomicOr(&fault[0],128u);return;}\n");
         } else {
             b.push_str("    if (cohort_prefix+tile)*1280u>arrayLength(&fused_out) || arrayLength(&fused_status)!=PROMPT_STATUS_WORDS {atomicOr(&fault[0],128u);return;}\n");
         }
@@ -254,8 +254,8 @@ struct Info {count:u32,half:u32,r0:u32,r1:u32,r2:u32,r3:u32,r4:u32,r5:u32}
 fn finite(x:f32)->bool {return abs(x)<=3.4028234663852886e38;}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
-    if p.count<1u || p.count>4096u || p.half>1u || p.r0!=0u || p.r1!=0u || p.r2!=0u || p.r3!=0u || p.r4!=0u || p.r5!=0u
-        || arrayLength(&xq)!=4096u*900u || arrayLength(&input)<p.count*select(2560u,1280u,p.half==1u) {atomicOr(&fault[0],128u);return;}
+    if p.count<1u || p.count>PROMPT_MAX_ROWS || p.half>1u || p.r0!=0u || p.r1!=0u || p.r2!=0u || p.r3!=0u || p.r4!=0u || p.r5!=0u
+        || arrayLength(&xq)!=PROMPT_MAX_ROWS*900u || arrayLength(&input)<p.count*select(2560u,1280u,p.half==1u) {atomicOr(&fault[0],128u);return;}
     let i=id.x;if i>=p.count*80u {return;}
     let token=i/80u;let block=i%80u;
     var v:array<f32,32>;
@@ -287,13 +287,13 @@ impl KernelMetadata for QuantX {
 impl CubeTask<AutoCompiler> for QuantX {
     fn compile(&self, _: &mut AutoCompiler, _: &cubecl::WgpuCompilationOptions, _: ExecutionMode, _: StorageType)
         -> std::result::Result<CompiledKernel<AutoCompiler>, CompilationError> {
-        Ok(CompiledKernel { entrypoint_name: "main".into(), debug_name: None, source: QUANT_X.into(), repr: None,
+        Ok(CompiledKernel { entrypoint_name: "main".into(), debug_name: None, source: (groups::shader_prefix() + QUANT_X).into(), repr: None,
             cube_dim: CubeDim::new_1d(256), debug_info: None })
     }
 }
 /// Quantize the layer's expert input (f32, or the f16 mixed image) into Xq.
 pub(crate) fn quant_x(client: &ComputeClient<WgpuRuntime>, input: Handle, q: Handle, fault: Handle, count: usize, half: bool) -> Result<()> {
-    if !(1..=4096).contains(&count) || q.size_in_used() != groups::LAYER_Q_BYTES {
+    if !(1..=groups::CAPACITY).contains(&count) || q.size_in_used() != groups::LAYER_Q_BYTES {
         return Err(Error::InvalidBufferLength);
     }
     let words = [count as u32, u32::from(half), 0, 0, 0, 0, 0, 0];
@@ -332,10 +332,10 @@ impl ActivateQ {
 fn main(@builtin(global_invocation_id) id:vec3<u32>) {
     if !cohort_begin(id.z) {return;}
     if !valid() {return;}
-    if arrayLength(&hq)!=4096u*180u || arrayLength(&gu)!=PROMPT_MAX_ROWS*1280u || arrayLength(&status)!=PROMPT_STATUS_WORDS {atomicOr(&fault[0],128u);return;}
+    if arrayLength(&hq)!=PROMPT_MAX_ROWS*180u || arrayLength(&gu)!=PROMPT_MAX_ROWS*1280u || arrayLength(&status)!=PROMPT_STATUS_WORDS {atomicOr(&fault[0],128u);return;}
     let members=map[516u+p.group];let i=id.x;if i>=members*20u {return;}
     let member=i/20u;let block=i%20u;
-    if cohort_prefix+member>=4096u {atomicOr(&fault[0],128u);return;}
+    if cohort_prefix+member>=PROMPT_MAX_ROWS {atomicOr(&fault[0],128u);return;}
     let route=map[1540u+map[1028u+p.group]+member];if route>=p.count*10u {atomicOr(&fault[0],128u);return;}
     let base=(cohort_prefix+member)*1280u+block*64u;
     var y:array<f32,32>;var amax=0.0;var good=true;
@@ -395,7 +395,7 @@ mod tests {
     use super::*;
     #[test]
     fn int8_activation_sources_validate() {
-        for s in [QUANT_X.to_string(), ActivateQ::source()] {
+        for s in [groups::shader_prefix() + QUANT_X, ActivateQ::source()] {
             let module = wgpu::naga::front::wgsl::parse_str(&s).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&s)));
             wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(), wgpu::naga::valid::Capabilities::all())
                 .validate(&module)

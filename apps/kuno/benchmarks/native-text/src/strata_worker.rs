@@ -488,9 +488,10 @@ async fn serve(
         client
             .configure_public_target_request_io_with_backlog(Default::default())
             .map_err(|_| "public_matrix_io_failed")?;
+        // Matrix fixtures carry full-capacity PART/GU owners (450 + 22.5 MiB at 4608 rows).
         let mut arena = crate::private_arena::PrivateArena::new_transient_on_configured(
             client.clone(),
-            512 * 1024 * 1024,
+            640 * 1024 * 1024,
             std::sync::Arc::new(AtomicBool::new(false)),
         )
         .map_err(|_| "public_matrix_arena_failed")?;
@@ -1171,8 +1172,14 @@ async fn serve(
             let prompt_count = request.geometry().map_err(|_| "native_request_invalid")?.0;
             #[cfg(feature = "strata-dequant-direct8")]
             if quality {
-                crate::strata_prompt::experts::cohorts::fused::FORCE_OFF
-                    .store(quality_plan[quality_rows.len()].1, std::sync::atomic::Ordering::Relaxed);
+                let second = quality_plan[quality_rows.len()].1;
+                if crate::claude_quality::chunk_mode() {
+                    crate::claude_quality::CHUNK_CAP
+                        .store(if second { 4096 } else { 0 }, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    crate::strata_prompt::experts::cohorts::fused::FORCE_OFF
+                        .store(second, std::sync::atomic::Ordering::Relaxed);
+                }
             }
             crate::strata_prefill_profile::begin();
             #[cfg(feature = "strata-public-host-clock")]

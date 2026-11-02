@@ -24,14 +24,14 @@ fn large_cohort_rows_and_each_original_prefix_tail_partition() {
         assert!(visits.into_iter().all(|n|n==1));
     }
     assert_eq!(validate_words(&fixture(&[512;8])).unwrap(),4096);
-    for n in [0,1,31,32,255,4097,u32::MAX] {assert!(validate_words(&fixture(&[n])).is_err());}
-    assert!(validate_words(&fixture(&[1025;4])).is_err());
+    for n in [0,1,31,32,255,crate::strata_prompt::groups::CAPACITY as u32+1,u32::MAX] {assert!(validate_words(&fixture(&[n])).is_err());}
+    assert!(validate_words(&fixture(&[1153;4])).is_err());
     let mut w=fixture(&[256,257,265,288]);
     for i in [0usize,4,9,10,12,13,16,17,18,19,47] {let old=w[i];w[i]=u32::MAX;assert!(validate_words(&w).is_err());w[i]=old;}
     assert_eq!(IMAGE_BYTES*8,75*1024*1024);
     for op in [LargeOp::Gather,LargeOp::Activate] {
         let text=op.source();assert!(text.contains("let tile=32u;let padded=((real+tile-1u)/tile)*tile;"));
-        assert!(text.contains("v.y<256u || v.y>4096u"));
+        assert!(text.contains("v.y<256u || v.y>PROMPT_MAX_ROWS"));
     }
 }
 #[test]

@@ -24,7 +24,7 @@ impl CubeTask<AutoCompiler> for Gather {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: include_str!("strata_prompt_layer_gather.wgsl").into(),
+            source: (crate::strata_prompt::groups::shader_prefix() + include_str!("strata_prompt_layer_gather.wgsl")).into(),
             repr: None,
             cube_dim: CubeDim::new_1d(256),
             debug_info: None,
@@ -58,7 +58,7 @@ impl CubeTask<AutoCompiler> for PackedGather {
         Ok(CompiledKernel {
             entrypoint_name: "main".into(),
             debug_name: None,
-            source: include_str!("strata_prompt_layer_packed_gather.wgsl").into(),
+            source: (crate::strata_prompt::groups::shader_prefix() + include_str!("strata_prompt_layer_packed_gather.wgsl")).into(),
             repr: None,
             cube_dim: CubeDim::new_1d(256),
             debug_info: None,
@@ -95,9 +95,9 @@ pub(crate) fn enqueue(
     let x = x()?;
     let root = stages()?[0].clone();
     let mut h = root.clone();
-    h.offset_start = Some(root.offset_start.unwrap_or(0) + 20 * 1024 * 1024);
-    h.offset_end = Some(root.size() - h.offset_start.unwrap() - 5 * 1024 * 1024);
-    if x.size_in_used() != groups::LAYER_X_BYTES || h.size_in_used() != 5 * 1024 * 1024 {
+    h.offset_start = Some(root.offset_start.unwrap_or(0) + (crate::strata_prompt::groups::CAPACITY * 2560 * 2) as u64);
+    h.offset_end = Some(root.size() - h.offset_start.unwrap() - (crate::strata_prompt::groups::CAPACITY * 640 * 2) as u64);
+    if x.size_in_used() != groups::LAYER_X_BYTES || h.size_in_used() != (crate::strata_prompt::groups::CAPACITY * 640 * 2) as u64 {
         return Err(Error::InvalidBufferLength);
     }
     let words = [
@@ -159,7 +159,7 @@ fn launch_inner(
     words: &[u32; 8],
     packed: bool,
 ) -> Result<()> {
-    if !(1..=4096).contains(&words[0])
+    if !(1..=crate::strata_prompt::groups::CAP_U32).contains(&words[0])
         || !(1..=512).contains(&words[1])
         || words[2] > 1
         || words[3] < words[0] * 10
@@ -246,7 +246,7 @@ mod tests {
         )
         .validate(&module)
         .unwrap();
-        assert_eq!(groups::LAYER_X_BYTES, 277 * 1024 * 1024 + 512 * 1024);
+        assert_eq!(groups::LAYER_X_BYTES, ((groups::ROUTES + 512 * 31) * 2560 * 2) as u64);
         assert!(groups::LAYER_PADDED_ROWS <= 65535);
         assert!(source.contains("let row=id.y;let i=row*1280u+id.x;"));
     }
@@ -265,7 +265,7 @@ mod tests {
         .unwrap();
         assert!(source.contains("p.spare.x!=1u"));
         assert!(source.contains("if members>=256u"));
-        assert!(source.contains("arrayLength(&packed)!=72744960u"));
+        assert!(source.contains("arrayLength(&packed)!=PROMPT_PADDED_ROWS*1280u"));
         assert_eq!(PackedGather.name(), "StrataExpertLayerPackedGather");
         assert_eq!(Gather.name(), "StrataExpertLayerGather");
     }

@@ -22,8 +22,15 @@ static ACTIVE: AtomicBool = AtomicBool::new(false);
 static ROWS: Mutex<Vec<(usize, u32, Vec<f32>)>> = Mutex::new(Vec::new());
 
 pub(crate) fn requested() -> bool {
-    std::env::var("KUNO_CLAUDE_QUALITY").as_deref() == Ok("1")
+    matches!(std::env::var("KUNO_CLAUDE_QUALITY").as_deref(), Ok("1" | "chunk"))
 }
+/// `KUNO_CLAUDE_QUALITY=chunk`: one long public text, first as single prompt
+/// chunks (report column "int8"), then capped at 4096-row chunks ("f16").
+pub(crate) fn chunk_mode() -> bool {
+    std::env::var("KUNO_CLAUDE_QUALITY").as_deref() == Ok("chunk")
+}
+/// Nonzero: cap prompt chunks at this many rows (chunk-mode second pass).
+pub(crate) static CHUNK_CAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 pub(crate) fn activate() {
     ACTIVE.store(true, Ordering::Relaxed);
 }
@@ -45,6 +52,9 @@ fn cut(s: &'static str, n: usize) -> &'static [u8] {
     &s.as_bytes()[..n]
 }
 pub(crate) fn texts() -> Vec<Text> {
+    if chunk_mode() {
+        return vec![Text { name: "long_spec", bytes: cut(include_str!("../../../../../docs/kuno-native-text-checkpoint.md"), 15000), reference: false }];
+    }
     vec![
         Text { name: "prose_spec", bytes: cut(include_str!("../../../../../docs/vashti-images-spec.md"), 12000), reference: false },
         Text { name: "rust_source", bytes: cut(include_str!("claude_expert_regular.rs"), 9000), reference: false },
@@ -63,12 +73,16 @@ pub(crate) fn capture(client: &ComputeClient<WgpuRuntime>, residual: &Handle, st
     }
     let mut rows = ROWS.lock().unwrap();
     for (c, piece) in tokens.chunks(256).enumerate() {
+        // Chunk mode: positions >= 2048 only (the private I/O budget is ~4K rows).
+        if chunk_mode() && start + c * 256 + piece.len() <= 2048 {
+            continue;
+        }
         let first = (c * 256) as u64 * row_bytes;
         let bytes = piece.len() as u64 * row_bytes;
         let data = client
             .read_one(residual.clone().offset_start(first).offset_end(size - first - bytes))
-            .map_err(|_| {
-                eprintln!("public_quality_capture_read_failed");
+            .map_err(|e| {
+                eprintln!("public_quality_capture_read_failed piece={c} {}", e.to_string().replace('\n', " | "));
                 kuno_text::Error::InvalidBufferLength
             })?;
         for (i, &t) in piece.iter().enumerate() {
@@ -201,9 +215,11 @@ pub(crate) fn report(
     let cancel = AtomicBool::new(false);
     let mut exec = kuno_text::threaded::ThreadedExecutor::new(32)?;
     // Position i predicts the token consumed at i+1.
-    let stride = (int8.len() / 1024).max(1);
+    let stride = if chunk_mode() { 1 } else { (int8.len() / 1024).max(1) };
     let picks: Vec<usize> = (0..int8.len().saturating_sub(1)).step_by(stride).collect();
     let mut f16_vs_i8 = Compare::default();
+    // Chunk mode: positions past the old 4096-row chunk boundary, separately.
+    let mut late = Compare::default();
     let (mut ref_vs_i8, mut ref_vs_f16) = (Compare::default(), Compare::default());
     for &i in &picks {
         f16_vs_i8.hidden_rel.push(rel(&int8[i].2, &f16[i].2));
@@ -219,6 +235,10 @@ pub(crate) fn report(
             let next = int8[i + 1].1 as usize;
             let (a, b) = (&logits[2 * k], &logits[2 * k + 1]);
             f16_vs_i8.add(b, a, next);
+            if int8[i].0 >= 4096 {
+                late.hidden_rel.push(rel(&int8[i].2, &f16[i].2));
+                late.add(b, a, next);
+            }
             if let Some(r) = reference.and_then(|r| r.iter().find(|x| x.0 == int8[i].0)) {
                 ref_vs_i8.add(&r.1, a, next);
                 ref_vs_f16.add(&r.1, b, next);
@@ -229,6 +249,9 @@ pub(crate) fn report(
         "text": name, "tokens": int8.len(), "stride": stride, "seconds": started.elapsed().as_secs_f64(),
         "f16_base_int8_cand": f16_vs_i8.json(),
     });
+    if chunk_mode() {
+        out["positions_from_4096"] = late.json();
+    }
     if reference.is_some() {
         out["cpu_f32_base_int8_cand"] = ref_vs_i8.json();
         out["cpu_f32_base_f16_cand"] = ref_vs_f16.json();

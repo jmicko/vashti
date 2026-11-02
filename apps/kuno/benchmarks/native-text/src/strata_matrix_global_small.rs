@@ -199,7 +199,7 @@ pub(crate) fn expert_global_macro32_gu(input:&Array<Vector<f16,Const<4>>>,weight
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total
@@ -234,7 +234,7 @@ pub(crate) fn expert_global_macro32_down(input:&Array<Vector<f16,Const<4>>>,weig
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total
@@ -269,7 +269,7 @@ pub(crate) fn expert_global_macro64_gu(input:&Array<Vector<f16,Const<4>>>,weight
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total
@@ -304,7 +304,7 @@ pub(crate) fn expert_global_macro64_down(input:&Array<Vector<f16,Const<4>>>,weig
     let mut header_good = false;
     if group < 512 && map.len() == 65536 {
         let total = usize::cast_from(map[0]);
-        if total >= 1 && total <= 4096 && group < usize::cast_from(map[3]) {
+        if total >= 1 && total <= comptime!(crate::strata_prompt::groups::CAPACITY) && group < usize::cast_from(map[3]) {
             let prefix = usize::cast_from(map[1028 + group]);
             header_good = map[1] == 0
                 && usize::cast_from(map[2]) == total

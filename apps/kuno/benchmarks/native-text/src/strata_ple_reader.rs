@@ -22,7 +22,7 @@ const WAYS: usize = 8;
 const DEPTH: usize = 256;
 const WORKERS: usize = 64;
 const PAGE: usize = 4096;
-const MAX_ROWS: usize = 4096 * 16;
+const MAX_ROWS: usize = crate::strata_prompt::groups::CAPACITY * 16;
 const MAX_RB: usize = 110;
 // Cache includes the largest supported original row format. Two caller plans/
 // raw results can coexist with a prompt producer; all capacities are bounded.

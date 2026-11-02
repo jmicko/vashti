@@ -18,7 +18,18 @@ mod large_cohort;
 #[cfg(feature="kuno-layer-gather")]
 #[path="native_expert_layer_gather.rs"]
 mod layer_gather;
-const MAX_MEMBERS: u32 = 4096;
+/// Prompt chunk rows; must equal kuno-text `MAX_PROMPT_BATCH` (asserted there).
+pub const KUNO_PROMPT_ROWS: usize = 4608;
+const ROWS: u64 = KUNO_PROMPT_ROWS as u64;
+/// Whole-layer padded route rows: every route plus <=31 pad rows per expert.
+const PADDED_ROWS: u64 = ROWS * 10 + 512 * 31;
+const WORKING_BYTES: u64 = ROWS * 4 * 2560 * 2;
+const X_ROWS_BYTES: u64 = ROWS * 2560 * 2;
+const H_ROWS_BYTES: u64 = ROWS * 640 * 2;
+const MAX_MEMBERS: u32 = KUNO_PROMPT_ROWS as u32;
+/// Prompt root sizes at KUNO_PROMPT_ROWS (asserted against kuno's layout).
+pub const KUNO_PERSISTENT_ROOT_BYTES: u64 = 852 * 1024 * 1024;
+pub const KUNO_PHASE_ROOT_BYTES: u64 = 884 * 1024 * 1024;
 const MIN_WIDE_MEMBERS: u32 = if cfg!(feature = "kuno-native-expert-medium") {
     128
 } else {
@@ -26,8 +37,8 @@ const MIN_WIDE_MEMBERS: u32 = if cfg!(feature = "kuno-native-expert-medium") {
 };
 const MAP_BYTES: u64 = 65536 * 4;
 const STATUS_BYTES: u64 = 131072 * 4;
-const GU_BYTES: u64 = 4096 * 1280 * 4;
-const PART_BYTES: u64 = 4096 * 10 * 2560 * 4;
+const GU_BYTES: u64 = ROWS * 1280 * 4;
+const PART_BYTES: u64 = ROWS * 10 * 2560 * 4;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct View {

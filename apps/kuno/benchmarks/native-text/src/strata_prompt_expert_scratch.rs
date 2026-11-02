@@ -175,7 +175,7 @@ mod tests {
             }
         }
         assert_eq!(extent(&slots[0].gu), extent(&gu));
-        assert_eq!(USED_BYTES, 60 * 1024 * 1024);
+        assert_eq!(USED_BYTES, (crate::strata_prompt::groups::CAPACITY * 15360) as u64);
         assert!(USED_BYTES <= storage::WORKING_BYTES);
         for s in &slots {
             assert_eq!(s.input.size_in_used(), (groups::CAPACITY * 2560 * 2) as u64);

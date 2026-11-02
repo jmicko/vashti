@@ -7,6 +7,16 @@ use zeroize::Zeroizing;
 pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const RUNTIME_BYTES: u64 = 16 * 1024 * 1024;
 pub(crate) const CAPACITY: usize = allocation::DEFAULT_ROWS;
+// The vendored native expert grammar carries its own copy of the row count.
+const _: () = assert!(
+    CAPACITY == cubecl_runtime::server::native_expert_grammar::KUNO_PROMPT_ROWS
+);
+const _: () = assert!(
+    allocation::ROOT_SIZES[0] == cubecl_runtime::server::native_expert_grammar::KUNO_PERSISTENT_ROOT_BYTES
+        && allocation::ROOT_SIZES[1] == cubecl_runtime::server::native_expert_grammar::KUNO_PHASE_ROOT_BYTES
+);
+/// Whole-layer padded route rows (every route plus <=31 pad rows per expert).
+pub(crate) const PADDED_ROWS: usize = ROUTES + 512 * 31;
 // Separate prompt geometry from MAX8 verifier/decode and hardware workgroups.
 pub(crate) const ROUTE_CAPACITY: usize = allocation::DEFAULT_ROWS;
 pub(crate) const ROUTES: usize = ROUTE_CAPACITY * 10;
@@ -15,8 +25,12 @@ pub(crate) const RAW_WORDS: usize = 131072;
 pub(crate) const MAP_WORDS: usize = 65536;
 pub(crate) const PROB_WORDS: usize = 65536;
 pub(crate) const STATUS_WORDS: usize = 131072;
-pub(crate) const LAYER_PREFIX: usize = 43008;
-pub(crate) const LAYER_PADDED_ROWS: usize = ROUTES + 512 * 31;
+/// Whole-layer pad prefixes follow the member list (43008 at 4096 rows).
+pub(crate) const LAYER_PREFIX: usize = (MEMBERS + ROUTES).next_multiple_of(512);
+pub(crate) const CAP_U32: u32 = CAPACITY as u32;
+pub(crate) const LAYER_PADDED_ROWS: usize = PADDED_ROWS;
+// Layer gather dispatches one workgroup row per padded row (grid Y <= 65535).
+const _: () = assert!(LAYER_PADDED_ROWS <= 65535);
 pub(crate) const LAYER_X_BYTES: u64 = (LAYER_PADDED_ROWS * 2560 * 2) as u64;
 /// Int8 activations (Strata's numerics): per token 2560 codes (640 words) then
 /// 80 f32 scales; per small-cohort row 640 hidden codes (160 words) + 20 scales.
@@ -31,7 +45,7 @@ pub(crate) const PART_BYTES: u64 = (ROUTES * 2560 * 4) as u64;
 /// Decode/MAX8 packet dimensions and expert address-table sizes stay separate.
 pub(crate) fn shader_prefix() -> String {
     format!(
-        "const PROMPT_MAX_ROWS:u32={CAPACITY}u;const PROMPT_ROUTES:u32={ROUTES}u;const PROMPT_LOGICAL:u32={LOGICAL}u;const PROMPT_RAW_WORDS:u32={RAW_WORDS}u;const PROMPT_MAP_WORDS:u32={MAP_WORDS}u;const PROMPT_PROB_WORDS:u32={PROB_WORDS}u;const PROMPT_STATUS_WORDS:u32={STATUS_WORDS}u;const PROMPT_PART_WORDS:u32={}u;const PROMPT_WORKING_WORDS:u32={}u;\n",
+        "const PROMPT_MAX_ROWS:u32={CAPACITY}u;const PROMPT_PADDED_ROWS:u32={PADDED_ROWS}u;const PROMPT_LAYER_PREFIX:u32={LAYER_PREFIX}u;const PROMPT_ROUTES:u32={ROUTES}u;const PROMPT_LOGICAL:u32={LOGICAL}u;const PROMPT_RAW_WORDS:u32={RAW_WORDS}u;const PROMPT_MAP_WORDS:u32={MAP_WORDS}u;const PROMPT_PROB_WORDS:u32={PROB_WORDS}u;const PROMPT_STATUS_WORDS:u32={STATUS_WORDS}u;const PROMPT_PART_WORDS:u32={}u;const PROMPT_WORKING_WORDS:u32={}u;\n",
         PART_BYTES / 4,
         storage::WORKING_BYTES / 4
     )
@@ -170,7 +184,7 @@ fn overlap_order(order: &mut [u16; 512], lengths: &[usize; 512], host: &[bool; 5
                     let mut rows = lengths[usize::from(ids[i])].div_ceil(32) * 32;
                     while end < ids.len() && end < i + 8 {
                         let next = lengths[usize::from(ids[end])].div_ceil(32) * 32;
-                        if rows + next > 4096 { break; }
+                        if rows + next > CAPACITY { break; }
                         rows += next;
                         end += 1;
                     }

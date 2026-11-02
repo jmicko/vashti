@@ -1261,13 +1261,13 @@ mod direct_quote_tests {
         assert_eq!(requests[18], 512 * 1024);
         assert_eq!(
             &requests[19..22],
-            &[756 * 1024 * 1024, 642 * 1024 * 1024 + crate::strata_prompt::layout::layer_extra_bytes(), 32 * 1024 * 1024]
+            &crate::strata_prompt::allocation::ROOT_SIZES
         );
         assert!(!requests.contains(&(128 * 1024 * 1024)));
-        assert_eq!(requests[..22].iter().sum::<u64>(), 1_503_494_144 + crate::strata_prompt::layout::layer_extra_bytes());
+        assert_eq!(requests[..22].iter().sum::<u64>(), 1_688_043_520 + crate::strata_prompt::layout::layer_extra_bytes());
         assert_eq!(requests[22..].iter().sum::<u64>(), secondary);
-        assert_eq!(requests.iter().sum::<u64>(), 1_503_494_144 + crate::strata_prompt::layout::layer_extra_bytes() + secondary);
-        assert_eq!(MAIN_BYTES - secondary, 1_503_494_144 + crate::strata_prompt::layout::layer_extra_bytes());
+        assert_eq!(requests.iter().sum::<u64>(), 1_688_043_520 + crate::strata_prompt::layout::layer_extra_bytes() + secondary);
+        assert_eq!(MAIN_BYTES - secondary, 1_688_043_520 + crate::strata_prompt::layout::layer_extra_bytes());
         assert_eq!(
             3 * 128 * 1024 * 1024 - crate::strata_dense::INPUT_BYTES,
             402_128_896

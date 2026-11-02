@@ -488,7 +488,7 @@ pub(crate) fn try_launch(
             .checked_add(offset)
             .and_then(|n| n.checked_add(count))
             .is_none_or(|end| end > cap)
-        || offset.checked_add(count).is_none_or(|end| end > 4096)
+        || offset.checked_add(count).is_none_or(|end| end > crate::strata_prompt::groups::CAPACITY)
         || grid != [33, 2, count]
         || h.len() != 7
         || h.iter().any(|x| x.stream != h[0].stream)

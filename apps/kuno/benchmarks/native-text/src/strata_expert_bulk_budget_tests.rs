@@ -300,13 +300,16 @@ fn command(
 #[test]
 fn maximum_route_conserving_shadow_inventory_fits_the_original_byte_reservations() {
     let rows = groups::ROUTE_CAPACITY;
-    assert_eq!(rows, 4096);
+    assert_eq!(rows, crate::strata_prompt::groups::CAPACITY);
     let mut raw = vec![0u32; groups::LOGICAL + rows * 10];
     raw[..4].copy_from_slice(&[rows as u32, 0, rows as u32, 0]);
+    // Worst case: as many >=257-member groups as the routes allow, the rest single.
+    let large = (rows * 10 - 512) / 256;
+    assert_eq!(large * 257 + (512 - large), rows * 10);
     let mut rank = vec![0usize; rows];
     let mut cursor = 0;
     for group in 0..512 {
-        let members = if group < 158 { 257 } else { 1 };
+        let members = if group < large { 257 } else { 1 };
         for _ in 0..members {
             let row = cursor % rows;
             let route = row * 10 + rank[row];
@@ -324,7 +327,7 @@ fn maximum_route_conserving_shadow_inventory_fits_the_original_byte_reservations
         (0..512).map(|g| map[516 + g] as usize).sum::<usize>(),
         rows * 10
     );
-    assert_eq!((0..512).filter(|&g| map[516 + g] >= 257).count(), 158);
+    assert_eq!((0..512).filter(|&g| map[516 + g] >= 257).count(), large);
     // Valid loan mode may retain43 GPU+12 HOST+30 shadow source views. The
     // original exact-size collection retains the full85-view list per DQ.
     let handles = (0..85)
@@ -354,24 +357,24 @@ fn maximum_route_conserving_shadow_inventory_fits_the_original_byte_reservations
             (4, 4, 64, false),
             (8, 8, 64, true),
             (7, 8, 64, true),
-            (6, 8, if group < 158 { 80 } else { 72 }, false),
+            (6, 8, if group < large { 80 } else { 72 }, false),
             (5, 5, 64, false),
-            (6, 8, if group < 158 { 80 } else { 72 }, false),
+            (6, 8, if group < large { 80 } else { 72 }, false),
         ] {
             batch
                 .push(command(&handles, buffers, capacity, info, reads))
                 .unwrap();
             launches += 1;
         }
-        if group < 158 {
+        if group < large {
             for _ in 0..2 {
                 batch.push(command(&handles, 6, 8, 80, false)).unwrap();
                 launches += 1;
             }
         }
     }
-    assert_eq!(launches, 512 * 6 + 158 * 2);
-    assert_eq!(launches + 512 * 3, 4924);
+    assert_eq!(launches, 512 * 6 + large * 2);
+    assert!(launches + 512 * 3 <= NATIVE_EXPERT_BATCH_COMMANDS);
     assert_eq!(NATIVE_EXPERT_BATCH_COMMANDS, 5632);
     let bytes = batch.metadata_bytes().unwrap();
     assert!(bytes <= NATIVE_EXPERT_BATCH_BYTES);

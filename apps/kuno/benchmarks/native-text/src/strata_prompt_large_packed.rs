@@ -25,7 +25,7 @@ impl PackedLargeOp {
         if matches!(self.0, LargeOp::Gather | LargeOp::Activate) {
             // Every large Pad32 gutter belongs to this group and must be zeroed.
             // The original small producer's <256 condition never initialized it.
-            replace_once(&mut source, "if real<256u", "if real<=4096u");
+            replace_once(&mut source, "if real<256u", "if real<=PROMPT_MAX_ROWS");
         }
         match self.0 {
             LargeOp::Image { .. } => {
