@@ -33,6 +33,20 @@ static TOTALS: [std::sync::atomic::AtomicU64; 4] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 4];
 /// Content-free process counts: prepared admissions, ordinary executables,
 /// created native-key graph programs, created original-key graph programs. Read only by compiled-public probes.
+/// [server misses, miss wall ns, native graph creations, native wall ns].
+pub static CLAUDE_PIPELINE_TIME: [std::sync::atomic::AtomicU64; 12] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 12];
+pub fn claude_pipeline_time() -> [u64; 12] {
+    std::array::from_fn(|i| CLAUDE_PIPELINE_TIME[i].load(std::sync::atomic::Ordering::Relaxed))
+}
+pub(crate) struct ClaudeTimer(pub(crate) std::time::Instant, pub(crate) usize);
+impl Drop for ClaudeTimer {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        CLAUDE_PIPELINE_TIME[self.1].fetch_add(1, Relaxed);
+        CLAUDE_PIPELINE_TIME[self.1 + 1].fetch_add(self.0.elapsed().as_nanos() as u64, Relaxed);
+    }
+}
 #[cfg(feature = "kuno-native-prepared")]
 pub fn native_strata_prepared_pipeline_stats() -> [u64; 4] {
     std::array::from_fn(|index| TOTALS[index].load(std::sync::atomic::Ordering::Relaxed))

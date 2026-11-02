@@ -1476,6 +1476,7 @@ impl Graph {
         }
         let key = pipeline.key();
         if !self.pipelines.contains_key(&key) {
+            let _claude_timer = super::strata_pipeline::ClaudeTimer(std::time::Instant::now(), 2);
             let p = pipeline.native_program(&self.owner_device)?;
             self.program_limits
                 .validate(

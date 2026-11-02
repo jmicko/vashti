@@ -268,6 +268,7 @@ impl WgpuServer {
         if let Some(pipeline) = self.pipelines.get(&kernel_id) {
             return Ok(pipeline.clone());
         }
+        let _claude_timer = super::strata_pipeline::ClaudeTimer(std::time::Instant::now(), 0);
         #[cfg(feature = "kuno-public-host-clock")]
         let preparation = super::strata_pipeline_profile::Timer::new(
             super::strata_pipeline_profile::Stage::Prepare,

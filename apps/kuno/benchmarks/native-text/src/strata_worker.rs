@@ -80,6 +80,43 @@ pub(crate) fn public_prefill_host_trace(path: &Path) -> Result<()> {
 pub(crate) fn public_prefill_short_check(path: &Path) -> Result<()> {
     run_mode(path, true, Some(false), false, true, false, false, false, false, false)
 }
+static CODE_FILL: AtomicBool = AtomicBool::new(false);
+/// Install-time code cache fill: fixed public prompts covering the windowed
+/// short path, batched prefill size buckets and decode, so serving workers can
+/// prewarm every recorded kernel. Writes GPU code only, never request content.
+pub(crate) fn public_code_cache_fill(path: &Path) -> Result<()> {
+    CODE_FILL.store(true, std::sync::atomic::Ordering::Release);
+    run_mode(path, true, Some(false), false, false, false, false, false, false, false)
+}
+fn fill_request(index: usize) -> Option<wire::Generate> {
+    let tiny = b"<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n".to_vec();
+    let (prompt, outputs) = match index {
+        0 => (tiny, 64),
+        1 => (public_prompt(0), 64),
+        2 => (public_prompt(2), 8),
+        3 => (public_prompt(10), 8),
+        4 => (public_prompt(30), 8),
+        5 => (public_prompt(100), 8),
+        6 => (public_prompt(300), 8),
+        // A full-length decode (the tiny prompt stops early at EOS).
+        7 => (b"<|im_start|>user\nWrite a Python function that merges two sorted lists of integers into one sorted list. Explain its time and space complexity.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n".to_vec(), 200),
+        // Every short-window row count (1..=8 rows per window) and their
+        // two-window combinations: raw public prompts of 2..=18 words.
+        // (A 1-token prompt currently fails the request; tracked separately.)
+        8..=24 => (" one".repeat(index - 6).into_bytes(), 3),
+        _ => return None,
+    };
+    Some(wire::Generate {
+        prompt: Zeroizing::new(prompt),
+        outputs,
+        context: 32768,
+        temperature: 0.,
+        seed: 0,
+        top_k: 20,
+        top_p: 0.95,
+        min_p: 0.,
+    })
+}
 pub(crate) fn public_matrix_check(path: &Path) -> Result<()> {
     run_mode(path, true, None, true, false, false, false, false, false, false)
 }
@@ -110,6 +147,11 @@ fn public_prompt(repeats: usize) -> Vec<u8> {
 fn host_blob_mode_allowed(public:bool,prefill:Option<bool>,matrix:bool,short:bool,timing:bool,rolling:bool,host_clock:bool,full_trace:bool)->bool{
     cfg!(feature="strata-host-expert-blobs") && public && prefill==Some(true) && !matrix && !short && !timing && !rolling && !host_clock && !full_trace
 }
+enum WgslCache {
+    Record(std::path::PathBuf),
+    Prewarm(std::path::PathBuf),
+}
+static WGSL_CACHE: std::sync::OnceLock<WgslCache> = std::sync::OnceLock::new();
 /// Private RAM copy of the compiled Mesa shader cache for a serving worker.
 /// Holds GPU code only; the directory contents are removed when dropped.
 struct RamCodeCache {
@@ -124,10 +166,17 @@ impl RamCodeCache {
         std::fs::create_dir(&root).ok()?;
         let cache = Self { root };
         copy_tree(source, &cache.mesa_dir()).ok()?;
+        // Recorded WGSL kernel sources (GPU code only) for load-time prewarm.
+        if let Some(wgsl) = source.parent().map(|p| p.join("wgsl")).filter(|p| p.is_dir()) {
+            let _ = copy_tree(&wgsl, &cache.wgsl_dir());
+        }
         Some(cache)
     }
     fn mesa_dir(&self) -> std::path::PathBuf {
         self.root.join("mesa")
+    }
+    fn wgsl_dir(&self) -> std::path::PathBuf {
+        self.root.join("wgsl")
     }
 }
 impl Drop for RamCodeCache {
@@ -135,6 +184,7 @@ impl Drop for RamCodeCache {
         // The worker may remove entries beneath its writable root, not the root
         // itself; the empty directory is left for the launcher or reboot.
         let _ = std::fs::remove_dir_all(self.mesa_dir());
+        let _ = std::fs::remove_dir_all(self.wgsl_dir());
     }
 }
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -327,6 +377,13 @@ fn run_mode(
         // SAFETY: still single-threaded startup; no runtime thread exists yet.
         unsafe { std::env::set_var("MESA_SHADER_CACHE_DIR", ram.mesa_dir()) };
     }
+    if cache_writer {
+        if let Some(dir) = &code_cache {
+            let _ = WGSL_CACHE.set(WgslCache::Record(dir.join("wgsl")));
+        }
+    } else if let Some(ram) = &ram_cache {
+        let _ = WGSL_CACHE.set(WgslCache::Prewarm(ram.wgsl_dir()));
+    }
     let writable = if cache_writer {
         code_cache.clone()
     } else {
@@ -448,6 +505,14 @@ async fn serve(
         },
     );
     let client = WgpuRuntime::client(&selected);
+    // Compile recorded WGSL kernels on idle CPU cores while weights load.
+    match WGSL_CACHE.get() {
+        Some(WgslCache::Record(dir)) => cubecl::wgpu::set_wgsl_record_dir(dir.clone()),
+        Some(WgslCache::Prewarm(dir)) => {
+            cubecl::wgpu::prewarm_wgsl(dir, target_device.clone(), 8)
+        }
+        None => {}
+    }
     if public_check && DENSE_BENCH.load(std::sync::atomic::Ordering::Acquire) {
         return crate::claude_dense_bench::run(&client).map_err(|error| {
             eprintln!("public_dense_bench_error {error}");
@@ -1083,6 +1148,8 @@ async fn serve(
     let mut quality_rows: Vec<Vec<(usize, u32, Vec<f32>)>> = Vec::new();
     let first = if quality {
         Some((prepare(quality_request(0), &tokenizer)?, false))
+    } else if public_check && CODE_FILL.load(std::sync::atomic::Ordering::Acquire) {
+        Some((prepare(fill_request(0).ok_or("public_code_fill")?, &tokenizer)?, false))
     } else if public_check {
         let request = wire::Generate {
             // The long-prefix operator profile warms the ordinary prompt path
@@ -1262,6 +1329,10 @@ async fn serve(
                     "original_core_and_hal_stage_admission_retained":true,
                 }));
             }
+            if public_check || std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+                let t = cubecl::wgpu::claude_pipeline_time();
+                eprintln!("public_pipeline_time server_misses={} server_s={:.3} native_creates={} native_s={:.3} modules={} module_s={:.3} pipelines={} pipeline_s={:.3} prewarm_hits={} prewarm_failures={} wgsl_compiles={} wgsl_s={:.3}", t[0], t[1] as f64 / 1e9, t[2], t[3] as f64 / 1e9, t[4], t[5] as f64 / 1e9, t[6], t[7] as f64 / 1e9, t[8], t[9], t[10], t[11] as f64 / 1e9);
+            }
             crate::strata_prefill_profile::report();
             let total_ns = generation_ns.ok_or("native_generation_failed")?;
             let tail = Zeroizing::new(decoder.finish());
@@ -1318,7 +1389,12 @@ async fn serve(
                 }
                 continue;
             }
-            if prefill_check.is_some() && public_index < 2 {
+            if CODE_FILL.load(std::sync::atomic::Ordering::Acquire) {
+                public_index += 1;
+                if let Some(request) = fill_request(public_index) {
+                    current = Some(prepare(request, &tokenizer)?);
+                }
+            } else if prefill_check.is_some() && public_index < 2 {
                 public_index += 1;
                 current = Some(prepare(
                     wire::Generate {

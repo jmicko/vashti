@@ -1279,6 +1279,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return strata_worker::public_matrix_timing_check(std::path::Path::new(&args[2]))
             .map_err(Into::into);
     }
+    if std::env::args().nth(1).as_deref() == Some("--public-code-cache-fill") {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.len() != 3 {
+            return Err("native_settings_required".into());
+        }
+        return strata_worker::public_code_cache_fill(std::path::Path::new(&args[2])).map_err(Into::into);
+    }
     if std::env::args().nth(1).as_deref() == Some("--public-prefill-short-check") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {

@@ -13,6 +13,8 @@ mod strata_draft_scope;
 mod strata_flights;
 pub(crate) mod strata_graph;
 pub(crate) mod strata_pipeline;
+pub(crate) mod claude_prewarm;
+pub use claude_prewarm::{prewarm_wgsl, set_wgsl_record_dir};
 #[cfg(feature = "kuno-public-host-clock")]
 mod strata_pipeline_profile;
 #[cfg(feature = "kuno-public-host-clock")]
@@ -82,6 +84,7 @@ pub use strata_graph::native_strata_segment_compact_profile;
 
 #[cfg(feature = "kuno-native-prepared")]
 pub use strata_pipeline::native_strata_prepared_pipeline_stats;
+pub use strata_pipeline::claude_pipeline_time;
 
 #[cfg(feature = "kuno-global-wide32")]
 pub use strata_graph::native_strata_atomic_or_descriptor_mask;

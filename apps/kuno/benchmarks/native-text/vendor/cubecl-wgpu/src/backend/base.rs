@@ -23,6 +23,87 @@ use super::metal;
 #[cfg(all(feature = "msl", target_os = "macos"))]
 use cubecl_cpp::metal as cpp_metal;
 
+/// WGSL -> wgpu module plus native-graph registration. Shared by the server's
+/// lazy path and the load-time prewarm threads (error scopes are per thread).
+pub(crate) fn compile_wgsl(
+    device: &Device,
+    entrypoint_name: &str,
+    source: &str,
+    checked: bool,
+) -> Result<ShaderModule, CompilationError> {
+    let checks = wgpu::ShaderRuntimeChecks {
+        // Cube does not need wgpu bounds checks - OOB behaviour is instead
+        // checked by cube (if enabled).
+        // This is because the WebGPU specification only makes loose guarantees that Cube can't rely on.
+        bounds_checks: false,
+        // Loop bounds are only checked in checked mode.
+        force_loop_bounding: checked,
+        ..wgpu::ShaderRuntimeChecks::unchecked()
+    };
+
+    log::trace!("[cubecl-wgpu] compiling WGSL module `{entrypoint_name}`\n{source}");
+
+    let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+    // SAFETY: Cube guarantees OOB safety when launching in checked mode. Launching in unchecked mode
+    // is only available through the use of unsafe code.
+    let module = unsafe {
+        device.create_shader_module_trusted(
+            ShaderModuleDescriptor {
+                label: Some(entrypoint_name),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(source)),
+            },
+            checks,
+        )
+    };
+
+    // `pop()` detaches from the LIFO stack immediately; only the
+    // result is async. Safe to interleave with other push/pops.
+    let err_future = error_scope.pop();
+
+    #[cfg(not(target_family = "wasm"))]
+    if let Some(err) = cubecl_common::future::block_on(err_future) {
+        log::error!(
+            "[cubecl-wgpu] WGSL compilation failed for kernel `{entrypoint_name}`:\n{err}\n--- shader source ({} bytes) ---\n{source}\n--- end shader ---",
+            source.len()
+        );
+        return Err(CompilationError::Generic {
+            reason: format!(
+                "WGSL compilation failed for kernel `{entrypoint_name}`: {err}"
+            ),
+            backtrace: cubecl_common::backtrace::BackTrace::capture(),
+        });
+    }
+
+    // On wasm we can't block; spawn a task that awaits the pop
+    // future and logs.
+    #[cfg(target_family = "wasm")]
+    {
+        let entrypoint_name = entrypoint_name.to_string();
+        let source = source.to_string();
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Some(err) = err_future.await {
+                log::error!(
+                    "[cubecl-wgpu] WGSL compilation failed for kernel `{entrypoint_name}`:\n{err}\n--- shader source ({} bytes) ---\n{source}\n--- end shader ---",
+                    source.len()
+                );
+            }
+        });
+    }
+
+    crate::compute::strata_graph::register_module(
+        device,
+        &module,
+        source,
+        entrypoint_name,
+    )
+    .map_err(|_| CompilationError::Generic {
+        reason: "native graph shader registration failed".into(),
+        backtrace: cubecl_common::backtrace::BackTrace::capture(),
+    })?;
+    Ok(module)
+}
+
 impl WgpuServer {
     /// Loads a cached kernel if present and creates the pipeline for it.
     /// Returns `None` if the cache isn't enabled, `Some(Ok(pipeline))` if a cache entry was found,
@@ -86,6 +167,7 @@ impl WgpuServer {
         mode: ExecutionMode,
         _metadata: bool,
     ) -> Result<ShaderModule, CompilationError> {
+        let _claude_timer = crate::compute::strata_pipeline::ClaudeTimer(std::time::Instant::now(), 4);
         match repr {
             #[cfg(feature = "spirv")]
             Some(AutoRepresentationRef::SpirV(repr)) => unsafe {
@@ -120,77 +202,20 @@ impl WgpuServer {
                 ))
             },
             _ => {
-                let checks = wgpu::ShaderRuntimeChecks {
-                    // Cube does not need wgpu bounds checks - OOB behaviour is instead
-                    // checked by cube (if enabled).
-                    // This is because the WebGPU specification only makes loose guarantees that Cube can't rely on.
-                    bounds_checks: false,
-                    // Loop bounds are only checked in checked mode.
-                    force_loop_bounding: mode == ExecutionMode::Checked,
-                    ..wgpu::ShaderRuntimeChecks::unchecked()
-                };
-
-                log::trace!("[cubecl-wgpu] compiling WGSL module `{entrypoint_name}`\n{source}");
-
-                let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-
-                // SAFETY: Cube guarantees OOB safety when launching in checked mode. Launching in unchecked mode
-                // is only available through the use of unsafe code.
-                let module = unsafe {
-                    self.device.create_shader_module_trusted(
-                        ShaderModuleDescriptor {
-                            label: Some(entrypoint_name),
-                            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(source)),
-                        },
-                        checks,
-                    )
-                };
-
-                // `pop()` detaches from the LIFO stack immediately; only the
-                // result is async. Safe to interleave with other push/pops.
-                let err_future = error_scope.pop();
-
-                #[cfg(not(target_family = "wasm"))]
-                if let Some(err) = cubecl_common::future::block_on(err_future) {
-                    log::error!(
-                        "[cubecl-wgpu] WGSL compilation failed for kernel `{entrypoint_name}`:\n{err}\n--- shader source ({} bytes) ---\n{source}\n--- end shader ---",
-                        source.len()
-                    );
-                    return Err(CompilationError::Generic {
-                        reason: format!(
-                            "WGSL compilation failed for kernel `{entrypoint_name}`: {err}"
-                        ),
-                        backtrace: cubecl_common::backtrace::BackTrace::capture(),
-                    });
-                }
-
-                // On wasm we can't block; spawn a task that awaits the pop
-                // future and logs.
-                #[cfg(target_family = "wasm")]
+                let checked = mode == ExecutionMode::Checked;
+                crate::compute::claude_prewarm::record(entrypoint_name, source, checked);
+                if let Some(module) =
+                    crate::compute::claude_prewarm::take(entrypoint_name, source, checked)
                 {
-                    let entrypoint_name = entrypoint_name.to_string();
-                    let source = source.to_string();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        if let Some(err) = err_future.await {
-                            log::error!(
-                                "[cubecl-wgpu] WGSL compilation failed for kernel `{entrypoint_name}`:\n{err}\n--- shader source ({} bytes) ---\n{source}\n--- end shader ---",
-                                source.len()
-                            );
-                        }
-                    });
+                    crate::compute::strata_pipeline::CLAUDE_PIPELINE_TIME[8]
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return Ok(module);
                 }
-
-                crate::compute::strata_graph::register_module(
-                    &self.device,
-                    &module,
-                    source,
-                    entrypoint_name,
-                )
-                .map_err(|_| CompilationError::Generic {
-                    reason: "native graph shader registration failed".into(),
-                    backtrace: cubecl_common::backtrace::BackTrace::capture(),
-                })?;
-                Ok(module)
+                let _t = crate::compute::strata_pipeline::ClaudeTimer(std::time::Instant::now(), 10);
+                if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+                    eprintln!("public_wgsl_lazy {} {:016x} {}", entrypoint_name, crate::compute::claude_prewarm::source_key(entrypoint_name, source, checked), source.len());
+                }
+                compile_wgsl(&self.device, entrypoint_name, source, checked)
             }
         }
     }
@@ -203,6 +228,7 @@ impl WgpuServer {
         module: ShaderModule,
         bindings: &KernelArguments,
     ) -> Result<Arc<ComputePipeline>, CompilationError> {
+        let _claude_timer = crate::compute::strata_pipeline::ClaudeTimer(std::time::Instant::now(), 6);
         let bindings_info = match repr {
             Some(AutoRepresentationRef::Wgsl(repr)) => Some(wgsl::bindings(repr, bindings)),
             #[cfg(all(feature = "msl", target_os = "macos"))]

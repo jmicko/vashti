@@ -7,12 +7,18 @@ use zeroize::Zeroizing;
 
 pub(super) const PREFIX_LIMIT: usize = 64;
 pub(super) const WINDOW_ROWS: usize = crate::strata_port::verify_capacity();
+/// Prefixes up to this length use the 8-row verification windows; longer ones
+/// take batched prefill. Measured on the B70 (warm): 14 tokens 0.45 vs 0.64 s,
+/// 17 tokens 0.49 vs 0.53 s, 26 tokens 0.78 vs 0.73 s, 45 tokens 1.20 vs 0.85 s.
+/// PREFIX_LIMIT stays the reserved capacity of the windowed path.
+pub(super) const ROUTE_LIMIT: usize = 20;
+const _: () = assert!(ROUTE_LIMIT <= PREFIX_LIMIT);
 pub(super) struct Plan(Zeroizing<usize>);
 impl Plan {
     pub(super) fn new(prompt: usize) -> Option<Self> {
         prompt
             .checked_sub(1)
-            .filter(|&prefix| prefix <= PREFIX_LIMIT)?;
+            .filter(|&prefix| prefix <= ROUTE_LIMIT)?;
         Some(Self(Zeroizing::new(prompt)))
     }
     pub(super) fn prefix(&self) -> usize {
@@ -51,7 +57,7 @@ mod tests {
     use super::*;
     #[test]
     fn known_short_prefix_covers_max_eight_tails_and_exact_threshold() {
-        for prefix in [0usize, 1, 2, 3, 4, 7, 8, 9, 63, 64] {
+        for prefix in [0usize, 1, 2, 3, 4, 7, 8, 9, 19, 20] {
             let prompt: Vec<u32> = (0..=prefix as u32).collect();
             let plan = Plan::new(prompt.len()).unwrap();
             assert_eq!(plan.prefix(), prefix);
@@ -69,15 +75,15 @@ mod tests {
             assert_eq!(&prompt[plan.prefix()..], &[prefix as u32]);
         }
         // The threshold counts FRESH PREFIX rows, excluding the final normal
-        // count1 input; a65-token prefix stays on the original large path.
-        assert!(Plan::new(65).is_some());
-        assert!(Plan::new(66).is_none());
+        // count1 input; a 21-token prompt is the last windowed one.
+        assert!(Plan::new(ROUTE_LIMIT + 1).is_some());
+        assert!(Plan::new(ROUTE_LIMIT + 2).is_none());
         assert!(Plan::new(0).is_none());
         assert!(Plan::new(usize::MAX).is_none());
     }
     #[test]
     fn wrong_teacher_slices_and_window_boundaries_are_rejected() {
-        for length in [1usize, 3, 4, 8, 9, 64, 65] {
+        for length in [1usize, 3, 4, 8, 9, 20, 21] {
             let plan = Plan::new(length).unwrap();
             let prompt = vec![7; length];
             for chunk in plan.chunks() {
