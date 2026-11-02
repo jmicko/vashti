@@ -324,6 +324,15 @@ fn run_mode(
             (5u64 * 1024 * 1024 * 1024).to_string(),
         );
     }
+    if std::env::var_os("KUNO_CLAUDE_DECODE_PROFILE").is_some() {
+        // SAFETY: single-threaded startup. Diagnostic only: one decode window's
+        // kernel names and device timestamps, no request content.
+        unsafe {
+            std::env::set_var("KUNO_STRATA_NATIVE_PROFILE", "decode-round-8");
+            std::env::set_var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY", "1");
+            std::env::set_var("KUNO_CLAUDE_TIMELINE", "1");
+        }
+    }
     if public_check && (prefill_check == Some(true) || rolling_failure) {
         // SAFETY: still before any runtime thread; only the compiled public
         // diagnostic can select this fixed one-layer query scope. Private entry
@@ -1345,7 +1354,7 @@ async fn serve(
             }
             if public_check || std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
                 let t = cubecl::wgpu::claude_pipeline_time();
-                eprintln!("public_pipeline_time server_misses={} server_s={:.3} native_creates={} native_s={:.3} modules={} module_s={:.3} pipelines={} pipeline_s={:.3} prewarm_hits={} prewarm_failures={} wgsl_compiles={} wgsl_s={:.3}", t[0], t[1] as f64 / 1e9, t[2], t[3] as f64 / 1e9, t[4], t[5] as f64 / 1e9, t[6], t[7] as f64 / 1e9, t[8], t[9], t[10], t[11] as f64 / 1e9);
+                eprintln!("public_pipeline_time server_misses={} server_s={:.3} native_creates={} native_s={:.3} modules={} module_s={:.3} pipelines={} pipeline_s={:.3} prewarm_hits={} prewarm_failures={} wgsl_compiles={} wgsl_s={:.3} replays={} replay_s={:.3} records={} record_s={:.3} recorded_dispatches={}", t[0], t[1] as f64 / 1e9, t[2], t[3] as f64 / 1e9, t[4], t[5] as f64 / 1e9, t[6], t[7] as f64 / 1e9, t[8], t[9], t[10], t[11] as f64 / 1e9, t[12], t[13] as f64 / 1e9, t[14], t[15] as f64 / 1e9, t[16]);
             }
             crate::strata_prefill_profile::report();
             let total_ns = generation_ns.ok_or("native_generation_failed")?;

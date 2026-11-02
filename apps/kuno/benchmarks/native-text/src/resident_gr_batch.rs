@@ -592,7 +592,7 @@ impl Workspace {
         // Missing active status stores must not inherit success from a prior
         // layer. Floating scratch is fully overwritten for every active row.
         let clear_ids = Zeroizing::new([self.ids[SN], self.ids[SL], self.ids[SM]]);
-        u::zero_many(arena, &*clear_ids)?;
+        if !u::decode_skips_layer_clears() { u::zero_many(arena, &*clear_ids)?; }
         if crate::next_shared::gr_selected() {
             crate::next_shared::gr_norm(
                 client,

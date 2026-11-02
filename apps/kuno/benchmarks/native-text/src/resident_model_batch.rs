@@ -6244,8 +6244,10 @@ impl Workspace {
                         cancel,
                     )
                     .inspect_err(|_| chunk_failure_site!())?;
+                if !u::decode_skips_layer_clears() {
                 u::zero_many(&m.arena, &[self.outer.router, self.outer.packet])
                     .inspect_err(|_| chunk_failure_site!())?;
+                }
                 let tensor = m
                     .graph
                     .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))

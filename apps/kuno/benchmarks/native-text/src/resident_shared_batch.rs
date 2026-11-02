@@ -513,7 +513,7 @@ impl Workspace {
         let weight = public.vector(graph, &format!("{base}ffn_gate_inp_shexp.weight"))?;
         self.prove(arena, input, routed, output, fault, &weight)?;
         if native {
-            u::zero_many(arena, &[self.native_fault()?])?;
+            if !u::decode_skips_layer_clears() { u::zero_many(arena, &[self.native_fault()?])?; }
         }
         let spans = BatchSpans::new(count, 0, 0, self.layout.width, 0, self.layout.hidden);
         projector.enqueue_pair(

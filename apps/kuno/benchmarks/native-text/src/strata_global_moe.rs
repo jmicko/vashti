@@ -516,7 +516,7 @@ impl Workspace {
             sources.validate_graph_ready(graph)?;
         }
         let client = arena.client().map_err(u::fault)?;
-        u::zero_many(arena, &self.ids[..7])?;
+        if !u::decode_skips_layer_clears() { u::zero_many(arena, &self.ids[..7])?; }
         let full = |id| arena.handle(id).cloned().map_err(u::fault);
         let mut owners = [
             full(self.ids[0])?,

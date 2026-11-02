@@ -107,12 +107,15 @@ pub(crate) fn profile_target() -> bool {
 enum NativeProfileSample {
     First,
     Warm,
+    /// Native worker: request 1 is the preload, so the first decode is request 2.
+    WorkerDecode,
 }
 impl NativeProfileSample {
     fn parse(raw: &str) -> Option<Self> {
         match raw {
             "round-8" => Some(Self::First),
             "warm-round-64" => Some(Self::Warm),
+            "decode-round-8" => Some(Self::WorkerDecode),
             _ => None,
         }
     }
@@ -120,6 +123,7 @@ impl NativeProfileSample {
         match self {
             Self::First => request == 1 && round == 8,
             Self::Warm => request == 2 && round == 64,
+            Self::WorkerDecode => request == 2 && round == 8,
         }
     }
 }

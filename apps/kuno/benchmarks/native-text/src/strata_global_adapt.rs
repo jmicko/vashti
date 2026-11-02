@@ -13,6 +13,8 @@ pub(crate) fn record_published_swaps(count: usize) {
 pub(crate) fn published_swaps() -> u64 {
     PUBLISHED_SWAPS.load(std::sync::atomic::Ordering::Relaxed)
 }
+/// Diagnostic route counts since process start: [VRAM-resident, host] (content-free).
+pub(crate) static ROUTE_TRACE: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 pub(crate) const EVERY: u64 = 4;
 pub(crate) const MAX_SWAPS: usize = 96;
 pub(crate) const WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
@@ -200,6 +202,18 @@ impl Cache {
             || usage.iter().any(|u| !u.is_finite() || *u < 0.)
         {
             return Err(reject());
+        }
+        if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() && self.usage.len() == usage.len() {
+            let (mut hit, mut miss) = (0f64, 0f64);
+            for layer in 0..LAYERS {
+                for expert in 0..EXPERTS {
+                    let i = layer * EXPERTS + expert;
+                    let new = (usage[i] - self.usage[i]).max(0.) as f64;
+                    if self.resident[layer * EXPERTS + usize::from(self.mapping[i])] { hit += new } else { miss += new }
+                }
+            }
+            ROUTE_TRACE[0].fetch_add(hit as u64, std::sync::atomic::Ordering::Relaxed);
+            ROUTE_TRACE[1].fetch_add(miss as u64, std::sync::atomic::Ordering::Relaxed);
         }
         let mut swaps = Zeroizing::new(Vec::new());
         for layer in 0..LAYERS {

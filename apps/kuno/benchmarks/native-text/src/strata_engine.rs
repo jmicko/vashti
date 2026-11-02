@@ -645,6 +645,11 @@ impl<'m, 'f, 'd, 'df> Session<'m, 'f, 'd, 'df> {
             if done.outputs != *delivered {
                 return Err(Failure::Inference);
             }
+            if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+                eprintln!("public_decode_windows outputs={} windows={} repairs={} window={} routes_vram={} routes_host={}", done.outputs, done.windows, done.state_repairs, speculation.window, crate::strata_global_adapt::ROUTE_TRACE[0].load(std::sync::atomic::Ordering::Relaxed), crate::strata_global_adapt::ROUTE_TRACE[1].load(std::sync::atomic::Ordering::Relaxed));
+                let ph: Vec<String> = controller::PHASE_NS.iter().map(|v| v.load(std::sync::atomic::Ordering::Relaxed).to_string()).collect();
+                eprintln!("public_decode_phases {}", ph.join(" "));
+            }
             // Generation is complete. Request state is erased separately by
             // `erase_completed`, so the caller can deliver DONE first; no new
             // request can start until that erasure has succeeded.

@@ -64,7 +64,7 @@ fn profile_active() -> bool {
         && PROFILE_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
         && matches!(
             std::env::var("KUNO_STRATA_NATIVE_PROFILE").as_deref(),
-            Ok("round-8" | "warm-round-64" | "prefill-layer")
+            Ok("round-8" | "warm-round-64" | "decode-round-8" | "prefill-layer")
         )
         && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
 }
@@ -3194,10 +3194,18 @@ impl Graph {
             drop(keys);
             drop(resources);
             self.submit_last_recording(compute_count, true, false)?;
+            super::strata_pipeline::CLAUDE_PIPELINE_TIME[12].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            super::strata_pipeline::CLAUDE_PIPELINE_TIME[13].fetch_add(capture_start.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
             if wait {
                 self.complete_scoped_submission()?;
             }
             return Ok(());
+        }
+        if std::env::var_os("KUNO_CLAUDE_REC_TRACE").is_some() {
+            let same_key = key.is_some() && self.recordings.iter().any(|r| r.key == key);
+            let same_sig = self.recordings.iter().any(|r| r.signature == signature);
+            let unnamed = self.recordings.iter().filter(|r| r.key.is_none()).count();
+            eprintln!("public_rec fresh dispatches={compute_count} named={} same_key={same_key} same_sig={same_sig} unnamed_live={unnamed} profiling={profiling}", key.is_some());
         }
         // Named branches pin their original owners until request erasure; only
         // unnamed opportunistic recordings participate in the sixteen-plan LRU.
@@ -4315,6 +4323,12 @@ impl Graph {
             }
         } else {
             self.submit_last_recording(compute_count, false, profiling)?;
+        }
+        super::strata_pipeline::CLAUDE_PIPELINE_TIME[14].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::strata_pipeline::CLAUDE_PIPELINE_TIME[15].fetch_add(capture_start.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        super::strata_pipeline::CLAUDE_PIPELINE_TIME[16].fetch_add(compute_count as u64, std::sync::atomic::Ordering::Relaxed);
+        if std::env::var_os("KUNO_CLAUDE_REC_TRACE").is_some() {
+            eprintln!("public_rec done dispatches={compute_count} us={}", capture_start.elapsed().as_micros());
         }
         if wait {
             self.complete_scoped_submission()?;

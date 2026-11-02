@@ -291,6 +291,17 @@ fn prepare_next_draft(
 /// The model's charged request geometry must match this request. The caller
 /// controls accepted-token delivery; this module never persists text or tokens.
 /// Transient counts only; only caller-selected token output leaves inference.
+/// Diagnostic host phase totals (ns): [round setup, verify->Verified, Verified->Pending,
+/// Pending body (incl. next draft), Pending->return, rounds]. Content-free.
+pub(crate) static PHASE_NS: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
+struct DraftTimer(Instant);
+impl Drop for DraftTimer { fn drop(&mut self) { phase_add(6, self.0); } }
+struct MarkGuard<'a>(&'a mut Instant);
+impl Drop for MarkGuard<'_> {
+    fn drop(&mut self) { phase_add(3, *self.0); *self.0 = Instant::now(); }
+}
+fn scopeguard_mark(m: &mut Instant) -> MarkGuard<'_> { MarkGuard(m) }
+fn phase_add(i: usize, t: Instant) { PHASE_NS[i].fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed); }
 pub(crate) struct Completion {
     pub outputs: usize,
     pub windows: u64,
@@ -567,6 +578,7 @@ pub(super) fn run<'m, 'f>(
             return Err("global target entry alignment rejected".into());
         }
         let remaining = request.max_outputs - history.len();
+        let round_start = Instant::now();
         let ready = if let Some(d) = draft.as_deref_mut() {
             let ready = prepared
                 .take()
@@ -650,10 +662,13 @@ pub(super) fn run<'m, 'f>(
             profile_request,
             rounds,
         ));
+        phase_add(0, round_start);
+        let mut mark = Instant::now();
         let verification = target.verify_native_prefix(executor, &inputs, cancel, &mut |phase| {
             use crate::resident_model::batch::PrefixPhase;
             match phase {
                 PrefixPhase::Verified(rows) => {
+                    phase_add(1, mark); mark = Instant::now();
                     // Target math has completed. Commit export and next-draft
                     // work retain their original unprofiled pending protocol.
                     drop(native_profile.take());
@@ -679,6 +694,8 @@ pub(super) fn run<'m, 'f>(
                     source,
                     accepted: n,
                 } => {
+                    phase_add(2, mark); mark = Instant::now();
+                    let _pending_timer = scopeguard_mark(&mut mark);
                     let (predicted, device) = selected
                         .as_ref()
                         .ok_or(Error::InvalidFormat("global verified prefix missing"))?;
@@ -713,6 +730,8 @@ pub(super) fn run<'m, 'f>(
                         let next_position = position + n;
                         sampling.begin_round(next_position, predicted[n - 1])?;
                         let grant = source.borrow(device, n)?;
+                        let draft_start = Instant::now();
+                        let _draft_timer = DraftTimer(draft_start);
                         prepared = Some(prepare_next_draft(
                             d,
                             position,
@@ -731,6 +750,8 @@ pub(super) fn run<'m, 'f>(
             }
         });
         drop(native_profile);
+        phase_add(4, mark);
+        PHASE_NS[5].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // The original model already ran its terminal failure cleanup. Preserve
         // the original delivery error rather than replacing its typed cause.
         if let Some(error) = delivery_error {
@@ -791,6 +812,12 @@ pub(super) fn run<'m, 'f>(
         return Err("global request erasure rejected".into());
     }
     *retained_policy = Some(policy); // only after original request/fault/I/O scope closes
+    if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+        let mut v: Vec<_> = target.phase_ns.iter().map(|(k, v)| (*v, *k)).collect();
+        v.sort_by(|a, b| b.0.cmp(&a.0));
+        let top: Vec<String> = v.iter().take(14).map(|(ns, k)| format!("{k}={:.1}", *ns as f64 / 1e6)).collect();
+        eprintln!("public_decode_hostphases_ms {}", top.join(" "));
+    }
     Ok(Completion {
         outputs: history.len(),
         windows: rounds,

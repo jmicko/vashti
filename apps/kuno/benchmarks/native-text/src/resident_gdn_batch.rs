@@ -1376,7 +1376,7 @@ impl ResidentGdn<'_> {
             match operation {
                 Operation::Clear(i) => {
                     if u::grouped_scratch_clear_enabled() {
-                        if i == 0 {
+                        if i == 0 && !u::decode_skips_layer_clears() {
                             u::zero_many(arena, &**ids)?;
                         }
                     } else {

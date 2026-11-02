@@ -305,6 +305,12 @@ pub fn status_batch(
     );
     Ok(())
 }
+/// Decode windows skip per-layer scratch/status re-zeroing: every active row
+/// is overwritten by its producer and fault words are cleared once per window.
+/// Verified bit-identical (greedy outputs) against the clearing path.
+pub fn decode_skips_layer_clears() -> bool {
+    !crate::strata_prompt::active()
+}
 pub fn zero(arena: &PrivateArena, id: BufferId) -> Result<()> {
     let layout = arena.layout(id).map_err(fault)?;
     if native_scratch_clear_enabled() && layout.owned_bytes <= 64 * 1024 * 1024 {
