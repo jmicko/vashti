@@ -573,7 +573,7 @@ impl Plan {
             first,
             destination,
             |pair| Ok(pair.expert),
-            |tensor, source, target| reader.read_range(tensor, source, target),
+            |tensor, source, target| reader.read_range_direct(tensor, source, target),
         )
     }
     pub(crate) fn load_chunk_placed(

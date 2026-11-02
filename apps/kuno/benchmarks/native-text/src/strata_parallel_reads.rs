@@ -6,7 +6,9 @@ pub(super) const WORKERS: usize = 16;
 const STACK_BYTES: usize = 256 * 1024;
 // Requested stacks plus bounded per-worker bookkeeping/TLS allowance. Job
 // vectors remain inside the original separately charged global metadata cap.
-pub(super) const SETUP_BYTES: u64 = (WORKERS * (STACK_BYTES + 64 * 1024)) as u64;
+// Each worker also owns one aligned direct-read bounce buffer.
+pub(super) const SETUP_BYTES: u64 =
+    (WORKERS * (STACK_BYTES + 64 * 1024 + kuno_text::gguf::DIRECT_BOUNCE_BYTES)) as u64;
 
 #[derive(Debug)]
 pub(super) enum Failure<E> {
@@ -103,7 +105,7 @@ mod tests {
                 Err(Failure::Geometry)
             ));
         }
-        assert_eq!(SETUP_BYTES, 2_621_440);
+        assert_eq!(SETUP_BYTES, 2_621_440 + 16 * (1024 * 1024 + 8192));
     }
 
     #[test]

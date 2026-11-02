@@ -123,6 +123,9 @@ pub(crate) fn enable_compiled_public_diagnostics() {
     COMPILED_PUBLIC_DIAGNOSTICS.store(true, Ordering::Release);
 }
 /// Public-diagnostic-only step timing: prints a static label and elapsed time.
+pub(crate) fn public_diagnostics() -> bool {
+    COMPILED_PUBLIC_DIAGNOSTICS.load(Ordering::Acquire)
+}
 pub(crate) fn public_step(label: &'static str, started: std::time::Instant) {
     if COMPILED_PUBLIC_DIAGNOSTICS.load(Ordering::Acquire) {
         eprintln!("public_load_step {label} {:.3}", started.elapsed().as_secs_f64());

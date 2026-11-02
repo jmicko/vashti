@@ -94,7 +94,7 @@ impl Host {
                                 .checked_mul(l.role_expert_bytes[role])
                                 .ok_or(Error::ArithmeticOverflow)?;
                             #[cfg(feature = "strata-parallel-loading")]
-                            reader.read_range(tensors[role], source, output)?;
+                            reader.read_range_direct(tensors[role], source, output)?;
                             #[cfg(not(feature = "strata-parallel-loading"))]
                             tensors[role].read_range(source, output)?;
                             Ok(())

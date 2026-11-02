@@ -254,16 +254,20 @@ impl Sources {
         };
         // Incremental ownership makes every construction failure take the same
         // completed-reader closure path as a fully constructed source set.
-        // GPU cache upload and host mirror fill stay sequential: both are bound
-        // by the same disk, so overlapping them measured no gain.
         let step = std::time::Instant::now();
+        if crate::resident_util::public_diagnostics() {
+            eprintln!("public_load_plan {}", serde_json::json!({"ranked_pairs":sources.plan.slots.len(),"budget_bytes":sources.plan.budget,"resident_piece_bytes":sources.plan.resident_piece_bytes,"host_logical_bytes":sources.plan.host_logical_bytes,"host_piece_bytes":sources.plan.host_piece_bytes}));
+        }
+        // GPU cache upload and host mirror fill stay sequential: both are bound
+        // by the same disk, so overlapping them measured no gain (re-measured
+        // with direct reads: 22 s overlapped vs 20.6 s sequential).
         sources.gpu = Some(Cache::load(client, graph, &sources.plan)?);
         crate::resident_util::public_step("gpu_cache_load", step);
         let step = std::time::Instant::now();
         sources.host =
             Some(unsafe { Host::load(&sources.plan, graph, client, device, host_reserved)? });
         crate::resident_util::public_step("host_mirror_load", step);
-        if crate::strata_intel_core::enabled() && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
+        if crate::strata_intel_core::enabled() && (crate::resident_util::public_diagnostics() || std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")) {
             use std::sync::atomic::Ordering::Relaxed;
             eprintln!("public_load_step host_zero {:.3}", crate::public_host_expert_mirror::strata_global::host_zero_ns() as f64 / 1e9);
             eprintln!("public_load_step host_fill {:.3}", crate::public_host_expert_mirror::strata_global::host_fill_ns() as f64 / 1e9);

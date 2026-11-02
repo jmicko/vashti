@@ -346,7 +346,7 @@ impl Host {
                                             .checked_add(ordinal)
                                             .ok_or(Error::ArithmeticOverflow)?,
                                     )?;
-                                    reader.read_range(
+                                    reader.read_range_direct(
                                         tensor,
                                         (expert as u64)
                                             .checked_mul(p.expert_bytes)

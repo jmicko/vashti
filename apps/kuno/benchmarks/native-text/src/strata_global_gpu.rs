@@ -223,7 +223,7 @@ impl Cache {
                 read_s = t.elapsed().as_secs_f64().max(read_s);
             }
         }
-        if crate::strata_intel_core::enabled() && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1") {
+        if crate::strata_intel_core::enabled() && (crate::resident_util::public_diagnostics() || std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")) {
             eprintln!("public_load_step gpu_cache_first_read {read_s:.3}");
             eprintln!("public_load_step gpu_cache_upload_total {submit_s:.3}");
         }

@@ -12,6 +12,45 @@ use std::fs::File;
 pub struct PositionalReader<'m> {
     model: &'m GgufFile,
     files: Vec<File>,
+    /// Same inodes reopened with O_DIRECT (Linux x86_64), for bulk loads that
+    /// must not route tens of GB of weights through the page cache.
+    direct: Vec<Option<File>>,
+}
+
+/// Bytes of the per-thread aligned bounce buffer used by direct reads.
+pub const DIRECT_BOUNCE_BYTES: usize = 1024 * 1024 + 8192;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+struct Bounce(std::ptr::NonNull<u8>);
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl Bounce {
+    const LAYOUT: std::alloc::Layout =
+        match std::alloc::Layout::from_size_align(DIRECT_BOUNCE_BYTES, 4096) {
+            Ok(l) => l,
+            Err(_) => panic!("bounce layout"),
+        };
+    #[allow(unsafe_code)]
+    fn new() -> Option<Self> {
+        // SAFETY: non-zero size layout.
+        std::ptr::NonNull::new(unsafe { std::alloc::alloc(Self::LAYOUT) }).map(Self)
+    }
+    #[allow(unsafe_code)]
+    fn bytes(&mut self) -> &mut [u8] {
+        // SAFETY: owned allocation of LAYOUT size; u8 has no validity invariant
+        // beyond initialization, and every read fills before use.
+        unsafe { std::slice::from_raw_parts_mut(self.0.as_ptr(), DIRECT_BOUNCE_BYTES) }
+    }
+}
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl Drop for Bounce {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        // SAFETY: allocated with the same layout in `new`.
+        unsafe { std::alloc::dealloc(self.0.as_ptr(), Self::LAYOUT) }
+    }
+}
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+thread_local! {
+    static BOUNCE: std::cell::RefCell<Option<Bounce>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Read-only Linux direct-I/O view of one original tensor's inspected inode.
@@ -300,7 +339,11 @@ impl GgufFile {
                 source.check_stat(&file)?;
                 files.push(file);
             }
-            let reader = PositionalReader { model: self, files };
+            let mut direct = Vec::with_capacity(files.len());
+            for (source, file) in self.sources.iter().zip(&files) {
+                direct.push(reopen_direct(file).filter(|d| source.check_stat(d).is_ok()));
+            }
+            let reader = PositionalReader { model: self, files, direct };
             reader.verify_file_unchanged()?;
             Ok(reader)
         }
@@ -527,6 +570,86 @@ impl<'m> PositionalReader<'m> {
         result
     }
 
+    /// Same contract as `read_range`, but bypasses the page cache with O_DIRECT
+    /// through a per-thread aligned bounce buffer. Falls back to `read_range`
+    /// where direct I/O is unavailable.
+    pub fn read_range_direct(
+        &self,
+        tensor: TensorView<'m>,
+        byte_offset: u64,
+        output: &mut [u8],
+    ) -> Result<()> {
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            let Some(Some(file)) = self.direct.get(tensor.info.shard_index) else {
+                return self.read_range(tensor, byte_offset, output);
+            };
+            if !self.owns(tensor) {
+                return Err(Error::InvalidFormat("positional tensor ownership"));
+            }
+            let length = u64::try_from(output.len()).map_err(|_| Error::ArithmeticOverflow)?;
+            if length > self.model.limits.max_tensor_read_bytes {
+                return Err(Error::LimitExceeded("tensor read bytes"));
+            }
+            if byte_offset.checked_add(length).ok_or(Error::ArithmeticOverflow)? > tensor.info.byte_len {
+                return Err(Error::OutOfBounds);
+            }
+            let source = tensor.source();
+            let absolute = source
+                .data_offset
+                .checked_add(tensor.info.offset)
+                .and_then(|base| base.checked_add(byte_offset))
+                .ok_or(Error::ArithmeticOverflow)?;
+            let file_len = source.file_len;
+            absolute.checked_add(length).filter(|&end| end <= file_len).ok_or(Error::OutOfBounds)?;
+            let result = (|| {
+                self.verify_file_unchanged()?;
+                BOUNCE.with(|cell| -> Result<()> {
+                    let mut slot = cell.borrow_mut();
+                    if slot.is_none() {
+                        *slot = Some(Bounce::new().ok_or(Error::LimitExceeded("direct bounce"))?);
+                    }
+                    let bounce = slot.as_mut().unwrap().bytes();
+                    const STEP: usize = 1024 * 1024;
+                    let mut done = 0usize;
+                    while done < output.len() {
+                        let at = absolute + done as u64;
+                        let take = (output.len() - done).min(STEP);
+                        let first = at / 4096 * 4096;
+                        let lead = (at - first) as usize;
+                        let span = (lead + take).next_multiple_of(4096);
+                        let span = span.min(DIRECT_BOUNCE_BYTES);
+                        let mut got = 0usize;
+                        // Short reads happen only at EOF; the bound check above
+                        // proves every requested byte lies before file_len.
+                        while got < lead + take {
+                            use std::os::unix::fs::FileExt;
+                            match file.read_at(&mut bounce[got..span], first + got as u64) {
+                                Ok(0) => return Err(Error::Io(std::io::ErrorKind::UnexpectedEof)),
+                                Ok(n) => got += n,
+                                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                                Err(e) => return Err(e.into()),
+                            }
+                            if got % 4096 != 0 && got < lead + take {
+                                return Err(Error::InvalidFormat("direct short read"));
+                            }
+                        }
+                        output[done..done + take].copy_from_slice(&bounce[lead..lead + take]);
+                        done += take;
+                    }
+                    Ok(())
+                })?;
+                self.verify_file_unchanged()
+            })();
+            if result.is_err() {
+                output.fill(0);
+            }
+            result
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        self.read_range(tensor, byte_offset, output)
+    }
+
     pub fn read_row(&self, tensor: TensorView<'m>, row: u64, output: &mut [u8]) -> Result<()> {
         if !self.owns(tensor) {
             return Err(Error::InvalidFormat("positional tensor ownership"));
@@ -542,6 +665,22 @@ impl<'m> PositionalReader<'m> {
             .ok_or(Error::ArithmeticOverflow)?;
         self.read_range(tensor, offset, output)
     }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn reopen_direct(file: &File) -> Option<File> {
+    use std::os::{fd::AsRawFd, unix::fs::{MetadataExt, OpenOptionsExt}};
+    let direct = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(0o40000)
+        .open(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .ok()?;
+    let (a, b) = (file.metadata().ok()?, direct.metadata().ok()?);
+    ((a.dev(), a.ino()) == (b.dev(), b.ino())).then_some(direct)
+}
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn reopen_direct(_: &File) -> Option<File> {
+    None
 }
 
 #[cfg(any(unix, test))]
@@ -627,6 +766,39 @@ mod tests {
             model,
             data_offset,
         }
+    }
+
+    #[test]
+    fn direct_reads_match_buffered_reads_at_unaligned_spans() {
+        let experts = 100_000u64;
+        let f = fixture_experts(u64::MAX, experts);
+        let tensor = f.model.tensor("w").unwrap();
+        let reader = tensor.positional_reader().unwrap();
+        let total = 32 * experts;
+        let spans = [
+            (0u64, 1usize),
+            (1, 4095),
+            (4093, 9000),
+            (12345, 1024 * 1024),
+            (777, 1024 * 1024 + 4097),
+            (total - 3_000_001, 3_000_001),
+            (total - 1, 1),
+        ];
+        std::thread::scope(|scope| {
+            for &(offset, length) in &spans {
+                let reader = &reader;
+                scope.spawn(move || {
+                    let mut buffered = vec![0u8; length];
+                    let mut direct = vec![0xAAu8; length];
+                    reader.read_range(tensor, offset, &mut buffered).unwrap();
+                    reader.read_range_direct(tensor, offset, &mut direct).unwrap();
+                    assert!(buffered == direct, "span {offset}+{length}");
+                });
+            }
+        });
+        let mut past = vec![0u8; 2];
+        assert!(reader.read_range_direct(tensor, total - 1, &mut past).is_err());
+        assert!(past.iter().all(|&b| b == 0));
     }
 
     #[test]
