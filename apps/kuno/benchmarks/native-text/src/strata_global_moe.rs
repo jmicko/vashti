@@ -643,7 +643,7 @@ impl Workspace {
             };
             // Pipelined prefill: transient staging is erased at the request's
             // own audited boundaries instead of after every layer's route read.
-            let raw = if std::env::var_os("KUNO_CLAUDE_PIPELINE").is_some() {
+            let raw = if std::env::var_os("KUNO_SERIAL_SUBMISSION").is_none() {
                 u::cancel(cancel)?;
                 read()?
             } else {
