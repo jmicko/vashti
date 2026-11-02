@@ -23,6 +23,7 @@ mod strata_weight_q8;
 #[cfg(feature = "strata-rust-port")]
 mod claude_dense_bench;
 #[cfg(feature = "strata-rust-port")]
+mod claude_driver;
 mod claude_gemm;
 mod claude_gemm_i8;
 mod claude_quality;

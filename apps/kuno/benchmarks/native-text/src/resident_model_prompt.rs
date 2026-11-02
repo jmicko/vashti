@@ -428,9 +428,7 @@ impl Workspace {
             )?;
             // Start the routed experts on the GPU while the host records the
             // shared expert and the next layer (joined at their submission).
-            if std::env::var_os("KUNO_SERIAL_SUBMISSION").is_none() {
-                m.arena.client().map_err(u::fault)?.submit_native_strata_experts().map_err(u::fault)?;
-            }
+            m.arena.client().map_err(u::fault)?.submit_native_strata_experts().map_err(u::fault)?;
             timing.mark("experts")?;
             if let Some(sample) = native_sample {
                 sample.finish();

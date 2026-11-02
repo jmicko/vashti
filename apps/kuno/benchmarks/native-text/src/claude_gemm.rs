@@ -919,7 +919,6 @@ pub(crate) fn try_dense(
         || !columns.is_multiple_of(KSTEP)
         || !weight_first.is_multiple_of(4)
         || BYPASS.load(std::sync::atomic::Ordering::Relaxed)
-        || std::env::var_os("KUNO_CLAUDE_GEMM_OFF").is_some()
     {
         return Ok(false);
     }
@@ -932,11 +931,9 @@ pub(crate) fn try_dense(
     let guarded = !count.is_multiple_of(TILE) || !rows.is_multiple_of(TILE);
     // SAFETY: `dense` validated every operand interval for this shape; loads and
     // stores outside count x rows are masked in the kernel.
-    // Production selection: Mesa with Xe2 2D block loads (INTEL_CMAT_BLOCK2D)
-    // runs the direct kernel on full tiles; everything else keeps the
-    // shared-memory kernel below.
-    let direct = std::env::var_os("INTEL_CMAT_BLOCK2D").is_some()
-        && std::env::var_os("KUNO_CLAUDE_GEMM_DIRECT").is_none();
+    // Production selection: Kuno's Mesa (Xe2 2D block loads) runs the direct
+    // kernel on full tiles; everything else keeps the shared-memory kernel.
+    let direct = crate::claude_driver::block2d();
     if direct && count % 128 == 0 && rows % 128 == 0 && columns % 16 == 0 {
         let grid = CubeCount::Static((count / 128) as u32, (rows / 128) as u32, 1);
         // SAFETY: full tiles only; every fragment lies inside the operands.
@@ -947,96 +944,6 @@ pub(crate) fn try_dense(
             } else {
                 gemm_direct_42u1::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
-            }
-        }
-        return Ok(true);
-    }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("42u4") && count % 128 == 0 && rows % 128 == 0 && columns % 64 == 0 {
-        let grid = CubeCount::Static((count / 128) as u32, (rows / 128) as u32, 1);
-        // SAFETY: full tiles only; every fragment lies inside the operands.
-        unsafe {
-            if bfloat {
-                gemm_direct_42u4::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            } else {
-                gemm_direct_42u4::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            }
-        }
-        return Ok(true);
-    }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("44u2") && count % 128 == 0 && rows % 256 == 0 && columns % 32 == 0 {
-        let grid = CubeCount::Static((count / 128) as u32, (rows / 256) as u32, 1);
-        // SAFETY: full tiles only; every fragment lies inside the operands.
-        unsafe {
-            if bfloat {
-                gemm_direct_44u2::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            } else {
-                gemm_direct_44u2::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            }
-        }
-        return Ok(true);
-    }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("82u2") && count % 256 == 0 && rows % 128 == 0 && columns % 32 == 0 {
-        let grid = CubeCount::Static((count / 256) as u32, (rows / 128) as u32, 1);
-        // SAFETY: full tiles only; every fragment lies inside the operands.
-        unsafe {
-            if bfloat {
-                gemm_direct_82u2::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            } else {
-                gemm_direct_82u2::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            }
-        }
-        return Ok(true);
-    }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("42u1") && count % 128 == 0 && rows % 128 == 0 && columns % 16 == 0 {
-        let grid = CubeCount::Static((count / 128) as u32, (rows / 128) as u32, 1);
-        // SAFETY: full tiles only; every fragment lies inside the operands.
-        unsafe {
-            if bfloat {
-                gemm_direct_42u1::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            } else {
-                gemm_direct_42u1::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns);
-            }
-        }
-        return Ok(true);
-    }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("42") && !guarded {
-        // SAFETY: full tiles only; every fragment lies inside the operands.
-        unsafe {
-            if bfloat {
-                gemm_direct::launch_unchecked::<half::bf16, WgpuRuntime>(
-                    client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns,
-                );
-            } else {
-                gemm_direct::launch_unchecked::<half::f16, WgpuRuntime>(
-                    client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
-                    weight_first, out_first, out_stride, count, rows, columns,
-                );
-            }
-        }
-        return Ok(true);
-    }
-    if std::env::var_os("KUNO_CLAUDE_GEMM8").is_some() {
-        // SAFETY: as below.
-        unsafe {
-            if bfloat {
-                gemm_nt8::launch_unchecked::<half::bf16, WgpuRuntime>(
-                    client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
-                    columns, weight_first, out_first, out_stride, count, rows, guarded,
-                );
-            } else {
-                gemm_nt8::launch_unchecked::<half::f16, WgpuRuntime>(
-                    client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
-                    columns, weight_first, out_first, out_stride, count, rows, guarded,
-                );
             }
         }
         return Ok(true);

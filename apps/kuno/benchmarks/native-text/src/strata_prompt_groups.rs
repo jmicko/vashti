@@ -116,13 +116,11 @@ fn group_with_streamed(raw: &[u32], count: usize, row_order: bool, streamed: Opt
         });
     }
     if let (true, Some(streamed)) = (row_order, streamed) {
-        if std::env::var_os("KUNO_CLAUDE_SORTED_ORDER").is_none() {
-            let mut host = Zeroizing::new([false; 512]);
-            for l in 0..512 {
-                host[l] = lengths[l] != 0 && streamed(cells[l]);
-            }
-            overlap_order(&mut order, &lengths, &host);
+        let mut host = Zeroizing::new([false; 512]);
+        for l in 0..512 {
+            host[l] = lengths[l] != 0 && streamed(cells[l]);
         }
+        overlap_order(&mut order, &lengths, &host);
     }
     let mut n = 0;
     let mut groups = 0;

@@ -4369,12 +4369,9 @@ impl std::fmt::Debug for Graph {
 }
 
 /// Let a new native recording encode while the previous one is still
-/// executing; real access conflicts are still joined before submit. On by
-/// default. `KUNO_SERIAL_SUBMISSION=1` restores the old drain-before-every-
-/// submission behavior, for bisecting a suspected ordering bug.
+/// executing; real access conflicts are still joined before submit.
 pub(crate) fn claude_pipeline() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("KUNO_SERIAL_SUBMISSION").is_none())
+    true
 }
 
 /// Diagnostic: code locations (no data) of host fence waits longer than 1 ms.

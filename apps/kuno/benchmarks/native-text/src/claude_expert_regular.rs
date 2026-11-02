@@ -441,9 +441,8 @@ pub(crate) fn launch(
     if hw.max_units_per_cube < 256 || hw.max_cube_dim.0 < 256 || hw.max_shared_memory_size < 1024 {
         return Err(Error::LimitExceeded("balanced cohort native geometry"));
     }
-    // Mesa with Xe2 2D block loads: direct fragments, 16 x 16 opt-in workgroup.
-    let direct = std::env::var_os("INTEL_CMAT_BLOCK2D").is_some()
-        && std::env::var_os("KUNO_CLAUDE_EXPERT_DIRECT_OFF").is_none();
+    // Kuno's Mesa (Xe2 2D block loads): direct fragments, 16 x 16 workgroup.
+    let direct = crate::claude_driver::block2d();
     let settings = matrix_settings().cube_dim(if direct { CubeDim::new_2d(16, 16) } else { CubeDim::new_1d(256) });
     let mut launcher = KernelLauncher::<WgpuRuntime>::new(settings.clone());
     launcher.with_scope(|scope| scope.device_properties(client.properties()));

@@ -643,12 +643,8 @@ impl Workspace {
             };
             // Pipelined prefill: transient staging is erased at the request's
             // own audited boundaries instead of after every layer's route read.
-            let raw = if std::env::var_os("KUNO_SERIAL_SUBMISSION").is_none() {
-                u::cancel(cancel)?;
-                read()?
-            } else {
-                admission.readback_audited(cancel, read)?
-            };
+            u::cancel(cancel)?;
+            let raw = read()?;
             boundary.mark("expert_boundary_route_readback_checkpoint");
             let streamed = |cell: u32| sources.cell_streamed(graph, layer, cell as usize);
             let map = crate::strata_prompt::groups::group_for_prefill(&raw, count, &streamed).map_err(|error| {

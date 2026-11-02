@@ -254,12 +254,25 @@ fn run_mode(
     // Model identity re-checks (stat) at most every 250 ms on hot paths.
     kuno_text::gguf::set_identity_check_interval(std::time::Duration::from_millis(250));
     use cubecl_runtime::config::{CubeClRuntimeConfig, RuntimeConfig};
-    // Optional compiled-code cache: GPU code only, built from model shapes, never
-    // request content. Mesa's ISA cache and CubeCL's SPIR-V cache both live under
-    // it. Only the fixed-public check may write it (see the filesystem policy).
-    let code_cache = std::env::var_os("KUNO_CODE_CACHE_DIR")
-        .map(std::path::PathBuf::from)
-        .filter(|dir| dir.is_absolute() && dir.is_dir());
+    // Kuno's Mesa build, installed next to the worker, is always preferred.
+    if let Some(icd) = crate::claude_driver::bundled_icd() {
+        // SAFETY: single-threaded startup; no runtime thread exists yet.
+        unsafe { std::env::set_var("VK_DRIVER_FILES", icd) };
+    }
+    // Compiled-code cache next to the worker: GPU code only, built from model
+    // shapes and fixed public prompts, never request content. Mesa's ISA cache,
+    // CubeCL's SPIR-V cache and the recorded WGSL kernels live under it. Only
+    // fixed-public modes may write it (see the filesystem policy); the install
+    // fill (--public-code-cache-fill) creates it.
+    let code_cache = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("code-cache")))
+        .filter(|dir| {
+            if public_check && CODE_FILL.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            dir.is_absolute() && dir.is_dir()
+        });
     if std::env::var_os("KUNO_ZERO_AUDIT").is_some_and(|v| v == "1") {
         crate::private_arena::enable_zero_readback_audit();
     }
@@ -440,6 +453,7 @@ async fn serve(
         return Err("native_gpu_unavailable");
     }
     let adapter = adapters.remove(0);
+    crate::claude_driver::record(&adapter.get_info());
     let limits = adapter.limits();
     crate::strata_port::validate_limits(&limits).map_err(|_| "native_gpu_unsupported")?;
     let features = crate::strata_intel_core::device_features() | wgpu::Features::SHADER_F16;
@@ -607,7 +621,7 @@ async fn serve(
             arena.close().map_err(|_| "public_matrix_close_failed")?;
             eprintln!("public_regular_check {}", serde_json::json!({
                 "passed": true, "reports": checks.len(), "seconds": started.elapsed().as_secs_f64(),
-                "claude_kernel": std::env::var_os("KUNO_CLAUDE_EXPERT_OFF").is_none(),
+                "claude_kernel": true,
             }));
             return Ok(());
         }
