@@ -165,6 +165,12 @@ fn stat_clock() -> u64 {
     EPOCH.get_or_init(std::time::Instant::now).elapsed().as_nanos() as u64 + 1
 }
 impl GgufSource {
+    fn recently_checked(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        let last = self.checked.load(Ordering::Relaxed);
+        last != 0
+            && stat_clock().saturating_sub(last) < STAT_INTERVAL_NS.load(Ordering::Relaxed)
+    }
     fn check_stat(&self, file: &File) -> Result<()> {
         use std::sync::atomic::Ordering;
         let now = stat_clock();
@@ -514,6 +520,9 @@ impl GgufFile {
     /// against a malicious same-size/same-mtime rewrite.
     pub fn verify_file_unchanged(&self) -> Result<()> {
         for source in &self.sources {
+            if source.recently_checked() {
+                continue;
+            }
             let file = source
                 .file
                 .lock()

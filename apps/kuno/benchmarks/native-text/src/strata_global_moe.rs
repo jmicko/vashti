@@ -634,13 +634,21 @@ impl Workspace {
         if prompt {
             // Intel prompt grouping is a single bounded router readback. No
             // activation readback or CPU expert contribution is scheduled.
-            let raw = admission.readback_audited(cancel, || {
+            let read = || {
                 u::read_handle_prefix_u32(
                     arena,
                     crate::strata_prompt::groups::views()?.raw,
                     crate::strata_prompt::groups::LOGICAL + count * 10,
                 )
-            })?;
+            };
+            // Pipelined prefill: transient staging is erased at the request's
+            // own audited boundaries instead of after every layer's route read.
+            let raw = if std::env::var_os("KUNO_CLAUDE_PIPELINE").is_some() {
+                u::cancel(cancel)?;
+                read()?
+            } else {
+                admission.readback_audited(cancel, read)?
+            };
             boundary.mark("expert_boundary_route_readback_checkpoint");
             let streamed = |cell: u32| sources.cell_streamed(graph, layer, cell as usize);
             let map = crate::strata_prompt::groups::group_for_prefill(&raw, count, &streamed).map_err(|error| {
