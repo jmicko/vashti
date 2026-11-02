@@ -136,7 +136,7 @@ impl OperatorProfile {
                 .zip(ticks.chunks_exact(2))
                 .map(|(name, pair)| {
                     let at = |t: u64| ((t.wrapping_sub(first) & self.mask) as f64 * self.period / 1000.0).round() as u64;
-                    format!("[\"{}\",{},{}]", name.rsplit("::").next().unwrap_or(name).replace('"', ""), at(pair[0]), at(pair[1]))
+                    format!("[\"{}\",{},{}]", name.split('<').next().unwrap_or(name).rsplit("::").next().unwrap_or(name).replace('"', ""), at(pair[0]), at(pair[1]))
                 })
                 .collect();
             eprintln!("public_timeline_base {}", (first as f64 * self.period / 1000.0).round() as u64);

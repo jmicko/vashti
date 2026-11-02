@@ -58,6 +58,7 @@ fn claude_product<F: Float>(
     input_member_base: usize,
     gu_prefix: usize,
     #[comptime] down: bool,
+    #[comptime] direct: bool,
 ) {
     let sg = usize::cast_from(PLANE_POS);
     let lane = usize::cast_from(UNIT_POS_PLANE);
@@ -84,38 +85,64 @@ fn claude_product<F: Float>(
     let c1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
     let c2 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
     let c3 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    claude_stage::<F>(input, weight, &mut a, &mut b, cols4, wf4, row_base, input_member_base, tok_base, count, 0, 0);
-    sync_cube();
-    let mut k = 0usize;
-    let mut cur = 0usize;
-    while k < columns {
-        let nxt = 1usize - cur;
-        if k + 32 < columns {
-            claude_stage::<F>(input, weight, &mut a, &mut b, cols4, wf4, row_base, input_member_base, tok_base, count, (k + 32) / 4, nxt);
+    if comptime!(direct) {
+        // Mesa Xe2 2D block loads (INTEL_CMAT_BLOCK2D): fragments straight
+        // from global memory; K is a compile-time constant (constant stride).
+        let kc = comptime!(if down { 640usize } else { 2560usize });
+        let kc4 = comptime!(kc / 4);
+        let abase = wf4 + row * kc4;
+        let bbase = (input_member_base + token) * kc4;
+        let wlen = weight.len();
+        let ilen = input.len();
+        let mut k4 = 0usize;
+        while k4 < kc4 {
+            let ak = abase + k4;
+            let bk = bbase + k4;
+            cmma::load(&a0, &weight.to_slice().slice(ak, wlen), comptime!(kc as u32));
+            cmma::load(&a1, &weight.to_slice().slice(ak + comptime!(8 * kc4), wlen), comptime!(kc as u32));
+            cmma::load(&a2, &weight.to_slice().slice(ak + comptime!(16 * kc4), wlen), comptime!(kc as u32));
+            cmma::load(&a3, &weight.to_slice().slice(ak + comptime!(24 * kc4), wlen), comptime!(kc as u32));
+            cmma::load(&b0, &input.to_slice().slice(bk, ilen), comptime!(kc as u32));
+            cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
+            cmma::execute::<F, F, f32, f32>(&a1, &b0, &c1, &c1);
+            cmma::execute::<F, F, f32, f32>(&a2, &b0, &c2, &c2);
+            cmma::execute::<F, F, f32, f32>(&a3, &b0, &c3, &c3);
+            k4 += 4;
         }
-        let ab = cur * 1024 + (sg % 4) * 256;
-        let bb = cur * 512 + (sg / 4) * 128;
-        cmma::load(&a0, &a.to_slice().slice(ab, a.len()), 32);
-        cmma::load(&a1, &a.to_slice().slice(ab + 64, a.len()), 32);
-        cmma::load(&a2, &a.to_slice().slice(ab + 128, a.len()), 32);
-        cmma::load(&a3, &a.to_slice().slice(ab + 192, a.len()), 32);
-        cmma::load(&b0, &b.to_slice().slice(bb, b.len()), 32);
-        cmma::load(&a4, &a.to_slice().slice(ab + 4, a.len()), 32);
-        cmma::load(&a5, &a.to_slice().slice(ab + 68, a.len()), 32);
-        cmma::load(&a6, &a.to_slice().slice(ab + 132, a.len()), 32);
-        cmma::load(&a7, &a.to_slice().slice(ab + 196, a.len()), 32);
-        cmma::load(&b1, &b.to_slice().slice(bb + 4, b.len()), 32);
-        cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
-        cmma::execute::<F, F, f32, f32>(&a1, &b0, &c1, &c1);
-        cmma::execute::<F, F, f32, f32>(&a2, &b0, &c2, &c2);
-        cmma::execute::<F, F, f32, f32>(&a3, &b0, &c3, &c3);
-        cmma::execute::<F, F, f32, f32>(&a4, &b1, &c0, &c0);
-        cmma::execute::<F, F, f32, f32>(&a5, &b1, &c1, &c1);
-        cmma::execute::<F, F, f32, f32>(&a6, &b1, &c2, &c2);
-        cmma::execute::<F, F, f32, f32>(&a7, &b1, &c3, &c3);
+    } else {
+        claude_stage::<F>(input, weight, &mut a, &mut b, cols4, wf4, row_base, input_member_base, tok_base, count, 0, 0);
         sync_cube();
-        cur = nxt;
-        k += 32;
+        let mut k = 0usize;
+        let mut cur = 0usize;
+        while k < columns {
+            let nxt = 1usize - cur;
+            if k + 32 < columns {
+                claude_stage::<F>(input, weight, &mut a, &mut b, cols4, wf4, row_base, input_member_base, tok_base, count, (k + 32) / 4, nxt);
+            }
+            let ab = cur * 1024 + (sg % 4) * 256;
+            let bb = cur * 512 + (sg / 4) * 128;
+            cmma::load(&a0, &a.to_slice().slice(ab, a.len()), 32);
+            cmma::load(&a1, &a.to_slice().slice(ab + 64, a.len()), 32);
+            cmma::load(&a2, &a.to_slice().slice(ab + 128, a.len()), 32);
+            cmma::load(&a3, &a.to_slice().slice(ab + 192, a.len()), 32);
+            cmma::load(&b0, &b.to_slice().slice(bb, b.len()), 32);
+            cmma::load(&a4, &a.to_slice().slice(ab + 4, a.len()), 32);
+            cmma::load(&a5, &a.to_slice().slice(ab + 68, a.len()), 32);
+            cmma::load(&a6, &a.to_slice().slice(ab + 132, a.len()), 32);
+            cmma::load(&a7, &a.to_slice().slice(ab + 196, a.len()), 32);
+            cmma::load(&b1, &b.to_slice().slice(bb + 4, b.len()), 32);
+            cmma::execute::<F, F, f32, f32>(&a0, &b0, &c0, &c0);
+            cmma::execute::<F, F, f32, f32>(&a1, &b0, &c1, &c1);
+            cmma::execute::<F, F, f32, f32>(&a2, &b0, &c2, &c2);
+            cmma::execute::<F, F, f32, f32>(&a3, &b0, &c3, &c3);
+            cmma::execute::<F, F, f32, f32>(&a4, &b1, &c0, &c0);
+            cmma::execute::<F, F, f32, f32>(&a5, &b1, &c1, &c1);
+            cmma::execute::<F, F, f32, f32>(&a6, &b1, &c2, &c2);
+            cmma::execute::<F, F, f32, f32>(&a7, &b1, &c3, &c3);
+            sync_cube();
+            cur = nxt;
+            k += 32;
+        }
     }
     // Publication is per subgroup; subgroups wholly past `count` publish nothing.
     let mut scratch = SharedMemory::<f32>::new(2048usize);
@@ -207,6 +234,7 @@ pub(crate) fn claude_regular_cohort(
     m30: u32,
     m31: u32,
     #[comptime] down: bool,
+    #[comptime] direct: bool,
 ) {
     let slot = usize::cast_from(CUBE_POS_Z);
     let mut group = 0u32;
@@ -267,7 +295,9 @@ pub(crate) fn claude_regular_cohort(
     let members = usize::cast_from(count);
     let group = usize::cast_from(group);
     let prefix = usize::cast_from(prefix);
-    if CUBE_DIM_X != 256u32 || CUBE_DIM_Y != 1u32 || CUBE_DIM_Z != 1u32 {
+    let dim_x = comptime!(if direct { 16u32 } else { 256u32 });
+    let dim_y = comptime!(if direct { 16u32 } else { 1u32 });
+    if CUBE_DIM_X != dim_x || CUBE_DIM_Y != dim_y || CUBE_DIM_Z != 1u32 {
         if UNIT_POS == 0 {
             fault[0].fetch_or(128);
         }
@@ -357,7 +387,7 @@ pub(crate) fn claude_regular_cohort(
     let weight_first = slot * 4915200 + comptime!(if down { 3276800usize } else { 0usize });
     claude_product::<f16>(
         input, weight, output, map, status, fault, columns, rows, members, weight_first,
-        group, input_prefix, prefix, down,
+        group, input_prefix, prefix, down, direct,
     );
 }
 
@@ -411,7 +441,10 @@ pub(crate) fn launch(
     if hw.max_units_per_cube < 256 || hw.max_cube_dim.0 < 256 || hw.max_shared_memory_size < 1024 {
         return Err(Error::LimitExceeded("balanced cohort native geometry"));
     }
-    let settings = matrix_settings().cube_dim(CubeDim::new_1d(256));
+    // Mesa with Xe2 2D block loads: direct fragments, 16 x 16 opt-in workgroup.
+    let direct = std::env::var_os("INTEL_CMAT_BLOCK2D").is_some()
+        && std::env::var_os("KUNO_CLAUDE_EXPERT_DIRECT_OFF").is_none();
+    let settings = matrix_settings().cube_dim(if direct { CubeDim::new_2d(16, 16) } else { CubeDim::new_1d(256) });
     let mut launcher = KernelLauncher::<WgpuRuntime>::new(settings.clone());
     launcher.with_scope(|scope| scope.device_properties(client.properties()));
     let [ia, wa, oa, ma, sa, fa] = register_arrays(&mut launcher, [ia, wa, oa, ma, sa, fa]);
@@ -477,6 +510,7 @@ pub(crate) fn launch(
         (),
         (),
         down,
+        direct,
     );
     unsafe {
         launcher.launch_unchecked(

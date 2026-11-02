@@ -418,9 +418,16 @@ pub fn gemm_direct<F: Float>(
 }
 
 
-/// Direct 2D-block variant: subgroup tile 32 x 32 (4 A x 2 B), K unrolled x2.
+
+
+
+
+
+/// Direct 2D-block variant: subgroup tile 32 x 32 (4 A x 2 B), K unrolled x4.
+/// Indices are (tile base + K) + constant, so Mesa can turn constants into
+/// immediate block offsets and share one payload per matrix and step.
 #[cube(launch_unchecked)]
-pub fn gemm_direct_42u<F: Float>(
+pub fn gemm_direct_42u4<F: Float>(
     input: &Array<Vector<F, Const<4>>>,
     weight: &Array<Vector<F, Const<4>>>,
     output: &mut Array<f32>,
@@ -433,10 +440,11 @@ pub fn gemm_direct_42u<F: Float>(
     #[comptime] columns: usize,
 ) {
     let sg = usize::cast_from(PLANE_POS);
-    let t0 = usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32;
-    let r0 = usize::cast_from(CUBE_POS_X) * 128 + (sg % 4) * 32;
-    let cols4 = columns / 4;
-    let wf4 = weight_first / 4;
+    let t0 = usize::cast_from(CUBE_POS_X) * 128 + (sg / 4) * 32;
+    let r0 = usize::cast_from(CUBE_POS_Y) * 128 + (sg % 4) * 32;
+    let cols4 = comptime!(columns / 4);
+    let abase = t0 * cols4;
+    let bbase = weight_first / 4 + r0 * cols4;
     let ilen = input.len();
     let wlen = weight.len();
     let a0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
@@ -451,6 +459,18 @@ pub fn gemm_direct_42u<F: Float>(
     let a1_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
     let b1_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
     let b1_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let a2_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a2_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a2_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a2_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let b2_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let b2_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let a3_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a3_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a3_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a3_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let b3_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let b3_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
     let c0_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
     let c0_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
     let c1_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
@@ -461,18 +481,14 @@ pub fn gemm_direct_42u<F: Float>(
     let c3_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
     let mut k4 = 0usize;
     while k4 < cols4 {
-        cmma::load(&a0_0, &input.to_slice().slice((t0 + 0) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_1, &input.to_slice().slice((t0 + 8) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_2, &input.to_slice().slice((t0 + 16) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_3, &input.to_slice().slice((t0 + 24) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&b0_0, &weight.to_slice().slice(wf4 + (r0 + 0) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_1, &weight.to_slice().slice(wf4 + (r0 + 16) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&a1_0, &input.to_slice().slice((t0 + 0) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&a1_1, &input.to_slice().slice((t0 + 8) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&a1_2, &input.to_slice().slice((t0 + 16) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&a1_3, &input.to_slice().slice((t0 + 24) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&b1_0, &weight.to_slice().slice(wf4 + (r0 + 0) * cols4 + k4 + 4, wlen), comptime!(columns as u32));
-        cmma::load(&b1_1, &weight.to_slice().slice(wf4 + (r0 + 16) * cols4 + k4 + 4, wlen), comptime!(columns as u32));
+        let ak = abase + k4;
+        let bk = bbase + k4;
+        cmma::load(&a0_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&b0_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::load(&b0_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 0), wlen), comptime!(columns as u32));
         cmma::execute::<F, F, f32, f32>(&a0_0, &b0_0, &c0_0, &c0_0);
         cmma::execute::<F, F, f32, f32>(&a0_0, &b0_1, &c0_1, &c0_1);
         cmma::execute::<F, F, f32, f32>(&a0_1, &b0_0, &c1_0, &c1_0);
@@ -481,6 +497,12 @@ pub fn gemm_direct_42u<F: Float>(
         cmma::execute::<F, F, f32, f32>(&a0_2, &b0_1, &c2_1, &c2_1);
         cmma::execute::<F, F, f32, f32>(&a0_3, &b0_0, &c3_0, &c3_0);
         cmma::execute::<F, F, f32, f32>(&a0_3, &b0_1, &c3_1, &c3_1);
+        cmma::load(&a1_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&b1_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 4), wlen), comptime!(columns as u32));
+        cmma::load(&b1_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 4), wlen), comptime!(columns as u32));
         cmma::execute::<F, F, f32, f32>(&a1_0, &b1_0, &c0_0, &c0_0);
         cmma::execute::<F, F, f32, f32>(&a1_0, &b1_1, &c0_1, &c0_1);
         cmma::execute::<F, F, f32, f32>(&a1_1, &b1_0, &c1_0, &c1_0);
@@ -489,7 +511,35 @@ pub fn gemm_direct_42u<F: Float>(
         cmma::execute::<F, F, f32, f32>(&a1_2, &b1_1, &c2_1, &c2_1);
         cmma::execute::<F, F, f32, f32>(&a1_3, &b1_0, &c3_0, &c3_0);
         cmma::execute::<F, F, f32, f32>(&a1_3, &b1_1, &c3_1, &c3_1);
-        k4 += 8;
+        cmma::load(&a2_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 8), ilen), comptime!(columns as u32));
+        cmma::load(&a2_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 8), ilen), comptime!(columns as u32));
+        cmma::load(&a2_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 8), ilen), comptime!(columns as u32));
+        cmma::load(&a2_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 8), ilen), comptime!(columns as u32));
+        cmma::load(&b2_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 8), wlen), comptime!(columns as u32));
+        cmma::load(&b2_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 8), wlen), comptime!(columns as u32));
+        cmma::execute::<F, F, f32, f32>(&a2_0, &b2_0, &c0_0, &c0_0);
+        cmma::execute::<F, F, f32, f32>(&a2_0, &b2_1, &c0_1, &c0_1);
+        cmma::execute::<F, F, f32, f32>(&a2_1, &b2_0, &c1_0, &c1_0);
+        cmma::execute::<F, F, f32, f32>(&a2_1, &b2_1, &c1_1, &c1_1);
+        cmma::execute::<F, F, f32, f32>(&a2_2, &b2_0, &c2_0, &c2_0);
+        cmma::execute::<F, F, f32, f32>(&a2_2, &b2_1, &c2_1, &c2_1);
+        cmma::execute::<F, F, f32, f32>(&a2_3, &b2_0, &c3_0, &c3_0);
+        cmma::execute::<F, F, f32, f32>(&a2_3, &b2_1, &c3_1, &c3_1);
+        cmma::load(&a3_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 12), ilen), comptime!(columns as u32));
+        cmma::load(&a3_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 12), ilen), comptime!(columns as u32));
+        cmma::load(&a3_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 12), ilen), comptime!(columns as u32));
+        cmma::load(&a3_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 12), ilen), comptime!(columns as u32));
+        cmma::load(&b3_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 12), wlen), comptime!(columns as u32));
+        cmma::load(&b3_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 12), wlen), comptime!(columns as u32));
+        cmma::execute::<F, F, f32, f32>(&a3_0, &b3_0, &c0_0, &c0_0);
+        cmma::execute::<F, F, f32, f32>(&a3_0, &b3_1, &c0_1, &c0_1);
+        cmma::execute::<F, F, f32, f32>(&a3_1, &b3_0, &c1_0, &c1_0);
+        cmma::execute::<F, F, f32, f32>(&a3_1, &b3_1, &c1_1, &c1_1);
+        cmma::execute::<F, F, f32, f32>(&a3_2, &b3_0, &c2_0, &c2_0);
+        cmma::execute::<F, F, f32, f32>(&a3_2, &b3_1, &c2_1, &c2_1);
+        cmma::execute::<F, F, f32, f32>(&a3_3, &b3_0, &c3_0, &c3_0);
+        cmma::execute::<F, F, f32, f32>(&a3_3, &b3_1, &c3_1, &c3_1);
+        k4 += 16;
     }
     let mut out = SharedMemory::<f32>::new(2048usize);
     emit(&c0_0, &mut out, output, fault, sg, t0 + 0, r0 + 0, out_first, out_stride, count, rows, false);
@@ -500,199 +550,13 @@ pub fn gemm_direct_42u<F: Float>(
     emit(&c2_1, &mut out, output, fault, sg, t0 + 16, r0 + 16, out_first, out_stride, count, rows, false);
     emit(&c3_0, &mut out, output, fault, sg, t0 + 24, r0 + 0, out_first, out_stride, count, rows, false);
     emit(&c3_1, &mut out, output, fault, sg, t0 + 24, r0 + 16, out_first, out_stride, count, rows, false);
-}
-
-/// Direct 2D-block variant: subgroup tile 32 x 64 (4 A x 4 B), K unrolled x1.
-#[cube(launch_unchecked)]
-pub fn gemm_direct_44<F: Float>(
-    input: &Array<Vector<F, Const<4>>>,
-    weight: &Array<Vector<F, Const<4>>>,
-    output: &mut Array<f32>,
-    fault: &mut Array<Atomic<u32>>,
-    weight_first: usize,
-    out_first: usize,
-    out_stride: usize,
-    count: usize,
-    rows: usize,
-    #[comptime] columns: usize,
-) {
-    let sg = usize::cast_from(PLANE_POS);
-    let t0 = usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32;
-    let r0 = usize::cast_from(CUBE_POS_X) * 256 + (sg % 4) * 64;
-    let cols4 = columns / 4;
-    let wf4 = weight_first / 4;
-    let ilen = input.len();
-    let wlen = weight.len();
-    let a0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let b0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
-    let b0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
-    let b0_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
-    let b0_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
-    let c0_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c0_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c0_2 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c0_3 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c1_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c1_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c1_2 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c1_3 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c2_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c2_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c2_2 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c2_3 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c3_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c3_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c3_2 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c3_3 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let mut k4 = 0usize;
-    while k4 < cols4 {
-        cmma::load(&a0_0, &input.to_slice().slice((t0 + 0) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_1, &input.to_slice().slice((t0 + 8) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_2, &input.to_slice().slice((t0 + 16) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_3, &input.to_slice().slice((t0 + 24) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&b0_0, &weight.to_slice().slice(wf4 + (r0 + 0) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_1, &weight.to_slice().slice(wf4 + (r0 + 16) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_2, &weight.to_slice().slice(wf4 + (r0 + 32) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_3, &weight.to_slice().slice(wf4 + (r0 + 48) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_0, &c0_0, &c0_0);
-        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_1, &c0_1, &c0_1);
-        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_2, &c0_2, &c0_2);
-        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_3, &c0_3, &c0_3);
-        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_0, &c1_0, &c1_0);
-        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_1, &c1_1, &c1_1);
-        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_2, &c1_2, &c1_2);
-        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_3, &c1_3, &c1_3);
-        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_0, &c2_0, &c2_0);
-        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_1, &c2_1, &c2_1);
-        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_2, &c2_2, &c2_2);
-        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_3, &c2_3, &c2_3);
-        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_0, &c3_0, &c3_0);
-        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_1, &c3_1, &c3_1);
-        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_2, &c3_2, &c3_2);
-        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_3, &c3_3, &c3_3);
-        k4 += 4;
-    }
-    let mut out = SharedMemory::<f32>::new(2048usize);
-    emit(&c0_0, &mut out, output, fault, sg, t0 + 0, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c0_1, &mut out, output, fault, sg, t0 + 0, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c0_2, &mut out, output, fault, sg, t0 + 0, r0 + 32, out_first, out_stride, count, rows, false);
-    emit(&c0_3, &mut out, output, fault, sg, t0 + 0, r0 + 48, out_first, out_stride, count, rows, false);
-    emit(&c1_0, &mut out, output, fault, sg, t0 + 8, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c1_1, &mut out, output, fault, sg, t0 + 8, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c1_2, &mut out, output, fault, sg, t0 + 8, r0 + 32, out_first, out_stride, count, rows, false);
-    emit(&c1_3, &mut out, output, fault, sg, t0 + 8, r0 + 48, out_first, out_stride, count, rows, false);
-    emit(&c2_0, &mut out, output, fault, sg, t0 + 16, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c2_1, &mut out, output, fault, sg, t0 + 16, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c2_2, &mut out, output, fault, sg, t0 + 16, r0 + 32, out_first, out_stride, count, rows, false);
-    emit(&c2_3, &mut out, output, fault, sg, t0 + 16, r0 + 48, out_first, out_stride, count, rows, false);
-    emit(&c3_0, &mut out, output, fault, sg, t0 + 24, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c3_1, &mut out, output, fault, sg, t0 + 24, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c3_2, &mut out, output, fault, sg, t0 + 24, r0 + 32, out_first, out_stride, count, rows, false);
-    emit(&c3_3, &mut out, output, fault, sg, t0 + 24, r0 + 48, out_first, out_stride, count, rows, false);
-}
-
-/// Direct 2D-block variant: subgroup tile 64 x 32 (8 A x 2 B), K unrolled x1.
-#[cube(launch_unchecked)]
-pub fn gemm_direct_82<F: Float>(
-    input: &Array<Vector<F, Const<4>>>,
-    weight: &Array<Vector<F, Const<4>>>,
-    output: &mut Array<f32>,
-    fault: &mut Array<Atomic<u32>>,
-    weight_first: usize,
-    out_first: usize,
-    out_stride: usize,
-    count: usize,
-    rows: usize,
-    #[comptime] columns: usize,
-) {
-    let sg = usize::cast_from(PLANE_POS);
-    let t0 = usize::cast_from(CUBE_POS_Y) * 256 + (sg / 4) * 64;
-    let r0 = usize::cast_from(CUBE_POS_X) * 128 + (sg % 4) * 32;
-    let cols4 = columns / 4;
-    let wf4 = weight_first / 4;
-    let ilen = input.len();
-    let wlen = weight.len();
-    let a0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_4 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_5 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_6 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let a0_7 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
-    let b0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
-    let b0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
-    let c0_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c0_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c1_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c1_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c2_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c2_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c3_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c3_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c4_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c4_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c5_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c5_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c6_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c6_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c7_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let c7_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
-    let mut k4 = 0usize;
-    while k4 < cols4 {
-        cmma::load(&a0_0, &input.to_slice().slice((t0 + 0) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_1, &input.to_slice().slice((t0 + 8) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_2, &input.to_slice().slice((t0 + 16) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_3, &input.to_slice().slice((t0 + 24) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_4, &input.to_slice().slice((t0 + 32) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_5, &input.to_slice().slice((t0 + 40) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_6, &input.to_slice().slice((t0 + 48) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_7, &input.to_slice().slice((t0 + 56) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&b0_0, &weight.to_slice().slice(wf4 + (r0 + 0) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_1, &weight.to_slice().slice(wf4 + (r0 + 16) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_0, &c0_0, &c0_0);
-        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_1, &c0_1, &c0_1);
-        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_0, &c1_0, &c1_0);
-        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_1, &c1_1, &c1_1);
-        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_0, &c2_0, &c2_0);
-        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_1, &c2_1, &c2_1);
-        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_0, &c3_0, &c3_0);
-        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_1, &c3_1, &c3_1);
-        cmma::execute::<F, F, f32, f32>(&a0_4, &b0_0, &c4_0, &c4_0);
-        cmma::execute::<F, F, f32, f32>(&a0_4, &b0_1, &c4_1, &c4_1);
-        cmma::execute::<F, F, f32, f32>(&a0_5, &b0_0, &c5_0, &c5_0);
-        cmma::execute::<F, F, f32, f32>(&a0_5, &b0_1, &c5_1, &c5_1);
-        cmma::execute::<F, F, f32, f32>(&a0_6, &b0_0, &c6_0, &c6_0);
-        cmma::execute::<F, F, f32, f32>(&a0_6, &b0_1, &c6_1, &c6_1);
-        cmma::execute::<F, F, f32, f32>(&a0_7, &b0_0, &c7_0, &c7_0);
-        cmma::execute::<F, F, f32, f32>(&a0_7, &b0_1, &c7_1, &c7_1);
-        k4 += 4;
-    }
-    let mut out = SharedMemory::<f32>::new(2048usize);
-    emit(&c0_0, &mut out, output, fault, sg, t0 + 0, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c0_1, &mut out, output, fault, sg, t0 + 0, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c1_0, &mut out, output, fault, sg, t0 + 8, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c1_1, &mut out, output, fault, sg, t0 + 8, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c2_0, &mut out, output, fault, sg, t0 + 16, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c2_1, &mut out, output, fault, sg, t0 + 16, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c3_0, &mut out, output, fault, sg, t0 + 24, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c3_1, &mut out, output, fault, sg, t0 + 24, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c4_0, &mut out, output, fault, sg, t0 + 32, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c4_1, &mut out, output, fault, sg, t0 + 32, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c5_0, &mut out, output, fault, sg, t0 + 40, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c5_1, &mut out, output, fault, sg, t0 + 40, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c6_0, &mut out, output, fault, sg, t0 + 48, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c6_1, &mut out, output, fault, sg, t0 + 48, r0 + 16, out_first, out_stride, count, rows, false);
-    emit(&c7_0, &mut out, output, fault, sg, t0 + 56, r0 + 0, out_first, out_stride, count, rows, false);
-    emit(&c7_1, &mut out, output, fault, sg, t0 + 56, r0 + 16, out_first, out_stride, count, rows, false);
 }
 
 /// Direct 2D-block variant: subgroup tile 32 x 64 (4 A x 4 B), K unrolled x2.
+/// Indices are (tile base + K) + constant, so Mesa can turn constants into
+/// immediate block offsets and share one payload per matrix and step.
 #[cube(launch_unchecked)]
-pub fn gemm_direct_44u<F: Float>(
+pub fn gemm_direct_44u2<F: Float>(
     input: &Array<Vector<F, Const<4>>>,
     weight: &Array<Vector<F, Const<4>>>,
     output: &mut Array<f32>,
@@ -705,10 +569,11 @@ pub fn gemm_direct_44u<F: Float>(
     #[comptime] columns: usize,
 ) {
     let sg = usize::cast_from(PLANE_POS);
-    let t0 = usize::cast_from(CUBE_POS_Y) * 128 + (sg / 4) * 32;
-    let r0 = usize::cast_from(CUBE_POS_X) * 256 + (sg % 4) * 64;
-    let cols4 = columns / 4;
-    let wf4 = weight_first / 4;
+    let t0 = usize::cast_from(CUBE_POS_X) * 128 + (sg / 4) * 32;
+    let r0 = usize::cast_from(CUBE_POS_Y) * 256 + (sg % 4) * 64;
+    let cols4 = comptime!(columns / 4);
+    let abase = t0 * cols4;
+    let bbase = weight_first / 4 + r0 * cols4;
     let ilen = input.len();
     let wlen = weight.len();
     let a0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
@@ -745,22 +610,16 @@ pub fn gemm_direct_44u<F: Float>(
     let c3_3 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
     let mut k4 = 0usize;
     while k4 < cols4 {
-        cmma::load(&a0_0, &input.to_slice().slice((t0 + 0) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_1, &input.to_slice().slice((t0 + 8) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_2, &input.to_slice().slice((t0 + 16) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&a0_3, &input.to_slice().slice((t0 + 24) * cols4 + k4 + 0, ilen), comptime!(columns as u32));
-        cmma::load(&b0_0, &weight.to_slice().slice(wf4 + (r0 + 0) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_1, &weight.to_slice().slice(wf4 + (r0 + 16) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_2, &weight.to_slice().slice(wf4 + (r0 + 32) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&b0_3, &weight.to_slice().slice(wf4 + (r0 + 48) * cols4 + k4 + 0, wlen), comptime!(columns as u32));
-        cmma::load(&a1_0, &input.to_slice().slice((t0 + 0) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&a1_1, &input.to_slice().slice((t0 + 8) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&a1_2, &input.to_slice().slice((t0 + 16) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&a1_3, &input.to_slice().slice((t0 + 24) * cols4 + k4 + 4, ilen), comptime!(columns as u32));
-        cmma::load(&b1_0, &weight.to_slice().slice(wf4 + (r0 + 0) * cols4 + k4 + 4, wlen), comptime!(columns as u32));
-        cmma::load(&b1_1, &weight.to_slice().slice(wf4 + (r0 + 16) * cols4 + k4 + 4, wlen), comptime!(columns as u32));
-        cmma::load(&b1_2, &weight.to_slice().slice(wf4 + (r0 + 32) * cols4 + k4 + 4, wlen), comptime!(columns as u32));
-        cmma::load(&b1_3, &weight.to_slice().slice(wf4 + (r0 + 48) * cols4 + k4 + 4, wlen), comptime!(columns as u32));
+        let ak = abase + k4;
+        let bk = bbase + k4;
+        cmma::load(&a0_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&b0_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::load(&b0_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::load(&b0_2, &weight.to_slice().slice(bk + comptime!(32 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::load(&b0_3, &weight.to_slice().slice(bk + comptime!(48 * (columns / 4) + 0), wlen), comptime!(columns as u32));
         cmma::execute::<F, F, f32, f32>(&a0_0, &b0_0, &c0_0, &c0_0);
         cmma::execute::<F, F, f32, f32>(&a0_0, &b0_1, &c0_1, &c0_1);
         cmma::execute::<F, F, f32, f32>(&a0_0, &b0_2, &c0_2, &c0_2);
@@ -777,6 +636,14 @@ pub fn gemm_direct_44u<F: Float>(
         cmma::execute::<F, F, f32, f32>(&a0_3, &b0_1, &c3_1, &c3_1);
         cmma::execute::<F, F, f32, f32>(&a0_3, &b0_2, &c3_2, &c3_2);
         cmma::execute::<F, F, f32, f32>(&a0_3, &b0_3, &c3_3, &c3_3);
+        cmma::load(&a1_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&b1_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 4), wlen), comptime!(columns as u32));
+        cmma::load(&b1_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 4), wlen), comptime!(columns as u32));
+        cmma::load(&b1_2, &weight.to_slice().slice(bk + comptime!(32 * (columns / 4) + 4), wlen), comptime!(columns as u32));
+        cmma::load(&b1_3, &weight.to_slice().slice(bk + comptime!(48 * (columns / 4) + 4), wlen), comptime!(columns as u32));
         cmma::execute::<F, F, f32, f32>(&a1_0, &b1_0, &c0_0, &c0_0);
         cmma::execute::<F, F, f32, f32>(&a1_0, &b1_1, &c0_1, &c0_1);
         cmma::execute::<F, F, f32, f32>(&a1_0, &b1_2, &c0_2, &c0_2);
@@ -812,6 +679,212 @@ pub fn gemm_direct_44u<F: Float>(
     emit(&c3_1, &mut out, output, fault, sg, t0 + 24, r0 + 16, out_first, out_stride, count, rows, false);
     emit(&c3_2, &mut out, output, fault, sg, t0 + 24, r0 + 32, out_first, out_stride, count, rows, false);
     emit(&c3_3, &mut out, output, fault, sg, t0 + 24, r0 + 48, out_first, out_stride, count, rows, false);
+}
+
+/// Direct 2D-block variant: subgroup tile 64 x 32 (8 A x 2 B), K unrolled x2.
+/// Indices are (tile base + K) + constant, so Mesa can turn constants into
+/// immediate block offsets and share one payload per matrix and step.
+#[cube(launch_unchecked)]
+pub fn gemm_direct_82u2<F: Float>(
+    input: &Array<Vector<F, Const<4>>>,
+    weight: &Array<Vector<F, Const<4>>>,
+    output: &mut Array<f32>,
+    fault: &mut Array<Atomic<u32>>,
+    weight_first: usize,
+    out_first: usize,
+    out_stride: usize,
+    count: usize,
+    rows: usize,
+    #[comptime] columns: usize,
+) {
+    let sg = usize::cast_from(PLANE_POS);
+    let t0 = usize::cast_from(CUBE_POS_X) * 256 + (sg / 4) * 64;
+    let r0 = usize::cast_from(CUBE_POS_Y) * 128 + (sg % 4) * 32;
+    let cols4 = comptime!(columns / 4);
+    let abase = t0 * cols4;
+    let bbase = weight_first / 4 + r0 * cols4;
+    let ilen = input.len();
+    let wlen = weight.len();
+    let a0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_4 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_5 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_6 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_7 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let b0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let b0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let a1_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1_4 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1_5 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1_6 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a1_7 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let b1_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let b1_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let c0_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c0_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c1_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c1_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c2_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c2_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c3_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c3_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c4_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c4_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c5_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c5_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c6_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c6_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c7_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c7_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let mut k4 = 0usize;
+    while k4 < cols4 {
+        let ak = abase + k4;
+        let bk = bbase + k4;
+        cmma::load(&a0_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_4, &input.to_slice().slice(ak + comptime!(32 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_5, &input.to_slice().slice(ak + comptime!(40 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_6, &input.to_slice().slice(ak + comptime!(48 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_7, &input.to_slice().slice(ak + comptime!(56 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&b0_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::load(&b0_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_0, &c0_0, &c0_0);
+        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_1, &c0_1, &c0_1);
+        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_0, &c1_0, &c1_0);
+        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_1, &c1_1, &c1_1);
+        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_0, &c2_0, &c2_0);
+        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_1, &c2_1, &c2_1);
+        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_0, &c3_0, &c3_0);
+        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_1, &c3_1, &c3_1);
+        cmma::execute::<F, F, f32, f32>(&a0_4, &b0_0, &c4_0, &c4_0);
+        cmma::execute::<F, F, f32, f32>(&a0_4, &b0_1, &c4_1, &c4_1);
+        cmma::execute::<F, F, f32, f32>(&a0_5, &b0_0, &c5_0, &c5_0);
+        cmma::execute::<F, F, f32, f32>(&a0_5, &b0_1, &c5_1, &c5_1);
+        cmma::execute::<F, F, f32, f32>(&a0_6, &b0_0, &c6_0, &c6_0);
+        cmma::execute::<F, F, f32, f32>(&a0_6, &b0_1, &c6_1, &c6_1);
+        cmma::execute::<F, F, f32, f32>(&a0_7, &b0_0, &c7_0, &c7_0);
+        cmma::execute::<F, F, f32, f32>(&a0_7, &b0_1, &c7_1, &c7_1);
+        cmma::load(&a1_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_4, &input.to_slice().slice(ak + comptime!(32 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_5, &input.to_slice().slice(ak + comptime!(40 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_6, &input.to_slice().slice(ak + comptime!(48 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&a1_7, &input.to_slice().slice(ak + comptime!(56 * (columns / 4) + 4), ilen), comptime!(columns as u32));
+        cmma::load(&b1_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 4), wlen), comptime!(columns as u32));
+        cmma::load(&b1_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 4), wlen), comptime!(columns as u32));
+        cmma::execute::<F, F, f32, f32>(&a1_0, &b1_0, &c0_0, &c0_0);
+        cmma::execute::<F, F, f32, f32>(&a1_0, &b1_1, &c0_1, &c0_1);
+        cmma::execute::<F, F, f32, f32>(&a1_1, &b1_0, &c1_0, &c1_0);
+        cmma::execute::<F, F, f32, f32>(&a1_1, &b1_1, &c1_1, &c1_1);
+        cmma::execute::<F, F, f32, f32>(&a1_2, &b1_0, &c2_0, &c2_0);
+        cmma::execute::<F, F, f32, f32>(&a1_2, &b1_1, &c2_1, &c2_1);
+        cmma::execute::<F, F, f32, f32>(&a1_3, &b1_0, &c3_0, &c3_0);
+        cmma::execute::<F, F, f32, f32>(&a1_3, &b1_1, &c3_1, &c3_1);
+        cmma::execute::<F, F, f32, f32>(&a1_4, &b1_0, &c4_0, &c4_0);
+        cmma::execute::<F, F, f32, f32>(&a1_4, &b1_1, &c4_1, &c4_1);
+        cmma::execute::<F, F, f32, f32>(&a1_5, &b1_0, &c5_0, &c5_0);
+        cmma::execute::<F, F, f32, f32>(&a1_5, &b1_1, &c5_1, &c5_1);
+        cmma::execute::<F, F, f32, f32>(&a1_6, &b1_0, &c6_0, &c6_0);
+        cmma::execute::<F, F, f32, f32>(&a1_6, &b1_1, &c6_1, &c6_1);
+        cmma::execute::<F, F, f32, f32>(&a1_7, &b1_0, &c7_0, &c7_0);
+        cmma::execute::<F, F, f32, f32>(&a1_7, &b1_1, &c7_1, &c7_1);
+        k4 += 8;
+    }
+    let mut out = SharedMemory::<f32>::new(2048usize);
+    emit(&c0_0, &mut out, output, fault, sg, t0 + 0, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c0_1, &mut out, output, fault, sg, t0 + 0, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c1_0, &mut out, output, fault, sg, t0 + 8, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c1_1, &mut out, output, fault, sg, t0 + 8, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c2_0, &mut out, output, fault, sg, t0 + 16, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c2_1, &mut out, output, fault, sg, t0 + 16, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c3_0, &mut out, output, fault, sg, t0 + 24, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c3_1, &mut out, output, fault, sg, t0 + 24, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c4_0, &mut out, output, fault, sg, t0 + 32, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c4_1, &mut out, output, fault, sg, t0 + 32, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c5_0, &mut out, output, fault, sg, t0 + 40, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c5_1, &mut out, output, fault, sg, t0 + 40, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c6_0, &mut out, output, fault, sg, t0 + 48, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c6_1, &mut out, output, fault, sg, t0 + 48, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c7_0, &mut out, output, fault, sg, t0 + 56, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c7_1, &mut out, output, fault, sg, t0 + 56, r0 + 16, out_first, out_stride, count, rows, false);
+}
+
+/// Direct 2D-block variant: subgroup tile 32 x 32 (4 A x 2 B), K unrolled x1.
+/// Indices are (tile base + K) + constant, so Mesa can turn constants into
+/// immediate block offsets and share one payload per matrix and step.
+#[cube(launch_unchecked)]
+pub fn gemm_direct_42u1<F: Float>(
+    input: &Array<Vector<F, Const<4>>>,
+    weight: &Array<Vector<F, Const<4>>>,
+    output: &mut Array<f32>,
+    fault: &mut Array<Atomic<u32>>,
+    weight_first: usize,
+    out_first: usize,
+    out_stride: usize,
+    count: usize,
+    rows: usize,
+    #[comptime] columns: usize,
+) {
+    let sg = usize::cast_from(PLANE_POS);
+    let t0 = usize::cast_from(CUBE_POS_X) * 128 + (sg / 4) * 32;
+    let r0 = usize::cast_from(CUBE_POS_Y) * 128 + (sg % 4) * 32;
+    let cols4 = comptime!(columns / 4);
+    let abase = t0 * cols4;
+    let bbase = weight_first / 4 + r0 * cols4;
+    let ilen = input.len();
+    let wlen = weight.len();
+    let a0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_2 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let a0_3 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::A, 8usize, 16usize, 16usize, cmma::MatrixLayout::RowMajor) };
+    let b0_0 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let b0_1 = unsafe { cmma::Matrix::<F>::uninitialized(cmma::MatrixIdent::B, 8usize, 16usize, 16usize, cmma::MatrixLayout::ColMajor) };
+    let c0_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c0_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c1_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c1_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c2_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c2_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c3_0 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let c3_1 = cmma::Matrix::<f32>::from_value(cmma::MatrixIdent::Accumulator, 8usize, 16usize, 16usize, cmma::MatrixLayout::Undefined, 0.0);
+    let mut k4 = 0usize;
+    while k4 < cols4 {
+        let ak = abase + k4;
+        let bk = bbase + k4;
+        cmma::load(&a0_0, &input.to_slice().slice(ak + comptime!(0 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_1, &input.to_slice().slice(ak + comptime!(8 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_2, &input.to_slice().slice(ak + comptime!(16 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&a0_3, &input.to_slice().slice(ak + comptime!(24 * (columns / 4) + 0), ilen), comptime!(columns as u32));
+        cmma::load(&b0_0, &weight.to_slice().slice(bk + comptime!(0 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::load(&b0_1, &weight.to_slice().slice(bk + comptime!(16 * (columns / 4) + 0), wlen), comptime!(columns as u32));
+        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_0, &c0_0, &c0_0);
+        cmma::execute::<F, F, f32, f32>(&a0_0, &b0_1, &c0_1, &c0_1);
+        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_0, &c1_0, &c1_0);
+        cmma::execute::<F, F, f32, f32>(&a0_1, &b0_1, &c1_1, &c1_1);
+        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_0, &c2_0, &c2_0);
+        cmma::execute::<F, F, f32, f32>(&a0_2, &b0_1, &c2_1, &c2_1);
+        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_0, &c3_0, &c3_0);
+        cmma::execute::<F, F, f32, f32>(&a0_3, &b0_1, &c3_1, &c3_1);
+        k4 += 4;
+    }
+    let mut out = SharedMemory::<f32>::new(2048usize);
+    emit(&c0_0, &mut out, output, fault, sg, t0 + 0, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c0_1, &mut out, output, fault, sg, t0 + 0, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c1_0, &mut out, output, fault, sg, t0 + 8, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c1_1, &mut out, output, fault, sg, t0 + 8, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c2_0, &mut out, output, fault, sg, t0 + 16, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c2_1, &mut out, output, fault, sg, t0 + 16, r0 + 16, out_first, out_stride, count, rows, false);
+    emit(&c3_0, &mut out, output, fault, sg, t0 + 24, r0 + 0, out_first, out_stride, count, rows, false);
+    emit(&c3_1, &mut out, output, fault, sg, t0 + 24, r0 + 16, out_first, out_stride, count, rows, false);
 }
 
 fn vec4_arg(handle: Handle) -> Result<ArrayArg<WgpuRuntime>> {
@@ -859,57 +932,76 @@ pub(crate) fn try_dense(
     let guarded = !count.is_multiple_of(TILE) || !rows.is_multiple_of(TILE);
     // SAFETY: `dense` validated every operand interval for this shape; loads and
     // stores outside count x rows are masked in the kernel.
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("42u") && count % 128 == 0 && rows % 128 == 0 && columns % 32 == 0 {
-        let grid = CubeCount::Static((rows / 128) as u32, (count / 128) as u32, 1);
+    // Production selection: Mesa with Xe2 2D block loads (INTEL_CMAT_BLOCK2D)
+    // runs the direct kernel on full tiles; everything else keeps the
+    // shared-memory kernel below.
+    let direct = std::env::var_os("INTEL_CMAT_BLOCK2D").is_some()
+        && std::env::var_os("KUNO_CLAUDE_GEMM_DIRECT").is_none();
+    if direct && count % 128 == 0 && rows % 128 == 0 && columns % 16 == 0 {
+        let grid = CubeCount::Static((count / 128) as u32, (rows / 128) as u32, 1);
         // SAFETY: full tiles only; every fragment lies inside the operands.
         unsafe {
             if bfloat {
-                gemm_direct_42u::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_42u1::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             } else {
-                gemm_direct_42u::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_42u1::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             }
         }
         return Ok(true);
     }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("44") && count % 128 == 0 && rows % 256 == 0 && columns % 16 == 0 {
-        let grid = CubeCount::Static((rows / 256) as u32, (count / 128) as u32, 1);
+    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("42u4") && count % 128 == 0 && rows % 128 == 0 && columns % 64 == 0 {
+        let grid = CubeCount::Static((count / 128) as u32, (rows / 128) as u32, 1);
         // SAFETY: full tiles only; every fragment lies inside the operands.
         unsafe {
             if bfloat {
-                gemm_direct_44::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_42u4::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             } else {
-                gemm_direct_44::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_42u4::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             }
         }
         return Ok(true);
     }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("82") && count % 256 == 0 && rows % 128 == 0 && columns % 16 == 0 {
-        let grid = CubeCount::Static((rows / 128) as u32, (count / 256) as u32, 1);
+    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("44u2") && count % 128 == 0 && rows % 256 == 0 && columns % 32 == 0 {
+        let grid = CubeCount::Static((count / 128) as u32, (rows / 256) as u32, 1);
         // SAFETY: full tiles only; every fragment lies inside the operands.
         unsafe {
             if bfloat {
-                gemm_direct_82::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_44u2::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             } else {
-                gemm_direct_82::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_44u2::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             }
         }
         return Ok(true);
     }
-    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("44u") && count % 128 == 0 && rows % 256 == 0 && columns % 32 == 0 {
-        let grid = CubeCount::Static((rows / 256) as u32, (count / 128) as u32, 1);
+    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("82u2") && count % 256 == 0 && rows % 128 == 0 && columns % 32 == 0 {
+        let grid = CubeCount::Static((count / 256) as u32, (rows / 128) as u32, 1);
         // SAFETY: full tiles only; every fragment lies inside the operands.
         unsafe {
             if bfloat {
-                gemm_direct_44u::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_82u2::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             } else {
-                gemm_direct_44u::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_1d(256), ia, wa, oa, fa,
+                gemm_direct_82u2::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
+                    weight_first, out_first, out_stride, count, rows, columns);
+            }
+        }
+        return Ok(true);
+    }
+    if std::env::var("KUNO_CLAUDE_GEMM_DIRECT").as_deref() == Ok("42u1") && count % 128 == 0 && rows % 128 == 0 && columns % 16 == 0 {
+        let grid = CubeCount::Static((count / 128) as u32, (rows / 128) as u32, 1);
+        // SAFETY: full tiles only; every fragment lies inside the operands.
+        unsafe {
+            if bfloat {
+                gemm_direct_42u1::launch_unchecked::<half::bf16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
+                    weight_first, out_first, out_stride, count, rows, columns);
+            } else {
+                gemm_direct_42u1::launch_unchecked::<half::f16, WgpuRuntime>(client, grid, CubeDim::new_2d(16, 16), ia, wa, oa, fa,
                     weight_first, out_first, out_stride, count, rows, columns);
             }
         }
