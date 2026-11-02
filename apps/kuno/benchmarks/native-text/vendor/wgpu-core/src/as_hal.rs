@@ -334,6 +334,27 @@ impl Global {
     /// # Safety
     ///
     /// - The raw buffer handle must not be manually destroyed
+    /// Kuno extension: true when Wgpu would not zero any range of this buffer
+    /// before its next use (no pending lazy initialization).
+    pub fn kuno_buffer_fully_initialized(&self, id: BufferId) -> bool {
+        let Ok(buffer) = self.hub.buffers.get(id).get() else {
+            return false;
+        };
+        let size = buffer.size;
+        let done = buffer.initialization_status.read().check(0..size).is_none();
+        done
+    }
+
+    /// Kuno extension: record every range as initialized without any GPU
+    /// clear. The caller guarantees no range is read before it is written.
+    pub fn kuno_buffer_assume_initialized(&self, id: BufferId) {
+        let Ok(buffer) = self.hub.buffers.get(id).get() else {
+            return;
+        };
+        let size = buffer.size;
+        buffer.initialization_status.write().drain(0..size).for_each(drop);
+    }
+
     pub unsafe fn buffer_as_hal<A: hal::Api>(
         &self,
         id: BufferId,

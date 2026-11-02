@@ -210,7 +210,10 @@ impl NativeSelection {
             && self.request == 3
             && self.start == 0
             && self.count == 4096
-            && self.layer == std::env::var("KUNO_CLAUDE_TIMELINE_LAYER").ok().and_then(|v| v.parse().ok()).unwrap_or(24)
+            && std::env::var("KUNO_CLAUDE_TIMELINE_LAYER")
+                .unwrap_or_else(|_| "24".into())
+                .split(',')
+                .any(|v| v.trim().parse() == Ok(self.layer))
     }
 }
 fn native_class(name: &str) -> usize {
@@ -877,7 +880,9 @@ impl Timer {
         if !ENABLED.load(Ordering::Acquire) {
             return Ok(Self(None));
         }
-        cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
+        if std::env::var_os("KUNO_CLAUDE_TIMELINE_NOSYNC").is_none() {
+            cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
+        }
         Ok(Self(Some((
             client.clone(),
             Instant::now(),
@@ -887,7 +892,10 @@ impl Timer {
     pub(crate) fn mark(&mut self, name: &'static str) -> kuno_text::Result<()> {
         if let Some((client, start, native_before)) = &mut self.0 {
             let enqueue_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
-            cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
+            // Timeline diagnostics without the per-phase GPU drains.
+            if std::env::var_os("KUNO_CLAUDE_TIMELINE_NOSYNC").is_none() {
+                cubecl::future::block_on(client.sync()).map_err(crate::resident_util::fault)?;
+            }
             let ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
             let native_after = native_backend_counts();
             TOTALS.with(|v| {

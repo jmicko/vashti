@@ -426,6 +426,11 @@ impl Workspace {
                 m.b.fault,
                 cancel,
             )?;
+            // Start the routed experts on the GPU while the host records the
+            // shared expert and the next layer (joined at their submission).
+            if std::env::var_os("KUNO_CLAUDE_PIPELINE").is_some() {
+                m.arena.client().map_err(u::fault)?.submit_native_strata_experts().map_err(u::fault)?;
+            }
             timing.mark("experts")?;
             if let Some(sample) = native_sample {
                 sample.finish();

@@ -2003,7 +2003,11 @@ impl Graph {
             // extents were checked above. execute() still resolves EVERY real
             // original root under Keys::acquire before signature/replay/Plan,
             // encoding or submission; no raw-handle/lifetime check is omitted.
-            self.complete_submission()?;
+            // Pipelined: the node's recording joins every live flight on its
+            // lane (and any conflicting peer) before it is submitted.
+            if !claude_pipeline() {
+                self.complete_submission()?;
+            }
             COMPUTE_BARRIERS[18].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
@@ -2253,11 +2257,12 @@ impl Graph {
         &mut self,
         mut joins: [bool; 2],
         destination: vk::Queue,
+        force_lane: bool,
     ) -> Result<(), ServerError> {
         // The selected compute lane owns its command/fence scratch. Copies
         // may additionally use the transfer lane; conflicts still name their
         // original compute fence, which covers every segment of that work.
-        joins[self.compute_lane] = true;
+        joins[self.compute_lane] |= force_lane;
         for (lane, needed) in joins.into_iter().enumerate() {
             if needed && self.flights.peek(lane).map_err(fault)?.is_some() {
                 self.complete_lane_submission(lane)?;
@@ -2275,14 +2280,21 @@ impl Graph {
         incoming: &[strata_schedule::Access],
         destination: vk::Queue,
     ) -> Result<(), ServerError> {
-        if self.draft_scope.active_request().is_none() {
+        if self.draft_scope.active_request().is_none() && !claude_pipeline() {
             self.complete_submission()?;
             return Ok(());
         }
         let joins = self.access_joins(incoming)?;
-        self.join_accesses(joins, destination)
+        // INFO targets only need their real conflicts joined; the lane's own
+        // fence is joined when the consuming recording is submitted.
+        let force = !(claude_pipeline() && self.draft_scope.active_request().is_none());
+        self.join_accesses(joins, destination, force)
     }
     fn admit_math_submission(&mut self) -> Result<(), ServerError> {
+        if claude_pipeline() && self.draft_scope.active_request().is_none() {
+            // Conflicting flights are joined by prepare_last_recording.
+            return Ok(());
+        }
         if self.draft_scope.active_request().is_some() {
             self.complete_scoped_submission()
         } else {
@@ -2521,7 +2533,7 @@ impl Graph {
         // The actual retained plan supplies all ranges. No rebuilt-node or
         // caller-declared substitute is accepted for direct replay.
         let joins = self.access_joins(original.work.plan.accesses())?;
-        self.join_accesses(joins, self.queue)?;
+        self.join_accesses(joins, self.queue, true)?;
         // Joining sampled peer work can remove a Vec entry. Re-find the exact
         // stable original ID rather than using a pre-join position.
         let hit = self
@@ -2682,7 +2694,7 @@ impl Graph {
         }
         let id = recording.id;
         let joins = self.access_joins(recording.work.plan.accesses())?;
-        self.join_accesses(joins, self.queue)?;
+        self.join_accesses(joins, self.queue, true)?;
         // Joining a sampled peer may remove an earlier Vec entry; ownership
         // must still resolve to this exact original tail, never an old index.
         if self.recordings.last().is_none_or(|r| r.id != id) {
@@ -2748,6 +2760,7 @@ impl Graph {
                 info_wait,
             )
             .map_err(fault)?;
+        claude_event("submit", compute_count);
         self.mark_last_submitted(id)
     }
     fn complete_math_submission(&mut self) -> Result<(), ServerError> {
@@ -2784,6 +2797,7 @@ impl Graph {
             wait_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
+        claude_wait_trace(wait_start, self.recordings[at].compute_count);
         if flight.profiling {
             self.recordings[at]
                 .profile
@@ -2939,6 +2953,7 @@ impl Graph {
         key: Option<super::strata_parameters::RecordingKey>,
         primary_writes: bool,
     ) -> Result<(), ServerError> {
+        claude_event(if wait { "execute_wait" } else { "execute" }, self.nodes.len());
         self.admit_math_submission()?;
         if self.nodes.is_empty() {
             return Ok(());
@@ -3658,7 +3673,7 @@ impl Graph {
                 ));
             }
             let joins = self.access_joins(plan.accesses())?;
-            self.join_accesses(joins, self.queue)?;
+            self.join_accesses(joins, self.queue, true)?;
         }
         let reusable_class = fresh_recording_pool && reusable_workload;
         COMPUTE_BARRIERS[26].fetch_add(
@@ -4287,6 +4302,7 @@ impl Graph {
             let [windows, segments] = rolling.submitted_counts();
             #[cfg(feature = "kuno-expert-cohorts")]
             let cohort_nodes = self.nodes.len();
+            claude_event("submit_rolling", 0);
             self.mark_last_submitted(id)?;
             rolling.accept().map_err(fault)?;
             #[cfg(feature = "kuno-expert-cohorts")]
@@ -4349,4 +4365,59 @@ impl std::fmt::Debug for Graph {
             .field("pipelines", &self.pipelines.len())
             .finish()
     }
+}
+
+/// Experimental: let a new native recording encode while the previous one
+/// is still executing. Real access conflicts are still joined before submit.
+pub(crate) fn claude_pipeline() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KUNO_CLAUDE_PIPELINE").is_some())
+}
+
+/// Diagnostic: code locations (no data) of host fence waits longer than 1 ms.
+static CLAUDE_T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+pub(crate) fn claude_trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KUNO_CLAUDE_WAIT_TRACE").is_some())
+}
+pub(crate) fn claude_event(what: &str, n: usize) {
+    if claude_trace_on() {
+        let t = CLAUDE_T0.get_or_init(std::time::Instant::now).elapsed().as_micros();
+        eprintln!("public_claude_event {t} {what} {n}");
+    }
+}
+pub(crate) fn claude_frames(tag: &str, n: usize) {
+    if !claude_trace_on() {
+        return;
+    }
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let frames: Vec<&str> = bt
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains("cubecl_wgpu::") || l.contains("kuno_strata_rust::") || l.contains("cubecl_runtime::"))
+        .filter(|l| !l.contains("claude_") && !l.starts_with("at "))
+        .map(|l| l.split_once(": ").map_or(l, |x| x.1))
+        .take(14)
+        .collect();
+    eprintln!("public_claude_frames {tag} {n} {}", frames.join(" < "));
+}
+fn claude_wait_trace(start: std::time::Instant, n: usize) {
+    if !claude_trace_on() {
+        return;
+    }
+    let us = start.elapsed().as_micros();
+    claude_event(if us >= 1000 { "wait_end_long" } else { "wait_end" }, n);
+    if us < 1000 {
+        return;
+    }
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let frames: Vec<&str> = bt
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains("cubecl_wgpu::") || l.contains("kuno_strata_rust::") || l.contains("cubecl_runtime::"))
+        .filter(|l| !l.contains("claude_wait_trace") && !l.starts_with("at "))
+        .map(|l| l.split_once(": ").map_or(l, |x| x.1))
+        .take(8)
+        .collect();
+    eprintln!("public_claude_wait {us} {}", frames.join(" < "));
 }

@@ -302,6 +302,24 @@ impl Buffer {
     /// # Safety
     /// The same HAL lifetime/synchronization rules as `as_hal` apply; raw
     /// resources must not be destroyed manually. References cannot outlive guard.
+    /// Kuno extension: true when Wgpu has no pending lazy zero-initialization
+    /// for any range of this buffer (false on non-core backends).
+    #[cfg(wgpu_core)]
+    pub fn kuno_fully_initialized(&self) -> bool {
+        self.inner
+            .as_core_opt()
+            .is_some_and(|b| b.context.kuno_buffer_fully_initialized(b))
+    }
+
+    /// Kuno extension: mark the whole buffer initialized without a GPU clear.
+    /// Only for buffers whose every read range is written first.
+    #[cfg(wgpu_core)]
+    pub fn kuno_assume_initialized(&self) {
+        if let Some(b) = self.inner.as_core_opt() {
+            b.context.kuno_buffer_assume_initialized(b);
+        }
+    }
+
     #[cfg(wgpu_core)]
     pub unsafe fn kuno_as_hal_batch<A: hal::Api>(
         buffers: &[Self],

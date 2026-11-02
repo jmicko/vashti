@@ -129,6 +129,14 @@ impl ContextWgpuCore {
         unsafe { self.0.kuno_buffers_as_hal::<A>(&ids, remaining) }
     }
 
+    pub fn kuno_buffer_fully_initialized(&self, buffer: &CoreBuffer) -> bool {
+        self.0.kuno_buffer_fully_initialized(buffer.id)
+    }
+
+    pub fn kuno_buffer_assume_initialized(&self, buffer: &CoreBuffer) {
+        self.0.kuno_buffer_assume_initialized(buffer.id)
+    }
+
     pub unsafe fn buffer_as_hal<A: hal::Api>(
         &self,
         buffer: &CoreBuffer,

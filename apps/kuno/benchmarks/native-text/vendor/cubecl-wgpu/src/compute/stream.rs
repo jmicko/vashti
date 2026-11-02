@@ -318,6 +318,17 @@ impl WgpuStream {
         {
             return Ok(());
         }
+        // Wgpu would zero nothing: the ownership pass is a no-op dispatch whose
+        // only effect is a wgpu submission serialized behind native flights.
+        if super::strata_graph::claude_pipeline() {
+            // INFO pages: every bound range is written by its INFO copy first.
+            if resource.buffer.usage().contains(wgpu::BufferUsages::UNIFORM) {
+                resource.buffer.kuno_assume_initialized();
+            }
+            if resource.buffer.kuno_fully_initialized() {
+                return Ok(());
+            }
+        }
         if self.native_init_pipeline.is_none() {
             let module=self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label:Some("Native Strata upload ownership"),
@@ -352,6 +363,9 @@ impl WgpuStream {
             }],
         });
         self.encoder_dirty = true;
+        if super::strata_graph::claude_trace_on() {
+            eprintln!("public_claude_root {} {:?} {}", resource.buffer.size(), resource.buffer.usage(), resource.buffer.size() == resource.size);
+        }
         let mut pass = self
             .encoder
             .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1603,10 +1617,17 @@ impl WgpuStream {
         {
             return;
         }
-        let _ = self.flush(StreamErrorMode {
+        let mode = StreamErrorMode {
             ignore: true,
             flush: false,
-        });
+        };
+        // Pipelined: submit without joining; real conflicts are joined by
+        // the next submission, readbacks still wait for their own work.
+        let _ = if self.strata_graph.is_some() && super::strata_graph::claude_pipeline() {
+            self.flush_native_mode(mode, false)
+        } else {
+            self.flush(mode)
+        };
     }
     fn flush_if_needed(&mut self) {
         // A genuine closed grammar has bounded the ENTIRE active cohort batch.
@@ -2131,13 +2152,17 @@ impl WgpuStream {
         result
     }
     fn flush_inner(&mut self, mode: StreamErrorMode, wait_native: bool) -> Result<(), ServerError> {
+        super::strata_graph::claude_event(if wait_native { "flush_wait" } else { "flush" }, self.tasks_count);
+        if wait_native && self.tasks_count > 100 {
+            super::strata_graph::claude_frames("flush", self.tasks_count);
+        }
         // Actual primary work still requires a global drain/visibility. Native
         // draft-only work finishes its own lane; original access admission and
         // managed allocation pins retain any unrelated pending target owners.
         if let Some(graph) = self.strata_graph.as_mut() {
             if self.encoder_dirty || self.pending_write_count != 0 {
                 graph.complete_primary_access()?;
-            } else {
+            } else if !super::strata_graph::claude_pipeline() {
                 graph.complete_scoped_submission()?;
             }
         }
