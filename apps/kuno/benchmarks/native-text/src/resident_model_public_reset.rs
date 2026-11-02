@@ -168,6 +168,24 @@ impl RetainedReady {
         model: &ResidentModel<'_, '_>,
         executor: &GpuExecutor<'_>,
     ) -> Result<()> {
+        self.check_with_sampling(model, executor, false)
+    }
+    /// The same retained boundary, seen by the final-prompt window of a
+    /// one-token prompt: no prefill ran, so the request's sampling scope is
+    /// already open when this first window checks the cursor.
+    pub(super) fn check_first_window(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        executor: &GpuExecutor<'_>,
+    ) -> Result<()> {
+        self.check_with_sampling(model, executor, true)
+    }
+    fn check_with_sampling(
+        &self,
+        model: &ResidentModel<'_, '_>,
+        executor: &GpuExecutor<'_>,
+        sampling: bool,
+    ) -> Result<()> {
         model.validate_native_projection_owners(executor)?;
         if self.fault != model.b.fault
             || self.binding != model.graph.binding_id()
@@ -175,7 +193,7 @@ impl RetainedReady {
         {
             return Err(rejected());
         }
-        model.validate_retained_native_cursor()?;
+        model.validate_retained_native_cursor_sampling(sampling)?;
         model
             .native_batch
             .as_ref()
@@ -228,9 +246,15 @@ impl ResidentModel<'_, '_> {
     fn validate_retained_native_cursor(&self) -> Result<()> {
         self.validate_retained_native_cursor_state(false)
     }
+    fn validate_retained_native_cursor_sampling(&self, sampling: bool) -> Result<()> {
+        self.validate_retained_native_cursor_inner(false, sampling)
+    }
     fn validate_retained_native_cursor_state(&self, short_prefix: bool) -> Result<()> {
+        self.validate_retained_native_cursor_inner(short_prefix, false)
+    }
+    fn validate_retained_native_cursor_inner(&self, short_prefix: bool, sampling: bool) -> Result<()> {
         if self.position != 0
-            || crate::strata_sampler::request::active()
+            || crate::strata_sampler::request::active() != sampling
             || crate::strata_prompt::active()
             || ple_batch::prompt_source::active()
             || self.admission.request_io_reuse_active() != short_prefix

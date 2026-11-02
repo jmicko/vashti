@@ -101,9 +101,9 @@ fn fill_request(index: usize) -> Option<wire::Generate> {
         // A full-length decode (the tiny prompt stops early at EOS).
         7 => (b"<|im_start|>user\nWrite a Python function that merges two sorted lists of integers into one sorted list. Explain its time and space complexity.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n".to_vec(), 200),
         // Every short-window row count (1..=8 rows per window) and their
-        // two-window combinations: raw public prompts of 2..=18 words.
-        // (A 1-token prompt currently fails the request; tracked separately.)
-        8..=24 => (" one".repeat(index - 6).into_bytes(), 3),
+        // two-window combinations: raw public prompts of 1..=17 words. The
+        // first is a one-token prompt following a completed request.
+        8..=24 => (" one".repeat(index - 7).into_bytes(), 3),
         _ => return None,
     };
     Some(wire::Generate {

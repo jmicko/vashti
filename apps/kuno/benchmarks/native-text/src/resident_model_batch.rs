@@ -5227,8 +5227,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         {
             return Err(chunk_error!());
         }
-        self.validate_native_request_boundary(executor)
-            .inspect_err(|_| chunk_failure_site!())?;
+        // A one-token prompt reaches this window with no prefill: on a
+        // retained (erased) request the boundary is checked with the
+        // request's sampling scope already open.
+        let first_window = |model: &Self| -> Result<()> {
+            match &model.native_batch.as_ref().ok_or(chunk_error!())?.retained_ready {
+                Some(ready) if model.position == 0 => ready.check_first_window(model, executor),
+                _ => model.validate_native_request_boundary(executor),
+            }
+        };
+        first_window(self).inspect_err(|_| chunk_failure_site!())?;
         let permit = self
             .native_batch
             .as_ref()
