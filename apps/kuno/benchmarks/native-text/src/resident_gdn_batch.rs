@@ -1313,7 +1313,23 @@ impl ResidentGdn<'_> {
         )?;
         let params = bounded_view(&public.controls, 0, self.layout.pointwise.control_elements)?;
         let gamma = bounded_view(&public.gamma, 0, public.gamma_words)?;
-        let ids = &workspace.ids;
+        // Decode: the five replay inputs are produced straight into this
+        // layer's cache owners, so retain() needs no per-layer copies.
+        let direct = if crate::strata_intel_core::enabled() && !crate::strata_prompt::active() {
+            self.strata_inputs.as_ref().map(|cache| {
+                let c = cache.ids();
+                let mut local = *workspace.ids;
+                local[QKV] = c[0];
+                local[Q] = c[1];
+                local[K] = c[2];
+                local[V] = c[3];
+                local[CONTROL] = c[4];
+                local
+            })
+        } else {
+            None
+        };
+        let ids = direct.as_ref().unwrap_or(&*workspace.ids);
         let p = self.layout.pointwise;
         let client = arena.client().map_err(arena_fault)?;
         let dim = CubeDim::new_1d(64);
@@ -1377,7 +1393,7 @@ impl ResidentGdn<'_> {
                 Operation::Clear(i) => {
                     if u::grouped_scratch_clear_enabled() {
                         if i == 0 && !u::decode_skips_layer_clears() {
-                            u::zero_many(arena, &**ids)?;
+                            u::zero_many(arena, &ids[..])?;
                         }
                     } else {
                         u::zero(arena, ids[i])?;

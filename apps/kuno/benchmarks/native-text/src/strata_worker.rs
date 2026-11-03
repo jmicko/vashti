@@ -1295,6 +1295,11 @@ async fn serve(
                     Ok(())
                 },
                 &mut |phase| {
+                    if !public_check && std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some()
+                        && (phase.contains("error") || phase.contains("reject") || phase.contains("fail"))
+                    {
+                        eprintln!("native_trace_phase {phase}");
+                    }
                     if public_check {
                         eprintln!("public_prefill_phase {phase}");
                         if prefill_check == Some(true) {
@@ -1451,7 +1456,16 @@ async fn serve(
         return attempted.and(Err("public_rolling_failure_not_exercised"));
     }
     // Checked close even after rejected input or a disconnected output pipe.
-    session.close().map_err(|_| "native_recovery_required")?;
+    let trace = std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some();
+    if trace {
+        eprintln!("native_trace_attempted {:?}", attempted.as_ref().err());
+    }
+    session.close().map_err(|e| {
+        if trace {
+            eprintln!("native_trace_close {e:?}");
+        }
+        "native_recovery_required"
+    })?;
     attempted?;
     wire::write_response(&mut output, wire::CLOSED, &[]).map_err(|_| "native_worker_pipe_failed")
 }

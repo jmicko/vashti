@@ -1411,6 +1411,9 @@ pub struct GpuExecutor<'a> {
     pub small_cpu_calls: u64,
     client: ComputeClient<WgpuRuntime>,
     cache: BTreeMap<Key, Cached>,
+    /// Cached-tensor count whose name is a routed expert weight (tracked on
+    /// insert/clear instead of scanning every cached name per policy check).
+    cache_expert_entries: usize,
     cache_bytes: usize,
     budget: usize,
     tick: u64,
@@ -1743,6 +1746,7 @@ impl<'a> GpuExecutor<'a> {
             model,
             client,
             cache: BTreeMap::new(),
+            cache_expert_entries: 0,
             cache_bytes: 0,
             budget,
             tick: 0,
@@ -1873,6 +1877,7 @@ impl<'a> GpuExecutor<'a> {
         }
         self.strata_global_sources = None;
         self.cache.clear();
+        self.cache_expert_entries = 0;
         self.cache_bytes = 0;
         self.native_static = None;
         self.banks.clear();
@@ -2603,7 +2608,7 @@ impl<'a> GpuExecutor<'a> {
             || self.batch_moe.is_some()
             || self.adaptive.is_some()
             || self.secondary.is_some()
-            || self.cache.keys().any(|k| k.tensor.contains("_exps.weight"))
+            || (self.cache_expert_entries != 0)
             || !self.native_static.as_ref().is_some_and(|p| p.sealed)
         {
             return Err(Error::InvalidFormat("global target execution authority"));
@@ -3355,7 +3360,7 @@ impl<'a> GpuExecutor<'a> {
             || self.batch_moe.is_some()
             || self.adaptive.is_some()
             || self.secondary.is_some()
-            || self.cache.keys().any(|k| k.tensor.contains("_exps.weight"))
+            || (self.cache_expert_entries != 0)
             || !self.native_static.as_ref().is_some_and(|p| p.sealed)
         {
             return Err(Error::InvalidFormat("global expert loader selection"));
@@ -3696,6 +3701,7 @@ impl<'a> GpuExecutor<'a> {
                     as u64
         {
             self.cache.clear();
+        self.cache_expert_entries = 0;
             self.cache_bytes = 0;
             self.client.memory_cleanup();
             if self.reserved_bytes()?
@@ -3782,15 +3788,23 @@ impl<'a> GpuExecutor<'a> {
         self.weight_upload_ns += started.elapsed().as_nanos();
         self.uploaded_bytes += padded as u64;
         let words = padded / 4;
-        self.cache.insert(
-            key,
-            Cached {
-                handle: handle.clone(),
-                words,
-                bytes: reserved,
-                last: self.tick,
-            },
-        );
+        let expert = key.tensor.contains("_exps.weight");
+        if self
+            .cache
+            .insert(
+                key,
+                Cached {
+                    handle: handle.clone(),
+                    words,
+                    bytes: reserved,
+                    last: self.tick,
+                },
+            )
+            .is_none()
+            && expert
+        {
+            self.cache_expert_entries += 1;
+        }
         self.cache_bytes += reserved;
         Ok((handle, words))
     }
@@ -5371,6 +5385,7 @@ impl Drop for GpuExecutor<'_> {
             return;
         }
         self.cache.clear();
+        self.cache_expert_entries = 0;
         self.cache_bytes = 0;
         self.banks.clear();
         self.resident_banks_frozen = false;

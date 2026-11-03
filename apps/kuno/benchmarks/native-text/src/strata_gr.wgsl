@@ -107,6 +107,89 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
     }
 }
 // SLICES_END
+// NORMSLICES_BEGIN
+// NORM fused into SLICES: each slice workgroup recomputes its stream's RMS
+// scale with NORM's exact per-thread order, subgroup reduction and warp sum,
+// writes its own 128 normalized columns and the slice-0 stream scales.
+@group(0) @binding(0) var<storage,read> residual:array<f32>;
+@group(0) @binding(1) var<storage,read> block:array<f32>;
+@group(0) @binding(2) var<storage,read> gatein:array<f32>;
+@group(0) @binding(3) var<storage,read> gamma:array<f32>;
+@group(0) @binding(4) var<storage,read_write> normalized:array<f32>;
+@group(0) @binding(5) var<storage,read_write> scales:array<f32>;
+@group(0) @binding(6) var<storage,read_write> fault:array<atomic<u32>>;
+@group(0) @binding(7) var<storage,read> down:array<vec4<u32>>;
+@group(0) @binding(8) var<storage,read> injection:array<vec4<u32>>;
+@group(0) @binding(9) var<storage,read_write> partial:array<f32>;
+@group(0) @binding(10) var<uniform> p:Params;
+var<workgroup> wsum:array<f32,8>;
+var<workgroup> rs_t:array<f32,8>;
+var<workgroup> gate_t:array<f32,8>;
+var<workgroup> stage:array<f32,1024>;
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,
+        @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) width:u32) {
+    if width!=32u || p.count<1u || p.count>8u || p.apply>1u || p.inject>1u || group.x>=80u || group.y!=0u || group.z!=0u {return;}
+    if arrayLength(&fault)!=1u || arrayLength(&gamma)!=10240u || arrayLength(&scales)!=64u || arrayLength(&normalized)!=81920u {return;}
+    if arrayLength(&down)!=409600u || arrayLength(&partial)!=207360u {return;}
+    if p.inject!=0u && arrayLength(&injection)!=5120u {return;}
+    if p.first>arrayLength(&residual) || p.count*10240u>arrayLength(&residual)-p.first {return;}
+    if p.apply!=0u && (arrayLength(&block)!=20480u || arrayLength(&gatein)!=32u) {return;}
+    let slice=group.x;let first=slice*128u;let stream=first/2560u;
+    for(var token=0u;token<p.count;token++) {
+        var gate=0.0;if p.apply!=0u {gate=2.0*sigmoid(gatein[token*4u+stream]/4.0);}
+        var sum=0.0;
+        for(var i=local*4u;i<10240u;i+=1024u) {
+            if i/2560u!=stream {continue;}
+            let at=p.first+token*10240u+i;
+            var r=vec4<f32>(residual[at],residual[at+1u],residual[at+2u],residual[at+3u]);
+            if p.apply!=0u {
+                let b=token*2560u+i%2560u;
+                r=vec4<f32>(fma(block[b],gate,r.x),fma(block[b+1u],gate,r.y),fma(block[b+2u],gate,r.z),fma(block[b+3u],gate,r.w));
+            }
+            if !finite(r.x) || !finite(r.y) || !finite(r.z) || !finite(r.w) {atomicOr(&fault[0],1u);}
+            sum+=r.x*r.x+r.y*r.y+r.z*r.z+r.w*r.w;
+        }
+        for(var distance=16u;distance>0u;distance/=2u) {sum+=subgroupShuffleXor(sum,distance);}
+        if lane==0u {wsum[warp]=sum;}
+        workgroupBarrier();
+        if local==0u {
+            var total=0.0;for(var w=0u;w<8u;w++) {total+=wsum[w];}
+            let rs=inverseSqrt(total/2560.0+p.eps);
+            rs_t[token]=rs;gate_t[token]=gate;
+            if slice%20u==0u {scales[token*4u+stream]=rs;scales[32u+token*4u+stream]=gate;}
+            if !finite(rs) {atomicOr(&fault[0],1u);}
+        }
+        workgroupBarrier();
+    }
+    for(var i=local;i<p.count*128u;i+=256u) {
+        let token=i/128u;let column=first+i%128u;
+        var r=residual[p.first+token*10240u+column];
+        if p.apply!=0u {r=fma(block[token*2560u+column%2560u],gate_t[token],r);}
+        let x=(r*gamma[column])*rs_t[token];
+        stage[i]=x;normalized[token*10240u+column]=x;
+    }
+    workgroupBarrier();
+    let subrow=lane/4u;let sub=lane%4u;
+    for(var r0=0u;r0<324u;r0+=64u) {
+        let row=r0+warp*8u+subrow;
+        var w0=vec4<u32>(0u);var w1=w0;var w2=w0;var w3=w0;
+        if row<320u {
+            let at=row*1280u+first/8u+sub;
+            w0=down[at];w1=down[at+4u];w2=down[at+8u];w3=down[at+12u];
+        } else if row<324u && p.inject!=0u {
+            let at=(row-320u)*1280u+first/8u+sub;
+            w0=injection[at];w1=injection[at+4u];w2=injection[at+8u];w3=injection[at+12u];
+        }
+        for(var token=0u;token<p.count;token++) {
+            let at=token*128u+sub*8u;
+            var sum=dot8(w0,at);sum+=dot8(w1,at+32u);sum+=dot8(w2,at+64u);sum+=dot8(w3,at+96u);
+            sum+=subgroupShuffleXor(sum,1u);sum+=subgroupShuffleXor(sum,2u);
+            if sub==0u && row<324u {partial[(slice*8u+token)*324u+row]=sum;}
+        }
+    }
+}
+// NORMSLICES_END
 // REDUCE_BEGIN
 @group(0) @binding(0) var<storage,read> partial:array<f32>;
 @group(0) @binding(1) var<storage,read_write> down:array<f32>;

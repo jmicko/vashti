@@ -362,7 +362,8 @@ fn checked_cpu_miss_total(current: u64, completed_chunk: u64) -> Result<Zeroizin
 macro_rules! chunk_failure_site {
     () => {
         if crate::strata_intel_core::enabled()
-            && std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+            && (std::env::var("KUNO_LAB_LANGUAGE_PUBLIC_ONLY").as_deref() == Ok("1")
+                || std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some())
         {
             eprintln!(
                 "native_public_chunk_failure source_file={} source_line={}",
@@ -5954,6 +5955,11 @@ impl Workspace {
         } else {
             None
         };
+        if branch.is_some() {
+            let since = Instant::now();
+            u::claude_time(if replay.is_some() { "target_replay_hit" } else { "target_replay_miss" }, since);
+            *m.phase_ns.entry(if replay.is_some() { "claude_n_replay_hit" } else { "claude_n_replay_miss" }).or_default() += 1_000_000;
+        }
         if let Some(key) = branch.filter(|_| replay.is_none()) {
             m.arena
                 .client()

@@ -71,6 +71,10 @@ impl InputCache {
         self.chunk = chunk;
         Ok(())
     }
+    /// This layer's five cache owners; decode producers write them directly.
+    pub(super) fn ids(&self) -> [BufferId; 5] {
+        self.ids
+    }
     pub(crate) fn allocate(arena: &mut PrivateArena, layout: StageLayout) -> Result<Option<Self>> {
         if !crate::strata_port::enabled() {
             return Ok(None);
@@ -98,9 +102,15 @@ impl InputCache {
         chunk: u64,
     ) -> Result<()> {
         for (role, (&from, &to)) in source.iter().zip(&self.ids).enumerate() {
-            if from == to
-                || arena.layout(from).map_err(arena_fault)?
-                    != arena.layout(to).map_err(arena_fault)?
+            if from == to {
+                // Decode producers wrote this cache owner directly.
+                if prompt_raw.is_some() {
+                    return Err(fault("Strata GDN prompt cache alias"));
+                }
+                continue;
+            }
+            if arena.layout(from).map_err(arena_fault)?
+                != arena.layout(to).map_err(arena_fault)?
             {
                 return Err(fault("Strata GDN cache role extent"));
             }

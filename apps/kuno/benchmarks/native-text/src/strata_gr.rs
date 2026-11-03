@@ -46,6 +46,7 @@ pub(crate) struct Read<'a> {
 enum Kernel {
     Norm,
     Slices,
+    NormSlices,
     Reduce,
     Up,
     Write,
@@ -72,11 +73,12 @@ impl Kernel {
         source.push_str(section(match self {
             Self::Norm => "NORM",
             Self::Slices => "SLICES",
+            Self::NormSlices => "NORMSLICES",
             Self::Reduce => "REDUCE",
             Self::Up => "UP",
             Self::Write => "WRITE",
         }));
-        if matches!(self, Self::Slices | Self::Up) {
+        if matches!(self, Self::Slices | Self::NormSlices | Self::Up) {
             source.push_str(section("DOT"));
         }
         source
@@ -87,6 +89,7 @@ impl KernelMetadata for Kernel {
         match self {
             Self::Norm => "StrataGrNormPendingWrite",
             Self::Slices => "StrataGrSlicedDownInject",
+            Self::NormSlices => "StrataGrNormSlicedDown",
             Self::Reduce => "StrataGrFixedSliceReduce",
             Self::Up => "StrataGrUpMixCommit",
             Self::Write => "StrataGrBoundaryWrite",
@@ -205,10 +208,11 @@ pub(crate) fn read(request: Read<'_>, weights: [Handle; 3]) -> Result<()> {
         0,
         0,
     ];
+    // NORM fused into the sliced down projection (bit-identical scales).
     enqueue(
         client,
-        Kernel::Norm,
-        (count * 4) as u32,
+        Kernel::NormSlices,
+        80,
         vec![
             h(source)?,
             h(block)?,
@@ -217,15 +221,6 @@ pub(crate) fn read(request: Read<'_>, weights: [Handle; 3]) -> Result<()> {
             h(b.normalized)?,
             h(b.scales)?,
             h(fault)?,
-        ],
-        info,
-    )?;
-    enqueue(
-        client,
-        Kernel::Slices,
-        80,
-        vec![
-            h(b.normalized)?,
             weights[0].clone(),
             weights[2].clone(),
             h(b.partial)?,
@@ -325,6 +320,7 @@ pub(crate) fn sources() -> Vec<CompiledKernel<AutoCompiler>> {
     [
         Kernel::Norm,
         Kernel::Slices,
+        Kernel::NormSlices,
         Kernel::Reduce,
         Kernel::Up,
         Kernel::Write,
