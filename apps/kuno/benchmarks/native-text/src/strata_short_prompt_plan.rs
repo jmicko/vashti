@@ -8,10 +8,11 @@ use zeroize::Zeroizing;
 pub(super) const PREFIX_LIMIT: usize = 64;
 pub(super) const WINDOW_ROWS: usize = crate::strata_port::verify_capacity();
 /// Prefixes up to this length use the 8-row verification windows; longer ones
-/// take batched prefill. Measured on the B70 (warm): 14 tokens 0.45 vs 0.64 s,
-/// 17 tokens 0.49 vs 0.53 s, 26 tokens 0.78 vs 0.73 s, 45 tokens 1.20 vs 0.85 s.
-/// PREFIX_LIMIT stays the reserved capacity of the windowed path.
-pub(super) const ROUTE_LIMIT: usize = 20;
+/// take batched prefill. Re-measured on the B70 after the decode-window work
+/// (windowed vs batched, warm): 30 tokens 0.60-0.63 vs 0.68 s, 35 tokens 0.67
+/// vs 0.67 s, 45 tokens 0.98 vs 0.79 s. PREFIX_LIMIT stays the reserved
+/// capacity of the windowed path.
+pub(super) const ROUTE_LIMIT: usize = 32;
 const _: () = assert!(ROUTE_LIMIT <= PREFIX_LIMIT);
 pub(super) struct Plan(Zeroizing<usize>);
 impl Plan {

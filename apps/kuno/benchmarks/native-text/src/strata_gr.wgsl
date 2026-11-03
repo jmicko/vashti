@@ -129,13 +129,13 @@ var<workgroup> stage:array<f32,1024>;
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) width:u32) {
-    if width!=32u || p.count<1u || p.count>8u || p.apply>1u || p.inject>1u || group.x>=80u || group.y!=0u || group.z!=0u {return;}
+    if width!=32u || p.count<1u || p.count>8u || p.apply>1u || p.inject>1u || group.x>=160u || group.y!=0u || group.z!=0u {return;}
     if arrayLength(&fault)!=1u || arrayLength(&gamma)!=10240u || arrayLength(&scales)!=64u || arrayLength(&normalized)!=81920u {return;}
     if arrayLength(&down)!=409600u || arrayLength(&partial)!=207360u {return;}
     if p.inject!=0u && arrayLength(&injection)!=5120u {return;}
     if p.first>arrayLength(&residual) || p.count*10240u>arrayLength(&residual)-p.first {return;}
     if p.apply!=0u && (arrayLength(&block)!=20480u || arrayLength(&gatein)!=32u) {return;}
-    let slice=group.x;let first=slice*128u;let stream=first/2560u;
+    let slice=group.x%80u;let half=group.x/80u;let first=slice*128u;let stream=first/2560u;
     for(var token=0u;token<p.count;token++) {
         var gate=0.0;if p.apply!=0u {gate=2.0*sigmoid(gatein[token*4u+stream]/4.0);}
         var sum=0.0;
@@ -157,7 +157,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
             var total=0.0;for(var w=0u;w<8u;w++) {total+=wsum[w];}
             let rs=inverseSqrt(total/2560.0+p.eps);
             rs_t[token]=rs;gate_t[token]=gate;
-            if slice%20u==0u {scales[token*4u+stream]=rs;scales[32u+token*4u+stream]=gate;}
+            if slice%20u==0u && half==0u {scales[token*4u+stream]=rs;scales[32u+token*4u+stream]=gate;}
             if !finite(rs) {atomicOr(&fault[0],1u);}
         }
         workgroupBarrier();
@@ -167,11 +167,11 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         var r=residual[p.first+token*10240u+column];
         if p.apply!=0u {r=fma(block[token*2560u+column%2560u],gate_t[token],r);}
         let x=(r*gamma[column])*rs_t[token];
-        stage[i]=x;normalized[token*10240u+column]=x;
+        stage[i]=x;if half==0u {normalized[token*10240u+column]=x;}
     }
     workgroupBarrier();
     let subrow=lane/4u;let sub=lane%4u;
-    for(var r0=0u;r0<324u;r0+=64u) {
+    for(var r0=half*192u;r0<min(324u,half*192u+192u);r0+=64u) {
         let row=r0+warp*8u+subrow;
         var w0=vec4<u32>(0u);var w1=w0;var w2=w0;var w3=w0;
         if row<320u {
@@ -224,7 +224,7 @@ var<workgroup> gates:array<f32,512>;
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_id) warp:u32,@builtin(subgroup_size) width:u32) {
-    if width!=32u || p.count<1u || p.count>8u || p.apply>1u || group.x>=160u || group.y!=0u || group.z!=0u {return;}
+    if width!=32u || p.count<1u || p.count>8u || p.apply>1u || group.x>=320u || group.y!=0u || group.z!=0u {return;}
     if arrayLength(&weights)!=409600u || arrayLength(&down)!=2560u || arrayLength(&normalized)!=81920u || arrayLength(&scales)!=64u || arrayLength(&low)!=2560u || arrayLength(&mixed)!=20480u || arrayLength(&fault)!=1u {return;}
     if p.first>arrayLength(&residual) || p.count*10240u>arrayLength(&residual)-p.first {return;}
     if p.first>arrayLength(&residual_out) || p.count*10240u>arrayLength(&residual_out)-p.first {return;}
@@ -236,9 +236,9 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         if group.x==0u {low[i]=v;}
     }
     workgroupBarrier();
-    let d0=group.x*16u;
-    for(var r=warp;r<64u;r+=8u) {
-        let stream=r/16u;let d=r%16u;let column=stream*2560u+d0+d;
+    let d0=group.x*8u;
+    for(var r=warp;r<32u;r+=8u) {
+        let stream=r/8u;let d=r%8u;let column=stream*2560u+d0+d;
         let wa=weights[column*40u+lane];var wb=vec4<u32>(0u);
         if lane<8u {wb=weights[column*40u+32u+lane];}
         var mine=0.0;
@@ -261,8 +261,8 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) 
         }
     }
     workgroupBarrier();
-    for(var i=local;i<p.count*16u;i+=256u) {
-        let token=i/16u;let d=i%16u;var value=0.0;
+    for(var i=local;i<p.count*8u;i+=256u) {
+        let token=i/8u;let d=i%8u;var value=0.0;
         for(var stream=0u;stream<4u;stream++) {value+=gates[(token*4u+stream)*16u+d];}
         value/=4.0;mixed[token*2560u+d0+d]=value;
         if !finite(value) {atomicOr(&fault[0],1u);}

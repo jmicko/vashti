@@ -1295,6 +1295,15 @@ async fn serve(
                     Ok(())
                 },
                 &mut |phase| {
+                    if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+                        static LAST: std::sync::Mutex<Option<(std::time::Instant, &'static str)>> =
+                            std::sync::Mutex::new(None);
+                        let mut last = LAST.lock().unwrap();
+                        if let Some((t, label)) = *last {
+                            crate::resident_util::claude_time(label, t);
+                        }
+                        *last = Some((std::time::Instant::now(), phase));
+                    }
                     if !public_check && std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some()
                         && (phase.contains("error") || phase.contains("reject") || phase.contains("fail"))
                     {

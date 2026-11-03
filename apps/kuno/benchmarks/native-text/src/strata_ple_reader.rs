@@ -490,6 +490,7 @@ struct Gather {
     permit: Arc<Permit>,
     reply: mpsc::SyncSender<Result<OwnedRows>>,
 }
+static RETAINED: Mutex<Option<(Binding, usize, Cache)>> = Mutex::new(None);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Binding {
     Model(GraphBindingId),
@@ -660,6 +661,7 @@ fn with_source<T>(
         return Err(bad());
     }
     let rb = source.row_bytes() as usize;
+    let worker_binding = binding;
     let (tx, rx) = mpsc::sync_channel::<Gather>(0);
     let (ready, wait) = mpsc::sync_channel(0);
     let stop = Arc::new(AtomicBool::new(false));
@@ -669,7 +671,13 @@ fn with_source<T>(
         let worker = std::thread::Builder::new()
             .stack_size(256 * 1024)
             .spawn_scoped(scope, move || -> Result<()> {
-                let mut cache = match Cache::new(cache_rows, rb) {
+                // A model's public PLE row cache stays warm across requests
+                // (RAM only); allocating, zeroing and erasing ~120 MB cost
+                // ~50 ms per request.
+                let retained = RETAINED.lock().ok().and_then(|mut r| r.take()).and_then(
+                    |(b, rows, c)| (b == worker_binding && rows == cache_rows && c.rb == rb).then_some(c),
+                );
+                let mut cache = match retained.map_or_else(|| Cache::new(cache_rows, rb), Ok) {
                     Ok(c) => c,
                     Err(e) => {
                         let _ = ready.send(Err(bad()));
@@ -750,6 +758,12 @@ fn with_source<T>(
                     }
                     Ok(())
                 });
+                if result.is_ok() && matches!(worker_binding, Binding::Model(_)) {
+                    if let Ok(mut r) = RETAINED.lock() {
+                        *r = Some((worker_binding, cache_rows, cache));
+                        return result;
+                    }
+                }
                 // Cache still owns its full original allocations at inspection.
                 let erased = cache.erase();
                 erased?;

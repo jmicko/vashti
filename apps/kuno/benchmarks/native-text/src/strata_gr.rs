@@ -212,7 +212,7 @@ pub(crate) fn read(request: Read<'_>, weights: [Handle; 3]) -> Result<()> {
     enqueue(
         client,
         Kernel::NormSlices,
-        80,
+        160,
         vec![
             h(source)?,
             h(block)?,
@@ -249,7 +249,7 @@ pub(crate) fn read(request: Read<'_>, weights: [Handle; 3]) -> Result<()> {
     enqueue(
         client,
         Kernel::Up,
-        160,
+        320,
         vec![
             weights[1].clone(),
             h(b.down)?,
