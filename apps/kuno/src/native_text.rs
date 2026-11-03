@@ -46,7 +46,7 @@ impl Config {
             "details":{"format":"gguf","family":"qwen4exp","families":["qwen4exp"],"quantization_level":"IQ3_S"},"kuno_backend":"rust-intel"})
     }
     pub fn show(&self) -> Value {
-        json!({"license":"See model artifact license","parameters":"temperature 0\nnum_ctx 32768\nnum_predict 1024",
+        json!({"license":"See model artifact license","parameters":"temperature 0.7\ntop_p 0.8\ntop_k 20\nnum_ctx 32768\nnum_predict 1024",
             "template":"{{ .Prompt }}", "capabilities":["completion","thinking","tools"],
             "details":self.metadata()["details"],"model_info":{"general.architecture":"qwen4exp","qwen4exp.context_length":32768},"kuno_backend":"rust-intel"})
     }
@@ -69,6 +69,17 @@ fn preload() -> wire::Generate {
         min_p: 0.,
         top_k: 1,
     }
+}
+/// A fresh per-request sampling seed (OS-seeded hasher keys mixed with time).
+fn random_seed() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
+    hasher.finish().max(1)
 }
 fn append(out: &mut Vec<u8>, text: &str) -> Result<()> {
     if out
@@ -199,13 +210,21 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
         Some(v) => u32::try_from(v.as_u64().ok_or("native_options_invalid")?)
             .map_err(|_| "native_options_invalid")?,
     };
+    // Unset sampling options follow Ollama: the model's recommended sampling
+    // (Qwen: thinking 0.6/0.95, non-thinking 0.7/0.8, top_k 20) and a fresh
+    // random seed per request. Explicit temperature 0 still selects greedy.
+    let (default_temperature, default_top_p) = if thinking.enabled() {
+        (0.6, 0.95)
+    } else {
+        (0.7, 0.8)
+    };
     let top_k = match get("top_k") {
         None => 20,
         Some(v) => i32::try_from(v.as_i64().ok_or("native_options_invalid")?)
             .map_err(|_| "native_options_invalid")?,
     };
-    let seed = match get("seed") {
-        None => 0,
+    let seed = match get("seed").filter(|v| v.as_i64() != Some(-1)) {
+        None => random_seed(),
         Some(v) => v.as_u64().ok_or("native_options_invalid")?,
     };
     let mut prompt = Zeroizing::new(Vec::with_capacity(wire::MAX_PROMPT_BYTES));
@@ -267,8 +286,8 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
         outputs,
         context,
         seed,
-        temperature: float("temperature", 0.)?,
-        top_p: float("top_p", 0.95)?,
+        temperature: float("temperature", default_temperature)?,
+        top_p: float("top_p", default_top_p)?,
         min_p: float("min_p", 0.)?,
         top_k,
     };
