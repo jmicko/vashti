@@ -364,6 +364,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let private_owned = requests.iter().try_fold(0_u64, |sum, &n| {
             sum.checked_add(n).ok_or(Error::ArithmeticOverflow)
         })?;
+        if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+            let mut v = requests.clone();
+            v.sort_unstable_by(|a, b| b.cmp(a));
+            eprintln!("public_vram_private_top_mib {:?} n={}", v.iter().take(16).map(|b| b >> 20).collect::<Vec<_>>(), v.len());
+        }
         let public_pages = PublicVectors::prewarm_page_bytes(graph)?;
         if let Some(plan) = &native {
             plan.check_public_with_audit(graph, public_pages, public_zero_audit)?;

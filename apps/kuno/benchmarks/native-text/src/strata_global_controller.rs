@@ -297,6 +297,10 @@ fn prepare_next_draft(
 /// Diagnostic host phase totals (ns): [round setup, verify->Verified, Verified->Pending,
 /// Pending body (incl. next draft), Pending->return, rounds]. Content-free.
 pub(crate) static PHASE_NS: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
+struct RoundTimer<'a>(Instant, &'a mut Vec<u16>);
+impl Drop for RoundTimer<'_> {
+    fn drop(&mut self) { self.1.push(self.0.elapsed().as_millis().min(65535) as u16); }
+}
 struct DraftTimer(Instant);
 impl Drop for DraftTimer { fn drop(&mut self) { phase_add(6, self.0); } }
 struct MarkGuard<'a>(&'a mut Instant);
@@ -574,6 +578,7 @@ pub(super) fn run<'m, 'f>(
     let mut committed_cursor = request.prompt.len();
     let mut rounds = 0u64;
     let mut repairs = 0u64;
+    let mut round_ms: Vec<u16> = Vec::new();
     while history.len() < request.max_outputs && confirmed != request.eos {
         crate::resident_util::cancel(cancel)?;
         let position = target.completed_target_rows_cursor(executor)?;
@@ -582,6 +587,7 @@ pub(super) fn run<'m, 'f>(
         }
         let remaining = request.max_outputs - history.len();
         let round_start = Instant::now();
+        let _round_timer = RoundTimer(round_start, &mut round_ms);
         let ready = if let Some(d) = draft.as_deref_mut() {
             let ready = prepared
                 .take()
@@ -817,6 +823,7 @@ pub(super) fn run<'m, 'f>(
     }
     *retained_policy = Some(policy); // only after original request/fault/I/O scope closes
     if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+        eprintln!("public_decode_round_ms {:?}", round_ms);
         let mut v: Vec<_> = target.phase_ns.iter().map(|(k, v)| (*v, *k)).collect();
         v.sort_by(|a, b| b.0.cmp(&a.0));
         let top: Vec<String> = v.iter().take(14).map(|(ns, k)| format!("{k}={:.1}", *ns as f64 / 1e6)).collect();

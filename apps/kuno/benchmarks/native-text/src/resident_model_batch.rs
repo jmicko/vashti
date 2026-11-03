@@ -5430,6 +5430,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             {
                 return Err(chunk_error!());
             }
+            // Short known-prompt windows count their expert routes too, so the
+            // first decode round's adaptive tick already knows the prompt's
+            // experts. Adaptation itself still only begins after decode rows.
+            let tracking = tracking
+                || (purpose == Purpose::KnownPrefix
+                    && crate::strata_intel_core::enabled()
+                    && !crate::strata_prompt::active());
             if tracking {
                 native
                     .global_moe
