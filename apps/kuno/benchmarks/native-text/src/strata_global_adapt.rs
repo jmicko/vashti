@@ -15,8 +15,13 @@ pub(crate) fn published_swaps() -> u64 {
 }
 /// Diagnostic route counts since process start: [VRAM-resident, host] (content-free).
 pub(crate) static ROUTE_TRACE: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-pub(crate) const EVERY: u64 = 4;
+/// One adaptive tick per verified round, at most SWAPS_PER_TICK exchanges.
+/// Measured on the B70 (code/prose/water first sight + repeats): 64 per round
+/// beat Strata's 96-every-4 by 6% total decode time (34.3 -> 32.3 s).
+pub(crate) const EVERY: u64 = 1;
+pub(crate) const SWAPS_PER_TICK: usize = 64;
 pub(crate) const MAX_SWAPS: usize = 96;
+const _: () = assert!(SWAPS_PER_TICK <= MAX_SWAPS);
 pub(crate) const WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const HOST_BYTES: usize = 2 * 1024 * 1024
     + WORKER_STACK_BYTES
@@ -327,10 +332,11 @@ fn retain_best(swaps: &mut Zeroizing<Vec<Swap>>) {
             .then(a.layer.cmp(&b.layer))
             .then(a.incoming.cmp(&b.incoming))
     });
-    for discarded in swaps.iter_mut().skip(MAX_SWAPS) {
+    let cap = SWAPS_PER_TICK;
+    for discarded in swaps.iter_mut().skip(cap) {
         discarded.zeroize();
     }
-    swaps.truncate(MAX_SWAPS);
+    swaps.truncate(cap);
 }
 
 #[cfg(test)]
@@ -393,7 +399,7 @@ mod tests {
         assert!(encode_route_map(&invalid[..invalid.len() - 1]).is_err());
     }
     #[test]
-    fn reference_gain_rule_is_global_96_with_unequal_and_nonprefix_residency() {
+    fn reference_gain_rule_is_global_budget_with_unequal_and_nonprefix_residency() {
         let mut resident = vec![false; LAYERS * EXPERTS];
         // GPU cells are actual initial expert IDs, not a uniform first240.
         for cell in 300..428 {
@@ -414,7 +420,7 @@ mod tests {
         usage[2 * EXPERTS] = 100.; // fully HOST: no GPU slot can be evicted
         usage[3 * EXPERTS + 100] = 100.; // fully GPU: no missing candidate
         let p = c.propose(&usage).unwrap();
-        assert_eq!(p.swaps.len(), 96);
+        assert_eq!(p.swaps.len(), SWAPS_PER_TICK);
         assert!(
             p.swaps
                 .iter()
@@ -574,7 +580,7 @@ mod retained_usage_tests {
             }
         }
         // Empty callback-derived counts in reference NO_HOST still advance the
-        // original every4 window/job/decay state; zero counters aren't a reason
+        // window/job/decay state every EVERY rounds; zero counters aren't a reason
         // to omit the connected worker or manufacture a cold cache on reuse.
         let mut cache = model();
         let zeros = vec![0.; LAYERS * EXPERTS];
@@ -587,7 +593,7 @@ mod retained_usage_tests {
                 jobs += 1;
             }
         }
-        assert_eq!((cache.rounds, jobs), (12, 3));
+        assert_eq!((cache.rounds, jobs), (12, 12 / EVERY as usize));
     }
     #[test]
     fn actual_host_job_runs_beside_foreground_and_returns_the_same_cache_proposal() {

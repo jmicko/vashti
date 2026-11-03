@@ -6537,6 +6537,7 @@ impl Workspace {
         // and joins on unwind BEFORE any original private arena cleanup.
         let mut adaptation = None;
         let selected_prefix = if let Some(select) = select {
+            *m.phase_ns.entry("claude_rows_read").or_default() += final_proof_start.elapsed().as_nanos();
             let keep = match output {
                 ChunkOutput::TargetRows(rows) => {
                     select_verified_rows(rows, *count, |rows| select(PrefixPhase::Verified(rows)))
@@ -6550,6 +6551,7 @@ impl Workspace {
                 .inspect_err(|_| chunk_failure_site!())?
                 .check_no_live_output()
                 .inspect_err(|_| chunk_failure_site!())?;
+            let adapt_start = Instant::now();
             adaptation = self
                 .global_moe
                 .as_mut()
@@ -6567,6 +6569,8 @@ impl Workspace {
                     cancel,
                 )
                 .inspect_err(|_| chunk_failure_site!())?;
+            *m.phase_ns.entry("claude_adapt_begin").or_default() += adapt_start.elapsed().as_nanos();
+            let commit_submit_start = Instant::now();
             // Pin the ACTUAL original observed R owner and enqueue its real
             // MAIN->draft visibility BEFORE any accepted-prefix commit. The
             // scope cannot publish target state or erase/reuse that source.
@@ -6589,6 +6593,7 @@ impl Workspace {
                 .map(|submission| m.admission.retain_native_commit(submission))
                 .transpose()
                 .inspect_err(|_| chunk_failure_site!())?;
+            *m.phase_ns.entry("claude_commit_submit").or_default() += commit_submit_start.elapsed().as_nanos();
             // Scope entry precedes the entire observer: sampling controls,
             // scratch/token preparation, R copy, front and every MTP branch.
             draft_scope.enter().inspect_err(|_| chunk_failure_site!())?;
@@ -6617,16 +6622,19 @@ impl Workspace {
             draft_scope
                 .finish()
                 .inspect_err(|_| chunk_failure_site!())?;
+            let join_start = Instant::now();
             if let Some(commit) = commit {
                 // The observer may run the original drafter, but may not
                 // publish target state. Join its exact original submission.
                 commit.join().inspect_err(|_| chunk_failure_site!())?;
             }
+            *m.phase_ns.entry("claude_commit_join").or_default() += join_start.elapsed().as_nanos();
             output = ChunkOutput::AcceptedPrefix(keep);
             Some(keep)
         } else {
             None
         };
+        let proof_start = Instant::now();
         let (mut output, ple) = completed_proof(
             || Ok(output),
             || {
@@ -6668,6 +6676,7 @@ impl Workspace {
         *m.phase_ns
             .entry("native_completed_final_proofs")
             .or_default() += final_proof_start.elapsed().as_nanos();
+        *m.phase_ns.entry("claude_completed_proof").or_default() += proof_start.elapsed().as_nanos();
         let family_start = Instant::now();
         let mut ga = {
             let (first_stage, first_receipt) = match (&m.layers[0], pending.gdn[0].as_ref()) {
@@ -6853,6 +6862,8 @@ impl Workspace {
         self.four_rows_completed_chunks = four_rows_completed_chunks;
         self.grouped_ple_completed_chunks = grouped_ple_completed_chunks;
         self.grouped_status_completed = grouped_status_completed;
+        let adapt_finish_start = Instant::now();
+        let adapting = adaptation.is_some();
         if adaptation.is_some() {
             self.global_moe
                 .as_mut()
@@ -6868,6 +6879,9 @@ impl Workspace {
                     adaptation,
                 )
                 .inspect_err(|_| chunk_failure_site!())?;
+        }
+        if adapting {
+            *m.phase_ns.entry("claude_adapt_finish").or_default() += adapt_finish_start.elapsed().as_nanos();
         }
         m.position = *start + selected_prefix.unwrap_or(*count);
         if purpose == Purpose::KnownPrefix {

@@ -249,12 +249,15 @@ fn prepare_next_draft(
     let mut first = None;
     let mut joint = 1.;
     if plan.maximum > 1 {
+        // Draft the whole chain in one submission (zero threshold): the
+        // confidence cut below applies the same `p >= minimum` prefix rule the
+        // per-step early stop did, without a host round trip after every cell.
         let output = draft.draft_accepted_device_window(
             start,
             tokens,
             source,
             plan.maximum - 1,
-            plan.minimum,
+            0.,
             cancel,
         )?;
         if output.start != plan.position - 1
@@ -817,6 +820,10 @@ pub(super) fn run<'m, 'f>(
         v.sort_by(|a, b| b.0.cmp(&a.0));
         let top: Vec<String> = v.iter().take(14).map(|(ns, k)| format!("{k}={:.1}", *ns as f64 / 1e6)).collect();
         eprintln!("public_decode_hostphases_ms {}", top.join(" "));
+        if let Some(t) = crate::resident_util::CLAUDE_TIMES.get() {
+            let t: Vec<String> = t.lock().unwrap().iter().map(|(k, v)| format!("{k}={:.1}", *v as f64 / 1e6)).collect();
+            eprintln!("public_decode_timers_ms {}", t.join(" "));
+        }
     }
     Ok(Completion {
         outputs: history.len(),

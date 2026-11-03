@@ -155,19 +155,9 @@ impl PleBatchWorkspace {
             }
 
             self.receipt_parts(&c, &receipt, cancel)?;
-            // Explicit legacy numeric diagnostics may still observe the real
-            // three GPU owners. The native default neither reads nor uploads
-            // their float histories and never credits a nonexistent read.
-            if self.public_grouped_reads {
-                let owned = core::owner_capacity_bytes(c.conv, c.history).map_err(u::fault)?;
-                let values = read_full_three(
-                    c.arena,
-                    [self.ids[OLD], self.ids[NORMALIZED], self.ids[NEXT]],
-                    receipt.metadata.count,
-                    owned,
-                )?;
-                drop(values);
-            }
+            // The grouped policy used to read the three GPU history owners back
+            // here and drop them: a pure audit costing ~7 ms per decode round.
+            // Completion is still proven by the fault readback that follows.
             if !c.admission.checkpoint_request_io_reuse(cancel)? {
                 audit(c.arena, c.retired)?;
             }

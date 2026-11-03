@@ -106,65 +106,90 @@ impl CopyWork {
         }
         let pairs = self.inventory.pairs(&proposal.swaps, &self.scratch)?;
         let copies = copy_plan(pairs.iter().map(|p| p.gpu.size), self.scratch.size)?;
-        unsafe {
-            self.raw
-                .begin_command_buffer(self.command, &vk::CommandBufferBeginInfo::default())
-                .map_err(|_| fail())?;
-            self.barrier(
-                vk::PipelineStageFlags::HOST,
-                vk::AccessFlags::HOST_WRITE,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
-            );
-            for op in &copies {
-                let pair = &pairs[op.pair];
-                let resource = |which| match which {
-                    Endpoint::Gpu => &pair.gpu,
-                    Endpoint::Host => &pair.host,
-                    Endpoint::Scratch => &self.scratch,
-                };
-                let a = resource(op.from);
-                let b = resource(op.to);
-                self.raw.cmd_copy_buffer(
-                    self.command,
-                    raw_buffer(a)?,
-                    raw_buffer(b)?,
-                    &[vk::BufferCopy::default()
-                        .src_offset(a.offset)
-                        .dst_offset(b.offset)
-                        .size(op.bytes)],
-                );
-                self.barrier(
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
-                );
+        // Paced batches: the native graph's INFO uploads share this in-order
+        // COPY queue, so one monolithic swap submission stalled the next
+        // window's parameters behind every swap copy. Each batch is whole
+        // (host->scratch, gpu->host, scratch->gpu) triples, so the shared
+        // scratch never crosses a batch. Only the first batch waits READY and
+        // only the last signals DONE and the original fence.
+        const TRIPLES_PER_BATCH: usize = 4;
+        let batches: Vec<&[Copy]> = copies.chunks(TRIPLES_PER_BATCH * 3).collect();
+        let pace = unsafe { self.raw.create_fence(&vk::FenceCreateInfo::default(), None) }
+            .map_err(|_| fail())?;
+        let result = (|| -> KResult<()> {
+            for (index, batch) in batches.iter().enumerate() {
+                let first = index == 0;
+                let last = index + 1 == batches.len();
+                unsafe {
+                    self.raw
+                        .begin_command_buffer(self.command, &vk::CommandBufferBeginInfo::default())
+                        .map_err(|_| fail())?;
+                    self.barrier(
+                        vk::PipelineStageFlags::HOST,
+                        vk::AccessFlags::HOST_WRITE,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+                    );
+                    for op in batch.iter() {
+                        let pair = &pairs[op.pair];
+                        let resource = |which| match which {
+                            Endpoint::Gpu => &pair.gpu,
+                            Endpoint::Host => &pair.host,
+                            Endpoint::Scratch => &self.scratch,
+                        };
+                        let a = resource(op.from);
+                        let b = resource(op.to);
+                        self.raw.cmd_copy_buffer(
+                            self.command,
+                            raw_buffer(a)?,
+                            raw_buffer(b)?,
+                            &[vk::BufferCopy::default()
+                                .src_offset(a.offset)
+                                .dst_offset(b.offset)
+                                .size(op.bytes)],
+                        );
+                        self.barrier(
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+                        );
+                    }
+                    let (stage, access) =
+                        wgpu::hal::vulkan::CommandEncoder::kuno_public_host_transfer_read_dependency();
+                    self.barrier(stage, access, vk::PipelineStageFlags::HOST, vk::AccessFlags::HOST_READ);
+                    self.raw
+                        .end_command_buffer(self.command)
+                        .map_err(|_| fail())?;
+                    // Atomic records only attempted ownership debt, NEVER completion.
+                    self.attempted.store(true, Ordering::Release);
+                    let waits: &[vk::Semaphore] = if first { std::slice::from_ref(&self.ready) } else { &[] };
+                    let stages: &[vk::PipelineStageFlags] =
+                        if first { &[vk::PipelineStageFlags::TRANSFER] } else { &[] };
+                    let signals: &[vk::Semaphore] = if last { std::slice::from_ref(&self.done) } else { &[] };
+                    self.copy
+                        .submit(
+                            &[vk::SubmitInfo::default()
+                                .wait_semaphores(waits)
+                                .wait_dst_stage_mask(stages)
+                                .command_buffers(std::slice::from_ref(&self.command))
+                                .signal_semaphores(signals)],
+                            if last { self.fence } else { pace },
+                        )
+                        .map_err(|_| fail())?;
+                    if !last {
+                        // The command buffer is reused only after its batch completed.
+                        self.raw
+                            .wait_for_fences(&[pace], true, 120_000_000_000)
+                            .map_err(|_| fail())?;
+                        self.raw.reset_fences(&[pace]).map_err(|_| fail())?;
+                    }
+                }
             }
-            let (stage, access) =
-                wgpu::hal::vulkan::CommandEncoder::kuno_public_host_transfer_read_dependency();
-            self.barrier(
-                stage,
-                access,
-                vk::PipelineStageFlags::HOST,
-                vk::AccessFlags::HOST_READ,
-            );
-            self.raw
-                .end_command_buffer(self.command)
-                .map_err(|_| fail())?;
-            // Atomic records only attempted ownership debt, NEVER completion.
-            self.attempted.store(true, Ordering::Release);
-            self.copy
-                .submit(
-                    &[vk::SubmitInfo::default()
-                        .wait_semaphores(std::slice::from_ref(&self.ready))
-                        .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
-                        .command_buffers(std::slice::from_ref(&self.command))
-                        .signal_semaphores(std::slice::from_ref(&self.done))],
-                    self.fence,
-                )
-                .map_err(|_| fail())?;
-        }
+            Ok(())
+        })();
+        unsafe { self.raw.destroy_fence(pace, None) };
+        result?;
         Ok(proposal)
     }
     unsafe fn barrier(
@@ -232,7 +257,9 @@ impl Flight {
             s.pool = s
                 .raw
                 .create_command_pool(
-                    &vk::CommandPoolCreateInfo::default().queue_family_index(family),
+                    &vk::CommandPoolCreateInfo::default()
+                        .queue_family_index(family)
+                        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
                     None,
                 )
                 .map_err(|_| fail())?;
