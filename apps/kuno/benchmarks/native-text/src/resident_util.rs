@@ -311,12 +311,16 @@ pub fn status_batch(
 /// Diagnostic host timers (content-free labels and durations), printed with
 /// KUNO_CLAUDE_PIPE_TRACE at request end.
 pub fn claude_time(label: &'static str, since: std::time::Instant) {
-    static T: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<&'static str, u128>>> = std::sync::OnceLock::new();
-    *T.get_or_init(Default::default).lock().unwrap().entry(label).or_default() += since.elapsed().as_nanos();
+    static T: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<&'static str, (u128, u64)>>> = std::sync::OnceLock::new();
+    let mut map = T.get_or_init(Default::default).lock().unwrap();
+    let entry = map.entry(label).or_default();
+    entry.0 += since.elapsed().as_nanos();
+    entry.1 += 1;
+    drop(map);
     let _ = &CLAUDE_TIMES;
     CLAUDE_TIMES.get_or_init(|| T.get().unwrap());
 }
-pub static CLAUDE_TIMES: std::sync::OnceLock<&'static std::sync::Mutex<std::collections::BTreeMap<&'static str, u128>>> = std::sync::OnceLock::new();
+pub static CLAUDE_TIMES: std::sync::OnceLock<&'static std::sync::Mutex<std::collections::BTreeMap<&'static str, (u128, u64)>>> = std::sync::OnceLock::new();
 pub fn decode_skips_layer_clears() -> bool {
     !crate::strata_prompt::active()
 }

@@ -472,13 +472,17 @@ impl ResidentMtp<'_, '_> {
             .map_err(error)?;
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<DraftWindow> {
+                let t = std::time::Instant::now();
                 self.start_window(source)?;
                 u::zero(&self.arena, id)?;
                 self.tick(1)?;
+                u::claude_time("draft_start_window", t);
+                let t = std::time::Instant::now();
                 // Original TOKEN upload and borrowed carry copy happen before
                 // capture. The outer source grant stays live through the same
                 // actual final packet/fault observation as before.
                 let mut first_front = self.prepare_window_first(source, cancel)?;
+                u::claude_time("draft_prepare_front", t);
                 let mut last_enqueue_ns = 0;
                 let mut observation = None;
                 let coupled = crate::strata_sampler::request::coupled_draft_active(
@@ -516,11 +520,15 @@ impl ResidentMtp<'_, '_> {
                     .transpose()?;
                 let mut whole_capture = None;
                 if let Some(key) = whole_branch {
+                    let t = std::time::Instant::now();
                     if self.try_native_frame_replay(key, front_origin, &mut first_front, cancel)? {
+                        u::claude_time("draft_replay_submit", t);
+                        let t = std::time::Instant::now();
                         let WindowPayload {
                             tokens,
                             probabilities,
                         } = self.read_window_payload(id, count)?;
+                        u::claude_time("draft_read_payload", t);
                         return Ok(DraftWindow {
                             tokens,
                             probabilities,
@@ -529,6 +537,7 @@ impl ResidentMtp<'_, '_> {
                             last_enqueue_ns: 0,
                         });
                     }
+                    u::claude_time("draft_replay_miss", std::time::Instant::now());
                     self.client()?
                         .begin_native_strata_invocation(
                             key,

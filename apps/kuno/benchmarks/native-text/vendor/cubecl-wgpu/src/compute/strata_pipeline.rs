@@ -34,9 +34,9 @@ static TOTALS: [std::sync::atomic::AtomicU64; 4] =
 /// Content-free process counts: prepared admissions, ordinary executables,
 /// created native-key graph programs, created original-key graph programs. Read only by compiled-public probes.
 /// [server misses, miss wall ns, native graph creations, native wall ns].
-pub static CLAUDE_PIPELINE_TIME: [std::sync::atomic::AtomicU64; 18] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 18];
-pub fn claude_pipeline_time() -> [u64; 18] {
+pub static CLAUDE_PIPELINE_TIME: [std::sync::atomic::AtomicU64; 24] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 24];
+pub fn claude_pipeline_time() -> [u64; 24] {
     std::array::from_fn(|i| CLAUDE_PIPELINE_TIME[i].load(std::sync::atomic::Ordering::Relaxed))
 }
 pub(crate) struct ClaudeTimer(pub(crate) std::time::Instant, pub(crate) usize);

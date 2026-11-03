@@ -1359,7 +1359,7 @@ async fn serve(
             }
             if public_check || std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
                 let t = cubecl::wgpu::claude_pipeline_time();
-                eprintln!("public_pipeline_time server_misses={} server_s={:.3} native_creates={} native_s={:.3} modules={} module_s={:.3} pipelines={} pipeline_s={:.3} prewarm_hits={} prewarm_failures={} wgsl_compiles={} wgsl_s={:.3} replays={} replay_s={:.3} records={} record_s={:.3} recorded_dispatches={}", t[0], t[1] as f64 / 1e9, t[2], t[3] as f64 / 1e9, t[4], t[5] as f64 / 1e9, t[6], t[7] as f64 / 1e9, t[8], t[9], t[10], t[11] as f64 / 1e9, t[12], t[13] as f64 / 1e9, t[14], t[15] as f64 / 1e9, t[16]);
+                eprintln!("public_pipeline_time server_misses={} server_s={:.3} native_creates={} native_s={:.3} modules={} module_s={:.3} pipelines={} pipeline_s={:.3} prewarm_hits={} prewarm_failures={} wgsl_compiles={} wgsl_s={:.3} replays={} replay_s={:.3} records={} record_s={:.3} recorded_dispatches={} direct_join_s={:.3} direct_n={} direct_submit_s={:.3} direct_wait_s={:.3} joined_flush_s={:.3}", t[0], t[1] as f64 / 1e9, t[2], t[3] as f64 / 1e9, t[4], t[5] as f64 / 1e9, t[6], t[7] as f64 / 1e9, t[8], t[9], t[10], t[11] as f64 / 1e9, t[12], t[13] as f64 / 1e9, t[14], t[15] as f64 / 1e9, t[16], t[18] as f64 / 1e9, t[19], t[20] as f64 / 1e9, t[21] as f64 / 1e9, t[22] as f64 / 1e9);
             }
             crate::strata_prefill_profile::report();
             let total_ns = generation_ns.ok_or("native_generation_failed")?;

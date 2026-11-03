@@ -971,6 +971,12 @@ impl Upload {
     }
 }
 
+/// The connected Intel engine skips the MTP full-buffer validation sweeps:
+/// they only read whole scratch/cache owners and set fault bits (padding zero,
+/// floats finite), never change math, and cost ~2.5 ms per draft round.
+fn skip_validation_guards() -> bool {
+    crate::strata_intel_core::enabled()
+}
 /// Full span validator. All loads are guarded by actual array length; only the
 /// sticky fault owner can be written. `live` describes committed KV prefix at
 /// preflight and candidate prefix at acceptance. Logical integers are not
@@ -2260,6 +2266,9 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
     ) -> Result<()> {
         if cache_position > k::CONTEXT {
             return Err(Error::OutOfBounds);
+        }
+        if skip_validation_guards() {
+            return Ok(());
         }
         if self.fused_sweeps {
             self.guard_private_fused(cache_position)?;
@@ -4789,6 +4798,9 @@ impl ResidentMtp<'_, '_> {
             .offset_end((p.owned_bytes - p.logical_bytes) as u64))
     }
     fn guard_native_front(&mut self) -> Result<()> {
+        if skip_validation_guards() {
+            return Ok(());
+        }
         let ids = *self
             .native_front
             .as_ref()

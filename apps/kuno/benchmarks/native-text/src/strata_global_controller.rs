@@ -735,6 +735,7 @@ pub(super) fn run<'m, 'f>(
                         let grant = source.borrow(device, n)?;
                         let draft_start = Instant::now();
                         let _draft_timer = DraftTimer(draft_start);
+                        let _draft_profile = crate::strata_port::NativeProfileRound::new(profile_request, rounds);
                         prepared = Some(prepare_next_draft(
                             d,
                             position,
@@ -821,7 +822,7 @@ pub(super) fn run<'m, 'f>(
         let top: Vec<String> = v.iter().take(14).map(|(ns, k)| format!("{k}={:.1}", *ns as f64 / 1e6)).collect();
         eprintln!("public_decode_hostphases_ms {}", top.join(" "));
         if let Some(t) = crate::resident_util::CLAUDE_TIMES.get() {
-            let t: Vec<String> = t.lock().unwrap().iter().map(|(k, v)| format!("{k}={:.1}", *v as f64 / 1e6)).collect();
+            let t: Vec<String> = t.lock().unwrap().iter().map(|(k, (v, n))| format!("{k}={:.1}/{n}", *v as f64 / 1e6)).collect();
             eprintln!("public_decode_timers_ms {}", t.join(" "));
         }
     }

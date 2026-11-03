@@ -2533,8 +2533,11 @@ impl Graph {
         let id = original.id;
         // The actual retained plan supplies all ranges. No rebuilt-node or
         // caller-declared substitute is accepted for direct replay.
+        let claude_t = std::time::Instant::now();
         let joins = self.access_joins(original.work.plan.accesses())?;
         self.join_accesses(joins, self.queue, true)?;
+        super::strata_pipeline::CLAUDE_PIPELINE_TIME[18].fetch_add(claude_t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        super::strata_pipeline::CLAUDE_PIPELINE_TIME[19].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Joining sampled peer work can remove a Vec entry. Re-find the exact
         // stable original ID rather than using a pre-join position.
         let hit = self
@@ -2550,10 +2553,14 @@ impl Graph {
                 .transfer(self.compute_queues[0].queue, self.queue)
                 .map_err(fault)?;
         }
+        let claude_t = std::time::Instant::now();
         self.submit_last_recording(compute_count, true, false)?;
+        super::strata_pipeline::CLAUDE_PIPELINE_TIME[20].fetch_add(claude_t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        let claude_t = std::time::Instant::now();
         if wait {
             self.complete_scoped_submission()?;
         }
+        super::strata_pipeline::CLAUDE_PIPELINE_TIME[21].fetch_add(claude_t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
     pub(crate) fn preflight_pending_commit(

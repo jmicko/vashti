@@ -1871,10 +1871,14 @@ impl WgpuStream {
         }
         // Input gathers, clears and prepared PLE uploads precede the retained
         // recording. Join them before touching its original INFO pages.
+        let claude_t = std::time::Instant::now();
         self.flush(StreamErrorMode {
             ignore: false,
             flush: true,
         })?;
+        if wait {
+            super::strata_pipeline::CLAUDE_PIPELINE_TIME[22].fetch_add(claude_t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         let Some(recording) = self.transient_io.as_ref().unwrap().native_replay_key(key)? else {
             return Ok(NativeReplay::Missing);
         };
