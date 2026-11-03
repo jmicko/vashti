@@ -3188,6 +3188,9 @@ impl<'a> GpuExecutor<'a> {
                 0
             },
         ];
+        if std::env::var_os("KUNO_CLAUDE_PIPE_TRACE").is_some() {
+            eprintln!("public_vram_fixed_mib {:?} reserved_mib {}", fixed.iter().map(|b| b >> 20).collect::<Vec<_>>(), self.reserved_limit >> 20);
+        }
         let banks = if crate::strata_intel_core::enabled() {
             let budget = main_admission::shared_expert_capacity(
                 self.reserved_limit as u64,
