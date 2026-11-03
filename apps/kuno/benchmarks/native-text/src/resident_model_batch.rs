@@ -5898,6 +5898,7 @@ impl Workspace {
                     .validate_graph_ready(m.graph)
                     .inspect_err(|_| chunk_failure_site!())?;
                 if deferred_ple {
+                    let claude_t = Instant::now();
                     let prefix = super::target_replay::try_prefix(
                         &m.arena,
                         key,
@@ -5911,7 +5912,9 @@ impl Workspace {
                         m.retired.clone(),
                     )
                     .inspect_err(|_| chunk_failure_site!())?;
+                    u::claude_time("verify_prefix_submit", claude_t);
                     if let Some(prefix) = prefix {
+                        let claude_t = Instant::now();
                         let ready = self
                             .ple
                             .finish_deferred(
@@ -5924,6 +5927,8 @@ impl Workspace {
                             )
                             .inspect_err(|_| chunk_failure_site!())?;
                         ple_invocation = Some(ready);
+                        u::claude_time("verify_ple_deferred", claude_t);
+                        let claude_t = Instant::now();
                         m.arena
                             .client()
                             .map_err(u::fault)
@@ -5931,7 +5936,9 @@ impl Workspace {
                             .submit_native_strata_experts()
                             .map_err(u::fault)
                             .inspect_err(|_| chunk_failure_site!())?;
-                        Some(prefix.finish().inspect_err(|_| chunk_failure_site!())?)
+                        let done = prefix.finish().inspect_err(|_| chunk_failure_site!())?;
+                        u::claude_time("verify_suffix_submit", claude_t);
+                        Some(done)
                     } else {
                         None
                     }
