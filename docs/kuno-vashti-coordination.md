@@ -6,9 +6,10 @@ with Demons frontend/backend/watchers aligned. Title-search/gallery filtering
 are additive Vashti-only API changes and preserve owner/device scope. No Kuno
 API, native-engine source, installation, or GPU test changed. See
 [the current UX report](ux-review-2026-10-27.md#november-3-refinement) for source
-coverage and validation limits. Browser use is currently disabled; manual and
-physical Android acceptance remain outstanding. No release is authorized by
-this checkpoint.
+coverage and validation limits. Browser access is restored; the current fixture
+and signed-in read-only acceptance receipt is recorded there. Physical Android,
+live generation, and release acceptance remain outstanding. No release is
+authorized by this checkpoint.
 
 **Current native-engine handoff (2026-10-31):** read the
 [57-line handoff](kuno-handoff-2026-10-31.txt) and
