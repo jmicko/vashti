@@ -39,7 +39,7 @@ export function AssistantWorkspace(props: Props) {
   const home = () => props.onNavigate({ page: "assistant" });
   if (!bootstrap) return <section className="assistant-workspace"><div className="assistant-empty">{error ? <><p role="alert">{error}</p><button type="button" onClick={() => setRetry(v => v + 1)}><RefreshCw />Retry</button></> : <p role="status">Loading assistant...</p>}</div></section>;
   if (props.route.view) return <section className="assistant-workspace assistant-scroll"><TaskForm key={props.route.view} config={bootstrap.config} defaults={props.route.view === "defaults"} groups={props.groups} sandbox={sandbox} onGuardChange={props.onGuardChange}
-    onBack={home} onManageModels={props.onManageModels} onSaved={(task, runId) => { setRetry(v => v + 1); if (task) props.onNavigate({ page: "assistant", taskId: task.id, runId }); }} /></section>;
+    onBack={home} onManageModels={props.onManageModels} onSaved={(task, runId, config) => { if (config) setBootstrap(previous => previous ? { ...previous, config } : previous); if (task) props.onNavigate({ page: "assistant", taskId: task.id, runId }); }} /></section>;
   if (props.route.taskId || props.route.runId) return <TaskDetail key={props.route.taskId ?? props.route.runId} {...props} sandbox={sandbox} />;
   return <TaskInbox onNavigate={props.onNavigate} />;
 }

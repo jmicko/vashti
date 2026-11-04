@@ -12,7 +12,7 @@ import { useAssistantDraft } from "./useDraft";
 export function TaskForm({ config, task, defaults, groups, sandbox, onGuardChange, onBack, onSaved, onManageModels }: {
   config: TaskConfig; task?: AssistantTask; defaults?: boolean; groups: BackendModelGroup[]; sandbox: SandboxStatus | null;
   onGuardChange: (guard: SettingsGuard | null) => void; onBack: () => void;
-  onSaved: (task?: AssistantTask, runId?: string) => void; onManageModels: () => void;
+  onSaved: (task?: AssistantTask, runId?: string, config?: TaskConfig) => void; onManageModels: () => void;
 }) {
   const initial = useMemo<TaskDraft>(() => {
     const selected = { ...config };
@@ -57,8 +57,9 @@ export function TaskForm({ config, task, defaults, groups, sandbox, onGuardChang
     try {
       await draft.change(value);
       if (defaults) {
-        await requestJson("/api/assistant/preferences", { method: "PUT", body: JSON.stringify(value.config) });
+        const response = await requestJson<{ config: TaskConfig }>("/api/assistant/preferences", { method: "PUT", body: JSON.stringify(value.config) });
         await draft.clear(); setBaseline(JSON.stringify(value)); setSaved(true); onGuardChange(null);
+        onSaved(undefined, undefined, response.config);
       } else {
         const result = await assistantApi.save({ ...value, title: value.title.trim() || value.instructions.trim().split(/\r?\n/)[0].slice(0, 80) }, task?.id);
         // Retrying after a lost response uses the same task and run IDs.

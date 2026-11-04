@@ -212,6 +212,9 @@ run, while preserving the earlier run in history. Desktop, 390px mobile, 320px
 narrow, and 844x390 landscape geometry were checked. The administrator's real
 Tools page shows the workspace permission with the existing admin tag; no
 permission settings were changed during that acceptance check.
+Saving account defaults was also checked through opening a new task without
+reloading; the authoritative saved config now replaces the old in-memory defaults
+immediately. This caught and fixed a stale-config handoff in the first UI pass.
 
 Validation receipts:
 
