@@ -1,5 +1,30 @@
 use url::Url;
 
+pub fn validate_file_export(
+    filename: &str,
+    mime_type: &str,
+    data_len: usize,
+) -> Result<(), String> {
+    let valid_name = !filename.trim().is_empty()
+        && !matches!(filename, "." | "..")
+        && filename.len() <= 160
+        && !filename
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '\\'));
+    let valid_mime = mime_type.len() <= 128
+        && mime_type.split_once('/').is_some_and(|(a, b)| {
+            !a.is_empty()
+                && !b.is_empty()
+                && a.bytes()
+                    .chain(b.bytes())
+                    .all(|c| c.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&c))
+        });
+    if !valid_name || !valid_mime || data_len > 32 * 1024 * 1024 {
+        return Err("Invalid file export".into());
+    }
+    Ok(())
+}
+
 pub fn normalize_base_url(value: &str, allow_insecure_http: bool) -> Result<Url, String> {
     let mut url = Url::parse(value.trim()).map_err(|_| "Enter a valid server URL".to_string())?;
     if url.username() != "" || url.password().is_some() {
@@ -51,6 +76,19 @@ pub fn api_url(base_url: &str, path: &str) -> Result<Url, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_exports_are_bounded_and_cannot_choose_paths_or_inject_metadata() {
+        assert!(validate_file_export("answer.csv", "text/csv", 1024).is_ok());
+        assert!(validate_file_export("report.pdf", "application/pdf", 1024).is_ok());
+        for name in ["../secret", "..", "x\\secret", "x\n.csv", ""] {
+            assert!(validate_file_export(name, "text/csv", 1).is_err());
+        }
+        for mime in ["text/csv\r\nother", "text/csv/extra", "", "text/"] {
+            assert!(validate_file_export("answer.csv", mime, 1).is_err());
+        }
+        assert!(validate_file_export("answer.csv", "text/csv", 33 * 1024 * 1024).is_err());
+    }
 
     #[test]
     fn api_urls_remain_on_the_server_and_preserve_queries() {

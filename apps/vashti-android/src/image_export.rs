@@ -32,16 +32,23 @@ pub async fn native_save_image(
     mime_type: String,
     data: String,
 ) -> Result<serde_json::Value, String> {
-    if filename.len() > 160
-        || filename.contains(['/', '\\'])
-        || !matches!(
-            mime_type.as_str(),
-            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
-        )
-        || data.len() > 32 * 1024 * 1024
-    {
+    if !matches!(
+        mime_type.as_str(),
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    ) {
         return Err("Invalid image export".into());
     }
+    native_save_file(app, filename, mime_type, data).await
+}
+
+#[tauri::command]
+pub async fn native_save_file(
+    app: tauri::AppHandle,
+    filename: String,
+    mime_type: String,
+    data: String,
+) -> Result<serde_json::Value, String> {
+    crate::validation::validate_file_export(&filename, &mime_type, data.len())?;
     app.state::<ImageExport<tauri::Wry>>()
         .0
         .run_mobile_plugin_async(
@@ -53,5 +60,5 @@ pub async fn native_save_image(
             },
         )
         .await
-        .map_err(|_| "Could not save image".into())
+        .map_err(|_| "Could not save file".into())
 }

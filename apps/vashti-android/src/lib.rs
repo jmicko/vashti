@@ -91,6 +91,7 @@ pub fn run() {
             updates::native_check_app_update,
             updates::native_open_app_update,
             image_export::native_save_image,
+            image_export::native_save_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vashti Android");

@@ -29,7 +29,7 @@ class ImageExportPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun save(invoke: Invoke) {
     if (pending) {
-      invoke.reject("An image save is already open")
+      invoke.reject("A file save is already open")
       return
     }
     try {
@@ -43,7 +43,7 @@ class ImageExportPlugin(private val activity: Activity) : Plugin(activity) {
       startActivityForResult(invoke, intent, "saved")
     } catch (_: Exception) {
       pending = false
-      invoke.reject("Could not open image save dialog")
+      invoke.reject("Could not open file save dialog")
     }
   }
 
@@ -65,7 +65,7 @@ class ImageExportPlugin(private val activity: Activity) : Plugin(activity) {
       } catch (_: Exception) {
         // Do not leave a corrupt or empty document behind on failure.
         try { DocumentsContract.deleteDocument(activity.contentResolver, uri) } catch (_: Exception) {}
-        invoke.reject("Could not save image")
+        invoke.reject("Could not save file")
       } finally {
         activity.runOnUiThread { pending = false }
       }
