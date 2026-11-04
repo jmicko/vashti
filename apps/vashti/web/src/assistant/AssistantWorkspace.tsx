@@ -125,7 +125,7 @@ function useRun(id: string | null, refresh: number) {
         actionsAfter.current = actionCursor(dataRef.current.actions);
         setData(dataRef.current);
         setError(null);
-        if (response.more_events || activeStatuses.has(response.run.status)) timer = window.setTimeout(poll, response.more_events ? 0 : document.hidden ? 10000 : 1200);
+        if (response.more_events || activeStatuses.has(response.run.status) || response.actions.some(a => a.status === "executing")) timer = window.setTimeout(poll, response.more_events ? 0 : document.hidden ? 10000 : 1200);
       } catch (e) { if (current) { setError(message(e)); timer = window.setTimeout(poll, 5000); } }
       finally { inFlight = false; }
     }
