@@ -188,6 +188,20 @@ const runRequest = (draft) => ({
   fixed_endless_confirmed: false,
 });
 
+test("private history searches all titles before pagination and stays account scoped", async () => {
+  user("history-search");
+  for (let index = 0; index < 52; index++) {
+    await local("/sessions", { draft: { ...app.newDraft(profile), recipe: { ...recipe, prompt: `Saved drawing ${index}` } }, mode: "generate" });
+  }
+  const found = await local("/sessions?q=DRAWING%200");
+  assert.equal(found.length, 1);
+  assert.equal(found[0].title, "Saved drawing 0");
+  assert.equal((await local("/sessions?q=drawing&offset=50")).length, 2);
+  assert.deepEqual(await local("/sessions?q=%25"), []);
+  user("other-history");
+  assert.deepEqual(await local("/sessions?q=drawing"), []);
+});
+
 test("private flows persist encrypted images, branch versions and gallery only on device", async () => {
   user("alice");
   requests = [];
@@ -215,6 +229,8 @@ test("private flows persist encrypted images, branch versions and gallery only o
     ["40", "41", "42"],
   );
   const results = await local(`/sessions/${session.id}/results`);
+  assert.equal((await local(`/gallery?session=${session.id}`)).length, 3);
+  assert.deepEqual(await local("/gallery?session=missing"), []);
   assert.equal(results.length, 3);
   assert.equal(
     (await app.deviceImageBlob(results[0].asset_id)).size,
@@ -385,11 +401,23 @@ test("image-only edits, candidate batches, Stop, failures and defaults remain us
 test("native download exports authenticated bytes instead of a browser blob link", async () => {
   native = true;
   exports = [];
-  await app.saveImage(new Blob([png], { type: "image/png" }), "fixture");
+  assert.equal(await app.saveImage(new Blob([png], { type: "image/png" }), "fixture"), "saved");
   assert.equal(exports[0].name, "native_save_image");
   assert.equal(exports[0].args.filename, "fixture.png");
   assert.deepEqual(Buffer.from(exports[0].args.data, "base64"), png);
   native = false;
+});
+
+test("cancelling the Android save dialog is not reported as a successful download", async () => {
+  native = true;
+  const invoke = globalThis.__imageTestNative.invokeNative;
+  globalThis.__imageTestNative.invokeNative = async () => ({ saved: false });
+  try {
+    assert.equal(await app.saveImage(new Blob([png], { type: "image/png" }), "cancelled"), "cancelled");
+  } finally {
+    globalThis.__imageTestNative.invokeNative = invoke;
+    native = false;
+  }
 });
 
 test("private seed exhaustion retains completed images without wrapping", async () => {
@@ -678,10 +706,11 @@ test("browser downloads retain the normal authenticated blob download", async ()
     callback();
   };
   try {
-    await app.saveImage(
+    const result = await app.saveImage(
       new Blob([png], { type: "image/png" }),
       "browser-fixture",
     );
+    assert.equal(result, "requested");
     assert.equal(anchor.download, "browser-fixture.png");
     assert.ok(anchor.href.startsWith("blob:"));
     assert.ok(appended && anchor.clicked && anchor.removed);

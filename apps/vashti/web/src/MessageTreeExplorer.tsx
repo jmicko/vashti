@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsDown,
+  Crosshair,
   LocateFixed,
   Minus,
   Plus,
@@ -116,6 +117,7 @@ export function MessageTreeExplorer({
     () => new Set()
   );
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const findCurrent = useRef(false);
 
   const tree = useMemo(() => buildMessageTree(messages), [messages]);
   const activeBranch = useMemo(() => {
@@ -148,6 +150,17 @@ export function MessageTreeExplorer({
     viewRef.current = nextView;
     setView(nextView);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!findCurrent.current || !viewportRef.current) return;
+    findCurrent.current = false;
+    const target = layout.nodes.find((node) => node.id === activeBranch.leafNodeId);
+    if (!target) return;
+    const rect = viewportRef.current.getBoundingClientRect();
+    const scale = clamp(viewRef.current.scale, .72, 1);
+    applyView({ x: rect.width / 2 - (target.x + NODE_WIDTH / 2) * scale,
+      y: rect.height / 2 - (target.y + NODE_HEIGHT / 2) * scale, scale });
+  }, [layout, activeBranch.leafNodeId, applyView]);
 
   const fitTree = useCallback(() => {
     const viewport = viewportRef.current;
@@ -389,6 +402,12 @@ export function MessageTreeExplorer({
           </small>
         </div>
         <div className="message-tree-toolbar-actions">
+          <button type="button" className="icon-button" title="Find current message" aria-label="Find current message"
+            disabled={!activeBranch.leafNodeId} onClick={() => {
+              setFocusedNodeId(null);
+              findCurrent.current = true;
+              setCollapsedMessageIds((current) => new Set([...current].filter((id) => !activeBranch.messageIds.has(id))));
+            }}><Crosshair /></button>
           {collapsedMessageIds.size > 0 && (
             <button
               type="button"
@@ -517,6 +536,7 @@ export function MessageTreeExplorer({
                     <button
                       type="button"
                       className="message-tree-node-open"
+                      aria-current={node.id === activeBranch.leafNodeId ? "location" : undefined}
                       onClick={() => setFocusedNodeId(node.id)}
                     >
                       <header>
@@ -528,6 +548,7 @@ export function MessageTreeExplorer({
                       {renderNodePreview ? <div className="message-tree-custom-preview">{renderNodePreview(node.message)}</div> : <p>{treeNodePreview(node)}</p>}
                       <footer>
                         <span>{node.message.status}</span>
+                        {node.id === activeBranch.leafNodeId && <strong>Current</strong>}
                       </footer>
                     </button>
                     {hasChildren && node.id === collapseNodeId && (

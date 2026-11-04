@@ -111,6 +111,7 @@ export function ImageAsset({
     null,
   );
   const [failedId, setFailedId] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const failed = failedId === id;
   const [visible, setVisible] = useState(false);
   const [size, setSize] = useState<{
@@ -177,7 +178,7 @@ export function ImageAsset({
         if (!cache) owned.dispose();
       }
     };
-  }, [id, shouldLoad, cache, path, thumbnail]);
+  }, [id, shouldLoad, cache, path, thumbnail, attempt]);
   useEffect(() => {
     if (!visible || !cache || !neighborKey) return;
     const entries = neighborKey.split(",").map((value) => cache.acquire(value));
@@ -222,6 +223,14 @@ export function ImageAsset({
         ) : (
           <img draggable={false} src={image.url} alt={alt} />
         )
+      ) : failed && !thumbnail ? (
+        <div className="images-asset-error" role="status">
+          <span>Image unavailable</span>
+          <button type="button" className="secondary-button" onClick={(event) => {
+            event.stopPropagation();
+            setAttempt((value) => value + 1);
+          }}>Retry image</button>
+        </div>
       ) : (
         <span role={thumbnail ? undefined : "status"} aria-label={thumbnail && failed ? "Image unavailable" : undefined}>
           {failed ? "Image unavailable" : !thumbnail && shouldLoad ? "Loading image..." : ""}
@@ -231,5 +240,5 @@ export function ImageAsset({
   );
 }
 export async function downloadImage(id: string, path = "/api/images") {
-  await saveImage(await loadImageBlob(path, id), id);
+  return saveImage(await loadImageBlob(path, id), id);
 }

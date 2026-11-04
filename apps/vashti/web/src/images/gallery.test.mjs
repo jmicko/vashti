@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendGallery, galleryVariants } from "./gallery.ts";
+import { appendGallery, galleryDays, galleryVariants } from "./gallery.ts";
+
+test("gallery groups local calendar days without changing library order across pages", () => {
+  const now = new Date(2026, 10, 3, 14);
+  const item = (id, day, hour = 12) => ({ id, created_at: new Date(2026, 10, day, hour).getTime() / 1000 });
+  const items = [item("one", 3), item("two", 3, 0), item("three", 2), item("four", 1)];
+  const groups = galleryDays(items, now);
+  assert.deepEqual(groups.slice(0, 2).map(day => day.label), ["Today", "Yesterday"]);
+  assert.deepEqual(groups.flatMap(day => day.items), items);
+  assert.deepEqual(groups.map(day => day.items.length), [2, 1, 1]);
+  assert.deepEqual(galleryDays([], now), []);
+});
 
 test("gallery pagination appends without replacing or repeating existing tiles", () => {
   const original = [{ id: "one" }, { id: "two" }];

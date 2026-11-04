@@ -1,3 +1,5 @@
+import { ToolRecordNavigation } from "./ToolRecordLinks";
+import type { ToolRecord } from "./toolRecords";
 import {
   lazy,
   Suspense,
@@ -8,6 +10,7 @@ import {
   useState
 } from "react";
 import {
+  ArrowLeft,
   Cog,
   Download,
   GitFork,
@@ -142,6 +145,7 @@ export function AppShell({
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
   const routeRef = useRef(route);
   const [noteReturnRoute, setNoteReturnRoute] = useState<AppRoute | null>(null);
+  const [toolReturnRoute, setToolReturnRoute] = useState<AppRoute | null>(null);
   const [isNotesEditorOpen, setIsNotesEditorOpen] = useState(false);
   const [imageHeaderTarget, setImageHeaderTarget] = useState<HTMLDivElement | null>(
     null
@@ -726,6 +730,7 @@ export function AppShell({
       }
 
       setRoute(nextRoute);
+      setToolReturnRoute(null);
       if (nextRoute.page !== "notes") {
         setNoteReturnRoute(null);
       }
@@ -784,6 +789,7 @@ export function AppShell({
       window.history.pushState(null, "", nextPath);
     }
     setRoute(nextRoute);
+    setToolReturnRoute(null);
     if (nextRoute.page !== "notes") {
       setNoteReturnRoute(null);
     }
@@ -827,6 +833,16 @@ export function AppShell({
       setNoteReturnRoute(route);
     }
     navigate({ page: "notes", storageMode, noteId });
+  }
+
+  function openToolRecord(record: ToolRecord) {
+    const source = toolReturnRoute ?? route;
+    const destination: AppRoute = record.kind === "memory"
+      ? { page: "settings", section: "memories", memoryId: record.id }
+      : { page: "chat", chatId: record.id };
+    if (routesEqual(route, destination)) return;
+    navigate(destination);
+    setToolReturnRoute(source);
   }
 
   function returnToReferencedChat() {
@@ -1281,6 +1297,7 @@ export function AppShell({
     .join(" ");
 
   return (
+    <ToolRecordNavigation value={openToolRecord}>
     <main className={shellClassName}>
       {!isSettingsPage && !(isNotesPage && isNotesEditorOpen) && (
         <>
@@ -1338,7 +1355,7 @@ export function AppShell({
           />
         </>
       )}
-      <section className="main-pane">
+      <section className={`main-pane${toolReturnRoute ? " main-pane-with-source" : ""}`}>
         {topbarPull.isEnabled && (
           <div
             className={`topbar-pull-indicator topbar-pull-${topbarPull.pullState}`}
@@ -1415,6 +1432,7 @@ export function AppShell({
                   privatePersonaVersions={knownPrivatePersonaVersions}
                   isLoading={isLoadingModels}
                   error={modelError}
+                  onManageModels={() => openSettings(isAdmin ? "backends" : "models")}
                   value={activeSelectedModel}
                   onChange={(value) => {
                     setChatBaseModelOverride(null);
@@ -1540,8 +1558,12 @@ export function AppShell({
             </div>
           </div>
         </header>
+        {toolReturnRoute && <div className="tool-source-return"><button type="button" className="secondary-button" onClick={() => navigate(toolReturnRoute)}>
+          <ArrowLeft />Back to source chat
+        </button></div>}
         {page === "settings" ? (
           <SettingsPage
+            initialMemoryId={route.page === "settings" ? route.memoryId : undefined}
             currentUser={user}
             activeSection={settingsSection}
             onBackendsChanged={loadModels}
@@ -1723,6 +1745,7 @@ export function AppShell({
         />
       )}
     </main>
+    </ToolRecordNavigation>
   );
 }
 

@@ -946,6 +946,31 @@ textarea {
   grid-template-rows: auto 1fr;
 }
 
+.main-pane-with-source { grid-template-rows: auto auto minmax(0, 1fr); }
+.tool-source-return { padding: 6px 14px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+.tool-source-return button { gap: 8px; min-height: 40px; }
+.tool-record-links { display: grid; gap: 4px; padding: 8px 0; }
+.tool-record-links a { display: flex; align-items: center; gap: 8px; min-height: 44px; min-width: 0; padding: 6px 8px; border-radius: 4px; color: var(--text); }
+.tool-record-links a:hover { background: var(--accent-muted); }
+.tool-record-links a > svg { flex: 0 0 18px; width: 18px; height: 18px; color: var(--accent); }
+.tool-record-copy { min-width: 0; display: grid; gap: 4px; }
+.tool-record-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-record-copy > small { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.message-tool-technical { color: var(--muted); font-size: .85rem; }
+.effective-access { min-width: 0; padding-block: 8px; border-bottom: 1px solid var(--line-soft); }
+.effective-access h3 { margin: 0 0 8px; font-size: .9rem; }
+.effective-access dl { display: grid; gap: 6px; margin: 0 0 8px; font-size: .85rem; }
+.effective-access dl > div { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+.effective-access dd { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); }
+.effective-access dd svg { width: 14px; height: 14px; flex-shrink: 0; }
+.effective-access small { color: var(--muted); }
+.message-tree-node footer strong { font-size: inherit; color: var(--accent); }
+
+@media (max-width: 400px) {
+  .message-tree-toolbar { flex-wrap: wrap; }
+  .message-tree-toolbar-actions { margin-left: auto; flex-wrap: wrap; }
+}
+
 .topbar {
   position: relative;
   z-index: 50;
@@ -7792,7 +7817,10 @@ textarea {
 }
 
 .confirm-dialog {
-  width: min(390px, 100%);
+  width: min(390px, calc(100vw - 36px));
+  max-height: calc(100dvh - 36px);
+  overflow: auto;
+  color: var(--text);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -7801,6 +7829,9 @@ textarea {
     0 18px 60px rgba(var(--shadow-rgb), 0.7);
   padding: 20px;
 }
+
+.confirm-dialog::backdrop { background: rgba(var(--shadow-rgb), 0.72); }
+.backend-capabilities { display: block; color: var(--muted); overflow-wrap: anywhere; }
 
 .confirm-dialog p {
   margin: 12px 0 20px;

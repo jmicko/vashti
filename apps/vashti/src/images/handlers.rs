@@ -66,6 +66,8 @@ pub(super) async fn user(state: &AppState, jar: &CookieJar) -> Result<String, Ap
 struct Page {
     #[serde(default)]
     offset: i64,
+    q: Option<String>,
+    session: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,7 +83,16 @@ async fn list_sessions(
     Query(page): Query<Page>,
 ) -> Result<Json<Vec<Session>>, ApiError> {
     let u = user(&state, &jar).await?;
-    Ok(Json(service::sessions(&state.db, &u, page.offset).await?))
+    let query = page.q.as_deref().unwrap_or("").trim();
+    if query.chars().count() > 200 {
+        return Err(ApiError::bad_request(
+            "image_search_long",
+            "Use a shorter search",
+        ));
+    }
+    Ok(Json(
+        service::sessions(&state.db, &u, page.offset, query).await?,
+    ))
 }
 async fn create_session(
     State(state): State<AppState>,
@@ -225,7 +236,9 @@ async fn gallery(
     Query(page): Query<Page>,
 ) -> Result<Json<Vec<GalleryItem>>, ApiError> {
     let u = user(&state, &jar).await?;
-    Ok(Json(service::gallery(&state.db, &u, page.offset).await?))
+    Ok(Json(
+        service::gallery(&state.db, &u, page.offset, page.session.as_deref()).await?,
+    ))
 }
 async fn copy(
     State(state): State<AppState>,

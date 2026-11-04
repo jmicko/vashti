@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ConfirmDialog } from "../common";
 import {
   ArrowLeft,
   ImagePlus,
@@ -69,12 +70,34 @@ function Workspace({
   const [error, setError] = useState("");
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [settings, setSettings] = useState<ServiceSettings | null>(null);
+  const [savedSettings, setSavedSettings] = useState<ServiceSettings | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const afterClose = useRef<(() => void) | undefined>(undefined);
+  const preferencesRequest = useRef(0);
   const [busy, setBusy] = useState(false);
   const [activeRuns, setActiveRuns] = useState<Run[]>([]);
   const [createdFlow, setCreatedFlow] = useState<{
     id: string;
     key: string;
   } | null>(null);
+  const serverDirty = Boolean(settings && savedSettings &&
+    (settings.backend_id !== savedSettings.backend_id || settings.max_user_bytes !== savedSettings.max_user_bytes));
+  const personalDirty = Boolean(pendingPreferences && preferences && JSON.stringify(pendingPreferences) !== JSON.stringify(preferences));
+  useEffect(() => {
+    if (!preferencesOpen || (!personalDirty && !serverDirty)) return;
+    const protect = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", protect);
+    return () => window.removeEventListener("beforeunload", protect);
+  }, [preferencesOpen, personalDirty, serverDirty]);
+
+  function closePreferences(next?: () => void) {
+    if (busy) return;
+    afterClose.current = next;
+    if (personalDirty || serverDirty) { setConfirmDiscard(true); return; }
+    preferencesRequest.current++;
+    setPreferencesOpen(false);
+    next?.();
+  }
   useEffect(() => {
     let live = true;
     const refresh = () => {
@@ -134,12 +157,18 @@ function Workspace({
     };
   }, [refreshHosts]);
   function openPreferences() {
+    const request = ++preferencesRequest.current;
     setPendingPreferences(preferences ? structuredClone(preferences) : null);
     setPreferencesOpen(true);
+    setSettings(null);
+    setSavedSettings(null);
     if (isAdmin)
       void requestJson<ServiceSettings>("/api/images/settings")
-        .then(setSettings)
-        .catch((error) => setError(imageError(error)));
+        .then((value) => {
+          if (request !== preferencesRequest.current) return;
+          setSettings(value); setSavedSettings(value);
+        })
+        .catch((error) => { if (request === preferencesRequest.current) setError(imageError(error)); });
   }
   async function savePreferences() {
     if (!pendingPreferences) return;
@@ -152,7 +181,7 @@ function Workspace({
           "PUT",
         ),
       );
-      setPreferencesOpen(false);
+      if (!serverDirty) setPreferencesOpen(false);
     } catch (error) {
       setError(imageError(error));
     } finally {
@@ -269,7 +298,7 @@ function Workspace({
           </button>
         </div>
       ) : view === "gallery" && preferences ? (
-        <ImageGallery preferences={preferences} onNavigate={onNavigate} />
+        <ImageGallery key={`${imagePath}:${sessionId ?? "all"}`} sessionId={sessionId} preferences={preferences} onNavigate={onNavigate} />
       ) : flow && preferences ? (
         <ImageFlow
           key={
@@ -310,8 +339,10 @@ function Workspace({
       {preferencesOpen && pendingPreferences && (
         <ImagePanel
           title="Image preferences"
-          onClose={() => setPreferencesOpen(false)}
+          onClose={() => closePreferences()}
         >
+          <fieldset disabled={busy}>
+          {error && <p role="alert" className="images-error">{error}</p>}
           <details open>
             <summary>Visible inference controls</summary>
             {imageControls.map(([key, label]) => (
@@ -397,7 +428,7 @@ function Workspace({
                 Check hosts
               </button>
               {isAdmin && (
-                <button type="button" onClick={onOpenBackends}>
+                <button type="button" onClick={() => closePreferences(onOpenBackends)}>
                   Backends
                 </button>
               )}
@@ -440,7 +471,7 @@ function Workspace({
                 </label>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !serverDirty}
                   onClick={() => {
                     setBusy(true);
                     void writeImage<ServiceSettings>(
@@ -451,12 +482,12 @@ function Workspace({
                       },
                       "PUT",
                     )
-                      .then(setSettings)
+                      .then((value) => { setSettings(value); setSavedSettings(value); })
                       .catch((error) => setError(imageError(error)))
                       .finally(() => setBusy(false));
                   }}
                 >
-                  Save server settings
+                  {serverDirty ? "Save server settings" : "Server settings saved"}
                 </button>
               </div>
             </details>
@@ -464,13 +495,25 @@ function Workspace({
           <button
             type="button"
             className="primary-action"
-            disabled={busy}
+            disabled={busy || !personalDirty}
             onClick={() => void savePreferences()}
           >
-            Save preferences
+            Save my preferences
           </button>
+          </fieldset>
         </ImagePanel>
       )}
+      {confirmDiscard && <ConfirmDialog title="Discard image preference changes?"
+        message="Unsaved account preferences and server settings will be discarded. Your conversation settings are unchanged."
+        confirmLabel="Discard changes" isBusy={false}
+        onCancel={() => { setConfirmDiscard(false); afterClose.current = undefined; }}
+        onConfirm={() => {
+          preferencesRequest.current++;
+          setConfirmDiscard(false);
+          setPreferencesOpen(false);
+          afterClose.current?.();
+          afterClose.current = undefined;
+        }} />}
     </div>
   );
 }

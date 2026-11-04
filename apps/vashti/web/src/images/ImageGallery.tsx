@@ -1,19 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  Download,
   History,
   Layers,
   Pencil,
   SlidersHorizontal,
   Trash2,
+  X,
 } from "lucide-react";
-import { ImageAsset, downloadImage } from "./ImageAsset";
+import { ImageAsset } from "./ImageAsset";
+import { DownloadImageButton } from "./DownloadImageButton";
 import { ImageComparison } from "./ImageComparison";
 import { ActionMenu } from "../ActionMenu";
 import { comparisonReference } from "./comparison";
-import { appendGallery, galleryVariants } from "./gallery";
+import { appendGallery, galleryDays, galleryVariants } from "./gallery";
 import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
 import { useImagePath } from "./storage";
 import {
@@ -28,11 +29,14 @@ import {
 export function ImageGallery({
   preferences,
   onNavigate,
+  sessionId,
 }: {
   preferences: Preferences;
+  sessionId?: string;
   onNavigate: (view: ImageView, id?: string) => void;
 }) {
   const imagePath = useImagePath();
+  const galleryPath = `${imagePath}/gallery?${new URLSearchParams(sessionId ? { session: sessionId } : {})}`;
   const [items, setItems] = useState<GalleryItem[]>([]);
   const [nextOffset, setNextOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -44,6 +48,8 @@ export function ImageGallery({
   const mounted = useRef(true);
   const pageRequest = useRef<Promise<GalleryItem[]> | null>(null);
   const pageSentinel = useRef<HTMLDivElement>(null);
+  const grid = useRef<HTMLDivElement>(null);
+  const densityAnchor = useRef<{ id: string; top: number } | null>(null);
   const nextPage = useRef<() => Promise<GalleryItem[]>>(async () => []);
   const variantsCache = useRef(new Map<string, ImageResult[]>());
   const [viewer, setViewer] = useState<{
@@ -56,7 +62,7 @@ export function ImageGallery({
   useEffect(() => {
     let live = true;
     mounted.current = true;
-    requestJson<GalleryItem[]>(`${imagePath}/gallery?offset=0`)
+    requestJson<GalleryItem[]>(`${galleryPath}&offset=0`)
       .then((values) => {
         if (!live) return;
         setItems(values);
@@ -73,7 +79,25 @@ export function ImageGallery({
       live = false;
       mounted.current = false;
     };
-  }, [imagePath]);
+  }, [galleryPath]);
+
+  useLayoutEffect(() => {
+    const anchor = densityAnchor.current;
+    if (!anchor) return;
+    densityAnchor.current = null;
+    const tile = Array.from(grid.current?.querySelectorAll<HTMLElement>("[data-gallery-id]") ?? [])
+      .find((element) => element.dataset.galleryId === anchor.id);
+    const scroller = grid.current?.closest(".images-workspace");
+    if (tile && scroller) scroller.scrollTop += tile.getBoundingClientRect().top - anchor.top;
+  }, [density]);
+
+  function changeDensity(value: number) {
+    const top = grid.current?.closest(".images-workspace")?.getBoundingClientRect().top ?? 0;
+    const tile = Array.from(grid.current?.querySelectorAll<HTMLElement>("[data-gallery-id]") ?? [])
+      .find((element) => element.getBoundingClientRect().bottom > top);
+    if (tile) densityAnchor.current = { id: tile.dataset.galleryId!, top: tile.getBoundingClientRect().top };
+    setDensity(value);
+  }
 
   async function loadMore(): Promise<GalleryItem[]> {
     if (pageRequest.current) return pageRequest.current;
@@ -82,7 +106,7 @@ export function ImageGallery({
     const request = (async () => {
       try {
         const page = await requestJson<GalleryItem[]>(
-          `${imagePath}/gallery?offset=${nextOffset}`,
+          `${galleryPath}&offset=${nextOffset}`,
         );
         if (!mounted.current) return [];
         setItems((values) => appendGallery(values, page));
@@ -227,6 +251,8 @@ export function ImageGallery({
   }
 
   const selected = viewer?.results[viewer.index];
+  const days = useMemo(() => galleryDays(items), [items]);
+  const positions = useMemo(() => new Map(items.map((item, index) => [item.id, index + 1])), [items]);
   const alert = error && (
     <p className="images-error" role="alert">
       {error}
@@ -241,6 +267,9 @@ export function ImageGallery({
             ? "Loading images..."
             : `${items.length}${hasMore ? "+" : ""} images`}
         </small>
+        {sessionId && <button type="button" className="secondary-button" onClick={() => onNavigate("gallery")}>
+          <X size={16} />This conversation
+        </button>}
         <ActionMenu label="Gallery view" icon={<SlidersHorizontal />}>
           <fieldset className="gallery-view-options">
             <legend>Thumbnail size</legend>
@@ -250,7 +279,7 @@ export function ImageGallery({
                   type="radio"
                   name="gallery-density"
                   checked={density === value}
-                  onChange={() => setDensity(value)}
+                  onChange={() => changeDensity(value)}
                 />
                 {label}
               </label>
@@ -259,17 +288,21 @@ export function ImageGallery({
         </ActionMenu>
       </div>
       <div
+        ref={grid}
         className={`images-gallery images-gallery-density-${density}`}
         aria-label="Image gallery"
       >
-        {items.map((item, index) => (
+        {days.map((day) => <Fragment key={day.key}>
+          <h2 className="images-gallery-date">{day.label}</h2>
+          {day.items.map((item) => (
           <button
             key={item.id}
+            data-gallery-id={item.id}
             type="button"
             className="images-gallery-tile"
             disabled={busy}
             onClick={() => open(item)}
-            aria-label={`Open image ${index + 1}${item.variants > 1 ? `, ${item.variants} versions` : ""}`}
+            aria-label={`Open image ${positions.get(item.id)}${item.variants > 1 ? `, ${item.variants} versions` : ""}`}
           >
             <ImageAsset
               id={item.asset_id}
@@ -284,7 +317,8 @@ export function ImageGallery({
               </span>
             )}
           </button>
-        ))}
+          ))}
+        </Fragment>)}
       </div>
       {!items.length && !loading && !error && (
         <p className="images-empty" role="status">
@@ -357,6 +391,7 @@ export function ImageGallery({
           secondaryActions={
             <>
               {viewer.item.session_id && (
+                <>
                 <button
                   type="button"
                   onClick={() => onNavigate("flow", viewer.item.session_id!)}
@@ -364,6 +399,10 @@ export function ImageGallery({
                   <History />
                   Open image flow
                 </button>
+                {!sessionId && <button type="button" onClick={() => onNavigate("gallery", viewer.item.session_id!)}>
+                  <Layers />Only this conversation
+                </button>}
+                </>
               )}
               <button
                 type="button"
@@ -427,20 +466,7 @@ export function ImageGallery({
           >
             <Pencil />
           </button>
-          <button
-            type="button"
-            className="images-icon"
-            disabled={busy}
-            title="Download image"
-            aria-label="Download image"
-            onClick={() =>
-              void action(() =>
-                downloadImage(viewer.ids[viewer.index], imagePath),
-              )
-            }
-          >
-            <Download />
-          </button>
+          <DownloadImageButton id={viewer.ids[viewer.index]} path={imagePath} disabled={busy} onError={setError} />
         </ImageComparison>
       )}
     </>

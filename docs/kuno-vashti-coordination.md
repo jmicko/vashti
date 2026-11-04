@@ -1,5 +1,15 @@
 # Kuno and Vashti Coordination
 
+**Vashti UX follow-up (2026-11-03):** the preserved image-library/UX snapshots are
+recovered on `codex/ux-report-refinements` in the normal application checkout,
+with Demons frontend/backend/watchers aligned. Title-search/gallery filtering
+are additive Vashti-only API changes and preserve owner/device scope. No Kuno
+API, native-engine source, installation, or GPU test changed. See
+[the current UX report](ux-review-2026-10-27.md#november-3-refinement) for source
+coverage and validation limits. Browser use is currently disabled; manual and
+physical Android acceptance remain outstanding. No release is authorized by
+this checkpoint.
+
 **Current native-engine handoff (2026-10-31):** read the
 [57-line handoff](kuno-handoff-2026-10-31.txt) and
 [worktree disposition](kuno-worktree-disposition-2026-10-31.md).

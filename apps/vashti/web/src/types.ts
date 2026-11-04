@@ -728,7 +728,7 @@ export type AppRoute =
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }
   | { page: "notes"; storageMode?: "server" | "device"; noteId?: string }
-  | { page: "settings"; section: SettingsSection; storageMode?: "server" | "device" };
+  | { page: "settings"; section: SettingsSection; storageMode?: "server" | "device"; memoryId?: string };
 export type SettingsGuard = {
   isDirty: boolean;
   save: () => Promise<boolean>;

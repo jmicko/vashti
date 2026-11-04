@@ -3,6 +3,8 @@ import { RetroLoader, ThinkingLoader } from "./common";
 import { MarkdownContent } from "./MarkdownContent";
 import { toolIcon } from "./toolUi";
 import { calculatorResult } from "./calculatorResult";
+import { ToolRecordLinks } from "./ToolRecordLinks";
+import { toolEmptyResult } from "./toolRecords";
 import type { ChatMessage, MessageStreamSegment, ThinkingSegment, ToolUsageRecord } from "./types";
 
 export function MessageStreamContent({
@@ -97,6 +99,10 @@ const ToolUsageCard = memo(function ToolUsageCard({ usage }: { usage: ToolUsageR
           </span>
         ) : <span>{usage.summary}</span>}
       </summary>
+      {toolEmptyResult(usage) && <p className="muted">No matches.</p>}
+      <ToolRecordLinks usage={usage} />
+      <details className="message-tool-technical">
+        <summary>Technical details</summary>
       <div className="message-tool-details">
         <label>
           <span>Arguments</span>
@@ -107,6 +113,7 @@ const ToolUsageCard = memo(function ToolUsageCard({ usage }: { usage: ToolUsageR
           <pre>{formatToolResult(usage.result)}</pre>
         </label>
       </div>
+      </details>
     </details>
   );
 });

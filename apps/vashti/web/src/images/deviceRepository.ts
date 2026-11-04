@@ -402,6 +402,9 @@ export async function deviceImageRequest<T>(
         if (method === "GET")
           return (await flows())
             .map((value) => value.session)
+            .filter((session) => session.title.toLocaleLowerCase().includes(
+              (parsed.searchParams.get("q") ?? "").trim().toLocaleLowerCase(),
+            ))
             .slice(offset, offset + 50);
         const session: ImageSession = {
           id: uuid(),
@@ -638,6 +641,8 @@ export async function deviceImageRequest<T>(
         return {};
       }
       return items
+        .filter((item) => !parsed.searchParams.get("session") ||
+          item.session_id === parsed.searchParams.get("session"))
         .sort((a, b) => b.created_at - a.created_at)
         .slice(offset, offset + 50);
     }

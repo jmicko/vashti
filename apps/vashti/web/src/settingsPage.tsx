@@ -54,6 +54,7 @@ const MemoriesSettingsPanel = lazy(() =>
 export function SettingsPage({
   currentUser,
   activeSection,
+  initialMemoryId,
   onBackendsChanged,
   onToolsChanged,
   onPersonasChanged,
@@ -75,6 +76,7 @@ export function SettingsPage({
 }: {
   currentUser: User;
   activeSection: SettingsSection;
+  initialMemoryId?: string;
   onBackendsChanged: () => Promise<void>;
   onToolsChanged: () => Promise<void>;
   onPersonasChanged: () => Promise<void>;
@@ -202,6 +204,7 @@ export function SettingsPage({
           )}
           {selectedSection === "memories" && (
             <MemoriesSettingsPanel
+              initialMemoryId={initialMemoryId}
               modelGroups={modelGroups}
               personas={personas}
               onToolsChanged={onToolsChanged}

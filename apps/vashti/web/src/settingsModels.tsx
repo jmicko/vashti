@@ -31,6 +31,8 @@ import {
 import { ModelBackgroundButton } from "./ModelBackground";
 import { ModelPicker } from "./ModelPicker";
 import { ModelCapabilityBadges } from "./modelCapabilities";
+import { canChatWith } from "./modelEligibility";
+import type { ImageHost } from "./images/types";
 import { compactModelName, modelValue } from "./modelSelection";
 import { DefaultPermissionTagControls, PermissionTagEditor } from "./permissionTags";
 import { CustomModelsSection } from "./settingsPersonas";
@@ -891,6 +893,7 @@ export function UserModelsPanel({
 
 export function AdminModelsAccessPanel({
   backends,
+  imageHosts = [],
   editingBackend,
   backendBusyId,
   onCancelBackendEdit,
@@ -903,6 +906,7 @@ export function AdminModelsAccessPanel({
   onModelsChanged
 }: {
   backends: Backend[];
+  imageHosts?: ImageHost[];
   editingBackend: Backend | null;
   backendBusyId: string | null;
   onCancelBackendEdit: () => void;
@@ -1391,6 +1395,7 @@ export function AdminModelsAccessPanel({
 
           const group = groups.find((candidate) => candidate.backend.id === backend.id);
           const models = group?.models ?? [];
+          const images = imageHosts.find((host) => host.backend.id === backend.id)?.service;
           const enabledCount = models.filter((model) => model.is_enabled).length;
           const isModelsBackendBusy = busyModelsBackendId === backend.id;
           const isBackendBusy = backendBusyId === backend.id;
@@ -1402,6 +1407,9 @@ export function AdminModelsAccessPanel({
                   <div>
                     <h2>{backend.name}</h2>
                     <p>{backend.base_url}</p>
+                    <small className="backend-capabilities" title={images?.message}>
+                      {models.filter(canChatWith).length} chat models · {models.filter((model) => model.capabilities?.includes("embedding")).length} embedding models · Images: {backend.is_enabled ? images?.state ?? "not checked" : "disabled"}
+                    </small>
                     {backend.last_error && <p className="backend-error">{backend.last_error}</p>}
                   </div>
                   <div className="badges">

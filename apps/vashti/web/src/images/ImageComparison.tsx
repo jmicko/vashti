@@ -93,7 +93,7 @@ export function ImageComparison({
         />
       </div>
       {referenceId && (
-        <div className="image-compare-reference" aria-hidden={!showing}>
+        <div className="image-compare-reference" aria-hidden={!showing} inert={!showing || undefined}>
           <ImageAsset
             id={referenceId}
             alt="First reference used for this edit"

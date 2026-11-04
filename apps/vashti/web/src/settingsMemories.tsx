@@ -18,6 +18,8 @@ import {
   Trash2
 } from "lucide-react";
 import { ConfirmDialog } from "./common";
+import { EffectiveAccess } from "./notes/EffectiveAccess";
+import { memoryAccessStatus } from "./notes/effectiveAccess";
 import {
   NoteModelScopeEditor,
   buildNoteModelOptions,
@@ -57,11 +59,13 @@ const EMPTY_SCOPE: MemoryModelScope = { all_models: true, model_keys: [] };
 
 export function MemoriesSettingsPanel({
   modelGroups,
+  initialMemoryId,
   personas,
   onToolsChanged,
   onGuardChange
 }: {
   modelGroups: BackendModelGroup[];
+  initialMemoryId?: string;
   personas: Persona[];
   onToolsChanged: () => Promise<void>;
   onGuardChange: (guard: SettingsGuard | null) => void;
@@ -86,6 +90,7 @@ export function MemoriesSettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const loadRequestRef = useRef(0);
+  const memoryRequestRef = useRef(0);
   const skipInitialListReloadRef = useRef(true);
 
   const modelOptions = useMemo(
@@ -156,6 +161,11 @@ export function MemoriesSettingsPanel({
       loadRequestRef.current += 1;
     };
   }, [loadInitial]);
+
+  useEffect(() => {
+    if (initialMemoryId) void openMemory(initialMemoryId);
+    return () => { memoryRequestRef.current++; };
+  }, [initialMemoryId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180);
@@ -325,20 +335,23 @@ export function MemoriesSettingsPanel({
   }
 
   async function openMemory(memoryId: string) {
+    const requestId = ++memoryRequestRef.current;
     setIsLoadingMemory(true);
     setError(null);
     setStatus(null);
     try {
       const memory = await getMemory(memoryId);
+      if (requestId !== memoryRequestRef.current) return;
       setSelectedMemory(memory);
       setIsCreating(false);
       setContentDraft(memory.current_version.content);
       setScopeDraft(cloneScope(memory.model_scope));
       setVersions(null);
     } catch (loadError) {
+      if (requestId !== memoryRequestRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Failed to load memory");
     } finally {
-      setIsLoadingMemory(false);
+      if (requestId === memoryRequestRef.current) setIsLoadingMemory(false);
     }
   }
 
@@ -351,6 +364,8 @@ export function MemoriesSettingsPanel({
   }
 
   function beginNewMemory() {
+    memoryRequestRef.current++;
+    setIsLoadingMemory(false);
     setSelectedMemory(null);
     setIsCreating(true);
     setContentDraft("");
@@ -369,6 +384,8 @@ export function MemoriesSettingsPanel({
   }
 
   function clearEditor() {
+    memoryRequestRef.current++;
+    setIsLoadingMemory(false);
     setSelectedMemory(null);
     setIsCreating(false);
     setContentDraft("");
@@ -687,6 +704,8 @@ export function MemoriesSettingsPanel({
             </header>
 
             {selectedMemory && <MemorySource version={selectedMemory.current_version} />}
+            {savedSettings && <EffectiveAccess pending={isDirty}
+              status={memoryAccessStatus(scopeDraft, settingsDraft ?? savedSettings, "", Boolean(selectedMemory?.deleted_at))} />}
 
             <label className="setting-field memory-content-field">
               <span>What should Vashti remember?</span>

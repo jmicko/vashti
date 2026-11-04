@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Image, MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Image, MoreHorizontal, Pencil, Search, Trash2, X } from "lucide-react";
 import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
 import { deviceImagePath, type ImageStorage } from "./storage";
 import type { ImageSession } from "./types";
@@ -26,45 +26,66 @@ export function ImageFlowHistory({
   const [remove, setRemove] = useState<ImageSession | null>(null);
   const [busy, setBusy] = useState(false);
   const [more, setMore] = useState(false);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const generation = useRef(0);
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 180);
+    return () => clearTimeout(timer);
+  }, [search]);
   useEffect(() => {
     let live = true;
-    const refresh = () =>
-      void requestJson<ImageSession[]>(`${imagePath}/sessions`)
+    generation.current++;
+    let loaded = false;
+    let refreshRequest = 0;
+    setSessions([]);
+    setLoading(true);
+    setError("");
+    setMore(false);
+    setMenu(null);
+    setRename(null);
+    setRemove(null);
+    const refresh = () => {
+      const request = ++refreshRequest;
+      void requestJson<ImageSession[]>(
+        `${imagePath}/sessions?q=${encodeURIComponent(query)}`,
+      )
         .then((values) => {
-          if (live) {
-            setSessions((previous) => [
-              ...values,
-              ...previous
-                .slice(50)
-                .filter(
-                  (value) => !values.some((current) => current.id === value.id),
-                ),
-            ]);
-            setMore((previous) => (values.length < 50 ? false : previous));
+          if (live && request === refreshRequest) {
+            const firstLoad = !loaded;
+            loaded = true;
+            setSessions((previous) =>
+              firstLoad
+                ? values
+                : [
+                    ...values,
+                    ...previous
+                      .slice(50)
+                      .filter(
+                        (value) =>
+                          !values.some((current) => current.id === value.id),
+                      ),
+                  ],
+            );
+            setMore((previous) =>
+              firstLoad
+                ? values.length === 50
+                : values.length < 50
+                  ? false
+                  : previous,
+            );
             setLoading(false);
             setError("");
           }
         })
         .catch((error) => {
-          if (live) {
+          if (live && request === refreshRequest) {
             setError(imageError(error));
             setLoading(false);
           }
         });
-    void requestJson<ImageSession[]>(`${imagePath}/sessions`)
-      .then((values) => {
-        if (live) {
-          setSessions(values);
-          setMore(values.length === 50);
-          setLoading(false);
-        }
-      })
-      .catch((error) => {
-        if (live) {
-          setError(imageError(error));
-          setLoading(false);
-        }
-      });
+    };
+    refresh();
     window.addEventListener("vashti:image-flows-changed", refresh);
     window.addEventListener("focus", refresh);
     const timer = setInterval(refresh, 30000);
@@ -74,7 +95,7 @@ export function ImageFlowHistory({
       window.removeEventListener("vashti:image-flows-changed", refresh);
       window.removeEventListener("focus", refresh);
     };
-  }, []);
+  }, [imagePath, query]);
   useEffect(() => {
     if (!menu) return;
     const outside = (event: PointerEvent) => {
@@ -109,11 +130,22 @@ export function ImageFlowHistory({
   return (
     <>
       <p className="eyebrow">Previous Image Flows</p>
+      <label className="history-search">
+        <Search aria-hidden="true" />
+        <input
+          type="search"
+          aria-label="Search image conversations"
+          placeholder="Search image conversations"
+          maxLength={200}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </label>
       {error && <p role="alert">{error}</p>}
       {loading && !sessions.length ? (
         <p role="status">Loading flows...</p>
       ) : !sessions.length ? (
-        <p>No image flows yet</p>
+        <p>{query ? "No matching conversations" : "No image flows yet"}</p>
       ) : (
         <div className="chat-link-list">
           {sessions.map((session) => (
@@ -131,6 +163,17 @@ export function ImageFlowHistory({
                         `${imagePath}/sessions/${session.id}/title`,
                         { title: title.trim() },
                         "PATCH",
+                      );
+                      setSessions((values) =>
+                        values.flatMap((session) => {
+                          if (session.id !== rename.id) return [session];
+                          const renamed = { ...session, title: title.trim() };
+                          return renamed.title
+                            .toLocaleLowerCase()
+                            .includes(query.toLocaleLowerCase())
+                            ? [renamed]
+                            : [];
+                        }),
                       );
                       setRename(null);
                     });
@@ -223,9 +266,11 @@ export function ImageFlowHistory({
               disabled={busy}
               onClick={() =>
                 void action(async () => {
+                  const current = generation.current;
                   const older = await requestJson<ImageSession[]>(
-                    `${imagePath}/sessions?offset=${sessions.length}`,
+                    `${imagePath}/sessions?offset=${sessions.length}&q=${encodeURIComponent(query)}`,
                   );
+                  if (current !== generation.current) return;
                   setSessions((values) => [
                     ...values,
                     ...older.filter(
@@ -260,6 +305,9 @@ export function ImageFlowHistory({
                 await requestJson(`${imagePath}/sessions/${remove.id}`, {
                   method: "DELETE",
                 });
+                setSessions((values) =>
+                  values.filter((session) => session.id !== remove.id),
+                );
                 onRemoved(remove.id);
                 setRemove(null);
               })

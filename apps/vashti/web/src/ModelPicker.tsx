@@ -34,6 +34,7 @@ export function ModelPicker({
   modelUnavailable,
   task = "chat",
   emptyLabel = "No models",
+  onManageModels,
   onChange
 }: {
   groups: BackendModelGroup[];
@@ -50,6 +51,7 @@ export function ModelPicker({
   modelLabel?: (name: string) => string;
   modelUnavailable?: (backendId: string, name: string) => string | undefined;
   emptyLabel?: string;
+  onManageModels?: () => void;
   onChange: (value: string) => void;
 }) {
   const groups = useMemo(() => task === "chat" ? chatModelGroups(suppliedGroups) : suppliedGroups, [suppliedGroups, task]);
@@ -489,7 +491,10 @@ export function ModelPicker({
           </label>
           <div className="model-options">
             {filteredGroups.length === 0 && favoriteCount === 0 ? (
-              <p className="model-empty" role="status">{normalizedQuery ? "No matching models" : task === "chat" ? "No chat models available. Check the connected hosts in Settings." : emptyLabel}</p>
+              <div className="model-empty" role="status">
+                <p>{normalizedQuery ? "No matching models" : error ? "Models unavailable" : task === "chat" ? "No chat models available" : emptyLabel}</p>
+                {!normalizedQuery && onManageModels && <button type="button" className="secondary-button" onClick={() => { setIsOpen(false); onManageModels(); }}>Manage models</button>}
+              </div>
             ) : (
               <>
                 {favoriteCount > 0 && (

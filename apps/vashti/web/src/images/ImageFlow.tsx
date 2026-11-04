@@ -7,7 +7,6 @@ import {
   ChevronUp,
   Copy,
   CopyPlus,
-  Download,
   GitBranch,
   ImagePlus,
   Images,
@@ -27,7 +26,8 @@ import { modelParts, modelValue } from "../modelSelection";
 import { MessageTreeExplorer } from "../MessageTreeExplorer";
 import { usesMobileInputBehavior } from "../viewport";
 import type { BackendModelGroup } from "../types";
-import { ImageAsset, downloadImage } from "./ImageAsset";
+import { ImageAsset } from "./ImageAsset";
+import { DownloadImageButton } from "./DownloadImageButton";
 import { ImageComparison } from "./ImageComparison";
 import { ActionMenu } from "../ActionMenu";
 import { comparisonReference } from "./comparison";
@@ -837,19 +837,8 @@ export function ImageFlow({
                           >
                             <Pencil size={18} />
                           </button>
-                          <button
-                            type="button"
-                            className="message-tool-button"
-                            title="Download image"
-                            aria-label="Download image"
-                            onClick={() =>
-                              void flow.guard(() =>
-                                downloadImage(result.asset_id, imagePath),
-                              )
-                            }
-                          >
-                            <Download size={18} />
-                          </button>
+                          <DownloadImageButton id={result.asset_id} path={imagePath}
+                            className="message-tool-button" onError={flow.setError} />
                           <ActionMenu label="Image actions">
                             <button
                               type="button"
@@ -1605,19 +1594,7 @@ export function ImageFlow({
           )}
           onStep={moveViewer}
         >
-          <button
-            type="button"
-            className="images-icon"
-            title="Download image"
-            aria-label="Download image"
-            onClick={() =>
-              void flow.guard(() =>
-                downloadImage(viewer.ids[viewer.index], imagePath),
-              )
-            }
-          >
-            <Download />
-          </button>
+          <DownloadImageButton id={viewer.ids[viewer.index]} path={imagePath} onError={flow.setError} />
           {viewedResult && (
             <button type="button" onClick={() => editResult(viewedResult)}>
               Edit image

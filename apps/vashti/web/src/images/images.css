@@ -36,6 +36,10 @@
 .images-model-picker .model-picker { width: 100%; min-width: 0; }
 .images-asset { width: 100%; min-width: 0; min-height: 5rem; max-height: 68dvh; display: flex; align-items: center; justify-content: center; background: repeating-conic-gradient(var(--panel) 0% 25%,var(--surface) 0% 50%) 0 / 20px 20px; border-radius: 6px; overflow: hidden; }
 .images-asset img { display: block; max-width: 100%; max-height: 68dvh; width: auto; height: auto; object-fit: contain; }
+.images-asset-error { display: grid; justify-items: center; gap: .5rem; padding: 1rem; color: var(--muted); }
+.image-download-progress { animation: image-download-spin 1s linear infinite; }
+@keyframes image-download-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .image-download-progress { animation: none; } }
 .images-open-image { display: flex; justify-content: center; width: 100%; background: none; border: 0; padding: 0; border-radius: 0; box-shadow: none; }
 .images-icon { flex: 0 0 2.5rem; width: 2.5rem; height: 2.5rem; min-height: 2.5rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; box-shadow: none; }
 .images-gallery-controls { max-width: 90rem; margin: 0 auto .6rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
@@ -43,6 +47,7 @@
 .images-gallery-workspace .images-page-header { max-width: 90rem; margin-bottom: .75rem; }
 .images-gallery { --gallery-size: 9rem; max-width: 90rem; margin-inline: auto; display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,var(--gallery-size)),1fr)); gap: 4px; }
 .images-gallery-density-0 { --gallery-size: 7rem; }
+.images-gallery-date { grid-column: 1 / -1; margin: .85rem 0 .4rem; font-size: .85rem; font-weight: 600; color: var(--muted); }
 .images-gallery-density-2 { --gallery-size: 12rem; }
 .images-gallery-tile { position: relative; min-width: 0; min-height: 0; width: 100%; aspect-ratio: 1; display: block; padding: 0; border: 0; border-radius: 4px; overflow: hidden; box-shadow: none; background: var(--panel); contain: size layout; }
 .images-gallery-tile:hover { box-shadow: inset 0 0 0 2px var(--accent); }

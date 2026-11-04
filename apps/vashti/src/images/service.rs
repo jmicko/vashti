@@ -244,9 +244,10 @@ pub async fn sessions(
     pool: &SqlitePool,
     user: &str,
     offset: i64,
+    query: &str,
 ) -> Result<Vec<Session>, ApiError> {
-    sqlx::query("SELECT * FROM image_sessions WHERE user_id=? AND chat_id IS NULL AND is_archived=0 ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?")
-        .bind(user).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(session_row).collect()
+    sqlx::query("SELECT * FROM image_sessions WHERE user_id=? AND chat_id IS NULL AND is_archived=0 AND instr(lower(title),lower(?)) > 0 ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?")
+        .bind(user).bind(query).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(session_row).collect()
 }
 pub async fn update_session(
     pool: &SqlitePool,
@@ -572,9 +573,10 @@ pub async fn gallery(
     pool: &SqlitePool,
     user: &str,
     offset: i64,
+    session: Option<&str>,
 ) -> Result<Vec<GalleryItem>, ApiError> {
-    sqlx::query("SELECT e.id,COALESCE(e.asset_id,r.asset_id) AS asset_id,a.width,a.height,e.group_id,g.session_id,e.created_at,CASE WHEN e.group_id IS NULL THEN 1 ELSE (SELECT COUNT(*) FROM image_results WHERE group_id=e.group_id) END AS variants FROM image_gallery e LEFT JOIN image_result_groups g ON g.id=e.group_id LEFT JOIN image_results r ON r.id=g.selected_result_id JOIN image_assets a ON a.id=COALESCE(e.asset_id,r.asset_id) WHERE e.user_id=? ORDER BY e.created_at DESC,e.rowid DESC LIMIT 50 OFFSET ?")
-        .bind(user).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(|r|Ok(GalleryItem {width:r.try_get("width")?,height:r.try_get("height")?,id:r.try_get("id")?,asset_id:r.try_get("asset_id")?,group_id:r.try_get("group_id")?,session_id:r.try_get("session_id")?,variants:r.try_get("variants")?,created_at:r.try_get("created_at")?})).collect()
+    sqlx::query("SELECT e.id,COALESCE(e.asset_id,r.asset_id) AS asset_id,a.width,a.height,e.group_id,g.session_id,e.created_at,CASE WHEN e.group_id IS NULL THEN 1 ELSE (SELECT COUNT(*) FROM image_results WHERE group_id=e.group_id) END AS variants FROM image_gallery e LEFT JOIN image_result_groups g ON g.id=e.group_id LEFT JOIN image_results r ON r.id=g.selected_result_id JOIN image_assets a ON a.id=COALESCE(e.asset_id,r.asset_id) WHERE e.user_id=? AND (? IS NULL OR g.session_id=?) ORDER BY e.created_at DESC,e.rowid DESC LIMIT 50 OFFSET ?")
+        .bind(user).bind(session).bind(session).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(|r|Ok(GalleryItem {width:r.try_get("width")?,height:r.try_get("height")?,id:r.try_get("id")?,asset_id:r.try_get("asset_id")?,group_id:r.try_get("group_id")?,session_id:r.try_get("session_id")?,variants:r.try_get("variants")?,created_at:r.try_get("created_at")?})).collect()
 }
 pub async fn copy_to_gallery(
     pool: &SqlitePool,

@@ -54,6 +54,10 @@ export function routeFromLocation(): AppRoute {
       return { page: "settings", section: "models" };
     }
     const selectedSection = isSettingsSection(section) ? section : "profile";
+    if (selectedSection === "memories") {
+      const memoryId = new URLSearchParams(window.location.hash.slice(1)).get("memory")?.trim();
+      return { page: "settings", section: "memories", ...(memoryId ? { memoryId } : {}) };
+    }
     if (selectedSection === "notes") {
       const storageMode = new URLSearchParams(window.location.hash.slice(1)).get("mode");
       return storageMode === "device"
@@ -100,6 +104,9 @@ export function pathForRoute(route: AppRoute) {
     return `/app/images${!route.view || route.view === "home" ? "" : `/${route.view}`}${params.size ? `#${params}` : ""}`;
   }
   if (route.page === "settings") {
+    if (route.section === "memories" && route.memoryId) {
+      return `/app/settings/memories#${new URLSearchParams({ memory: route.memoryId })}`;
+    }
     if (route.section === "notes" && route.storageMode === "device") {
       return "/app/settings/notes#mode=device";
     }

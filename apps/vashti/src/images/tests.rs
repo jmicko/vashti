@@ -203,6 +203,64 @@ fn draft() -> Draft {
         prompt_help: None,
     }
 }
+
+#[tokio::test]
+async fn image_history_search_filters_before_paging_and_preserves_ownership() {
+    let (state, _, server) = setup(false).await;
+    for index in 0..55 {
+        let session = service::create_session(
+            &state.db,
+            "alice",
+            &format!("Saved drawing {index}"),
+            "generate",
+            draft(),
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE image_sessions SET updated_at=? WHERE id=?")
+            .bind(index)
+            .bind(session.id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+    let found = service::sessions(&state.db, "alice", 0, "DRAWING 0")
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].title, "Saved drawing 0");
+    assert_eq!(
+        service::sessions(&state.db, "alice", 50, "drawing")
+            .await
+            .unwrap()
+            .len(),
+        5
+    );
+    assert!(
+        service::sessions(&state.db, "bob", 0, "drawing")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        service::sessions(&state.db, "alice", 0, "%")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("UPDATE image_sessions SET is_archived=1 WHERE id=?")
+        .bind(&found[0].id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        service::sessions(&state.db, "alice", 0, "drawing 0")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    server.abort();
+}
 fn request(draft: Draft) -> RunRequest {
     RunRequest {
         chat_target: None,
@@ -753,14 +811,39 @@ async fn batches_are_independent_retries_stack_and_inputs_are_owner_scoped() {
     assert_eq!(variants[0].recipe.prompt, "a weasel");
     assert_ne!(variants[0].recipe.seed, original[0].recipe.seed);
     assert_eq!(
-        service::gallery(&state.db, "alice", 0).await.unwrap().len(),
+        service::gallery(&state.db, "alice", 0, None)
+            .await
+            .unwrap()
+            .len(),
         2
     );
     service::copy_to_gallery(&state.db, "alice", &original[0].asset_id)
         .await
         .unwrap();
     assert_eq!(
-        service::gallery(&state.db, "alice", 0).await.unwrap().len(),
+        service::gallery(&state.db, "alice", 0, Some(&session.id))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        service::gallery(&state.db, "bob", 0, Some(&session.id))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        service::gallery(&state.db, "alice", 0, Some("missing"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        service::gallery(&state.db, "alice", 0, None)
+            .await
+            .unwrap()
+            .len(),
         3
     );
     assert!(
@@ -1083,7 +1166,7 @@ async fn settings_and_discovery_remain_session_and_admin_scoped_without_a_token(
         reqwest::StatusCode::OK
     );
     assert!(
-        service::sessions(&state.db, "alice", 0)
+        service::sessions(&state.db, "alice", 0, "")
             .await
             .unwrap()
             .is_empty()
@@ -1096,7 +1179,10 @@ async fn settings_and_discovery_remain_session_and_admin_scoped_without_a_token(
         "Renamed flow"
     );
     assert_eq!(
-        service::gallery(&state.db, "alice", 0).await.unwrap().len(),
+        service::gallery(&state.db, "alice", 0, None)
+            .await
+            .unwrap()
+            .len(),
         1
     );
     assert!(
@@ -1332,7 +1418,10 @@ async fn chat_image_is_committed_with_attachment_and_shared_without_copying_file
         .await
         .unwrap();
     assert_eq!(
-        service::gallery(&state.db, "alice", 0).await.unwrap().len(),
+        service::gallery(&state.db, "alice", 0, None)
+            .await
+            .unwrap()
+            .len(),
         1
     );
     assert!(

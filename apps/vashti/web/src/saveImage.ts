@@ -19,12 +19,12 @@ export async function saveImage(blob: Blob, name: string) {
   if (!extension) throw new Error("Unsupported image format");
   const filename = `${name.replace(/[^a-zA-Z0-9_-]/g, "_")}.${extension}`;
   if (isNativeRuntime()) {
-    await invokeNative("native_save_image", {
+    const result = await invokeNative<{ saved: boolean }>("native_save_image", {
       filename,
       mimeType: blob.type,
       data: (await imageDataUrl(blob)).split(",")[1],
     });
-    return;
+    return result.saved ? "saved" as const : "cancelled" as const;
   }
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -34,4 +34,5 @@ export async function saveImage(blob: Blob, name: string) {
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return "requested" as const;
 }

@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { useModalFocus } from "./useModalFocus";
+import { useEffect, useId, useRef, useState } from "react";
 
 export function RetroLoader() {
   const frames = ["-______", "_-_____", "__-____", "___-___", "____-__", "_____-_", "______-"];
@@ -50,22 +49,30 @@ export function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const dialogRef = useRef<HTMLElement>(null);
-  useModalFocus(dialogRef, onCancel, isBusy);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = dialogRef.current!;
+    const opener = document.activeElement;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      if (opener instanceof HTMLElement && opener.isConnected)
+        opener.focus({ preventScroll: true });
+    };
+  }, []);
 
   return (
-    <div className="confirm-backdrop" role="presentation">
-      <section
+      <dialog
         className="confirm-dialog"
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
+        aria-labelledby={titleId}
+        onCancel={(event) => { event.preventDefault(); if (!isBusy) onCancel(); }}
       >
-        <h2 id="confirm-dialog-title">{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <p>{message}</p>
         <div className="dialog-actions">
-          <button type="button" className="secondary-button" disabled={isBusy} onClick={onCancel}>
+          <button autoFocus type="button" className="secondary-button" disabled={isBusy} onClick={onCancel}>
             {cancelLabel}
           </button>
           <button
@@ -77,8 +84,7 @@ export function ConfirmDialog({
             {isBusy ? <RetroLoader /> : confirmLabel}
           </button>
         </div>
-      </section>
-    </div>
+      </dialog>
   );
 }
 

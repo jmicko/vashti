@@ -473,6 +473,12 @@ alternatives. Fullscreen and the mobile keyboard respect safe areas and Back.
 Ordinary chats keep their existing image presentation.
 Paginate long histories and gallery queries, load thumbnails lazily, and bound
 decoded-image memory so an endless run does not make the browser unusable.
+History title search filters the full owner-scoped collection before pagination,
+in both Server and This device storage. Gallery tiles may be grouped by local
+calendar date and filtered to a conversation, without changing library order,
+retry selection, or original-image ownership. Density changes preserve the
+visible tile. Account preferences and server-policy edits have separate save
+boundaries; dismissing their sheet must not silently discard either draft.
 
 Reuse the ComfyUI metadata importer for **Use settings**, including explicit
 missing-reference and unsupported-workflow messages. Imported edit images do

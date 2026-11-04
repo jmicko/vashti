@@ -6,6 +6,8 @@ import {
 } from "react";
 import { Plus, RefreshCw, Search, Server, X } from "lucide-react";
 import { requestJson } from "./api";
+import { ActionMenu } from "./ActionMenu";
+import type { ImageHost } from "./images/types";
 import { isLocalBackend } from "./modelSelection";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { AdminModelsAccessPanel } from "./settingsModels";
@@ -33,6 +35,14 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
   const [modelRefreshRequest, setModelRefreshRequest] = useState(0);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [imageHosts, setImageHosts] = useState<ImageHost[]>([]);
+  useEffect(() => {
+    let live = true;
+    setImageHosts([]);
+    if (backends.length) void requestJson<ImageHost[]>("/api/images/hosts")
+      .then((value) => { if (live) setImageHosts(value); }).catch(() => {});
+    return () => { live = false; };
+  }, [backends]);
 
   const loadBackends = useCallback(async () => {
     setIsRefreshing(true);
@@ -195,9 +205,10 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
             <Plus />
             <span>Add Backend</span>
           </button>
+          <ActionMenu label="Backend actions">
           <button
             type="button"
-            className="secondary-button refresh-button"
+            className="message-icon-button"
             onClick={() => void loadBackends()}
             disabled={isRefreshing}
           >
@@ -206,7 +217,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
           </button>
           <button
             type="button"
-            className="secondary-button refresh-button"
+            className="message-icon-button"
             onClick={() => setModelRefreshRequest((current) => current + 1)}
             disabled={isRefreshingModels}
           >
@@ -216,7 +227,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
           {!hasLocalBackend && (
             <button
               type="button"
-              className="secondary-button"
+              className="message-icon-button"
               onClick={() => void detectLocalhost()}
               disabled={isDetecting}
             >
@@ -226,13 +237,14 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
           )}
           <button
             type="button"
-            className="secondary-button"
+            className="message-icon-button"
             onClick={() => void scanLocalNetwork()}
             disabled={isScanning}
           >
             {isScanning ? <RetroLoader /> : <Server />}
             <span>{isScanning ? "Scanning" : "Scan Network"}</span>
           </button>
+          </ActionMenu>
         </div>
       }
     >
@@ -294,6 +306,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       )}
 
       <AdminModelsAccessPanel
+        imageHosts={imageHosts}
         backends={backends}
         editingBackend={editingBackend}
         backendBusyId={busyBackendId}

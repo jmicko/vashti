@@ -38,6 +38,9 @@ import {
   type NoteModelOption
 } from "./accessControls";
 import { MarkdownToolbar } from "./MarkdownToolbar";
+import { getNoteSettings } from "./api";
+import { EffectiveAccess } from "./EffectiveAccess";
+import { noteAccessStatus } from "./effectiveAccess";
 import {
   noteRepositoryFor,
   type NoteStorageMode
@@ -47,6 +50,7 @@ import type {
   NoteDraft,
   NoteListStatus,
   NoteSort,
+  NoteSettings,
   NoteSummary,
   NoteVersion
 } from "./types";
@@ -1189,6 +1193,10 @@ export function NotesWorkspace({
               {drawer === "details" && draft && note && (
                 <NoteDetails
                   draft={draft}
+                  storageMode={storageMode}
+                  pending={isDirty}
+                  trashed={Boolean(note.deleted_at)}
+                  onOpenSettings={() => void openNotesSettings()}
                   tagsText={tagsText}
                   modelOptions={modelOptions}
                   onDraftChange={updateDraft}
@@ -1237,6 +1245,10 @@ function NoteDrawer({ title, onClose, children }: { title: string; onClose: () =
 
 function NoteDetails({
   draft,
+  storageMode,
+  pending,
+  trashed,
+  onOpenSettings,
   tagsText,
   modelOptions,
   onDraftChange,
@@ -1244,14 +1256,41 @@ function NoteDetails({
   onTagsCommit
 }: {
   draft: NoteDraft;
+  storageMode: NoteStorageMode;
+  pending: boolean;
+  trashed: boolean;
+  onOpenSettings: () => void;
   tagsText: string;
   modelOptions: NoteModelOption[];
   onDraftChange: (patch: Partial<NoteDraft>) => void;
   onTagsTextChange: (value: string) => void;
   onTagsCommit: () => void;
 }) {
+  const [settings, setSettings] = useState<NoteSettings | null>(null);
+  const [model, setModel] = useState("");
+  const [error, setError] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setSettings(null);
+    setError(false);
+    void (storageMode === "device" ? getPrivateNoteSettings() : getNoteSettings())
+      .then((value) => { if (live) setSettings(value); })
+      .catch(() => { if (live) setError(true); });
+    return () => { live = false; };
+  }, [storageMode, refresh]);
   return (
     <div className="notes-drawer-content">
+      <label>Check model access
+        <select value={model} onChange={(event) => setModel(event.target.value)}>
+          <option value="">{draft.model_scope.all_models ? "Every model" : "Selected models"}</option>
+          {modelOptions.map((option) => <option key={option.key} value={option.key}>{option.label} - {option.group}</option>)}
+        </select>
+      </label>
+      {settings ? <EffectiveAccess status={noteAccessStatus(draft, settings, model, trashed)} pending={pending} />
+        : error ? <button type="button" className="secondary-button" onClick={() => setRefresh((value) => value + 1)}>Retry access check</button>
+        : <p role="status">Loading access...</p>}
+      <button type="button" className="secondary-button" onClick={onOpenSettings}><Settings2 />Account permissions</button>
       <label>
         Tags
         <input
