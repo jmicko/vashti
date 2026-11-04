@@ -26,6 +26,7 @@ const actions: Record<string, AssistantAction[]> = { [run.id]: [
   { id: "write", run_id: run.id, ordinal: 1, tool_name: "create_note", arguments_json: JSON.stringify({ title: "Garden summary", content: "Buy 12 bags of mulch." }), summary: "Create garden summary", status: "pending", result_text: null, requested_at: now - 30, expires_at: now + 86400, decided_at: null, finished_at: null }
 ] };
 const files: Record<string, AssistantArtifact[]> = { [run.id]: [{ id: "synthetic-csv", run_id: run.id, name: "supplies.csv", mime_type: "text/csv", size: 26, created_at: now - 40 }] };
+const nextEventId = () => Math.max(0, ...Object.values(events).flat().map(e => e.id)) + 1;
 let failure = false, starts = 0, writes = 0;
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 window.fetch = async (input, options = {}) => {
@@ -60,7 +61,7 @@ window.fetch = async (input, options = {}) => {
       starts++;
       const created: AssistantRun = { ...run, id: body.request_id, task_id: selected.id, status: "running", instructions: body.message || selected.instructions, created_at: now + starts, updated_at: now + starts, steps: 0, output_tokens: 0 };
       selected.last_run_id = created.id; selected.last_status = created.status;
-      runs.unshift(created); events[created.id] = [{ id: 100 + starts, kind: "user", text: created.instructions, data_json: "{}", created_at: now + starts }]; actions[created.id] = []; files[created.id] = [];
+      runs.unshift(created); events[created.id] = [{ id: nextEventId(), kind: "user", text: created.instructions, data_json: "{}", created_at: now + starts }]; actions[created.id] = []; files[created.id] = [];
       return json({ run: created });
     }
     if (options.method === "PUT") { Object.assign(selected, body, { revision: selected.revision + 1 }); writes++; return json({ task: selected }); }
@@ -72,12 +73,12 @@ window.fetch = async (input, options = {}) => {
     if (!selected) return json({ error: { message: "Run not found" } }, 404);
     if (runMatch[2]) {
       if (runMatch[2] === "control") selected.status = body.command === "pause" ? "paused" : body.command === "resume" ? "running" : "cancelled";
-      if (runMatch[2] === "reply") { selected.status = "running"; for (const a of actions[selected.id]) if (a.tool_name === "ask_user" && a.status === "pending") { a.status = "completed"; a.result_text = JSON.stringify({ answer: body.text }); a.finished_at = now + 5; } events[selected.id].push({ id: 900 + events[selected.id].length, kind: "user", text: body.text, data_json: "{}", created_at: now + 5 }); }
+      if (runMatch[2] === "reply") { selected.status = "running"; for (const a of actions[selected.id]) if (a.tool_name === "ask_user" && a.status === "pending") { a.status = "completed"; a.result_text = JSON.stringify({ answer: body.text }); a.finished_at = now + 5; } events[selected.id].push({ id: nextEventId(), kind: "user", text: body.text, data_json: JSON.stringify({ reply: true, question_id: body.question_id }), created_at: now + 5 }); }
       if (runMatch[2] === "actions") {
         const action = actions[selected.id].find(a => a.id === runMatch[3])!;
         action.status = body.approve ? "completed" : "rejected"; action.result_text = JSON.stringify(body.approve ? { note_id: "synthetic-summary", title: "Garden summary" } : { error: "User rejected the action" });
         selected.status = "completed"; selected.finished_at = now + 1; selected.result_text = body.approve ? "Summary saved." : "I did not save the note.";
-        events[selected.id].push({ id: 950, kind: "assistant", text: selected.result_text, data_json: "{}", created_at: now + 1 });
+        events[selected.id].push({ id: nextEventId(), kind: "assistant", text: selected.result_text, data_json: "{}", created_at: now + 1 });
       }
       const t = tasks.find(t => t.id === selected.task_id)!; t.last_status = selected.status;
       return json({ ok: true });

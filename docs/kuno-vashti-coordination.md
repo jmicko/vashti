@@ -1,5 +1,13 @@
 # Kuno and Vashti Coordination
 
+**Vashti Assistant checkpoint (2026-11-03/04):** `codex/personal-assistant`
+adds a separate durable task workspace, approval-bound existing tools, and an
+optional offline rootless Podman worker. It consumes the existing Ollama chat,
+tool-calling, and show-profile APIs. The installed Kuno-prefixed Qwen passed real
+file/export and note-approval checks; no Kuno API, source, configuration,
+installation, or service restart changed. See [Assistant specification and
+receipts](assistant-spec.md). This is not a release/deployment authorization.
+
 **Vashti UX follow-up (2026-11-03):** the preserved image-library/UX snapshots are
 recovered on `codex/ux-report-refinements` in the normal application checkout,
 with Demons frontend/backend/watchers aligned. Title-search/gallery filtering

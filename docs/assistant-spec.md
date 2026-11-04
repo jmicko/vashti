@@ -1,6 +1,6 @@
 # Personal Assistant
 
-Status: approved workspace direction; implementation in progress, 2026-11-03.
+Status: first implementation complete and locally validated, 2026-11-03/04.
 Branch: `codex/personal-assistant`, based on `4bdd9dfc`.
 
 ## Goals and Checkpoints
@@ -9,9 +9,9 @@ Branch: `codex/personal-assistant`, based on `4bdd9dfc`.
 - [x] Confirm the dedicated Assistant workspace with the user.
 - [x] Implement owner-scoped durable tasks, runs, events, approvals, and recovery.
 - [x] Integrate existing permission-checked tools and rootless Podman workspaces.
-- [ ] Add the responsive workspace, routines, progress, results, and approvals.
-- [ ] Test failure/security boundaries and the real installed Kuno Qwen model.
-- [ ] Refine, document measured limits, and commit. No deployment is authorized.
+- [x] Add the responsive workspace, routines, progress, results, and approvals.
+- [x] Test failure/security boundaries and the real installed Kuno Qwen model.
+- [x] Refine and document measured limits. No deployment is authorized.
 
 ## Research and Decisions
 
@@ -155,19 +155,107 @@ each, 32 files/128 MiB per run, and 512 MiB per account; owners can delete them.
 
 Current receipts (2026-11-03):
 
-- Existing 145 Rust tests remain passing; 16 additional deterministic assistant
+- Existing 145 Rust tests remain passing; 24 additional deterministic assistant
   tests cover ownership, stale edits, approvals/rejection/revocation, questions,
   crash uncertainty, queue exclusion, cancellation, budgets, malformed/incomplete
   streams, schedule overlap/failures, permission defaults, and HTTP downloads.
+- Additional cases cover exact question/reply retries, batched questions,
+  immutable creation-request identities after task edits, context compaction,
+  protected-record retrieval, full-library filters, and idle SQLite contention.
 - Explicit rootless Podman test passes: offline networking, read-only root,
   workspace persistence, export, traversal/symlink rejection, timeout, and no
   leftover test containers. It caught and fixed an unclosed archive input pipe.
+  Actual cgroup values also enforce 1 GiB memory, 128 PIDs, and one CPU.
 - Installed `kuno-qwen3.8-flash-next:iq3_s` passes the real multi-tool file test:
   calculation, workspace execution, file verification/export, exact CSV bytes,
   and a final link to the actual artifact. Disposable data only.
 - An initial fixed 64K context request was rejected by the installed engine.
   Vashti now reads the ordinary `/api/show` profile and honors its configured
   context (currently 32768) instead. No Kuno source/config/service changes.
+- The installed Qwen also passes a real note-creation approval test: no note
+  exists before approval; afterward the exact run is retained in version history.
 
-The interactive frontend and full refinement/validation pass are still in
-progress. These receipts are not release or physical Android acceptance.
+## Interface and Retry Checkpoint
+
+`/app/assistant` contains the inbox, server-side search/filtering, task settings,
+account defaults, schedules, history, progress, questions, approvals, and files.
+The canonical bootstrap API is `GET /api/assistant` without a trailing slash;
+the real-app check caught a client mismatch not represented by the initial fixture.
+Sandbox availability is checked separately so Podman discovery cannot block the
+inbox. Initial task-list responses contain previews, not full prompt/config text.
+
+Task/run request IDs and follow-up drafts are persisted in the existing
+account-and-server-scoped encrypted device vault. Late storage operations cannot
+cross an account switch. A response lost after a start can be retried with the
+same request ID without creating a second run. Questions bind replies to the
+exact action; identical retries are accepted, changed replies are not replayed.
+Run creation and replies include their activity event in the same transaction.
+
+Polling fetches new events and the unfinished suffix of tool actions, preserving
+component identity and avoiding repeat downloads of old result bodies. Explicit
+action events preserve order even when multiple steps occur in one second.
+Older model reasoning can leave the inference context without leaving the audit.
+Long tool output is compacted into a bounded preview and a retrievable reference.
+Protected notes, memories, and chats must instead be re-read using their original
+permission-checked read tools; the activity cache cannot bypass that boundary.
+Generated Markdown images are links, not automatic outbound image requests.
+
+Browser acceptance used isolated fixtures for save/run, failed submissions,
+pause/resume/stop, previous-run navigation, questions/choices, approve/reject,
+note references, history, archive filtering, schedules, and an actual CSV
+download. Long reasoning expands within the one main scroll area. The running
+development app also completed a synthetic arithmetic task through the UI using
+the preferred Kuno model, with unrelated tools disabled. Its task/run survived
+the development watcher's subsequent restarts.
+An additional follow-up produced the verified value 2331 for 63*37 in a separate
+run, while preserving the earlier run in history. Desktop, 390px mobile, 320px
+narrow, and 844x390 landscape geometry were checked. The administrator's real
+Tools page shows the workspace permission with the existing admin tag; no
+permission settings were changed during that acceptance check.
+
+Validation receipts:
+
+- `cargo test -p vashti --locked`: 169 passed, three explicitly ignored live tests.
+  Both installed-Qwen tests and the rootless-Podman test were separately run and
+  passed. No leftover assistant containers remained afterward.
+- Frontend Node tests: 89 passed; production/PWA and native frontend builds pass.
+- Browser fixture TypeScript and warnings-denied Rust Clippy pass.
+- Android host tests: eight passed. All four Android ABIs compile and the signed
+  universal APK builds. Physical Android installation/export remains untested.
+
+## Setup and Deliberate Limits
+
+Use the Assistant workspace in the normal Vashti app. New tasks use account
+defaults; editing a task affects only its next run. A routine uses one-shot or
+fixed-interval timing, not a calendar/DST-aware cron expression. Dispatch failures
+stop the schedule and remain visible for human review rather than looping.
+
+For the optional workspace, install rootless Podman on the **Vashti server**, not
+necessarily the inference machine. As the OS user running Vashti, prepare:
+
+```sh
+podman pull docker.io/library/python:3.12-slim-bookworm
+```
+
+Vashti never pulls a model-supplied image. Each run pins the already-installed
+image ID. The sandbox permission defaults to administrators and can be assigned
+to existing permission tags under Settings > Tools. Each task separately opts in.
+No new Rust or frontend orchestration framework/dependency was added.
+
+This is a server-side assistant, not a phone background service or a full VM.
+The server must stay running. Device-only vaults remain unavailable. Rootless
+containers share the host kernel; isolation is not a guarantee against kernel
+exploits. There is no host shell, arbitrary network/package installation, general
+browser/computer control, email, payments, recursive scheduling, or delegation.
+
+Defaults are 24 steps and 24,576 output tokens; tasks can choose up to 64 steps
+and 131,072 tokens. The context guard is a conservative estimate, not an exact
+Qwen tokenizer. A provider may still reject a prompt. Context/output limits stop
+visibly and retain activity, rather than claiming successful completion. Model
+results still need human judgment. Multi-day soak and physical-phone acceptance
+have not been claimed. Tasks can be archived; permanent task-history purge is
+not implemented in this first slice. Artifact deletion is explicit and owner-only.
+The run picker currently lists the 50 most recent runs; exact older run links
+remain owner-accessible. This is not an unbounded history browser.
+
+These receipts are not a release, deployment, or physical Android acceptance.

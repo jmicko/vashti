@@ -292,10 +292,6 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
           </SettingsSaveBanner>
 
           <section className="settings-subsection">
-            <div className="tool-provider-heading"><Terminal aria-hidden="true" /><div><strong>Assistant workspace</strong><p>Offline, isolated code execution. Requires rootless Podman and the configured image on the server.</p></div></div>
-            <PermissionTagEditor label="Tags" tags={toolPermissionTags.assistant_sandbox ?? []} availableTags={availableTags} onChange={tags => setToolPermissionTags(current => ({ ...current, assistant_sandbox: tags }))} />
-          </section>
-          <section className="settings-subsection">
             <ToggleSwitch
               icon={<Wrench />}
               label="Enable tools globally"
@@ -349,6 +345,12 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
               availableTags={availableTags}
               onChange={(tags) => setToolPermissionTags((current) => ({ ...current, calculator: tags }))}
             />
+          </section>
+
+          <section className="settings-subsection">
+            <div><p className="eyebrow">Vashti</p><h2>Assistant workspace</h2></div>
+            <div className="tool-setting-heading"><Terminal aria-hidden="true" /><div><strong>Isolated code execution</strong><p>Offline. Requires rootless Podman and the approved image on the server.</p></div></div>
+            <PermissionTagEditor label="Tags" tags={toolPermissionTags.assistant_sandbox ?? []} availableTags={availableTags} onChange={tags => setToolPermissionTags(current => ({ ...current, assistant_sandbox: tags }))} />
           </section>
 
           <section className="settings-subsection">
