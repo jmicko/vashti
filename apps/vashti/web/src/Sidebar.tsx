@@ -9,6 +9,8 @@ import {
   Copy,
   Lock,
   MessageSquarePlus,
+  MessageSquare,
+  Search,
   MoreHorizontal,
   NotebookPen,
   Images,
@@ -82,6 +84,14 @@ export function Sidebar({
 }) {
   const [openMenuChatId, setOpenMenuChatId] = useState<string | null>(null);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 720px)").matches);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 720px)");
+    const change = () => setNarrow(query.matches);
+    query.addEventListener("change", change);
+    return () => query.removeEventListener("change", change);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -133,9 +143,10 @@ export function Sidebar({
     [chats, privateChats]
   );
   const isLoadingAnyChats = isLoading || isLoadingPrivateChats;
+  const filteredChats = combinedChats.filter(({ chat }) => chat.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" inert={narrow && !isOpen ? true : undefined} aria-label="Navigation">
       <div className="sidebar-static">
         <div className="sidebar-header">
           <button
@@ -174,6 +185,7 @@ export function Sidebar({
             <MessageSquarePlus />
             <span>{isImagesActive ? "New Flow" : "New Chat"}</span>
           </button>
+          {(isImagesActive || isNotesActive) && <button type="button" className="sidebar-section-button" onClick={() => onOpenChat()}><MessageSquare /><span>Chat</span></button>}
           <button type="button" className={isImagesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isImagesActive ? "page" : undefined} onClick={() => { setOpenMenuChatId(null); onOpenImages(); }}><Images /><span>Images</span></button>
           <button
             type="button"
@@ -192,13 +204,15 @@ export function Sidebar({
       <div className="chat-history">
         {isImagesActive ? <ImageFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
         <p className="eyebrow">Previous Chats</p>
+        {(combinedChats.length > 5 || search) && <label className="history-search"><Search size={16} /><input aria-label="Search chats" placeholder="Search chats" value={search} onChange={(event) => setSearch(event.target.value)} /></label>}
         {isLoadingAnyChats && combinedChats.length === 0 ? (
           <p>Loading chats...</p>
         ) : combinedChats.length === 0 ? (
           <p>No chats yet</p>
         ) : (
           <div className="chat-link-list">
-            {combinedChats.map(({ chat, isPrivate }) => {
+            {!filteredChats.length && <p className="history-empty" role="status">No matching chats</p>}
+            {filteredChats.map(({ chat, isPrivate }) => {
               const version = chat.persona_version_id
                 ? (isPrivate ? privatePersonaVersions : personaVersions).find(
                     (candidate) => candidate.id === chat.persona_version_id

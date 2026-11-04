@@ -43,6 +43,7 @@ import {
   type PrivatePersona
 } from "./privateChatStore";
 import { backendNameFor, firstModelValue } from "./settingsModelHelpers";
+import { chatModelGroups } from "./modelEligibility";
 import type {
   BackendModelGroup,
   ModelsResponse,
@@ -126,7 +127,7 @@ export function CustomModelsSection({
       ]);
       setPersonas(personaResponse.personas);
       setPrivatePersonas(privatePersonaResponse);
-      setModelGroups(modelsResponse.backends);
+      setModelGroups(chatModelGroups(modelsResponse.backends));
       setHasLoaded(true);
       setSelectedBaseModel((current) => current || firstModelValue(modelsResponse.backends));
     } catch (loadError) {
@@ -718,6 +719,7 @@ export function CustomModelsSection({
           <label>
             <span>Base Model</span>
             <select
+              aria-label="Base Model"
               required
               value={selectedBaseModel}
               onChange={(event) => setSelectedBaseModel(event.target.value)}

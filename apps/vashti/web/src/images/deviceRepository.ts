@@ -7,6 +7,8 @@ import {
   writePrivateImage,
 } from "../privateChatStore";
 import { imageDataUrl } from "../saveImage";
+import { imageBlobFromData } from "./imageBytes";
+import { storeDeviceThumbnail } from "./assetStorage";
 import {
   activeRun,
   type Draft,
@@ -102,6 +104,7 @@ async function collectAssets(candidates: Set<string>) {
   for (const id of candidates) {
     guard();
     await deletePrivateImage(`asset:${id}`);
+    await deletePrivateImage(`thumbnail:device:${id}`);
   }
 }
 async function flows() {
@@ -116,11 +119,7 @@ async function asset(id: string) {
   return value;
 }
 function blobFromData(data: string) {
-  const [header, body] = data.split(",");
-  const mime = /^data:(image\/[^;]+);base64$/.exec(header)?.[1];
-  if (!mime || !body) throw new Error("Device image could not be read");
-  const bytes = Uint8Array.from(atob(body), (char) => char.charCodeAt(0));
-  return new Blob([bytes], { type: mime });
+  return imageBlobFromData(data);
 }
 export async function deviceImageBlob(id: string) {
   return blobFromData((await asset(id)).data);
@@ -161,6 +160,7 @@ export async function uploadDeviceImage(blob: Blob) {
     guard();
     const id = uuid();
     await writePrivateImage(`asset:${id}`, value);
+    await storeDeviceThumbnail(id, blob);
     return { id, width: value.width, height: value.height };
   } finally {
     pixels.close();
@@ -266,6 +266,7 @@ async function execute(session: string, id: string, job: Job) {
                 height: status.recipe.height,
                 recipe: status.recipe,
               });
+              if (output) await storeDeviceThumbnail(assetId, output);
               const retry = flow.results.find(
                 (value) => value.id === original.request.retry_result_id,
               );
@@ -465,15 +466,6 @@ export async function deviceImageRequest<T>(
         ) {
           if (flow.session.mode === "original")
             request.draft.input_ids = [...request.draft.original_input_ids];
-          else if (request.draft.parent_result_id) {
-            const parent = flow.results.find(
-              (value) => value.id === request.draft.parent_result_id,
-            );
-            if (!parent || request.draft.input_ids[0] !== parent.asset_id)
-              throw new Error(
-                "The selected result must be the first image for this iterative edit",
-              );
-          }
           if (!request.draft.input_ids.length)
             throw new Error("Choose an image to edit");
         }

@@ -505,6 +505,8 @@ export function MemoriesSettingsPanel({
 
         {!isEditing && settingsDraft && (
           <>
+            <details className="memories-access-disclosure">
+              <summary>Model access <span>{modelAccessEnabled ? "On" : "Off"} · Past chats {settingsDraft.allow_model_chat_history ? "on" : "off"}</span></summary>
             <section className="settings-subsection memories-access-section">
               <div className="tool-setting-heading">
                 <BrainCircuit aria-hidden="true" />
@@ -580,6 +582,7 @@ export function MemoriesSettingsPanel({
               />
             </section>
 
+            </details>
             <section className="memories-library" aria-label="Memory library">
               <div className="memories-library-toolbar">
                 <div className="segmented-control memories-status-control" role="group" aria-label="Memory status">

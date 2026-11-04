@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useRef } from "react";
+import { useModalFocus } from "./useModalFocus";
 import { RetroLoader } from "./common";
 
 export function SettingsPanel({
@@ -188,21 +189,14 @@ export function UnsavedSettingsDialog({
   onDiscard: () => void;
   onSave: () => void;
 }) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !isSaving) {
-        onCancel();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isSaving, onCancel]);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, onCancel, isSaving);
 
   return (
     <div className="confirm-backdrop" role="presentation">
       <section
         className="confirm-dialog"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="unsaved-settings-title"

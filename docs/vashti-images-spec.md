@@ -172,6 +172,9 @@ make a stack.
 ## Editing, variants, and branches
 
 Show an ordered input-image strip with add, remove, reorder, and replace actions.
+Number references visibly as Image 1, Image 2, and so on, matching the submitted
+order. Provide touch-sized move-left/right controls; moving a reference retains
+its loaded image and keeps it visible in the strip.
 Reference thumbnails open a full-size viewer without leaving the flow or changing
 the draft. The viewer supports swiping and arrows through the ordered references.
 Make the distinction between the two editing modes explicit and always visible:
@@ -196,6 +199,10 @@ future requests, never old results.
 Each step stores an immutable prompt, setting snapshot, editing mode, exact
 ordered source-image IDs, and exact parent result. Retry uses that step's original
 inputs and parameters with a new seed; it does not edit its own output again.
+Normal Send continues the currently selected conversation, even when Original
+images mode reuses its inputs or the user replaces/reorders sources. The parent
+result records conversation ancestry; the ordered input IDs record actual pixel
+provenance. Changing sources must not silently start another root branch.
 Editing a previous prompt creates a sibling branch from the same prior result.
 Do not overwrite the old instruction, images, or descendants.
 
@@ -224,8 +231,16 @@ not prevent online viewing or downloading.
 
 Gallery previews have a separate decoded RAM budget: up to 120 thumbnails or
 32 MiB, with visible thumbnails pinned and at most two being decoded at once.
-Generate centered square PNG previews of at most 320 pixels in memory; do not
-replace or recompress originals. Opening, editing and downloading an image
+Generate centered square PNG previews of at most 320 pixels; do not replace or
+recompress originals. Persist derived previews beside server assets and inside
+the encrypted account/server-scoped device vault for private images. Existing
+private images acquire previews lazily, once. Server previews are fetched through
+the authenticated owner-scoped `GET /api/images/assets/{id}/thumbnail` endpoint,
+then cached in the encrypted device vault at up to 512 previews or 64 MiB with
+LRU eviction. Older servers without this endpoint use a cached client-derived
+preview. Preview storage failures are non-fatal; originals remain available.
+Keep tile dimensions fixed before and after loading, and discard queued decodes
+for images that have scrolled away. Opening, editing and downloading an image
 always use its original bytes.
 
 Multiple outputs requested for one instruction are candidates from the same
@@ -256,8 +271,22 @@ move image actions into the opened viewer. Appending older gallery pages must
 preserve the existing tiles and scroll position. Load all requested stack
 versions even when they extend beyond the first page of session results.
 
-Fullscreen supports swiping through a stack, previous/next buttons, keyboard
-navigation, and a variant counter. **Browsing** a gallery variant does not change
+Fullscreen swipes, previous/next image buttons, and keyboard arrows browse the
+whole gallery in grid order, including loading older pages at the end. Separate
+version arrows and a counter select retries inside the current entry.
+Present the photo edge-to-edge in a shared viewer, not inside a settings form.
+Controls overlay the image, hide after inactivity, and toggle on a tap. Keep
+focused keyboard controls visible. Double-tap or zoom controls zoom around the
+selected detail; pinch zoom and panning remain bounded to the image. At fit size,
+horizontal swipes navigate; while zoomed, dragging pans without changing photos.
+Preload only adjacent photos within the bounded image cache. Back closes image
+actions before the photo and returns to the unchanged gallery or flow.
+
+Edit, Download, and Compare remain direct viewer actions. Put less frequent
+actions in More and retry navigation in a compact, expandable version control.
+Use the first submitted reference for comparison, never the current draft's
+first image. Opening or browsing references must not alter their order.
+**Browsing** a gallery variant does not change
 an editing branch. **Use this version** explicitly changes the corresponding
 workflow selection and cover. Inside the editing workflow, selecting a version
 already expresses that intent. Distinguish retries from separate edit steps in
@@ -429,8 +458,11 @@ support continue to return final images without fabricated progress.
 On mobile, image cards nearly fill the content width. Desktop cards respect both
 available width and viewport height, preserving the entire image without crop.
 The conversation scrolls independently of the fixed composer, just as in chat.
-Expanded composer settings are bounded by available height, with their own
-intentional settings scroll and a permanently reachable collapse control.
+Advanced settings open in a separate bounded sheet with a reachable close
+control; they do not enlarge the composer. Reference ordering and removal open
+in a separate reference sheet, with numbered images, tap-to-inspect, accessible
+reorder buttons, and uncommon metadata import under More. Keep a small reference
+thumbnail/count next to the prompt. This supersedes the expanded-settings dock.
 Retain scroll position when results arrive while the user inspects old images;
 provide a new-result indicator instead of forcing them to the bottom. When
 following generation at the bottom, keep the new result/input naturally visible.

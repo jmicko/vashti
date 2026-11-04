@@ -44,6 +44,7 @@ import {
   selectedModelBaseParts
 } from "./modelSelection";
 import { Sidebar } from "./Sidebar";
+import { chatModelGroups } from "./modelEligibility";
 import { UnsavedSettingsDialog } from "./settingsControls";
 import { SettingsPage } from "./settingsPage";
 import { markPerformance, measurePerformance } from "./performance";
@@ -468,7 +469,8 @@ export function AppShell({
   const applyModelPickerData = useCallback(
     (modelsResponse: ModelsResponse, personasResponse: PersonasResponse) => {
       hasModelPickerDataRef.current = true;
-      const enabledValues = enabledModelValueSet(modelsResponse.backends);
+      const eligibleGroups = chatModelGroups(modelsResponse.backends);
+      const enabledValues = enabledModelValueSet(eligibleGroups);
       const visiblePersonas = personasResponse.personas
         .filter((persona) => enabledValues.has(personaBaseModelValue(persona)))
         .map((persona) => ({
@@ -480,13 +482,13 @@ export function AppShell({
       rememberPersonaVersions(visiblePersonas.map((persona) => persona.current_version));
       setSelectedModel((current) => {
         const values = [
-          ...modelsResponse.backends.flatMap((group) =>
+          ...eligibleGroups.flatMap((group) =>
             group.models.map((model) => modelValue(group.backend.id, model.name))
           ),
           ...visiblePersonas.map((persona) => personaModelValue(persona.current_version.id))
         ];
         const defaultModel =
-          modelsResponse.backends
+          eligibleGroups
             .flatMap((group) =>
               group.models.map((model) => ({
                 backendId: group.backend.id,
@@ -501,7 +503,7 @@ export function AppShell({
         return current &&
           (values.includes(current) || Boolean(privatePersonaVersionIdFromValue(current)))
           ? current
-          : defaultValue;
+          : defaultValue || (values[0] ?? "");
       });
     },
     [rememberPersonaVersions]
@@ -710,13 +712,10 @@ export function AppShell({
 
   useEffect(() => {
     function handlePopState() {
-      if (imageViewerRef.current) {
-        setImageViewer(null);
-        return;
-      }
-
       const nextRoute = routeFromLocation();
       const currentRoute = routeRef.current;
+      if (routesEqual(currentRoute, nextRoute)) return;
+      setImageViewer(null);
 
       if (shouldGuardNavigation(currentRoute, nextRoute)) {
         window.history.pushState(null, "", pathForRoute(currentRoute));
@@ -746,26 +745,10 @@ export function AppShell({
       viewerAttachments.findIndex((viewerAttachment) => viewerAttachment.id === attachment.id)
     );
     setImageViewer({ attachments: viewerAttachments, index });
-    if (!window.history.state?.vashtiImageViewer) {
-      window.history.pushState(
-        {
-          ...(typeof window.history.state === "object" && window.history.state !== null
-            ? window.history.state
-            : {}),
-          vashtiImageViewer: true
-        },
-        "",
-        window.location.href
-      );
-    }
   }
 
   function closeImageViewer() {
-    const shouldStepBack = Boolean(window.history.state?.vashtiImageViewer);
     setImageViewer(null);
-    if (shouldStepBack) {
-      window.history.back();
-    }
   }
 
   function setImageViewerIndex(index: number) {
@@ -789,6 +772,12 @@ export function AppShell({
   }
 
   function applyNavigation(nextRoute: AppRoute) {
+    if (window.history.state?.vashtiMediaViewer) {
+      // Leave temporary photo/panel entries before recording the destination.
+      window.addEventListener("popstate", () => applyNavigation(nextRoute), { once: true });
+      window.history.go(window.history.state?.vashtiMediaPanel ? -2 : -1);
+      return;
+    }
     const nextPath = pathForRoute(nextRoute);
     const currentPath = `${window.location.pathname}${window.location.hash}`;
     if (currentPath !== nextPath) {
@@ -1513,7 +1502,7 @@ export function AppShell({
                     <button
                       type="button"
                       className="menu-item update-menu-item"
-                      onClick={() => openSettings("profile")}
+                      onClick={() => openSettings("device")}
                     >
                       <Download />
                       <span>Android app {nativeUpdates.available.version} available</span>

@@ -2,7 +2,8 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  type ReactNode
 } from "react";
 import {
   ArrowLeft,
@@ -13,6 +14,7 @@ import {
   HardDrive,
   History,
   MoreHorizontal,
+  Pencil,
   Pin,
   PinOff,
   RefreshCw,
@@ -24,6 +26,7 @@ import {
   X
 } from "lucide-react";
 import { ConfirmDialog, RetroLoader } from "../common";
+import { useModalFocus } from "../useModalFocus";
 import { MarkdownContent } from "../MarkdownContent";
 import { getPrivateNoteSettings, type PrivatePersona } from "../privateChatStore";
 import type { BackendModelGroup, Persona } from "../types";
@@ -969,6 +972,13 @@ export function NotesWorkspace({
                   </div>
                 </div>
                 <div className="note-editor-actions">
+                  <button type="button" className="icon-button note-primary-action"
+                    aria-label={editorMode === "edit" ? "Preview note" : "Edit note"}
+                    title={editorMode === "edit" ? "Preview note" : "Edit note"}
+                    aria-pressed={editorMode === "preview"}
+                    onClick={() => setEditorMode(editorMode === "edit" ? "preview" : "edit")}>
+                    {editorMode === "edit" ? <Eye /> : <Pencil />}
+                  </button>
                   {note.deleted_at ? (
                     <>
                       <button type="button" className="secondary-button" onClick={() => void restoreCurrentNote()}>
@@ -989,7 +999,7 @@ export function NotesWorkspace({
                       >
                         {draft.is_pinned ? <PinOff /> : <Pin />}
                       </button>
-                      <button type="button" className="icon-button" aria-label="Version history" title="Version history" onClick={() => void openHistory()}>
+                      <button type="button" className="icon-button note-primary-action" aria-label="Version history" title={`Version history (v${note.current_version.version_number})`} onClick={() => void openHistory()}>
                         <History />
                       </button>
                       <button
@@ -1136,18 +1146,6 @@ export function NotesWorkspace({
               )}
               {noteError && <p className="error note-editor-error">{noteError}</p>}
 
-              <div className="note-editor-modebar">
-                <div className="segmented-control">
-                  <button type="button" className={editorMode === "edit" ? "active" : ""} onClick={() => setEditorMode("edit")}>
-                    Edit
-                  </button>
-                  <button type="button" className={editorMode === "preview" ? "active" : ""} onClick={() => setEditorMode("preview")}>
-                    <Eye /> Preview
-                  </button>
-                </div>
-                <span>v{note.current_version.version_number}</span>
-              </div>
-
               {editorMode === "edit" && !note.deleted_at ? (
                 <div className="note-markdown-editor" onBlur={(event) => {
                   if (!event.currentTarget.contains(event.relatedTarget)) {
@@ -1180,9 +1178,7 @@ export function NotesWorkspace({
         </article>
 
         {drawer && (
-          <>
-            <button type="button" className="notes-drawer-backdrop" aria-label="Close panel" onClick={() => setDrawer(null)} />
-            <aside className="notes-drawer" aria-label={drawerTitle(drawer)}>
+          <NoteDrawer title={drawerTitle(drawer)} onClose={() => setDrawer(null)}>
               <header>
                 <div>
                   <p className="eyebrow">Notes</p>
@@ -1212,8 +1208,7 @@ export function NotesWorkspace({
                   onRestore={(version) => setConfirmAction({ kind: "restore-version", version })}
                 />
               )}
-            </aside>
-          </>
+          </NoteDrawer>
         )}
       </div>
 
@@ -1230,6 +1225,14 @@ export function NotesWorkspace({
       )}
     </section>
   );
+}
+
+function NoteDrawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null);
+  useModalFocus(ref, onClose);
+  return <div className="notes-drawer-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <aside ref={ref} className="notes-drawer" role="dialog" aria-modal="true" aria-label={title}>{children}</aside>
+  </div>;
 }
 
 function NoteDetails({

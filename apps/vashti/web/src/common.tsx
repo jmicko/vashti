@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useModalFocus } from "./useModalFocus";
 
 export function RetroLoader() {
   const frames = ["-______", "_-_____", "__-____", "___-___", "____-__", "_____-_", "______-"];
@@ -49,21 +50,14 @@ export function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !isBusy) {
-        onCancel();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isBusy, onCancel]);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, onCancel, isBusy);
 
   return (
     <div className="confirm-backdrop" role="presentation">
       <section
         className="confirm-dialog"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"

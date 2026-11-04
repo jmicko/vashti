@@ -5,15 +5,14 @@ import {
   Download,
   History,
   Layers,
-  Minus,
   Pencil,
-  Plus,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import { ImageAsset, downloadImage } from "./ImageAsset";
 import { ImageComparison } from "./ImageComparison";
+import { ActionMenu } from "../ActionMenu";
 import { comparisonReference } from "./comparison";
-import { ImagePanel } from "./controls";
 import { appendGallery, galleryVariants } from "./gallery";
 import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
 import { useImagePath } from "./storage";
@@ -43,6 +42,10 @@ export function ImageGallery({
   const [loading, setLoading] = useState(true);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const mounted = useRef(true);
+  const pageRequest = useRef<Promise<GalleryItem[]> | null>(null);
+  const pageSentinel = useRef<HTMLDivElement>(null);
+  const nextPage = useRef<() => Promise<GalleryItem[]>>(async () => []);
+  const variantsCache = useRef(new Map<string, ImageResult[]>());
   const [viewer, setViewer] = useState<{
     item: GalleryItem;
     ids: string[];
@@ -72,23 +75,45 @@ export function ImageGallery({
     };
   }, [imagePath]);
 
-  async function loadMore() {
+  async function loadMore(): Promise<GalleryItem[]> {
+    if (pageRequest.current) return pageRequest.current;
     setLoading(true);
     setError("");
-    try {
-      const page = await requestJson<GalleryItem[]>(
-        `${imagePath}/gallery?offset=${nextOffset}`,
-      );
-      if (!mounted.current) return;
-      setItems((values) => appendGallery(values, page));
-      setNextOffset((value) => value + page.length);
-      setHasMore(page.length === 50);
-    } catch (error) {
-      if (mounted.current) setError(imageError(error));
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
+    const request = (async () => {
+      try {
+        const page = await requestJson<GalleryItem[]>(
+          `${imagePath}/gallery?offset=${nextOffset}`,
+        );
+        if (!mounted.current) return [];
+        setItems((values) => appendGallery(values, page));
+        setNextOffset((value) => value + page.length);
+        setHasMore(page.length === 50);
+        return page;
+      } catch (error) {
+        if (mounted.current) setError(imageError(error));
+        return [];
+      } finally {
+        if (mounted.current) setLoading(false);
+        pageRequest.current = null;
+      }
+    })();
+    pageRequest.current = request;
+    return request;
   }
+  nextPage.current = loadMore;
+  useEffect(() => {
+    const target = pageSentinel.current;
+    if (!target || !hasMore || loading || error || viewer) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting))
+          void nextPage.current();
+      },
+      { rootMargin: "400px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, loading, error, nextOffset, Boolean(viewer)]);
 
   async function action(task: () => Promise<void>) {
     setBusy(true);
@@ -115,28 +140,48 @@ export function ImageGallery({
     onNavigate("flow", session.id);
   }
 
-  async function open(item: GalleryItem) {
+  function open(item: GalleryItem) {
     setConfirmRemove(false);
+    setError("");
     setViewer({ item, ids: [item.asset_id], index: 0, results: [] });
-    if (!item.session_id || !item.group_id) return;
-    const variants = await galleryVariants(item, (offset) =>
-      requestJson<ImageResult[]>(
-        `${imagePath}/sessions/${item.session_id}/results?offset=${offset}`,
-      ),
-    );
-    if (!mounted.current || !variants.length) return;
-    const ids = variants.map((value) => value.asset_id);
-    setViewer((value) =>
-      value?.item.id === item.id
-        ? {
-            item,
-            ids,
-            index: Math.max(0, ids.indexOf(item.asset_id)),
-            results: variants,
-          }
-        : value,
-    );
   }
+
+  useEffect(() => {
+    const item = viewer?.item;
+    if (!item?.session_id || !item.group_id) return;
+    let live = true;
+    const key = `${item.id}:${item.variants}:${item.asset_id}`;
+    const cached = variantsCache.current.get(key);
+    const request = cached
+      ? Promise.resolve(cached)
+      : galleryVariants(item, (offset) =>
+          requestJson<ImageResult[]>(
+            `${imagePath}/sessions/${item.session_id}/results?offset=${offset}`,
+          ),
+        );
+    void request
+      .then((variants) => {
+        if (!live || !variants.length) return;
+        variantsCache.current.set(key, variants);
+        const ids = variants.map((value) => value.asset_id);
+        setViewer((value) =>
+          value?.item.id === item.id
+            ? {
+                item,
+                ids,
+                index: Math.max(0, ids.indexOf(item.asset_id)),
+                results: variants,
+              }
+            : value,
+        );
+      })
+      .catch((error) => {
+        if (live) setError(imageError(error));
+      });
+    return () => {
+      live = false;
+    };
+  }, [viewer?.item.id, imagePath]);
 
   async function remove(item: GalleryItem) {
     await requestJson(`${imagePath}/gallery/${item.id}`, { method: "DELETE" });
@@ -147,7 +192,7 @@ export function ImageGallery({
     setConfirmRemove(false);
   }
 
-  function move(delta: number) {
+  function moveVersion(delta: number) {
     setViewer((value) =>
       value
         ? {
@@ -162,22 +207,24 @@ export function ImageGallery({
     setConfirmRemove(false);
   }
 
-  useEffect(() => {
-    if (!viewer) return;
-    const key = (event: KeyboardEvent) => {
-      if (
-        event.target instanceof HTMLElement &&
-        event.target.closest("input,textarea,select,[contenteditable=true]")
-      )
-        return;
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        event.preventDefault();
-        move(event.key === "ArrowLeft" ? -1 : 1);
-      }
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [Boolean(viewer)]);
+  const libraryIndex = viewer
+    ? items.findIndex((item) => item.id === viewer.item.id)
+    : -1;
+  function move(delta: number) {
+    const item = items[libraryIndex + delta];
+    if (item) open(item);
+    else if (delta > 0 && hasMore) {
+      const previousId = viewer?.item.id;
+      void loadMore().then((page) => {
+        if (!mounted.current || !page.length) return;
+        setViewer((current) =>
+          current?.item.id === previousId
+            ? { item: page[0], ids: [page[0].asset_id], index: 0, results: [] }
+            : current,
+        );
+      });
+    }
+  }
 
   const selected = viewer?.results[viewer.index];
   const alert = error && (
@@ -194,32 +241,22 @@ export function ImageGallery({
             ? "Loading images..."
             : `${items.length}${hasMore ? "+" : ""} images`}
         </small>
-        <div
-          className="images-actions"
-          role="group"
-          aria-label="Thumbnail size"
-        >
-          <button
-            type="button"
-            className="images-icon"
-            title="Smaller thumbnails"
-            aria-label="Smaller thumbnails"
-            disabled={density === 0}
-            onClick={() => setDensity((value) => value - 1)}
-          >
-            <Minus size={18} />
-          </button>
-          <button
-            type="button"
-            className="images-icon"
-            title="Larger thumbnails"
-            aria-label="Larger thumbnails"
-            disabled={density === 2}
-            onClick={() => setDensity((value) => value + 1)}
-          >
-            <Plus size={18} />
-          </button>
-        </div>
+        <ActionMenu label="Gallery view" icon={<SlidersHorizontal />}>
+          <fieldset className="gallery-view-options">
+            <legend>Thumbnail size</legend>
+            {["Small", "Medium", "Large"].map((label, value) => (
+              <label key={label}>
+                <input
+                  type="radio"
+                  name="gallery-density"
+                  checked={density === value}
+                  onChange={() => setDensity(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+        </ActionMenu>
       </div>
       <div
         className={`images-gallery images-gallery-density-${density}`}
@@ -231,7 +268,7 @@ export function ImageGallery({
             type="button"
             className="images-gallery-tile"
             disabled={busy}
-            onClick={() => void action(() => open(item))}
+            onClick={() => open(item)}
             aria-label={`Open image ${index + 1}${item.variants > 1 ? `, ${item.variants} versions` : ""}`}
           >
             <ImageAsset
@@ -255,7 +292,7 @@ export function ImageGallery({
         </p>
       )}
       {(hasMore || (!items.length && error)) && (
-        <div className="images-actions images-pagination">
+        <div ref={pageSentinel} className="images-actions images-pagination">
           <button
             type="button"
             disabled={loading || busy}
@@ -266,132 +303,145 @@ export function ImageGallery({
         </div>
       )}
       {viewer && (
-        <ImagePanel
-          title={
-            viewer.ids.length > 1
-              ? `Version ${viewer.index + 1} of ${viewer.ids.length}`
-              : "Image"
-          }
-          className="images-viewer-panel"
-          onClose={() => {
-            setViewer(null);
-            setError("");
+        <ImageComparison
+          fullscreen={{
+            title: `Image ${libraryIndex + 1} of ${items.length}${hasMore ? "+" : ""}`,
+            onClose: () => {
+              setViewer(null);
+              setError("");
+            },
+            canPrevious: libraryIndex > 0,
+            canNext: libraryIndex < items.length - 1 || (hasMore && !loading),
           }}
-        >
-          {alert}
-          <ImageComparison
-            id={viewer.ids[viewer.index]}
-            referenceId={comparisonReference(selected)}
-            onStep={move}
-            dimensions={
-              selected
-                ? {
-                    width: selected.recipe.width,
-                    height: selected.recipe.height,
-                  }
-                : viewer.item.width && viewer.item.height
-                  ? { width: viewer.item.width, height: viewer.item.height }
-                  : undefined
-            }
-            neighbors={viewer.ids.filter(
-              (_, index) => Math.abs(index - viewer.index) === 1,
-            )}
-          >
-            {viewer.ids.length > 1 && (
-              <>
+          previousId={items[libraryIndex - 1]?.asset_id}
+          nextId={items[libraryIndex + 1]?.asset_id}
+          notice={alert}
+          versions={
+            viewer.ids.length > 1 && (
+              <details className="photo-viewer-versions">
+                <summary>
+                  Version {viewer.index + 1} of {viewer.ids.length}
+                </summary>
+                <div
+                  className="images-gallery-versions"
+                  role="group"
+                  aria-label="Image versions"
+                >
+                  <button
+                    type="button"
+                    className="images-icon"
+                    aria-label="Previous version"
+                    title="Previous version"
+                    disabled={viewer.index === 0}
+                    onClick={() => moveVersion(-1)}
+                  >
+                    <ArrowLeft size={18} />
+                  </button>
+                  <span>
+                    Version {viewer.index + 1} of {viewer.ids.length}
+                  </span>
+                  <button
+                    type="button"
+                    className="images-icon"
+                    aria-label="Next version"
+                    title="Next version"
+                    disabled={viewer.index === viewer.ids.length - 1}
+                    onClick={() => moveVersion(1)}
+                  >
+                    <ArrowRight size={18} />
+                  </button>
+                </div>
+              </details>
+            )
+          }
+          secondaryActions={
+            <>
+              {viewer.item.session_id && (
                 <button
                   type="button"
-                  className="images-icon"
-                  disabled={viewer.index === 0}
-                  title="Previous version"
-                  aria-label="Previous version"
-                  onClick={() => move(-1)}
+                  onClick={() => onNavigate("flow", viewer.item.session_id!)}
                 >
-                  <ArrowLeft />
+                  <History />
+                  Open image flow
                 </button>
-                <button
-                  type="button"
-                  className="images-icon"
-                  disabled={viewer.index === viewer.ids.length - 1}
-                  title="Next version"
-                  aria-label="Next version"
-                  onClick={() => move(1)}
-                >
-                  <ArrowRight />
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              className="images-icon"
-              disabled={busy}
-              title="Edit image"
-              aria-label="Edit image"
-              onClick={() => void action(() => edit(viewer.ids[viewer.index]))}
-            >
-              <Pencil />
-            </button>
-            <button
-              type="button"
-              className="images-icon"
-              disabled={busy}
-              title="Download image"
-              aria-label="Download image"
-              onClick={() =>
-                void action(() =>
-                  downloadImage(viewer.ids[viewer.index], imagePath),
-                )
-              }
-            >
-              <Download />
-            </button>
-            {viewer.item.session_id && (
+              )}
               <button
                 type="button"
-                className="images-icon"
-                title="Open image flow"
-                aria-label="Open image flow"
-                onClick={() => onNavigate("flow", viewer.item.session_id!)}
+                disabled={busy}
+                onClick={() => setConfirmRemove(true)}
               >
-                <History />
+                <Trash2 />
+                Remove from gallery
               </button>
-            )}
-            <button
-              type="button"
-              className="images-icon"
-              disabled={busy}
-              title="Remove from gallery"
-              aria-label="Remove from gallery"
-              onClick={() => setConfirmRemove(true)}
-            >
-              <Trash2 />
-            </button>
-          </ImageComparison>
-          {confirmRemove && (
-            <div className="images-gallery-remove">
-              <p>
-                Remove from gallery? Images still used in flows or chats are
-                kept.
-              </p>
-              <div className="images-actions">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void action(() => remove(viewer.item))}
-                >
-                  Remove
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setConfirmRemove(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </ImagePanel>
+              {confirmRemove && (
+                <div className="images-gallery-remove">
+                  <p>
+                    Remove from gallery? Images still used in flows or chats are
+                    kept.
+                  </p>
+                  <div className="images-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void action(() => remove(viewer.item))}
+                    >
+                      Remove
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmRemove(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          }
+          id={viewer.ids[viewer.index]}
+          referenceId={comparisonReference(selected)}
+          onStep={move}
+          dimensions={
+            selected
+              ? {
+                  width: selected.recipe.width,
+                  height: selected.recipe.height,
+                }
+              : viewer.item.width && viewer.item.height
+                ? { width: viewer.item.width, height: viewer.item.height }
+                : undefined
+          }
+          neighbors={[
+            items[libraryIndex - 1]?.asset_id,
+            items[libraryIndex + 1]?.asset_id,
+          ].filter((id): id is string => Boolean(id))}
+        >
+          <button
+            type="button"
+            className="images-icon"
+            disabled={busy}
+            title="Edit image"
+            aria-label="Edit image"
+            onClick={() => void action(() => edit(viewer.ids[viewer.index]))}
+          >
+            <Pencil />
+          </button>
+          <button
+            type="button"
+            className="images-icon"
+            disabled={busy}
+            title="Download image"
+            aria-label="Download image"
+            onClick={() =>
+              void action(() =>
+                downloadImage(viewer.ids[viewer.index], imagePath),
+              )
+            }
+          >
+            <Download />
+          </button>
+        </ImageComparison>
       )}
     </>
   );

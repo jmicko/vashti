@@ -2,6 +2,8 @@ import type { AppRoute, NewChatMode, SettingsSection } from "./types";
 
 const settingsSections: SettingsSection[] = [
   "profile",
+  "appearance",
+  "device",
   "users",
   "backends",
   "models",

@@ -1,4 +1,5 @@
 import { modelValue } from "./modelSelection";
+import { chatModelGroups } from "./modelEligibility";
 import type {
   AdminBackendModelGroup,
   AdminModelInfo,
@@ -8,8 +9,9 @@ import type {
 } from "./types";
 
 export function firstModelValue(groups: BackendModelGroup[]) {
-  const firstGroup = groups.find((group) => group.models.length > 0);
-  const firstModel = firstGroup?.models[0];
+  const eligible = chatModelGroups(groups);
+  const firstGroup = eligible.find((group) => group.models.some((model) => model.is_default)) ?? eligible.find((group) => group.models.length > 0);
+  const firstModel = firstGroup?.models.find((model) => model.is_default) ?? firstGroup?.models[0];
   return firstGroup && firstModel ? modelValue(firstGroup.backend.id, firstModel.name) : "";
 }
 

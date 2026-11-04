@@ -10,6 +10,11 @@ export const THEME_OPTIONS = [
     description: "Dark terminal green."
   },
   {
+    id: "grayscale",
+    label: "Grayscale",
+    description: "Black, white, and neutral grays."
+  },
+  {
     id: "light",
     label: "Light",
     description: "Bright neutral surfaces with green accents."
@@ -47,7 +52,7 @@ function resolvedTheme(theme: ThemeId): AppliedThemeId {
 function applyResolvedTheme(theme: AppliedThemeId) {
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
-  const themeColor = theme === "light" ? "#f4f8f0" : "#020402";
+  const themeColor = theme === "light" ? "#f7f7f7" : "#0a0b0a";
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", themeColor);

@@ -39,6 +39,7 @@ import {
   parseThinkingText
 } from "./chatMessages";
 import { RetroLoader } from "./common";
+import { ActionMenu } from "./ActionMenu";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageStreamContent, ThinkingContent, thinkingSummary } from "./messageContent";
 import { ModelAvatar } from "./ModelAvatar";
@@ -530,6 +531,11 @@ function MessageBubbleCard({
                 <RefreshCw />
               </button>
             )}
+            <button type="button" className="message-icon-button" title="Copy" aria-label="Copy"
+              disabled={message.is_deleted || content === ""} onClick={() => void onCopy(message)}>
+              <Copy />{copied && <span>Copied</span>}
+            </button>
+            <ActionMenu label="Message actions">
             {message.role === "assistant" && (
               <button
                 type="button"
@@ -549,19 +555,9 @@ function MessageBubbleCard({
                 }}
               >
                 <StepForward />
+                <span>Continue response</span>
               </button>
             )}
-            <button
-              type="button"
-              className="message-icon-button"
-              title="Copy"
-              aria-label="Copy"
-              disabled={message.is_deleted || content === ""}
-              onClick={() => void onCopy(message)}
-            >
-              <Copy />
-              {copied && <span>Copied</span>}
-            </button>
             <button
               type="button"
               className="message-icon-button"
@@ -571,6 +567,7 @@ function MessageBubbleCard({
               onClick={startEditing}
             >
               <Pencil />
+              <span>Edit</span>
             </button>
             <button
               type="button"
@@ -581,7 +578,9 @@ function MessageBubbleCard({
               onClick={() => onDelete(message)}
             >
               <Trash2 />
+              <span>Delete</span>
             </button>
+            </ActionMenu>
             {message.role === "assistant" && (
               <button
                 type="button"

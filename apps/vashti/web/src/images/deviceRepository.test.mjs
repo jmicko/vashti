@@ -10,11 +10,18 @@ Object.assign(globalThis, {
   IDBKeyRange,
   window: new EventTarget(),
 });
-globalThis.createImageBitmap = async () => ({
+let thumbnailDecodes = 0;
+globalThis.createImageBitmap = async () => { thumbnailDecodes++; return ({
   width: 64,
   height: 64,
   close() {},
-});
+}); };
+globalThis.document = {
+  createElement: () => ({
+    getContext: () => ({ drawImage() {} }),
+    toBlob: callback => callback(new Blob([png], { type: "image/png" })),
+  }),
+};
 globalThis.FileReader = class {
   readAsDataURL(blob) {
     blob
@@ -65,6 +72,7 @@ let requests = [],
   pending = false,
   fail = false,
   native = false,
+  previewStatus = 0,
   blobRequests = [],
   holdBlob;
 globalThis.__imageTestNative = {
@@ -105,6 +113,8 @@ globalThis.__imageTestApi = {
   },
   requestBlob: async (path) => {
     blobRequests.push(path);
+    if (path.endsWith("/thumbnail") && previewStatus)
+      throw Object.assign(new Error("Preview request failed"), { status: previewStatus });
     if (holdBlob) await holdBlob;
     return new Blob([png], { type: "image/png" });
   },
@@ -329,13 +339,14 @@ test("image-only edits, candidate batches, Stop, failures and defaults remain us
     (await local(`/sessions/${session.id}/results`))[0].parent_result_id,
     results[0].id,
   );
-  await assert.rejects(
-    local(
+  const reordered = await local(
       `/sessions/${session.id}/runs`,
-      runRequest({ ...continuation, input_ids: [source.id] }),
-    ),
-    /selected result/,
+      runRequest({ ...continuation, input_ids: [source.id, results[0].asset_id] }),
   );
+  assert.equal((await completed(reordered.id)).status, "complete");
+  const reorderedResult = (await local(`/sessions/${session.id}/results`))[0];
+  assert.equal(reorderedResult.parent_result_id, results[0].id);
+  assert.deepEqual(reorderedResult.input_ids, [source.id, results[0].asset_id]);
   await assert.rejects(
     local(`/sessions/${session.id}/runs`, {
       ...runRequest(draft),
@@ -358,7 +369,7 @@ test("image-only edits, candidate batches, Stop, failures and defaults remain us
   await local("/preferences", preferences, "PUT");
   assert.deepEqual(await local("/preferences"), preferences);
   await local(`/gallery/${results[0].group_id}`, {}, "DELETE");
-  assert.equal((await local(`/sessions/${session.id}/results`)).length, 3);
+  assert.equal((await local(`/sessions/${session.id}/results`)).length, 4);
   const copy = await local(`/gallery/copy/${results[0].asset_id}`, {});
   await local(`/sessions/${session.id}`, {}, "DELETE");
   assert.deepEqual(await local("/sessions"), []);
@@ -506,6 +517,67 @@ test("an account switch during a private result cannot save it under the next us
     "stopped",
   );
   assert.deepEqual(await local(`/sessions/${session.id}/results`), []);
+});
+
+test("device previews persist encrypted and avoid reopening originals on warm loads", async () => {
+  user("preview-device");
+  const source = await app.uploadDeviceImage(new Blob([png], { type: "image/png" }));
+  assert.ok(await app.readPrivateImage(`thumbnail:device:${source.id}`));
+  const decoded = thumbnailDecodes;
+  blobRequests = [];
+  const preview = await app.loadImageThumbnail("/device/images", source.id);
+  assert.equal(preview.type, "image/png");
+  assert.equal(thumbnailDecodes, decoded);
+  assert.deepEqual(blobRequests, []);
+  await app.deletePrivateImage(`thumbnail:device:${source.id}`);
+  await app.loadImageThumbnail("/device/images", source.id);
+  assert.equal(thumbnailDecodes, decoded + 1);
+  await app.loadImageThumbnail("/device/images", source.id);
+  assert.equal(thumbnailDecodes, decoded + 1);
+  user("preview-other");
+  await assert.rejects(app.loadImageThumbnail("/device/images", source.id), /not found/);
+});
+
+test("server previews fetch only small assets and survive RAM cache lifetimes", async () => {
+  user("preview-server");
+  blobRequests = [];
+  await app.loadImageThumbnail("/api/images", "preview");
+  for (let i = 0; i < 100 && !(await app.readPrivateImage("thumbnail-cache-index")); i++)
+    await new Promise(resolve => setTimeout(resolve, 1));
+  assert.deepEqual(blobRequests, ["/api/images/assets/preview/thumbnail"]);
+  const decoded = thumbnailDecodes;
+  await app.loadImageThumbnail("/api/images", "preview");
+  assert.equal(blobRequests.length, 1);
+  assert.equal(thumbnailDecodes, decoded);
+  assert.equal(await app.readPrivateImage("cache:preview"), null);
+  let release;
+  holdBlob = new Promise(resolve => { release = resolve; });
+  const pendingPreview = app.loadImageThumbnail("/api/images", "late");
+  while (!blobRequests.includes("/api/images/assets/late/thumbnail"))
+    await new Promise(resolve => setTimeout(resolve, 1));
+  user("preview-other");
+  release();
+  await assert.rejects(pendingPreview, /user changed/);
+  holdBlob = undefined;
+  assert.equal(await app.readPrivateImage("thumbnail:server:late"), null);
+});
+
+test("old-server preview fallback is cached and never hides permission errors", async () => {
+  user("preview-legacy");
+  blobRequests = [];
+  previewStatus = 404;
+  try {
+    await app.loadImageThumbnail("/api/images", "legacy");
+    assert.deepEqual(blobRequests, ["/api/images/assets/legacy/thumbnail", "/api/images/assets/legacy"]);
+    for (let i = 0; i < 100 && !(await app.readPrivateImage("thumbnail:server:legacy")); i++)
+      await new Promise(resolve => setTimeout(resolve, 1));
+    await app.loadImageThumbnail("/api/images", "legacy");
+    assert.equal(blobRequests.length, 2);
+    previewStatus = 403;
+    blobRequests = [];
+    await assert.rejects(app.loadImageThumbnail("/api/images", "denied"), /Preview request failed/);
+    assert.deepEqual(blobRequests, ["/api/images/assets/denied/thumbnail"]);
+  } finally { previewStatus = 0; }
 });
 
 test("prompt retention only clears accepted iterative edits, not newly typed text", () => {

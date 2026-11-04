@@ -34,6 +34,49 @@ struct Mock {
     disconnected: AtomicBool,
     response_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
+
+#[tokio::test]
+async fn thumbnails_are_small_persistent_owner_scoped_and_leave_originals_unchanged() {
+    let (state, _, server) = setup(false).await;
+    let mut original = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(1024, 768)
+        .write_to(&mut original, image::ImageFormat::Png)
+        .unwrap();
+    let original = original.into_inner();
+    let uploaded = service::upload(&state.db, "alice", original.clone())
+        .await
+        .unwrap();
+    let id = uploaded["id"].as_str().unwrap();
+    let bytes = service::thumbnail(&state.db, "alice", id).await.unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (320, 320));
+    assert!(bytes.len() < original.len());
+    assert_eq!(
+        service::asset(&state.db, "alice", id).await.unwrap().1,
+        original
+    );
+    assert_eq!(
+        service::thumbnail(&state.db, "alice", id).await.unwrap(),
+        bytes
+    );
+    assert!(service::thumbnail(&state.db, "bob", id).await.is_err());
+    assert!(
+        service::thumbnail(&state.db, "alice", "missing")
+            .await
+            .is_err()
+    );
+    sqlx::query("DELETE FROM image_assets WHERE id=?")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM image_thumbnails")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0);
+    server.abort();
+}
 struct ImageBody {
     chunks: VecDeque<Vec<u8>>,
     mock: Arc<Mock>,
@@ -600,6 +643,77 @@ async fn image_edits_and_branch_selection_preserve_exact_ancestry_and_titles() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn reordered_edit_inputs_preserve_conversation_ancestry_and_retry_snapshot() {
+    let (state, _, server) = setup(false).await;
+    const PNG: &[u8] = include_bytes!("fixtures/64.png");
+    let first_asset = service::upload(&state.db, "alice", PNG.to_vec())
+        .await
+        .unwrap();
+    let second_asset = service::upload(&state.db, "alice", PNG.to_vec())
+        .await
+        .unwrap();
+    let mut d = draft();
+    d.recipe.workflow = kuno_protocol::QWEN21_EDIT_RECIPE.into();
+    d.input_ids = vec![
+        first_asset["id"].as_str().unwrap().into(),
+        second_asset["id"].as_str().unwrap().into(),
+    ];
+    d.original_input_ids = d.input_ids.clone();
+    let session = service::create_session(
+        &state.db,
+        "alice",
+        "Reordered sources",
+        "iterative",
+        d.clone(),
+    )
+    .await
+    .unwrap();
+    let first = service::submit(&state, "alice", &session.id, request(d.clone()))
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &first.id).await.status, "complete");
+    let result = service::results(&state.db, "alice", &session.id, 0)
+        .await
+        .unwrap()
+        .remove(0);
+    d.input_ids.reverse();
+    d.original_input_ids = d.input_ids.clone();
+    d.parent_result_id = Some(result.id.clone());
+    let second = service::submit(&state, "alice", &session.id, request(d.clone()))
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &second.id).await.status, "complete");
+    let child = service::results(&state.db, "alice", &session.id, 0)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(child.parent_result_id, Some(result.id));
+    assert_eq!(child.input_ids, d.input_ids);
+    let mut retry = request(d.clone());
+    retry.retry_result_id = Some(child.id);
+    retry.draft.input_ids.reverse();
+    let retry = service::submit(&state, "alice", &session.id, retry)
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &retry.id).await.status, "complete");
+    let retried = service::results(&state.db, "alice", &session.id, 0)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(retried.input_ids, child.input_ids);
+    assert_eq!(retried.parent_result_id, child.parent_result_id);
+    let other = service::create_session(&state.db, "alice", "Other", "generate", draft())
+        .await
+        .unwrap();
+    assert!(
+        service::submit(&state, "alice", &other.id, request(d))
+            .await
+            .is_err()
+    );
+    server.abort();
+}
 #[tokio::test]
 async fn batches_are_independent_retries_stack_and_inputs_are_owner_scoped() {
     let (state, mock, server) = setup(false).await;
@@ -911,6 +1025,31 @@ async fn settings_and_discovery_remain_session_and_admin_scoped_without_a_token(
         .await
         .unwrap()
         .remove(0);
+    let preview_url = format!("{url}/assets/{}/thumbnail", image_result.asset_id);
+    assert_eq!(
+        client.get(&preview_url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .get(&preview_url)
+            .header("cookie", cookie(&bob.id))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    let preview = client
+        .get(&preview_url)
+        .header("cookie", cookie(&alice.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), reqwest::StatusCode::OK);
+    assert_eq!(preview.headers()["content-type"], "image/png");
+    assert_eq!(preview.headers()["cache-control"], "private, no-store");
+    assert!(image::load_from_memory(&preview.bytes().await.unwrap()).is_ok());
     assert_eq!(
         client
             .patch(format!("{url}/sessions/{}/title", image_session.id))

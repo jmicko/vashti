@@ -42,6 +42,7 @@ pub fn router() -> Router<AppState> {
             post(upload).layer(DefaultBodyLimit::max(13 * 1024 * 1024)),
         )
         .route("/assets/{id}", get(asset))
+        .route("/assets/{id}/thumbnail", get(thumbnail))
         .route("/assets/{id}/settings", get(import_settings))
 }
 pub(super) async fn user(state: &AppState, jar: &CookieJar) -> Result<String, ApiError> {
@@ -289,6 +290,22 @@ async fn asset(
     );
     Ok((headers, bytes))
 }
+async fn thumbnail(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Result<(HeaderMap, Vec<u8>), ApiError> {
+    let u = user(&state, &jar).await?;
+    let bytes = service::thumbnail(&state.db, &u, &id).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    Ok((headers, bytes))
+}
+
 async fn import_settings(
     State(state): State<AppState>,
     jar: CookieJar,

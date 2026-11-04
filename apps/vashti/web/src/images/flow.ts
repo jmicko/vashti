@@ -16,6 +16,14 @@ export function clearPromptAfterSend(request: RunRequest, mode: string, currentP
     currentPrompt === request.draft.recipe.prompt;
 }
 
+export function nextImageDraft(draft: Draft, leaf: string | null): Draft {
+  return {
+    ...structuredClone(draft),
+    // Conversation ancestry is independent of the explicitly ordered source images.
+    parent_result_id: leaf,
+  };
+}
+
 export function advancedImageSeed(
   run: Run,
   previousCount: number,

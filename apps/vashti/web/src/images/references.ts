@@ -47,3 +47,12 @@ export function toggleReference(ids: string[], id: string, limit: number) {
       ? [...ids, id]
       : ids;
 }
+
+export function reorderReferences(draft: Draft, from: number, to: number): Partial<Draft> {
+  if (!Number.isInteger(from) || !Number.isInteger(to) ||
+      from < 0 || to < 0 || from >= draft.input_ids.length ||
+      to >= draft.input_ids.length || from === to) return {};
+  const ids = [...draft.input_ids];
+  ids.splice(to, 0, ids.splice(from, 1)[0]);
+  return { input_ids: ids, original_input_ids: [...ids] };
+}

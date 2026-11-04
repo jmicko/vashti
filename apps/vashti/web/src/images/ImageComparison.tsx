@@ -3,6 +3,7 @@ import { Columns2 } from "lucide-react";
 import { ImageAsset, type ImageAssetStatus } from "./ImageAsset";
 import { ComparisonPress } from "./comparison";
 import { SwipeSurface } from "./SwipeSurface";
+import { PhotoViewer, type PhotoViewerOptions } from "../PhotoViewer";
 
 export function ImageComparison({
   id,
@@ -14,6 +15,12 @@ export function ImageComparison({
   onStep,
   actionsClassName = "images-actions",
   children,
+  fullscreen,
+  secondaryActions,
+  versions,
+  previousId,
+  nextId,
+  notice,
 }: {
   id: string;
   alt?: string;
@@ -24,10 +31,18 @@ export function ImageComparison({
   onStep: (direction: number) => void;
   actionsClassName?: string;
   children: ReactNode;
+  fullscreen?: PhotoViewerOptions;
+  secondaryActions?: ReactNode;
+  versions?: ReactNode;
+  previousId?: string;
+  nextId?: string;
+  notice?: ReactNode;
 }) {
   const [showReference, setShowReference] = useState(false);
   const [press] = useState(() => new ComparisonPress(setShowReference));
-  const [resultStatus, setResultStatus] = useState<ImageAssetStatus | null>(null);
+  const [resultStatus, setResultStatus] = useState<ImageAssetStatus | null>(
+    null,
+  );
   const [referenceStatus, setReferenceStatus] =
     useState<ImageAssetStatus | null>(null);
   const available = Boolean(
@@ -58,81 +73,110 @@ export function ImageComparison({
       press.reset();
     };
   }, [press]);
+  const frame = (
+    <div
+      className={`image-compare-frame${referenceId ? " image-compare-enabled" : ""}${showing ? " image-compare-show-reference" : ""}`}
+    >
+      <div
+        className="image-compare-result"
+        aria-hidden={showing}
+        inert={showing || undefined}
+      >
+        <ImageAsset
+          id={id}
+          alt={alt}
+          dimensions={dimensions}
+          neighbors={neighbors}
+          onClick={onClick}
+          onStatus={referenceId ? setResultStatus : undefined}
+          eager={Boolean(fullscreen)}
+        />
+      </div>
+      {referenceId && (
+        <div className="image-compare-reference" aria-hidden={!showing}>
+          <ImageAsset
+            id={referenceId}
+            alt="First reference used for this edit"
+            onStatus={setReferenceStatus}
+            eager={Boolean(fullscreen)}
+          />
+        </div>
+      )}
+      {showing && <span className="image-compare-label">Reference 1</span>}
+    </div>
+  );
+  const compare = referenceId && (
+    <button
+      type="button"
+      className="image-compare-button"
+      aria-label="Compare with first reference"
+      aria-pressed={showing}
+      title={
+        failed
+          ? "Reference image unavailable"
+          : available
+            ? "Hold to compare with the first reference"
+            : "Loading reference image"
+      }
+      disabled={!available}
+      onPointerDown={(event) => {
+        if (!event.isPrimary || event.button !== 0) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        press.start(`pointer:${event.pointerId}`);
+      }}
+      onPointerUp={(event) => press.end(`pointer:${event.pointerId}`)}
+      onPointerCancel={(event) => press.end(`pointer:${event.pointerId}`)}
+      onLostPointerCapture={(event) => press.end(`pointer:${event.pointerId}`)}
+      onBlur={() => press.reset()}
+      onContextMenu={(event) => event.preventDefault()}
+      onClick={(event) => {
+        // Keyboard/screen-reader activation toggles; pointer release stays momentary.
+        if (event.detail === 0) press.activate();
+      }}
+    >
+      <Columns2 size={18} />
+      Compare
+    </button>
+  );
+  const warning = failed && (
+    <small role="status" className="image-compare-error">
+      Reference image unavailable
+    </small>
+  );
+  if (fullscreen)
+    return (
+      <PhotoViewer
+        {...fullscreen}
+        id={id}
+        onStep={onStep}
+        actions={
+          <>
+            {children}
+            {compare}
+          </>
+        }
+        more={secondaryActions}
+        versions={versions}
+        previous={previousId && <ImageAsset id={previousId} eager alt="" />}
+        next={nextId && <ImageAsset id={nextId} eager alt="" />}
+        notice={
+          <>
+            {notice}
+            {warning}
+          </>
+        }
+      >
+        {frame}
+      </PhotoViewer>
+    );
   return (
     <>
-      <SwipeSurface onStep={onStep}>
-        <div
-          className={`image-compare-frame${referenceId ? " image-compare-enabled" : ""}${showing ? " image-compare-show-reference" : ""}`}
-        >
-          <div
-            className="image-compare-result"
-            aria-hidden={showing}
-            inert={showing || undefined}
-          >
-            <ImageAsset
-              id={id}
-              alt={alt}
-              dimensions={dimensions}
-              neighbors={neighbors}
-              onClick={onClick}
-              onStatus={referenceId ? setResultStatus : undefined}
-            />
-          </div>
-          {referenceId && (
-            <div className="image-compare-reference" aria-hidden={!showing}>
-              <ImageAsset
-                id={referenceId}
-                alt="First reference used for this edit"
-                onStatus={setReferenceStatus}
-              />
-            </div>
-          )}
-          {showing && <span className="image-compare-label">Reference 1</span>}
-        </div>
-      </SwipeSurface>
+      <SwipeSurface onStep={onStep}>{frame}</SwipeSurface>
       <div className={actionsClassName}>
         {children}
-        {referenceId && (
-          <button
-            type="button"
-            className="image-compare-button"
-            aria-label="Compare with first reference"
-            aria-pressed={showing}
-            title={
-              failed
-                ? "Reference image unavailable"
-                : available
-                  ? "Hold to compare with the first reference"
-                  : "Loading reference image"
-            }
-            disabled={!available}
-            onPointerDown={(event) => {
-              if (!event.isPrimary || event.button !== 0) return;
-              event.currentTarget.setPointerCapture(event.pointerId);
-              press.start(`pointer:${event.pointerId}`);
-            }}
-            onPointerUp={(event) => press.end(`pointer:${event.pointerId}`)}
-            onPointerCancel={(event) => press.end(`pointer:${event.pointerId}`)}
-            onLostPointerCapture={(event) =>
-              press.end(`pointer:${event.pointerId}`)
-            }
-            onBlur={() => press.reset()}
-            onContextMenu={(event) => event.preventDefault()}
-            onClick={(event) => {
-              // Keyboard/screen-reader activation toggles; pointer release stays momentary.
-              if (event.detail === 0) press.activate();
-            }}
-          >
-            <Columns2 size={18} />
-            Compare
-          </button>
-        )}
+        {compare}
       </div>
-      {failed && (
-        <small role="status" className="image-compare-error">
-          Reference image unavailable
-        </small>
-      )}
+      {warning}
     </>
   );
 }

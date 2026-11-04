@@ -4,6 +4,7 @@ import {
   referencePatch,
   referenceWorkflow,
   toggleReference,
+  reorderReferences,
 } from "./references.ts";
 
 const draft = {
@@ -39,6 +40,19 @@ test("gallery references retain selection order and do not duplicate existing re
   assert.equal(patch.parent_result_id, "previous");
   assert.equal(patch.recipe, undefined);
   assert.deepEqual(current.input_ids, ["existing"]);
+});
+
+test("reference reordering moves replacements to any position without mutating history", () => {
+  const current = { ...draft, input_ids: ["second", "third", "replacement"], original_input_ids: ["first", "second", "third"] };
+  const moved = reorderReferences(current, 2, 0);
+  assert.deepEqual(moved.input_ids, ["replacement", "second", "third"]);
+  assert.deepEqual(moved.original_input_ids, moved.input_ids);
+  assert.equal(moved.parent_result_id, undefined);
+  assert.deepEqual(current.input_ids, ["second", "third", "replacement"]);
+  assert.deepEqual(current.original_input_ids, ["first", "second", "third"]);
+  assert.deepEqual(reorderReferences({ ...current, ...moved }, 0, 2).input_ids, current.input_ids);
+  for (const [from, to] of [[-1, 0], [0, 3], [3, 1], [1, 1], [0.5, 1], [0, NaN]])
+    assert.deepEqual(reorderReferences(current, from, to), {});
 });
 
 test("attaching the first gallery or uploaded reference chooses an edit workflow without losing the prompt", () => {

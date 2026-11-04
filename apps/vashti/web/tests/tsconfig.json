@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "target": "ES2022" },
+  "include": ["../src", "./images.tsx"]
+}

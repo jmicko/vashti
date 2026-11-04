@@ -712,6 +712,8 @@ export type FormState = {
 export type Page = "chat" | "private-chat" | "notes" | "images" | "settings";
 export type SettingsSection =
   | "profile"
+  | "appearance"
+  | "device"
   | "context"
   | "notes"
   | "memories"

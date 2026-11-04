@@ -7,6 +7,8 @@ import {
   SlidersHorizontal,
   Sparkles,
   UserRound,
+  Palette,
+  Smartphone,
   Users,
   Wrench
 } from "lucide-react";
@@ -100,6 +102,8 @@ export function SettingsPage({
     group: "personal" | "admin";
   }> = [
     { id: "profile", label: "Profile", icon: <UserRound />, group: "personal" },
+    { id: "appearance", label: "Appearance", icon: <Palette />, group: "personal" },
+    { id: "device", label: "This device", icon: <Smartphone />, group: "personal" },
     { id: "models", label: "Models", icon: <Sparkles />, group: "personal" },
     { id: "context", label: "Context", icon: <Library />, group: "personal" },
     { id: "notes", label: "Notes", icon: <NotebookPen />, group: "personal" },
@@ -120,6 +124,17 @@ export function SettingsPage({
 
   return (
     <div className="settings-page">
+      <label className="settings-section-picker">
+        <span>Settings</span>
+        <select aria-label="Settings section" value={selectedSection} onChange={(event) => onSelectSection(event.target.value as SettingsSection)}>
+          <optgroup label="Personal">
+            {visibleSections.filter((section) => section.group === "personal").map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
+          </optgroup>
+          {isAdmin && <optgroup label="Administration">
+            {visibleSections.filter((section) => section.group === "admin").map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
+          </optgroup>}
+        </select>
+      </label>
       <nav className="settings-nav" aria-label="Settings sections">
         {visibleSections.map((section, index) => (
           <Fragment key={section.id}>
@@ -155,8 +170,8 @@ export function SettingsPage({
             </div>
           }
         >
-          {selectedSection === "profile" && (
-            <ProfileSettings user={currentUser} onUserChanged={onUserChanged} />
+          {["profile", "appearance", "device"].includes(selectedSection) && (
+            <ProfileSettings key={selectedSection} view={selectedSection as "profile" | "appearance" | "device"} user={currentUser} onUserChanged={onUserChanged} onGuardChange={onSettingsGuardChange} />
           )}
           {selectedSection === "users" && isAdmin && (
             <AdminUsersPanel currentUserId={currentUser.id} />

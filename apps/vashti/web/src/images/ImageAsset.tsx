@@ -2,72 +2,36 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { saveImage } from "../saveImage";
 import { privateImageGuard } from "../privateChatStore";
-import { loadImageBlob } from "./assetStorage";
+import { loadImageBlob, loadImageThumbnail } from "./assetStorage";
 import { useImagePath } from "./storage";
-import { AssetCache, thumbnailCrop, type CachedImage } from "./assetCache";
+import { AssetCache, type CachedImage } from "./assetCache";
 
 function imageCache(path: string, thumbnail = false) {
   const guard = privateImageGuard();
   return new AssetCache(
     async (id) => {
       guard();
-      const blob = await loadImageBlob(path, id);
+      const blob = await (thumbnail ? loadImageThumbnail : loadImageBlob)(path, id);
       guard();
-      let url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
       try {
         const image = new Image();
         image.src = url;
         await image.decode();
         guard();
-        if (!thumbnail)
-          return {
-            url,
-            width: image.naturalWidth,
-            height: image.naturalHeight,
-            bytes: blob.size + image.naturalWidth * image.naturalHeight * 4,
-          };
-        // Only the gallery preview is cropped. Viewing, editing and exporting use original bytes.
-        const crop = thumbnailCrop(image.naturalWidth, image.naturalHeight);
-        const side = Math.min(320, crop.side);
-        const canvas = document.createElement("canvas");
-        canvas.width = side;
-        canvas.height = side;
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Thumbnail renderer unavailable");
-        context.drawImage(
-          image,
-          crop.x,
-          crop.y,
-          crop.side,
-          crop.side,
-          0,
-          0,
-          side,
-          side,
-        );
-        const preview = await new Promise<Blob>((resolve, reject) =>
-          canvas.toBlob(
-            (value) =>
-              value
-                ? resolve(value)
-                : reject(new Error("Thumbnail unavailable")),
-            "image/png",
-          ),
-        );
-        guard();
-        URL.revokeObjectURL(url);
-        url = URL.createObjectURL(preview);
         return {
           url,
-          width: side,
-          height: side,
-          bytes: preview.size + side * side * 4,
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+          bytes: blob.size + image.naturalWidth * image.naturalHeight * 4,
+          decoded: image,
         };
       } catch (error) {
         URL.revokeObjectURL(url);
@@ -123,6 +87,7 @@ export function ImageAsset({
   openLabel = "Open full image",
   neighbors = [],
   thumbnail = false,
+  eager = false,
 }: {
   id: string;
   alt?: string;
@@ -133,6 +98,7 @@ export function ImageAsset({
   openLabel?: string;
   neighbors?: string[];
   thumbnail?: boolean;
+  eager?: boolean;
 }) {
   const caches = useContext(CacheContext);
   const cache = caches
@@ -144,7 +110,8 @@ export function ImageAsset({
   const [image, setImage] = useState<(CachedImage & { id: string }) | null>(
     null,
   );
-  const [failed, setFailed] = useState(false);
+  const [failedId, setFailedId] = useState<string | null>(null);
+  const failed = failedId === id;
   const [visible, setVisible] = useState(false);
   const [size, setSize] = useState<{
     id: string;
@@ -155,7 +122,7 @@ export function ImageAsset({
   dimensionsRef.current = onDimensions;
   const displayed = useRef<(() => void) | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  const shouldLoad = visible || Boolean(onDimensions);
+  const shouldLoad = eager || visible || Boolean(onDimensions);
   const neighborKey = neighbors
     .filter((value) => value !== id)
     .slice(0, 2)
@@ -168,7 +135,7 @@ export function ImageAsset({
     if (ref.current) observer.observe(ref.current);
     return () => observer.disconnect();
   }, [thumbnail]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!shouldLoad) {
       setImage(null);
       displayed.current?.();
@@ -179,7 +146,7 @@ export function ImageAsset({
     let adopted = false;
     const owned = cache ?? imageCache(path, thumbnail);
     const acquired = owned.acquire(id);
-    setFailed(false);
+    setFailedId(null);
     const adopt = (value: CachedImage) => {
       if (!alive) return;
       displayed.current?.();
@@ -199,7 +166,7 @@ export function ImageAsset({
       })
       .catch(() => {
         if (alive) {
-          setFailed(true);
+          setFailedId(id);
           setImage(null);
         }
       });
@@ -241,7 +208,7 @@ export function ImageAsset({
       }
       aria-busy={visible && !failed && image?.id !== id}
     >
-      {image ? (
+      {image?.id === id ? (
         onClick ? (
           <button
             type="button"
@@ -256,8 +223,8 @@ export function ImageAsset({
           <img draggable={false} src={image.url} alt={alt} />
         )
       ) : (
-        <span role="status">
-          {failed ? "Image unavailable" : visible ? "Loading image…" : ""}
+        <span role={thumbnail ? undefined : "status"} aria-label={thumbnail && failed ? "Image unavailable" : undefined}>
+          {failed ? "Image unavailable" : !thumbnail && shouldLoad ? "Loading image..." : ""}
         </span>
       )}
     </div>

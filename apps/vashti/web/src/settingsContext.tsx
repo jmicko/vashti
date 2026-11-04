@@ -24,6 +24,7 @@ import {
   updatePrivateContextCategory
 } from "./privateChatStore";
 import { SettingsPanel } from "./settingsControls";
+import { useModalFocus } from "./useModalFocus";
 import type {
   ContextBlock,
   ContextCategory,
@@ -364,6 +365,11 @@ function ContextEditorDialog({
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const categoryPickerRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, () => {
+    if (isCategoryMenuOpen) setIsCategoryMenuOpen(false);
+    else onCancel();
+  }, isSaving || isCreatingCategory);
 
   const availableCategories = useMemo(() => {
     const categories = new Map<string, ContextCategory>();
@@ -493,7 +499,7 @@ function ContextEditorDialog({
 
   return (
     <div className="confirm-backdrop" role="presentation">
-      <section className="context-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="context-editor-title">
+      <section ref={dialogRef} className="context-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="context-editor-title">
         <header>
           <div>
             <p className="eyebrow">{storageMode === "server" ? "Server" : "This device"}</p>

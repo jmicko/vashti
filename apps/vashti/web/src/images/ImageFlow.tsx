@@ -29,6 +29,7 @@ import { usesMobileInputBehavior } from "../viewport";
 import type { BackendModelGroup } from "../types";
 import { ImageAsset, downloadImage } from "./ImageAsset";
 import { ImageComparison } from "./ImageComparison";
+import { ActionMenu } from "../ActionMenu";
 import { comparisonReference } from "./comparison";
 import { ImagePanel } from "./controls";
 import { GenerationControls } from "./GenerationControls";
@@ -37,6 +38,7 @@ import {
   imageModelGroups,
   imageTreeMessages,
   imageTurns,
+  nextImageDraft,
 } from "./flow";
 import { requestJson, requestMultipartJson, writeImage } from "./api";
 import { useImagePath, deviceImagePath } from "./storage";
@@ -57,7 +59,11 @@ import {
 } from "./types";
 import { useImageFlow } from "./useImageFlow";
 import { ImageReferencePicker } from "./ImageReferencePicker";
-import { referencePatch, referenceWorkflow } from "./references";
+import {
+  referencePatch,
+  referenceWorkflow,
+  reorderReferences,
+} from "./references";
 
 type Props = {
   sessionId?: string;
@@ -104,6 +110,10 @@ export function ImageFlow({
   const [expanded, setExpanded] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [referencesOpen, setReferencesOpen] = useState(false);
+  useEffect(() => {
+    if (!draft?.input_ids.length) setReferencesOpen(false);
+  }, [draft?.input_ids.length]);
   const [defaultsSaved, setDefaultsSaved] = useState(false);
   useEffect(() => setDefaultsSaved(false), [draft]);
   const [treeOpen, setTreeOpen] = useState(false);
@@ -128,7 +138,7 @@ export function ImageFlow({
   const file = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLFormElement>(null);
   const pointerDown = useRef(false);
-  const focusReferences = useRef(false);
+  const movedReference = useRef<number | null>(null);
   const composerEpoch = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
@@ -151,12 +161,24 @@ export function ImageFlow({
     if (expanded) collapseComposer();
   }
   useLayoutEffect(() => {
-    if (!composerOpen || !focusReferences.current) return;
-    composer.current
-      ?.querySelector<HTMLElement>(".images-inputs")
-      ?.focus({ preventScroll: true });
-    focusReferences.current = false;
-  }, [composerOpen]);
+    const index = movedReference.current;
+    if (index === null) return;
+    movedReference.current = null;
+    const strip =
+      composer.current?.querySelector<HTMLElement>(".images-inputs");
+    const card = strip?.children[index];
+    if (!strip || !card) return;
+    const outer = strip.getBoundingClientRect();
+    const inner = card.getBoundingClientRect();
+    if (inner.left < outer.left) strip.scrollLeft -= outer.left - inner.left;
+    else if (inner.right > outer.right)
+      strip.scrollLeft += inner.right - outer.right;
+  }, [draft?.input_ids]);
+  function moveReference(from: number, to: number) {
+    if (!draft) return;
+    movedReference.current = to;
+    flow.patch(reorderReferences(draft, from, to));
+  }
   useEffect(() => {
     const down = () => {
       pointerDown.current = true;
@@ -324,15 +346,6 @@ export function ImageFlow({
     if (end.current?.parentElement) observer.observe(end.current.parentElement);
     return () => observer.disconnect();
   }, [treeOpen]);
-  useEffect(() => {
-    if (!viewer) return;
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") moveViewer(-1);
-      if (event.key === "ArrowRight") moveViewer(1);
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [Boolean(viewer)]);
   function moveViewer(delta: number) {
     setViewer((value) =>
       value
@@ -363,6 +376,7 @@ export function ImageFlow({
         <LockKeyhole size={18} aria-label="Private image flow on this device" />
       )}
       <ModelPicker
+        task="image"
         groups={groups}
         personas={[]}
         privatePersonas={[]}
@@ -413,9 +427,10 @@ export function ImageFlow({
   ) {
     if (!draft || active) return;
     const submittedEpoch = composerEpoch.current;
-    const value = structuredClone(restore ?? draft);
-    if (!retry && !restore)
-      value.parent_result_id = editing ? draft.parent_result_id : leaf;
+    const value =
+      retry || restore
+        ? structuredClone(restore ?? draft)
+        : nextImageDraft(draft, leaf);
     if (
       !improveOnly &&
       value.count === null &&
@@ -835,15 +850,20 @@ export function ImageFlow({
                           >
                             <Download size={18} />
                           </button>
-                          <button
-                            type="button"
-                            className="message-tool-button"
-                            title="Continue from this image"
-                            aria-label="Continue from this image"
-                            onClick={() => void flow.select(result, result.id)}
-                          >
-                            <GitBranch size={18} />
-                          </button>
+                          <ActionMenu label="Image actions">
+                            <button
+                              type="button"
+                              className="message-tool-button"
+                              title="Select this branch"
+                              aria-label="Select this branch"
+                              onClick={() =>
+                                void flow.select(result, result.id)
+                              }
+                            >
+                              <GitBranch size={18} />
+                              <span>Select this branch</span>
+                            </button>
+                          </ActionMenu>
                         </ImageComparison>
                         <details className="images-result-details">
                           <summary>
@@ -960,9 +980,7 @@ export function ImageFlow({
             </div>
           )}
           {draft && (
-            <div
-              className={`image-composer-dock${expanded ? " image-composer-dock-expanded" : ""}`}
-            >
+            <div className="image-composer-dock">
               {notice && (
                 <div className="image-connection-notice" role="status">
                   <span>{notice}</span>
@@ -1005,14 +1023,14 @@ export function ImageFlow({
               )}
               <form
                 ref={composer}
-                className={`image-chat-composer${!composerOpen && !expanded ? " image-chat-composer-compact" : ""}`}
+                className={`image-chat-composer${!composerOpen ? " image-chat-composer-compact" : ""}`}
                 onBlurCapture={(event) => {
                   if (
                     !expanded &&
+                    !referencesOpen &&
                     !galleryOpen &&
                     !viewer &&
                     !pointerDown.current &&
-                    !focusReferences.current &&
                     !event.currentTarget.contains(event.relatedTarget)
                   )
                     setComposerOpen(false);
@@ -1021,6 +1039,8 @@ export function ImageFlow({
                   event.preventDefault();
                   if (
                     ready &&
+                    !expanded &&
+                    !referencesOpen &&
                     !busy &&
                     !active &&
                     (draft.recipe.prompt.trim() || draft.input_ids.length)
@@ -1028,116 +1048,115 @@ export function ImageFlow({
                     void send();
                 }}
               >
-                <button
-                  type="button"
-                  className="image-composer-expand"
-                  title={
-                    expanded
-                      ? "Collapse inference settings"
-                      : "Expand inference settings"
-                  }
-                  aria-label={
-                    expanded
-                      ? "Collapse inference settings"
-                      : "Expand inference settings"
-                  }
-                  aria-expanded={expanded}
-                  onClick={toggleSettings}
-                >
-                  {expanded ? (
-                    <ChevronDown size={18} />
-                  ) : (
-                    <ChevronUp size={18} />
-                  )}
-                </button>
                 <div className="image-composer-body">
-                  {draft.input_ids.length > 0 && (
-                    <div
-                      className="images-inputs"
-                      tabIndex={-1}
-                      role="group"
-                      aria-label="Reference images"
+                  {referencesOpen && draft.input_ids.length > 0 && (
+                    <ImagePanel
+                      title="Reference images"
+                      className="image-reference-panel"
+                      onClose={() => setReferencesOpen(false)}
                     >
-                      {draft.input_ids.map((id, index) => (
-                        <div key={`${id}:${index}`}>
-                          <ImageAsset
-                            id={id}
-                            alt={`Reference ${index + 1}`}
-                            openLabel={`View reference ${index + 1}`}
-                            neighbors={draft.input_ids.filter(
-                              (_, position) => Math.abs(position - index) === 1,
-                            )}
-                            onClick={() => viewReferences(draft.input_ids, index)}
-                          />
-                          <div className="images-actions">
-                            <button
-                              type="button"
-                              className="message-tool-button"
-                              title={`Move reference ${index + 1} left`}
-                              aria-label={`Move reference ${index + 1} left`}
-                              disabled={index === 0 || busy}
-                              onClick={() => {
-                                const ids = [...draft.input_ids];
-                                [ids[index], ids[index - 1]] = [
-                                  ids[index - 1],
-                                  ids[index],
-                                ];
-                                flow.patch({
-                                  input_ids: ids,
-                                  original_input_ids: ids,
-                                  parent_result_id: null,
-                                });
-                              }}
-                            >
-                              <ArrowLeft size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              className="message-tool-button"
-                              title={`Remove reference ${index + 1}`}
-                              aria-label={`Remove reference ${index + 1}`}
-                              disabled={busy}
-                              onClick={() => {
-                                const ids = draft.input_ids.filter(
-                                  (_, position) => position !== index,
-                                );
-                                flow.patch({
-                                  input_ids: ids,
-                                  original_input_ids: ids,
-                                  parent_result_id:
-                                    index === 0 ? null : draft.parent_result_id,
-                                });
-                              }}
-                            >
-                              <X size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              className="message-tool-button"
-                              title="Import generation settings"
-                              aria-label="Import generation settings"
-                              disabled={busy}
+                      <div
+                        className="images-inputs"
+                        tabIndex={-1}
+                        role="group"
+                        aria-label="Reference images"
+                      >
+                        {draft.input_ids.map((id, index) => (
+                          <div
+                            className="images-reference"
+                            key={`${id}:${draft.input_ids.slice(0, index).filter((value) => value === id).length}`}
+                          >
+                            <span className="images-reference-number">
+                              Image {index + 1}
+                            </span>
+                            <ImageAsset
+                              id={id}
+                              alt={`Reference ${index + 1}`}
+                              openLabel={`View reference ${index + 1}`}
+                              neighbors={draft.input_ids.filter(
+                                (_, position) =>
+                                  Math.abs(position - index) === 1,
+                              )}
                               onClick={() =>
-                                void flow.guard(async () => {
-                                  const value = await requestJson<{
-                                    recipe: Recipe;
-                                    required_reference_images: number;
-                                  }>(`${imagePath}/assets/${id}/settings`);
-                                  flow.patch({ recipe: value.recipe });
-                                  setExpanded(true);
-                                  if (value.required_reference_images)
-                                    flow.setError(
-                                      `This recipe needs ${value.required_reference_images} original reference images in their original order.`,
-                                    );
-                                })
+                                viewReferences(draft.input_ids, index)
                               }
-                            >
-                              <Settings2 size={14} />
-                            </button>
+                            />
+                            <div className="images-actions">
+                              <button
+                                type="button"
+                                className="message-tool-button"
+                                title={`Move reference ${index + 1} left`}
+                                aria-label={`Move reference ${index + 1} left`}
+                                disabled={index === 0 || busy}
+                                onClick={() => moveReference(index, index - 1)}
+                              >
+                                <ArrowLeft size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                className="message-tool-button"
+                                title={`Move reference ${index + 1} right`}
+                                aria-label={`Move reference ${index + 1} right`}
+                                disabled={
+                                  index === draft.input_ids.length - 1 || busy
+                                }
+                                onClick={() => moveReference(index, index + 1)}
+                              >
+                                <ArrowRight size={14} />
+                              </button>
+                              <ActionMenu
+                                label={`Reference ${index + 1} actions`}
+                              >
+                                <button
+                                  type="button"
+                                  className="message-tool-button"
+                                  title={`Remove reference ${index + 1}`}
+                                  aria-label={`Remove reference ${index + 1}`}
+                                  disabled={busy}
+                                  onClick={() => {
+                                    const ids = draft.input_ids.filter(
+                                      (_, position) => position !== index,
+                                    );
+                                    flow.patch({
+                                      input_ids: ids,
+                                      original_input_ids: ids,
+                                    });
+                                  }}
+                                >
+                                  <X size={14} />
+                                  <span>Remove reference</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="message-tool-button"
+                                  title="Import generation settings"
+                                  aria-label="Import generation settings"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void flow.guard(async () => {
+                                      const value = await requestJson<{
+                                        recipe: Recipe;
+                                        required_reference_images: number;
+                                      }>(`${imagePath}/assets/${id}/settings`);
+                                      flow.patch({ recipe: value.recipe });
+                                      setReferencesOpen(false);
+                                      setExpanded(true);
+                                      if (value.required_reference_images)
+                                        flow.setError(
+                                          `This recipe needs ${value.required_reference_images} original reference images in their original order.`,
+                                        );
+                                    })
+                                  }
+                                >
+                                  <Settings2 size={14} />
+                                  <span>Import generation settings</span>
+                                </button>
+                              </ActionMenu>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    </ImagePanel>
                   )}
                   <div className="image-composer-prompt">
                     {draft.input_ids.length > 0 && (
@@ -1157,8 +1176,7 @@ export function ImageFlow({
                           aria-label={`Show ${draft.input_ids.length} reference image${draft.input_ids.length === 1 ? "" : "s"}`}
                           onClick={() => {
                             composerEpoch.current++;
-                            focusReferences.current = true;
-                            setComposerOpen(true);
+                            setReferencesOpen(true);
                           }}
                         >
                           <Images size={14} />
@@ -1175,7 +1193,7 @@ export function ImageFlow({
                           ? "Describe the changes..."
                           : "Describe an image..."
                       }
-                      rows={expanded ? 5 : 2}
+                      rows={2}
                       onFocus={() => {
                         composerEpoch.current++;
                         setComposerOpen(true);
@@ -1218,183 +1236,192 @@ export function ImageFlow({
                     )}
                   </div>
                   {expanded && (
-                    <div className="image-expanded-controls">
-                      {editing && (
-                        <fieldset>
-                          <legend>Edit source</legend>
-                          <div className="images-segments">
-                            <button
-                              type="button"
-                              aria-pressed={flow.editMode === "iterative"}
-                              onClick={() => flow.setEditMode("iterative")}
-                            >
-                              Latest image
-                            </button>
-                            <button
-                              type="button"
-                              aria-pressed={flow.editMode === "original"}
-                              onClick={() => flow.setEditMode("original")}
-                            >
-                              Original references
-                            </button>
-                          </div>
-                        </fieldset>
-                      )}
-                      <GenerationControls
-                        draft={draft}
-                        hidden={preferences.hidden_controls}
-                        workflows={workflows}
-                        editing={editing}
-                        patchRecipe={patchRecipe}
-                        patchDraft={flow.patch}
-                      />
-                      <details>
-                        <summary>Prompt improvement</summary>
-                        <div className="images-model-picker">
-                          <span>Assistant model</span>
-                          <ModelPicker
-                            groups={promptModels}
-                            personas={[]}
-                            privatePersonas={[]}
-                            isLoading={false}
-                            error={null}
-                            value={
-                              draft.prompt_help
-                                ? modelValue(
-                                    draft.prompt_help.backend_id,
-                                    draft.prompt_help.model_name,
-                                  )
-                                : ""
-                            }
-                            ariaLabel="Prompt assistant model"
-                            onChange={(value) => {
-                              const parts = modelParts(value);
-                              if (parts)
-                                flow.patch({
-                                  prompt_help: {
-                                    backend_id: parts.backendId,
-                                    model_name: parts.modelName,
-                                    guidance: draft.prompt_help?.guidance ?? "",
-                                  },
-                                });
-                            }}
-                          />
-                        </div>
-                        <label>
-                          Guidance
-                          <textarea
-                            rows={2}
-                            value={draft.prompt_help?.guidance ?? ""}
-                            disabled={!draft.prompt_help}
-                            onChange={(event) => {
-                              if (draft.prompt_help)
-                                flow.patch({
-                                  prompt_help: {
-                                    ...draft.prompt_help,
-                                    guidance: event.target.value,
-                                  },
-                                });
-                            }}
-                          />
-                        </label>
-                        <label className="images-check">
-                          <input
-                            type="checkbox"
-                            checked={draft.auto_improve}
-                            disabled={!draft.prompt_help}
-                            onChange={(event) =>
-                              flow.patch({ auto_improve: event.target.checked })
-                            }
-                          />
-                          Improve each image's prompt
-                        </label>
-                        <button
-                          type="button"
-                          disabled={
-                            busy ||
-                            Boolean(active) ||
-                            !draft.prompt_help ||
-                            !draft.recipe.prompt.trim()
-                          }
-                          onClick={() => void send(true)}
-                        >
-                          <Sparkles size={18} />
-                          Improve once
-                        </button>
-                      </details>
-                      <div className="images-actions">
-                        <button type="button" onClick={onPreferencesOpen}>
-                          Preferences
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            void flow.guard(async () => {
-                              const operation = editing ? "edit" : "generate";
-                              const value = {
-                                ...preferences,
-                                [operation]: profileFromDraft(
-                                  preferences[operation],
-                                  draft,
-                                  flow.editMode,
-                                ),
-                              };
-                              onPreferences(
-                                await writeImage<Preferences>(
-                                  `${imagePath}/preferences`,
-                                  value,
-                                  "PUT",
-                                ),
-                              );
-                              setDefaultsSaved(true);
-                            })
-                          }
-                        >
-                          Save as account defaults
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            const profile = editing
-                              ? preferences.edit
-                              : preferences.generate;
-                            if (editing)
-                              flow.setEditMode(
-                                profile.edit_mode ?? "iterative",
-                              );
-                            flow.patch(
-                              resetDraftSettings(flow.getDraft()!, profile),
-                            );
-                          }}
-                        >
-                          Reset to account defaults
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            void flow.guard(async () => {
-                              const current = flow.getDraft();
-                              if (!current) return;
-                              const next = newFlowWithSettings(current);
-                              await flow.save();
-                              await onNewFlow(
-                                next,
-                                editing ? flow.editMode : "generate",
-                              );
-                            })
-                          }
-                        >
-                          <CopyPlus size={18} />
-                          New flow with these settings
-                        </button>
-                        {defaultsSaved && (
-                          <span role="status">Account defaults saved.</span>
+                    <ImagePanel
+                      title="Image settings"
+                      className="image-settings-panel"
+                      onClose={() => setExpanded(false)}
+                    >
+                      <div className="image-expanded-controls">
+                        {editing && (
+                          <fieldset>
+                            <legend>Edit source</legend>
+                            <div className="images-segments">
+                              <button
+                                type="button"
+                                aria-pressed={flow.editMode === "iterative"}
+                                onClick={() => flow.setEditMode("iterative")}
+                              >
+                                Latest image
+                              </button>
+                              <button
+                                type="button"
+                                aria-pressed={flow.editMode === "original"}
+                                onClick={() => flow.setEditMode("original")}
+                              >
+                                Original references
+                              </button>
+                            </div>
+                          </fieldset>
                         )}
+                        <GenerationControls
+                          draft={draft}
+                          hidden={preferences.hidden_controls}
+                          workflows={workflows}
+                          editing={editing}
+                          patchRecipe={patchRecipe}
+                          patchDraft={flow.patch}
+                        />
+                        <details>
+                          <summary>Prompt improvement</summary>
+                          <div className="images-model-picker">
+                            <span>Assistant model</span>
+                            <ModelPicker
+                              groups={promptModels}
+                              personas={[]}
+                              privatePersonas={[]}
+                              isLoading={false}
+                              error={null}
+                              value={
+                                draft.prompt_help
+                                  ? modelValue(
+                                      draft.prompt_help.backend_id,
+                                      draft.prompt_help.model_name,
+                                    )
+                                  : ""
+                              }
+                              ariaLabel="Prompt assistant model"
+                              onChange={(value) => {
+                                const parts = modelParts(value);
+                                if (parts)
+                                  flow.patch({
+                                    prompt_help: {
+                                      backend_id: parts.backendId,
+                                      model_name: parts.modelName,
+                                      guidance:
+                                        draft.prompt_help?.guidance ?? "",
+                                    },
+                                  });
+                              }}
+                            />
+                          </div>
+                          <label>
+                            Guidance
+                            <textarea
+                              rows={2}
+                              value={draft.prompt_help?.guidance ?? ""}
+                              disabled={!draft.prompt_help}
+                              onChange={(event) => {
+                                if (draft.prompt_help)
+                                  flow.patch({
+                                    prompt_help: {
+                                      ...draft.prompt_help,
+                                      guidance: event.target.value,
+                                    },
+                                  });
+                              }}
+                            />
+                          </label>
+                          <label className="images-check">
+                            <input
+                              type="checkbox"
+                              checked={draft.auto_improve}
+                              disabled={!draft.prompt_help}
+                              onChange={(event) =>
+                                flow.patch({
+                                  auto_improve: event.target.checked,
+                                })
+                              }
+                            />
+                            Improve each image's prompt
+                          </label>
+                          <button
+                            type="button"
+                            disabled={
+                              busy ||
+                              Boolean(active) ||
+                              !draft.prompt_help ||
+                              !draft.recipe.prompt.trim()
+                            }
+                            onClick={() => void send(true)}
+                          >
+                            <Sparkles size={18} />
+                            Improve once
+                          </button>
+                        </details>
+                        <div className="images-actions">
+                          <button type="button" onClick={onPreferencesOpen}>
+                            Preferences
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void flow.guard(async () => {
+                                const operation = editing ? "edit" : "generate";
+                                const value = {
+                                  ...preferences,
+                                  [operation]: profileFromDraft(
+                                    preferences[operation],
+                                    draft,
+                                    flow.editMode,
+                                  ),
+                                };
+                                onPreferences(
+                                  await writeImage<Preferences>(
+                                    `${imagePath}/preferences`,
+                                    value,
+                                    "PUT",
+                                  ),
+                                );
+                                setDefaultsSaved(true);
+                              })
+                            }
+                          >
+                            Save as account defaults
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => {
+                              const profile = editing
+                                ? preferences.edit
+                                : preferences.generate;
+                              if (editing)
+                                flow.setEditMode(
+                                  profile.edit_mode ?? "iterative",
+                                );
+                              flow.patch(
+                                resetDraftSettings(flow.getDraft()!, profile),
+                              );
+                            }}
+                          >
+                            Reset to account defaults
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void flow.guard(async () => {
+                                const current = flow.getDraft();
+                                if (!current) return;
+                                const next = newFlowWithSettings(current);
+                                await flow.save();
+                                await onNewFlow(
+                                  next,
+                                  editing ? flow.editMode : "generate",
+                                );
+                              })
+                            }
+                          >
+                            <CopyPlus size={18} />
+                            New flow with these settings
+                          </button>
+                          {defaultsSaved && (
+                            <span role="status">Account defaults saved.</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </ImagePanel>
                   )}
                 </div>
                 <footer>
@@ -1538,63 +1565,20 @@ export function ImageFlow({
         </ImagePanel>
       )}
       {viewer && (
-        <ImagePanel
-          title={`${viewer.kind === "reference" ? "Reference" : "Image"} ${viewer.index + 1} of ${viewer.ids.length}`}
-          className="images-viewer-panel"
-          onClose={() => setViewer(null)}
-        >
-          <ImageComparison
-            id={viewer.ids[viewer.index]}
-            alt={
-              viewer.kind === "reference"
-                ? `Reference ${viewer.index + 1}`
-                : "Generated image"
-            }
-            referenceId={comparisonReference(viewedResult)}
-            dimensions={viewedResult?.recipe}
-            neighbors={viewer.ids.filter(
-              (_, index) => Math.abs(index - viewer.index) === 1,
-            )}
-            onStep={moveViewer}
-          >
+        <ImageComparison
+          fullscreen={{
+            title: `${viewer.kind === "reference" ? "Reference" : "Image"} ${viewer.index + 1} of ${viewer.ids.length}`,
+            onClose: () => setViewer(null),
+            canPrevious: viewer.index > 0,
+            canNext: viewer.index < viewer.ids.length - 1,
+          }}
+          previousId={viewer.ids[viewer.index - 1]}
+          nextId={viewer.ids[viewer.index + 1]}
+          notice={flow.error && <p role="alert">{flow.error}</p>}
+          secondaryActions={
             <button
               type="button"
-              className="images-icon"
-              title="Previous image"
-              aria-label="Previous image"
-              disabled={!viewer.index}
-              onClick={() => moveViewer(-1)}
-            >
-              <ArrowLeft />
-            </button>
-            <button
-              type="button"
-              className="images-icon"
-              title="Next image"
-              aria-label="Next image"
-              disabled={viewer.index === viewer.ids.length - 1}
-              onClick={() => moveViewer(1)}
-            >
-              <ArrowRight />
-            </button>
-            <button
-              type="button"
-              className="images-icon"
-              title="Download image"
-              aria-label="Download image"
-              onClick={() =>
-                void flow.guard(() =>
-                  downloadImage(viewer.ids[viewer.index], imagePath),
-                )
-              }
-            >
-              <Download />
-            </button>
-            <button
-              type="button"
-              className="images-icon"
               title="Copy to gallery"
-              aria-label="Copy to gallery"
               onClick={() =>
                 void flow.guard(async () => {
                   await writeImage(
@@ -1605,17 +1589,41 @@ export function ImageFlow({
               }
             >
               <Copy />
+              Copy to gallery
             </button>
-            {viewedResult && (
-              <button
-                type="button"
-                onClick={() => editResult(viewedResult)}
-              >
-                Edit image
-              </button>
-            )}
-          </ImageComparison>
-        </ImagePanel>
+          }
+          id={viewer.ids[viewer.index]}
+          alt={
+            viewer.kind === "reference"
+              ? `Reference ${viewer.index + 1}`
+              : "Generated image"
+          }
+          referenceId={comparisonReference(viewedResult)}
+          dimensions={viewedResult?.recipe}
+          neighbors={viewer.ids.filter(
+            (_, index) => Math.abs(index - viewer.index) === 1,
+          )}
+          onStep={moveViewer}
+        >
+          <button
+            type="button"
+            className="images-icon"
+            title="Download image"
+            aria-label="Download image"
+            onClick={() =>
+              void flow.guard(() =>
+                downloadImage(viewer.ids[viewer.index], imagePath),
+              )
+            }
+          >
+            <Download />
+          </button>
+          {viewedResult && (
+            <button type="button" onClick={() => editResult(viewedResult)}>
+              Edit image
+            </button>
+          )}
+        </ImageComparison>
       )}
     </div>
   );

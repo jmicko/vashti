@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { chatModelGroups } from "./modelEligibility";
 import { Brain, Lock, Search, Star, Users } from "lucide-react";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import { ModelAvatar } from "./ModelAvatar";
@@ -19,7 +20,7 @@ import type { PrivatePersona, PrivatePersonaVersion } from "./privateChatStore";
 import type { BackendModelGroup, ModelInfo, Persona, PersonaVersion } from "./types";
 
 export function ModelPicker({
-  groups,
+  groups: suppliedGroups,
   personas,
   privatePersonas,
   personaVersions = [],
@@ -31,10 +32,12 @@ export function ModelPicker({
   disabled = false,
   modelLabel = compactModelName,
   modelUnavailable,
+  task = "chat",
   emptyLabel = "No models",
   onChange
 }: {
   groups: BackendModelGroup[];
+  task?: "chat" | "image";
   personas: Persona[];
   privatePersonas: PrivatePersona[];
   personaVersions?: PersonaVersion[];
@@ -49,6 +52,7 @@ export function ModelPicker({
   emptyLabel?: string;
   onChange: (value: string) => void;
 }) {
+  const groups = useMemo(() => task === "chat" ? chatModelGroups(suppliedGroups) : suppliedGroups, [suppliedGroups, task]);
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -186,8 +190,8 @@ export function ModelPicker({
       }
     }
 
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, []);
 
   function buttonLabel() {
@@ -387,11 +391,25 @@ export function ModelPicker({
   }
 
   return (
-    <div className="model-picker" ref={wrapRef}>
+    <div className="model-picker" ref={wrapRef} onKeyDown={(event) => {
+      if (event.key === "Escape" && isOpen) {
+        event.stopPropagation();
+        setIsOpen(false);
+        wrapRef.current?.querySelector<HTMLButtonElement>(".model-picker-button")?.focus({ preventScroll: true });
+      }
+      if (isOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        const options = Array.from(wrapRef.current?.querySelectorAll<HTMLButtonElement>(".model-option:not(:disabled)") ?? []);
+        if (!options.length) return;
+        event.preventDefault();
+        const index = options.indexOf(document.activeElement as HTMLButtonElement);
+        options[(index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length]?.focus({ preventScroll: true });
+        (document.activeElement as HTMLElement)?.scrollIntoView({ block: "nearest" });
+      }
+    }}>
       <button
         type="button"
         className="model-picker-button"
-        disabled={disabled || isLoading || !hasModels}
+        disabled={disabled || isLoading}
         aria-label={ariaLabel}
         title={
           error ??
@@ -471,7 +489,7 @@ export function ModelPicker({
           </label>
           <div className="model-options">
             {filteredGroups.length === 0 && favoriteCount === 0 ? (
-              <p className="model-empty">No matching models</p>
+              <p className="model-empty" role="status">{normalizedQuery ? "No matching models" : task === "chat" ? "No chat models available. Check the connected hosts in Settings." : emptyLabel}</p>
             ) : (
               <>
                 {favoriteCount > 0 && (

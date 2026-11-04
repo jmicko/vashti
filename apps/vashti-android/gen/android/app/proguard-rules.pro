@@ -1,4 +1,10 @@
 # Add project specific ProGuard rules here.
+# Native startup looks up this method by name. Keep it even when a shared Cargo
+# cache skips regenerating proguard-tauri.pro in a fresh checkout.
+-keep class chat.vashti.app.TauriActivity {
+  public app.tauri.plugin.PluginManager getPluginManager();
+}
+
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
 #

@@ -255,7 +255,18 @@ export function PersonaAvatarField({
                     height: layout.cropSize
                   }}
                   role="application"
-                  aria-label="Profile image crop. Drag to reposition."
+                  tabIndex={0}
+                  aria-label="Profile image crop. Arrow keys move; plus and minus resize."
+                  onKeyDown={(event) => {
+                    const distance = event.shiftKey ? 0.05 : 0.01;
+                    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "=", "-"].includes(event.key)) return;
+                    event.preventDefault();
+                    updateCrop({
+                      x: crop.x + (event.key === "ArrowRight" ? distance : event.key === "ArrowLeft" ? -distance : 0),
+                      y: crop.y + (event.key === "ArrowDown" ? distance : event.key === "ArrowUp" ? -distance : 0),
+                      size: crop.size + (["+", "="].includes(event.key) ? distance : event.key === "-" ? -distance : 0),
+                    });
+                  }}
                   onPointerDown={(event) => startPointerDrag(event, "move")}
                 >
                   {(["north-west", "north-east", "south-west", "south-east"] as const).map(

@@ -354,6 +354,62 @@ pub async fn asset(
             .ok_or_else(missing)?,
     ))
 }
+pub async fn thumbnail(pool: &SqlitePool, user: &str, id: &str) -> Result<Vec<u8>, ApiError> {
+    // Bound full-resolution decodes even when several clients open their libraries.
+    static SLOTS: Semaphore = Semaphore::const_new(2);
+    async fn cached(pool: &SqlitePool, user: &str, id: &str) -> Result<Option<Vec<u8>>, ApiError> {
+        Ok(sqlx::query_scalar(
+            "SELECT thumbnails.body FROM image_thumbnails thumbnails JOIN image_assets assets ON assets.id=thumbnails.asset_id WHERE assets.id=? AND assets.user_id=?",
+        ).bind(id).bind(user).fetch_optional(pool).await?)
+    }
+    if let Some(bytes) = cached(pool, user, id).await? {
+        return Ok(bytes);
+    }
+    let permit = SLOTS
+        .acquire()
+        .await
+        .map_err(|_| ApiError::internal("Thumbnail unavailable"))?;
+    if let Some(bytes) = cached(pool, user, id).await? {
+        return Ok(bytes);
+    }
+    let (_, original) = asset(pool, user, id).await?;
+    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ApiError> {
+        use image::ImageDecoder;
+        // A disconnected HTTP request must not release the slot while decoding continues.
+        let _permit = permit;
+        let mut reader = image::ImageReader::new(std::io::Cursor::new(original))
+            .with_guessed_format()
+            .map_err(|_| invalid("Could not read image"))?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(4096);
+        limits.max_image_height = Some(4096);
+        limits.max_alloc = Some(128 * 1024 * 1024);
+        reader.limits(limits);
+        let mut decoder = reader
+            .into_decoder()
+            .map_err(|_| invalid("Could not read image"))?;
+        let orientation = decoder
+            .orientation()
+            .unwrap_or(image::metadata::Orientation::NoTransforms);
+        let mut image = image::DynamicImage::from_decoder(decoder)
+            .map_err(|_| invalid("Could not read image"))?;
+        image.apply_orientation(orientation);
+        let side = image.width().min(image.height()).min(320);
+        let preview = image.resize_to_fill(side, side, image::imageops::FilterType::Triangle);
+        let mut output = std::io::Cursor::new(Vec::new());
+        preview
+            .write_to(&mut output, image::ImageFormat::Png)
+            .map_err(|_| ApiError::internal("Could not create thumbnail"))?;
+        Ok(output.into_inner())
+    })
+    .await
+    .map_err(|_| ApiError::internal("Could not create thumbnail"))??;
+    // Insert only if the owned original still exists after decoding.
+    sqlx::query("INSERT INTO image_thumbnails (asset_id,body) SELECT id,? FROM image_assets WHERE id=? AND user_id=? ON CONFLICT(asset_id) DO NOTHING")
+        .bind(&bytes).bind(id).bind(user).execute(pool).await?;
+    Ok(bytes)
+}
+
 pub async fn upload(pool: &SqlitePool, user: &str, bytes: Vec<u8>) -> Result<Value, ApiError> {
     if bytes.len() > 12 * 1024 * 1024 {
         return Err(invalid("A reference image must be at most 12 MiB"));
@@ -644,14 +700,6 @@ pub async fn submit(
     if request.retry_result_id.is_none() && request.draft.recipe.workflow == QWEN21_EDIT_RECIPE {
         if stored.mode == "original" {
             request.draft.input_ids = request.draft.original_input_ids.clone();
-        } else if let Some(parent) = &request.draft.parent_result_id {
-            let result = get_result(&state.db, user, parent).await?;
-            // Explicitly supplied extra references are allowed; stale original inputs are not.
-            if request.draft.input_ids.first() != Some(&result.asset_id) {
-                return Err(invalid(
-                    "The selected result must be the first image for this iterative edit",
-                ));
-            }
         }
         if request.draft.input_ids.is_empty() {
             return Err(invalid("Choose an image to edit"));

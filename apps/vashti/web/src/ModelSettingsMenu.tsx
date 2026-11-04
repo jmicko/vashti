@@ -756,6 +756,7 @@ export function ModelSettingsMenu({
               <div>
                 <h2>{title}</h2>
                 <p>{subtitle}</p>
+                <p className="model-settings-scope">This conversation only</p>
               </div>
               {isUsingNonDefaultVersion && (
                 <button type="button" className="secondary-button" onClick={resetVersion}>

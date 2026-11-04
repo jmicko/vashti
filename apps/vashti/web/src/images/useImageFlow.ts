@@ -74,7 +74,7 @@ export function useImageFlow(
     setLeaf(id);
   }
   function followRun(run: Run) {
-    chooseLeaf(run.request.draft.parent_result_id);
+    chooseLeaf(run.request.retry_result_id ?? run.request.draft.parent_result_id);
     watching.current.set(run.id, selectionEpoch.current);
   }
   function setEditMode(mode: "iterative" | "original") {
@@ -372,12 +372,7 @@ export function useImageFlow(
     if (
       modeRef.current === "iterative" &&
       current.recipe.workflow === "qwen-image-2.1-edit/v1" &&
-      sameInputs &&
-      (current.parent_result_id === next.request.draft.parent_result_id ||
-        resultRef.current.some(
-          (value) =>
-            value.run_id === next.id && value.id === current.parent_result_id,
-        ))
+      sameInputs
     ) {
       patch({ parent_result_id: selected.id, input_ids: [selected.asset_id] });
     }
@@ -444,6 +439,7 @@ export function useImageFlow(
   ) {
     if (submitting.current || active) return null;
     submitting.current = true;
+    const selectionAtDispatch = selectionEpoch.current;
     setBusy(true);
     setError("");
     try {
@@ -470,7 +466,16 @@ export function useImageFlow(
         request,
       );
       submission.current = null;
-      watching.current.set(run.id, selectionEpoch.current);
+      const followAccepted = selectionEpoch.current === selectionAtDispatch;
+      if (!improveOnly && followAccepted) {
+        // Follow the accepted branch immediately, including retries and restored prompts.
+        chooseLeaf(retry?.id ?? run.request.draft.parent_result_id);
+        setNotice(null);
+      }
+      watching.current.set(
+        run.id,
+        followAccepted ? selectionEpoch.current : selectionAtDispatch,
+      );
       if (dispatchSeed !== undefined)
         dispatchedSeeds.current.set(run.id, dispatchSeed);
       if (live.current) setRuns((values) => merge([run], values));

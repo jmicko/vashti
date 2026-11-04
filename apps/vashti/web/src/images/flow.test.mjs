@@ -21,6 +21,7 @@ const {
   continuationLeaf,
   hasImageAncestry,
   advancedImageSeed,
+  nextImageDraft,
 } = await import("./flow.ts");
 hook.deregister();
 const profile = {
@@ -70,6 +71,33 @@ test("new flows use incremental seeds unless the user chose another policy", () 
     newDraft({ ...profile, seed_mode: "random" }).seed_mode,
     "random",
   );
+});
+test("original-image sends keep a continuous thread while preserving their source pixels", () => {
+  const draft = newDraft(profile);
+  draft.recipe.workflow = "qwen-image-2.1-edit/v1";
+  draft.input_ids = ["original-a", "original-b"];
+  draft.original_input_ids = [...draft.input_ids];
+  const submitted = nextImageDraft(draft, "first-result");
+  assert.equal(submitted.parent_result_id, "first-result");
+  assert.deepEqual(submitted.input_ids, draft.input_ids);
+  assert.equal(draft.parent_result_id, null);
+  const second = run("second", submitted.parent_result_id, null, "generating");
+  const first = result("first-result", "first");
+  assert.deepEqual(imageTurns([second, run("first")], [first], first.id).map(turn => turn.run.id), ["first", "second"]);
+  const finished = result("second-result", "second", "second-group", first.id);
+  assert.deepEqual(imageTurns([second, run("first")], [finished, first], finished.id).map(turn => turn.run.id), ["first", "second"]);
+});
+test("changing edit sources does not disconnect the next turn", () => {
+  const draft = newDraft(profile);
+  draft.recipe.workflow = "qwen-image-2.1-edit/v1";
+  draft.parent_result_id = "chosen-source";
+  draft.input_ids = ["source-asset"];
+  const submitted = nextImageDraft(draft, "latest");
+  assert.equal(submitted.parent_result_id, "latest");
+  assert.deepEqual(submitted.input_ids, ["source-asset"]);
+  assert.equal(draft.parent_result_id, "chosen-source");
+  draft.recipe.workflow = profile.recipe.workflow;
+  assert.equal(nextImageDraft(draft, "latest").parent_result_id, "latest");
 });
 test("incremental seeds advance after regeneration without overwriting newer settings", () => {
   const generated = run("retry", null, "old");

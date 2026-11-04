@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { useModalFocus } from "./useModalFocus";
 import { Save, X } from "lucide-react";
 import { RetroLoader } from "./common";
 import { ModelAvatar } from "./ModelAvatar";
@@ -50,15 +51,8 @@ export function ModelAvatarEditorDialog({
   const [isReadingFile, setIsReadingFile] = useState(false);
   const controlsDisabled = isBusy || isReadingFile;
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !controlsDisabled) {
-        onCancel();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [controlsDisabled, onCancel]);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, onCancel, controlsDisabled);
 
   return (
     <div
@@ -72,6 +66,7 @@ export function ModelAvatarEditorDialog({
     >
       <section
         className="model-avatar-editor-dialog"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="model-avatar-editor-title"

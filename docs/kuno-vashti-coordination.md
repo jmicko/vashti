@@ -86,6 +86,19 @@ authorizes it.
 
 ## Active Handoff: Image Access Without Manual Key Setup
 
+**Vashti image-library follow-up (2026-10-15):** isolated application work on
+`codex/vashti-image-library-fixes`, based on `ae3e70d`. No Kuno API,
+gateway, runtime, GPU or installed-service change is required. Vashti adds an
+owner-authenticated thumbnail endpoint and a forward migration for derived PNG
+previews, encrypted device previews, stable gallery tiles, whole-library viewer
+navigation, numbered/reorderable references, and connected normal-Send ancestry.
+Explicitly ordered edit sources are independent of conversation parents;
+immutable retry snapshots and ownership checks remain enforced. See the updated
+Images specification and `apps/vashti/web/tests/README.md` for the isolated
+no-inference browser fixture. Server/device automated and mobile-size browser
+checks pass; physical Android and new live GPU generation remain unverified.
+This follow-up is not a release or installation receipt.
+
 **Latest application acceptance:** see the beta.3 preparation/publication
 receipts at the end of this guide. Kuno's handoff is merged into the normal
 project checkout; all four beta.3 artifacts are published and
@@ -950,3 +963,18 @@ with about 856 MiB available. No release or log cleanup, storage resize, Hub
 deployment, stable promotion, main-branch merge, Git push or live Vashti/Kuno
 installation was performed. Physical Android acceptance and the backend
 hardware/platform limits remain as recorded above.
+
+### Vashti UX refinement checkpoint (2026-10-28)
+
+The user approved a Vashti UX pass, implemented on `codex/ux-refinement` in
+`/home/jmicko/.codex/worktrees/vashti-android-test/vashti`, based on `772608c6`.
+See [the review and implementation ledger](ux-review-2026-10-27.md).
+
+This changes photo viewing/gesture handling, image settings/reference sheets,
+navigation, shared controls, and themes. The Images specification's fullscreen
+and layout sections now describe the approved behavior. Kuno discovery,
+execution, readiness, stream framing, privacy, and image/reference/ancestry
+contracts are unchanged. No Kuno sources, installed services, or GPU workload
+were changed. Browser validation uses isolated fixtures instead of live
+generation. Physical Android acceptance remains pending; no release,
+deployment, main merge, or Git push is authorized by this checkpoint.

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { useModalFocus } from "./useModalFocus";
 import { ImagePlus, Save, Trash2, X } from "lucide-react";
 import { RetroLoader } from "./common";
 import { ModelBackgroundPreview } from "./ModelBackground";
@@ -81,15 +82,8 @@ export function ModelBackgroundEditorDialog({
         : (inheritedBackground?.portrait ?? nextPortrait);
   const canEditLayout = hasOwnImage;
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !controlsDisabled) {
-        onCancel();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [controlsDisabled, onCancel]);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, onCancel, controlsDisabled);
 
   function updateLayout(patch: Partial<BackgroundLayout>) {
     if (orientation === "landscape") {
@@ -111,6 +105,7 @@ export function ModelBackgroundEditorDialog({
     >
       <section
         className="model-background-editor-dialog"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="model-background-editor-title"

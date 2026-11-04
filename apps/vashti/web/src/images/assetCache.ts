@@ -3,6 +3,7 @@ export type CachedImage = {
   width: number;
   height: number;
   bytes: number;
+  decoded?: HTMLImageElement;
 };
 type Entry = {
   promise: Promise<CachedImage>;
@@ -43,11 +44,14 @@ export class AssetCache {
   }
 
   private async decode(id: string) {
-    if (this.running >= this.concurrency)
+    const queued = this.running >= this.concurrency;
+    if (queued)
       await new Promise<void>((resolve) => this.waiting.push(resolve));
     else this.running++;
     try {
       if (this.closed) throw new Error("Image workspace closed");
+      if (queued && !this.entries.get(id)?.users)
+        throw new Error("Image is no longer visible");
       const image = await this.load(id);
       if (this.closed) {
         this.revoke(image.url);

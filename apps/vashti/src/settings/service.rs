@@ -1069,7 +1069,7 @@ fn normalize_theme_update(
             }
 
             match value {
-                "system" | "vashti" | "light" => Ok(Some(value.to_string())),
+                "system" | "vashti" | "grayscale" | "light" => Ok(Some(value.to_string())),
                 _ => Err(ApiError::bad_request(
                     "invalid_theme",
                     "Theme is not available",
@@ -1094,6 +1094,18 @@ fn row_to_user_settings(row: sqlx::sqlite::SqliteRow) -> Result<UserSettingsResp
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grayscale_theme_is_supported_without_changing_other_preferences() {
+        assert_eq!(
+            super::normalize_theme_update(Some(serde_json::json!("grayscale")), None).unwrap(),
+            Some("grayscale".to_string())
+        );
+        assert_eq!(
+            super::normalize_theme_update(None, Some("light".to_string())).unwrap(),
+            Some("light".to_string())
+        );
+        assert!(super::normalize_theme_update(Some(serde_json::json!("unknown")), None).is_err());
+    }
     use sqlx::{
         SqlitePool,
         sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -1125,6 +1137,31 @@ mod tests {
             .await
             .expect("ensure app settings");
         pool
+    }
+
+    #[tokio::test]
+    async fn grayscale_preference_round_trips_without_changing_model_defaults() {
+        let pool = test_pool().await;
+        let user = register_user(&pool, "theme-test".into(), None, "test-password".into())
+            .await
+            .unwrap()
+            .user;
+        let before = super::get_user_settings(&pool, &user.id).await.unwrap();
+        let changed = super::update_user_settings(
+            &pool,
+            &user.id,
+            super::UpdateUserSettingsRequest {
+                default_backend_id: None,
+                default_model_name: None,
+                theme: Some(serde_json::json!("grayscale")),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(changed.default_backend_id, before.default_backend_id);
+        assert_eq!(changed.default_model_name, before.default_model_name);
+        let loaded = super::get_user_settings(&pool, &user.id).await.unwrap();
+        assert_eq!(loaded.theme.as_deref(), Some("grayscale"));
     }
 
     #[tokio::test]

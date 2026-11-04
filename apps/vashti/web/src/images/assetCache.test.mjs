@@ -85,6 +85,29 @@ test("decoded byte budget evicts least recently used unpinned images", async () 
   assert.equal(cache.peek("first"), undefined);
   cache.dispose();
 });
+test("scrolling past queued images skips their expensive decode", async () => {
+  let finish;
+  const loaded = [];
+  const cache = new AssetCache(id => {
+    loaded.push(id);
+    if (id === "first") return new Promise(resolve => { finish = () => resolve(picture(id)); });
+    return Promise.resolve(picture(id));
+  }, 10, 1000, 1, () => {});
+  const first = cache.acquire("first");
+  const skipped = cache.acquire("scrolled-past");
+  const rejection = assert.rejects(skipped.promise, /no longer visible/);
+  skipped.release();
+  const visible = cache.acquire("visible");
+  finish();
+  await first.promise;
+  await rejection;
+  await visible.promise;
+  assert.deepEqual(loaded, ["first", "visible"]);
+  const back = cache.acquire("scrolled-past");
+  await back.promise;
+  assert.equal(loaded.at(-1), "scrolled-past");
+  first.release(); visible.release(); back.release(); cache.dispose();
+});
 
 test("failed image loads can be retried", async () => {
   let attempts = 0;

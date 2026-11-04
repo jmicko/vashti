@@ -6,8 +6,10 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronLeft, ChevronRight, FileText, Image as ImageIcon, X } from "lucide-react";
-import { requestMultipartJson } from "./api";
+import { ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, X } from "lucide-react";
+import { requestBlob, requestMultipartJson } from "./api";
+import { PhotoViewer } from "./PhotoViewer";
+import { saveImage } from "./saveImage";
 import { RetroLoader } from "./common";
 import { ImageGenerationSettings } from "./ImageGenerationSettings";
 import { unixTimestamp } from "./privateChatStore";
@@ -350,89 +352,35 @@ export function ImageViewer({
   const attachment = attachments[index] ?? attachments[0];
   const canPrevious = index > 0;
   const canNext = index < attachments.length - 1;
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      } else if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select")) {
-        return;
-      } else if (event.key === "ArrowLeft" && canPrevious) {
-        onIndexChange(index - 1);
-      } else if (event.key === "ArrowRight" && canNext) {
-        onIndexChange(index + 1);
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [canNext, canPrevious, index, onClose, onIndexChange]);
-
-  function closeViewer() {
-    onClose();
-  }
-
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setError(""), [attachment?.id]);
   if (!attachment) {
     return null;
   }
-
+  async function download() {
+    setSaving(true);
+    setError("");
+    try {
+      const blob = attachment.data_url
+        ? await (await fetch(attachment.data_url)).blob()
+        : await requestBlob(`/api/attachments/${attachment.id}/content`);
+      await saveImage(blob, attachment.original_filename.replace(/\.[^.]+$/, ""));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save image"); }
+    finally { setSaving(false); }
+  }
+  const neighbor = (value: AttachmentInfo | undefined) => value && <img src={attachmentDisplayUrl(value)} alt="" draggable={false} />;
   return (
-    <div className="image-viewer-backdrop" role="presentation" onClick={closeViewer}>
-      <div className="image-viewer-top">
-        {attachment.mime_type === "image/png" && !attachment.data_url && (
-          <ImageGenerationSettings key={attachment.id} attachmentId={attachment.id} />
-        )}
-        {attachments.length > 1 && (
-          <span className="image-viewer-count">
-            {index + 1}/{attachments.length}
-          </span>
-        )}
-        <button
-          type="button"
-          aria-label="Close image"
-          onClick={(event) => {
-            event.stopPropagation();
-            closeViewer();
-          }}
-        >
-          <X />
-        </button>
-      </div>
-      <div className="image-viewer-body">
-        <img
-          className="image-viewer-image"
-          src={attachmentDisplayUrl(attachment)}
-          alt={attachment.original_filename}
-          onClick={(event) => event.stopPropagation()}
-        />
-        {canPrevious && (
-          <button
-            type="button"
-            className="image-viewer-nav image-viewer-nav-previous"
-            aria-label="Previous image"
-            onClick={(event) => {
-              event.stopPropagation();
-              onIndexChange(index - 1);
-            }}
-          >
-            <ChevronLeft />
-          </button>
-        )}
-        {canNext && (
-          <button
-            type="button"
-            className="image-viewer-nav image-viewer-nav-next"
-            aria-label="Next image"
-            onClick={(event) => {
-              event.stopPropagation();
-              onIndexChange(index + 1);
-            }}
-          >
-            <ChevronRight />
-          </button>
-        )}
-      </div>
-    </div>
+    <PhotoViewer id={attachment.id} title={`${index + 1} of ${attachments.length}`}
+      onClose={onClose} onStep={(direction) => onIndexChange(Math.max(0, Math.min(attachments.length - 1, index + direction)))}
+      canPrevious={canPrevious} canNext={canNext}
+      previous={neighbor(attachments[index - 1])} next={neighbor(attachments[index + 1])}
+      actions={<button type="button" aria-label="Download image" title="Download image" disabled={saving} onClick={() => void download()}><Download /></button>}
+      more={attachment.mime_type === "image/png" && !attachment.data_url
+        ? <ImageGenerationSettings key={attachment.id} attachmentId={attachment.id} /> : undefined}
+      notice={error && <p role="alert">{error}</p>}>
+      <img src={attachmentDisplayUrl(attachment)} alt={attachment.original_filename} draggable={false} />
+    </PhotoViewer>
   );
 }
 

@@ -140,7 +140,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       const response = await requestJson<DetectLocalhostResponse>("/api/backends/detect-localhost", {
         method: "POST"
       });
-      setStatus(response.detected.length === 0 ? "No local Ollama backend found." : null);
+      setStatus(response.detected.length === 0 ? "No inference host found on the Vashti server." : null);
       await loadBackends();
       await onBackendsChanged();
     } catch (detectError) {
@@ -164,7 +164,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       );
       setStatus(
         response.detected.length === 0
-          ? "No Ollama backends found on the local network."
+          ? "No inference hosts found on the server's local network."
           : null
       );
       await loadBackends();
@@ -246,9 +246,9 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
           onSubmit={createBackend}
         >
           <div className="settings-create-card-header">
-            <p className="eyebrow">Ollama Backend</p>
+            <p className="eyebrow">Inference Host</p>
             <h2>Add Backend</h2>
-            <p>Add another Ollama-compatible endpoint for model discovery and chat requests.</p>
+            <p>Connect Kuno or an Ollama-compatible host. Addresses are reached from the Vashti server, not this device.</p>
           </div>
           <div className="settings-create-card-grid">
             <label>
@@ -290,7 +290,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
 
       {!hasLoaded && <p className="status-message">Loading backends...</p>}
       {hasLoaded && backends.length === 0 && (
-        <p className="status-message">No Ollama backends configured.</p>
+        <p className="status-message">No inference hosts configured.</p>
       )}
 
       <AdminModelsAccessPanel
