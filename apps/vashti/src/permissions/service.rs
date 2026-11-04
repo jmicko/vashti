@@ -19,7 +19,7 @@ pub fn user_tag_id(user_id: &str) -> String {
     format!("user:{user_id}")
 }
 
-pub fn tool_ids() -> [&'static str; 9] {
+pub fn tool_ids() -> [&'static str; 10] {
     [
         crate::tools::service::TOOL_BRAVE_WEB_SEARCH,
         crate::tools::service::TOOL_OLLAMA_WEB_SEARCH,
@@ -30,6 +30,7 @@ pub fn tool_ids() -> [&'static str; 9] {
         crate::tools::service::TOOL_CHAT_HISTORY,
         crate::tools::service::TOOL_CALCULATOR,
         "images",
+        crate::assistant::models::SANDBOX_TOOL_ID,
     ]
 }
 
@@ -302,7 +303,12 @@ pub async fn ensure_tool_records(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
 
         if result.rows_affected() > 0 {
-            replace_tool_tags(pool, tool_id, defaults.clone())
+            let tags = if tool_id == crate::assistant::models::SANDBOX_TOOL_ID {
+                vec![TAG_ADMIN.to_string()]
+            } else {
+                defaults.clone()
+            };
+            replace_tool_tags(pool, tool_id, tags)
                 .await
                 .map_err(api_error_to_sqlx)?;
         }

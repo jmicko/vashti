@@ -29,6 +29,7 @@ pub struct MemoryVersionResponse {
     pub source_chat_id: Option<String>,
     pub source_message_id: Option<String>,
     pub source_tool_call_id: Option<String>,
+    pub source_assistant_run_id: Option<String>,
     pub created_at: i64,
 }
 

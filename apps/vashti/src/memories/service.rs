@@ -61,6 +61,7 @@ pub struct MemoryMutationActor {
     pub source_chat_id: Option<String>,
     pub source_message_id: Option<String>,
     pub source_tool_call_id: Option<String>,
+    pub source_assistant_run_id: Option<String>,
 }
 
 impl MemoryMutationActor {
@@ -73,6 +74,7 @@ impl MemoryMutationActor {
             source_chat_id: None,
             source_message_id: None,
             source_tool_call_id: None,
+            source_assistant_run_id: None,
         }
     }
 
@@ -92,7 +94,16 @@ impl MemoryMutationActor {
             source_chat_id: Some(chat_id.to_string()),
             source_message_id: Some(message_id.to_string()),
             source_tool_call_id: Some(tool_call_id.to_string()),
+            source_assistant_run_id: None,
         }
+    }
+
+    pub fn assistant(user: &str, model_key: &str, model_name: &str, run: &str, call: &str) -> Self {
+        let mut actor = Self::model(user, model_key, model_name, "", "", call);
+        actor.source_chat_id = None;
+        actor.source_message_id = None;
+        actor.source_assistant_run_id = Some(run.to_string());
+        actor
     }
 
     fn is_model(&self) -> bool {
@@ -456,7 +467,7 @@ pub async fn list_versions(
         r#"
         SELECT id, memory_id, version_number, content, actor_type, actor_user_id,
                actor_model_key, actor_model_name, source_chat_id, source_message_id,
-               source_tool_call_id, created_at
+               source_tool_call_id, source_assistant_run_id, created_at
         FROM memory_versions
         WHERE memory_id = ?
         ORDER BY version_number DESC
@@ -641,6 +652,7 @@ async fn memory_row(
                v.version_number, v.content, v.actor_type, v.actor_user_id,
                v.actor_model_key, v.actor_model_name, v.source_chat_id,
                v.source_message_id, v.source_tool_call_id,
+               v.source_assistant_run_id,
                v.created_at AS version_created_at
         FROM memories m
         JOIN memory_versions v ON v.id = m.current_version_id
@@ -816,8 +828,8 @@ async fn insert_version(
         INSERT INTO memory_versions (
             id, memory_id, version_number, content, actor_type, actor_user_id,
             actor_model_key, actor_model_name, source_chat_id, source_message_id,
-            source_tool_call_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            source_tool_call_id, source_assistant_run_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(version_id)
@@ -831,6 +843,7 @@ async fn insert_version(
     .bind(&actor.source_chat_id)
     .bind(&actor.source_message_id)
     .bind(&actor.source_tool_call_id)
+    .bind(&actor.source_assistant_run_id)
     .bind(created_at)
     .execute(&mut **tx)
     .await?;
@@ -974,6 +987,7 @@ fn row_to_memory(
             source_chat_id: row.try_get("source_chat_id")?,
             source_message_id: row.try_get("source_message_id")?,
             source_tool_call_id: row.try_get("source_tool_call_id")?,
+            source_assistant_run_id: row.try_get("source_assistant_run_id")?,
             created_at: row.try_get("version_created_at")?,
         },
         model_scope,
@@ -996,6 +1010,7 @@ fn row_to_version(row: SqliteRow) -> Result<MemoryVersionResponse, sqlx::Error> 
         source_chat_id: row.try_get("source_chat_id")?,
         source_message_id: row.try_get("source_message_id")?,
         source_tool_call_id: row.try_get("source_tool_call_id")?,
+        source_assistant_run_id: row.try_get("source_assistant_run_id")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -1085,14 +1100,18 @@ fn ensure_actor_owner(user_id: &str, actor: &MemoryMutationActor) -> Result<(), 
                     .actor_model_name
                     .as_deref()
                     .is_some_and(|v| !v.is_empty())
-                && actor
+                && ((actor
                     .source_chat_id
                     .as_deref()
                     .is_some_and(|v| !v.is_empty())
-                && actor
-                    .source_message_id
-                    .as_deref()
-                    .is_some_and(|v| !v.is_empty())
+                    && actor
+                        .source_message_id
+                        .as_deref()
+                        .is_some_and(|v| !v.is_empty()))
+                    || actor
+                        .source_assistant_run_id
+                        .as_deref()
+                        .is_some_and(|v| !v.is_empty()))
                 && actor
                     .source_tool_call_id
                     .as_deref()

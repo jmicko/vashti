@@ -989,6 +989,7 @@ async fn stream_generation(task: GenerationStreamTask) {
                     chat_id: &chat_id,
                     message_id: &assistant_message_id,
                     tool_call_id: &tool_call_id,
+                    source_assistant_run_id: None,
                 };
                 if crate::images::chat::is_image_tool(&call.function.name) {
                     let (previews, mut preview_rx) = tokio::sync::watch::channel(None);

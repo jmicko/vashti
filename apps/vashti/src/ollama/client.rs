@@ -89,6 +89,16 @@ pub async fn model_capabilities(
     base_url: &str,
     model_name: &str,
 ) -> Result<Vec<String>, reqwest::Error> {
+    Ok(model_profile(client, base_url, model_name)
+        .await?
+        .capabilities)
+}
+
+pub async fn model_profile(
+    client: &reqwest::Client,
+    base_url: &str,
+    model_name: &str,
+) -> Result<ShowModelResponse, reqwest::Error> {
     let url = format!("{}/api/show", base_url.trim_end_matches('/'));
     let response = client
         .post(url)
@@ -100,7 +110,7 @@ pub async fn model_capabilities(
         .json::<ShowModelResponse>()
         .await?;
 
-    Ok(response.capabilities)
+    Ok(response)
 }
 
 /// Image IDs remain in the text so text-only models can still invoke editing.

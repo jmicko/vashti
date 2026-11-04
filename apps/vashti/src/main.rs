@@ -1,5 +1,6 @@
 mod admin;
 mod app_state;
+mod assistant;
 mod auth;
 mod backends;
 mod chats;
@@ -86,6 +87,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     startup::secure_data_files(&config).await?;
     startup::migrations::run(&db).await?;
     images::service::recover(&db).await?;
+    assistant::service::recover(&db).await?;
     let interrupted_generations = chats::service::recover_interrupted_generations(&db).await?;
     if interrupted_generations > 0 {
         tracing::warn!(
@@ -112,23 +114,27 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     spawn_memory_indexing(state.clone());
     spawn_conversation_indexing(state.clone());
     spawn_update_checks(state.clone());
-    let app = router(state);
+    assistant::runner::spawn(state.clone());
+    let app = router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!("listening on http://{}", listener.local_addr()?);
 
-    axum::serve(
+    let result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    .await;
+    assistant::runner::shutdown(&state).await;
+    result?;
 
     Ok(())
 }
 
 fn router(state: AppState) -> Router {
     let api = Router::new()
+        .nest("/assistant", assistant::handlers::router())
         .nest("/images", images::handlers::router())
         .route("/version", get(version::get_version))
         .route("/admin/update", get(updates::handlers::get_update_status))

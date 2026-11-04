@@ -7,8 +7,8 @@ Branch: `codex/personal-assistant`, based on `4bdd9dfc`.
 
 - [x] Research persistent assistants and inspect Vashti's existing capabilities.
 - [x] Confirm the dedicated Assistant workspace with the user.
-- [ ] Implement owner-scoped durable tasks, runs, events, approvals, and recovery.
-- [ ] Integrate existing permission-checked tools and rootless Podman workspaces.
+- [x] Implement owner-scoped durable tasks, runs, events, approvals, and recovery.
+- [x] Integrate existing permission-checked tools and rootless Podman workspaces.
 - [ ] Add the responsive workspace, routines, progress, results, and approvals.
 - [ ] Test failure/security boundaries and the real installed Kuno Qwen model.
 - [ ] Refine, document measured limits, and commit. No deployment is authorized.
@@ -137,3 +137,37 @@ Exercise actual multi-step tool use and a created file with the installed
 Kuno-prefixed Qwen model. Keep tool/network/approval boundaries enforced even
 when the model asks otherwise. Browser-test mobile and desktop flows, build the
 web/native frontend, and distinguish those receipts from physical Android QA.
+
+## Backend Checkpoint
+
+Implemented the task/run/action/event/artifact store, polling and control APIs,
+owner-only downloads, versioned note/memory attribution to assistant runs,
+per-action approvals, durable questions, step/output bounds, one worker per
+account/two globally, routine dispatch, explicit interruption review, and rootless
+offline workspaces. Sandbox permission defaults to administrators; existing tool,
+model, and record access rules still apply.
+
+Workspace storage is a bounded tmpfs inside a disposable container. Commands
+checkpoint a compressed archive (maximum 64 MiB); restoration happens inside the
+next isolated container, never by extracting archive members on the host.
+Containers are removed after commands. Published artifacts are limited to 20 MiB
+each, 32 files/128 MiB per run, and 512 MiB per account; owners can delete them.
+
+Current receipts (2026-11-03):
+
+- Existing 145 Rust tests remain passing; 16 additional deterministic assistant
+  tests cover ownership, stale edits, approvals/rejection/revocation, questions,
+  crash uncertainty, queue exclusion, cancellation, budgets, malformed/incomplete
+  streams, schedule overlap/failures, permission defaults, and HTTP downloads.
+- Explicit rootless Podman test passes: offline networking, read-only root,
+  workspace persistence, export, traversal/symlink rejection, timeout, and no
+  leftover test containers. It caught and fixed an unclosed archive input pipe.
+- Installed `kuno-qwen3.8-flash-next:iq3_s` passes the real multi-tool file test:
+  calculation, workspace execution, file verification/export, exact CSV bytes,
+  and a final link to the actual artifact. Disposable data only.
+- An initial fixed 64K context request was rejected by the installed engine.
+  Vashti now reads the ordinary `/api/show` profile and honors its configured
+  context (currently 32768) instead. No Kuno source/config/service changes.
+
+The interactive frontend and full refinement/validation pass are still in
+progress. These receipts are not release or physical Android acceptance.

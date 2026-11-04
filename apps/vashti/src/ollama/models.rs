@@ -8,7 +8,7 @@ pub struct OllamaModel {
     pub capabilities: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OllamaChatMessage {
     pub role: String,
     pub content: String,
@@ -188,6 +188,37 @@ pub struct ShowModelRequest<'a> {
 pub struct ShowModelResponse {
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub parameters: String,
+    #[serde(default)]
+    pub model_info: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+impl ShowModelResponse {
+    pub fn context_window(&self) -> i64 {
+        let configured = self
+            .parameters
+            .lines()
+            .find_map(|line| {
+                let mut words = line.split_whitespace();
+                (words.next() == Some("num_ctx"))
+                    .then(|| words.next()?.parse::<i64>().ok())
+                    .flatten()
+            })
+            .filter(|n| *n >= 512);
+        let maximum = self
+            .model_info
+            .iter()
+            .filter(|(key, _)| key.ends_with(".context_length") || key.as_str() == "context_length")
+            .filter_map(|(_, value)| value.as_i64())
+            .filter(|n| *n >= 512)
+            .min();
+        configured
+            .or(maximum)
+            .unwrap_or(8192)
+            .min(maximum.unwrap_or(i64::MAX))
+            .clamp(512, 32768)
+    }
 }
 
 #[derive(Debug, Serialize)]

@@ -724,6 +724,7 @@ pub struct ToolExecutionContext<'a> {
     pub chat_id: &'a str,
     pub message_id: &'a str,
     pub tool_call_id: &'a str,
+    pub source_assistant_run_id: Option<&'a str>,
 }
 
 async fn execute_chat_history_tool(
@@ -788,14 +789,24 @@ async fn execute_memories_tool(
     context: &ToolExecutionContext<'_>,
     call: &OllamaToolCall,
 ) -> Result<String, String> {
-    let actor = MemoryMutationActor::model(
-        context.user_id,
-        context.model_key,
-        context.model_name,
-        context.chat_id,
-        context.message_id,
-        context.tool_call_id,
-    );
+    let actor = if let Some(run) = context.source_assistant_run_id {
+        MemoryMutationActor::assistant(
+            context.user_id,
+            context.model_key,
+            context.model_name,
+            run,
+            context.tool_call_id,
+        )
+    } else {
+        MemoryMutationActor::model(
+            context.user_id,
+            context.model_key,
+            context.model_name,
+            context.chat_id,
+            context.message_id,
+            context.tool_call_id,
+        )
+    };
     let value = match call.function.name.as_str() {
         TOOL_SEARCH_MEMORIES => {
             let query = required_string(&call.function.arguments, "query")?;
@@ -918,14 +929,24 @@ async fn execute_notes_tool(
     context: &ToolExecutionContext<'_>,
     call: &OllamaToolCall,
 ) -> Result<String, String> {
-    let actor = NoteMutationActor::model(
-        context.user_id,
-        context.model_key,
-        context.model_name,
-        context.chat_id,
-        context.message_id,
-        context.tool_call_id,
-    );
+    let actor = if let Some(run) = context.source_assistant_run_id {
+        NoteMutationActor::assistant(
+            context.user_id,
+            context.model_key,
+            context.model_name,
+            run,
+            context.tool_call_id,
+        )
+    } else {
+        NoteMutationActor::model(
+            context.user_id,
+            context.model_key,
+            context.model_name,
+            context.chat_id,
+            context.message_id,
+            context.tool_call_id,
+        )
+    };
     let value = match call.function.name.as_str() {
         TOOL_SEARCH_NOTES => {
             let query = required_string(&call.function.arguments, "query")?;
@@ -1723,6 +1744,7 @@ mod tests {
             chat_id: "unused",
             message_id: "unused",
             tool_call_id: "unused",
+            source_assistant_run_id: None,
         };
         let client = reqwest::Client::new();
         let mut settings = disabled_web_settings();
