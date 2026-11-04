@@ -18,13 +18,19 @@ const markdownComponents = {
     return <CodeBlock>{children}</CodeBlock>;
   }
 } satisfies Components;
+const deferredImageComponents = {
+  ...markdownComponents,
+  img({ src, alt }) { return <a href={src}>{alt || "Image"}</a>; }
+} satisfies Components;
 
 export const MarkdownContent = memo(function MarkdownContent({
   content,
-  dimmedEmphasis = false
+  dimmedEmphasis = false,
+  deferImages = false
 }: {
   content: string;
   dimmedEmphasis?: boolean;
+  deferImages?: boolean;
 }) {
   return (
     <div
@@ -37,7 +43,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
-        components={markdownComponents}
+        components={deferImages ? deferredImageComponents : markdownComponents}
       >
         {content}
       </ReactMarkdown>

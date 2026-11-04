@@ -768,6 +768,7 @@ export function MemoriesSettingsPanel({
                             Open source chat <ExternalLink aria-hidden="true" />
                           </a>
                         )}
+                        {version.source_assistant_run_id && <a href={`/app/assistant/runs/${encodeURIComponent(version.source_assistant_run_id)}`}>Open assistant run <ExternalLink aria-hidden="true" /></a>}
                         {version.id !== selectedMemory.current_version.id && !selectedMemory.deleted_at && (
                           <button type="button" className="secondary-button" disabled={isMutating || isDirty} onClick={() => setConfirmAction({ kind: "restore-version", version })}>
                             Restore this version
@@ -811,6 +812,7 @@ function MemorySource({ version }: { version: MemoryVersion }) {
           Source chat <ExternalLink aria-hidden="true" />
         </a>
       )}
+      {version.source_assistant_run_id && <a href={`/app/assistant/runs/${encodeURIComponent(version.source_assistant_run_id)}`}>Assistant run <ExternalLink aria-hidden="true" /></a>}
     </div>
   );
 }

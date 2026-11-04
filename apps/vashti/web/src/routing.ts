@@ -41,6 +41,13 @@ export function storeNewChatMode(mode: NewChatMode) {
 export function routeFromLocation(): AppRoute {
   const path = window.location.pathname;
 
+  if (path === "/app/assistant" || path.startsWith("/app/assistant/")) {
+    const [, , , section, id] = path.split("/");
+    if (section === "tasks" && id) return { page: "assistant", taskId: decodeURIComponent(id), runId: new URLSearchParams(window.location.hash.slice(1)).get("run") ?? undefined };
+    if (section === "runs" && id) return { page: "assistant", runId: decodeURIComponent(id) };
+    return { page: "assistant", view: section === "new" || section === "defaults" ? section : undefined };
+  }
+
   if (path === "/app/images" || path.startsWith("/app/images/")) {
     const view = path.split("/")[3];
     const params = new URLSearchParams(window.location.hash.slice(1));
@@ -97,6 +104,11 @@ export function routeFromLocation(): AppRoute {
 }
 
 export function pathForRoute(route: AppRoute) {
+  if (route.page === "assistant") {
+    if (route.taskId) return `/app/assistant/tasks/${encodeURIComponent(route.taskId)}${route.runId ? `#${new URLSearchParams({ run: route.runId })}` : ""}`;
+    if (route.runId) return `/app/assistant/runs/${encodeURIComponent(route.runId)}`;
+    return `/app/assistant${route.view ? `/${route.view}` : ""}`;
+  }
   if (route.page === "images") {
     const params = new URLSearchParams();
     if (route.storageMode === "device") params.set("mode", "device");

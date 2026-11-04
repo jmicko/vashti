@@ -79,6 +79,7 @@ export function NotesWorkspace({
   initialStorageMode = "server",
   initialNoteId = null,
   onReturnToSource,
+  sourceLabel = "Back to chat",
   onLocationChange,
   onEditorOpenChange,
   onOpenSettings
@@ -89,6 +90,7 @@ export function NotesWorkspace({
   initialStorageMode?: NoteStorageMode;
   initialNoteId?: string | null;
   onReturnToSource?: () => void;
+  sourceLabel?: string;
   onLocationChange?: (storageMode: NoteStorageMode, noteId: string | null) => void;
   onEditorOpenChange?: (isOpen: boolean) => void;
   onOpenSettings?: (storageMode: NoteStorageMode) => void;
@@ -777,7 +779,7 @@ export function NotesWorkspace({
           {onReturnToSource && selectedNoteId && (
             <button type="button" className="secondary-button" onClick={() => void returnToSource()}>
               <ArrowLeft />
-              <span>Back to chat</span>
+              <span>{sourceLabel}</span>
             </button>
           )}
           <button type="button" className="secondary-button" onClick={() => void openNotesSettings()}>
@@ -955,8 +957,8 @@ export function NotesWorkspace({
                 <button
                   type="button"
                   className="icon-button notes-editor-back"
-                  aria-label={onReturnToSource ? "Back to chat" : "Back to notes"}
-                  title={onReturnToSource ? "Back to chat" : "Back to notes"}
+                  aria-label={onReturnToSource ? sourceLabel : "Back to notes"}
+                  title={onReturnToSource ? sourceLabel : "Back to notes"}
                   onClick={() => void (onReturnToSource ? returnToSource() : closeEditor())}
                 >
                   <ArrowLeft />
@@ -1384,6 +1386,7 @@ function NoteHistory({
               <button type="button" className="secondary-button" onClick={() => onRestore(selectedVersion)}><Undo2 /> Restore</button>
             )}
           </header>
+          {selectedVersion.source_assistant_run_id && <a href={`/app/assistant/runs/${encodeURIComponent(selectedVersion.source_assistant_run_id)}`}>Open assistant run</a>}
           <MarkdownContent content={selectedVersion.content || "_Empty note_"} />
         </div>
       )}

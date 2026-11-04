@@ -179,11 +179,13 @@ export function ToggleSwitch({
 }
 
 export function UnsavedSettingsDialog({
+  subject = "settings",
   isSaving,
   onCancel,
   onDiscard,
   onSave
 }: {
+  subject?: string;
   isSaving: boolean;
   onCancel: () => void;
   onDiscard: () => void;
@@ -201,8 +203,8 @@ export function UnsavedSettingsDialog({
         aria-modal="true"
         aria-labelledby="unsaved-settings-title"
       >
-        <h2 id="unsaved-settings-title">Unsaved Settings</h2>
-        <p>Save your settings before leaving, or discard the unsaved changes.</p>
+        <h2 id="unsaved-settings-title">Unsaved {subject}</h2>
+        <p>Save your {subject} before leaving, or discard the unsaved changes.</p>
         <div className="dialog-actions">
           <button type="button" className="secondary-button" disabled={isSaving} onClick={onCancel}>
             Cancel

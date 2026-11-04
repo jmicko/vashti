@@ -11,6 +11,8 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  Bell,
+  Bot,
   Cog,
   Download,
   GitFork,
@@ -129,6 +131,7 @@ const PrivateChatView = lazy(() =>
   import("./PrivateChatView").then((module) => ({ default: module.PrivateChatView }))
 );
 const ImagesWorkspace = lazy(() => import("./images/ImagesWorkspace").then(module => ({ default: module.ImagesWorkspace })));
+const AssistantWorkspace = lazy(() => import("./assistant/AssistantWorkspace").then(module => ({ default: module.AssistantWorkspace })));
 const NotesWorkspace = lazy(() =>
   import("./notes/NotesWorkspace").then((module) => ({ default: module.NotesWorkspace }))
 );
@@ -143,6 +146,17 @@ export function AppShell({
   onUserChanged: (user: User) => void;
 }) {
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
+  const [assistantAttention, setAssistantAttention] = useState(0);
+  useEffect(() => {
+    let current = true, timer = 0;
+    async function poll() {
+      try { const summary = await requestJson<{ attention: number }>("/api/assistant/summary"); if (current) setAssistantAttention(summary.attention); }
+      catch { /* Older servers do not expose Assistant yet. */ }
+      if (current) timer = window.setTimeout(poll, document.hidden ? 60000 : 15000);
+    }
+    void poll();
+    return () => { current = false; clearTimeout(timer); };
+  }, [user.id]);
   const routeRef = useRef(route);
   const [noteReturnRoute, setNoteReturnRoute] = useState<AppRoute | null>(null);
   const [toolReturnRoute, setToolReturnRoute] = useState<AppRoute | null>(null);
@@ -257,6 +271,7 @@ export function AppShell({
   const isSettingsPage = page === "settings";
   const isNotesPage = page === "notes";
   const isImagesPage = page === "images";
+  const isAssistantPage = page === "assistant";
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const settingsNotesStorageMode =
     route.page === "settings" && route.section === "notes"
@@ -770,7 +785,7 @@ export function AppShell({
 
   function shouldGuardNavigation(currentRoute: AppRoute, nextRoute: AppRoute) {
     return (
-      currentRoute.page === "settings" &&
+      (currentRoute.page === "settings" || currentRoute.page === "assistant") &&
       Boolean(settingsGuardRef.current?.isDirty) &&
       !routesEqual(currentRoute, nextRoute)
     );
@@ -829,7 +844,7 @@ export function AppShell({
   }
 
   function openReferencedNote(storageMode: "server" | "device", noteId: string) {
-    if (route.page === "chat" || route.page === "private-chat") {
+    if (route.page === "chat" || route.page === "private-chat" || route.page === "assistant") {
       setNoteReturnRoute(route);
     }
     navigate({ page: "notes", storageMode, noteId });
@@ -1308,6 +1323,9 @@ export function AppShell({
             currentPrivateChatId={currentPrivateChatId}
             isNotesActive={isNotesPage}
             isImagesActive={isImagesPage}
+            isAssistantActive={isAssistantPage}
+            assistantAttention={assistantAttention}
+            onOpenAssistant={() => navigate({ page: "assistant" })}
             currentImageFlowId={route.page === "images" ? route.sessionId : undefined}
             imageStorageMode={route.page === "images" ? route.storageMode ?? "server" : "server"}
             onOpenImageFlow={(id) => {
@@ -1329,7 +1347,9 @@ export function AppShell({
             onDeleteChat={setChatDeleteTarget}
             onDeletePrivateChat={setPrivateChatDeleteTarget}
             onNewChat={() => {
-              if (isImagesPage) {
+              if (isAssistantPage) {
+                navigate({ page: "assistant", view: "new" });
+              } else if (isImagesPage) {
                 setNewImageFlowKey(value => value + 1);
                 navigate({ page: "images", view: "flow", storageMode: route.page === "images" ? route.storageMode : "server" });
                 setIsSidebarOpen(false);
@@ -1385,9 +1405,9 @@ export function AppShell({
                 <SettingsIcon />
                 <span>Settings</span>
               </div>
-            ) : isNotesPage || isImagesPage ? (
+            ) : isNotesPage || isImagesPage || isAssistantPage ? (
               <>
-                {!isNotesEditorOpen && (
+                {!(isNotesPage && isNotesEditorOpen) && (
                   <button
                     type="button"
                     className="icon-button mobile-only"
@@ -1405,8 +1425,8 @@ export function AppShell({
                   <div className="image-flow-header-slot" ref={setImageHeaderTarget} />
                 ) : (
                   <div className="workspace-topbar-title">
-                    {isImagesPage ? <ImagesIcon /> : <NotebookPen />}
-                    <span>{isImagesPage ? "Images" : "Notes"}</span>
+                    {isAssistantPage ? <Bot /> : isImagesPage ? <ImagesIcon /> : <NotebookPen />}
+                    <span>{isAssistantPage ? "Assistant" : isImagesPage ? "Images" : "Notes"}</span>
                   </div>
                 )}
               </>
@@ -1478,6 +1498,7 @@ export function AppShell({
             )}
           </div>
           <div className="topbar-right">
+            {assistantAttention > 0 && !isAssistantPage && <button type="button" className="icon-button assistant-notification" title={`${assistantAttention} assistant tasks need attention`} aria-label={`${assistantAttention} assistant tasks need attention`} onClick={() => navigate({ page: "assistant" })}><Bell /><small>{assistantAttention}</small></button>}
             {(currentChatId || currentPrivateChatId) && (
               <button
                 type="button"
@@ -1559,7 +1580,7 @@ export function AppShell({
           </div>
         </header>
         {toolReturnRoute && <div className="tool-source-return"><button type="button" className="secondary-button" onClick={() => navigate(toolReturnRoute)}>
-          <ArrowLeft />Back to source chat
+          <ArrowLeft />{toolReturnRoute.page === "assistant" ? "Back to task" : "Back to source chat"}
         </button></div>}
         {page === "settings" ? (
           <SettingsPage
@@ -1588,6 +1609,10 @@ export function AppShell({
             onUserChanged={onUserChanged}
             isAdmin={isAdmin}
           />
+        ) : route.page === "assistant" ? (
+          <Suspense fallback={<p role="status">Loading assistant...</p>}>
+            <AssistantWorkspace key={user.id} route={route} groups={modelGroups} onNavigate={navigate} onGuardChange={updateSettingsGuard} onManageModels={() => openSettings(isAdmin ? "backends" : "models")} onOpenNote={id => openReferencedNote("server", id)} />
+          </Suspense>
         ) : route.page === "images" ? (
           <Suspense fallback={<p role="status">Loading images...</p>}>
             <ImagesWorkspace
@@ -1617,6 +1642,7 @@ export function AppShell({
               initialStorageMode={notesStorageMode}
               initialNoteId={referencedNoteId}
               onReturnToSource={noteReturnRoute ? returnToReferencedChat : undefined}
+              sourceLabel={noteReturnRoute?.page === "assistant" ? "Back to task" : undefined}
               onLocationChange={syncNotesLocation}
               onEditorOpenChange={handleNotesEditorOpenChange}
               onOpenSettings={(storageMode) => openSettings("notes", storageMode)}
@@ -1710,6 +1736,7 @@ export function AppShell({
       )}
       {pendingNavigation && (
         <UnsavedSettingsDialog
+          subject={isAssistantPage ? "task" : "settings"}
           isSaving={isSavingPendingNavigation}
           onCancel={() => setPendingNavigation(null)}
           onDiscard={discardAndContinueNavigation}

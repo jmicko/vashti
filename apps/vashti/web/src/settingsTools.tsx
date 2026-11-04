@@ -12,7 +12,8 @@ import {
   NotebookPen,
   Save,
   Search,
-  Wrench
+  Wrench,
+  Terminal
 } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog } from "./common";
@@ -290,6 +291,10 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
             </button>
           </SettingsSaveBanner>
 
+          <section className="settings-subsection">
+            <div className="tool-provider-heading"><Terminal aria-hidden="true" /><div><strong>Assistant workspace</strong><p>Offline, isolated code execution. Requires rootless Podman and the configured image on the server.</p></div></div>
+            <PermissionTagEditor label="Tags" tags={toolPermissionTags.assistant_sandbox ?? []} availableTags={availableTags} onChange={tags => setToolPermissionTags(current => ({ ...current, assistant_sandbox: tags }))} />
+          </section>
           <section className="settings-subsection">
             <ToggleSwitch
               icon={<Wrench />}

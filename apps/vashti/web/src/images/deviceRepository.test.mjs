@@ -302,7 +302,7 @@ test("private flows persist encrypted images, branch versions and gallery only o
   // Check the actual vault database, not just the repository's decoded view.
   const databases = await indexedDB.databases();
   const name = databases.find(
-    (value) => value.name.includes("alice") && value.version === 10,
+    (value) => value.name.includes("alice") && value.version >= 10,
   )?.name;
   assert.ok(name);
   const vault = await new Promise((resolve) => {

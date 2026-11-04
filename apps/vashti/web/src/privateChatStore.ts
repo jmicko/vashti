@@ -27,7 +27,8 @@ import type {
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 10;
+const DB_VERSION = 11;
+const ASSISTANT_DRAFT_STORE = "assistant_drafts";
 const IMAGE_STORE = "private_images";
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
@@ -393,6 +394,30 @@ export function privateImageGuard() {
     if (epoch !== storageEpoch || !currentUserId)
       throw new Error("Private storage user changed");
   };
+}
+
+export async function readAssistantDraft<T>(id: string): Promise<T | null> {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  guard();
+  const tx = db.transaction(ASSISTANT_DRAFT_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | undefined>(tx.objectStore(ASSISTANT_DRAFT_STORE).get(id));
+  await transactionDone(tx);
+  const value = record ? await readPrivateRecord<{ value: T }>(record) : null;
+  guard();
+  return value?.value ?? null;
+}
+
+export async function writeAssistantDraft(id: string, value: unknown | null) {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  const record = value === null ? null : await privateStoreRecord({ id, value });
+  guard();
+  const tx = db.transaction(ASSISTANT_DRAFT_STORE, "readwrite");
+  if (record) tx.objectStore(ASSISTANT_DRAFT_STORE).put(record);
+  else tx.objectStore(ASSISTANT_DRAFT_STORE).delete(id);
+  await transactionDone(tx);
+  guard();
 }
 
 export async function readPrivateImage<T>(id: string): Promise<T | null> {
@@ -2206,6 +2231,9 @@ function privateDbName() {
 }
 
 function ensurePrivateStores(db: IDBDatabase) {
+  if (!db.objectStoreNames.contains(ASSISTANT_DRAFT_STORE)) {
+    db.createObjectStore(ASSISTANT_DRAFT_STORE, { keyPath: "id" });
+  }
   if (!db.objectStoreNames.contains(IMAGE_STORE)) {
     db.createObjectStore(IMAGE_STORE, { keyPath: "id" });
   }

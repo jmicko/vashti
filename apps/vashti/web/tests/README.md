@@ -59,3 +59,13 @@ Run `node_modules/.bin/tsc -p tests/tsconfig.json` to type-check the fixture.
 The fixture keeps simulated flow records in memory; reloading resets its flow.
 Automated persistence/ownership tests live in `src/images/deviceRepository.test.mjs`
 and `apps/vashti/src/images/tests.rs`.
+# Assistant
+
+Open `/tests/assistant.html` through Vite for synthetic Assistant workflows.
+All fetches are intercepted; it cannot contact an inference host or use a real
+account. It has a pending note approval, a downloadable CSV, a long reasoning
+block, question choices, failed-send injection, and local encrypted drafts.
+Check mobile and desktop controls, run history, save/defaults, schedules,
+archive/restore, exact-action review, question replies, and draft retention.
+The remote-image fixture must render as a link, never an `img` request.
+

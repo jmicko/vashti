@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   Copy,
+  Bot,
   Lock,
   MessageSquarePlus,
   MessageSquare,
@@ -34,6 +35,8 @@ export function Sidebar({
   currentPrivateChatId,
   isNotesActive,
   isImagesActive,
+  isAssistantActive = false,
+  assistantAttention = 0,
   currentImageFlowId,
   imageStorageMode,
   onOpenImageFlow,
@@ -50,6 +53,7 @@ export function Sidebar({
   onNewChat,
   onOpenNotes,
   onOpenImages,
+  onOpenAssistant,
   onOpenChat,
   onOpenPrivateChat,
   onRenameChat,
@@ -61,6 +65,8 @@ export function Sidebar({
   currentPrivateChatId: string | null;
   isNotesActive: boolean;
   isImagesActive: boolean;
+  isAssistantActive?: boolean;
+  assistantAttention?: number;
   currentImageFlowId?: string;
   imageStorageMode: "server" | "device";
   onOpenImageFlow: (id: string) => void;
@@ -77,6 +83,7 @@ export function Sidebar({
   onNewChat: () => void;
   onOpenNotes: () => void;
   onOpenImages: () => void;
+  onOpenAssistant?: () => void;
   onOpenChat: (chatId?: string) => void;
   onOpenPrivateChat: (chatId: string) => void;
   onRenameChat: (chatId: string, title: string) => Promise<void>;
@@ -183,9 +190,10 @@ export function Sidebar({
             }}
           >
             <MessageSquarePlus />
-            <span>{isImagesActive ? "New Flow" : "New Chat"}</span>
+            <span>{isAssistantActive ? "New Task" : isImagesActive ? "New Flow" : "New Chat"}</span>
           </button>
-          {(isImagesActive || isNotesActive) && <button type="button" className="sidebar-section-button" onClick={() => onOpenChat()}><MessageSquare /><span>Chat</span></button>}
+          {(isImagesActive || isNotesActive || isAssistantActive) && <button type="button" className="sidebar-section-button" onClick={() => onOpenChat()}><MessageSquare /><span>Chat</span></button>}
+          {onOpenAssistant && <button type="button" className={isAssistantActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isAssistantActive ? "page" : undefined} onClick={onOpenAssistant}><Bot /><span>Assistant</span>{assistantAttention > 0 && <small className="assistant-attention-count">{assistantAttention}</small>}</button>}
           <button type="button" className={isImagesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isImagesActive ? "page" : undefined} onClick={() => { setOpenMenuChatId(null); onOpenImages(); }}><Images /><span>Images</span></button>
           <button
             type="button"
@@ -201,7 +209,7 @@ export function Sidebar({
           </button>
         </nav>
       </div>
-      <div className="chat-history">
+      <div className="chat-history" hidden={isAssistantActive}>
         {isImagesActive ? <ImageFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
         <p className="eyebrow">Previous Chats</p>
         {(combinedChats.length > 5 || search) && <label className="history-search"><Search size={16} /><input aria-label="Search chats" placeholder="Search chats" value={search} onChange={(event) => setSearch(event.target.value)} /></label>}

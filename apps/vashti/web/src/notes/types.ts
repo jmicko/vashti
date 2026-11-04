@@ -18,6 +18,7 @@ export type NoteVersion = {
   actor_model_key: string | null;
   actor_model_name: string | null;
   source_chat_id: string | null;
+  source_assistant_run_id?: string | null;
   source_message_id: string | null;
   source_tool_call_id: string | null;
   created_at: number;
