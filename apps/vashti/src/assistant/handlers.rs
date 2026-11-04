@@ -16,6 +16,7 @@ use crate::{app_state::AppState, auth, error::ApiError};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(bootstrap))
+        .route("/sandbox-status", get(sandbox_status))
         .route("/preferences", axum::routing::put(preferences))
         .route("/summary", get(summary))
         .route("/tasks", get(list).post(create))
@@ -41,6 +42,16 @@ async fn owner(state: &AppState, jar: &CookieJar) -> Result<String, ApiError> {
 async fn bootstrap(State(state): State<AppState>, jar: CookieJar) -> Result<Json<Value>, ApiError> {
     let owner = owner(&state, &jar).await?;
     let config = service::preferences(&state.db, &owner).await?;
+    Ok(Json(
+        json!({"config":config,"storage":"server","preferred_model":PREFERRED_MODEL}),
+    ))
+}
+
+async fn sandbox_status(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<Value>, ApiError> {
+    let owner = owner(&state, &jar).await?;
     let allowed =
         crate::settings::service::tool_is_available_for_user(&state.db, &owner, SANDBOX_TOOL_ID)
             .await?;
@@ -57,9 +68,7 @@ async fn bootstrap(State(state): State<AppState>, jar: CookieJar) -> Result<Json
             image_id: None,
         }
     };
-    Ok(Json(
-        json!({"config":config,"sandbox":sandbox,"storage":"server","preferred_model":PREFERRED_MODEL}),
-    ))
+    Ok(Json(json!({"sandbox":sandbox})))
 }
 
 async fn preferences(
@@ -75,20 +84,22 @@ async fn preferences(
 
 async fn summary(State(state): State<AppState>, jar: CookieJar) -> Result<Json<Value>, ApiError> {
     let owner = owner(&state, &jar).await?;
-    let rows=sqlx::query_as::<_,(String,i64,Option<i64>)>("SELECT r.status,t.viewed_at,r.finished_at FROM assistant_tasks t JOIN assistant_runs r ON r.id=t.last_run_id WHERE t.user_id=? AND t.archived_at IS NULL")
+    let rows=sqlx::query_as::<_,(Option<String>,i64,Option<i64>,Option<String>)>("SELECT r.status,t.viewed_at,r.finished_at,t.schedule_error FROM assistant_tasks t LEFT JOIN assistant_runs r ON r.id=t.last_run_id WHERE t.user_id=? AND t.archived_at IS NULL")
         .bind(owner).fetch_all(&state.db).await?;
     let attention = rows
         .iter()
-        .filter(|(status, viewed, finished)| {
-            matches!(
-                status.as_str(),
-                "waiting_approval" | "waiting_input" | "interrupted" | "limit_reached"
-            ) || finished.is_some_and(|at| at > *viewed)
+        .filter(|(status, viewed, finished, error)| {
+            error.is_some()
+                || matches!(
+                    status.as_deref(),
+                    Some("waiting_approval" | "waiting_input" | "interrupted" | "limit_reached")
+                )
+                || finished.is_some_and(|at| at > *viewed)
         })
         .count();
     let active = rows
         .iter()
-        .filter(|(status, _, _)| matches!(status.as_str(), "queued" | "running"))
+        .filter(|(status, _, _, _)| matches!(status.as_deref(), Some("queued" | "running")))
         .count();
     Ok(Json(json!({"attention":attention,"active":active})))
 }
@@ -97,7 +108,11 @@ async fn summary(State(state): State<AppState>, jar: CookieJar) -> Result<Json<V
 struct Page {
     offset: Option<i64>,
     after: Option<i64>,
+    actions_after: Option<i64>,
     archived: Option<bool>,
+    attention: Option<bool>,
+    scheduled: Option<bool>,
+    search: Option<String>,
 }
 async fn list(
     State(state): State<AppState>,
@@ -105,12 +120,27 @@ async fn list(
     Query(page): Query<Page>,
 ) -> Result<Json<Value>, ApiError> {
     let owner = owner(&state, &jar).await?;
-    let tasks = if page.archived.unwrap_or(false) {
+    let tasks = if page.attention.unwrap_or(false)
+        || page.scheduled.unwrap_or(false)
+        || page.search.as_ref().is_some_and(|s| !s.is_empty())
+    {
+        service::list_filtered_tasks(
+            &state.db,
+            &owner,
+            page.offset.unwrap_or(0),
+            page.archived.unwrap_or(false),
+            page.attention.unwrap_or(false),
+            page.scheduled.unwrap_or(false),
+            page.search.as_deref().unwrap_or_default(),
+        )
+        .await?
+    } else if page.archived.unwrap_or(false) {
         service::list_archived_tasks(&state.db, &owner, page.offset.unwrap_or(0)).await?
     } else {
         service::list_tasks(&state.db, &owner, page.offset.unwrap_or(0)).await?
     };
-    Ok(Json(json!({"tasks":tasks})))
+    let summaries: Vec<Value> = tasks.into_iter().map(|t| json!({"id":t.id,"title":t.title,"instructions":t.instructions.chars().take(180).collect::<String>(),"interval_seconds":t.interval_seconds,"next_run_at":t.next_run_at,"schedule_enabled":t.schedule_enabled,"schedule_error":t.schedule_error,"archived_at":t.archived_at,"last_run_id":t.last_run_id,"last_status":t.last_status,"needs_attention":t.needs_attention,"created_at":t.created_at,"updated_at":t.updated_at,"revision":t.revision})).collect();
+    Ok(Json(json!({"tasks":summaries})))
 }
 async fn create(
     State(state): State<AppState>,
@@ -163,7 +193,8 @@ async fn run(
     let owner = owner(&state, &jar).await?;
     let run = service::get_run(&state.db, &owner, &id).await?;
     let events = service::events(&state.db, &owner, &id, page.after.unwrap_or(0)).await?;
-    let actions = service::actions(&state.db, &owner, &id).await?;
+    let actions =
+        service::actions_since(&state.db, &owner, &id, page.actions_after.unwrap_or(-1)).await?;
     let artifacts = service::artifacts(&state.db, &owner, &id).await?;
     Ok(Json(
         json!({"run":run,"more_events":events.len()==500,"events":events,"actions":actions,"artifacts":artifacts}),
@@ -192,6 +223,7 @@ async fn control(
 #[serde(deny_unknown_fields)]
 struct Reply {
     text: String,
+    question_id: Option<String>,
 }
 async fn reply(
     State(state): State<AppState>,
@@ -200,7 +232,14 @@ async fn reply(
     Json(payload): Json<Reply>,
 ) -> Result<Json<Value>, ApiError> {
     let owner = owner(&state, &jar).await?;
-    service::reply(&state.db, &owner, &id, &payload.text).await?;
+    service::reply_question(
+        &state.db,
+        &owner,
+        &id,
+        &payload.text,
+        payload.question_id.as_deref(),
+    )
+    .await?;
     state.assistant_jobs.wake.notify_one();
     Ok(Json(json!({"ok":true})))
 }

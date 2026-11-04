@@ -132,6 +132,7 @@ pub struct Checkpoint {
     pub sandbox_image: Option<String>,
     pub context_window: i64,
     pub supports_thinking: bool,
+    pub message_actions: std::collections::BTreeMap<usize, String>,
 }
 
 #[derive(Debug, Deserialize)]

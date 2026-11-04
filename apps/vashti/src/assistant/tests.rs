@@ -285,6 +285,145 @@ async fn tasks_are_owner_scoped_and_edits_have_revision_checks() {
 }
 
 #[tokio::test]
+async fn task_filters_search_before_pagination_and_keep_owner_scope() {
+    let f = Fixture::new(vec![]).await;
+    let target = f.task().await;
+    sqlx::query("UPDATE assistant_tasks SET updated_at=1,schedule_error='Fixture schedule error',instructions=? WHERE id=?")
+        .bind(format!("{} rare-search-suffix", "a".repeat(220))).bind(&target.id).execute(&f.state.db).await.unwrap();
+    for _ in 0..52 {
+        f.task().await;
+    }
+    assert!(
+        !service::list_tasks(&f.state.db, &f.owner, 0)
+            .await
+            .unwrap()
+            .iter()
+            .any(|t| t.id == target.id)
+    );
+    let filtered = service::list_filtered_tasks(
+        &f.state.db,
+        &f.owner,
+        0,
+        false,
+        true,
+        false,
+        "rare-search-suffix",
+    )
+    .await
+    .unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, target.id);
+    assert!(
+        service::list_filtered_tasks(
+            &f.state.db,
+            &f.other,
+            0,
+            false,
+            true,
+            false,
+            "rare-search-suffix"
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn idle_queue_does_not_compete_for_the_sqlite_writer_lock() {
+    let f = Fixture::new(vec![]).await;
+    let pool = SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(f.directory.join("idle.db"))
+                .create_if_missing(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+    startup::migrations::run(&pool).await.unwrap();
+    let mut writer = pool.acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), runner::claim(&pool, &[]))
+            .await
+            .unwrap()
+            .unwrap()
+            .is_none()
+    );
+    sqlx::query("ROLLBACK").execute(&mut *writer).await.unwrap();
+    drop(writer);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn batched_questions_bind_replies_and_accept_exact_retries() {
+    let mut batch = call("ask_user", json!({"question":"Which color?"}));
+    batch["message"]["tool_calls"].as_array_mut().unwrap().push(
+        json!({"function":{"name":"ask_user","arguments":{"question":"Which size?"},"index":1}}),
+    );
+    let f = Fixture::new(vec![batch, answer("Both replies received")]).await;
+    let task = f.task().await;
+    let run = f.start(&task).await;
+    f.advance(&run).await;
+    let actions = service::actions(&f.state.db, &f.owner, &run.id)
+        .await
+        .unwrap();
+    assert_eq!(actions.len(), 2);
+    let first = &actions[0].id;
+    let second = &actions[1].id;
+    service::reply_question(&f.state.db, &f.owner, &run.id, "Gray", Some(first))
+        .await
+        .unwrap();
+    service::reply_question(&f.state.db, &f.owner, &run.id, "Gray", Some(first))
+        .await
+        .unwrap();
+    assert!(
+        service::reply_question(&f.state.db, &f.owner, &run.id, "Green", Some(first))
+            .await
+            .is_err()
+    );
+    f.advance(&run).await;
+    assert_eq!(f.current(&run).await.status, "waiting_input");
+    service::reply_question(&f.state.db, &f.owner, &run.id, "Large", Some(second))
+        .await
+        .unwrap();
+    f.advance(&run).await;
+    assert_eq!(f.current(&run).await.status, "completed");
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM assistant_events WHERE run_id=? AND kind='user'")
+            .bind(&run.id)
+            .fetch_one(&f.state.db)
+            .await
+            .unwrap();
+    assert_eq!(count, 3);
+}
+
+#[tokio::test]
+async fn activity_cache_cannot_bypass_protected_record_reads() {
+    let source = Uuid::new_v4().to_string();
+    let f = Fixture::new(vec![
+        call("read_activity", json!({"action_id":source})),
+        answer("Need to re-read the original record"),
+    ])
+    .await;
+    let task = f.task().await;
+    let run = f.start(&task).await;
+    sqlx::query("INSERT INTO assistant_actions(id,run_id,ordinal,tool_name,arguments_json,summary,status,result_text,requested_at,expires_at,finished_at) VALUES(?,?,0,'read_note','{}','protected','completed','private old content',1,9999999999,2)").bind(&source).bind(&run.id).execute(&f.state.db).await.unwrap();
+    f.advance(&run).await;
+    let actions = service::actions(&f.state.db, &f.owner, &run.id)
+        .await
+        .unwrap();
+    let result = actions[1].result_text.as_ref().unwrap();
+    assert!(result.contains("Re-read protected records"));
+    assert!(!result.contains("private old content"));
+}
+
+#[tokio::test]
 async fn tool_loop_waits_for_exact_approval_and_retains_note_provenance() {
     let f = Fixture::new(vec![
         call("calculate", json!({"expression":"17*23+5"})),
@@ -766,6 +905,17 @@ async fn http_routes_require_sessions_and_scope_every_record_and_download() {
         .await
         .unwrap();
     let client = reqwest::Client::new();
+    let bootstrap = client
+        .get(format!("{base}/api/assistant"))
+        .header(header::COOKIE, format!("vashti_session={}", owner.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bootstrap.status(), StatusCode::OK);
+    assert_eq!(
+        bootstrap.json::<Value>().await.unwrap()["preferred_model"],
+        PREFERRED_MODEL
+    );
     assert_eq!(
         client
             .get(format!("{base}/api/assistant/tasks"))
@@ -859,9 +1009,12 @@ async fn podman_workspace_is_offline_persistent_bounded_and_owner_exportable() {
     assert!(available.available, "{:?}", available.reason);
     let image = available.image_id.unwrap();
     let token = CancellationToken::new();
-    let result=super::sandbox::execute(&f.state,&run.id,&image,"printf 'value\\n396\\n' > answer.csv; test ! -e /run/podman/podman.sock; test ! -e /media/jmicko/faststore/dev/vashti/.private; if touch /should-not-write 2>/dev/null; then exit 42; fi; python3 -I -c \"import socket; s=socket.socket(); s.settimeout(1); assert s.connect_ex(('1.1.1.1',443)) != 0; print('isolated')\"",20,&token).await.unwrap();
+    let result=super::sandbox::execute(&f.state,&run.id,&image,"set -eu; printf 'value\\n396\\n' > answer.csv; test ! -e /run/podman/podman.sock; test ! -e /media/jmicko/faststore/dev/vashti/.private; if touch /should-not-write 2>/dev/null; then exit 42; fi; python3 -I -c \"import socket; s=socket.socket(); s.settimeout(1); assert s.connect_ex(('1.1.1.1',443)) != 0; print('isolated')\"",20,&token).await.unwrap();
     assert_eq!(result["exit_code"], 0);
     assert!(result["stdout"].as_str().unwrap().contains("isolated"));
+    let limits = super::sandbox::execute(&f.state, &run.id, &image,
+        "python3 -I -c \"from pathlib import Path; p=Path('/sys/fs/cgroup'); assert int((p/'memory.max').read_text()) <= 1073741824; assert int((p/'pids.max').read_text()) <= 128; q,t=map(int,(p/'cpu.max').read_text().split()); assert q/t <= 1; print('limits enforced')\"", 20, &token).await.unwrap();
+    assert_eq!(limits["exit_code"], 0, "{limits}");
     let result = super::sandbox::execute(
         &f.state,
         &run.id,
@@ -916,6 +1069,139 @@ async fn podman_workspace_is_offline_persistent_bounded_and_owner_exportable() {
         .await
         .unwrap();
     assert!(String::from_utf8_lossy(&count.stdout).trim().is_empty());
+}
+
+#[test]
+fn context_compaction_keeps_a_retrievable_audit_reference() {
+    use crate::ollama::models::OllamaChatMessage;
+    let mut cp = Checkpoint::default();
+    for index in 0..9 {
+        cp.messages.push(OllamaChatMessage {
+            role: if index == 2 { "tool" } else { "assistant" }.into(),
+            content: if index == 2 {
+                "long result ".repeat(1000)
+            } else {
+                "kept text".into()
+            },
+            thinking: Some("old reasoning".into()),
+            images: None,
+            tool_name: None,
+            tool_calls: None,
+        });
+    }
+    cp.message_actions.insert(2, "exact-action-id".into());
+    runner::compact_context(&mut cp);
+    assert!(cp.messages[0].thinking.is_none());
+    assert!(cp.messages[8].thinking.is_some());
+    assert_eq!(cp.messages[0].content, "kept text");
+    assert!(cp.messages[2].content.len() < 1500);
+    assert_eq!(
+        serde_json::from_str::<Value>(&cp.messages[2].content).unwrap()["archived_action_id"],
+        "exact-action-id"
+    );
+    assert!(runner::context_weight("非ASCII") > runner::context_weight("ASCII"));
+}
+
+#[tokio::test]
+async fn archived_activity_reads_cannot_reach_another_run() {
+    let own_action = Uuid::new_v4().to_string();
+    let foreign_action = Uuid::new_v4().to_string();
+    let f = Fixture::new(vec![
+        call("read_activity", json!({"action_id":own_action})),
+        call("read_activity", json!({"action_id":foreign_action})),
+        answer("Done"),
+    ])
+    .await;
+    let task = f.task().await;
+    let run = f.start(&task).await;
+    let other_task = f.task().await;
+    let other_run = f.start(&other_task).await;
+    for (id, run_id, result) in [
+        (&own_action, &run.id, "same-run-result"),
+        (&foreign_action, &other_run.id, "other-run-result"),
+    ] {
+        sqlx::query("INSERT INTO assistant_actions(id,run_id,ordinal,tool_name,arguments_json,summary,status,result_text,requested_at,expires_at,finished_at) VALUES(?,?,0,'calculate','{}','fixture','completed',?,1,9999999999,2)")
+            .bind(id).bind(run_id).bind(result).execute(&f.state.db).await.unwrap();
+    }
+    f.advance(&run).await;
+    assert_eq!(f.current(&run).await.status, "completed");
+    let actions = service::actions(&f.state.db, &f.owner, &run.id)
+        .await
+        .unwrap();
+    assert!(
+        actions[1]
+            .result_text
+            .as_ref()
+            .unwrap()
+            .contains("same-run-result")
+    );
+    assert!(
+        !actions[2]
+            .result_text
+            .as_ref()
+            .unwrap()
+            .contains("other-run-result")
+    );
+    assert!(actions[2].result_text.as_ref().unwrap().contains("error"));
+    assert_eq!(
+        service::actions_since(&f.state.db, &f.owner, &run.id, 0)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        service::actions_since(&f.state.db, &f.other, &run.id, -1)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+#[ignore = "explicit installed-model evaluation; performs actual inference"]
+async fn installed_kuno_qwen_waits_for_note_approval() {
+    let f = Fixture::new(vec![]).await;
+    sqlx::query("UPDATE ollama_backends SET base_url='http://127.0.0.1:11434' WHERE id=?")
+        .bind(&f.backend)
+        .execute(&f.state.db)
+        .await
+        .unwrap();
+    let mut payload = f.payload();
+    payload.config.model_name = PREFERRED_MODEL.into();
+    payload.config.max_steps = 12;
+    payload.config.max_output_tokens = 16384;
+    payload.instructions = "Create exactly one note titled Synthetic assistant approval check, with content: The blue garden has four beds. This is disposable test data. Use create_note, wait for its actual result, then report its ID. Do not create memories, change existing notes, or ask questions.".into();
+    let task = service::save_task(&f.state.db, &f.owner, None, payload)
+        .await
+        .unwrap();
+    let run = f.start(&task).await;
+    f.advance(&run).await;
+    let current = f.current(&run).await;
+    assert_eq!(current.status, "waiting_approval", "{}", current.error_text);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM notes")
+            .fetch_one(&f.state.db)
+            .await
+            .unwrap(),
+        0
+    );
+    let actions = service::actions(&f.state.db, &f.owner, &run.id)
+        .await
+        .unwrap();
+    let pending = actions
+        .iter()
+        .find(|a| a.tool_name == "create_note" && a.status == "pending")
+        .unwrap();
+    service::decide(&f.state.db, &f.owner, &run.id, &pending.id, true)
+        .await
+        .unwrap();
+    f.advance(&run).await;
+    assert_eq!(f.current(&run).await.status, "completed");
+    let source: String = sqlx::query_scalar("SELECT source_assistant_run_id FROM note_versions")
+        .fetch_one(&f.state.db)
+        .await
+        .unwrap();
+    assert_eq!(source, run.id);
 }
 
 #[tokio::test]
@@ -1034,6 +1320,33 @@ async fn retry_keys_do_not_duplicate_tasks_or_finished_runs() {
             .unwrap()
             .len(),
         1
+    );
+    sqlx::query(
+        "UPDATE assistant_tasks SET title='Changed after creation',revision=revision+1 WHERE id=?",
+    )
+    .bind(&task.id)
+    .execute(&f.state.db)
+    .await
+    .unwrap();
+    let mut original = f.payload();
+    original.request_id = Some(key.clone());
+    assert_eq!(
+        service::save_task(&f.state.db, &f.owner, None, original)
+            .await
+            .unwrap()
+            .title,
+        "Changed after creation"
+    );
+    let mut changed = f.payload();
+    changed.request_id = Some(key);
+    changed.schedule_enabled = true;
+    changed.next_run_at = Some(unix_timestamp() + 3600);
+    assert_eq!(
+        service::save_task(&f.state.db, &f.owner, None, changed)
+            .await
+            .unwrap_err()
+            .code(),
+        "request_changed"
     );
     let run_id = Uuid::new_v4().to_string();
     let run = service::start_run(

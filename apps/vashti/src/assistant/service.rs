@@ -126,9 +126,47 @@ pub async fn list_tasks(
     owner: &str,
     offset: i64,
 ) -> Result<Vec<Task>, ApiError> {
-    let rows=sqlx::query(&format!("{TASK_SELECT} WHERE t.user_id=? AND t.archived_at IS NULL ORDER BY t.updated_at DESC,t.id LIMIT 50 OFFSET ?"))
-        .bind(owner).bind(offset.clamp(0,100_000)).fetch_all(pool).await?;
-    rows.into_iter().map(task_row).collect()
+    list_filtered_tasks(pool, owner, offset, false, false, false, "").await
+}
+
+pub async fn list_filtered_tasks(
+    pool: &SqlitePool,
+    owner: &str,
+    offset: i64,
+    archived: bool,
+    attention: bool,
+    scheduled: bool,
+    search: &str,
+) -> Result<Vec<Task>, ApiError> {
+    let mut query =
+        sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!("{TASK_SELECT} WHERE t.user_id="));
+    query.push_bind(owner).push(if archived {
+        " AND t.archived_at IS NOT NULL"
+    } else {
+        " AND t.archived_at IS NULL"
+    });
+    if attention {
+        query.push(" AND (t.schedule_error IS NOT NULL OR r.status IN ('waiting_approval','waiting_input','interrupted','limit_reached') OR r.finished_at>t.viewed_at)");
+    }
+    if scheduled {
+        query.push(" AND t.schedule_enabled=1");
+    }
+    if !search.trim().is_empty() {
+        query
+            .push(" AND instr(lower(t.title || ' ' || t.instructions),lower(")
+            .push_bind(search.trim().chars().take(256).collect::<String>())
+            .push("))>0");
+    }
+    query
+        .push(" ORDER BY t.updated_at DESC,t.id LIMIT 50 OFFSET ")
+        .push_bind(offset.clamp(0, 100_000));
+    query
+        .build()
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(task_row)
+        .collect()
 }
 
 pub async fn get_task(pool: &SqlitePool, owner: &str, id: &str) -> Result<Task, ApiError> {
@@ -146,8 +184,7 @@ pub async fn list_archived_tasks(
     owner: &str,
     offset: i64,
 ) -> Result<Vec<Task>, ApiError> {
-    sqlx::query(&format!("{TASK_SELECT} WHERE t.user_id=? AND t.archived_at IS NOT NULL ORDER BY t.updated_at DESC,t.id LIMIT 50 OFFSET ?"))
-        .bind(owner).bind(offset.clamp(0,100_000)).fetch_all(pool).await?.into_iter().map(task_row).collect()
+    list_filtered_tasks(pool, owner, offset, true, false, false, "").await
 }
 
 pub async fn save_task(
@@ -181,6 +218,9 @@ pub async fn save_task(
         ));
     }
     authorize_model(pool, owner, &payload.config).await?;
+    let create_request = encode(
+        &json!({"title":title,"instructions":payload.instructions.trim(),"config":payload.config,"interval_seconds":payload.interval_seconds,"next_run_at":payload.next_run_at,"schedule_enabled":payload.schedule_enabled}),
+    )?;
     let now = unix_timestamp();
     let key = id
         .map(str::to_owned)
@@ -196,9 +236,23 @@ pub async fn save_task(
                 .await?;
         if exists {
             let existing = get_task(pool, owner, &key).await?;
-            if existing.title == title
-                && existing.instructions == payload.instructions.trim()
-                && encode(&existing.config)? == encode(&payload.config)?
+            let original: Option<String> = sqlx::query_scalar(
+                "SELECT create_request_json FROM assistant_tasks WHERE id=? AND user_id=?",
+            )
+            .bind(&key)
+            .bind(owner)
+            .fetch_one(pool)
+            .await?;
+            if original
+                .as_ref()
+                .is_some_and(|request| request == &create_request)
+                || (original.is_none()
+                    && existing.title == title
+                    && existing.instructions == payload.instructions.trim()
+                    && encode(&existing.config)? == encode(&payload.config)?
+                    && existing.interval_seconds == payload.interval_seconds
+                    && existing.next_run_at == payload.next_run_at
+                    && existing.schedule_enabled == payload.schedule_enabled)
             {
                 return Ok(existing);
             }
@@ -233,10 +287,10 @@ pub async fn save_task(
                 "Archive an existing task before adding another",
             ));
         }
-        sqlx::query("INSERT INTO assistant_tasks(id,user_id,title,instructions,config_json,interval_seconds,next_run_at,schedule_enabled,viewed_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO assistant_tasks(id,user_id,title,instructions,config_json,interval_seconds,next_run_at,schedule_enabled,viewed_at,created_at,updated_at,create_request_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(&key).bind(owner).bind(title).bind(payload.instructions.trim()).bind(encode(&payload.config)?)
             .bind(payload.interval_seconds).bind(payload.next_run_at).bind(payload.schedule_enabled)
-            .bind(now-1).bind(now).bind(now).execute(pool).await?;
+            .bind(now-1).bind(now).bind(now).bind(create_request).execute(pool).await?;
     }
     get_task(pool, owner, &key).await
 }
@@ -368,15 +422,10 @@ pub async fn start_run(
         .bind(encode(&Checkpoint::default())?).bind(scheduled).bind(now).bind(now).bind(&request.message).execute(&mut *tx).await?;
     sqlx::query("UPDATE assistant_tasks SET last_run_id=?,viewed_at=0,updated_at=? WHERE id=? AND user_id=?")
         .bind(&id).bind(now).bind(task_id).bind(owner).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO assistant_events(run_id,kind,text,data_json,created_at) VALUES(?,'user',?,?,?)")
+        .bind(&id).bind(if request.message.trim().is_empty() { &task.instructions } else { &request.message })
+        .bind(json!({"scheduled":scheduled}).to_string()).bind(now).execute(&mut *tx).await?;
     tx.commit().await?;
-    append(
-        pool,
-        &id,
-        "user",
-        &instructions,
-        json!({"scheduled":scheduled}),
-    )
-    .await?;
     get_run(pool, owner, &id).await
 }
 
@@ -416,12 +465,23 @@ pub async fn events(
     .await?)
 }
 
+#[cfg(test)]
 pub async fn actions(pool: &SqlitePool, owner: &str, run: &str) -> Result<Vec<Action>, ApiError> {
+    actions_since(pool, owner, run, -1).await
+}
+
+pub async fn actions_since(
+    pool: &SqlitePool,
+    owner: &str,
+    run: &str,
+    after: i64,
+) -> Result<Vec<Action>, ApiError> {
     get_run(pool, owner, run).await?;
     Ok(sqlx::query_as::<_, Action>(
-        "SELECT * FROM assistant_actions WHERE run_id=? ORDER BY ordinal",
+        "SELECT * FROM assistant_actions WHERE run_id=? AND ordinal>? ORDER BY ordinal",
     )
     .bind(run)
+    .bind(after.max(-1))
     .fetch_all(pool)
     .await?)
 }
@@ -461,6 +521,12 @@ pub async fn decide(
         .await?
         .ok_or_else(|| ApiError::not_found("action_not_found", "Action not found"))?;
     let expires: i64 = row.try_get("expires_at")?;
+    if row.try_get::<String, _>("tool_name")? == "ask_user" {
+        return Err(ApiError::bad_request(
+            "reply_required",
+            "Answer this question through the reply action",
+        ));
+    }
     if approve && expires < unix_timestamp() {
         return Err(ApiError::conflict(
             "approval_expired",
@@ -544,17 +610,51 @@ pub async fn control(
     Ok(())
 }
 
+#[cfg(test)]
 pub async fn reply(pool: &SqlitePool, owner: &str, id: &str, text: &str) -> Result<(), ApiError> {
+    reply_question(pool, owner, id, text, None).await
+}
+
+pub async fn reply_question(
+    pool: &SqlitePool,
+    owner: &str,
+    id: &str,
+    text: &str,
+    question: Option<&str>,
+) -> Result<(), ApiError> {
     let run = get_run(pool, owner, id).await?;
-    if run.status != "waiting_input" || text.trim().is_empty() || text.len() > 16_000 {
+    if text.trim().is_empty() || text.len() > 16_000 {
         return Err(ApiError::bad_request(
             "invalid_reply",
             "This run needs a nonempty reply of at most 16000 bytes",
         ));
     }
+    let row: Option<(String, String, Option<String>)> = sqlx::query_as("SELECT id,status,result_text FROM assistant_actions WHERE run_id=? AND tool_name='ask_user' AND (id=? OR (? IS NULL AND status='pending')) ORDER BY ordinal LIMIT 1")
+        .bind(id).bind(question).bind(question).fetch_optional(pool).await?;
+    let (question_id, status, result) = row.ok_or_else(|| {
+        ApiError::conflict(
+            "question_not_found",
+            "This question is no longer waiting for a reply",
+        )
+    })?;
+    if status == "completed"
+        && question.is_some()
+        && result
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .is_some_and(|v| v.get("answer").and_then(Value::as_str) == Some(text.trim()))
+    {
+        return Ok(());
+    }
+    if run.status != "waiting_input" || status != "pending" {
+        return Err(ApiError::conflict(
+            "already_answered",
+            "This question is no longer waiting for this reply",
+        ));
+    }
     let mut tx = pool.begin().await?;
-    let updated=sqlx::query("UPDATE assistant_actions SET status='completed',result_text=?,finished_at=? WHERE run_id=? AND tool_name='ask_user' AND status='pending'")
-        .bind(json!({"answer":text.trim()}).to_string()).bind(unix_timestamp()).bind(id).execute(&mut *tx).await?;
+    let updated=sqlx::query("UPDATE assistant_actions SET status='completed',result_text=?,finished_at=? WHERE id=? AND run_id=? AND tool_name='ask_user' AND status='pending' AND EXISTS(SELECT 1 FROM assistant_runs WHERE id=? AND status='waiting_input')")
+        .bind(json!({"answer":text.trim()}).to_string()).bind(unix_timestamp()).bind(&question_id).bind(id).bind(id).execute(&mut *tx).await?;
     if updated.rows_affected() != 1 {
         return Err(ApiError::conflict(
             "already_answered",
@@ -563,8 +663,10 @@ pub async fn reply(pool: &SqlitePool, owner: &str, id: &str, text: &str) -> Resu
     }
     sqlx::query("UPDATE assistant_runs SET status='queued',updated_at=? WHERE id=? AND status='waiting_input'")
         .bind(unix_timestamp()).bind(id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO assistant_events(run_id,kind,text,data_json,created_at) VALUES(?,'user',?,?,?)")
+        .bind(id).bind(text.trim()).bind(json!({"reply":true,"question_id":question_id}).to_string()).bind(unix_timestamp()).execute(&mut *tx).await?;
     tx.commit().await?;
-    append(pool, id, "user", text.trim(), json!({"reply":true})).await
+    Ok(())
 }
 
 pub async fn archive(
