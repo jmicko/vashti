@@ -45,7 +45,8 @@ export function routeFromLocation(): AppRoute {
     const [, , , section, id] = path.split("/");
     if (section === "tasks" && id) return { page: "assistant", taskId: decodeURIComponent(id), runId: new URLSearchParams(window.location.hash.slice(1)).get("run") ?? undefined };
     if (section === "runs" && id) return { page: "assistant", runId: decodeURIComponent(id) };
-    return { page: "assistant", view: section === "new" || section === "defaults" ? section : undefined };
+    if (section === "conversations" && id) return { page: "assistant", conversationId: decodeURIComponent(id) };
+    return { page: "assistant", view: section === "new" || section === "defaults" || section === "tasks" || section === "conversations" || section === "compose" ? section : undefined };
   }
 
   if (path === "/app/images" || path.startsWith("/app/images/")) {
@@ -105,6 +106,7 @@ export function routeFromLocation(): AppRoute {
 
 export function pathForRoute(route: AppRoute) {
   if (route.page === "assistant") {
+    if (route.conversationId) return `/app/assistant/conversations/${encodeURIComponent(route.conversationId)}`;
     if (route.taskId) return `/app/assistant/tasks/${encodeURIComponent(route.taskId)}${route.runId ? `#${new URLSearchParams({ run: route.runId })}` : ""}`;
     if (route.runId) return `/app/assistant/runs/${encodeURIComponent(route.runId)}`;
     return `/app/assistant${route.view ? `/${route.view}` : ""}`;

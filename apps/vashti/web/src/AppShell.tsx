@@ -165,6 +165,7 @@ export function AppShell({
     null
   );
   const [newImageFlowKey, setNewImageFlowKey] = useState(0);
+  const [assistantHeaderTarget, setAssistantHeaderTarget] = useState<HTMLDivElement | null>(null);
   const settingsGuardRef = useRef<SettingsGuard | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -272,6 +273,7 @@ export function AppShell({
   const isNotesPage = page === "notes";
   const isImagesPage = page === "images";
   const isAssistantPage = page === "assistant";
+  const isAssistantConversation = route.page === "assistant" && !route.taskId && !route.runId && (!route.view || route.view === "compose");
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const settingsNotesStorageMode =
     route.page === "settings" && route.section === "notes"
@@ -1348,7 +1350,8 @@ export function AppShell({
             onDeletePrivateChat={setPrivateChatDeleteTarget}
             onNewChat={() => {
               if (isAssistantPage) {
-                navigate({ page: "assistant", view: "new" });
+                navigate({ page: "assistant", view: "compose" });
+                setIsSidebarOpen(false);
               } else if (isImagesPage) {
                 setNewImageFlowKey(value => value + 1);
                 navigate({ page: "images", view: "flow", storageMode: route.page === "images" ? route.storageMode : "server" });
@@ -1423,6 +1426,8 @@ export function AppShell({
                 )}
                 {isImagesPage && route.page === "images" && route.view !== "home" && route.view !== "gallery" ? (
                   <div className="image-flow-header-slot" ref={setImageHeaderTarget} />
+                ) : isAssistantConversation ? (
+                  <div className="assistant-header-slot" ref={setAssistantHeaderTarget} />
                 ) : (
                   <div className="workspace-topbar-title">
                     {isAssistantPage ? <Bot /> : isImagesPage ? <ImagesIcon /> : <NotebookPen />}
@@ -1498,7 +1503,7 @@ export function AppShell({
             )}
           </div>
           <div className="topbar-right">
-            {assistantAttention > 0 && !isAssistantPage && <button type="button" className="icon-button assistant-notification" title={`${assistantAttention} assistant tasks need attention`} aria-label={`${assistantAttention} assistant tasks need attention`} onClick={() => navigate({ page: "assistant" })}><Bell /><small>{assistantAttention}</small></button>}
+            {assistantAttention > 0 && !isAssistantPage && <button type="button" className="icon-button assistant-notification" title={`${assistantAttention} assistant tasks need attention`} aria-label={`${assistantAttention} assistant tasks need attention`} onClick={() => navigate({ page: "assistant", view: "tasks" })}><Bell /><small>{assistantAttention}</small></button>}
             {(currentChatId || currentPrivateChatId) && (
               <button
                 type="button"
@@ -1611,7 +1616,7 @@ export function AppShell({
           />
         ) : route.page === "assistant" ? (
           <Suspense fallback={<p role="status">Loading assistant...</p>}>
-            <AssistantWorkspace key={user.id} route={route} groups={modelGroups} onNavigate={navigate} onGuardChange={updateSettingsGuard} onManageModels={() => openSettings(isAdmin ? "backends" : "models")} onOpenNote={id => openReferencedNote("server", id)} />
+            <AssistantWorkspace key={user.id} headerTarget={assistantHeaderTarget} route={route} groups={modelGroups} onNavigate={navigate} onGuardChange={updateSettingsGuard} onManageModels={() => openSettings(isAdmin ? "backends" : "models")} onOpenNote={id => openReferencedNote("server", id)} />
           </Suspense>
         ) : route.page === "images" ? (
           <Suspense fallback={<p role="status">Loading images...</p>}>

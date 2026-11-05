@@ -78,7 +78,8 @@ export function StartChatComposer({
   canAttachNotes = false,
   searchNotes,
   onSubmit,
-  autoFocusOnReady = true
+  autoFocusOnReady = true,
+  draft
 }: {
   isBusy: boolean;
   isDisabled: boolean;
@@ -108,8 +109,12 @@ export function StartChatComposer({
     notes?: NoteContextSelection[]
   ) => Promise<boolean | void>;
   autoFocusOnReady?: boolean;
+  // A controlled draft owns its submit/reset lifecycle, including retry identity.
+  draft?: { text: string; onChange: (text: string) => void };
 }) {
-  const [prompt, setPrompt] = useState("");
+  const [localPrompt, setLocalPrompt] = useState("");
+  const prompt = draft?.text ?? localPrompt;
+  const setPrompt = (text: string) => draft ? draft.onChange(text) : setLocalPrompt(text);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [selectedNotes, setSelectedNotes] = useState<NoteContextSelection[]>([]);
   const [activeNoteIndex, setActiveNoteIndex] = useState(0);
@@ -318,7 +323,7 @@ export function StartChatComposer({
       (attachment) => attachment.status === "ready" || attachment.status === "uploaded"
     );
     const submittedNotes = selectedNotes;
-    setPrompt("");
+    if (!draft) setPrompt("");
     setAttachments([]);
     setSelectedNotes([]);
     setIsComposerExpanded(false);
@@ -336,7 +341,7 @@ export function StartChatComposer({
       submittedNotes
     );
     if (accepted === false) {
-      setPrompt(submittedPrompt);
+      if (!draft) setPrompt(submittedPrompt);
       setAttachments(submittedAttachments);
       setSelectedNotes(submittedNotes);
     }

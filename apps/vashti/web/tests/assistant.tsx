@@ -14,8 +14,13 @@ const groups: BackendModelGroup[] = [{ backend: { id: "fixture", name: "Kuno fix
 let defaults = config;
 const task: AssistantTask = { id: "fixture-task", title: "Prepare a weekly garden summary", instructions: "Review the synthetic garden notes, calculate supplies, and prepare a short summary.", config, interval_seconds: 86400, next_run_at: now + 3600, schedule_enabled: true, schedule_error: null, archived_at: null, last_run_id: "fixture-run", last_status: "waiting_approval", needs_attention: true, created_at: now - 3600, updated_at: now, revision: 1 };
 const tasks = [task];
+const conversation: AssistantTask = { ...task, id: "fixture-conversation", kind: "conversation", title: "Garden conversation", instructions: "Conversation", interval_seconds: null, next_run_at: null, schedule_enabled: false, last_run_id: "fixture-turn", last_status: "completed" };
+task.conversation_id = conversation.id;
+tasks.push(conversation);
 const run: AssistantRun = { id: "fixture-run", task_id: task.id, instructions: task.instructions, status: "waiting_approval", progress_text: "", progress_thinking: "", result_text: null, error_text: null, steps: 3, output_tokens: 2048, scheduled: false, created_at: now - 90, updated_at: now, finished_at: null };
 const runs = [run];
+const turn: AssistantRun = { ...run, id: "fixture-turn", task_id: conversation.id, instructions: "Prepare the garden summary in the background.", status: "completed", result_text: "I have prepared the task. Its approval and result will appear below while we keep chatting.", finished_at: now - 95, created_at: now - 100 };
+runs.push(turn);
 const events: Record<string, AssistantEvent[]> = { [run.id]: [
   { id: 1, kind: "user", text: task.instructions, data_json: "{}", created_at: now - 90 },
   { id: 2, kind: "plan", text: "", data_json: JSON.stringify({ steps: [{ label: "Review the garden note", status: "completed" }, { label: "Check quantities", status: "completed" }, { label: "Save the summary", status: "in_progress" }] }), created_at: now - 80 },
@@ -26,6 +31,8 @@ const actions: Record<string, AssistantAction[]> = { [run.id]: [
   { id: "write", run_id: run.id, ordinal: 1, tool_name: "create_note", arguments_json: JSON.stringify({ title: "Garden summary", content: "Buy 12 bags of mulch." }), summary: "Create garden summary", status: "pending", result_text: null, requested_at: now - 30, expires_at: now + 86400, decided_at: null, finished_at: null }
 ] };
 const files: Record<string, AssistantArtifact[]> = { [run.id]: [{ id: "synthetic-csv", run_id: run.id, name: "supplies.csv", mime_type: "text/csv", size: 26, created_at: now - 40 }] };
+events[turn.id] = [{ id: 4, kind: "user", text: turn.instructions, data_json: "{}", created_at: now - 100 }, { id: 5, kind: "assistant", text: turn.result_text!, data_json: "{}", created_at: now - 95 }];
+actions[turn.id] = []; files[turn.id] = [];
 const nextEventId = () => Math.max(0, ...Object.values(events).flat().map(e => e.id)) + 1;
 let failure = false, starts = 0, writes = 0;
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
@@ -35,13 +42,26 @@ window.fetch = async (input, options = {}) => {
   if (path === "/api/assistant") return json({ config: defaults, storage: "server", preferred_model: config.model_name });
   if (path === "/api/assistant/sandbox-status") return json({ sandbox: { available: true, image: "python-fixture", reason: null } });
   if (path === "/api/assistant/preferences") { defaults = body; return json({ config: defaults }); }
+  if (path === "/api/assistant/conversations") {
+    if (options.method === "POST") {
+      let saved = tasks.find(t => t.id === body.request_id);
+      if (!saved) { saved = { ...conversation, ...body, id: body.request_id, last_run_id: null, last_status: null }; tasks.push(saved!); }
+      return json({ task: saved });
+    }
+    return json({ conversations: tasks.filter(t => t.kind === "conversation" && Boolean(t.archived_at) === (url.searchParams.get("archived") === "true")).map(t => ({ id: t.id, title: t.title, updated_at: t.updated_at })) });
+  }
+  const conversationMatch = /^\/api\/assistant\/conversations\/([^/]+)$/.exec(path);
+  if (conversationMatch) {
+    const selected = tasks.find(t => t.id === conversationMatch[1]);
+    return json({ task: selected, runs: runs.filter(r => r.task_id === selected?.id).toReversed(), more: false, jobs: tasks.filter(t => t.conversation_id === selected?.id).map(t => { const latest = runs.find(r => r.id === t.last_run_id); return { id: t.id, title: t.title, run_id: latest?.id ?? null, status: latest?.status ?? null, result: latest?.result_text ?? null, error: latest?.error_text ?? null, schedule_enabled: t.schedule_enabled, next_run_at: t.next_run_at, schedule_error: null, created_at: t.created_at }; }) });
+  }
   if (path === "/api/assistant/tasks") {
     if (options.method === "POST") {
       let saved = tasks.find(t => t.id === body.request_id);
       if (!saved) { saved = { ...task, ...body, id: body.request_id, archived_at: null, last_run_id: null, last_status: null, needs_attention: false, revision: 1 }; tasks.unshift(saved!); }
       return json({ task: saved });
     }
-    const matches = tasks.filter(t => Boolean(t.archived_at) === (url.searchParams.get("archived") === "true") && (url.searchParams.get("attention") !== "true" || t.needs_attention) && (url.searchParams.get("scheduled") !== "true" || t.schedule_enabled) && `${t.title} ${t.instructions}`.toLowerCase().includes((url.searchParams.get("search") ?? "").toLowerCase()));
+    const matches = tasks.filter(t => t.kind !== "conversation" && Boolean(t.archived_at) === (url.searchParams.get("archived") === "true") && (url.searchParams.get("attention") !== "true" || t.needs_attention) && (url.searchParams.get("scheduled") !== "true" || t.schedule_enabled) && `${t.title} ${t.instructions}`.toLowerCase().includes((url.searchParams.get("search") ?? "").toLowerCase()));
     return json({ tasks: matches.slice(Number(url.searchParams.get("offset")) || 0, 50) });
   }
   if (path === "/api/assistant/artifacts/synthetic-csv") {
@@ -108,7 +128,8 @@ function Fixture() {
   }, []);
   return <div style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
     <header style={{ padding: 8, display: "flex", gap: 6, flexWrap: "wrap", borderBottom: "1px solid var(--line-soft)" }}>
-      <button onClick={() => navigate({ page: "assistant" })}>Tasks</button>
+      <button onClick={() => navigate({ page: "assistant" })}>Assistant</button>
+      <button onClick={() => navigate({ page: "assistant", view: "tasks" })}>Tasks</button>
       <button onClick={() => { run.status = "waiting_input"; actions[run.id] = [{ ...actions[run.id][0], id: "question", tool_name: "ask_user", arguments_json: JSON.stringify({ question: "Which garden should I summarize?", choices: ["Front garden", "Back garden"] }), status: "pending", result_text: null }]; setRoute({ page: "assistant", taskId: task.id, runId: run.id }); setEpoch(n => n + 1); }}>Fixture question</button>
       <button onClick={() => { failure = true; setNotice("Next run request fails"); }}>Fail next send</button>
       <output style={{ fontSize: 11 }}>{notice} · starts {starts} · writes {writes}</output>

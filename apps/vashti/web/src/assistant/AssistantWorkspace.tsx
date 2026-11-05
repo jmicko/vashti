@@ -1,20 +1,21 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Archive, ArrowLeft, Check, Clock, Download, FileText, LoaderCircle, Pause, Play, Plus, RefreshCw, Search, Send, Settings2, Square, Trash2, Undo2 } from "lucide-react";
 import { requestBlob, requestJson } from "../api";
 import { ActionMenu } from "../ActionMenu";
 import { ConfirmDialog } from "../common";
 import { MarkdownContent as SharedMarkdownContent } from "../MarkdownContent";
-import { ToolRecordLinks } from "../ToolRecordLinks";
-import { noteToolReferencesFromSegments } from "../notes/toolReferences";
 import { saveFile } from "../saveFile";
-import type { AppRoute, BackendModelGroup, SettingsGuard, ToolUsageRecord } from "../types";
+import type { AppRoute, BackendModelGroup, SettingsGuard } from "../types";
 import { assistantApi, activeStatuses, newRequestId, parseData, statusLabel } from "./api";
 import { TaskForm } from "./TaskForm";
 import { useAssistantDraft } from "./useDraft";
-import { actionCursor, activityEntries, mergeActivity } from "./activity";
-import type { AssistantAction, AssistantArtifact, AssistantEvent, AssistantRun, Bootstrap, ReplyDraft, RunResponse, SandboxStatus, TaskResponse, TaskSummary } from "./types";
+import { Activity, Plan, humanTool } from "./Activity";
+import { useRun } from "./useRun";
+import { ConversationView } from "./ConversationView";
+import type { AssistantArtifact, Bootstrap, ReplyDraft, SandboxStatus, TaskResponse, TaskSummary } from "./types";
 
-type Props = {
+export type Props = {
+  headerTarget?: HTMLDivElement | null;
   route: Extract<AppRoute, { page: "assistant" }>; groups: BackendModelGroup[];
   onNavigate: (route: AppRoute) => void; onGuardChange: (guard: SettingsGuard | null) => void;
   onManageModels: () => void; onOpenNote: (id: string) => void;
@@ -38,10 +39,11 @@ export function AssistantWorkspace(props: Props) {
   }, [retry]);
   const home = () => props.onNavigate({ page: "assistant" });
   if (!bootstrap) return <section className="assistant-workspace"><div className="assistant-empty">{error ? <><p role="alert">{error}</p><button type="button" onClick={() => setRetry(v => v + 1)}><RefreshCw />Retry</button></> : <p role="status">Loading assistant...</p>}</div></section>;
-  if (props.route.view) return <section className="assistant-workspace assistant-scroll"><TaskForm key={props.route.view} config={bootstrap.config} defaults={props.route.view === "defaults"} groups={props.groups} sandbox={sandbox} onGuardChange={props.onGuardChange}
+  if (props.route.view === "new" || props.route.view === "defaults") return <section className="assistant-workspace assistant-scroll"><TaskForm key={props.route.view} config={bootstrap.config} defaults={props.route.view === "defaults"} groups={props.groups} sandbox={sandbox} onGuardChange={props.onGuardChange}
     onBack={home} onManageModels={props.onManageModels} onSaved={(task, runId, config) => { if (config) setBootstrap(previous => previous ? { ...previous, config } : previous); if (task) props.onNavigate({ page: "assistant", taskId: task.id, runId }); }} /></section>;
   if (props.route.taskId || props.route.runId) return <TaskDetail key={props.route.taskId ?? props.route.runId} {...props} sandbox={sandbox} />;
-  return <TaskInbox onNavigate={props.onNavigate} />;
+  if (props.route.view === "tasks") return <TaskInbox onNavigate={props.onNavigate} />;
+  return <ConversationView key={props.route.conversationId ?? props.route.view ?? "home"} {...props} config={bootstrap.config} onConfig={config => setBootstrap(previous => previous ? { ...previous, config } : previous)} />;
 }
 
 function TaskInbox({ onNavigate }: Pick<Props, "onNavigate">) {
@@ -84,7 +86,7 @@ function TaskInbox({ onNavigate }: Pick<Props, "onNavigate">) {
   }
   const visible = tasks.filter(t => (filter !== "attention" || t.needs_attention) && (filter !== "scheduled" || t.schedule_enabled));
   return <section className="assistant-workspace assistant-scroll"><div className="assistant-inbox">
-    <div className="assistant-page-heading"><h1>Tasks</h1><div className="assistant-heading-actions">
+    <div className="assistant-page-heading"><button type="button" className="icon-button" title="Back to assistant" aria-label="Back to assistant" onClick={() => onNavigate({ page: "assistant" })}><ArrowLeft /></button><h1>Tasks</h1><div className="assistant-heading-actions">
       <button type="button" className="icon-button" title="Assistant defaults" aria-label="Assistant defaults" onClick={() => onNavigate({ page: "assistant", view: "defaults" })}><Settings2 /></button>
       <button type="button" className="primary-action" onClick={() => onNavigate({ page: "assistant", view: "new" })}><Plus />New task</button>
     </div></div>
@@ -102,40 +104,6 @@ function TaskInbox({ onNavigate }: Pick<Props, "onNavigate">) {
   </div></section>;
 }
 
-function useRun(id: string | null, refresh: number) {
-  const [data, setData] = useState<RunResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const after = useRef(0);
-  const actionsAfter = useRef(-1);
-  const dataRef = useRef<RunResponse | null>(null);
-  const lastId = useRef(id);
-  if (lastId.current !== id) { lastId.current = id; after.current = 0; actionsAfter.current = -1; dataRef.current = null; }
-  useEffect(() => { setData(null); setError(null); }, [id]);
-  useEffect(() => {
-    if (!id) return;
-    let current = true, timer = 0, inFlight = false;
-    async function poll() {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const response = await assistantApi.run(id!, after.current, actionsAfter.current);
-        if (!current) return;
-        after.current = response.events[response.events.length - 1]?.id ?? after.current;
-        dataRef.current = mergeActivity(dataRef.current, response);
-        actionsAfter.current = actionCursor(dataRef.current.actions);
-        setData(dataRef.current);
-        setError(null);
-        if (response.more_events || activeStatuses.has(response.run.status) || response.actions.some(a => a.status === "executing")) timer = window.setTimeout(poll, response.more_events ? 0 : document.hidden ? 10000 : 1200);
-      } catch (e) { if (current) { setError(message(e)); timer = window.setTimeout(poll, 5000); } }
-      finally { inFlight = false; }
-    }
-    void poll();
-    const focus = () => { clearTimeout(timer); timer = window.setTimeout(poll, 0); };
-    window.addEventListener("focus", focus);
-    return () => { current = false; clearTimeout(timer); window.removeEventListener("focus", focus); };
-  }, [id, refresh]);
-  return { data: data?.run.id === id ? data : null, error };
-}
 
 function TaskDetail(props: Props & { sandbox: SandboxStatus | null }) {
   const [detail, setDetail] = useState<TaskResponse | null>(null);
@@ -172,7 +140,8 @@ function TaskDetail(props: Props & { sandbox: SandboxStatus | null }) {
   useEffect(() => {
     if (pinned.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
   }, [data?.events.length, data?.run.progress_text, data?.run.progress_thinking, data?.actions]);
-  const goHome = () => props.onNavigate({ page: "assistant" });
+  const sourceConversation = detail?.task.kind === "conversation" ? detail.task.id : detail?.task.conversation_id;
+  const goHome = () => props.onNavigate(sourceConversation ? { page: "assistant", conversationId: sourceConversation } : { page: "assistant", view: "tasks" });
   async function action(work: () => Promise<unknown>) {
     if (busy) return;
     setBusy(true); setError(null); setNotice(null);
@@ -184,6 +153,7 @@ function TaskDetail(props: Props & { sandbox: SandboxStatus | null }) {
     if (!detail || !draft.ready) return;
     await action(async () => {
       await draft.change(follow);
+      draft.assertCurrent();
       const response = await assistantApi.start(detail.task.id, follow.request_id, follow.text, acknowledge);
       await draft.clear(); clearReply();
       setRunId(response.run.id); props.onNavigate({ page: "assistant", taskId: detail.task.id, runId: response.run.id });
@@ -212,10 +182,10 @@ function TaskDetail(props: Props & { sandbox: SandboxStatus | null }) {
   const choices = Array.isArray(questionData.choices) ? questionData.choices.filter((s): s is string => typeof s === "string") : [];
   return <section className="assistant-workspace assistant-detail">
     <header className="assistant-detail-heading">
-      <button type="button" className="icon-button" title="All tasks" aria-label="All tasks" onClick={goHome}><ArrowLeft /></button>
+      <button type="button" className="icon-button" title={sourceConversation ? "Back to conversation" : "All tasks"} aria-label={sourceConversation ? "Back to conversation" : "All tasks"} onClick={goHome}><ArrowLeft /></button>
       <div className="assistant-detail-title"><h1>{task.title}</h1><span className="assistant-caption">{task.config.model_name} · Server</span></div>
       <ActionMenu label="Task actions">
-        <button type="button" disabled={task.archived_at !== null} onClick={() => setEditing(true)}><Settings2 />Task settings</button>
+        {task.kind !== "conversation" && <button type="button" disabled={task.archived_at !== null} onClick={() => setEditing(true)}><Settings2 />Task settings</button>}
         <button type="button" disabled={Boolean(live)} onClick={() => setConfirm("archive")}>{task.archived_at ? <Undo2 /> : <Archive />}{task.archived_at ? "Restore task" : "Archive task"}</button>
       </ActionMenu>
     </header>
@@ -275,42 +245,5 @@ function TaskDetail(props: Props & { sandbox: SandboxStatus | null }) {
   </section>;
 }
 
-const Activity = memo(function Activity({ events, actions, terminal, onOpenNote }: { events: AssistantEvent[]; actions: AssistantAction[]; terminal: boolean; onOpenNote: (id: string) => void }) {
-  const entries = activityEntries(events, actions);
-  return <>{entries.map(entry => entry.action ? <ToolAction key={entry.key} action={entry.action} terminal={terminal} onOpenNote={onOpenNote} /> : <EventEntry key={entry.key} event={entry.event!} />)}</>;
-});
-
-const EventEntry = memo(function EventEntry({ event }: { event: AssistantEvent }) {
-  if (event.kind === "status" || event.kind === "decision") return event.text ? <p className="assistant-activity-line">{event.kind === "status" ? statusLabel(event.text) : event.text}</p> : null;
-  const thinking = parseData(event.data_json).thinking;
-  return <article className={`assistant-entry${event.kind === "user" ? " assistant-user-entry" : ""}`}>
-    <h2>{event.kind === "user" ? "You" : "Assistant"}</h2>
-    {typeof thinking === "string" && thinking && <details className="assistant-thinking"><summary>Thinking</summary><MarkdownContent content={thinking} /></details>}
-    {event.text && <MarkdownContent content={event.text} />}
-  </article>;
-});
-
-const ToolAction = memo(function ToolAction({ action, terminal, onOpenNote }: { action: AssistantAction; terminal: boolean; onOpenNote: (id: string) => void }) {
-  const usage: ToolUsageRecord = { name: action.tool_name, summary: action.summary, arguments: parseData(action.arguments_json), result: action.result_text ?? "" };
-  const notes = noteToolReferencesFromSegments([{ type: "tool", usage }]);
-  return <details className={`assistant-tool status-${action.status}`}><summary><span>{humanTool(action.tool_name)}</span><small>{terminal && ["pending", "ready", "approved"].includes(action.status) ? "Not executed" : action.status === "executing" ? "Working" : action.status === "pending" ? "Waiting" : statusLabel(action.status)}</small></summary>
-    <ToolRecordLinks usage={usage} />
-    {notes.length > 0 && <nav className="tool-record-links" aria-label="Referenced notes">{notes.map(n => <button type="button" key={n.noteId} onClick={() => onOpenNote(n.noteId)}><FileText size={16} />{n.title}</button>)}</nav>}
-    <h3>Arguments</h3><pre>{JSON.stringify(usage.arguments, null, 2)}</pre>
-    {action.result_text && <><h3>Result</h3><pre>{pretty(action.result_text)}</pre></>}
-  </details>;
-});
-
-function Plan({ event }: { event: AssistantEvent }) {
-  const steps = parseData(event.data_json).steps;
-  if (!Array.isArray(steps)) return null;
-  return <details className="assistant-plan" open><summary>Plan</summary><ol>{steps.map((step: unknown, index) => {
-    if (!step || typeof step !== "object" || !("label" in step)) return null;
-    const s = step as { label: string; status?: string };
-    return <li key={index}>{s.status === "completed" ? <Check size={16} /> : s.status === "in_progress" ? <LoaderCircle size={16} /> : <span className="assistant-step-dot" />}<span>{s.label}</span></li>;
-  })}</ol></details>;
-}
 const dateTime = (time: number) => new Date(time * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 const message = (e: unknown) => e instanceof Error ? e.message : "Request failed";
-const humanTool = (name: string) => name.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
-const pretty = (text: string) => { try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; } };

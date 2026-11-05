@@ -1,10 +1,13 @@
 # Kuno and Vashti Coordination
 
 **Vashti Assistant checkpoint (2026-11-03/04):** `codex/personal-assistant`
-adds a separate durable task workspace, approval-bound existing tools, and an
-optional offline rootless Podman worker. It consumes the existing Ollama chat,
+adds a conversational Assistant workspace backed by durable tasks,
+approval-bound existing tools, and an optional offline rootless Podman worker.
+The approved chat-first revision adds persistent conversation turns, scoped
+task-management tools, and separate foreground/background worker lanes. It
+consumes the existing Ollama chat,
 tool-calling, and show-profile APIs. The installed Kuno-prefixed Qwen passed real
-file/export and note-approval checks; no Kuno API, source, configuration,
+file/export, note-approval, and conversational task-coordination checks; no Kuno API, source, configuration,
 installation, or service restart changed. See [Assistant specification and
 receipts](assistant-spec.md). This is not a release/deployment authorization.
 

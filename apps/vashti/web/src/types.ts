@@ -724,7 +724,7 @@ export type SettingsSection =
   | "backends";
 export type NewChatMode = "standard" | "private";
 export type AppRoute =
-  | { page: "assistant"; view?: "new" | "defaults"; taskId?: string; runId?: string }
+  | { page: "assistant"; view?: "new" | "defaults" | "tasks" | "conversations" | "compose"; conversationId?: string; taskId?: string; runId?: string }
   | { page: "images"; view?: import("./images/types").ImageView; sessionId?: string; storageMode?: "server" | "device" }
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }

@@ -1,6 +1,6 @@
 # Personal Assistant
 
-Status: first implementation complete and locally validated, 2026-11-03/04.
+Status: conversational revision implemented and locally validated, 2026-11-04.
 Branch: `codex/personal-assistant`, based on `4bdd9dfc`.
 
 ## Goals and Checkpoints
@@ -12,6 +12,9 @@ Branch: `codex/personal-assistant`, based on `4bdd9dfc`.
 - [x] Add the responsive workspace, routines, progress, results, and approvals.
 - [x] Test failure/security boundaries and the real installed Kuno Qwen model.
 - [x] Refine and document measured limits. No deployment is authorized.
+- [x] Replace the task-first entry screen with the approved conversational flow.
+- [x] Persist real conversation turns and expose scoped task-management tools.
+- [x] Validate foreground/background queue separation and live Qwen coordination.
 
 ## Research and Decisions
 
@@ -39,7 +42,7 @@ claims of feature parity with the referenced products.
   mistake a container or a safety prompt for complete authorization.
 - [Anthropic's agent patterns](https://www.anthropic.com/research/building-effective-agents)
   favor a simple tool loop with explicit stopping conditions before multi-agent
-  complexity. Use one worker per account and a bounded global concurrency.
+  complexity. Bound foreground and background concurrency separately.
 - [Tool design](https://www.anthropic.com/research/writing-tools-for-agents)
   emphasizes concise schemas and outcome-based evaluations. Test observable
   artifacts and mutations, not just fluent model narration.
@@ -64,10 +67,16 @@ chats and custom-model behavior do not change. The user chooses an allowed
 backend/model; prefer the installed `kuno-qwen3.8-flash-next:iq3_s` when offered,
 but do not silently select a different model if it is unavailable.
 
-The inbox lists tasks needing attention, active work, and completed work.
-Opening a task gives a full-width conversation-like activity view on mobile,
-with progress, results, tool records, files, and precise approval requests.
-Frequent controls remain direct; occasional settings live in a sheet/menu.
+Assistant opens into an ongoing conversation, not a task inbox or task form.
+Persist user/assistant turns across runs. Tasks and schedules are a secondary
+inspector. The coordinator has task creation, editing, inspection, and cancellation
+tools; background workers cannot delegate recursively. Task capabilities inherit
+the coordinator's selected permissions and cannot be elevated through arguments.
+Creating or changing a task requires exact-action approval. Results, questions,
+and approvals are surfaced back in the originating conversation. Foreground
+conversation and background work have separate bounded worker lanes. A backend
+may still serialize inference; this does not promise additional model capacity.
+Existing standalone tasks and their provenance links remain accessible.
 
 A task contains instructions, model selection, capability choices, and limits.
 Each execution is a separate run. Follow-ups can resume a paused checkpoint or
@@ -138,7 +147,80 @@ Kuno-prefixed Qwen model. Keep tool/network/approval boundaries enforced even
 when the model asks otherwise. Browser-test mobile and desktop flows, build the
 web/native frontend, and distinguish those receipts from physical Android QA.
 
-## Backend Checkpoint
+## Conversational Checkpoint
+
+This supersedes the original task-first interface described in the historical
+checkpoints below. `/app/assistant` opens the most recent conversation, or a
+normal composer when none exists. New Chat starts a separate conversation.
+Model selection and secondary tasks/settings controls share the existing top
+bar. Conversation history and recoverable archiving are available in its menu.
+Ordinary Chat is unchanged.
+
+Conversation turns are durable runs with full owner-visible activity. New turns
+reload recent user/assistant text, not merely the last result or a duplicated
+checkpoint. The inference history is bounded to 160 events/24,000 bytes and
+further constrained by the selected model's advertised context, current message,
+instructions, tool schemas, and an output reserve. Older history remains stored
+and pageable; it is not unlimited model memory. Prior private reasoning and raw
+tool bodies are not copied into a new turn. Protected records must be read again
+through current permission checks. Task status/results are inspected with tools,
+not treated as new user authorization.
+
+Only conversation runs receive `create_task`, `update_task`, `list_tasks`,
+`read_task`, and `cancel_task`. Creation/editing requires exact-action approval,
+including scheduling. A task has self-contained instructions and inherits the
+coordinator's model, capabilities, policies, and budgets. No capability overrides
+are accepted in tool arguments; subsequent edits can only narrow task access.
+Task tools cannot access a different owner's or a different conversation's jobs.
+Background workers cannot delegate or schedule recursively. Missing time zones
+require clarification; scheduling uses explicit UTC Unix seconds.
+
+One foreground and one background worker may run per owner, with two workers
+globally in each lane. Cancel-cleanup exclusion is also lane-specific. Pending
+foreground/background runs are separately bounded to eight each. There are at
+most 100 active conversations, 50 delegated tasks per conversation, and the
+existing 200-active-task bound. Backend/model capacity may still queue inference;
+Vashti does not change Kuno scheduling or promise simultaneous GPU execution.
+
+Results, exact approvals, questions, files, and task controls appear in the
+originating conversation. Each occurrence retains its own result, rather than
+being replaced by the next routine run. The latest 50 background occurrences
+are shown with access to older task history. Conversation polling transfers
+small turn/status summaries; completed turn activity is loaded once and cached
+in mounted components. Reasoning expands inside the single conversation scroll
+area. Viewing a completed result clears its attention marker. Archiving cannot
+hide a conversation's active jobs/schedules; stop them first.
+
+The ordinary composer is reused with an optional controlled draft. The owner of
+that draft controls clearing after acknowledgement, preserving request and
+creation identities across failed requests, navigation, and retries. Drafts stay
+encrypted and account/server scoped. Account-epoch checks guard chained saves
+and sends, so an account change cannot submit the previous account's draft.
+Interrupted/uncertain effects still require explicit review, not automatic replay.
+
+Current validation receipts:
+
+- 174 deterministic Rust tests pass; five new conversation cases cover history,
+  ownership/retries, independent worker capacity, task approval/inherited access,
+  recursion prevention, schedules, durable results, and archival safety.
+- The explicit installed `kuno-qwen3.8-flash-next:iq3_s` coordinator test passes:
+  task approval, actual calculator work in the delegated run, tool-verified result
+  retrieval, and an earlier conversation codeword recalled in a later turn.
+- Browser fixtures cover failed sends, draft restoration after navigation, new
+  conversation identities, inline approvals while a separate response runs,
+  stop, task navigation/return, and long reasoning without outer/double scrolling.
+  Mobile checks include a 390 x 844 viewport with no horizontal overflow.
+- The signed-in development UI also completes a harmless delegated calculator
+  task through an actual approval. No real notes or memories are changed.
+- Frontend tests, type checking, web/PWA/native builds, and warnings-denied Clippy
+  pass. Physical Android acceptance is still outstanding. No Kuno source, API,
+  service configuration, installation, release, or deployment changed.
+
+This remains server-stored work with polling while Vashti is open, not a device
+push-notification system. A later turn can inspect completed results; the server
+does not launch an unsolicited foreground model turn on every completion.
+
+## Initial Backend Checkpoint
 
 Implemented the task/run/action/event/artifact store, polling and control APIs,
 owner-only downloads, versioned note/memory attribution to assistant runs,
@@ -175,7 +257,7 @@ Current receipts (2026-11-03):
 - The installed Qwen also passes a real note-creation approval test: no note
   exists before approval; afterward the exact run is retained in version history.
 
-## Interface and Retry Checkpoint
+## Initial Interface and Retry Checkpoint
 
 `/app/assistant` contains the inbox, server-side search/filtering, task settings,
 account defaults, schedules, history, progress, questions, approvals, and files.

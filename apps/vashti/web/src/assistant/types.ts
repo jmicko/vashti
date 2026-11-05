@@ -14,6 +14,7 @@ export type TaskConfig = {
   max_output_tokens: number;
 };
 export type AssistantTask = {
+  kind?: "task" | "conversation"; conversation_id?: string | null;
   id: string; title: string; instructions: string; config: TaskConfig;
   interval_seconds: number | null; next_run_at: number | null; schedule_enabled: boolean;
   schedule_error: string | null; archived_at: number | null; last_run_id: string | null;
@@ -43,3 +44,6 @@ export type TaskDraft = {
   interval_seconds: number | null; next_run_at: number | null; schedule_enabled: boolean; expected_revision?: number;
 };
 export type ReplyDraft = { text: string; request_id: string; question_id?: string };
+export type ConversationJob = { id: string; title: string; run_id: string | null; status: RunStatus | null; result: string | null; error: string | null; schedule_enabled: boolean; next_run_at: number | null; schedule_error: string | null; created_at: number };
+export type ConversationTurnSummary = Pick<AssistantRun, "id" | "task_id" | "status" | "created_at" | "updated_at" | "finished_at">;
+export type ConversationPage = { task: AssistantTask; runs: ConversationTurnSummary[]; jobs: ConversationJob[]; more: boolean; more_jobs?: boolean; requires_review?: boolean };

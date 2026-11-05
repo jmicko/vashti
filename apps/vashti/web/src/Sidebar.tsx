@@ -190,7 +190,7 @@ export function Sidebar({
             }}
           >
             <MessageSquarePlus />
-            <span>{isAssistantActive ? "New Task" : isImagesActive ? "New Flow" : "New Chat"}</span>
+            <span>{isImagesActive ? "New Flow" : "New Chat"}</span>
           </button>
           {(isImagesActive || isNotesActive || isAssistantActive) && <button type="button" className="sidebar-section-button" onClick={() => onOpenChat()}><MessageSquare /><span>Chat</span></button>}
           {onOpenAssistant && <button type="button" className={isAssistantActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isAssistantActive ? "page" : undefined} onClick={onOpenAssistant}><Bot /><span>Assistant</span>{assistantAttention > 0 && <small className="assistant-attention-count">{assistantAttention}</small>}</button>}

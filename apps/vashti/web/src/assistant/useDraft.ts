@@ -29,6 +29,10 @@ export function useAssistantDraft<T>(key: string, initial: T) {
   }
   return {
     value, ready, storageError,
+    assertCurrent() {
+      if (!guardRef.current) throw new Error("Sign in again before sending this draft");
+      guardRef.current();
+    },
     change(next: T) { setValue(next); return persist(next); },
     async clear() { await persist(null); },
     reset(next: T) { setValue(next); void persist(null); }

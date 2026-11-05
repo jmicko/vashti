@@ -56,6 +56,7 @@ export function TaskForm({ config, task, defaults, groups, sandbox, onGuardChang
     setBusy(true); setError(null); setStale(false);
     try {
       await draft.change(value);
+      draft.assertCurrent();
       if (defaults) {
         const response = await requestJson<{ config: TaskConfig }>("/api/assistant/preferences", { method: "PUT", body: JSON.stringify(value.config) });
         await draft.clear(); setBaseline(JSON.stringify(value)); setSaved(true); onGuardChange(null);
@@ -64,7 +65,7 @@ export function TaskForm({ config, task, defaults, groups, sandbox, onGuardChang
         const result = await assistantApi.save({ ...value, title: value.title.trim() || value.instructions.trim().split(/\r?\n/)[0].slice(0, 80) }, task?.id);
         // Retrying after a lost response uses the same task and run IDs.
         let runId: string | undefined;
-        if (run) runId = (await assistantApi.start(result.task.id, value.start_request_id ?? runRequest.current, "")).run.id;
+        if (run) { draft.assertCurrent(); runId = (await assistantApi.start(result.task.id, value.start_request_id ?? runRequest.current, "")).run.id; }
         await draft.clear(); setBaseline(JSON.stringify(value)); onGuardChange(null);
         onSaved(result.task, runId);
       }
