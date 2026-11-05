@@ -53,6 +53,8 @@ impl Default for TaskConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Task {
     pub id: String,
+    pub kind: String,
+    pub conversation_id: Option<String>,
     pub title: String,
     pub instructions: String,
     pub config: TaskConfig,
@@ -67,6 +69,16 @@ pub struct Task {
     pub created_at: i64,
     pub updated_at: i64,
     pub revision: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, sqlx::FromRow)]
+pub struct TurnSummary {
+    pub id: String,
+    pub task_id: String,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub finished_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, sqlx::FromRow)]

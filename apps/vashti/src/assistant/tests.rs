@@ -1,4 +1,4 @@
-use super::{models::*, runner, service};
+use super::{conversation, models::*, runner, service};
 use crate::{
     app_state::AppState,
     auth::service::{register_user, unix_timestamp},
@@ -228,6 +228,428 @@ fn answer(text: &str) -> Value {
 }
 fn call(name: &str, args: Value) -> Value {
     json!({"message":{"role":"assistant","tool_calls":[{"function":{"name":name,"arguments":args,"index":0}}]},"done":true,"done_reason":"stop","eval_count":30})
+}
+
+async fn conversation_fixture(f: &Fixture) -> Task {
+    conversation::create(
+        &f.state.db,
+        &f.owner,
+        conversation::NewConversation {
+            request_id: Uuid::new_v4().to_string(),
+            title: "Synthetic conversation".into(),
+            config: f.config(),
+        },
+    )
+    .await
+    .unwrap()
+}
+async fn conversation_turn(f: &Fixture, task: &Task, text: &str) -> Run {
+    service::start_run(
+        &f.state.db,
+        &f.owner,
+        &task.id,
+        StartRun {
+            message: text.into(),
+            ..StartRun::default()
+        },
+        false,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn conversations_retain_turns_without_copying_tool_bodies_or_reasoning() {
+    let f = Fixture::new(vec![
+        answer("The agreed fixture word is cobalt."),
+        answer("Cobalt, as we agreed."),
+    ])
+    .await;
+    let task = conversation_fixture(&f).await;
+    let first = conversation_turn(
+        &f,
+        &task,
+        "Remember the fixture word cobalt for this conversation.",
+    )
+    .await;
+    f.advance(&first).await;
+    service::append(
+        &f.state.db,
+        &first.id,
+        "action",
+        "sensitive tool body",
+        json!({}),
+    )
+    .await
+    .unwrap();
+    let second = conversation_turn(&f, &task, "What word did we choose?").await;
+    f.advance(&second).await;
+    let requests = f.script.requests.lock().unwrap().clone();
+    let messages = requests[1]["messages"].as_array().unwrap();
+    assert!(messages.iter().any(|m| {
+        m["role"] == "user"
+            && m["content"]
+                .as_str()
+                .unwrap()
+                .contains("fixture word cobalt")
+    }));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m["role"] == "assistant"
+                && m["content"] == "The agreed fixture word is cobalt.")
+    );
+    assert!(!messages.iter().any(|m| {
+        m["content"]
+            .as_str()
+            .unwrap()
+            .contains("sensitive tool body")
+    }));
+    drop(requests);
+    assert!(
+        conversation::get(&f.state.db, &f.other, &task.id)
+            .await
+            .is_err()
+    );
+    assert!(
+        service::list_tasks(&f.state.db, &f.owner, 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let page = conversation::page(&f.state.db, &f.owner, &task.id, None)
+        .await
+        .unwrap();
+    assert_eq!(page["runs"].as_array().unwrap().len(), 2);
+    let earlier = conversation::page(&f.state.db, &f.owner, &task.id, Some(&second.id))
+        .await
+        .unwrap();
+    assert_eq!(earlier["runs"][0]["id"], first.id);
+    assert!(
+        conversation::page(&f.state.db, &f.other, &task.id, None)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn foreground_has_capacity_while_the_same_owners_background_job_runs() {
+    let f = Fixture::new(vec![]).await;
+    let background = f.task().await;
+    let job = f.start(&background).await;
+    assert_eq!(
+        runner::claim(&f.state.db, &[]).await.unwrap(),
+        Some(job.id.clone())
+    );
+    let chat = conversation_fixture(&f).await;
+    let turn = conversation_turn(&f, &chat, "Hello while that task runs.").await;
+    assert_eq!(
+        runner::claim(&f.state.db, std::slice::from_ref(&job.id))
+            .await
+            .unwrap(),
+        Some(turn.id.clone())
+    );
+    let another = conversation_fixture(&f).await;
+    let queued = conversation_turn(&f, &another, "This foreground turn must wait.").await;
+    assert!(runner::claim(&f.state.db, &[]).await.unwrap().is_none());
+    service::control(&f.state.db, &f.owner, &turn.id, "cancel")
+        .await
+        .unwrap();
+    assert!(
+        runner::claim(&f.state.db, std::slice::from_ref(&turn.id))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        runner::claim(&f.state.db, &[]).await.unwrap(),
+        Some(queued.id)
+    );
+}
+
+#[tokio::test]
+async fn conversational_task_tools_require_approval_inherit_permissions_and_cannot_recurse() {
+    let f = Fixture::new(vec![
+        call(
+            "create_task",
+            json!({"title":"Arithmetic job","instructions":"Calculate 11*13."}),
+        ),
+        answer("The background task was created."),
+    ])
+    .await;
+    let chat = conversation_fixture(&f).await;
+    let turn = conversation_turn(&f, &chat, "Calculate that in the background please.").await;
+    f.advance(&turn).await;
+    assert_eq!(f.current(&turn).await.status, "waiting_approval");
+    assert!(
+        service::list_tasks(&f.state.db, &f.owner, 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let action = service::actions(&f.state.db, &f.owner, &turn.id)
+        .await
+        .unwrap()
+        .remove(0);
+    service::decide(&f.state.db, &f.owner, &turn.id, &action.id, true)
+        .await
+        .unwrap();
+    f.advance(&turn).await;
+    let jobs = service::list_tasks(&f.state.db, &f.owner, 0).await.unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].conversation_id.as_deref(), Some(chat.id.as_str()));
+    assert_eq!(jobs[0].config.web, ActionPolicy::Block);
+    assert_eq!(jobs[0].config.writes, ActionPolicy::Ask);
+    let job_run = service::list_runs(&f.state.db, &f.owner, &jobs[0].id)
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(
+        conversation::dispatch(
+            &f.state,
+            &f.owner,
+            &job_run.id,
+            &f.config(),
+            "create_task",
+            &json!({"title":"Recursion","instructions":"No"}),
+            &Uuid::new_v4().to_string()
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        conversation::dispatch(
+            &f.state,
+            &f.other,
+            &turn.id,
+            &f.config(),
+            "read_task",
+            &json!({"task_id":jobs[0].id}),
+            "x"
+        )
+        .await
+        .is_err()
+    );
+    let other_chat = conversation_fixture(&f).await;
+    let other_turn = conversation_turn(&f, &other_chat, "Other chat").await;
+    assert!(
+        conversation::dispatch(
+            &f.state,
+            &f.owner,
+            &other_turn.id,
+            &f.config(),
+            "read_task",
+            &json!({"task_id":jobs[0].id}),
+            "x"
+        )
+        .await
+        .is_err()
+    );
+    assert!(conversation::dispatch(&f.state,&f.owner,&turn.id,&f.config(),"update_task",&json!({"task_id":jobs[0].id,"expected_revision":jobs[0].revision,"config":{"web":"allow"}}),"x").await.is_err());
+    let stopped = conversation::dispatch(
+        &f.state,
+        &f.owner,
+        &turn.id,
+        &f.config(),
+        "cancel_task",
+        &json!({"task_id":jobs[0].id}),
+        "x",
+    )
+    .await
+    .unwrap();
+    assert!(stopped.contains("stopped"));
+    assert_eq!(f.current(&job_run).await.status, "cancelled");
+    let request = f.script.requests.lock().unwrap();
+    assert!(
+        request[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["function"]["name"] == "create_task")
+    );
+}
+
+#[tokio::test]
+async fn conversation_creation_and_turn_retries_are_idempotent_and_owner_scoped() {
+    let f = Fixture::new(vec![]).await;
+    let id = Uuid::new_v4().to_string();
+    for _ in 0..2 {
+        conversation::create(
+            &f.state.db,
+            &f.owner,
+            conversation::NewConversation {
+                request_id: id.clone(),
+                title: "Same title".into(),
+                config: f.config(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        conversation::list(&f.state.db, &f.owner).await.unwrap()["conversations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        conversation::create(
+            &f.state.db,
+            &f.other,
+            conversation::NewConversation {
+                request_id: id.clone(),
+                title: "Same title".into(),
+                config: f.config()
+            }
+        )
+        .await
+        .is_err()
+    );
+    let nonce = Uuid::new_v4().to_string();
+    for _ in 0..2 {
+        service::start_run(
+            &f.state.db,
+            &f.owner,
+            &id,
+            StartRun {
+                request_id: Some(nonce.clone()),
+                message: "One turn only".into(),
+                acknowledge_uncertain: false,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        service::list_runs(&f.state.db, &f.owner, &id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn conversational_schedules_keep_all_results_and_archive_without_hiding_active_work() {
+    let f = Fixture::new(vec![
+        answer("Hello"),
+        answer("First result"),
+        answer("Second result"),
+    ])
+    .await;
+    let chat = conversation_fixture(&f).await;
+    let turn = conversation_turn(&f, &chat, "Set up a synthetic recurring task.").await;
+    f.advance(&turn).await;
+    let args = json!({"title":"Recurring fixture","instructions":"Report the synthetic result.","next_run_at":unix_timestamp()+3600,"interval_seconds":3600});
+    let created = conversation::dispatch(
+        &f.state,
+        &f.owner,
+        &turn.id,
+        &f.config(),
+        "create_task",
+        &args,
+        &Uuid::new_v4().to_string(),
+    )
+    .await
+    .unwrap();
+    let id: Value = serde_json::from_str(&created).unwrap();
+    let id = id["task_id"].as_str().unwrap();
+    let mut task = service::get_task(&f.state.db, &f.owner, id).await.unwrap();
+    assert!(task.schedule_enabled);
+    assert!(
+        service::list_runs(&f.state.db, &f.owner, id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        service::archive(&f.state.db, &f.owner, &chat.id, true)
+            .await
+            .is_err()
+    );
+    assert!(
+        conversation::dispatch(
+            &f.state,
+            &f.other,
+            &turn.id,
+            &f.config(),
+            "create_task",
+            &args,
+            &Uuid::new_v4().to_string()
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        conversation::dispatch(
+            &f.state,
+            &f.owner,
+            &turn.id,
+            &f.config(),
+            "update_task",
+            &json!({"task_id":id,"expected_revision":task.revision-1,"title":"Stale"}),
+            "unused"
+        )
+        .await
+        .is_err()
+    );
+    conversation::dispatch(
+        &f.state,
+        &f.owner,
+        &turn.id,
+        &f.config(),
+        "update_task",
+        &json!({"task_id":id,"expected_revision":task.revision,"schedule_enabled":false}),
+        "unused",
+    )
+    .await
+    .unwrap();
+    task = service::get_task(&f.state.db, &f.owner, id).await.unwrap();
+    assert!(!task.schedule_enabled);
+    let first = f.start(&task).await;
+    f.advance(&first).await;
+    let second = f.start(&task).await;
+    f.advance(&second).await;
+    let page = conversation::page(&f.state.db, &f.owner, &chat.id, None)
+        .await
+        .unwrap();
+    assert_eq!(page["jobs"].as_array().unwrap().len(), 2);
+    assert_eq!(page["jobs"][0]["result"], "First result");
+    assert_eq!(page["jobs"][1]["result"], "Second result");
+    assert!(
+        page["runs"][0].get("instructions").is_none(),
+        "polling must not resend entire message bodies"
+    );
+    service::archive(&f.state.db, &f.owner, &chat.id, true)
+        .await
+        .unwrap();
+    assert!(
+        conversation::list(&f.state.db, &f.owner).await.unwrap()["conversations"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        conversation::list_archived(&f.state.db, &f.owner, true)
+            .await
+            .unwrap()["conversations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    service::archive(&f.state.db, &f.owner, &chat.id, false)
+        .await
+        .unwrap();
+    assert!(
+        conversation::get(&f.state.db, &f.owner, &chat.id)
+            .await
+            .unwrap()
+            .archived_at
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -1154,6 +1576,96 @@ async fn archived_activity_reads_cannot_reach_another_run() {
         service::actions_since(&f.state.db, &f.other, &run.id, -1)
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+#[ignore = "explicit installed-model evaluation; performs actual inference"]
+async fn installed_kuno_qwen_coordinates_background_work_and_remembers_the_conversation() {
+    let f = Fixture::new(vec![]).await;
+    sqlx::query("UPDATE ollama_backends SET base_url='http://127.0.0.1:11434' WHERE id=?")
+        .bind(&f.backend)
+        .execute(&f.state.db)
+        .await
+        .unwrap();
+    let config = TaskConfig {
+        model_name: PREFERRED_MODEL.into(),
+        notes: false,
+        memories: false,
+        max_steps: 10,
+        max_output_tokens: 16384,
+        ..f.config()
+    };
+    let chat = conversation::create(
+        &f.state.db,
+        &f.owner,
+        conversation::NewConversation {
+            request_id: Uuid::new_v4().to_string(),
+            title: "Synthetic coordinator evaluation".into(),
+            config,
+        },
+    )
+    .await
+    .unwrap();
+    let turn=conversation_turn(&f,&chat,"This is a synthetic test. Remember our codeword cobalt in this conversation, not in a memory. Use create_task to create exactly one background task named Synthetic arithmetic. Its self-contained instructions must use calculate to evaluate 123*17+9 and return the integer result. Do not calculate it yourself. No notes or memories. Tell me the actual task status after it is created.").await;
+    f.advance(&turn).await;
+    assert_eq!(f.current(&turn).await.status, "waiting_approval");
+    let action = service::actions(&f.state.db, &f.owner, &turn.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.tool_name == "create_task" && a.status == "pending")
+        .expect("actual background-task approval");
+    assert!(
+        service::list_tasks(&f.state.db, &f.owner, 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    service::decide(&f.state.db, &f.owner, &turn.id, &action.id, true)
+        .await
+        .unwrap();
+    f.advance(&turn).await;
+    assert_eq!(f.current(&turn).await.status, "completed");
+    let job = service::list_tasks(&f.state.db, &f.owner, 0)
+        .await
+        .unwrap()
+        .remove(0);
+    let job_run = service::list_runs(&f.state.db, &f.owner, &job.id)
+        .await
+        .unwrap()
+        .remove(0);
+    f.advance(&job_run).await;
+    assert_eq!(f.current(&job_run).await.status, "completed");
+    assert!(
+        service::actions(&f.state.db, &f.owner, &job_run.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a.tool_name == "calculate"
+                && a.result_text.as_ref().is_some_and(|s| s.contains("2100")))
+    );
+    let follow=conversation_turn(&f,&chat,"Check the background task's actual result using your task tools. What is the result, and what codeword did I give you earlier in this conversation?").await;
+    f.advance(&follow).await;
+    let result = f.current(&follow).await;
+    assert_eq!(result.status, "completed", "{}", result.error_text);
+    assert!(
+        result.result_text.contains("2100") || result.result_text.contains("2,100"),
+        "arithmetic result missing"
+    );
+    assert!(
+        result.result_text.to_lowercase().contains("cobalt"),
+        "conversation continuity missing"
+    );
+    assert!(
+        service::actions(&f.state.db, &f.owner, &follow.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(
+                |a| matches!(a.tool_name.as_str(), "list_tasks" | "read_task")
+                    && a.status == "completed"
+            )
     );
 }
 

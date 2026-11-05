@@ -10,7 +10,7 @@ use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{models::*, sandbox, service};
+use super::{conversation, models::*, sandbox, service};
 use crate::{app_state::AppState, auth, error::ApiError};
 
 pub fn router() -> Router<AppState> {
@@ -19,6 +19,8 @@ pub fn router() -> Router<AppState> {
         .route("/sandbox-status", get(sandbox_status))
         .route("/preferences", axum::routing::put(preferences))
         .route("/summary", get(summary))
+        .route("/conversations", get(conversations).post(new_conversation))
+        .route("/conversations/{id}", get(conversation_page))
         .route("/tasks", get(list).post(create))
         .route("/tasks/{id}", get(task).put(update))
         .route("/tasks/{id}/archive", post(archive))
@@ -84,7 +86,7 @@ async fn preferences(
 
 async fn summary(State(state): State<AppState>, jar: CookieJar) -> Result<Json<Value>, ApiError> {
     let owner = owner(&state, &jar).await?;
-    let rows=sqlx::query_as::<_,(Option<String>,i64,Option<i64>,Option<String>)>("SELECT r.status,t.viewed_at,r.finished_at,t.schedule_error FROM assistant_tasks t LEFT JOIN assistant_runs r ON r.id=t.last_run_id WHERE t.user_id=? AND t.archived_at IS NULL")
+    let rows=sqlx::query_as::<_,(Option<String>,i64,Option<i64>,Option<String>)>("SELECT r.status,t.viewed_at,r.finished_at,t.schedule_error FROM assistant_tasks t LEFT JOIN assistant_runs r ON r.id=t.last_run_id WHERE t.user_id=? AND t.kind='task' AND t.archived_at IS NULL")
         .bind(owner).fetch_all(&state.db).await?;
     let attention = rows
         .iter()
@@ -106,6 +108,7 @@ async fn summary(State(state): State<AppState>, jar: CookieJar) -> Result<Json<V
 
 #[derive(Deserialize, Default)]
 struct Page {
+    before: Option<String>,
     offset: Option<i64>,
     after: Option<i64>,
     actions_after: Option<i64>,
@@ -113,6 +116,39 @@ struct Page {
     attention: Option<bool>,
     scheduled: Option<bool>,
     search: Option<String>,
+}
+async fn conversations(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(page): Query<Page>,
+) -> Result<Json<Value>, ApiError> {
+    let owner = owner(&state, &jar).await?;
+    Ok(Json(if page.archived.unwrap_or(false) {
+        conversation::list_archived(&state.db, &owner, true).await?
+    } else {
+        conversation::list(&state.db, &owner).await?
+    }))
+}
+async fn new_conversation(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(input): Json<conversation::NewConversation>,
+) -> Result<Json<Value>, ApiError> {
+    let owner = owner(&state, &jar).await?;
+    Ok(Json(
+        json!({"task":conversation::create(&state.db,&owner,input).await?}),
+    ))
+}
+async fn conversation_page(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Query(page): Query<Page>,
+) -> Result<Json<Value>, ApiError> {
+    let owner = owner(&state, &jar).await?;
+    Ok(Json(
+        conversation::page(&state.db, &owner, &id, page.before.as_deref()).await?,
+    ))
 }
 async fn list(
     State(state): State<AppState>,

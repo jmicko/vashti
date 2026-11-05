@@ -104,6 +104,8 @@ fn task_row(row: SqliteRow) -> Result<Task, ApiError> {
         || finished.is_some_and(|at| at > viewed);
     Ok(Task {
         id: row.try_get("id")?,
+        kind: row.try_get("kind")?,
+        conversation_id: row.try_get("conversation_id")?,
         title: row.try_get("title")?,
         instructions: row.try_get("instructions")?,
         config: decode(&row.try_get::<String, _>("config_json")?)?,
@@ -140,11 +142,14 @@ pub async fn list_filtered_tasks(
 ) -> Result<Vec<Task>, ApiError> {
     let mut query =
         sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!("{TASK_SELECT} WHERE t.user_id="));
-    query.push_bind(owner).push(if archived {
-        " AND t.archived_at IS NOT NULL"
-    } else {
-        " AND t.archived_at IS NULL"
-    });
+    query
+        .push_bind(owner)
+        .push(" AND t.kind='task'")
+        .push(if archived {
+            " AND t.archived_at IS NOT NULL"
+        } else {
+            " AND t.archived_at IS NULL"
+        });
     if attention {
         query.push(" AND (t.schedule_error IS NOT NULL OR r.status IN ('waiting_approval','waiting_input','interrupted','limit_reached') OR r.finished_at>t.viewed_at)");
     }
@@ -193,6 +198,26 @@ pub async fn save_task(
     id: Option<&str>,
     payload: SaveTask,
 ) -> Result<Task, ApiError> {
+    save_task_inner(pool, owner, id, payload, None).await
+}
+
+pub async fn save_delegated_task(
+    pool: &SqlitePool,
+    owner: &str,
+    conversation: &str,
+    payload: SaveTask,
+) -> Result<Task, ApiError> {
+    super::conversation::get(pool, owner, conversation).await?;
+    save_task_inner(pool, owner, None, payload, Some(conversation)).await
+}
+
+async fn save_task_inner(
+    pool: &SqlitePool,
+    owner: &str,
+    id: Option<&str>,
+    payload: SaveTask,
+    conversation_id: Option<&str>,
+) -> Result<Task, ApiError> {
     let title = payload.title.trim();
     if title.is_empty()
         || title.chars().count() > 160
@@ -236,6 +261,12 @@ pub async fn save_task(
                 .await?;
         if exists {
             let existing = get_task(pool, owner, &key).await?;
+            if existing.conversation_id.as_deref() != conversation_id {
+                return Err(ApiError::conflict(
+                    "request_changed",
+                    "This request belongs to a different conversation",
+                ));
+            }
             let original: Option<String> = sqlx::query_scalar(
                 "SELECT create_request_json FROM assistant_tasks WHERE id=? AND user_id=?",
             )
@@ -263,7 +294,13 @@ pub async fn save_task(
         }
     }
     if id.is_some() {
-        get_task(pool, owner, &key).await?;
+        let existing = get_task(pool, owner, &key).await?;
+        if existing.kind != "task" {
+            return Err(ApiError::bad_request(
+                "conversation_settings",
+                "Use assistant defaults to configure conversations",
+            ));
+        }
         let updated=sqlx::query("UPDATE assistant_tasks SET title=?,instructions=?,config_json=?,interval_seconds=?,next_run_at=?,schedule_enabled=?,schedule_error=NULL,updated_at=?,revision=revision+1 WHERE id=? AND user_id=? AND revision=? AND archived_at IS NULL")
             .bind(title).bind(payload.instructions.trim()).bind(encode(&payload.config)?)
             .bind(payload.interval_seconds).bind(payload.next_run_at).bind(payload.schedule_enabled).bind(now)
@@ -287,10 +324,10 @@ pub async fn save_task(
                 "Archive an existing task before adding another",
             ));
         }
-        sqlx::query("INSERT INTO assistant_tasks(id,user_id,title,instructions,config_json,interval_seconds,next_run_at,schedule_enabled,viewed_at,created_at,updated_at,create_request_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO assistant_tasks(id,user_id,title,instructions,config_json,interval_seconds,next_run_at,schedule_enabled,viewed_at,created_at,updated_at,create_request_json,conversation_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(&key).bind(owner).bind(title).bind(payload.instructions.trim()).bind(encode(&payload.config)?)
             .bind(payload.interval_seconds).bind(payload.next_run_at).bind(payload.schedule_enabled)
-            .bind(now-1).bind(now).bind(now).bind(create_request).execute(pool).await?;
+            .bind(now-1).bind(now).bind(now).bind(create_request).bind(conversation_id).execute(pool).await?;
     }
     get_task(pool, owner, &key).await
 }
@@ -321,7 +358,7 @@ pub async fn start_run(
     request: StartRun,
     scheduled: bool,
 ) -> Result<Run, ApiError> {
-    let task = get_task(pool, owner, task_id).await?;
+    let mut task = get_task(pool, owner, task_id).await?;
     if let Some(id) = &request.request_id {
         Uuid::parse_str(id).map_err(|_| {
             ApiError::bad_request("invalid_request_id", "Request IDs must be UUIDs")
@@ -361,6 +398,12 @@ pub async fn start_run(
             "Follow-up is limited to 32000 bytes",
         ));
     }
+    if task.kind == "conversation" {
+        let current = preferences(pool, owner).await?;
+        if !current.backend_id.is_empty() {
+            task.config = current;
+        }
+    }
     authorize_model(pool, owner, &task.config).await?;
     let mut tx = pool.begin().await?;
     if scheduled {
@@ -374,8 +417,13 @@ pub async fn start_run(
             ));
         }
     }
-    let active_count:i64=sqlx::query_scalar("SELECT count(*) FROM assistant_runs WHERE user_id=? AND status IN ('queued','running','waiting_approval','waiting_input','paused')")
-        .bind(owner).fetch_one(&mut *tx).await?;
+    let lane = if task.kind == "conversation" {
+        "foreground"
+    } else {
+        "background"
+    };
+    let active_count:i64=sqlx::query_scalar("SELECT count(*) FROM assistant_runs WHERE user_id=? AND lane=? AND status IN ('queued','running','waiting_approval','waiting_input','paused')")
+        .bind(owner).bind(lane).fetch_one(&mut *tx).await?;
     if active_count >= 8 {
         return Err(ApiError::too_many_requests(
             "run_limit",
@@ -402,7 +450,15 @@ pub async fn start_run(
         .request_id
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let now = unix_timestamp();
-    let instructions = if request.message.trim().is_empty() {
+    if task.kind == "conversation" && (scheduled || request.message.trim().is_empty()) {
+        return Err(ApiError::bad_request(
+            "message_required",
+            "Write a message to the assistant",
+        ));
+    }
+    let instructions = if task.kind == "conversation" {
+        request.message.trim().to_owned()
+    } else if request.message.trim().is_empty() {
         task.instructions.clone()
     } else {
         let previous:Option<String>=sqlx::query_scalar("SELECT result_text FROM assistant_runs WHERE task_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1").bind(task_id).fetch_optional(&mut *tx).await?;
@@ -417,9 +473,10 @@ pub async fn start_run(
             request.message.trim()
         )
     };
-    sqlx::query("INSERT INTO assistant_runs(id,task_id,user_id,status,instructions,config_json,checkpoint_json,scheduled,created_at,updated_at,request_message) VALUES(?,?,?,'queued',?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO assistant_runs(id,task_id,user_id,status,instructions,config_json,checkpoint_json,scheduled,created_at,updated_at,request_message,lane) VALUES(?,?,?,'queued',?,?,?,?,?,?,?,?)")
         .bind(&id).bind(task_id).bind(owner).bind(&instructions).bind(encode(&task.config)?)
-        .bind(encode(&Checkpoint::default())?).bind(scheduled).bind(now).bind(now).bind(&request.message).execute(&mut *tx).await?;
+        .bind(encode(&Checkpoint::default())?).bind(scheduled).bind(now).bind(now).bind(&request.message)
+        .bind(if task.kind == "conversation" { "foreground" } else { "background" }).execute(&mut *tx).await?;
     sqlx::query("UPDATE assistant_tasks SET last_run_id=?,viewed_at=0,updated_at=? WHERE id=? AND user_id=?")
         .bind(&id).bind(now).bind(task_id).bind(owner).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO assistant_events(run_id,kind,text,data_json,created_at) VALUES(?,'user',?,?,?)")
@@ -675,7 +732,17 @@ pub async fn archive(
     id: &str,
     archived: bool,
 ) -> Result<(), ApiError> {
-    get_task(pool, owner, id).await?;
+    let task = get_task(pool, owner, id).await?;
+    if archived && task.kind == "conversation" {
+        let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_tasks t LEFT JOIN assistant_runs r ON r.id=t.last_run_id WHERE t.user_id=? AND t.conversation_id=? AND (t.schedule_enabled=1 OR r.status IN ('queued','running','waiting_approval','waiting_input','paused')))")
+            .bind(owner).bind(id).fetch_one(pool).await?;
+        if pending {
+            return Err(ApiError::conflict(
+                "tasks_active",
+                "Stop this conversation's background tasks and schedules before archiving it",
+            ));
+        }
+    }
     let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_runs WHERE task_id=? AND status IN ('queued','running','waiting_approval','waiting_input','paused'))").bind(id).fetch_one(pool).await?;
     if active {
         return Err(ApiError::conflict(
