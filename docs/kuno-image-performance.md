@@ -1460,3 +1460,15 @@ Pixel differences vs installed: generate mean 0.143/0.148 (max 28/72), edit mean
 All previews/PNG/privacy/residency checks passed, normal idle shutdown, zero new kernel
 events. Cancellation after first preview: 1.85 s generate / 2.05 s edit, no forced stop,
 recovery and shutdown normal. Not installed; the installed runtime is unchanged.
+
+### Installed (2026-11-06)
+
+The Claude speed candidate is installed as `qwen21-sycl-2026.1-v1` via
+`kuno install-image-runtime` with approved manifest checksum
+`c45f1fcf4103b2b1b538921d936c2c58ae1bd1f65de5a0d1a42698db0f3199a5`
+(worker `d4f1521ada834f37dd41cfb76ba507cf679701f7de335b292efeef6e6be11f37`).
+The installed public-API check (2-step generate and edit, run as root) passed with
+zero new kernel events, shared resident worker, PNG privacy checks and no saved
+prompts/images: generate 6.9 s, edit 14.7 s (previous runtime: 31.0 s / 39.4 s).
+Rollback copy of the previous runtime (manifest `fc169dd2...`):
+`/usr/local/lib/kuno-test/qwen21-sycl-2026.1-v1-backup-20261106`.
