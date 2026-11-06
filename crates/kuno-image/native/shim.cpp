@@ -64,8 +64,14 @@ static void discard_sd(enum sd_log_level_t level, const char* text, void*) {
 static void discard_ggml(enum ggml_log_level, const char* text, void*) {
     if (text && std::strstr(text,"ErrorDeviceLost")) device_lost.store(true);
 }
+#ifdef KUNO_NATIVE_SYCL_DEV
+extern "C" void kuno_dev_prof_mark(int, int);
+#endif
 static void progress(int step, int steps, float, void* data) {
     auto* state=static_cast<Progress*>(data);
+#ifdef KUNO_NATIVE_SYCL_DEV
+    kuno_dev_prof_mark(step, steps);
+#endif
     if (cancelled && state->context) sd_cancel_generation(state->context,SD_CANCEL_ALL);
     std::fprintf(stderr,"kuno-image: progress %d/%d\n",step,steps);
 }

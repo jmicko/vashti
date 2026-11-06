@@ -142,12 +142,13 @@ index 0000000..7899841
 +}
 diff --git a/src/ggml-sycl/convrot.cpp b/src/ggml-sycl/convrot.cpp
 new file mode 100644
-index 0000000..4465487
+index 0000000..4233c77
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.cpp
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,344 @@
 +// Experimental native signed INT8 tensorwise GEMM for Qwen ConvRot weights.
 +#include "convrot.hpp"
++#include "element_wise.hpp"
 +#include <oneapi/mkl/blas.hpp>
 +#include <sycl/ext/intel/math/imf_rounding_math.hpp>
 +
@@ -158,10 +159,142 @@ index 0000000..4465487
 +           d.get_info<sycl::info::device::local_mem_size>() >= 320 * sizeof(float);
 +}
 +
++
++// Row-parallel ConvRot quantizer. Each work-group quantizes one row with 16
++// sub-groups; each sub-group owns G consecutive 256-value rotation groups.
++// The radix-4 stages run in the original order (strides 1, 4, 16, 64) with the
++// original expressions, so rotated values, row scales and INT8 bytes are
++// bit-identical to the legacy shared-memory kernel (verified including
++// subnormal, zero, infinite and NaN rows).
++#define KB4(v, i0, i1, i2, i3) { const float a = v[i0], b = v[i1], c = v[i2], d = v[i3]; \
++    v[i0] = a+b+c-d; v[i1] = a+b-c+d; v[i2] = a-b+c+d; v[i3] = -a+b+c+d; }
++// 16 sub-groups per row; each sub-group owns G consecutive 256-value groups.
++struct convrot_load_f32 {
++    const float * x; int64_t k;
++    float operator()(int64_t row, int64_t e) const { return x[row * k + e]; }
++};
++
++template <int G, typename Load>
++static void quantize_rows_sg_load(sycl::queue & Q, Load load, int8_t * q, float * scales, int64_t k, int64_t rows) {
++    Q.submit([&](sycl::handler & h) {
++        sycl::local_accessor<float, 1> maxima(16, h), tile(16 * 16 * 17, h);
++        h.parallel_for(sycl::nd_range<1>(rows * 256, 256), [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
++            auto sg = it.get_sub_group();
++            const int64_t row = it.get_group(0);
++            const int s = int(sg.get_group_linear_id());
++            const int lane = int(sg.get_local_linear_id());
++            float * t = &tile[s * 16 * 17];
++            float v[G][16];
++            float maximum = 0.f;
++#pragma unroll
++            for (int g = 0; g < G; ++g) {
++                const int64_t base = (s * G + g) * 256;
++                if (g) sycl::group_barrier(sg);
++#pragma unroll
++                for (int j = 0; j < 16; ++j) t[j * 17 + lane] = load(row, base + j * 16 + lane) / 16.f;
++                sycl::group_barrier(sg);
++#pragma unroll
++                for (int j = 0; j < 16; ++j) v[g][j] = t[lane * 17 + j];
++#pragma unroll
++                for (int m = 0; m < 4; ++m) KB4(v[g], 4*m, 4*m+1, 4*m+2, 4*m+3)
++#pragma unroll
++                for (int m = 0; m < 4; ++m) KB4(v[g], m, m+4, m+8, m+12)
++                sycl::group_barrier(sg);
++#pragma unroll
++                for (int j = 0; j < 16; ++j) t[lane * 17 + j] = v[g][j];
++                sycl::group_barrier(sg);
++#pragma unroll
++                for (int j = 0; j < 16; ++j) v[g][j] = t[j * 17 + lane];
++#pragma unroll
++                for (int m = 0; m < 4; ++m) KB4(v[g], 4*m, 4*m+1, 4*m+2, 4*m+3)
++#pragma unroll
++                for (int m = 0; m < 4; ++m) KB4(v[g], m, m+4, m+8, m+12)
++#pragma unroll
++                for (int j = 0; j < 16; ++j) maximum = sycl::fmax(maximum, sycl::fabs(v[g][j]));
++            }
++            maximum = sycl::reduce_over_group(sg, maximum, sycl::maximum<float>());
++            if (lane == 0) maxima[s] = maximum;
++            it.barrier(sycl::access::fence_space::local_space);
++            maximum = 0.f;
++#pragma unroll
++            for (int i = 0; i < 16; ++i) maximum = sycl::fmax(maximum, maxima[i]);
++            const float scale = sycl::ext::intel::math::fdiv_rn(maximum, 127.f);
++            if (s == 0 && lane == 0) scales[row] = scale;
++            const float inverse = scale == 0.f ? 0.f : sycl::ext::intel::math::fdiv_rn(1.f, scale);
++            // A single IEEE multiply is round-to-nearest; only flushed subnormal
++            // operands could differ, and those quantize to zero unless the row
++            // scale is tiny. Such rows keep the exact library multiply.
++            const bool exact_mul = !(inverse < 1e30f);
++            auto store = [&](auto mul) {
++#pragma unroll
++                for (int g = 0; g < G; ++g) {
++                    int8_t * dst = q + row * k + (s * G + g) * 256 + lane;
++#pragma unroll
++                    for (int j = 0; j < 16; ++j) {
++                        int8_t out = 0;
++                        if (scale != 0.f) {
++                            const float scaled = mul(v[g][j], inverse);
++                            out = sycl::isfinite(scaled) ? int8_t(sycl::clamp(sycl::rint(scaled), -127.f, 127.f)) : int8_t(0);
++                        }
++                        dst[j * 16] = out;
++                    }
++                }
++            };
++            if (exact_mul) store([](float a, float b) { return sycl::ext::intel::math::fmul_rn(a, b); });
++            else store([](float a, float b) { return a * b; });
++        });
++    });
++}
++
++template <int G>
++static void quantize_rows_sg(sycl::queue & Q, const float * x, int8_t * q, float * scales, int64_t k, int64_t rows) {
++    quantize_rows_sg_load<G>(Q, convrot_load_f32{x, k}, q, scales, k, rows);
++}
++
++static void quantize_legacy(ggml_backend_sycl_context & ctx, const float * x, int8_t * q,
++                            float * scales, int64_t k, int64_t rows, int group_size);
++
 +static void quantize(ggml_backend_sycl_context & ctx, const float * x, int8_t * q,
 +                     float * scales, int64_t k, int64_t rows, int group_size) {
 +    auto queue = ctx.stream();
 +    GGML_ASSERT(queue->has_property<sycl::property::queue::in_order>());
++    static const bool legacy = getenv("KUNO_DEV_QUANT_LEGACY") != nullptr;
++    static const bool check = getenv("KUNO_DEV_QUANT_CHECK") != nullptr;
++    const int64_t groups = k / 256;
++    if (legacy || group_size != 256 || k % 4096 != 0 || groups / 16 > 3) {
++        quantize_legacy(ctx, x, q, scales, k, rows, group_size);
++        return;
++    }
++    const int64_t padded = (rows + 3) / 4 * 4;
++    if (padded > rows) queue->memset(q + rows * k, 0, (padded - rows) * k);
++    switch (groups / 16) {
++        case 1: quantize_rows_sg<1>(*queue, x, q, scales, k, rows); break;
++        case 2: quantize_rows_sg<2>(*queue, x, q, scales, k, rows); break;
++        default: quantize_rows_sg<3>(*queue, x, q, scales, k, rows); break;
++    }
++    if (check) {
++        int8_t * q2 = sycl::malloc_device<int8_t>(padded * k, *queue);
++        float * s2 = sycl::malloc_device<float>(rows, *queue);
++        unsigned * bad = sycl::malloc_shared<unsigned>(2, *queue);
++        bad[0] = bad[1] = 0;
++        quantize_legacy(ctx, x, q2, s2, k, rows, group_size);
++        queue->parallel_for(sycl::range<1>(rows * k), [=](sycl::id<1> i) {
++            if (q[i] != q2[i]) sycl::atomic_ref<unsigned, sycl::memory_order::relaxed, sycl::memory_scope::device>(bad[0]).fetch_add(1u);
++            if (i[0] < (size_t) rows && sycl::bit_cast<uint32_t>(scales[i]) != sycl::bit_cast<uint32_t>(s2[i]))
++                sycl::atomic_ref<unsigned, sycl::memory_order::relaxed, sycl::memory_scope::device>(bad[1]).fetch_add(1u);
++        }).wait();
++        static unsigned calls = 0, failing = 0;
++        calls++; if (bad[0] || bad[1]) failing++;
++        if (bad[0] || bad[1] || calls % 500 == 0)
++            fprintf(stderr, "KUNO_DEV_QUANT_CHECK k=%lld rows=%lld byte_mismatch=%u scale_mismatch=%u calls=%u failing=%u\n",
++                    (long long) k, (long long) rows, bad[0], bad[1], calls, failing);
++        sycl::free(q2, *queue); sycl::free(s2, *queue); sycl::free(bad, *queue);
++    }
++}
++
++static void quantize_legacy(ggml_backend_sycl_context & ctx, const float * x, int8_t * q,
++                            float * scales, int64_t k, int64_t rows, int group_size) {
++    auto queue = ctx.stream();
 +    const int64_t padded = (rows + 3) / 4 * 4;
 +    if (padded > rows) queue->memset(q + rows * k, 0, (padded - rows) * k);
 +    queue->submit([&](sycl::handler & h) {
@@ -234,34 +367,50 @@ index 0000000..4465487
 +             reinterpret_cast<float *>(bytes + x->ne[0] * padded), x->ne[0], rows, 256);
 +}
 +
++// Shared front half of the INT8 ConvRot linear: activation INT8/scales and
++// the exact int32 oneMKL product, row-major [padded rows][n].
++struct convrot_product {
++    ggml_sycl_pool_alloc<int8_t> temporary_input;
++    ggml_sycl_pool_alloc<float> temporary_scales;
++    ggml_sycl_pool_alloc<int32_t> temporary_accum;
++    const float * activation_scales = nullptr;
++    int32_t * accum = nullptr;
++    sycl::event gemm;
++    int64_t k = 0, n = 0, rows = 0, padded = 0;
++    convrot_product(ggml_backend_sycl_context & ctx, ggml_tensor * dst)
++        : temporary_input(ctx.pool()), temporary_scales(ctx.pool()), temporary_accum(ctx.pool()) {
++        const auto weight = dst->src[0], input = dst->src[1];
++        k = weight->ne[0]; n = weight->ne[1]; rows = ggml_nrows(dst); padded = (rows+3)/4*4;
++        auto queue = ctx.stream();
++        GGML_ASSERT(queue->has_property<sycl::property::queue::in_order>());
++        const int8_t * q = static_cast<const int8_t *>(input->data);
++        if (input->type == GGML_TYPE_I8) activation_scales = reinterpret_cast<const float *>(q+k*padded);
++        else {
++            q = temporary_input.alloc(k*padded);
++            activation_scales = temporary_scales.alloc(rows);
++            quantize(ctx, static_cast<const float *>(input->data), const_cast<int8_t *>(q),
++                     const_cast<float *>(activation_scales), k, rows, ggml_get_op_params_i32(dst, 2));
++        }
++        accum = temporary_accum.alloc(n*padded);
++        gemm = oneapi::mkl::blas::column_major::gemm(*queue, oneapi::mkl::transpose::trans,
++            oneapi::mkl::transpose::nontrans, n, padded, k, int32_t(1),
++            static_cast<const int8_t *>(weight->data), k, q, k, int32_t(0), accum, n,
++            oneapi::mkl::blas::compute_mode::standard);
++    }
++};
++
 +void ggml_sycl_mul_mat_i8_convrot(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
 +    GGML_ASSERT(ggml_sycl_convrot_geometry(dst, true));
-+    const auto weight = dst->src[0], input = dst->src[1];
-+    const int64_t k = weight->ne[0], n = weight->ne[1], rows = ggml_nrows(dst), padded = (rows+3)/4*4;
++    convrot_product p(ctx, dst);
 +    auto queue = ctx.stream();
-+    GGML_ASSERT(queue->has_property<sycl::property::queue::in_order>());
-+    ggml_sycl_pool_alloc<int8_t> temporary_input(ctx.pool());
-+    ggml_sycl_pool_alloc<float> temporary_scales(ctx.pool());
-+    const int8_t * q = static_cast<const int8_t *>(input->data);
-+    const float * activation_scales = nullptr;
-+    if (input->type == GGML_TYPE_I8) activation_scales = reinterpret_cast<const float *>(q+k*padded);
-+    else {
-+        q = temporary_input.alloc(k*padded);
-+        activation_scales = temporary_scales.alloc(rows);
-+        quantize(ctx, static_cast<const float *>(input->data), const_cast<int8_t *>(q),
-+                 const_cast<float *>(activation_scales), k, rows, ggml_get_op_params_i32(dst, 2));
-+    }
-+    ggml_sycl_pool_alloc<int32_t> temporary_accum(ctx.pool(), n*padded);
-+    auto accum = temporary_accum.get();
-+    auto gemm = oneapi::mkl::blas::column_major::gemm(*queue, oneapi::mkl::transpose::trans,
-+        oneapi::mkl::transpose::nontrans, n, padded, k, int32_t(1),
-+        static_cast<const int8_t *>(weight->data), k, q, k, int32_t(0), accum, n,
-+        oneapi::mkl::blas::compute_mode::standard);
++    const int64_t rows = p.rows, n = p.n;
++    auto accum = p.accum;
++    auto activation_scales = p.activation_scales;
 +    auto scales = static_cast<const float *>(dst->src[2]->data);
 +    auto bias = dst->src[3] ? static_cast<const float *>(dst->src[3]->data) : nullptr;
 +    auto output = static_cast<float *>(dst->data);
 +    queue->submit([&](sycl::handler & h) {
-+        h.depends_on(gemm);
++        h.depends_on(p.gemm);
 +        h.parallel_for(sycl::range<1>(rows*n), [=](sycl::id<1> at) {
 +            const int64_t i = at[0], row = i/n, col = i%n;
 +            float value = float(accum[i]) * activation_scales[row];
@@ -272,12 +421,81 @@ index 0000000..4465487
 +    });
 +    // Pool allocations are stream-ordered, like existing SYCL GEMM scratch.
 +}
++
++// gate_up INT8 linear -> SWIGLU -> ConvRot quantize, without materializing the
++// F32 product or the activation. Each value is dequantized, activated and
++// rotated with exactly the arithmetic of the three separate operations.
++struct convrot_load_swiglu {
++    const int32_t * accum; const float * activation_scales; const float * scales; const float * bias;
++    int64_t n, half, gate_offset, up_offset;
++    float deq(int64_t row, int64_t col) const {
++        float value = float(accum[row * n + col]) * activation_scales[row];
++        value *= scales[col];
++        if (bias) value += bias[col];
++        return value;
++    }
++    float operator()(int64_t row, int64_t e) const {
++        const float x = deq(row, gate_offset + e), g = deq(row, up_offset + e);
++        return x / (1.0f + sycl::exp(-x)) * g;
++    }
++};
++
++bool ggml_sycl_mul_mat_i8_convrot_swiglu_quantize(ggml_backend_sycl_context & ctx, ggml_tensor * mm,
++                                                  ggml_tensor * glu, ggml_tensor * quant) {
++    static const bool disabled = getenv("KUNO_DEV_NO_SWIGLU_FUSION") != nullptr;
++    if (disabled) return false;
++    if (glu->op != GGML_OP_GLU || ggml_get_glu_op(glu) != GGML_GLU_OP_SWIGLU || glu->src[0] != mm ||
++        glu->src[1] != nullptr || quant->op != GGML_OP_QUANTIZE_I8_CONVROT || quant->src[0] != glu) return false;
++    if (!ggml_sycl_convrot_geometry(mm, true) || !ggml_sycl_convrot_geometry(quant, false)) return false;
++    if (mm->type != GGML_TYPE_F32 || glu->type != GGML_TYPE_F32 || !ggml_is_contiguous(mm) || !ggml_is_contiguous(glu)) return false;
++    const int64_t half = glu->ne[0];
++    if (mm->ne[0] != 2 * half || ggml_nrows(glu) != ggml_nrows(mm) || half % 4096 != 0 || half / 4096 > 3) return false;
++    convrot_product p(ctx, mm);
++    auto queue = ctx.stream();
++    const int64_t rows = p.rows, padded = p.padded;
++    const int32_t swapped = ggml_get_op_params_i32(glu, 1);
++    convrot_load_swiglu load{p.accum, p.activation_scales, static_cast<const float *>(mm->src[2]->data),
++                             mm->src[3] ? static_cast<const float *>(mm->src[3]->data) : nullptr,
++                             p.n, half, swapped ? half : 0, swapped ? 0 : half};
++    auto bytes = static_cast<int8_t *>(quant->data);
++    queue->memset(bytes + half * padded, 0, ggml_nbytes(quant) - half * padded);
++    if (padded > rows) queue->memset(bytes + rows * half, 0, (padded - rows) * half);
++    float * row_scales = reinterpret_cast<float *>(bytes + half * padded);
++    switch (half / 4096) {
++        case 1: quantize_rows_sg_load<1>(*queue, load, bytes, row_scales, half, rows); break;
++        case 2: quantize_rows_sg_load<2>(*queue, load, bytes, row_scales, half, rows); break;
++        default: quantize_rows_sg_load<3>(*queue, load, bytes, row_scales, half, rows); break;
++    }
++    static const bool check = getenv("KUNO_DEV_SWIGLU_CHECK") != nullptr;
++    if (check) {
++        // Reference: the three original operations into scratch, then compare bytes and scales.
++        int8_t * ref = sycl::malloc_device<int8_t>(ggml_nbytes(quant), *queue);
++        float * act = sycl::malloc_device<float>(rows * half, *queue);
++        float * prod = sycl::malloc_device<float>(rows * p.n, *queue);
++        void * saved_mm = mm->data; void * saved_glu = glu->data; void * saved_q = quant->data;
++        mm->data = prod; ggml_sycl_mul_mat_i8_convrot(ctx, mm);
++        glu->data = act; ggml_sycl_swiglu(ctx, glu);
++        quant->data = ref; ggml_sycl_quantize_i8_convrot(ctx, quant);
++        mm->data = saved_mm; glu->data = saved_glu; quant->data = saved_q;
++        unsigned * bad = sycl::malloc_shared<unsigned>(1, *queue); bad[0] = 0;
++        const size_t total = ggml_nbytes(quant);
++        queue->parallel_for(sycl::range<1>(total), [=](sycl::id<1> i) {
++            if (bytes[i] != ref[i]) sycl::atomic_ref<unsigned, sycl::memory_order::relaxed, sycl::memory_scope::device>(bad[0]).fetch_add(1u);
++        }).wait();
++        static unsigned calls = 0, failing = 0; calls++; if (bad[0]) failing++;
++        if (bad[0] || calls % 100 == 0)
++            fprintf(stderr, "KUNO_DEV_SWIGLU_CHECK rows=%lld half=%lld byte_mismatch=%u calls=%u failing=%u\n",
++                    (long long) rows, (long long) half, bad[0], calls, failing);
++        sycl::free(ref, *queue); sycl::free(act, *queue); sycl::free(prod, *queue); sycl::free(bad, *queue);
++    }
++    return true;
++}
 diff --git a/src/ggml-sycl/convrot.hpp b/src/ggml-sycl/convrot.hpp
 new file mode 100644
-index 0000000..48818e7
+index 0000000..0679b74
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.hpp
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,9 @@
 +#pragma once
 +#include "common.hpp"
 +#include "convrot-policy.hpp"
@@ -285,6 +503,8 @@ index 0000000..48818e7
 +bool ggml_sycl_convrot_device_supported(const sycl::device & device);
 +void ggml_sycl_quantize_i8_convrot(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
 +void ggml_sycl_mul_mat_i8_convrot(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
++bool ggml_sycl_mul_mat_i8_convrot_swiglu_quantize(ggml_backend_sycl_context & ctx, ggml_tensor * mm,
++                                                  ggml_tensor * glu, ggml_tensor * quant);
 diff --git a/src/ggml-sycl/cpy-offset.hpp b/src/ggml-sycl/cpy-offset.hpp
 new file mode 100644
 index 0000000..0e3ac8a
@@ -315,7 +535,7 @@ index 0000000..0e3ac8a
 +
 +#endif
 diff --git a/src/ggml-sycl/cpy.cpp b/src/ggml-sycl/cpy.cpp
-index 55e0761..ae47990 100644
+index 55e0761..df74201 100644
 --- a/src/ggml-sycl/cpy.cpp
 +++ b/src/ggml-sycl/cpy.cpp
 @@ -1,4 +1,5 @@
@@ -1352,6 +1572,65 @@ index 55e0761..ae47990 100644
      stream->parallel_for(
          sycl::nd_range<3>(sycl::range<3>(1, 1, num_blocks) * sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE),
                            sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE)),
+@@ -1202,6 +1168,50 @@ static void ggml_cpy_bf16_f16_sycl(const char * cx, char * cdst, const int ne, c
+ }
+ #endif
+ 
++// Same-shape float copy/conversion without per-element 64-bit index division.
++// Element (i0,i1,i2,i3) is read and written through both tensors' byte strides;
++// each value is converted exactly as by the scalar cpy_1_* helpers above.
++template <typename S, typename D>
++static void kuno_cpy_same_shape(const char * src, char * dst, const ggml_tensor * s, const ggml_tensor * d, queue_ptr stream) {
++    const int64_t ne0 = s->ne[0], ne1 = s->ne[1], ne2 = s->ne[2], ne3 = s->ne[3];
++    const size_t sb0 = s->nb[0], sb1 = s->nb[1], sb2 = s->nb[2], sb3 = s->nb[3];
++    const size_t db0 = d->nb[0], db1 = d->nb[1], db2 = d->nb[2], db3 = d->nb[3];
++    const int64_t lx = std::min<int64_t>(256, (ne0 + 15) / 16 * 16), ly = std::max<int64_t>(1, 256 / lx);
++    const int64_t gx = (ne0 + lx - 1) / lx * lx, gy = (ne1 + ly - 1) / ly * ly;
++    // Keep every launch index within int range; the outer dimension loops.
++    const int64_t ne23 = ne2 * ne3, plane = gx * gy;
++    const int64_t gz = std::max<int64_t>(1, std::min<int64_t>(ne23, (int64_t(INT32_MAX) / plane)));
++    GGML_ASSERT(plane <= INT32_MAX);
++    stream->parallel_for(sycl::nd_range<3>(sycl::range<3>(gz, gy, gx), sycl::range<3>(1, ly, lx)),
++        [=](sycl::nd_item<3> it) {
++            const int64_t i0 = it.get_global_id(2), i1 = it.get_global_id(1);
++            if (i0 >= ne0 || i1 >= ne1) return;
++            for (int64_t z = it.get_global_id(0); z < ne23; z += gz) {
++                const uint32_t i23 = uint32_t(z), i3 = i23 / uint32_t(ne2), i2 = i23 - i3 * uint32_t(ne2);
++                const S value = *(const S *) (src + i0 * sb0 + i1 * sb1 + i2 * sb2 + i3 * sb3);
++                D * out = (D *) (dst + i0 * db0 + i1 * db1 + i2 * db2 + i3 * db3);
++                if constexpr (std::is_same_v<S, float> && std::is_same_v<D, sycl::half>) {
++                    *out = sycl::vec<float, 1>(value).convert<sycl::half, sycl::rounding_mode::automatic>()[0];
++                } else {
++                    *out = D(value);
++                }
++            }
++        });
++}
++
++static bool kuno_cpy_fast(const ggml_tensor * src0, const ggml_tensor * src1, queue_ptr stream) {
++    static const bool disabled = getenv("KUNO_DEV_NO_FAST_CPY") != nullptr;
++    if (disabled || !ggml_are_same_shape(src0, src1) || src0->ne[2] * src0->ne[3] > INT32_MAX) return false;
++    const char * a = (const char *) src0->data; char * b = (char *) src1->data;
++    const auto st = src0->type, dt = src1->type;
++    if (st == GGML_TYPE_F32 && dt == GGML_TYPE_F32) kuno_cpy_same_shape<float, float>(a, b, src0, src1, stream);
++    else if (st == GGML_TYPE_F32 && dt == GGML_TYPE_F16) kuno_cpy_same_shape<float, sycl::half>(a, b, src0, src1, stream);
++    else if (st == GGML_TYPE_F16 && dt == GGML_TYPE_F16) kuno_cpy_same_shape<sycl::half, sycl::half>(a, b, src0, src1, stream);
++    else if (st == GGML_TYPE_F16 && dt == GGML_TYPE_F32) kuno_cpy_same_shape<sycl::half, float>(a, b, src0, src1, stream);
++    else return false;
++    return true;
++}
++
+ void ggml_sycl_cpy(ggml_backend_sycl_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1) try {
+     // Unlike other operators ggml_sycl_cpy takes 2 distinct tensors instead of a dst ggml_tensor and rely on its src field
+     GGML_SYCL_DEBUG("ggml_sycl_cpy: src0->type=%s, src1->type=%s\n",
+@@ -1220,6 +1230,7 @@ void ggml_sycl_cpy(ggml_backend_sycl_context & ctx, const ggml_tensor * src0, co
+     if ((src0->type == src1->type) && (ggml_is_contiguous(src0) && ggml_is_contiguous(src1))) {
+         GGML_SYCL_DEBUG("%s: memcpy path\n", __func__);
+         main_stream->memcpy(src1_ddc, src0_ddc, ggml_nbytes(src0));
++    } else if (kuno_cpy_fast(src0, src1, main_stream)) {
+     } else if (src0->type == GGML_TYPE_F32 && ggml_sycl_is_quantized_type(src1->type)) {
+         GGML_ASSERT(ggml_sycl_can_quantize_rows_sycl(src1->type));
+         ggml_sycl_quantize_rows_sycl<float>(src0_ddc, src1_ddc, src0, src1, ne, ne00, ne01, ne02, nb00, nb01,
 diff --git a/src/ggml-sycl/fattn-onednn-shapes.hpp b/src/ggml-sycl/fattn-onednn-shapes.hpp
 new file mode 100644
 index 0000000..33ded07
@@ -1699,7 +1978,7 @@ index 4a6027f..818fbe7 100644
          const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
          const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 18d5878..5f92308 100644
+index 18d5878..08cdc7c 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -59,6 +59,8 @@
@@ -1761,7 +2040,7 @@ index 18d5878..5f92308 100644
              if (dst->src[0]->ne[3] != dst->src[1]->ne[3]) {
                  return false;
              }
-@@ -5396,8 +5419,15 @@ catch (sycl::exception const &exc) {
+@@ -5396,8 +5419,68 @@ catch (sycl::exception const &exc) {
    std::exit(1);
  }
  
@@ -1769,6 +2048,59 @@ index 18d5878..5f92308 100644
 +#include "whole-rope-dispatch.hpp"
 +#endif
 +
++
++// KUNO_DEV_OP_PROFILE: development-only synchronous per-op timing (shapes only).
++#include <chrono>
++#include <map>
++#include <string>
++namespace {
++struct kuno_dev_prof {
++    bool on = getenv("KUNO_DEV_OP_PROFILE") != nullptr;
++    struct row { int64_t n = 0; double sum = 0, mn = 1e30; };
++    std::map<std::string, row> rows;
++    std::string key; std::chrono::steady_clock::time_point t;
++    void begin(ggml_backend_sycl_context & ctx, const ggml_tensor * n) {
++        end(ctx);
++        char b[256];
++        snprintf(b, sizeof b, "%s %s<-%s [%lld,%lld,%lld,%lld]", ggml_op_desc(n), ggml_type_name(n->type),
++                 n->src[0] ? ggml_type_name(n->src[0]->type) : "-", (long long) n->ne[0], (long long) n->ne[1],
++                 (long long) n->ne[2], (long long) n->ne[3]);
++        key = b; t = std::chrono::steady_clock::now();
++    }
++    void end(ggml_backend_sycl_context & ctx) {
++        if (key.empty()) return;
++        ctx.stream()->wait();
++        auto & r = rows[key]; r.n++;
++        const double d = std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
++        r.sum += d; r.mn = std::min(r.mn, d);
++        static const char * trace = getenv("KUNO_DEV_OP_TRACE");
++        if (trace && key.find(trace) != std::string::npos) fprintf(stderr, "KUNO_DEV_TRACE %.3f ms %s\n", d * 1e3, key.c_str());
++        key.clear();
++    }
++    ~kuno_dev_prof() { dump(); }
++    void dump() {
++        if (!on || rows.empty()) return;
++        std::vector<std::pair<double, std::string>> v; double total = 0;
++        for (auto & [k, r] : rows) {
++            char b[96]; snprintf(b, sizeof b, " n=%lld min=%.3fms", (long long) r.n, r.mn * 1e3);
++            v.push_back({r.sum, k + b}); total += r.sum;
++        }
++        std::sort(v.rbegin(), v.rend());
++        fprintf(stderr, "KUNO_DEV_PROF total %.3f s\n", total);
++        for (auto & [sec, k] : v) fprintf(stderr, "KUNO_DEV_PROF %9.3f ms %5.1f%% %s\n", sec * 1e3, 100 * sec / total, k.c_str());
++    }
++};
++kuno_dev_prof g_kuno_dev_prof;
++}
++// Called by the dev shim's progress callback: reset after step 2, dump at the last step.
++extern "C" void kuno_dev_prof_mark(int step, int steps) {
++    if (!g_kuno_dev_prof.on) return;
++    if (step == 2) { g_kuno_dev_prof.rows.clear(); g_kuno_dev_prof.key.clear(); }
++    if (step == steps) {
++        fprintf(stderr, "KUNO_DEV_PROF steps %d\n", steps - 2);
++        g_kuno_dev_prof.dump(); g_kuno_dev_prof.rows.clear(); g_kuno_dev_prof.key.clear();
++    }
++}
  static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * sycl_ctx, ggml_cgraph * cgraph) {
      ggml_sycl_set_main_device(sycl_ctx->device);
 +#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
@@ -1777,17 +2109,54 @@ index 18d5878..5f92308 100644
  
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
-@@ -5408,6 +5438,9 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5408,6 +5491,10 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
++        if (g_kuno_dev_prof.on) g_kuno_dev_prof.begin(*sycl_ctx, node);
 +#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
 +        if (kuno_whole_rope_step(*sycl_ctx,whole_rope_plans,i)) continue;
 +#endif
          const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
          if (nodes_to_skip != 0) {
              i += nodes_to_skip;
-@@ -5428,6 +5461,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5421,6 +5508,35 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+             }
+         }
+ #endif
++        if (getenv("KUNO_DEV_NODE_DUMP2") && node->op == GGML_OP_FLASH_ATTN_EXT && node->ne[2] == 8214) {
++            static int dumped = 0;
++            if (dumped++ == 40) {
++                for (int j = std::max(0, i - 40); j <= i; ++j) {
++                    ggml_tensor * t = cgraph->nodes[j];
++                    fprintf(stderr, "KUNO_DEV_N %d %-14s %s ne[%lld,%lld,%lld,%lld] nb[%zu,%zu,%zu,%zu]", j, ggml_op_desc(t), ggml_type_name(t->type),
++                            (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2], (long long) t->ne[3], t->nb[0], t->nb[1], t->nb[2], t->nb[3]);
++                    for (int q = 0; q < 4 && t->src[q]; ++q) {
++                        int idx = -1; for (int m = std::max(0, i - 60); m <= i; ++m) if (cgraph->nodes[m] == t->src[q]) idx = m;
++                        fprintf(stderr, " s%d=%d", q, idx);
++                    }
++                    fprintf(stderr, "\n");
++                }
++            }
++        }
++        if (getenv("KUNO_DEV_NODE_DUMP") && node->op == GGML_OP_MUL_MAT && node->src[0]->type == GGML_TYPE_I8 && node->ne[0] == 24576) {
++            static int dumped = 0;
++            if (dumped++ < 1) for (int j = i; j < i + 6 && j < cgraph->n_nodes; ++j)
++                fprintf(stderr, "KUNO_DEV_NODE %d %s src0=%d flags=%d\n", j, ggml_op_desc(cgraph->nodes[j]),
++                        cgraph->nodes[j]->src[0] == cgraph->nodes[j - (j > i)] ? 1 : 0, cgraph->nodes[j]->flags);
++        }
++        if (node->op == GGML_OP_MUL_MAT && node->src[0]->type == GGML_TYPE_I8 &&
++            g_ggml_sycl_enable_fusion && i + 2 < cgraph->n_nodes &&
++            (cgraph->nodes[i + 1]->flags & GGML_TENSOR_FLAG_COMPUTE) && (cgraph->nodes[i + 2]->flags & GGML_TENSOR_FLAG_COMPUTE) &&
++            ggml_node_has_n_uses(cgraph, i, 1) && ggml_node_has_n_uses(cgraph, i + 1, 1) &&
++            ggml_sycl_mul_mat_i8_convrot_swiglu_quantize(*sycl_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2])) {
++            i += 2;
++            continue;
++        }
+         if (node->op == GGML_OP_RMS_NORM &&
+             ggml_sycl_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL })) {
+             ggml_sycl_op_rms_norm_fused(*sycl_ctx, node, cgraph->nodes[i + 1]);
+@@ -5428,12 +5544,20 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -1801,7 +2170,14 @@ index 18d5878..5f92308 100644
          bool ok = ggml_sycl_compute_forward(*sycl_ctx, node);
          if (!ok) {
              GGML_LOG_ERROR("%s: error: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
-@@ -5449,6 +5489,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+         }
+         GGML_ASSERT(ok);
+     }
++    if (g_kuno_dev_prof.on) g_kuno_dev_prof.end(*sycl_ctx);
+ }
+ 
+ #ifdef GGML_SYCL_GRAPH
+@@ -5449,6 +5573,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
          switch (node_op) {
              default:
                  break;
@@ -1811,7 +2187,7 @@ index 18d5878..5f92308 100644
              case GGML_OP_CONCAT:
                  // ggml_sycl_op_concat() does a blocking host wait after memcpy operations,
                  // but wait() can't be called on the events returned by a queue recording
-@@ -5462,6 +5505,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5462,6 +5589,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
                                ggml_op_name(node_op));
                  return false;
              case GGML_OP_MUL_MAT:
@@ -1819,7 +2195,7 @@ index 18d5878..5f92308 100644
                  // We cannot use graphs with ggml_sycl_mul_mat() when SYCL async memory allocation extensions are not available,
                  // as SYCL malloc / free and host wait calls are not supported when recording to a graph which are all present
                  // in reordering.
-@@ -5602,6 +5646,7 @@ struct ggml_backend_sycl_device_context {
+@@ -5602,6 +5730,7 @@ struct ggml_backend_sycl_device_context {
      int device;
      std::string name;
      std::string description;
@@ -1827,7 +2203,7 @@ index 18d5878..5f92308 100644
      int op_offload_min_batch_size;
  };
  
-@@ -5632,6 +5677,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
+@@ -5632,6 +5761,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
  }
  
  static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
@@ -1836,7 +2212,7 @@ index 18d5878..5f92308 100644
      props->name        = ggml_backend_sycl_device_get_name(dev);
      props->description = ggml_backend_sycl_device_get_description(dev);
      props->type        = ggml_backend_sycl_device_get_type(dev);
-@@ -5736,9 +5783,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -5736,9 +5867,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
              }
              break;
@@ -1855,7 +2231,7 @@ index 18d5878..5f92308 100644
                  struct ggml_tensor * a = op->src[0];
                  struct ggml_tensor * b = op->src[1];
  
-@@ -6499,6 +6555,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+@@ -6499,6 +6639,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                  SYCL_CHECK(CHECK_TRY_ERROR(dpct::get_device_info(
                      prop, dpct::dev_mgr::instance().get_device(i))));
  
