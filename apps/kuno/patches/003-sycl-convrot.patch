@@ -2440,7 +2440,7 @@ index 4a6027f..818fbe7 100644
          const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
          const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 18d5878..36d7020 100644
+index 18d5878..d321f29 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -59,6 +59,9 @@
@@ -2495,7 +2495,7 @@ index 18d5878..36d7020 100644
          SYCL_CHECK(CHECK_TRY_ERROR(ggml_sycl_free_device(ptr, *qptr)));
          pool_size -= size;
      }
-@@ -4903,6 +4920,72 @@ catch (sycl::exception const &exc) {
+@@ -4903,6 +4920,146 @@ catch (sycl::exception const &exc) {
    std::exit(1);
  }
  
@@ -2503,6 +2503,80 @@ index 18d5878..36d7020 100644
 +// CONV_2D as banded im2col + the regular F16 MUL_MAT dispatch. Each band of
 +// output rows produces exactly the im2col rows and GEMM rows of the
 +// decomposed ggml_conv_2d, without materializing the whole im2col matrix.
++
++#if GGML_SYCL_DNNL
++#include "dnnl.hpp"
++// CONV_2D through a oneDNN convolution (implicit GEMM on XMX): the input is
++// rounded to F16 exactly as im2col does, accumulation is FP32.
++static bool kuno_conv2d_onednn(ggml_backend_sycl_context & ctx, ggml_tensor * dst) try {
++    static const bool disabled = getenv("KUNO_DEV_NO_ONEDNN_CONV") != nullptr;
++    const ggml_tensor * kernel = dst->src[0];
++    const ggml_tensor * input = dst->src[1];
++    const int32_t * p = (const int32_t *) dst->op_params;
++    if (disabled || !g_ggml_sycl_enable_dnn || kernel->type != GGML_TYPE_F16 || input->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 ||
++        !ggml_is_contiguous(kernel) || !ggml_is_contiguous(input) || !ggml_is_contiguous(dst) || p[6] != 0) return false;
++    using namespace dnnl;
++    using tag = memory::format_tag;
++    using dt = memory::data_type;
++    const int s0 = p[0], s1 = p[1], p0 = p[2], p1 = p[3], d0 = p[4], d1 = p[5];
++    const int64_t IW = input->ne[0], IH = input->ne[1], IC = input->ne[2], N = input->ne[3];
++    const int64_t OW = dst->ne[0], OH = dst->ne[1], OC = kernel->ne[3], KW = kernel->ne[0], KH = kernel->ne[1];
++    if (kernel->ne[2] != IC || dst->ne[2] != OC || dst->ne[3] != N) return false;
++    auto queue = ctx.stream();
++    engine eng = ctx.engine_dnnl(queue);
++    stream strm = ctx.stream_dnnl(queue);
++    const memory::dims src_d = {N, IC, IH, IW}, wei_d = {OC, IC, KH, KW}, dst_d = {N, OC, OH, OW};
++    const memory::dims strides = {s1, s0}, dil = {d1 - 1, d0 - 1}, pad_l = {p1, p0};
++    // Right padding so that the output size matches ggml's.
++    const memory::dims pad_r = {(OH - 1) * s1 + (KH - 1) * d1 + 1 - IH - p1, (OW - 1) * s0 + (KW - 1) * d0 + 1 - IW - p0};
++    struct entry { convolution_forward::primitive_desc pd; convolution_forward prim; };
++    static std::unordered_map<std::string, entry> cache;
++    char key[256];
++    snprintf(key, sizeof key, "%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%d,%d,%d,%d,%d,%d", (long long) N, (long long) IC, (long long) IH,
++             (long long) IW, (long long) OC, (long long) KH, (long long) KW, (long long) OH, s0, s1, p0, p1, d0, d1);
++    auto it = cache.find(key);
++    if (it == cache.end()) {
++        auto src_md = memory::desc(src_d, dt::f16, tag::any);
++        auto wei_md = memory::desc(wei_d, dt::f16, tag::any);
++        auto dst_md = memory::desc(dst_d, dt::f32, tag::any);
++        primitive_attr attr;
++        attr.set_scratchpad_mode(scratchpad_mode::user);
++        auto pd = convolution_forward::primitive_desc(eng, prop_kind::forward_inference, algorithm::convolution_direct,
++                                                      src_md, wei_md, dst_md, strides, dil, pad_l, pad_r, attr);
++        it = cache.emplace(key, entry{pd, convolution_forward(pd)}).first;
++    }
++    auto & e = it->second;
++    // Input rounded to F16 (as im2col writes it), plain NCHW.
++    const int64_t n_in = N * IC * IH * IW;
++    ggml_sycl_pool_alloc<sycl::half> x16(ctx.pool(), size_t(n_in));
++    {
++        const float * x = (const float *) input->data; sycl::half * y = x16.get();
++        queue->parallel_for(sycl::range<1>(n_in), [=](sycl::id<1> i) { y[i] = x[i]; });
++    }
++    auto plain_src = memory({src_d, dt::f16, tag::nchw}, eng, x16.get());
++    auto plain_wei = memory({wei_d, dt::f16, tag::oihw}, eng, kernel->data);
++    auto plain_dst = memory({dst_d, dt::f32, tag::nchw}, eng, dst->data);
++    ggml_sycl_pool_alloc<uint8_t> src_buf(ctx.pool()), wei_buf(ctx.pool()), dst_buf(ctx.pool()), scratch(ctx.pool());
++    memory src_m = plain_src, wei_m = plain_wei, dst_m = plain_dst;
++    if (e.pd.src_desc() != plain_src.get_desc()) {
++        src_m = memory(e.pd.src_desc(), eng, src_buf.alloc(e.pd.src_desc().get_size()));
++        reorder(plain_src, src_m).execute(strm, plain_src, src_m);
++    }
++    if (e.pd.weights_desc() != plain_wei.get_desc()) {
++        wei_m = memory(e.pd.weights_desc(), eng, wei_buf.alloc(e.pd.weights_desc().get_size()));
++        reorder(plain_wei, wei_m).execute(strm, plain_wei, wei_m);
++    }
++    if (e.pd.dst_desc() != plain_dst.get_desc()) dst_m = memory(e.pd.dst_desc(), eng, dst_buf.alloc(e.pd.dst_desc().get_size()));
++    auto scratch_m = memory(e.pd.scratchpad_desc(), eng, e.pd.scratchpad_desc().get_size() ? scratch.alloc(e.pd.scratchpad_desc().get_size()) : nullptr);
++    e.prim.execute(strm, {{DNNL_ARG_SRC, src_m}, {DNNL_ARG_WEIGHTS, wei_m}, {DNNL_ARG_DST, dst_m}, {DNNL_ARG_SCRATCHPAD, scratch_m}});
++    if (dst_m != plain_dst) reorder(dst_m, plain_dst).execute(strm, dst_m, plain_dst);
++    return true;
++} catch (const std::exception & ex) {
++    static int warned = 0;
++    if (!warned++) fprintf(stderr, "kuno-image: onednn conv unavailable\n");
++    return false;
++}
++#endif
 +static bool kuno_conv2d_banded(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
 +#if GGML_SYCL_DNNL
 +    static const bool disabled = getenv("KUNO_DEV_NO_BANDED_CONV") != nullptr;
@@ -2568,16 +2642,19 @@ index 18d5878..36d7020 100644
  static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct ggml_tensor * dst) try {
      if (!g_sycl_loaded) return false;
  
-@@ -4915,7 +4998,7 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
+@@ -4915,7 +5072,10 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
              ggml_sycl_argmax(ctx, dst);
              break;
          case GGML_OP_CONV_2D:
 -            ggml_sycl_op_conv2d(ctx, dst);
++#if GGML_SYCL_DNNL
++            if (kuno_conv2d_onednn(ctx, dst)) break;
++#endif
 +            if (!kuno_conv2d_banded(ctx, dst)) ggml_sycl_op_conv2d(ctx, dst);
              break;
          case GGML_OP_CONV_2D_DW:
              ggml_sycl_op_conv2d_dw(ctx, dst);
-@@ -5110,7 +5193,16 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
+@@ -5110,7 +5270,16 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
          case GGML_OP_L2_NORM:
              ggml_sycl_l2_norm(ctx, dst);
              break;
@@ -2594,7 +2671,7 @@ index 18d5878..36d7020 100644
              if (dst->src[0]->ne[3] != dst->src[1]->ne[3]) {
                  return false;
              }
-@@ -5396,8 +5488,283 @@ catch (sycl::exception const &exc) {
+@@ -5396,8 +5565,283 @@ catch (sycl::exception const &exc) {
    std::exit(1);
  }
  
@@ -2878,7 +2955,7 @@ index 18d5878..36d7020 100644
  
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
-@@ -5408,6 +5775,10 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5408,6 +5852,10 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -2889,7 +2966,7 @@ index 18d5878..36d7020 100644
          const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
          if (nodes_to_skip != 0) {
              i += nodes_to_skip;
-@@ -5421,6 +5792,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5421,6 +5869,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              }
          }
  #endif
@@ -2969,7 +3046,7 @@ index 18d5878..36d7020 100644
          if (node->op == GGML_OP_RMS_NORM &&
              ggml_sycl_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL })) {
              ggml_sycl_op_rms_norm_fused(*sycl_ctx, node, cgraph->nodes[i + 1]);
-@@ -5428,12 +5872,20 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5428,12 +5949,20 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -2990,7 +3067,7 @@ index 18d5878..36d7020 100644
  }
  
  #ifdef GGML_SYCL_GRAPH
-@@ -5449,6 +5901,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5449,6 +5978,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
          switch (node_op) {
              default:
                  break;
@@ -3000,7 +3077,7 @@ index 18d5878..36d7020 100644
              case GGML_OP_CONCAT:
                  // ggml_sycl_op_concat() does a blocking host wait after memcpy operations,
                  // but wait() can't be called on the events returned by a queue recording
-@@ -5462,6 +5917,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5462,6 +5994,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
                                ggml_op_name(node_op));
                  return false;
              case GGML_OP_MUL_MAT:
@@ -3008,7 +3085,7 @@ index 18d5878..36d7020 100644
                  // We cannot use graphs with ggml_sycl_mul_mat() when SYCL async memory allocation extensions are not available,
                  // as SYCL malloc / free and host wait calls are not supported when recording to a graph which are all present
                  // in reordering.
-@@ -5602,6 +6058,7 @@ struct ggml_backend_sycl_device_context {
+@@ -5602,6 +6135,7 @@ struct ggml_backend_sycl_device_context {
      int device;
      std::string name;
      std::string description;
@@ -3016,7 +3093,7 @@ index 18d5878..36d7020 100644
      int op_offload_min_batch_size;
  };
  
-@@ -5632,6 +6089,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
+@@ -5632,6 +6166,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
  }
  
  static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
@@ -3025,7 +3102,7 @@ index 18d5878..36d7020 100644
      props->name        = ggml_backend_sycl_device_get_name(dev);
      props->description = ggml_backend_sycl_device_get_description(dev);
      props->type        = ggml_backend_sycl_device_get_type(dev);
-@@ -5736,9 +6195,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -5736,9 +6272,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
              }
              break;
@@ -3044,7 +3121,7 @@ index 18d5878..36d7020 100644
                  struct ggml_tensor * a = op->src[0];
                  struct ggml_tensor * b = op->src[1];
  
-@@ -6499,6 +6967,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+@@ -6499,6 +7044,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                  SYCL_CHECK(CHECK_TRY_ERROR(dpct::get_device_info(
                      prop, dpct::dev_mgr::instance().get_device(i))));
  
