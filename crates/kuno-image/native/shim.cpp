@@ -49,10 +49,6 @@ static void preview(int step, int count, sd_image_t* frames, bool noisy, void* d
 }
 
 static void discard_sd(enum sd_log_level_t level, const char* text, void*) {
-#ifdef KUNO_NATIVE_SYCL_DEV
-    static const bool dev_log = getenv("KUNO_DEV_SD_LOG") != nullptr;
-    if (dev_log && text && (std::strstr(text, "taking") || std::strstr(text, "completed") || std::strstr(text, " ms") || std::strstr(text, "MB") || std::strstr(text, "evict"))) std::fprintf(stderr, "KUNO_DEV_SD %s", text);
-#endif
     if (text && std::strstr(text,"host prefix cache pipeline active")) std::fprintf(stderr,"kuno-image: cache transfer pipeline active\n");
     if (level != SD_LOG_ERROR || !text) return;
     if (std::strstr(text,"ErrorDeviceLost")) device_lost.store(true);
@@ -68,14 +64,8 @@ static void discard_sd(enum sd_log_level_t level, const char* text, void*) {
 static void discard_ggml(enum ggml_log_level, const char* text, void*) {
     if (text && std::strstr(text,"ErrorDeviceLost")) device_lost.store(true);
 }
-#ifdef KUNO_NATIVE_SYCL_DEV
-extern "C" void kuno_dev_prof_mark(int, int);
-#endif
 static void progress(int step, int steps, float, void* data) {
     auto* state=static_cast<Progress*>(data);
-#ifdef KUNO_NATIVE_SYCL_DEV
-    kuno_dev_prof_mark(step, steps);
-#endif
     if (cancelled && state->context) sd_cancel_generation(state->context,SD_CANCEL_ALL);
     std::fprintf(stderr,"kuno-image: progress %d/%d\n",step,steps);
 }

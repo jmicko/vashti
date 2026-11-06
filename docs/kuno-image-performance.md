@@ -1410,3 +1410,53 @@ Ollama inference deadlines remain zero. All benchmark workers are stopped and th
 benchmark unit is inactive. Classified Xe fault and NVIDIA Xid counts are zero
 for this boot. Both GPUs are released. No new prompts/images/previews, raw errors
 or content digests are saved by the test clients or Kuno.
+
+## Claude speed candidate (2026-11-05/06)
+
+Branch `claude/image-speed`; dev source/build tree `/media/jmicko/faststore/dev/kuno-image-dev`
+(source = whole-RoPE closure + these changes, `final-build.sh` builds the AOT worker).
+Candidate runtime (not installed): `/usr/local/lib/kuno-test/qwen21-claude-speed-v1`,
+worker `d4f1521ada834f37dd41cfb76ba507cf679701f7de335b292efeef6e6be11f37`.
+
+Changes (all in patch 003 unless noted):
+
+- ConvRot quantizer: row-parallel sub-group kernel (register radix-4 stages + padded SLM
+  transpose, original stage order/expressions). The IMF `fmul_rn` software multiply is
+  replaced by the IEEE multiply except for rows whose inverse scale is >= 1e30. ~4x faster;
+  bytes and scales identical to the legacy kernel (incl. zero/subnormal/inf/NaN rows).
+- Fusions (bit-identical to the unfused ops, verified on 1184x1776, 1024x1024 CFG4,
+  640x896 and 1024x768 edit with byte-compare replays): gate_up GEMM + SwiGLU + quantize;
+  MUL(row)/SCALE + quantize; out/down GEMM epilogue + SCALE + gate MUL + residual ADD;
+  q/k GEMM + per-head RMS norm + whole RoPE (K written as F16 into the prefix concat);
+  V CPY+CONCAT+PERMUTE+CONT gather; oneDNN attention F16 output straight into the
+  out-projection quantizer and an F16 Q copy from the q kernel. All fusions check for
+  allocator buffer reuse between fused inputs and outputs and fall back otherwise.
+- Same-shape float copies without 64-bit index division; tiled transpose copies; faster
+  attention Q/O conversions.
+- Wan VAE on SYCL uses CONV_2D (patch 001 `model_builders.cpp`) implemented with a oneDNN
+  convolution (fallback: banded im2col + the same oneDNN GEMM). The full im2col matrix
+  (VAE compute buffer 19.6 GB) is gone (9.2 GB), so the text encoder is no longer evicted
+  and re-staged every request. Not bit-identical: max 1 level in ~0.3% of channels vs the
+  im2col path.
+- Weight uploads through two pinned 64 MiB chunks (~5 GB/s instead of ~1.5 GB/s).
+- AOT device code for bmg-g31 (`GGML_SYCL_DEVICE_ARCH`, `sycl-runtime-linker.sh` with
+  `KUNO_SYCL_AOT_DEVICE`/`KUNO_OCLOC_DIR` at build time; managed builder `--ocloc`).
+  ocloc 26.35 was extracted locally (not installed) and works with the installed IGC.
+  Removes ~15 s of first-request JIT.
+
+Protected harness (`full-resident-bench.py` copy that checks new Xe events instead of
+requiring zero since boot; two pre-existing resets were from a dev bug before this run),
+original recipes, installed baseline vs candidate, separate processes:
+
+| Workload | ComfyUI (user) | Installed | Candidate |
+| --- | ---: | ---: | ---: |
+| Generate 50 steps first | 132.06 s | 124.156 s | 67.132 s |
+| Generate warm | 100.65 s | 106.726 s | 61.667 s |
+| Edit 25 steps first | 78.25 s | 84.624 s | 40.922 s |
+| Edit warm | 64.48 s | 61.963 s | 37.686 s |
+
+Pixel differences vs installed: generate mean 0.143/0.148 (max 28/72), edit mean
+1.29/1.41 — the same envelope as the earlier identical-runtime controls (0.14; edit 1.1-1.8).
+All previews/PNG/privacy/residency checks passed, normal idle shutdown, zero new kernel
+events. Cancellation after first preview: 1.85 s generate / 2.05 s edit, no forced stop,
+recovery and shutdown normal. Not installed; the installed runtime is unchanged.
