@@ -1355,6 +1355,23 @@ index d1a8866..349f5aa 100644
  
      bool reset_runners(const RunnerGroups& groups);
  
+diff --git a/src/pipeline/model_builders.cpp b/src/pipeline/model_builders.cpp
+index 9b8819a..7dc3fb8 100644
+--- a/src/pipeline/model_builders.cpp
++++ b/src/pipeline/model_builders.cpp
+@@ -615,6 +615,12 @@ namespace sd::model_builders {
+                 result.preview->set_conv3d_direct_enabled(true);
+             }
+         }
++        else if (result.vae && sd_backend_is(ctx.backends.runtime_backend(SDBackendModule::VAE), "SYCL")) {
++            // The SYCL CONV_2D op runs banded im2col + the regular F16 GEMM:
++            // identical results without the full im2col matrix (19+ GB for a
++            // 1184x1776 Wan VAE decode), so model weights stay resident.
++            result.vae->set_conv2d_direct_enabled(true);
++        }
+         if (result.vae) {
+             result.vae->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
+         }
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
 index b13c055..91dfccc 100644
 --- a/src/stable-diffusion.cpp

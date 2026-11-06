@@ -2440,7 +2440,7 @@ index 4a6027f..818fbe7 100644
          const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
          const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 18d5878..327f9a3 100644
+index 18d5878..36d7020 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -59,6 +59,9 @@
@@ -2476,7 +2476,16 @@ index 18d5878..327f9a3 100644
          info.devices[i].max_wg_per_cu = info.max_work_group_sizes[i] / prop.get_max_compute_units();
          info.devices[i].hw_info = get_device_hw_info(&device);
  
-@@ -1607,6 +1619,9 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
+@@ -1587,6 +1599,8 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
+ 
+         *actual_size = look_ahead_size;
+         pool_size += look_ahead_size;
++        if (getenv("KUNO_DEV_POOL_LOG")) fprintf(stderr, "KUNO_DEV_POOL new %.1f MiB (request %.1f) total %.1f MiB\n",
++            look_ahead_size / 1048576.0, size / 1048576.0, pool_size / 1048576.0);
+ 
+ #ifdef DEBUG_SYCL_MALLOC
+         GGML_LOG_DEBUG("%s[%d]: %d buffers, max_size = %u MB, pool_size = %u MB, requested %u MB\n", __func__, id, nnz,
+@@ -1607,6 +1621,9 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
              }
          }
          GGML_LOG_WARN("WARNING: sycl buffer pool full, increase MAX_sycl_BUFFERS\n");
@@ -2486,7 +2495,89 @@ index 18d5878..327f9a3 100644
          SYCL_CHECK(CHECK_TRY_ERROR(ggml_sycl_free_device(ptr, *qptr)));
          pool_size -= size;
      }
-@@ -5110,7 +5125,16 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
+@@ -4903,6 +4920,72 @@ catch (sycl::exception const &exc) {
+   std::exit(1);
+ }
+ 
++
++// CONV_2D as banded im2col + the regular F16 MUL_MAT dispatch. Each band of
++// output rows produces exactly the im2col rows and GEMM rows of the
++// decomposed ggml_conv_2d, without materializing the whole im2col matrix.
++static bool kuno_conv2d_banded(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
++#if GGML_SYCL_DNNL
++    static const bool disabled = getenv("KUNO_DEV_NO_BANDED_CONV") != nullptr;
++    const ggml_tensor * kernel = dst->src[0];
++    const ggml_tensor * input = dst->src[1];
++    const int32_t * p = (const int32_t *) dst->op_params;
++    if (disabled || !g_ggml_sycl_enable_dnn || kernel->type != GGML_TYPE_F16 || input->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 ||
++        !ggml_is_contiguous(kernel) || !ggml_is_contiguous(input) || !ggml_is_contiguous(dst) || p[6] != 0) return false;
++    const int s0 = p[0], s1 = p[1], p0 = p[2], p1 = p[3], d0 = p[4], d1 = p[5];
++    const int64_t IW = input->ne[0], IH = input->ne[1], IC = input->ne[2], N = input->ne[3];
++    const int64_t OW = dst->ne[0], OH = dst->ne[1], OC = kernel->ne[3], KW = kernel->ne[0], KH = kernel->ne[1];
++    if (kernel->ne[2] != IC || dst->ne[2] != OC || dst->ne[3] != N) return false;
++    const int64_t K = KW * KH * IC, M = OW * OH;
++    auto queue = ctx.stream();
++    // ~256 MiB of F16 im2col per band.
++    int64_t band = std::max<int64_t>(1, (256ll << 20) / (K * OW * 2));
++    band = std::min(band, OH);
++    ggml_sycl_pool_alloc<sycl::half> cols(ctx.pool(), size_t(K * OW * band));
++    ggml_sycl_pool_alloc<float> prod(ctx.pool(), size_t(OW * band * OC));
++    const sycl::half * weights = (const sycl::half *) kernel->data;
++    // The decomposed graph's MUL_MAT(im2col[K, M], kernel[K, OC]) reaches this
++    // same oneDNN row GEMM with m = M rows, n = OC, k = K.
++    for (int64_t n = 0; n < N; ++n) {
++        for (int64_t oh0 = 0; oh0 < OH; oh0 += band) {
++            const int64_t rows = std::min(band, OH - oh0), mb = rows * OW;
++            kuno_im2col_f16_rows((const float *) input->data, cols.get(), IW, IH, OW, OH, KW, KH, IC, IH * IW, IC * IH * IW,
++                                 s0, s1, p0, p1, d0, d1, n * OH + oh0, n * OH + oh0 + rows, queue);
++            DnnlGemmWrapper::row_gemm(ctx, mb, OC, K, cols.get(), DnnlGemmWrapper::to_dt<sycl::half>(),
++                                      weights, DnnlGemmWrapper::to_dt<sycl::half>(), prod.get(), DnnlGemmWrapper::to_dt<float>(), queue);
++            float * out = (float *) dst->data + n * OC * M + oh0 * OW;
++            const float * src = prod.get();
++            queue->parallel_for(sycl::range<2>(OC, mb), [=](sycl::id<2> at) {
++                out[at[0] * M + at[1]] = src[at[0] * mb + at[1]];
++            });
++        }
++    }
++    static const bool check = getenv("KUNO_DEV_FUSE_CHECK") != nullptr;
++    if (check && N == 1 && K * M * 2 < (6ll << 30)) {
++        // Reference: whole im2col + the original MUL_MAT path through the backend dispatcher.
++        sycl::half * full = sycl::malloc_device<sycl::half>(K * M, *queue);
++        float * ref = sycl::malloc_device<float>(M * OC, *queue);
++        kuno_im2col_f16_rows((const float *) input->data, full, IW, IH, OW, OH, KW, KH, IC, IH * IW, IC * IH * IW,
++                             s0, s1, p0, p1, d0, d1, 0, OH, queue);
++        DnnlGemmWrapper::row_gemm(ctx, M, OC, K, full, DnnlGemmWrapper::to_dt<sycl::half>(),
++                                  weights, DnnlGemmWrapper::to_dt<sycl::half>(), ref, DnnlGemmWrapper::to_dt<float>(), queue);
++        unsigned * bad = sycl::malloc_shared<unsigned>(1, *queue); bad[0] = 0;
++        const uint32_t * x = (const uint32_t *) dst->data; const uint32_t * y = (const uint32_t *) ref;
++        queue->parallel_for(sycl::range<1>(M * OC), [=](sycl::id<1> q) {
++            if (x[q] != y[q]) sycl::atomic_ref<unsigned, sycl::memory_order::relaxed, sycl::memory_scope::device>(bad[0]).fetch_add(1u);
++        }).wait();
++        static unsigned calls = 0, failing = 0; calls++; if (bad[0]) failing++;
++        fprintf(stderr, "KUNO_DEV_FUSE_CHECK banded_conv K=%lld M=%lld OC=%lld band=%lld mismatch=%u calls=%u failing=%u\n",
++                (long long) K, (long long) M, (long long) OC, (long long) band, bad[0], calls, failing);
++        sycl::free(bad, *queue); sycl::free(full, *queue); sycl::free(ref, *queue);
++    }
++    return true;
++#else
++    GGML_UNUSED(ctx); GGML_UNUSED(dst);
++    return false;
++#endif
++}
++
+ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct ggml_tensor * dst) try {
+     if (!g_sycl_loaded) return false;
+ 
+@@ -4915,7 +4998,7 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
+             ggml_sycl_argmax(ctx, dst);
+             break;
+         case GGML_OP_CONV_2D:
+-            ggml_sycl_op_conv2d(ctx, dst);
++            if (!kuno_conv2d_banded(ctx, dst)) ggml_sycl_op_conv2d(ctx, dst);
+             break;
+         case GGML_OP_CONV_2D_DW:
+             ggml_sycl_op_conv2d_dw(ctx, dst);
+@@ -5110,7 +5193,16 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
          case GGML_OP_L2_NORM:
              ggml_sycl_l2_norm(ctx, dst);
              break;
@@ -2503,7 +2594,7 @@ index 18d5878..327f9a3 100644
              if (dst->src[0]->ne[3] != dst->src[1]->ne[3]) {
                  return false;
              }
-@@ -5396,8 +5420,279 @@ catch (sycl::exception const &exc) {
+@@ -5396,8 +5488,283 @@ catch (sycl::exception const &exc) {
    std::exit(1);
  }
  
@@ -2558,6 +2649,10 @@ index 18d5878..327f9a3 100644
 +// Called by the dev shim's progress callback: reset after step 2, dump at the last step.
 +extern "C" void kuno_dev_prof_mark(int step, int steps) {
 +    if (!g_kuno_dev_prof.on) return;
++    if (step == 0) {
++        fprintf(stderr, "KUNO_DEV_PROF pre-phase (steps=%d)\n", steps);
++        g_kuno_dev_prof.dump(); g_kuno_dev_prof.rows.clear(); g_kuno_dev_prof.key.clear();
++    }
 +    if (step == 2) { g_kuno_dev_prof.rows.clear(); g_kuno_dev_prof.key.clear(); }
 +    if (step == steps) {
 +        fprintf(stderr, "KUNO_DEV_PROF steps %d\n", steps - 2);
@@ -2783,7 +2878,7 @@ index 18d5878..327f9a3 100644
  
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
-@@ -5408,6 +5703,10 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5408,6 +5775,10 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -2794,7 +2889,7 @@ index 18d5878..327f9a3 100644
          const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
          if (nodes_to_skip != 0) {
              i += nodes_to_skip;
-@@ -5421,6 +5720,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5421,6 +5792,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              }
          }
  #endif
@@ -2874,7 +2969,7 @@ index 18d5878..327f9a3 100644
          if (node->op == GGML_OP_RMS_NORM &&
              ggml_sycl_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL })) {
              ggml_sycl_op_rms_norm_fused(*sycl_ctx, node, cgraph->nodes[i + 1]);
-@@ -5428,12 +5800,20 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5428,12 +5872,20 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -2895,7 +2990,7 @@ index 18d5878..327f9a3 100644
  }
  
  #ifdef GGML_SYCL_GRAPH
-@@ -5449,6 +5829,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5449,6 +5901,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
          switch (node_op) {
              default:
                  break;
@@ -2905,7 +3000,7 @@ index 18d5878..327f9a3 100644
              case GGML_OP_CONCAT:
                  // ggml_sycl_op_concat() does a blocking host wait after memcpy operations,
                  // but wait() can't be called on the events returned by a queue recording
-@@ -5462,6 +5845,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5462,6 +5917,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
                                ggml_op_name(node_op));
                  return false;
              case GGML_OP_MUL_MAT:
@@ -2913,7 +3008,7 @@ index 18d5878..327f9a3 100644
                  // We cannot use graphs with ggml_sycl_mul_mat() when SYCL async memory allocation extensions are not available,
                  // as SYCL malloc / free and host wait calls are not supported when recording to a graph which are all present
                  // in reordering.
-@@ -5602,6 +5986,7 @@ struct ggml_backend_sycl_device_context {
+@@ -5602,6 +6058,7 @@ struct ggml_backend_sycl_device_context {
      int device;
      std::string name;
      std::string description;
@@ -2921,7 +3016,7 @@ index 18d5878..327f9a3 100644
      int op_offload_min_batch_size;
  };
  
-@@ -5632,6 +6017,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
+@@ -5632,6 +6089,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
  }
  
  static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
@@ -2930,7 +3025,7 @@ index 18d5878..327f9a3 100644
      props->name        = ggml_backend_sycl_device_get_name(dev);
      props->description = ggml_backend_sycl_device_get_description(dev);
      props->type        = ggml_backend_sycl_device_get_type(dev);
-@@ -5736,9 +6123,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -5736,9 +6195,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
              }
              break;
@@ -2949,7 +3044,7 @@ index 18d5878..327f9a3 100644
                  struct ggml_tensor * a = op->src[0];
                  struct ggml_tensor * b = op->src[1];
  
-@@ -6499,6 +6895,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+@@ -6499,6 +6967,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                  SYCL_CHECK(CHECK_TRY_ERROR(dpct::get_device_info(
                      prop, dpct::dev_mgr::instance().get_device(i))));
  
@@ -2984,7 +3079,7 @@ index 0000000..9735cbf
 +    return std::min<int64_t>(65535, max_work_items / (padded_channels * width));
 +}
 diff --git a/src/ggml-sycl/im2col.cpp b/src/ggml-sycl/im2col.cpp
-index 7bf3584..f48b102 100644
+index 7bf3584..8c8ad47 100644
 --- a/src/ggml-sycl/im2col.cpp
 +++ b/src/ggml-sycl/im2col.cpp
 @@ -11,6 +11,7 @@
@@ -3100,6 +3195,48 @@ index 7bf3584..f48b102 100644
  }
  
  static void im2col_3d_sycl_f16(const float *   src,
+@@ -398,3 +408,27 @@ void ggml_sycl_op_im2col_3d(ggml_backend_sycl_context & ctx, ggml_tensor * dst)
+                            s0, s1, s2, p0, p1, p2, d0, d1, d2, stream);
+     }
+ }
++
++// Rows [row_begin, row_end) of the N*OH output rows, written to the start of
++// `band`. Same kernel and per-element conversion as the full im2col.
++void kuno_im2col_f16_rows(const float * x, sycl::half * band, int64_t IW, int64_t IH, int64_t OW, int64_t OH,
++                          int64_t KW, int64_t KH, int64_t IC, int64_t IC_IH_IW /* channel stride */, int64_t IH_IW /* batch stride */,
++                          int s0, int s1, int p0, int p1, int d0, int d1,
++                          int64_t row_begin, int64_t row_end, dpct::queue_ptr stream) {
++    const int64_t IC_KH_KW = IC * KH * KW;
++    const int64_t num_blocks = (IC_KH_KW + SYCL_IM2COL_BLOCK_SIZE - 1) / SYCL_IM2COL_BLOCK_SIZE;
++    const int64_t KH_KW = KW * KH;
++    const int64_t local_size = MIN(IC_KH_KW, SYCL_IM2COL_BLOCK_SIZE);
++    const int64_t rows_per_launch = ggml_sycl_im2col_rows_per_launch(num_blocks * local_size, OW);
++    GGML_ASSERT(rows_per_launch > 0);
++    sycl::half * dst = band - row_begin * OW * IC_KH_KW;
++    for (int64_t begin = row_begin; begin < row_end; begin += rows_per_launch) {
++        const int64_t end = std::min(row_end, begin + rows_per_launch);
++        dpct::dim3 block_nums(num_blocks, OW, end - begin);
++        const sycl::range<3> local(1, 1, local_size);
++        stream->parallel_for(sycl::nd_range<3>(block_nums * local, local), [=](sycl::nd_item<3> item_ct1) {
++            im2col_kernel(x, dst, IC, IW, IH, OH, OW, KW, KH, IC_IH_IW, IH_IW, begin, end, KH_KW, IC_KH_KW,
++                          s0, s1, p0, p1, d0, d1);
++        });
++    }
++}
+diff --git a/src/ggml-sycl/im2col.hpp b/src/ggml-sycl/im2col.hpp
+index 976d109..c422d3b 100644
+--- a/src/ggml-sycl/im2col.hpp
++++ b/src/ggml-sycl/im2col.hpp
+@@ -20,4 +20,9 @@
+ void ggml_sycl_op_im2col(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
+ void ggml_sycl_op_im2col_3d(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
+ 
++void kuno_im2col_f16_rows(const float * x, sycl::half * band, int64_t IW, int64_t IH, int64_t OW, int64_t OH,
++                          int64_t KW, int64_t KH, int64_t IC, int64_t IC_IH_IW /* channel stride */, int64_t IH_IW /* batch stride */,
++                          int s0, int s1, int p0, int p1, int d0, int d1,
++                          int64_t row_begin, int64_t row_end, dpct::queue_ptr stream);
++
+ #endif // GGML_SYCL_IM2COL_HPP
 diff --git a/src/ggml-sycl/mul-add-policy.hpp b/src/ggml-sycl/mul-add-policy.hpp
 new file mode 100644
 index 0000000..8e833d6
