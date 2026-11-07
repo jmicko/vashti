@@ -465,7 +465,14 @@ async fn start(config: &Config) -> Result<Worker> {
         .kill_on_drop(true);
     unsafe {
         command.pre_exec(move || {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0
+            // systemd signals the whole cgroup on stop. The worker shuts down
+            // when the gateway closes stdin (after draining), so a stop signal
+            // must not kill it first and turn a clean stop into a close
+            // failure. The ignored disposition survives exec; the worker
+            // never installs its own handlers. PDEATHSIG and SIGKILL remain.
+            if libc::signal(libc::SIGTERM, libc::SIG_IGN) == libc::SIG_ERR
+                || libc::signal(libc::SIGINT, libc::SIG_IGN) == libc::SIG_ERR
+                || libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0
                 || libc::getppid() as u32 != parent
             {
                 return Err(std::io::Error::other("native_parent_unavailable"));
