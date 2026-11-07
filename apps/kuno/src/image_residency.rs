@@ -10,7 +10,10 @@ pub type VideoProgress = watch::Sender<Option<(VideoPhase, u32, u32)>>;
 pub enum Job {
     Image(ImageRecipe),
     /// Cleared on drop on every path, including validation failures.
-    Video(kuno_image::worker_protocol::TransientVideoRecipe, VideoProgress),
+    Video(
+        kuno_image::worker_protocol::TransientVideoRecipe,
+        VideoProgress,
+    ),
 }
 use std::{
     path::{Path, PathBuf},
@@ -90,8 +93,15 @@ impl ImageRuntime {
         shutdown: watch::Receiver<bool>,
         previews: watch::Sender<Option<kuno_image::preview::Preview>>,
     ) -> Finished {
-        self.run_job(executable, config, Job::Image(recipe), response, shutdown, previews)
-            .await
+        self.run_job(
+            executable,
+            config,
+            Job::Image(recipe),
+            response,
+            shutdown,
+            previews,
+        )
+        .await
     }
 
     pub async fn run_job(

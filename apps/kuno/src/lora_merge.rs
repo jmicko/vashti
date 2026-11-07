@@ -14,13 +14,7 @@
 use rayon::prelude::*;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeMap,
-    fs::File,
-    io::Write,
-    os::unix::fs::FileExt,
-    path::Path,
-};
+use std::{collections::BTreeMap, fs::File, io::Write, os::unix::fs::FileExt, path::Path};
 
 type Result<T> = std::result::Result<T, &'static str>;
 const MAX_HEADER: u64 = 64 * 1024 * 1024;
@@ -43,24 +37,34 @@ impl Tensors {
     fn open(path: &Path) -> Result<Self> {
         let file = File::open(path).map_err(|_| "model_file_unavailable")?;
         let mut size = [0u8; 8];
-        file.read_exact_at(&mut size, 0).map_err(|_| "model_read_failed")?;
+        file.read_exact_at(&mut size, 0)
+            .map_err(|_| "model_read_failed")?;
         let n = u64::from_le_bytes(size);
         if n > MAX_HEADER {
             return Err("model_header_invalid");
         }
         let mut header_bytes = vec![0u8; n as usize];
-        file.read_exact_at(&mut header_bytes, 8).map_err(|_| "model_read_failed")?;
+        file.read_exact_at(&mut header_bytes, 8)
+            .map_err(|_| "model_read_failed")?;
         let header = serde_json::from_slice::<Value>(&header_bytes)
             .ok()
             .and_then(|v| v.as_object().cloned())
             .ok_or("model_header_invalid")?;
-        Ok(Self { file, base: 8 + n, header, header_bytes })
+        Ok(Self {
+            file,
+            base: 8 + n,
+            header,
+            header_bytes,
+        })
     }
     fn entry(&self, name: &str) -> Result<Entry> {
         let e = self.header.get(name).ok_or("lora_merge_tensor_missing")?;
         let offsets = e["data_offsets"].as_array().ok_or("model_header_invalid")?;
         let (start, end) = match offsets.as_slice() {
-            [a, b] => (a.as_u64().ok_or("model_header_invalid")?, b.as_u64().ok_or("model_header_invalid")?),
+            [a, b] => (
+                a.as_u64().ok_or("model_header_invalid")?,
+                b.as_u64().ok_or("model_header_invalid")?,
+            ),
             _ => return Err("model_header_invalid"),
         };
         let shape = e["shape"]
@@ -70,11 +74,19 @@ impl Tensors {
             .map(|d| d.as_u64().map(|d| d as usize))
             .collect::<Option<Vec<_>>>()
             .ok_or("model_header_invalid")?;
-        let dtype = e["dtype"].as_str().ok_or("model_header_invalid")?.to_owned();
+        let dtype = e["dtype"]
+            .as_str()
+            .ok_or("model_header_invalid")?
+            .to_owned();
         if end < start {
             return Err("model_header_invalid");
         }
-        Ok(Entry { dtype, shape, start, end })
+        Ok(Entry {
+            dtype,
+            shape,
+            start,
+            end,
+        })
     }
     fn bytes(&self, entry: &Entry) -> Result<Vec<u8>> {
         let mut out = vec![0u8; (entry.end - entry.start) as usize];
@@ -122,7 +134,12 @@ fn rotate(row: &mut [f32], group: usize) {
         while stride < group {
             for block in chunk.chunks_exact_mut(4 * stride) {
                 for t in 0..stride {
-                    let (a, b, c, d) = (block[t], block[stride + t], block[2 * stride + t], block[3 * stride + t]);
+                    let (a, b, c, d) = (
+                        block[t],
+                        block[stride + t],
+                        block[2 * stride + t],
+                        block[3 * stride + t],
+                    );
                     block[t] = (a + b + c - d) * 0.5;
                     block[stride + t] = (a + b - c + d) * 0.5;
                     block[2 * stride + t] = (a - b + c + d) * 0.5;
@@ -135,7 +152,15 @@ fn rotate(row: &mut [f32], group: usize) {
 }
 
 /// dW row i = scale * sum_k B[i,k] * A[k,:], accumulated in k order.
-fn delta_row(b: &[f32], a: &[f32], rank: usize, cols: usize, i: usize, scale: f32, out: &mut [f32]) {
+fn delta_row(
+    b: &[f32],
+    a: &[f32],
+    rank: usize,
+    cols: usize,
+    i: usize,
+    scale: f32,
+    out: &mut [f32],
+) {
     out.fill(0.0);
     for k in 0..rank {
         let bk = b[i * rank + k];
@@ -155,7 +180,13 @@ struct Lora {
     scale: f32,
 }
 
-fn lora_for(lora: &Tensors, module: &str, multiplier: f64, rows: usize, cols: usize) -> Result<Lora> {
+fn lora_for(
+    lora: &Tensors,
+    module: &str,
+    multiplier: f64,
+    rows: usize,
+    cols: usize,
+) -> Result<Lora> {
     let prefix = format!("diffusion_model.{module}");
     let (a, a_shape) = lora.f32s(&format!("{prefix}.lora_A.weight"))?;
     let (b, b_shape) = lora.f32s(&format!("{prefix}.lora_B.weight"))?;
@@ -166,23 +197,42 @@ fn lora_for(lora: &Tensors, module: &str, multiplier: f64, rows: usize, cols: us
     }
     // Computed in f64 then rounded, as numpy's float32(multiplier * alpha / rank).
     let scale = (multiplier * f64::from(alpha[0]) / rank as f64) as f32;
-    Ok(Lora { a, b, rank, cols, rows, scale })
+    Ok(Lora {
+        a,
+        b,
+        rank,
+        cols,
+        rows,
+        scale,
+    })
 }
 
 /// Returns (weight bytes, scale bytes) for an INT8 ConvRot linear.
-fn merge_int8(base: &Tensors, lora: &Tensors, module: &str, multiplier: f64) -> Result<(Vec<u8>, Vec<u8>)> {
+fn merge_int8(
+    base: &Tensors,
+    lora: &Tensors,
+    module: &str,
+    multiplier: f64,
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let conf_entry = base.entry(&format!("{module}.comfy_quant"))?;
-    let conf: Value = serde_json::from_slice(&base.bytes(&conf_entry)?).map_err(|_| "lora_merge_quant_unsupported")?;
+    let conf: Value = serde_json::from_slice(&base.bytes(&conf_entry)?)
+        .map_err(|_| "lora_merge_quant_unsupported")?;
     if conf["format"] != "int8_tensorwise" || conf["convrot"] != true {
         return Err("lora_merge_quant_unsupported");
     }
-    let group = conf["convrot_groupsize"].as_u64().ok_or("lora_merge_quant_unsupported")? as usize;
+    let group = conf["convrot_groupsize"]
+        .as_u64()
+        .ok_or("lora_merge_quant_unsupported")? as usize;
     let weight = base.entry(&format!("{module}.weight"))?;
     let (rows, cols) = match weight.shape.as_slice() {
         [r, c] if weight.dtype == "I8" => (*r, *c),
         _ => return Err("lora_merge_shape_invalid"),
     };
-    if group < 4 || !group.is_power_of_two() || group.trailing_zeros() % 2 != 0 || cols % group != 0 {
+    if group < 4
+        || !group.is_power_of_two()
+        || !group.trailing_zeros().is_multiple_of(2)
+        || !cols.is_multiple_of(group)
+    {
         return Err("lora_merge_quant_unsupported");
     }
     let q = base.bytes(&weight)?;
@@ -250,13 +300,23 @@ fn merge_bf16(base: &Tensors, lora: &Tensors, module: &str, multiplier: f64) -> 
 
 /// Writes `out` (which must not exist) and returns its SHA-256. The header is unchanged:
 /// every merged tensor keeps its dtype, shape and offsets.
-pub fn merge(base_path: &Path, lora_path: &Path, out: &Path, multiplier: f64, progress: impl Fn(usize, usize)) -> Result<String> {
+pub fn merge(
+    base_path: &Path,
+    lora_path: &Path,
+    out: &Path,
+    multiplier: f64,
+    progress: impl Fn(usize, usize),
+) -> Result<String> {
     let base = Tensors::open(base_path)?;
     let lora = Tensors::open(lora_path)?;
     let modules: Vec<String> = lora
         .header
         .keys()
-        .filter_map(|k| k.strip_suffix(".lora_A.weight")?.strip_prefix("diffusion_model.").map(str::to_owned))
+        .filter_map(|k| {
+            k.strip_suffix(".lora_A.weight")?
+                .strip_prefix("diffusion_model.")
+                .map(str::to_owned)
+        })
         .collect();
     if modules.is_empty() {
         return Err("lora_merge_empty");
@@ -297,7 +357,10 @@ pub fn merge(base_path: &Path, lora_path: &Path, out: &Path, multiplier: f64, pr
         if let Some(module) = owner.get(&name) {
             if !pending.contains_key(&name) {
                 if base.entry(&format!("{module}.weight"))?.dtype == "BF16" {
-                    pending.insert(format!("{module}.weight"), merge_bf16(&base, &lora, module, multiplier)?);
+                    pending.insert(
+                        format!("{module}.weight"),
+                        merge_bf16(&base, &lora, module, multiplier)?,
+                    );
                 } else {
                     let (q, s) = merge_int8(&base, &lora, module, multiplier)?;
                     pending.insert(format!("{module}.weight"), q);
@@ -336,7 +399,9 @@ mod tests {
     use super::*;
     #[test]
     fn rotation_is_an_involution_and_orthonormal() {
-        let original: Vec<f32> = (0..512).map(|i| ((i * 37 % 101) as f32 - 50.0) / 8.0).collect();
+        let original: Vec<f32> = (0..512)
+            .map(|i| ((i * 37 % 101) as f32 - 50.0) / 8.0)
+            .collect();
         let mut row = original.clone();
         rotate(&mut row, 256);
         let norm = |v: &[f32]| v.iter().map(|x| x * x).sum::<f32>();
@@ -362,7 +427,10 @@ mod tests {
         let mut out = vec![0f32; cols];
         delta_row(&b, &a, rank, cols, 1, 2.0, &mut out);
         for j in 0..cols {
-            let expect: f32 = (0..rank).map(|k| b[rank + k] * a[k * cols + j]).sum::<f32>() * 2.0;
+            let expect: f32 = (0..rank)
+                .map(|k| b[rank + k] * a[k * cols + j])
+                .sum::<f32>()
+                * 2.0;
             assert_eq!(out[j], expect);
         }
     }
@@ -376,11 +444,17 @@ mod tests {
 fn real_merge() {
     let var = |k| std::path::PathBuf::from(std::env::var_os(k).expect(k));
     let start = std::time::Instant::now();
-    let sha = merge(&var("KUNO_MERGE_BASE"), &var("KUNO_MERGE_LORA"), &var("KUNO_MERGE_OUT"), 1.0, |d, n| {
-        if d % 20 == 0 || d == n {
-            eprintln!("merged {d}/{n} at {:.1} s", start.elapsed().as_secs_f64());
-        }
-    })
+    let sha = merge(
+        &var("KUNO_MERGE_BASE"),
+        &var("KUNO_MERGE_LORA"),
+        &var("KUNO_MERGE_OUT"),
+        1.0,
+        |d, n| {
+            if d % 20 == 0 || d == n {
+                eprintln!("merged {d}/{n} at {:.1} s", start.elapsed().as_secs_f64());
+            }
+        },
+    )
     .unwrap();
     eprintln!("sha256 {sha} in {:.1} s", start.elapsed().as_secs_f64());
 }

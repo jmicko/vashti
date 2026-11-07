@@ -36,7 +36,10 @@ fn boxes(bytes: &[u8]) -> Result<Vec<([u8; 4], &[u8])>> {
         if size < 8 || end > bytes.len() || out.len() > 64 {
             return Err("video_output_invalid");
         }
-        out.push((bytes[at + 4..at + 8].try_into().unwrap(), &bytes[at + 8..end]));
+        out.push((
+            bytes[at + 4..at + 8].try_into().unwrap(),
+            &bytes[at + 8..end],
+        ));
         at = end;
     }
     Ok(out)
@@ -203,7 +206,11 @@ pub fn cover_rgb(pixels: crate::references::Pixels, width: u32, height: u32) -> 
     let mut out = Vec::with_capacity(width as usize * height as usize * 3);
     for p in cropped.pixels() {
         let a = u16::from(p[3]);
-        out.extend(p.0[..3].iter().map(|c| ((u16::from(*c) * a + 127) / 255) as u8));
+        out.extend(
+            p.0[..3]
+                .iter()
+                .map(|c| ((u16::from(*c) * a + 127) / 255) as u8),
+        );
     }
     let mut cropped = cropped.into_raw();
     crate::worker_protocol::clear_bytes(&mut cropped);
@@ -220,7 +227,11 @@ mod cover_tests {
         let mut rgba = Vec::new();
         for _ in 0..100 {
             for x in 0..400 {
-                rgba.extend(if x < 200 { [255, 0, 0, 255] } else { [0, 0, 255, 255] });
+                rgba.extend(if x < 200 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 255, 255]
+                });
             }
         }
         let pixels = crate::references::Pixels {
@@ -244,6 +255,10 @@ mod encode {
     use crate::worker_protocol::clear_bytes;
     const VIDEO_TIMESCALE_PER_FRAME: u32 = 512;
     const MOVIE_TIMESCALE: u32 = 1000;
+    /// (av1C record, sample data, sample sizes, sync sample numbers)
+    type EncodedVideo = (Vec<u8>, Vec<u8>, Vec<u32>, Vec<u32>);
+    /// (STREAMINFO, sample data, sample sizes, total sample frames)
+    type EncodedAudio = (Vec<u8>, Vec<u8>, Vec<u32>, u64);
 
     /// Interleaved float PCM as the native engine returns it.
     pub struct Audio {
@@ -330,22 +345,42 @@ mod encode {
 
     fn trak(t: &TrackData) -> Vec<u8> {
         let mut tkhd = Bytes(Vec::new());
-        tkhd.u32(0).u32(0).u32(t.id).u32(0).u32(t.movie_duration).zeros(8);
-        tkhd.u16(0).u16(0).u16(if t.video { 0 } else { 0x0100 }).u16(0);
+        tkhd.u32(0)
+            .u32(0)
+            .u32(t.id)
+            .u32(0)
+            .u32(t.movie_duration)
+            .zeros(8);
+        tkhd.u16(0)
+            .u16(0)
+            .u16(if t.video { 0 } else { 0x0100 })
+            .u16(0);
         MATRIX.iter().for_each(|m| {
             tkhd.u32(*m);
         });
         tkhd.u32(t.width << 16).u32(t.height << 16);
         let mut mdhd = Bytes(Vec::new());
-        mdhd.u32(0).u32(0).u32(t.timescale).u32(t.duration).u16(0x55c4).u16(0);
+        mdhd.u32(0)
+            .u32(0)
+            .u32(t.timescale)
+            .u32(t.duration)
+            .u16(0x55c4)
+            .u16(0);
         let mut hdlr = Bytes(Vec::new());
-        hdlr.u32(0).raw(if t.video { b"vide" } else { b"soun" }).zeros(12).u8(0);
+        hdlr.u32(0)
+            .raw(if t.video { b"vide" } else { b"soun" })
+            .zeros(12)
+            .u8(0);
         let media_header = if t.video {
             full_box(b"vmhd", 1, &[0; 8])
         } else {
             full_box(b"smhd", 0, &[0; 4])
         };
-        let dref = full_box(b"dref", 0, &[&1u32.to_be_bytes()[..], &full_box(b"url ", 1, &[])].concat());
+        let dref = full_box(
+            b"dref",
+            0,
+            &[&1u32.to_be_bytes()[..], &full_box(b"url ", 1, &[])].concat(),
+        );
         let dinf = container(b"dinf", &[dref]);
         let mut stsd = Bytes(Vec::new());
         stsd.u32(1).raw(&t.sample_entry);
@@ -363,10 +398,7 @@ mod encode {
         });
         let mut stco = Bytes(Vec::new());
         stco.u32(1).u32(t.offset);
-        let mut stbl = vec![
-            full_box(b"stsd", 0, &stsd.0),
-            full_box(b"stts", 0, &stts.0),
-        ];
+        let mut stbl = vec![full_box(b"stsd", 0, &stsd.0), full_box(b"stts", 0, &stts.0)];
         if let Some(sync) = &t.sync {
             let mut stss = Bytes(Vec::new());
             stss.u32(sync.len() as u32);
@@ -383,7 +415,11 @@ mod encode {
         let minf = container(b"minf", &[media_header, dinf, container(b"stbl", &stbl)]);
         let mdia = container(
             b"mdia",
-            &[full_box(b"mdhd", 0, &mdhd.0), full_box(b"hdlr", 0, &hdlr.0), minf],
+            &[
+                full_box(b"mdhd", 0, &mdhd.0),
+                full_box(b"hdlr", 0, &hdlr.0),
+                minf,
+            ],
         );
         container(b"trak", &[full_box(b"tkhd", 3, &tkhd.0), mdia])
     }
@@ -461,7 +497,7 @@ mod encode {
         }
     }
 
-    fn encode_video(clip: &Clip) -> Result<(Vec<u8>, Vec<u8>, Vec<u32>, Vec<u32>)> {
+    fn encode_video(clip: &Clip) -> Result<EncodedVideo> {
         use rav1e::prelude::*;
         let (w, h) = (clip.width as usize, clip.height as usize);
         let mut config = EncoderConfig::with_speed_preset(10);
@@ -515,7 +551,9 @@ mod encode {
             input.planes[0].copy_from_raw_u8(&planes[0], w, 1);
             input.planes[1].copy_from_raw_u8(&planes[1], w / 2, 1);
             input.planes[2].copy_from_raw_u8(&planes[2], w / 2, 1);
-            context.send_frame(input).map_err(|_| "video_encode_failed")?;
+            context
+                .send_frame(input)
+                .map_err(|_| "video_encode_failed")?;
             receive(&mut context, &mut data)?;
         }
         context.flush();
@@ -528,13 +566,13 @@ mod encode {
     }
 
     /// 16-bit FLAC frames of 4096 samples (the last one shorter) and the STREAMINFO body.
-    fn encode_audio(audio: &Audio) -> Result<(Vec<u8>, Vec<u8>, Vec<u32>, u64)> {
+    fn encode_audio(audio: &Audio) -> Result<EncodedAudio> {
         use flacenc::{bitsink::ByteSink, component::BitRepr, error::Verify};
         let channels = audio.channels as usize;
         if !(1..=2).contains(&channels)
             || !(8000..=65535).contains(&audio.sample_rate)
             || audio.samples.is_empty()
-            || audio.samples.len() % channels != 0
+            || !audio.samples.len().is_multiple_of(channels)
         {
             return Err("video_audio_invalid");
         }
@@ -584,8 +622,8 @@ mod encode {
         let frame_bytes = clip.width as usize * clip.height as usize * 3;
         if clip.width == 0
             || clip.height == 0
-            || clip.width % 2 != 0
-            || clip.height % 2 != 0
+            || !clip.width.is_multiple_of(2)
+            || !clip.height.is_multiple_of(2)
             || !(1..=120).contains(&clip.fps)
             || clip.frames == 0
             || clip.rgb.len() != frame_bytes * clip.frames as usize
@@ -602,7 +640,14 @@ mod encode {
         let mut entry = Bytes(Vec::new());
         entry.zeros(6).u16(1).u16(0).u16(0).zeros(12);
         entry.u16(clip.width as u16).u16(clip.height as u16);
-        entry.u32(0x0048_0000).u32(0x0048_0000).u32(0).u16(1).zeros(32).u16(0x18).u16(0xffff);
+        entry
+            .u32(0x0048_0000)
+            .u32(0x0048_0000)
+            .u32(0)
+            .u16(1)
+            .zeros(32)
+            .u16(0x18)
+            .u16(0xffff);
         entry.raw(&mp4_box(b"av1C", &av1c));
         let mut tracks = vec![TrackData {
             id: 1,
@@ -625,8 +670,17 @@ mod encode {
             let mut dfla = Bytes(Vec::new());
             dfla.u8(0x80).u8(0).u16(34).raw(&info); // last block, STREAMINFO, 34 bytes
             let mut entry = Bytes(Vec::new());
-            entry.zeros(6).u16(1).zeros(8).u16(audio.channels as u16).u16(16).u16(0).u16(0);
-            entry.u32(audio.sample_rate << 16).raw(&full_box(b"dfLa", 0, &dfla.0));
+            entry
+                .zeros(6)
+                .u16(1)
+                .zeros(8)
+                .u16(audio.channels as u16)
+                .u16(16)
+                .u16(0)
+                .u16(0);
+            entry
+                .u32(audio.sample_rate << 16)
+                .raw(&full_box(b"dfLa", 0, &dfla.0));
             let block = 4096u32;
             let full = (sizes.len() - 1) as u32;
             let last = (total - u64::from(full) * u64::from(block)) as u32;

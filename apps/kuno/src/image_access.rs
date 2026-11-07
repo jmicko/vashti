@@ -149,7 +149,12 @@ fn describe_videos(
     } else {
         blocked
     };
-    videos.state = if reason.is_some() { "unavailable" } else { "ready" }.into();
+    videos.state = if reason.is_some() {
+        "unavailable"
+    } else {
+        "ready"
+    }
+    .into();
     videos.reason = reason.map(str::to_owned);
     videos.workflows.push(VideoWorkflowCapability {
         id: MINIMAX_H3_I2V_RECIPE.into(),
@@ -449,8 +454,16 @@ mod tests {
             serde_json::to_value(&a.images).unwrap(),
             serde_json::to_value(&b.images).unwrap()
         );
-        assert!(!serde_json::to_string(&a.images).unwrap().contains("/synthetic"));
-        assert!(!serde_json::to_string(&a.videos).unwrap().contains("/synthetic"));
+        assert!(
+            !serde_json::to_string(&a.images)
+                .unwrap()
+                .contains("/synthetic")
+        );
+        assert!(
+            !serde_json::to_string(&a.videos)
+                .unwrap()
+                .contains("/synthetic")
+        );
         assert!(!cache.cache.lock().unwrap().refreshing);
     }
 
@@ -460,14 +473,20 @@ mod tests {
         let mut c = config();
         assert_eq!(describe_videos(Some(&c), None, |_| true).state, "disabled");
         c.collections.push(MINIMAX_H3_COLLECTION.into());
-        assert_eq!(describe_videos(Some(&c), None, |_| true).state, "unsupported");
+        assert_eq!(
+            describe_videos(Some(&c), None, |_| true).state,
+            "unsupported"
+        );
         c.engine = crate::image_engine::ImageEngine::ManagedSycl;
         c.runtime = Some(crate::image_engine::SYCL_RUNTIME.into());
         let ready = describe_videos(Some(&c), None, |_| true);
         assert_eq!(ready.state, "ready");
         assert_eq!(ready.workflows[0].frames, kuno_protocol::VIDEO_FRAMES);
         let missing = describe_videos(Some(&c), None, |id| id != MINIMAX_H3_COLLECTION);
-        assert_eq!(missing.workflows[0].reason.as_deref(), Some("image_models_unavailable"));
+        assert_eq!(
+            missing.workflows[0].reason.as_deref(),
+            Some("image_models_unavailable")
+        );
         let old_runtime = describe_videos(Some(&c), Some("image_runtime_unavailable"), |_| true);
         assert_eq!(old_runtime.state, "unavailable");
         // The video collection never appears as an image workflow.

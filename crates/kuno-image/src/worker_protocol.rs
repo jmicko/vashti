@@ -204,7 +204,9 @@ pub fn progress_payload(phase: VideoPhase, step: u32, steps: u32) -> [u8; 9] {
 
 /// Decodes a PROGRESS payload; sampling carries 1..=steps, other phases none.
 pub fn parse_progress(payload: &[u8]) -> Result<(VideoPhase, u32, u32), &'static str> {
-    let payload: &[u8; 9] = payload.try_into().map_err(|_| "image_worker_frame_invalid")?;
+    let payload: &[u8; 9] = payload
+        .try_into()
+        .map_err(|_| "image_worker_frame_invalid")?;
     let n = |i: usize| u32::from_be_bytes(payload[i..i + 4].try_into().unwrap());
     let (step, steps) = (n(1), n(5));
     let phase = match payload[0] {
@@ -369,7 +371,10 @@ mod tests {
             panic!("missing video request")
         };
         assert_eq!((v.width, v.frames), (832, 56));
-        assert!(matches!(read_request(&mut reader).unwrap(), Some(Request::Generate(_))));
+        assert!(matches!(
+            read_request(&mut reader).unwrap(),
+            Some(Request::Generate(_))
+        ));
         let mut bad = video();
         bad.frames = 57;
         let payload = serde_json::to_vec(&bad).unwrap();

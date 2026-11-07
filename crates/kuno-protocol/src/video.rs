@@ -132,11 +132,18 @@ mod tests {
     #[test]
     fn accepts_the_tested_recipe_and_rejects_out_of_range_settings() {
         recipe().validate().unwrap();
-        let cases: [(fn(&mut VideoRecipe), &str); 9] = [
-            (|r| r.workflow = "other".into(), "unsupported_video_workflow"),
+        type Case = (fn(&mut VideoRecipe), &'static str);
+        let cases: [Case; 9] = [
+            (
+                |r| r.workflow = "other".into(),
+                "unsupported_video_workflow",
+            ),
             (|r| r.prompt.clear(), "video_prompt_invalid"),
             (|r| r.prompt = "a\0b".into(), "video_prompt_invalid"),
-            (|r| r.seed = "9223372036854775808".into(), "image_seed_invalid"),
+            (
+                |r| r.seed = "9223372036854775808".into(),
+                "image_seed_invalid",
+            ),
             (|r| r.width = 840, "video_dimensions_unsupported"),
             (|r| r.width = 1280, "video_dimensions_unsupported"),
             (|r| r.frames = 57, "video_frames_unsupported"),

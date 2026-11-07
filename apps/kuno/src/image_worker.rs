@@ -29,7 +29,9 @@ pub fn serve(
     output: &mut impl Write,
     generate: impl FnMut(&ImageRecipe) -> Result<Vec<u8>, &'static str>,
 ) -> Result<(), &'static str> {
-    serve_with_video(input, output, generate, |_| Err("unsupported_video_workflow"))
+    serve_with_video(input, output, generate, |_| {
+        Err("unsupported_video_workflow")
+    })
 }
 
 /// As `serve`, also answering video jobs; the same CLEAN contract applies.

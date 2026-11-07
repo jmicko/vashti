@@ -260,7 +260,12 @@ mod tests {
         let (progress, updates) = watch::channel(None);
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let slot = Arc::new(slots.clone().acquire_owned().await.unwrap());
-        let meta = VideoMeta { width: 832, height: 544, frames: 56, audio: true };
+        let meta = VideoMeta {
+            width: 832,
+            height: 544,
+            frames: 56,
+            audio: true,
+        };
         let mut body = video_response(receive, frames, updates, meta, slot).into_body();
         assert_eq!(event(&mut body).await.unwrap()["type"], "started");
         progress.send_replace(Some((VideoPhase::Conditioning, 0, 0)));
@@ -278,7 +283,12 @@ mod tests {
         assert_eq!(result["type"], "result");
         assert_eq!(result["mime_type"], "video/mp4");
         assert_eq!(result["frames"], 56);
-        assert_eq!(STANDARD.decode(result["video_base64"].as_str().unwrap()).unwrap(), b"mp4");
+        assert_eq!(
+            STANDARD
+                .decode(result["video_base64"].as_str().unwrap())
+                .unwrap(),
+            b"mp4"
+        );
         assert!(event(&mut body).await.is_none());
         drop(body);
         assert_eq!(slots.available_permits(), 1);

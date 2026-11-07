@@ -148,11 +148,15 @@ extern "C" fn receive_video_frame(bytes: *const u8, len: usize, data: *mut c_voi
     // SAFETY: the shim calls synchronously with a live frame of `len` bytes; data is the
     // VideoOutput owned by generate_video. No pointer escapes the callback.
     let out = unsafe { &mut *(data as *mut VideoOutput) };
-    if bytes.is_null() || len != out.frame_bytes || out.rgb.len() >= out.frame_bytes * out.frames as usize {
+    if bytes.is_null()
+        || len != out.frame_bytes
+        || out.rgb.len() >= out.frame_bytes * out.frames as usize
+    {
         out.invalid = true;
         return;
     }
-    out.rgb.extend_from_slice(unsafe { std::slice::from_raw_parts(bytes, len) });
+    out.rgb
+        .extend_from_slice(unsafe { std::slice::from_raw_parts(bytes, len) });
 }
 extern "C" fn receive_video_audio(
     samples: *const f32,
@@ -164,7 +168,12 @@ extern "C" fn receive_video_audio(
     // SAFETY: as receive_video_frame; `count` samples per channel, interleaved.
     let out = unsafe { &mut *(data as *mut VideoOutput) };
     let values = count.saturating_mul(u64::from(channels));
-    if samples.is_null() || out.audio.is_some() || !(1..=2).contains(&channels) || values == 0 || values > MAX_AUDIO_VALUES {
+    if samples.is_null()
+        || out.audio.is_some()
+        || !(1..=2).contains(&channels)
+        || values == 0
+        || values > MAX_AUDIO_VALUES
+    {
         out.invalid = true;
         return;
     }
@@ -182,7 +191,12 @@ extern "C" fn video_preview(
     channels: u32,
     data: *mut c_void,
 ) {
-    let (steps, wanted) = unsafe { ((*(data as *const VideoOutput)).steps, (*(data as *const VideoOutput)).previews) };
+    let (steps, wanted) = unsafe {
+        (
+            (*(data as *const VideoOutput)).steps,
+            (*(data as *const VideoOutput)).previews,
+        )
+    };
     if !wanted {
         return;
     }
@@ -329,7 +343,8 @@ impl Session {
             .seed
             .parse::<i64>()
             .map_err(|_| "native_image_seed_range_unsupported")?;
-        let prompt = CString::new(recipe.prompt.as_str()).map_err(|_| "native_image_string_invalid")?;
+        let prompt =
+            CString::new(recipe.prompt.as_str()).map_err(|_| "native_image_string_invalid")?;
         let decoded = crate::references::decode(&[recipe.first_frame.as_str()])
             .map_err(|_| "video_first_frame_invalid")?
             .pop()
@@ -345,7 +360,9 @@ impl Session {
             invalid: false,
             previews,
         };
-        output.rgb.reserve_exact(output.frame_bytes * recipe.frames as usize);
+        output
+            .rgb
+            .reserve_exact(output.frame_bytes * recipe.frames as usize);
         let code = unsafe {
             kuno_minimax_session_generate(
                 self.native.as_ptr(),
@@ -390,7 +407,11 @@ impl Session {
             fps: kuno_protocol::VIDEO_FPS,
             frames: recipe.frames,
             rgb: std::mem::take(&mut output.rgb),
-            audio: if recipe.audio { output.audio.take() } else { None },
+            audio: if recipe.audio {
+                output.audio.take()
+            } else {
+                None
+            },
         };
         drop(output);
         crate::video::encode_mp4(&clip)
