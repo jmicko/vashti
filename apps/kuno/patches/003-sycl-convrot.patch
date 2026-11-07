@@ -184,10 +184,10 @@ index 0000000..7899841
 +}
 diff --git a/src/ggml-sycl/convrot.cpp b/src/ggml-sycl/convrot.cpp
 new file mode 100644
-index 0000000..dbb046b
+index 0000000..1d6077c
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.cpp
-@@ -0,0 +1,722 @@
+@@ -0,0 +1,763 @@
 +// Experimental native signed INT8 tensorwise GEMM for Qwen ConvRot weights.
 +#include "convrot.hpp"
 +#include "binbcast.hpp"
@@ -217,6 +217,12 @@ index 0000000..dbb046b
 +    float operator()(int64_t row, int64_t e) const { return x[row * k + e]; }
 +};
 +
++// Loaders may provide row(r) returning a per-row element functor (hoists per-row setup).
++template <typename Load> static auto convrot_row_view(const Load & load, int64_t row, int) -> decltype(load.row(row)) { return load.row(row); }
++template <typename Load> static auto convrot_row_view(const Load & load, int64_t row, long) {
++    return [&load, row](int64_t e) { return load(row, e); };
++}
++
 +template <int G, typename Load>
 +static void quantize_rows_sg_load(sycl::queue & Q, Load load, int8_t * q, float * scales, int64_t k, int64_t rows) {
 +    Q.submit([&](sycl::handler & h) {
@@ -227,6 +233,7 @@ index 0000000..dbb046b
 +            const int s = int(sg.get_group_linear_id());
 +            const int lane = int(sg.get_local_linear_id());
 +            float * t = &tile[s * 16 * 17];
++            const auto rl = convrot_row_view(load, row, 0);
 +            float v[G][16];
 +            float maximum = 0.f;
 +#pragma unroll
@@ -236,7 +243,7 @@ index 0000000..dbb046b
 +                const int64_t base = (s * G + g) * 256;
 +                if (g) sycl::group_barrier(sg);
 +#pragma unroll
-+                for (int j = 0; j < 16; ++j) t[j * 17 + lane] = load(row, base + j * 16 + lane) / 16.f;
++                for (int j = 0; j < 16; ++j) t[j * 17 + lane] = rl(base + j * 16 + lane) / 16.f;
 +                sycl::group_barrier(sg);
 +#pragma unroll
 +                for (int j = 0; j < 16; ++j) v[g][j] = t[lane * 17 + j];
@@ -582,6 +589,40 @@ index 0000000..dbb046b
 +    return true;
 +}
 +
++// MiniMax H3 modulation fused into the quantizer: per token t in segment k,
++//   v = (x + x * scale_k) + shift_k   [then SCALE]   -> ConvRot quantize.
++struct convrot_load_minimax_mod {
++    kuno_minimax_seg_desc d;
++    struct row_loader {
++        const float * x; const float * p; const float * q; bool scaled; float qs, qb;
++        float operator()(int64_t e) const {
++            // Separately rounded IEEE products and sums, exactly like the per-node kernels.
++#pragma clang fp contract(off) reassociate(off)
++            const float v = x[e];
++            const float product = v * p[e];
++            const float added = v + product;
++            float r = added + q[e];
++            if (scaled) r = qs * r + qb;
++            return r;
++        }
++    };
++    row_loader row(int64_t row) const {
++        int64_t row0 = 0; const float * sa = nullptr, * sp = nullptr, * sq = nullptr;
++#pragma unroll
++        for (int j = 0; j < kuno_minimax_seg_desc::max_segs; ++j)
++            if (j < d.nseg && row >= d.seg[j].row0) { row0 = d.seg[j].row0; sa = d.seg[j].a; sp = d.seg[j].p; sq = d.seg[j].q; }
++        return {sa + (row - row0) * d.C, sp, sq, d.q_scaled, d.q_scale, d.q_bias};
++    }
++    float operator()(int64_t r, int64_t e) const { return row(r)(e); }
++};
++
++bool ggml_sycl_quantize_i8_convrot_minimax_mod(ggml_backend_sycl_context & ctx, ggml_tensor * quant, const kuno_minimax_seg_desc & d) {
++    if (!ggml_sycl_convrot_geometry(quant, false) || quant->src[0]->ne[0] != d.C || ggml_nrows(quant->src[0]) != d.L ||
++        !convrot_rows_supported(d.C) || d.nseg < 1 || d.nseg > kuno_minimax_seg_desc::max_segs) return false;
++    quantize_into(ctx, quant, convrot_load_minimax_mod{d}, d.C, d.L);
++    return true;
++}
++
 +bool ggml_sycl_quantize_i8_convrot_fused_input(ggml_backend_sycl_context & ctx, ggml_tensor * producer, ggml_tensor * quant) {
 +    if (quant->op != GGML_OP_QUANTIZE_I8_CONVROT || quant->src[0] != producer ||
 +        !ggml_sycl_convrot_geometry(quant, false) || producer->type != GGML_TYPE_F32 || !ggml_is_contiguous(producer)) return false;
@@ -912,10 +953,10 @@ index 0000000..dbb046b
 +}
 diff --git a/src/ggml-sycl/convrot.hpp b/src/ggml-sycl/convrot.hpp
 new file mode 100644
-index 0000000..cb0dd91
+index 0000000..77666f3
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.hpp
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,42 @@
 +#pragma once
 +#include "common.hpp"
 +#include "convrot-policy.hpp"
@@ -934,6 +975,23 @@ index 0000000..cb0dd91
 +    ggml_tensor * q = nullptr, * k16 = nullptr, * v16 = nullptr;
 +};
 +bool ggml_sycl_mul_mat_i8_convrot_minimax_qkv(ggml_backend_sycl_context & ctx, ggml_tensor * mm, const kuno_minimax_qkv_args & a);
++// MiniMax H3 segmented AdaLN chains (token segments, each with its own parameter rows).
++struct kuno_minimax_seg {
++    int64_t row0 = 0, rows = 0;
++    const float * a = nullptr;   // gate: residual segment;  mod: x segment
++    const float * b = nullptr;   // gate: output segment (pre-scale when o_scaled)
++    const float * p = nullptr;   // gate: gate row;          mod: scale row
++    const float * q = nullptr;   // mod: shift row
++};
++struct kuno_minimax_seg_desc {
++    static constexpr int max_segs = 8;
++    kuno_minimax_seg seg[max_segs];
++    int nseg = 0;
++    int64_t C = 0, L = 0;
++    bool o_scaled = false; float o_scale = 1, o_bias = 0;   // gate: SCALE folded into the output read
++    bool q_scaled = false; float q_scale = 1, q_bias = 0;   // mod: SCALE between CONCAT and QUANTIZE
++};
++bool ggml_sycl_quantize_i8_convrot_minimax_mod(ggml_backend_sycl_context & ctx, ggml_tensor * quant, const kuno_minimax_seg_desc & d);
 +bool ggml_sycl_quantize_i8_convrot_fused_input(ggml_backend_sycl_context & ctx, ggml_tensor * producer, ggml_tensor * quant);
 +bool ggml_sycl_mul_mat_i8_convrot_epilogue(ggml_backend_sycl_context & ctx, ggml_tensor * mm, ggml_tensor * scale_node,
 +                                           ggml_tensor * mul, ggml_tensor * add);
@@ -2665,7 +2723,7 @@ index 4a6027f..818fbe7 100644
          const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
          const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 18d5878..36f8703 100644
+index 18d5878..200be8d 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -59,6 +59,10 @@
@@ -2906,7 +2964,7 @@ index 18d5878..36f8703 100644
              if (dst->src[0]->ne[3] != dst->src[1]->ne[3]) {
                  return false;
              }
-@@ -5396,8 +5571,141 @@ catch (sycl::exception const &exc) {
+@@ -5396,11 +5571,150 @@ catch (sycl::exception const &exc) {
    std::exit(1);
  }
  
@@ -3045,16 +3103,36 @@ index 18d5878..36f8703 100644
 +#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
 +    auto whole_rope_plans = kuno_whole_rope_prepare(*sycl_ctx,cgraph);
 +#endif
++
++    kuno_minimax_seg_plan seg_plan;
++    if (g_ggml_sycl_enable_fusion) seg_plan = kuno_minimax_seg_prepare(cgraph);
  
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
-@@ -5408,6 +5716,17 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
++        if (!seg_plan.skip.empty() && seg_plan.skip[i]) {
++            continue;
++        }
+         if (ggml_is_empty(node) || node->op == GGML_OP_RESHAPE || node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_NONE) {
+             continue;
+         }
+@@ -5408,6 +5722,28 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
 +#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
 +        if (kuno_whole_rope_step(*sycl_ctx,whole_rope_plans,i)) continue;
 +#endif
++        if (!seg_plan.jobs.empty()) {
++            auto job = seg_plan.jobs.find(i);
++            if (job != seg_plan.jobs.end()) {
++                kuno_minimax_seg_run(*sycl_ctx, job->second);
++                continue;
++            }
++        }
++        if (!seg_plan.plain.empty() && seg_plan.plain[i]) {
++            ggml_sycl_compute_forward(*sycl_ctx, node);
++            continue;
++        }
 +        if (node->op == GGML_OP_CONT && g_ggml_sycl_enable_fusion) {
 +            kuno_minimax_rope_match rope;
 +            if (kuno_minimax_rope_find(cgraph, i, rope)) {
@@ -3066,7 +3144,7 @@ index 18d5878..36f8703 100644
          const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
          if (nodes_to_skip != 0) {
              i += nodes_to_skip;
-@@ -5421,6 +5740,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5421,6 +5757,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              }
          }
  #endif
@@ -3146,7 +3224,7 @@ index 18d5878..36f8703 100644
          if (node->op == GGML_OP_RMS_NORM &&
              ggml_sycl_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL })) {
              ggml_sycl_op_rms_norm_fused(*sycl_ctx, node, cgraph->nodes[i + 1]);
-@@ -5428,6 +5820,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5428,6 +5837,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -3160,7 +3238,7 @@ index 18d5878..36f8703 100644
          bool ok = ggml_sycl_compute_forward(*sycl_ctx, node);
          if (!ok) {
              GGML_LOG_ERROR("%s: error: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
-@@ -5449,6 +5848,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5449,6 +5865,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
          switch (node_op) {
              default:
                  break;
@@ -3170,7 +3248,7 @@ index 18d5878..36f8703 100644
              case GGML_OP_CONCAT:
                  // ggml_sycl_op_concat() does a blocking host wait after memcpy operations,
                  // but wait() can't be called on the events returned by a queue recording
-@@ -5462,6 +5864,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5462,6 +5881,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
                                ggml_op_name(node_op));
                  return false;
              case GGML_OP_MUL_MAT:
@@ -3178,7 +3256,7 @@ index 18d5878..36f8703 100644
                  // We cannot use graphs with ggml_sycl_mul_mat() when SYCL async memory allocation extensions are not available,
                  // as SYCL malloc / free and host wait calls are not supported when recording to a graph which are all present
                  // in reordering.
-@@ -5602,6 +6005,7 @@ struct ggml_backend_sycl_device_context {
+@@ -5602,6 +6022,7 @@ struct ggml_backend_sycl_device_context {
      int device;
      std::string name;
      std::string description;
@@ -3186,7 +3264,7 @@ index 18d5878..36f8703 100644
      int op_offload_min_batch_size;
  };
  
-@@ -5632,6 +6036,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
+@@ -5632,6 +6053,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
  }
  
  static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
@@ -3195,7 +3273,7 @@ index 18d5878..36f8703 100644
      props->name        = ggml_backend_sycl_device_get_name(dev);
      props->description = ggml_backend_sycl_device_get_description(dev);
      props->type        = ggml_backend_sycl_device_get_type(dev);
-@@ -5736,9 +6142,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -5736,9 +6159,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
              }
              break;
@@ -3214,7 +3292,7 @@ index 18d5878..36f8703 100644
                  struct ggml_tensor * a = op->src[0];
                  struct ggml_tensor * b = op->src[1];
  
-@@ -6499,6 +6914,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+@@ -6499,6 +6931,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                  SYCL_CHECK(CHECK_TRY_ERROR(dpct::get_device_info(
                      prop, dpct::dev_mgr::instance().get_device(i))));
  
@@ -3409,10 +3487,10 @@ index 976d109..c422d3b 100644
  #endif // GGML_SYCL_IM2COL_HPP
 diff --git a/src/ggml-sycl/kuno-minimax.hpp b/src/ggml-sycl/kuno-minimax.hpp
 new file mode 100644
-index 0000000..b51ea2f
+index 0000000..00832ac
 --- /dev/null
 +++ b/src/ggml-sycl/kuno-minimax.hpp
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,544 @@
 +// Kuno: exact fusions for MiniMax H3 DiT graph patterns. Included by ggml-sycl.cpp only.
 +#pragma once
 +
@@ -3643,6 +3721,319 @@ index 0000000..b51ea2f
 +    a.heads = H; a.rot = m.rq.R; a.pe = m.rq.pe; a.q = m.rq.out; a.k16 = k16; a.v16 = v16;
 +    m.first = i; m.last = i + 78;
 +    return true;
++}
++
++// ---------------------------------------------------------------------------
++// Segmented AdaLN chains (MiniMax H3 token segments, left-deep CONCAT along rows):
++//   gate: out_k = A_k + (B_k * g_k)                        -> materialized residual [C, L]
++//   mod:  v_k   = (X_k + X_k * s_k) + t_k  [-> SCALE]      -> QUANTIZE (fused loader)
++// Inputs are read where their values live (CONT copies and views resolved), so the
++// graph's per-segment CONT/MUL/ADD/CONCAT nodes and parameter-row copies are skipped.
++// The fused op runs at the chain's last node; nodes still executed inside the window
++// must not overlap any input (ggml-alloc plans reuse around the original order).
++// ---------------------------------------------------------------------------
++#include <unordered_map>
++
++struct kuno_minimax_seg_job {
++    bool gate = false, staged = false;
++    ggml_tensor * out = nullptr;       // gate: final CONCAT; mod: QUANTIZE
++    kuno_minimax_seg_desc d;
++    std::vector<int> nodes;            // skipped nodes + run node, ascending (dev check)
++    std::vector<std::pair<const char *, size_t>> inputs;
++    std::vector<const ggml_tensor *> input_roots;   // producer of each input range
++};
++struct kuno_minimax_seg_plan {
++    std::vector<uint8_t> skip, plain;  // plain: execute without other fusions (folded producer)
++    std::unordered_map<int, kuno_minimax_seg_job> jobs;
++};
++
++// Address of t's values in the tensor that actually holds them (through exact copies and views).
++static const char * kuno_seg_resolve(const ggml_tensor * t, const ggml_tensor *& root, std::vector<const ggml_tensor *> & path) {
++    for (int depth = 0; depth < 24; ++depth) {
++        if (t->op == GGML_OP_CONT && t->src[0] && t->src[0]->type == t->type && ggml_is_contiguous(t->src[0]) &&
++            ggml_is_contiguous(t) && ggml_nelements(t->src[0]) == ggml_nelements(t)) {
++            path.push_back(t);
++            t = t->src[0];
++            continue;
++        }
++        if (t->view_src && ggml_is_contiguous(t) && ggml_is_contiguous(t->view_src) && t->type == t->view_src->type) {
++            path.push_back(t);
++            const ggml_tensor * base_root = nullptr;
++            const char * base = kuno_seg_resolve(t->view_src, base_root, path);
++            if (!base) return nullptr;
++            root = base_root;
++            return base + t->view_offs;
++        }
++        root = t->view_src ? t->view_src : t;
++        return (const char *) t->data;
++    }
++    return nullptr;
++}
++
++static bool kuno_seg_overlaps(const char * a, size_t an, const char * b, size_t bn) { return a < b + bn && b < a + an; }
++
++static bool kuno_minimax_seg_match(ggml_cgraph * g, int fi, const std::unordered_map<const ggml_tensor *, int> & index,
++                                   kuno_minimax_seg_plan & plan, kuno_minimax_seg_job & job) {
++    ggml_tensor * F = g->nodes[fi];
++    if (F->op != GGML_OP_CONCAT || ((const int32_t *) F->op_params)[0] != 1 || F->type != GGML_TYPE_F32 ||
++        !ggml_is_contiguous(F) || F->ne[2] != 1 || F->ne[3] != 1) return false;
++    const int64_t C = F->ne[0], L = F->ne[1];
++    std::vector<ggml_tensor *> vals, concats;
++    ggml_tensor * t = F;
++    while (t->op == GGML_OP_CONCAT && ((const int32_t *) t->op_params)[0] == 1 && t->ne[0] == C) {
++        concats.push_back(t); vals.push_back(t->src[1]); t = t->src[0];
++        if ((int) vals.size() > kuno_minimax_seg_desc::max_segs) return false;
++    }
++    vals.push_back(t);
++    std::reverse(vals.begin(), vals.end());
++    const int nseg = (int) vals.size();
++    if (nseg < 2) return false;
++    auto & d = job.d;
++    d.nseg = nseg; d.C = C; d.L = L;
++    std::vector<const ggml_tensor *> skipped(concats.begin(), concats.end()), path;
++    std::vector<const ggml_tensor *> roots;
++    auto row_param = [&](const ggml_tensor * p, const float *& dst) {
++        if (!p || p->type != GGML_TYPE_F32 || p->ne[0] != C || ggml_nelements(p) != C || !ggml_is_contiguous(p)) return false;
++        const ggml_tensor * root = nullptr; path.clear();
++        const char * a = kuno_seg_resolve(p, root, path);
++        if (!a || !root) return false;
++        skipped.insert(skipped.end(), path.begin(), path.end());
++        roots.push_back(root);
++        dst = (const float *) a; job.inputs.push_back({a, size_t(C) * sizeof(float)}); job.input_roots.push_back(root);
++        return true;
++    };
++    auto slice = [&](const ggml_tensor * x, int64_t rows, const float *& dst, const ggml_tensor *& root, bool add_path) {
++        if (!x || x->type != GGML_TYPE_F32 || x->ne[0] != C || x->ne[1] != rows || !ggml_is_contiguous(x)) return false;
++        path.clear(); root = nullptr;
++        const char * a = kuno_seg_resolve(x, root, path);
++        if (!a || !root) return false;
++        if (add_path) skipped.insert(skipped.end(), path.begin(), path.end());
++        dst = (const float *) a; job.inputs.push_back({a, size_t(C) * rows * sizeof(float)}); job.input_roots.push_back(root);
++        return true;
++    };
++    const ggml_tensor * last_v = vals.back();
++    const bool gate = last_v->op == GGML_OP_ADD && last_v->src[1] && last_v->src[1]->op == GGML_OP_MUL;
++    job.gate = gate;
++    const ggml_tensor * shared_b = nullptr;
++    int64_t row0 = 0;
++    for (int k = 0; k < nseg; ++k) {
++        ggml_tensor * v = vals[k];
++        const int64_t rows = v->ne[1];
++        auto & s = d.seg[k];
++        s.row0 = row0; s.rows = rows;
++        if (v->op != GGML_OP_ADD || v->type != GGML_TYPE_F32 || v->ne[0] != C || !ggml_is_contiguous(v) || v->src[2]) return false;
++        skipped.push_back(v);
++        if (gate) {
++            const ggml_tensor * A = v->src[0], * M = v->src[1];
++            if (M->op != GGML_OP_MUL || M->src[2] || M->ne[0] != C || M->ne[1] != rows) return false;
++            skipped.push_back(M);
++            const ggml_tensor * ra = nullptr, * rb = nullptr;
++            // A: an exact copy (resolved) or any finished [C, rows] tensor, read in place.
++            const bool a_copy = A->op == GGML_OP_CONT;
++            if (!slice(A, rows, s.a, ra, a_copy)) return false;
++            if (!slice(M->src[0], rows, s.b, rb, true)) return false;
++            if (M->src[0]->op != GGML_OP_CONT) return false;
++            if (shared_b && rb != shared_b) return false;
++            shared_b = rb;
++            if ((const char *) s.b != (const char *) rb->data + size_t(row0) * C * sizeof(float)) return false;
++            roots.push_back(ra); roots.push_back(rb);
++            if (!row_param(M->src[1], s.p)) return false;
++        } else {
++            const ggml_tensor * inner = v->src[0], * M = inner ? inner->src[1] : nullptr;
++            if (!inner || inner->op != GGML_OP_ADD || inner->src[2] || !M || M->op != GGML_OP_MUL || M->src[2] ||
++                M->src[0] != inner->src[0] || inner->ne[1] != rows || M->ne[1] != rows) return false;
++            skipped.push_back(inner); skipped.push_back(M);
++            const ggml_tensor * rx = nullptr;
++            if (inner->src[0]->op != GGML_OP_CONT || !slice(inner->src[0], rows, s.a, rx, true)) return false;
++            if (shared_b && rx != shared_b) return false;
++            shared_b = rx;
++            if ((const char *) s.a != (const char *) rx->data + size_t(row0) * C * sizeof(float)) return false;
++            roots.push_back(rx);
++            if (!row_param(M->src[1], s.p) || !row_param(v->src[1], s.q)) return false;
++        }
++        row0 += rows;
++    }
++    if (row0 != L) return false;
++    int run_at = fi;
++    if (gate) {
++        // Fold a private SCALE producer of the gated output into the read.
++        const ggml_tensor * O = shared_b;
++        auto it = index.find(O);
++        if (O->op == GGML_OP_SCALE && it != index.end() && O->src[0] && O->src[0]->type == GGML_TYPE_F32 &&
++            ggml_is_contiguous(O->src[0]) && ggml_are_same_shape(O, O->src[0])) {
++            bool private_use = true;
++            for (int n = 0; n < g->n_nodes && private_use; ++n) {
++                const ggml_tensor * node = g->nodes[n];
++                for (int s = 0; s <= GGML_MAX_SRC; ++s) {
++                    const ggml_tensor * src = s < GGML_MAX_SRC ? node->src[s] : node->view_src;
++                    if (src == O && std::find(skipped.begin(), skipped.end(), node) == skipped.end()) { private_use = false; break; }
++                }
++            }
++            auto pit = index.find(O->src[0]);
++            if (private_use && pit != index.end()) {
++                d.o_scaled = true;
++                memcpy(&d.o_scale, (const float *) O->op_params + 0, sizeof(float));
++                memcpy(&d.o_bias, (const float *) O->op_params + 1, sizeof(float));
++                const ptrdiff_t delta = (const char *) O->src[0]->data - (const char *) O->data;
++                for (int k = 0; k < nseg; ++k) d.seg[k].b = (const float *) ((const char *) d.seg[k].b + delta);
++                for (size_t k = 0; k < job.inputs.size(); ++k) {
++                    auto & in = job.inputs[k];
++                    if (in.first >= (const char *) O->data && in.first < (const char *) O->data + ggml_nbytes(O)) { in.first += delta; job.input_roots[k] = O->src[0]; }
++                }
++                skipped.push_back(O);
++                roots.erase(std::remove(roots.begin(), roots.end(), O), roots.end());
++                roots.push_back(O->src[0]);
++                plan.plain[pit->second] = 1;
++            }
++        }
++        job.out = F;
++        skipped.erase(std::remove(skipped.begin(), skipped.end(), (const ggml_tensor *) F), skipped.end());  // written by the run
++    } else {
++        // CONCAT -> [SCALE ->] QUANTIZE, each single-use; the fast quantizer covers this width.
++        if (C % 256 || C / 256 > 64) return false;
++        auto fit = index.find(F);
++        if (fit == index.end() || ggml_node_get_use_count(g, fit->second) != 1) return false;
++        int next = -1;
++        for (int n = fi + 1; n < g->n_nodes; ++n) if (g->nodes[n]->src[0] == F) { next = n; break; }
++        if (next < 0) return false;
++        ggml_tensor * nn = g->nodes[next];
++        skipped.push_back(F);
++        if (nn->op == GGML_OP_SCALE) {
++            if (ggml_node_get_use_count(g, next) != 1 || next + 1 >= g->n_nodes) return false;
++            d.q_scaled = true;
++            memcpy(&d.q_scale, (const float *) nn->op_params + 0, sizeof(float));
++            memcpy(&d.q_bias, (const float *) nn->op_params + 1, sizeof(float));
++            skipped.push_back(nn);
++            int q = -1;
++            for (int n = next + 1; n < g->n_nodes; ++n) if (g->nodes[n]->src[0] == nn) { q = n; break; }
++            if (q < 0) return false;
++            next = q; nn = g->nodes[q];
++        }
++        if (nn->op != GGML_OP_QUANTIZE_I8_CONVROT || (nn->flags & GGML_TENSOR_FLAG_OUTPUT)) return false;
++        job.out = nn; run_at = next;
++    }
++    // Skipped nodes: indices, privacy, scheduling.
++    std::vector<int> idx;
++    for (const ggml_tensor * s : skipped) {
++        auto it = index.find(s);
++        if (it == index.end()) continue;                     // leaf or view outside the graph's node list
++        idx.push_back(it->second);
++    }
++    std::sort(idx.begin(), idx.end()); idx.erase(std::unique(idx.begin(), idx.end()), idx.end());
++    if (idx.empty() || idx.back() > run_at) return false;
++    for (int n : idx) {
++        if (plan.skip[n] || g->nodes[n]->flags & GGML_TENSOR_FLAG_OUTPUT) return false;
++        if (n == run_at) return false;
++    }
++    std::vector<uint8_t> mine(g->n_nodes, 0);
++    for (int n : idx) mine[n] = 1;
++    for (int n = 0; n < g->n_nodes; ++n) {
++        if (mine[n] || n == run_at) continue;
++        const ggml_tensor * node = g->nodes[n];
++        for (int s = 0; s <= GGML_MAX_SRC; ++s) {
++            const ggml_tensor * src = s < GGML_MAX_SRC ? node->src[s] : node->view_src;
++            if (!src) continue;
++            auto it = index.find(src);
++            if (it != index.end() && mine[it->second]) return false;
++        }
++    }
++    // Roots must be finished before the run and stay intact through it.
++    const int first = idx.front();
++    for (const ggml_tensor * r : roots) {
++        auto it = index.find(r);
++        if (it != index.end() && (mine[it->second] || it->second >= run_at)) return false;
++    }
++    for (int n = first; n < run_at; ++n) {
++        if (mine[n]) continue;
++        const ggml_tensor * node = g->nodes[n];
++        if (ggml_op_is_empty(node->op) || !(node->flags & GGML_TENSOR_FLAG_COMPUTE) || !node->data) continue;
++        // Producers of an input (the root itself or an in-place op on it) are expected to write it.
++        bool producer = false;
++        for (const ggml_tensor * r : roots) producer |= node == r || (node->view_src && node->view_src == r);
++        if (producer) continue;
++        for (size_t k = 0; k < job.inputs.size(); ++k) {
++            const auto & in = job.inputs[k];
++            auto rit = index.find(job.input_roots[k]);
++            if (rit != index.end() && n <= rit->second) continue;   // runs before the input is produced
++            if (kuno_seg_overlaps((const char *) node->data, ggml_nbytes(node), in.first, in.second)) return false;
++        }
++    }
++    std::vector<const char *> same_rows;   // gate inputs addressing the output's own element (safe in place)
++    if (gate) {
++        for (int k = 0; k < nseg; ++k) {
++            const char * own = (const char *) F->data + size_t(d.seg[k].row0) * C * sizeof(float);
++            if ((const char *) d.seg[k].a == own) same_rows.push_back((const char *) d.seg[k].a);
++            if ((const char *) d.seg[k].b == own) same_rows.push_back((const char *) d.seg[k].b);
++        }
++    }
++    for (const auto & in : job.inputs) {
++        if (!kuno_seg_overlaps((const char *) job.out->data, ggml_nbytes(job.out), in.first, in.second)) continue;
++        if (std::find(same_rows.begin(), same_rows.end(), in.first) == same_rows.end()) job.staged = true;
++    }
++    for (int n : idx) plan.skip[n] = 1;
++    job.nodes = idx; job.nodes.push_back(run_at);
++    plan.jobs[run_at] = job;
++    return true;
++}
++
++static kuno_minimax_seg_plan kuno_minimax_seg_prepare(ggml_cgraph * g) {
++    kuno_minimax_seg_plan plan;
++    plan.skip.assign(g->n_nodes, 0); plan.plain.assign(g->n_nodes, 0);
++    std::unordered_map<const ggml_tensor *, int> index;
++    index.reserve(g->n_nodes * 2);
++    std::vector<uint8_t> inner(g->n_nodes, 0);
++    bool any = false;
++    for (int n = 0; n < g->n_nodes; ++n) index[g->nodes[n]] = n;
++    for (int n = 0; n < g->n_nodes; ++n) {
++        const ggml_tensor * t = g->nodes[n];
++        if (t->op == GGML_OP_CONCAT && t->src[0] && t->src[0]->op == GGML_OP_CONCAT) {
++            any = true;
++            auto it = index.find(t->src[0]);
++            if (it != index.end()) inner[it->second] = 1;   // not a final CONCAT
++        }
++    }
++    if (!any) return plan;
++    for (int n = 0; n < g->n_nodes; ++n) {
++        ggml_tensor * t = g->nodes[n];
++        if (t->op != GGML_OP_CONCAT || plan.skip[n] || inner[n] || !t->src[0] || t->src[0]->op != GGML_OP_CONCAT) continue;
++        kuno_minimax_seg_job job;
++        kuno_minimax_seg_match(g, n, index, plan, job);
++    }
++    return plan;
++}
++
++static void kuno_minimax_seg_run(ggml_backend_sycl_context & ctx, const kuno_minimax_seg_job & job) {
++    const kuno_minimax_seg_desc d = job.d;
++    if (job.gate) {
++        ggml_sycl_pool_alloc<float> scratch(ctx.pool());
++        float * out = job.staged ? scratch.alloc(size_t(d.C) * d.L) : (float *) job.out->data;
++        for (int k = 0; k < d.nseg; ++k) {
++            const kuno_minimax_seg sg = d.seg[k];
++            float * o = out + size_t(sg.row0) * d.C;
++            const int64_t C = d.C;
++            const bool os = d.o_scaled; const float osc = d.o_scale, ob = d.o_bias;
++            ctx.stream()->parallel_for(sycl::range<2>(sg.rows, C), [=](sycl::id<2> id) {
++#pragma clang fp contract(off) reassociate(off)
++                const size_t off = id[0] * C + id[1];
++                float b = sg.b[off];
++                if (os) b = osc * b + ob;
++                const float product = b * sg.p[id[1]];
++                o[off] = sg.a[off] + product;
++            });
++        }
++        if (job.staged) ctx.stream()->memcpy(job.out->data, out, ggml_nbytes(job.out));
++    } else {
++        ggml_tensor * q = job.out;
++        if (job.staged) {
++            ggml_sycl_pool_alloc<int8_t> scratch(ctx.pool());
++            ggml_tensor tmp = *q;
++            tmp.data = scratch.alloc(ggml_nbytes(q));
++            GGML_ASSERT(ggml_sycl_quantize_i8_convrot_minimax_mod(ctx, &tmp, d));
++            ctx.stream()->memcpy(q->data, tmp.data, ggml_nbytes(q));
++        } else {
++            GGML_ASSERT(ggml_sycl_quantize_i8_convrot_minimax_mod(ctx, q, d));
++        }
++    }
 +}
 diff --git a/src/ggml-sycl/mul-add-policy.hpp b/src/ggml-sycl/mul-add-policy.hpp
 new file mode 100644
