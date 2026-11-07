@@ -70,10 +70,32 @@ pub struct WgpuStream {
     /// Used to prevent wgpu staging buffer pool exhaustion during bulk writes
     /// (e.g. model loading with hundreds of tensors).
     pending_write_count: usize,
+    /// Reused staging for large PUBLIC writes (model loads), released after the load.
+    bulk_upload: BulkUpload,
     transient_io: Option<super::transient_io::TransientIo>,
     strata_graph: Option<super::strata_graph::Graph>,
     native_init_pipeline: Option<wgpu::ComputePipeline>,
     cleanup_boundary: Arc<super::cleanup_boundary::CleanupBoundary>,
+}
+
+/// Bytes of one reused staging buffer (the model loader's upload window).
+const BULK_UPLOAD_BYTES: u64 = 16 * 1024 * 1024;
+/// Staging buffers in flight, so host copies overlap the GPU's transfers.
+const BULK_UPLOAD_SLOTS: usize = 8;
+
+#[derive(Debug)]
+struct BulkUploadSlot {
+    buffer: wgpu::Buffer,
+    submission: Option<wgpu::SubmissionIndex>,
+}
+
+/// `Queue::write_buffer` creates a new staging buffer per call. Bulk public
+/// writes reuse this ring instead; each slot is mapped again once its copy ends.
+#[derive(Debug, Default)]
+struct BulkUpload {
+    slots: Vec<BulkUploadSlot>,
+    next: usize,
+    used_since_sync: bool,
 }
 
 impl WgpuStream {
@@ -133,6 +155,7 @@ impl WgpuStream {
             poll,
             submission_load: SubmissionLoad::default(),
             pending_write_count: 0,
+            bulk_upload: BulkUpload::default(),
             transient_io: None,
             cleanup_boundary: Arc::default(),
         }
@@ -601,6 +624,12 @@ impl WgpuStream {
     pub fn sync(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = Result<(), ServerError>> + Send + 'static>> {
+        // A sync with no bulk write since the last one means the load has ended.
+        if !self.bulk_upload.used_since_sync {
+            self.bulk_upload.slots.clear();
+            self.bulk_upload.next = 0;
+        }
+        self.bulk_upload.used_since_sync = false;
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
 
         let flush_error = self
@@ -1527,6 +1556,55 @@ impl WgpuStream {
 
     // Nb: this function submits a command to the _queue_ not to the encoder,
     // so you have to be really careful about the ordering of operations here.
+    /// One bulk window through the staging ring. Pending `write_buffer` copies run
+    /// first at this submit, and the copy is ordered before unsubmitted compute
+    /// work, exactly like `write_buffer` itself.
+    fn write_bulk(&mut self, resource: &WgpuResource, data: &[u8]) {
+        self.bulk_upload.used_since_sync = true;
+        if self.bulk_upload.slots.is_empty() {
+            for _ in 0..BULK_UPLOAD_SLOTS {
+                let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Kuno bulk upload"),
+                    size: BULK_UPLOAD_BYTES,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: true,
+                });
+                self.bulk_upload.slots.push(BulkUploadSlot { buffer, submission: None });
+            }
+        }
+        let index = self.bulk_upload.next;
+        self.bulk_upload.next = (index + 1) % BULK_UPLOAD_SLOTS;
+        let timeout = self.cleanup_boundary.cleanup_timeout();
+        let slot = &mut self.bulk_upload.slots[index];
+        if let Some(submission) = slot.submission.take() {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            slot.buffer.map_async(wgpu::MapMode::Write, .., move |result| {
+                let _ = sender.send(result);
+            });
+            // The map callback fires once the slot's copy has completed.
+            let polled = self.device.poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout,
+            });
+            let mapped = polled.is_ok() && matches!(receiver.try_recv(), Ok(Ok(())));
+            if !mapped {
+                self.error(super::transient_io::fault("bulk upload staging map failed"));
+                return;
+            }
+        }
+        {
+            let mut view = slot.buffer.get_mapped_range_mut(..);
+            view.copy_from_slice(data);
+        }
+        slot.buffer.unmap();
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Kuno bulk upload"),
+        });
+        encoder.copy_buffer_to_buffer(&slot.buffer, 0, &resource.buffer, resource.offset, BULK_UPLOAD_BYTES);
+        slot.submission = Some(self.queue.submit([encoder.finish()]));
+        self.pending_write_count = 0;
+    }
+
     // Any buffer which has outstanding (not yet flushed) compute work should
     // NOT be copied to.
     fn write_to_buffer(&mut self, resource: &WgpuResource, data: &[u8]) {
@@ -1540,6 +1618,11 @@ impl WgpuStream {
         // just has to be a multiple of 4: https://www.w3.org/TR/webgpu/#dom-gpuqueue-writebuffer
         let copy_align = wgpu::COPY_BUFFER_ALIGNMENT;
         let size = resource.size.next_multiple_of(copy_align);
+
+        if size == data.len() as u64 && size == BULK_UPLOAD_BYTES {
+            self.write_bulk(resource, data);
+            return;
+        }
 
         if size == data.len() as u64 {
             // write_buffer is the recommended way to write this data, as:

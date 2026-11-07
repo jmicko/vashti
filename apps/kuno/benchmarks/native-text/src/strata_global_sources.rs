@@ -258,9 +258,9 @@ impl Sources {
         if crate::resident_util::public_diagnostics() {
             eprintln!("public_load_plan {}", serde_json::json!({"ranked_pairs":sources.plan.slots.len(),"budget_bytes":sources.plan.budget,"resident_piece_bytes":sources.plan.resident_piece_bytes,"host_logical_bytes":sources.plan.host_logical_bytes,"host_piece_bytes":sources.plan.host_piece_bytes}));
         }
-        // GPU cache upload and host mirror fill stay sequential: both are bound
-        // by the same disk, so overlapping them measured no gain (re-measured
-        // with direct reads: 22 s overlapped vs 20.6 s sequential).
+        // GPU cache upload and host mirror fill stay sequential: on a cold load both
+        // are bound by the same disk, so overlapping them measured no gain
+        // (re-measured with direct reads: 22 s overlapped vs 20.6 s sequential).
         sources.gpu = Some(Cache::load(client, graph, &sources.plan)?);
         crate::resident_util::public_step("gpu_cache_load", step);
         let step = std::time::Instant::now();

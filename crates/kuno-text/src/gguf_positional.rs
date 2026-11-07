@@ -15,6 +15,35 @@ pub struct PositionalReader<'m> {
     /// Same inodes reopened with O_DIRECT (Linux x86_64), for bulk loads that
     /// must not route tens of GB of weights through the page cache.
     direct: Vec<Option<File>>,
+    /// Bulk loads go through the page cache: the host has room for the whole
+    /// model, so the next load of it comes from RAM instead of the disk.
+    prefer_page_cache: bool,
+}
+
+/// RAM kept free beyond the model before bulk loads use the page cache.
+const PAGE_CACHE_MARGIN_BYTES: u64 = 16 << 30;
+
+fn mem_available_bytes(meminfo: &str) -> Option<u64> {
+    let line = meminfo.lines().find(|line| line.starts_with("MemAvailable:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    kib.checked_mul(1024)
+}
+
+fn fits_page_cache(model_bytes: u64, available: Option<u64>) -> bool {
+    match (available, model_bytes.checked_add(PAGE_CACHE_MARGIN_BYTES)) {
+        (Some(available), Some(needed)) => available >= needed,
+        _ => false,
+    }
+}
+
+/// Decided once, before the load's own allocations shrink MemAvailable, so one
+/// load never mixes policies. Unreadable meminfo keeps direct I/O.
+fn prefer_page_cache(model_bytes: u64) -> bool {
+    static DECISION: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DECISION.get_or_init(|| {
+        let meminfo = std::fs::read_to_string("/proc/meminfo").ok();
+        fits_page_cache(model_bytes, meminfo.as_deref().and_then(mem_available_bytes))
+    })
 }
 
 /// Bytes of the per-thread aligned bounce buffer used by direct reads.
@@ -343,7 +372,9 @@ impl GgufFile {
             for (source, file) in self.sources.iter().zip(&files) {
                 direct.push(reopen_direct(file).filter(|d| source.check_stat(d).is_ok()));
             }
-            let reader = PositionalReader { model: self, files, direct };
+            let model_bytes = self.sources.iter().fold(0u64, |sum, source| sum.saturating_add(source.file_len));
+            let prefer_page_cache = prefer_page_cache(model_bytes);
+            let reader = PositionalReader { model: self, files, direct, prefer_page_cache };
             reader.verify_file_unchanged()?;
             Ok(reader)
         }
@@ -571,14 +602,17 @@ impl<'m> PositionalReader<'m> {
     }
 
     /// Same contract as `read_range`, but bypasses the page cache with O_DIRECT
-    /// through a per-thread aligned bounce buffer. Falls back to `read_range`
-    /// where direct I/O is unavailable.
+    /// through a per-thread aligned bounce buffer, unless the whole model fits in
+    /// available RAM. Falls back to `read_range` where direct I/O is unavailable.
     pub fn read_range_direct(
         &self,
         tensor: TensorView<'m>,
         byte_offset: u64,
         output: &mut [u8],
     ) -> Result<()> {
+        if self.prefer_page_cache {
+            return self.read_range(tensor, byte_offset, output);
+        }
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
             let Some(Some(file)) = self.direct.get(tensor.info.shard_index) else {
@@ -709,6 +743,18 @@ fn read_exact_at(
 
 #[cfg(all(test, unix))]
 mod tests {
+    #[test]
+    fn page_cache_needs_room_for_the_model_and_margin() {
+        let meminfo = "MemTotal: 131000000 kB\nMemAvailable:   122000000 kB\n";
+        let available = super::mem_available_bytes(meminfo);
+        assert_eq!(available, Some(122_000_000 * 1024));
+        assert!(super::fits_page_cache(84_000_000_000, available));
+        assert!(!super::fits_page_cache(120_000_000_000, available));
+        assert!(!super::fits_page_cache(1, None));
+        assert!(!super::fits_page_cache(u64::MAX, available));
+        assert_eq!(super::mem_available_bytes("MemTotal: 1 kB\n"), None);
+    }
+
     use super::*;
     use crate::GgufLimits;
     use std::io::{Seek, SeekFrom, Write};
