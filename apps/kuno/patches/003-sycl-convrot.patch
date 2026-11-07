@@ -115,6 +115,54 @@ index 4fa34a5..1891e94 100644
 +kuno_f16_shadow & kuno_q_shadow();
 +
  #endif // GGML_SYCL_COMMON_HPP
+diff --git a/src/ggml-sycl/concat.cpp b/src/ggml-sycl/concat.cpp
+index 1ad242f..9f99619 100644
+--- a/src/ggml-sycl/concat.cpp
++++ b/src/ggml-sycl/concat.cpp
+@@ -174,18 +174,35 @@ void concat_impl_sycl(ggml_backend_sycl_context & ctx, ggml_tensor *dst) {
+         const T * src1_d = (const T *) src1->data;
+         T * dst_d = (T *) dst->data;
+         size_t type_size = elem_size(dst->type);
+-        if (dim != 3) {
+-            for (int i3 = 0; i3 < dst->ne[3]; i3++) {
+-                concat_T_sycl<T>(src0_d + i3 * (src0->nb[3] / type_size), src1_d + i3 * (src1->nb[3] / type_size),
+-                                dst_d + i3 * (dst->nb[3] / type_size), src0->ne[0], src0->ne[1], src0->ne[2], dst->ne[0],
+-                                dst->ne[1], dst->ne[2], dim, stream);
+-            }
++        if (dim != 3 && dst->ne[3] > 1) {
++            // Kuno: one launch for all i3 slices (the per-slice loop issued ne3 tiny kernels).
++            const int64_t ne0 = dst->ne[0], ne1 = dst->ne[1], ne2 = dst->ne[2], ne3 = dst->ne[3];
++            const int64_t a0 = src0->ne[0], a1 = src0->ne[1], a2 = src0->ne[2];
++            const int64_t b0 = src1->ne[0], b1 = src1->ne[1], b2 = src1->ne[2];
++            const int d = dim;
++            stream->parallel_for(sycl::range<3>(ne3 * ne2, ne1, ne0), [=](sycl::id<3> id) {
++                const int64_t i0 = id[2], i1 = id[1], i2 = id[0] % ne2, i3 = id[0] / ne2;
++                const int64_t c = d == 0 ? i0 : (d == 1 ? i1 : i2);
++                const int64_t lim = d == 0 ? a0 : (d == 1 ? a1 : a2);
++                T v;
++                if (c < lim) {
++                    v = src0_d[((i3 * a2 + i2) * a1 + i1) * a0 + i0];
++                } else {
++                    const int64_t j0 = d == 0 ? i0 - a0 : i0, j1 = d == 1 ? i1 - a1 : i1, j2 = d == 2 ? i2 - a2 : i2;
++                    v = src1_d[((i3 * b2 + j2) * b1 + j1) * b0 + j0];
++                }
++                dst_d[((i3 * ne2 + i2) * ne1 + i1) * ne0 + i0] = v;
++            });
++        } else if (dim != 3) {
++            concat_T_sycl<T>(src0_d, src1_d, dst_d, src0->ne[0], src0->ne[1], src0->ne[2], dst->ne[0],
++                            dst->ne[1], dst->ne[2], dim, stream);
+         } else {
+             const size_t size0 = ggml_nbytes(src0);
+             const size_t size1 = ggml_nbytes(src1);
+ 
+-            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d, src0_d, size0).wait()));
+-            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d + size0 / type_size, src1_d, size1).wait()));
++            // In-order queue: no host waits needed between the two copies.
++            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d, src0_d, size0)));
++            SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d + size0 / type_size, src1_d, size1)));
+         }
+     } else {
+         concat_T_sycl_non_cont<T>(stream, (const char *) src0->data, (const char *) src1->data, (char *) dst->data,
 diff --git a/src/ggml-sycl/conv.cpp b/src/ggml-sycl/conv.cpp
 index 475bd34..d2730d0 100644
 --- a/src/ggml-sycl/conv.cpp
@@ -2723,7 +2771,7 @@ index 4a6027f..818fbe7 100644
          const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
          const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 18d5878..200be8d 100644
+index 18d5878..ceced7c 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -59,6 +59,10 @@
@@ -3115,7 +3163,7 @@ index 18d5878..200be8d 100644
          if (ggml_is_empty(node) || node->op == GGML_OP_RESHAPE || node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_NONE) {
              continue;
          }
-@@ -5408,6 +5722,28 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5408,6 +5722,36 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -3133,6 +3181,14 @@ index 18d5878..200be8d 100644
 +            ggml_sycl_compute_forward(*sycl_ctx, node);
 +            continue;
 +        }
++        if (node->op == GGML_OP_ADD && g_ggml_sycl_enable_fusion) {
++            kuno_bias_swiglu_match bsg;
++            if (kuno_bias_swiglu_find(cgraph, i, bsg)) {
++                kuno_bias_swiglu_run(*sycl_ctx, bsg);
++                i = bsg.last;
++                continue;
++            }
++        }
 +        if (node->op == GGML_OP_CONT && g_ggml_sycl_enable_fusion) {
 +            kuno_minimax_rope_match rope;
 +            if (kuno_minimax_rope_find(cgraph, i, rope)) {
@@ -3144,7 +3200,7 @@ index 18d5878..200be8d 100644
          const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
          if (nodes_to_skip != 0) {
              i += nodes_to_skip;
-@@ -5421,6 +5757,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5421,6 +5765,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              }
          }
  #endif
@@ -3224,7 +3280,7 @@ index 18d5878..200be8d 100644
          if (node->op == GGML_OP_RMS_NORM &&
              ggml_sycl_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL })) {
              ggml_sycl_op_rms_norm_fused(*sycl_ctx, node, cgraph->nodes[i + 1]);
-@@ -5428,6 +5837,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5428,6 +5845,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -3238,7 +3294,7 @@ index 18d5878..200be8d 100644
          bool ok = ggml_sycl_compute_forward(*sycl_ctx, node);
          if (!ok) {
              GGML_LOG_ERROR("%s: error: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
-@@ -5449,6 +5865,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5449,6 +5873,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
          switch (node_op) {
              default:
                  break;
@@ -3248,7 +3304,7 @@ index 18d5878..200be8d 100644
              case GGML_OP_CONCAT:
                  // ggml_sycl_op_concat() does a blocking host wait after memcpy operations,
                  // but wait() can't be called on the events returned by a queue recording
-@@ -5462,6 +5881,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5462,6 +5889,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
                                ggml_op_name(node_op));
                  return false;
              case GGML_OP_MUL_MAT:
@@ -3256,7 +3312,7 @@ index 18d5878..200be8d 100644
                  // We cannot use graphs with ggml_sycl_mul_mat() when SYCL async memory allocation extensions are not available,
                  // as SYCL malloc / free and host wait calls are not supported when recording to a graph which are all present
                  // in reordering.
-@@ -5602,6 +6022,7 @@ struct ggml_backend_sycl_device_context {
+@@ -5602,6 +6030,7 @@ struct ggml_backend_sycl_device_context {
      int device;
      std::string name;
      std::string description;
@@ -3264,7 +3320,7 @@ index 18d5878..200be8d 100644
      int op_offload_min_batch_size;
  };
  
-@@ -5632,6 +6053,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
+@@ -5632,6 +6061,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
  }
  
  static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
@@ -3273,7 +3329,7 @@ index 18d5878..200be8d 100644
      props->name        = ggml_backend_sycl_device_get_name(dev);
      props->description = ggml_backend_sycl_device_get_description(dev);
      props->type        = ggml_backend_sycl_device_get_type(dev);
-@@ -5736,9 +6159,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -5736,9 +6167,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
              }
              break;
@@ -3292,7 +3348,7 @@ index 18d5878..200be8d 100644
                  struct ggml_tensor * a = op->src[0];
                  struct ggml_tensor * b = op->src[1];
  
-@@ -6499,6 +6931,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+@@ -6499,6 +6939,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                  SYCL_CHECK(CHECK_TRY_ERROR(dpct::get_device_info(
                      prop, dpct::dev_mgr::instance().get_device(i))));
  
@@ -3487,10 +3543,10 @@ index 976d109..c422d3b 100644
  #endif // GGML_SYCL_IM2COL_HPP
 diff --git a/src/ggml-sycl/kuno-minimax.hpp b/src/ggml-sycl/kuno-minimax.hpp
 new file mode 100644
-index 0000000..00832ac
+index 0000000..26caf93
 --- /dev/null
 +++ b/src/ggml-sycl/kuno-minimax.hpp
-@@ -0,0 +1,544 @@
+@@ -0,0 +1,608 @@
 +// Kuno: exact fusions for MiniMax H3 DiT graph patterns. Included by ggml-sycl.cpp only.
 +#pragma once
 +
@@ -4034,6 +4090,70 @@ index 0000000..00832ac
 +            GGML_ASSERT(ggml_sycl_quantize_i8_convrot_minimax_mod(ctx, q, d));
 +        }
 +    }
++}
++
++// ---------------------------------------------------------------------------
++// Bias + SwiGLU after an F32-output MUL_MAT (MiniMax H3 video VAE MLP):
++//   ADD(mm, bias) [in place] -> VIEW u -> CONT -> SILU ; VIEW v -> CONT ; MUL(silu, v)
++//   out[t, c] = silu(mm[t, c] + b[c]) * (mm[t, H + c] + b[H + c])
++// ---------------------------------------------------------------------------
++struct kuno_bias_swiglu_match {
++    ggml_tensor * mm = nullptr, * add = nullptr, * out = nullptr;
++    const ggml_tensor * bias = nullptr;
++    int64_t H = 0, L = 0;
++    int last = -1;
++};
++
++static bool kuno_bias_swiglu_find(ggml_cgraph * g, int i, kuno_bias_swiglu_match & m) {
++    if (i < 1 || i + 6 >= g->n_nodes) return false;
++    ggml_tensor ** n = g->nodes + i;    // n[0] = ADD
++    ggml_tensor * add = n[0], * mm = add->src[0];
++    if (add->op != GGML_OP_ADD || !mm || mm->op != GGML_OP_MUL_MAT || mm->type != GGML_TYPE_F32 || !ggml_is_contiguous(mm) ||
++        mm->ne[2] != 1 || mm->ne[3] != 1 || add->src[2] || !ggml_are_same_shape(add, mm) || add->type != GGML_TYPE_F32) return false;
++    const ggml_tensor * bias = add->src[1];
++    const int64_t H2 = mm->ne[0], H = H2 / 2, L = mm->ne[1];
++    if (H2 % 2 || !bias || bias->type != GGML_TYPE_F32 || !ggml_is_contiguous(bias) || ggml_nelements(bias) != H2 || bias->ne[0] != H2) return false;
++    ggml_tensor * vu = n[1], * cu = n[2], * si = n[3], * vv = n[4], * cv = n[5], * mul = n[6];
++    auto half = [&](ggml_tensor * v, ggml_tensor * c, size_t off) {
++        return v->op == GGML_OP_VIEW && v->src[0] == add && v->ne[0] == H && v->ne[1] == L && v->nb[1] == add->nb[1] &&
++               (char *) v->data == (char *) add->data + off && c->op == GGML_OP_CONT && c->src[0] == v &&
++               ggml_is_contiguous(c) && c->type == GGML_TYPE_F32;
++    };
++    if (!half(vu, cu, 0) || !half(vv, cv, size_t(H) * sizeof(float))) return false;
++    if (si->op != GGML_OP_UNARY || ggml_get_unary_op(si) != GGML_UNARY_OP_SILU || si->src[0] != cu) return false;
++    if (mul->op != GGML_OP_MUL || mul->src[0] != si || mul->src[1] != cv || mul->src[2] || !ggml_is_contiguous(mul) ||
++        mul->type != GGML_TYPE_F32 || mul->ne[0] != H || mul->ne[1] != L) return false;
++    static const int uses[6] = {2, 1, 1, 1, 1, 1};
++    for (int k = 0; k < 6; ++k) {
++        if (ggml_node_get_use_count(g, i + k) != uses[k] || (n[k]->flags & GGML_TENSOR_FLAG_OUTPUT)) return false;
++        if (!ggml_op_is_empty(n[k]->op) && !(n[k]->flags & GGML_TENSOR_FLAG_COMPUTE)) return false;
++    }
++    if (!(mul->flags & GGML_TENSOR_FLAG_COMPUTE)) return false;
++    // The MUL_MAT's only consumer is the ADD (in place on it).
++    for (int k = 0; k < g->n_nodes; ++k) {
++        const ggml_tensor * node = g->nodes[k];
++        if (node == add || node == vu || node == vv) continue;
++        for (int s = 0; s < GGML_MAX_SRC; ++s) if (node->src[s] == mm) return false;
++    }
++    m.mm = mm; m.add = add; m.out = mul; m.bias = bias; m.H = H; m.L = L; m.last = i + 6;
++    return true;
++}
++
++static void kuno_bias_swiglu_run(ggml_backend_sycl_context & ctx, const kuno_bias_swiglu_match & m) {
++    const float * x = (const float *) m.mm->data, * b = (const float *) m.bias->data;
++    const int64_t H = m.H, L = m.L;
++    const bool staged = kuno_overlap(m.out, m.mm) || kuno_overlap(m.out, m.bias);
++    ggml_sycl_pool_alloc<float> scratch(ctx.pool());
++    float * out = staged ? scratch.alloc(size_t(H) * L) : (float *) m.out->data;
++    ctx.stream()->parallel_for(sycl::range<2>(L, H), [=](sycl::id<2> id) {
++#pragma clang fp contract(off) reassociate(off)
++        const int64_t t = id[0], c = id[1];
++        const float u = x[t * 2 * H + c] + b[c];
++        const float v = x[t * 2 * H + H + c] + b[H + c];
++        const float s = u / (1.0f + sycl::exp(-u));
++        out[t * H + c] = s * v;
++    });
++    if (staged) ctx.stream()->memcpy(m.out->data, out, ggml_nbytes(m.out));
 +}
 diff --git a/src/ggml-sycl/mul-add-policy.hpp b/src/ggml-sycl/mul-add-policy.hpp
 new file mode 100644

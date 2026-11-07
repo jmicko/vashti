@@ -953,6 +953,63 @@ index da59cfa..b98f6c4 100644
          static ggml_tensor* process_image_common(ggml_context* ctx,
                                                   ggml_tensor* image,
                                                   const LLMVisionConfig& vision_params) {
+diff --git a/src/model/vae/minimax_h3_vae.hpp b/src/model/vae/minimax_h3_vae.hpp
+index 7775664..3200042 100644
+--- a/src/model/vae/minimax_h3_vae.hpp
++++ b/src/model/vae/minimax_h3_vae.hpp
+@@ -625,6 +625,7 @@ namespace MiniMaxH3VAE {
+                 input = repeat_last_frame(input, pad);
+             }
+             auto plan   = make_vae_temporal_tile_plan(input.shape()[2], {17, 0});
++            DeferRunnerEnd keep_runner(*this);
+             auto result = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& chunk, const VAETemporalTile& tile) {
+                 SD_UNUSED(tile);
+                 return VAE::encode(n_threads, chunk, tiling, circular_x, circular_y);
+@@ -688,6 +689,7 @@ namespace MiniMaxH3VAE {
+                 input.shape()[2],
+                 {static_cast<int>(tokens_per_chunk + token_overlap), static_cast<int>(token_overlap)});
+             GGML_ASSERT(plan.tiles.size() == static_cast<size_t>(num_chunks));
++            DeferRunnerEnd keep_runner(*this);
+             auto result = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& chunk, const VAETemporalTile& tile) {
+                 auto decoded = VAE::decode(n_threads,
+                                            chunk,
+diff --git a/src/model/vae/vae.hpp b/src/model/vae/vae.hpp
+index 4d8d135..6fb36a8 100644
+--- a/src/model/vae/vae.hpp
++++ b/src/model/vae/vae.hpp
+@@ -12,6 +12,14 @@ protected:
+     SDVersion version;
+     std::string weight_prefix;
+     bool scale_input                                      = true;
++    // Kuno: chunked callers (e.g. MiniMax H3 temporal chunks) keep the runner's staged
++    // weights, compute workspace and graph cache across chunks and end it once.
++    bool defer_runner_end_                                = false;
++    struct DeferRunnerEnd {
++        VAE& vae;
++        explicit DeferRunnerEnd(VAE& v) : vae(v) { vae.defer_runner_end_ = true; }
++        ~DeferRunnerEnd() { vae.defer_runner_end_ = false; vae.runner_end(); }
++    };
+     virtual sd::Tensor<float> _compute(const int n_threads,
+                                        const sd::Tensor<float>& z,
+                                        bool decode_graph) = 0;
+@@ -252,7 +260,7 @@ public:
+                                                   tiling_params);
+         }
+ 
+-        runner_end();
++        if (!defer_runner_end_) runner_end();
+ 
+         if (output.empty()) {
+             LOG_ERROR("vae encode compute failed");
+@@ -306,7 +314,7 @@ public:
+                                                   tiling_params);
+         }
+ 
+-        runner_end();
++        if (!defer_runner_end_) runner_end();
+ 
+         if (output.empty()) {
+             LOG_ERROR("vae decode compute failed");
 diff --git a/src/model/vae/wan_vae.hpp b/src/model/vae/wan_vae.hpp
 index 8d14cf9..4c105fa 100644
 --- a/src/model/vae/wan_vae.hpp
