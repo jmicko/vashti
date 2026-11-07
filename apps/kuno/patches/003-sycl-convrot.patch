@@ -115,6 +115,23 @@ index 4fa34a5..1891e94 100644
 +kuno_f16_shadow & kuno_q_shadow();
 +
  #endif // GGML_SYCL_COMMON_HPP
+diff --git a/src/ggml-sycl/conv.cpp b/src/ggml-sycl/conv.cpp
+index 475bd34..d2730d0 100644
+--- a/src/ggml-sycl/conv.cpp
++++ b/src/ggml-sycl/conv.cpp
+@@ -34,7 +34,11 @@ static  void conv_transpose_1d_kernel(
+         int kernel_offset = (src0_ne0 * src0_ne1 * c) + (out_index * src0_ne0);
+         int input_offset = src1_ne0 * c;
+ 
+-        for (int i = 0; i < src1_ne0; i++) {
++        // Only inputs with i*s0 <= idx < i*s0 + K contribute; visiting just that
++        // range keeps the original accumulation order (bit-identical result).
++        const int i_begin = idx >= src0_ne0 ? (idx - src0_ne0) / s0 + 1 : 0;
++        const int i_end   = sycl::min(idx / s0 + 1, src1_ne0);
++        for (int i = i_begin; i < i_end; i++) {
+             if (!(idx >= i*s0 && idx < i*s0 + src0_ne0)) {
+                 continue;
+             }
 diff --git a/src/ggml-sycl/convrot-policy.hpp b/src/ggml-sycl/convrot-policy.hpp
 new file mode 100644
 index 0000000..7899841
@@ -167,10 +184,10 @@ index 0000000..7899841
 +}
 diff --git a/src/ggml-sycl/convrot.cpp b/src/ggml-sycl/convrot.cpp
 new file mode 100644
-index 0000000..d08930f
+index 0000000..dbb046b
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.cpp
-@@ -0,0 +1,536 @@
+@@ -0,0 +1,722 @@
 +// Experimental native signed INT8 tensorwise GEMM for Qwen ConvRot weights.
 +#include "convrot.hpp"
 +#include "binbcast.hpp"
@@ -214,6 +231,8 @@ index 0000000..d08930f
 +            float maximum = 0.f;
 +#pragma unroll
 +            for (int g = 0; g < G; ++g) {
++                // Sub-group s owns groups s*G .. s*G+G-1; trailing ones past k are skipped (uniform per sub-group).
++                if ((s * G + g) * 256 >= k) break;
 +                const int64_t base = (s * G + g) * 256;
 +                if (g) sycl::group_barrier(sg);
 +#pragma unroll
@@ -254,6 +273,7 @@ index 0000000..d08930f
 +            auto store = [&](auto mul) {
 +#pragma unroll
 +                for (int g = 0; g < G; ++g) {
++                    if ((s * G + g) * 256 >= k) break;
 +                    int8_t * dst = q + row * k + (s * G + g) * 256 + lane;
 +#pragma unroll
 +                    for (int j = 0; j < 16; ++j) {
@@ -277,6 +297,19 @@ index 0000000..d08930f
 +    quantize_rows_sg_load<G>(Q, convrot_load_f32{x, k}, q, scales, k, rows);
 +}
 +
++// Row-parallel kernel coverage: K a multiple of 256 with at most 64 groups (16 sub-groups x G <= 4).
++static inline bool convrot_rows_supported(int64_t k) { return k > 0 && k % 256 == 0 && (k / 256 + 15) / 16 <= 4; }
++
++template <typename Load>
++static void quantize_rows_dispatch(sycl::queue & Q, Load load, int8_t * q, float * scales, int64_t k, int64_t rows) {
++    switch ((k / 256 + 15) / 16) {
++        case 1: quantize_rows_sg_load<1>(Q, load, q, scales, k, rows); break;
++        case 2: quantize_rows_sg_load<2>(Q, load, q, scales, k, rows); break;
++        case 3: quantize_rows_sg_load<3>(Q, load, q, scales, k, rows); break;
++        default: quantize_rows_sg_load<4>(Q, load, q, scales, k, rows); break;
++    }
++}
++
 +static void quantize_legacy(ggml_backend_sycl_context & ctx, const float * x, int8_t * q,
 +                            float * scales, int64_t k, int64_t rows, int group_size);
 +
@@ -287,17 +320,13 @@ index 0000000..d08930f
 +    const int64_t groups = k / 256;
 +    // The row-parallel kernel covers K = 4096..12288 in whole 4096 blocks; other
 +    // shapes use the shared-memory kernel. Both produce identical bytes.
-+    if (group_size != 256 || k % 4096 != 0 || groups / 16 > 3) {
++    if (group_size != 256 || !convrot_rows_supported(k)) {
 +        quantize_legacy(ctx, x, q, scales, k, rows, group_size);
 +        return;
 +    }
 +    const int64_t padded = (rows + 3) / 4 * 4;
 +    if (padded > rows) queue->memset(q + rows * k, 0, (padded - rows) * k);
-+    switch (groups / 16) {
-+        case 1: quantize_rows_sg<1>(*queue, x, q, scales, k, rows); break;
-+        case 2: quantize_rows_sg<2>(*queue, x, q, scales, k, rows); break;
-+        default: quantize_rows_sg<3>(*queue, x, q, scales, k, rows); break;
-+    }
++    quantize_rows_dispatch(*queue, convrot_load_f32{x, k}, q, scales, k, rows);
 +}
 +
 +static void quantize_legacy(ggml_backend_sycl_context & ctx, const float * x, int8_t * q,
@@ -455,7 +484,7 @@ index 0000000..d08930f
 +    if (!ggml_sycl_convrot_geometry(mm, true) || !ggml_sycl_convrot_geometry(quant, false)) return false;
 +    if (mm->type != GGML_TYPE_F32 || glu->type != GGML_TYPE_F32 || !ggml_is_contiguous(mm) || !ggml_is_contiguous(glu)) return false;
 +    const int64_t half = glu->ne[0];
-+    if (mm->ne[0] != 2 * half || ggml_nrows(glu) != ggml_nrows(mm) || half % 4096 != 0 || half / 4096 > 3) return false;
++    if (mm->ne[0] != 2 * half || ggml_nrows(glu) != ggml_nrows(mm) || !convrot_rows_supported(half)) return false;
 +    if (kuno_overlap(quant, mm->src[2]) || (mm->src[3] && kuno_overlap(quant, mm->src[3]))) return false;
 +    convrot_product p(ctx, mm);
 +    auto queue = ctx.stream();
@@ -468,11 +497,7 @@ index 0000000..d08930f
 +    queue->memset(bytes + half * padded, 0, ggml_nbytes(quant) - half * padded);
 +    if (padded > rows) queue->memset(bytes + rows * half, 0, (padded - rows) * half);
 +    float * row_scales = reinterpret_cast<float *>(bytes + half * padded);
-+    switch (half / 4096) {
-+        case 1: quantize_rows_sg_load<1>(*queue, load, bytes, row_scales, half, rows); break;
-+        case 2: quantize_rows_sg_load<2>(*queue, load, bytes, row_scales, half, rows); break;
-+        default: quantize_rows_sg_load<3>(*queue, load, bytes, row_scales, half, rows); break;
-+    }
++    quantize_rows_dispatch(*queue, load, bytes, row_scales, half, rows);
 +    return true;
 +}
 +
@@ -496,18 +521,72 @@ index 0000000..d08930f
 +    queue->memset(bytes + k * padded, 0, ggml_nbytes(quant) - k * padded);
 +    if (padded > rows) queue->memset(bytes + rows * k, 0, (padded - rows) * k);
 +    float * row_scales = reinterpret_cast<float *>(bytes + k * padded);
-+    switch (k / 4096) {
-+        case 1: quantize_rows_sg_load<1>(*queue, load, bytes, row_scales, k, rows); break;
-+        case 2: quantize_rows_sg_load<2>(*queue, load, bytes, row_scales, k, rows); break;
-+        default: quantize_rows_sg_load<3>(*queue, load, bytes, row_scales, k, rows); break;
++    quantize_rows_dispatch(*queue, load, bytes, row_scales, k, rows);
++}
++
++// ---------------------------------------------------------------------------
++// MiniMax H3 MLP: MUL_MAT(i8 fc1) -> SCALE -> {VIEW u -> CONT -> SILU} * {VIEW v -> CONT}
++// -> SCALE -> QUANTIZE_I8_CONVROT, read straight from the int32 product. Each former
++// node result is materialized as a volatile FP32 value (exact per-op rounding).
++struct convrot_load_minimax_mlp {
++    const int32_t * accum; const float * act; const float * scales; const float * bias;
++    int64_t n, half; float s1, b1, s2, b2;
++    float stage(int64_t row, int64_t col) const {
++        float value = float(accum[row * n + col]) * act[row];
++        value *= scales[col];
++        if (bias) value += bias[col];
++        volatile float linear = value;
++        const float l = linear;
++        volatile float scaled = s1 * l + b1;
++        return scaled;
 +    }
++    float operator()(int64_t row, int64_t e) const {
++        const float u = stage(row, e), v = stage(row, half + e);
++        volatile float silu = u / (1.0f + sycl::exp(-u));
++        const float s = silu;
++        volatile float product = op_mul(s, v);
++        const float p = product;
++        volatile float out = s2 * p + b2;
++        return out;
++    }
++};
++
++bool ggml_sycl_mul_mat_i8_convrot_minimax_mlp(ggml_backend_sycl_context & ctx, ggml_tensor * mm, ggml_tensor * scale1,
++                                              ggml_tensor * silu, ggml_tensor * mul, ggml_tensor * scale2, ggml_tensor * quant) {
++    if (!ggml_sycl_convrot_geometry(mm, true) || mm->type != GGML_TYPE_F32 || !ggml_is_contiguous(mm) ||
++        !ggml_sycl_convrot_geometry(quant, false) || quant->src[0] != scale2) return false;
++    if (scale1->op != GGML_OP_SCALE || scale1->src[0] != mm || !ggml_are_same_shape(scale1, mm) || !ggml_is_contiguous(scale1)) return false;
++    if (silu->op != GGML_OP_UNARY || ggml_get_unary_op(silu) != GGML_UNARY_OP_SILU || mul->op != GGML_OP_MUL ||
++        mul->src[0] != silu || scale2->op != GGML_OP_SCALE || scale2->src[0] != mul) return false;
++    const int64_t half = mul->ne[0];
++    if (mm->ne[0] != 2 * half || mm->ne[2] != 1 || mm->ne[3] != 1 || !convrot_rows_supported(half) ||
++        !ggml_are_same_shape(mul, silu) || !ggml_are_same_shape(mul, scale2) || ggml_nrows(mul) != ggml_nrows(mm)) return false;
++    // u = CONT(VIEW(scale1, cols [0, half))), v = CONT(VIEW(scale1, cols [half, 2*half)))
++    const ggml_tensor * cu = silu->src[0], * cv = mul->src[1];
++    auto half_of = [&](const ggml_tensor * c, size_t offset) {
++        const ggml_tensor * v = c ? c->src[0] : nullptr;
++        return c && c->op == GGML_OP_CONT && ggml_is_contiguous(c) && c->type == GGML_TYPE_F32 && ggml_are_same_shape(c, mul) &&
++               v && v->op == GGML_OP_VIEW && v->src[0] == scale1 && v->view_src == scale1 && v->view_offs == offset &&
++               v->nb[1] == scale1->nb[1] && v->ne[0] == half;
++    };
++    if (!half_of(cu, 0) || !half_of(cv, size_t(half) * sizeof(float))) return false;
++    if (kuno_overlap(quant, mm->src[2]) || (mm->src[3] && kuno_overlap(quant, mm->src[3]))) return false;
++    float s1, b1, s2, b2;
++    memcpy(&s1, (const float *) scale1->op_params + 0, sizeof(float)); memcpy(&b1, (const float *) scale1->op_params + 1, sizeof(float));
++    memcpy(&s2, (const float *) scale2->op_params + 0, sizeof(float)); memcpy(&b2, (const float *) scale2->op_params + 1, sizeof(float));
++    convrot_product p(ctx, mm);
++    convrot_load_minimax_mlp load{p.accum, p.activation_scales, static_cast<const float *>(mm->src[2]->data),
++                                  mm->src[3] ? static_cast<const float *>(mm->src[3]->data) : nullptr,
++                                  p.n, half, s1, b1, s2, b2};
++    quantize_into(ctx, quant, load, half, p.rows);
++    return true;
 +}
 +
 +bool ggml_sycl_quantize_i8_convrot_fused_input(ggml_backend_sycl_context & ctx, ggml_tensor * producer, ggml_tensor * quant) {
 +    if (quant->op != GGML_OP_QUANTIZE_I8_CONVROT || quant->src[0] != producer ||
 +        !ggml_sycl_convrot_geometry(quant, false) || producer->type != GGML_TYPE_F32 || !ggml_is_contiguous(producer)) return false;
 +    const int64_t k = producer->ne[0], rows = ggml_nrows(producer);
-+    if (k % 4096 != 0 || k / 4096 > 3) return false;
++    if (!convrot_rows_supported(k)) return false;
 +    const auto x = producer->src[0];
 +    if (!x || x->type != GGML_TYPE_F32 || !ggml_is_contiguous(x) || !ggml_are_same_shape(x, producer)) return false;
 +    if (kuno_overlap(x, quant) || (producer->op == GGML_OP_MUL && kuno_overlap(producer->src[1], quant))) return false;
@@ -689,6 +768,130 @@ index 0000000..d08930f
 +    return true;
 +}
 +
++// ---------------------------------------------------------------------------
++// MiniMax H3 attention inputs from the fused qkv projection, in one pass over the int32 product:
++//   q, k: per-head RMS norm * weight (exact RMS loop forms) -> partial RoPE (first R dims,
++//         non-interleaved halves) -> [128, L, H]; q as F32 (+F16 shadow), k scaled -> F16
++//   v:    scaled -> F16 [128, L, H]
++// One 16-lane sub-group per (token, q|k|v, head) row; every former node value is materialized.
++bool ggml_sycl_mul_mat_i8_convrot_minimax_qkv(ggml_backend_sycl_context & ctx, ggml_tensor * mm, const kuno_minimax_qkv_args & a) {
++    if (!ggml_sycl_convrot_geometry(mm, true) || mm->type != GGML_TYPE_F32 || mm->ne[2] != 1 || mm->ne[3] != 1) return false;
++    const int64_t H = a.heads, L = mm->ne[1], inner = H * 128, R = a.rot;
++    if (mm->ne[0] != 3 * inner || R <= 0 || R > 128 || R % 2) return false;
++    for (const ggml_tensor * w : {a.wq, a.wk})
++        if (!w || w->type != GGML_TYPE_F32 || ggml_nelements(w) != 128 || !ggml_is_contiguous(w)) return false;
++    if (!a.q || a.q->type != GGML_TYPE_F32 || !ggml_is_contiguous(a.q) || ggml_nelements(a.q) != inner * L) return false;
++    for (const ggml_tensor * o : {a.k16, a.v16})
++        if (!o || o->type != GGML_TYPE_F16 || !ggml_is_contiguous(o) || ggml_nelements(o) != inner * L) return false;
++    for (const ggml_tensor * o : {a.q, a.k16, a.v16}) {
++        if (kuno_overlap(o, a.pe) || kuno_overlap(o, a.wq) || kuno_overlap(o, a.wk) || kuno_overlap(o, mm->src[2]) ||
++            (mm->src[3] && kuno_overlap(o, mm->src[3]))) return false;
++    }
++    if (kuno_overlap(a.q, a.k16) || kuno_overlap(a.q, a.v16) || kuno_overlap(a.k16, a.v16)) return false;
++    convrot_product p(ctx, mm);
++    auto queue = ctx.stream();
++    const int32_t * accum = p.accum; const float * act = p.activation_scales;
++    const float * ws = static_cast<const float *>(mm->src[2]->data);
++    const float * bias = mm->src[3] ? static_cast<const float *>(mm->src[3]->data) : nullptr;
++    const float * wq = static_cast<const float *>(a.wq->data), * wk = static_cast<const float *>(a.wk->data);
++    const char * pe = static_cast<const char *>(a.pe->data);
++    const size_t p0 = a.pe->nb[0], p1 = a.pe->nb[1], p2 = a.pe->nb[2], p3 = a.pe->nb[3];
++    float * qo = static_cast<float *>(a.q->data);
++    sycl::half * ko = static_cast<sycl::half *>(a.k16->data), * vo = static_cast<sycl::half *>(a.v16->data);
++    sycl::half * q16 = nullptr;
++    {
++        auto & sh = kuno_q_shadow();
++        const size_t need = size_t(L) * inner;
++        if (sh.cap < need) {
++            if (sh.buf) { queue->wait(); sycl::free(sh.buf, *queue); }
++            sh.buf = sycl::malloc_device<sycl::half>(need, *queue); sh.cap = sh.buf ? need : 0;
++        }
++        if (sh.buf) { q16 = sh.buf; sh.key = a.q->data; }
++    }
++    const float eps_q = a.eps_q, eps_k = a.eps_k, ks = a.k_scale, kb = a.k_bias, vs = a.v_scale, vb = a.v_bias;
++    const int64_t n = p.n, R2 = R / 2, rows = L * 3 * H;
++    const int ncols = 128;     // runtime divisor and bound, as in the RMS kernel
++    const int block_size = 16;
++    queue->submit([&](sycl::handler & h) {
++        h.depends_on(p.gemm);
++        sycl::local_accessor<float, 1> stage(8 * 128, h);
++        h.parallel_for(sycl::nd_range<1>(rows * 16, 128), [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
++            auto sg = it.get_sub_group();
++            const int64_t r = it.get_global_id(0) / 16;
++            const int lane = int(sg.get_local_linear_id());
++            const int64_t hd = r % H, which = (r / H) % 3, t = r / (3 * H);
++            float * x = &stage[sg.get_group_linear_id() * 128];
++            const size_t out_base = size_t(128) * (t + L * hd);
++            for (int m = 0; m < 8; ++m) {
++                const int64_t col = which * inner + hd * 128 + lane + 16 * m;
++                float value = float(accum[t * n + col]) * act[t];
++                value *= ws[col];
++                if (bias) value += bias[col];
++                volatile float linear = value;
++                x[lane + 16 * m] = linear;
++            }
++            if (which == 2) {
++                for (int m = 0; m < 8; ++m) {
++                    const int e = lane + 16 * m;
++                    volatile float scaled = vs * x[e] + vb;
++                    const float sv = scaled;
++                    vo[out_base + e] = sycl::vec<float, 1>(sv).convert<sycl::half, sycl::rounding_mode::automatic>()[0];
++                }
++                return;
++            }
++            sycl::group_barrier(sg);
++            const float eps = which == 0 ? eps_q : eps_k;
++            const float * wn = which == 0 ? wq : wk;
++            const int tid = lane;
++            float tmp = 0.0f;
++            for (int col = tid; col < ncols; col += block_size) {
++                const float xi = x[col];
++                tmp += xi * xi;
++            }
++            for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
++                tmp += dpct::permute_sub_group_by_xor(sg, tmp, mask);
++            }
++            const float mean = tmp / ncols;
++            const float scale = sycl::rsqrt(mean + eps);
++            float normed[8];
++            for (int m = 0; m < 8; ++m) {
++                const int e = lane + 16 * m;
++                volatile float normed_store = scale * x[e] * wn[e];
++                normed[m] = normed_store;
++            }
++            sycl::group_barrier(sg);
++            for (int m = 0; m < 8; ++m) x[lane + 16 * m] = normed[m];
++            sycl::group_barrier(sg);
++            for (int m = 0; m < 8; ++m) {
++                const int64_t d = lane + 16 * m;
++                float out;
++                if (d < R) {
++                    const int64_t k = d / R2, aa = d % R2;
++                    const char * pp = pe + k * p0 + aa * p1 + t * p2;
++                    const float c0 = *(const float *) pp, c1 = *(const float *) (pp + p3);
++                    {
++#pragma clang fp contract(off)
++                        volatile float product0 = op_mul(x[aa], c0);
++                        volatile float product1 = op_mul(x[aa + R2], c1);
++                        out = op_add(float(product0), float(product1));
++                    }
++                } else {
++                    out = x[d];
++                }
++                if (which == 0) {
++                    qo[out_base + d] = out;
++                    if (q16) q16[out_base + d] = sycl::vec<float, 1>(out).convert<sycl::half, sycl::rounding_mode::automatic>()[0];
++                } else {
++                    volatile float scaled = ks * out + kb;
++                    const float sk = scaled;
++                    ko[out_base + d] = sycl::vec<float, 1>(sk).convert<sycl::half, sycl::rounding_mode::automatic>()[0];
++                }
++            }
++        });
++    });
++    return true;
++}
++
 +kuno_f16_shadow & kuno_q_shadow() { static kuno_f16_shadow shadow; return shadow; }
 +
 +// Attention output (oneDNN F16 [H][q][d]) -> SCALE -> ConvRot quantize.
@@ -709,10 +912,10 @@ index 0000000..d08930f
 +}
 diff --git a/src/ggml-sycl/convrot.hpp b/src/ggml-sycl/convrot.hpp
 new file mode 100644
-index 0000000..55b8bb2
+index 0000000..cb0dd91
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.hpp
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,25 @@
 +#pragma once
 +#include "common.hpp"
 +#include "convrot-policy.hpp"
@@ -722,6 +925,15 @@ index 0000000..55b8bb2
 +void ggml_sycl_mul_mat_i8_convrot(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
 +bool ggml_sycl_mul_mat_i8_convrot_swiglu_quantize(ggml_backend_sycl_context & ctx, ggml_tensor * mm,
 +                                                  ggml_tensor * glu, ggml_tensor * quant);
++bool ggml_sycl_mul_mat_i8_convrot_minimax_mlp(ggml_backend_sycl_context & ctx, ggml_tensor * mm, ggml_tensor * scale1,
++                                              ggml_tensor * silu, ggml_tensor * mul, ggml_tensor * scale2, ggml_tensor * quant);
++struct kuno_minimax_qkv_args {
++    int64_t heads = 0, rot = 0;
++    const ggml_tensor * wq = nullptr, * wk = nullptr, * pe = nullptr;
++    float eps_q = 0, eps_k = 0, k_scale = 1, k_bias = 0, v_scale = 1, v_bias = 0;
++    ggml_tensor * q = nullptr, * k16 = nullptr, * v16 = nullptr;
++};
++bool ggml_sycl_mul_mat_i8_convrot_minimax_qkv(ggml_backend_sycl_context & ctx, ggml_tensor * mm, const kuno_minimax_qkv_args & a);
 +bool ggml_sycl_quantize_i8_convrot_fused_input(ggml_backend_sycl_context & ctx, ggml_tensor * producer, ggml_tensor * quant);
 +bool ggml_sycl_mul_mat_i8_convrot_epilogue(ggml_backend_sycl_context & ctx, ggml_tensor * mm, ggml_tensor * scale_node,
 +                                           ggml_tensor * mul, ggml_tensor * add);
@@ -1968,10 +2180,10 @@ index 34bae1b..12d699c 100644
  #endif  // GGML_SYCL_CPY_HPP
 diff --git a/src/ggml-sycl/fattn-onednn-shapes.hpp b/src/ggml-sycl/fattn-onednn-shapes.hpp
 new file mode 100644
-index 0000000..33ded07
+index 0000000..2acd319
 --- /dev/null
 +++ b/src/ggml-sycl/fattn-onednn-shapes.hpp
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,84 @@
 +#pragma once
 +
 +#include "ggml.h"
@@ -2023,9 +2235,10 @@ index 0000000..33ded07
 +    // Contiguity alone can also describe a smaller malformed destination.
 +    if (dst->ne[0] != V->ne[0] || dst->ne[1] != Q->ne[2] ||
 +        dst->ne[2] != Q->ne[1] || dst->ne[3] != Q->ne[3]) return false;
-+    // The new unmasked path targets Qwen MHA at head dimension 128. Other
-+    // unmasked shapes remain native until separately validated on Xe2.
-+    if (!mask && (K->ne[0] != 128 || Q->ne[2] != K->ne[2])) return false;
++    // Unmasked MHA at head dimension 128 (Qwen, MiniMax H3 DiT) and 64
++    // (MiniMax H3 video VAE), each validated against the native kernel on Xe2.
++    // Other unmasked shapes remain native until separately validated.
++    if (!mask && ((K->ne[0] != 128 && K->ne[0] != 64) || Q->ne[2] != K->ne[2])) return false;
 +    if (mask && (mask->type != GGML_TYPE_F16 || mask->ne[0] != K->ne[1] ||
 +                 mask->ne[1] < Q->ne[1] || mask->ne[2] != 1 || mask->ne[3] != 1 ||
 +                 mask->nb[0] != sizeof(ggml_fp16_t) ||
@@ -2452,7 +2665,7 @@ index 4a6027f..818fbe7 100644
          const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
          const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 18d5878..a8ef5c4 100644
+index 18d5878..36f8703 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -59,6 +59,10 @@
@@ -2693,7 +2906,7 @@ index 18d5878..a8ef5c4 100644
              if (dst->src[0]->ne[3] != dst->src[1]->ne[3]) {
                  return false;
              }
-@@ -5396,8 +5571,139 @@ catch (sycl::exception const &exc) {
+@@ -5396,8 +5571,141 @@ catch (sycl::exception const &exc) {
    std::exit(1);
  }
  
@@ -2825,6 +3038,8 @@ index 18d5878..a8ef5c4 100644
 +    i += 4;
 +    return true;
 +}
++#include "kuno-minimax.hpp"
++
  static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * sycl_ctx, ggml_cgraph * cgraph) {
      ggml_sycl_set_main_device(sycl_ctx->device);
 +#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
@@ -2833,20 +3048,56 @@ index 18d5878..a8ef5c4 100644
  
      for (int i = 0; i < cgraph->n_nodes; i++) {
          ggml_tensor * node = cgraph->nodes[i];
-@@ -5408,6 +5714,9 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5408,6 +5716,17 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
 +#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
 +        if (kuno_whole_rope_step(*sycl_ctx,whole_rope_plans,i)) continue;
 +#endif
++        if (node->op == GGML_OP_CONT && g_ggml_sycl_enable_fusion) {
++            kuno_minimax_rope_match rope;
++            if (kuno_minimax_rope_find(cgraph, i, rope)) {
++                kuno_minimax_rope_run(*sycl_ctx, rope);
++                i += 27;
++                continue;
++            }
++        }
          const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
          if (nodes_to_skip != 0) {
              i += nodes_to_skip;
-@@ -5421,6 +5730,51 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5421,6 +5740,79 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              }
          }
  #endif
++        if (node->op == GGML_OP_MUL_MAT && node->src[0]->type == GGML_TYPE_I8 && g_ggml_sycl_enable_fusion) {
++            kuno_minimax_qkv_match qkv;
++            if (kuno_minimax_qkv_find(cgraph, i, qkv)) {
++                if (ggml_sycl_mul_mat_i8_convrot_minimax_qkv(*sycl_ctx, node, qkv.args)) {
++                    i = qkv.last;
++                    continue;
++                }
++            }
++        }
++        if (node->op == GGML_OP_MUL_MAT && node->src[0]->type == GGML_TYPE_I8 && g_ggml_sycl_enable_fusion && i + 9 < cgraph->n_nodes) {
++            // MiniMax H3 MLP: MUL_MAT -> SCALE -> VIEW/CONT/SILU, VIEW/CONT -> MUL -> SCALE -> QUANTIZE.
++            ggml_tensor ** nn = cgraph->nodes + i;
++            static const ggml_op mlp_ops[10] = { GGML_OP_MUL_MAT, GGML_OP_SCALE, GGML_OP_VIEW, GGML_OP_CONT, GGML_OP_UNARY,
++                                                 GGML_OP_VIEW, GGML_OP_CONT, GGML_OP_MUL, GGML_OP_SCALE, GGML_OP_QUANTIZE_I8_CONVROT };
++            static const int mlp_uses[9] = { 1, 2, 1, 1, 1, 1, 1, 1, 1 };
++            bool ok = true;
++            for (int k = 0; k < 10 && ok; ++k) {
++                ok = nn[k]->op == mlp_ops[k] && (k == 9 || !(nn[k]->flags & GGML_TENSOR_FLAG_OUTPUT)) &&
++                     (ggml_op_is_empty(nn[k]->op) || (nn[k]->flags & GGML_TENSOR_FLAG_COMPUTE));
++                if (ok && k < 9) ok = ggml_node_get_use_count(cgraph, i + k) == mlp_uses[k];
++            }
++            ok = ok && nn[2]->src[0] == nn[1] && nn[3]->src[0] == nn[2] && nn[4]->src[0] == nn[3] && nn[5]->src[0] == nn[1] &&
++                 nn[6]->src[0] == nn[5] && nn[7]->src[0] == nn[4] && nn[7]->src[1] == nn[6];
++            if (ok && ggml_sycl_mul_mat_i8_convrot_minimax_mlp(*sycl_ctx, nn[0], nn[1], nn[4], nn[7], nn[8], nn[9])) {
++                i += 9;
++                continue;
++            }
++        }
 +        if (node->op == GGML_OP_MUL_MAT && node->src[0]->type == GGML_TYPE_I8 &&
 +            g_ggml_sycl_enable_fusion && i + 2 < cgraph->n_nodes &&
 +            (cgraph->nodes[i + 1]->flags & GGML_TENSOR_FLAG_COMPUTE) && (cgraph->nodes[i + 2]->flags & GGML_TENSOR_FLAG_COMPUTE) &&
@@ -2895,7 +3146,7 @@ index 18d5878..a8ef5c4 100644
          if (node->op == GGML_OP_RMS_NORM &&
              ggml_sycl_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL })) {
              ggml_sycl_op_rms_norm_fused(*sycl_ctx, node, cgraph->nodes[i + 1]);
-@@ -5428,6 +5782,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -5428,6 +5820,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
              continue;
          }
  
@@ -2909,7 +3160,7 @@ index 18d5878..a8ef5c4 100644
          bool ok = ggml_sycl_compute_forward(*sycl_ctx, node);
          if (!ok) {
              GGML_LOG_ERROR("%s: error: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
-@@ -5449,6 +5810,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5449,6 +5848,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
          switch (node_op) {
              default:
                  break;
@@ -2919,7 +3170,7 @@ index 18d5878..a8ef5c4 100644
              case GGML_OP_CONCAT:
                  // ggml_sycl_op_concat() does a blocking host wait after memcpy operations,
                  // but wait() can't be called on the events returned by a queue recording
-@@ -5462,6 +5826,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5462,6 +5864,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
                                ggml_op_name(node_op));
                  return false;
              case GGML_OP_MUL_MAT:
@@ -2927,7 +3178,7 @@ index 18d5878..a8ef5c4 100644
                  // We cannot use graphs with ggml_sycl_mul_mat() when SYCL async memory allocation extensions are not available,
                  // as SYCL malloc / free and host wait calls are not supported when recording to a graph which are all present
                  // in reordering.
-@@ -5602,6 +5967,7 @@ struct ggml_backend_sycl_device_context {
+@@ -5602,6 +6005,7 @@ struct ggml_backend_sycl_device_context {
      int device;
      std::string name;
      std::string description;
@@ -2935,7 +3186,7 @@ index 18d5878..a8ef5c4 100644
      int op_offload_min_batch_size;
  };
  
-@@ -5632,6 +5998,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
+@@ -5632,6 +6036,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
  }
  
  static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
@@ -2944,7 +3195,7 @@ index 18d5878..a8ef5c4 100644
      props->name        = ggml_backend_sycl_device_get_name(dev);
      props->description = ggml_backend_sycl_device_get_description(dev);
      props->type        = ggml_backend_sycl_device_get_type(dev);
-@@ -5736,9 +6104,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -5736,9 +6142,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
              }
              break;
@@ -2963,7 +3214,7 @@ index 18d5878..a8ef5c4 100644
                  struct ggml_tensor * a = op->src[0];
                  struct ggml_tensor * b = op->src[1];
  
-@@ -6499,6 +6876,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+@@ -6499,6 +6914,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                  SYCL_CHECK(CHECK_TRY_ERROR(dpct::get_device_info(
                      prop, dpct::dev_mgr::instance().get_device(i))));
  
@@ -3156,6 +3407,243 @@ index 976d109..c422d3b 100644
 +                          int64_t row_begin, int64_t row_end, dpct::queue_ptr stream);
 +
  #endif // GGML_SYCL_IM2COL_HPP
+diff --git a/src/ggml-sycl/kuno-minimax.hpp b/src/ggml-sycl/kuno-minimax.hpp
+new file mode 100644
+index 0000000..b51ea2f
+--- /dev/null
++++ b/src/ggml-sycl/kuno-minimax.hpp
+@@ -0,0 +1,231 @@
++// Kuno: exact fusions for MiniMax H3 DiT graph patterns. Included by ggml-sycl.cpp only.
++#pragma once
++
++// ---------------------------------------------------------------------------
++// Partial RoPE: Rope::apply_rope(slice(x, 0, R), pe, interleaved=false) concatenated
++// with attention_layout(slice(x, R, D)) (MiniMax H3 apply_partial_rope). The 29-node
++// chain (VIEW .. CONCAT) becomes one kernel writing the [D, L, H] attention layout:
++//   out[a + k*R/2] = x[a] * pe[k,a,t,0] + x[a + R/2] * pe[k,a,t,1]   (d < R)
++//   out[d]         = x[d]                                            (d >= R)
++// The two products are rounded separately and then added, as in the MUL/MUL/ADD graph.
++// ---------------------------------------------------------------------------
++struct kuno_minimax_rope_match {
++    ggml_tensor * x = nullptr;     // [D, H, L, 1] normalized q or k (contiguous f32)
++    ggml_tensor * pe = nullptr;    // [2, R/2, L, 2] permuted pe view (any strides)
++    ggml_tensor * out = nullptr;   // [D, L, H, 1] contiguous f32 (CONCAT)
++    ggml_tensor * chain[29] = {};  // nodes[i-1 .. i+27]
++    int64_t D = 0, R = 0, H = 0, L = 0;
++};
++
++static bool kuno_minimax_dense_f32(const ggml_tensor * t) {
++    return t && t->type == GGML_TYPE_F32 && ggml_is_contiguous(t);
++}
++
++static bool kuno_minimax_ne(const ggml_tensor * t, int64_t a, int64_t b, int64_t c, int64_t d) {
++    return t && t->ne[0] == a && t->ne[1] == b && t->ne[2] == c && t->ne[3] == d;
++}
++
++static bool kuno_minimax_rope_find(ggml_cgraph * g, int i, kuno_minimax_rope_match & m) {
++    if (i < 1 || i + 27 >= g->n_nodes) return false;
++    ggml_tensor ** c = m.chain;
++    for (int k = 0; k < 29; ++k) c[k] = g->nodes[i - 1 + k];
++    static const ggml_op ops[29] = {
++        GGML_OP_VIEW, GGML_OP_CONT, GGML_OP_PERMUTE, GGML_OP_CONT, GGML_OP_RESHAPE, GGML_OP_PERMUTE, GGML_OP_CONT,
++        GGML_OP_VIEW, GGML_OP_RESHAPE, GGML_OP_REPEAT, GGML_OP_PERMUTE, GGML_OP_CONT, GGML_OP_VIEW, GGML_OP_MUL,
++        GGML_OP_VIEW, GGML_OP_RESHAPE, GGML_OP_REPEAT, GGML_OP_VIEW, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_PERMUTE,
++        GGML_OP_CONT, GGML_OP_RESHAPE, GGML_OP_VIEW, GGML_OP_CONT, GGML_OP_PERMUTE, GGML_OP_CONT, GGML_OP_RESHAPE,
++        GGML_OP_CONCAT };
++    for (int k = 0; k < 29; ++k) {
++        if (!c[k] || c[k]->op != ops[k] || c[k]->type != GGML_TYPE_F32) return false;
++    }
++    ggml_tensor * x = c[0]->src[0];
++    if (!kuno_minimax_dense_f32(x) || x->ne[3] != 1) return false;
++    const int64_t D = x->ne[0], H = x->ne[1], L = x->ne[2], R = c[0]->ne[0];
++    if (R <= 0 || R >= D || R % 2 || D > 1024) return false;
++    const int64_t R2 = R / 2;
++    auto src = [&](int k, int s) { return c[k]->src[s]; };
++    auto only = [&](int k, int n) {  // exactly n sources
++        for (int s = n; s < GGML_MAX_SRC; ++s) if (c[k]->src[s]) return false;
++        return true;
++    };
++    auto axes = [&](int k, int a, int b, int cc, int d) {
++        const int32_t * p = (const int32_t *) c[k]->op_params;
++        return p[0] == a && p[1] == b && p[2] == cc && p[3] == d;
++    };
++    // q/k slice and attention-layout copy of the rotated part.
++    if (!kuno_minimax_ne(c[0], R, H, L, 1) || c[0]->data != x->data || c[0]->nb[1] != x->nb[1] || c[0]->nb[2] != x->nb[2]) return false;
++    if (src(1, 0) != c[0] || !only(1, 1) || !kuno_minimax_ne(c[1], R, H, L, 1) || !ggml_is_contiguous(c[1])) return false;
++    if (src(2, 0) != c[1] || !axes(2, 0, 2, 1, 3) || !kuno_minimax_ne(c[2], R, L, H, 1)) return false;
++    if (src(3, 0) != c[2] || !only(3, 1) || !kuno_minimax_ne(c[3], R, L, H, 1) || !ggml_is_contiguous(c[3])) return false;
++    if (src(4, 0) != c[3] || !kuno_minimax_ne(c[4], R2, 2, L, H)) return false;
++    if (src(5, 0) != c[4] || !kuno_minimax_ne(c[5], R2, L, H, 2) || c[5]->nb[0] != c[4]->nb[0] || c[5]->nb[1] != c[4]->nb[2] ||
++        c[5]->nb[2] != c[4]->nb[3] || c[5]->nb[3] != c[4]->nb[1]) return false;
++    if (src(6, 0) != c[5] || !only(6, 1) || !kuno_minimax_ne(c[6], R2, L, H, 2) || !ggml_is_contiguous(c[6])) return false;
++    // x0 / x1 halves broadcast to [2, R/2, L, H].
++    if (src(7, 0) != c[6] || !kuno_minimax_ne(c[7], R2, L, H, 1) || c[7]->data != c[6]->data) return false;
++    if (src(8, 0) != c[7] || !kuno_minimax_ne(c[8], 1, R2, L, H)) return false;
++    if (src(9, 0) != c[8] || !only(9, 1) || !kuno_minimax_ne(c[9], 2, R2, L, H) || !ggml_is_contiguous(c[9])) return false;
++    if (src(14, 0) != c[6] || !kuno_minimax_ne(c[14], R2, L, H, 1) || (char *) c[14]->data != (char *) c[6]->data + c[6]->nb[3]) return false;
++    if (src(15, 0) != c[14] || !kuno_minimax_ne(c[15], 1, R2, L, H)) return false;
++    if (src(16, 0) != c[15] || !only(16, 1) || !kuno_minimax_ne(c[16], 2, R2, L, H) || !ggml_is_contiguous(c[16])) return false;
++    // pe: PERMUTE (external source) -> CONT -> two views.
++    ggml_tensor * pe = c[10];
++    if (!kuno_minimax_ne(pe, 2, R2, L, 2) || !pe->src[0]) return false;
++    if (src(11, 0) != c[10] || !only(11, 1) || !kuno_minimax_ne(c[11], 2, R2, L, 2) || !ggml_is_contiguous(c[11])) return false;
++    if (src(12, 0) != c[11] || !kuno_minimax_ne(c[12], 2, R2, L, 1) || c[12]->data != c[11]->data) return false;
++    if (src(17, 0) != c[11] || !kuno_minimax_ne(c[17], 2, R2, L, 1) || (char *) c[17]->data != (char *) c[11]->data + c[11]->nb[3]) return false;
++    // products and sum
++    if (src(13, 0) != c[9] || src(13, 1) != c[12] || !only(13, 2) || !kuno_minimax_ne(c[13], 2, R2, L, H)) return false;
++    if (src(18, 0) != c[16] || src(18, 1) != c[17] || !only(18, 2) || !kuno_minimax_ne(c[18], 2, R2, L, H)) return false;
++    if (src(19, 0) != c[13] || src(19, 1) != c[18] || !only(19, 2) || !kuno_minimax_ne(c[19], 2, R2, L, H)) return false;
++    if (src(20, 0) != c[19] || !kuno_minimax_ne(c[20], R2, 2, L, H) || c[20]->nb[0] != c[19]->nb[1] || c[20]->nb[1] != c[19]->nb[0] ||
++        c[20]->nb[2] != c[19]->nb[2] || c[20]->nb[3] != c[19]->nb[3]) return false;
++    if (src(21, 0) != c[20] || !only(21, 1) || !kuno_minimax_ne(c[21], R2, 2, L, H) || !ggml_is_contiguous(c[21])) return false;
++    if (src(22, 0) != c[21] || !kuno_minimax_ne(c[22], R, L, H, 1)) return false;
++    // tail
++    if (src(23, 0) != x || !kuno_minimax_ne(c[23], D - R, H, L, 1) || (char *) c[23]->data != (char *) x->data + R * sizeof(float) ||
++        c[23]->nb[1] != x->nb[1] || c[23]->nb[2] != x->nb[2]) return false;
++    if (src(24, 0) != c[23] || !only(24, 1) || !kuno_minimax_ne(c[24], D - R, H, L, 1) || !ggml_is_contiguous(c[24])) return false;
++    if (src(25, 0) != c[24] || !axes(25, 0, 2, 1, 3) || !kuno_minimax_ne(c[25], D - R, L, H, 1)) return false;
++    if (src(26, 0) != c[25] || !only(26, 1) || !kuno_minimax_ne(c[26], D - R, L, H, 1) || !ggml_is_contiguous(c[26])) return false;
++    if (src(27, 0) != c[26] || !kuno_minimax_ne(c[27], D - R, L, H, 1)) return false;
++    ggml_tensor * out = c[28];
++    if (src(28, 0) != c[22] || src(28, 1) != c[27] || !only(28, 2) || ((const int32_t *) out->op_params)[0] != 0 ||
++        !kuno_minimax_ne(out, D, L, H, 1) || !kuno_minimax_dense_f32(out)) return false;
++    // Intermediates must be private to the chain and every computed member must be scheduled.
++    for (int k = 0; k < 28; ++k) if (c[k]->flags & GGML_TENSOR_FLAG_OUTPUT) return false;
++    for (int k = 0; k < 29; ++k) {
++        if (ggml_op_is_empty(c[k]->op)) continue;
++        if (!(c[k]->flags & GGML_TENSOR_FLAG_COMPUTE)) return false;
++    }
++    for (int n = 0; n < g->n_nodes; ++n) {
++        if (n >= i - 1 && n <= i + 27) continue;
++        for (int s = 0; s < GGML_MAX_SRC; ++s) {
++            const ggml_tensor * t = g->nodes[n]->src[s];
++            if (!t) continue;
++            for (int k = 0; k < 28; ++k) if (t == c[k]) return false;
++        }
++        const ggml_tensor * v = g->nodes[n]->view_src;
++        for (int k = 0; k < 28 && v; ++k) if (v == c[k]) return false;
++    }
++    // pe's source must already be computed (an earlier node or a leaf).
++    for (int n = i - 1; n < g->n_nodes; ++n) if (g->nodes[n] == pe->src[0] || (pe->view_src && g->nodes[n] == pe->view_src)) return false;
++    // ggml-alloc may place the output in x's (now dead) buffer; run() then stages through scratch.
++    m.x = x; m.pe = pe; m.out = out; m.D = D; m.R = R; m.H = H; m.L = L;
++    return true;
++}
++
++static void kuno_minimax_rope_run(ggml_backend_sycl_context & ctx, const kuno_minimax_rope_match & m) {
++    const float * x = (const float *) m.x->data;
++    const char * pe = (const char *) m.pe->data;
++    const int64_t D = m.D, R = m.R, R2 = m.R / 2, H = m.H, L = m.L;
++    const bool staged = kuno_overlap(m.out, m.x) || kuno_overlap(m.out, m.pe);
++    ggml_sycl_pool_alloc<float> scratch(ctx.pool());
++    float * out = staged ? scratch.alloc(size_t(D) * L * H) : (float *) m.out->data;
++    const size_t xh = m.x->nb[1] / sizeof(float), xt = m.x->nb[2] / sizeof(float);
++    const size_t p0 = m.pe->nb[0], p1 = m.pe->nb[1], p2 = m.pe->nb[2], p3 = m.pe->nb[3];
++    const size_t total = size_t(D) * L * H;
++    ctx.stream()->parallel_for(sycl::range<1>(total), [=](sycl::id<1> id) {
++        const size_t e = id[0];
++        const int64_t d = e % D;
++        const int64_t t = (e / D) % L;
++        const int64_t h = e / (size_t(D) * L);
++        const float * row = x + h * xh + t * xt;
++        float v;
++        if (d < R) {
++            const int64_t k = d / R2, a = d % R2;
++            const char * pp = pe + k * p0 + a * p1 + t * p2;
++            const float c0 = *(const float *) pp, c1 = *(const float *) (pp + p3);
++            const float x0 = row[a], x1 = row[a + R2];
++            {
++#pragma clang fp contract(off)
++                const float m0 = x0 * c0;
++                const float m1 = x1 * c1;
++                v = m0 + m1;
++            }
++        } else {
++            v = row[d];
++        }
++        out[e] = v;
++    });
++    if (staged) ctx.stream()->memcpy(m.out->data, out, ggml_nbytes(m.out));
++}
++
++// ---------------------------------------------------------------------------
++// Attention inputs: qkv MUL_MAT(i8) -> {q: VIEW/CONT/RESHAPE/RMS_NORM/MUL/partial RoPE},
++// {k: same + SCALE + CPY F16}, {v: VIEW/CONT/RESHAPE/PERMUTE/CONT/RESHAPE/SCALE/CPY F16}
++// (79 nodes, mm .. v16) -> ggml_sycl_mul_mat_i8_convrot_minimax_qkv.
++// ---------------------------------------------------------------------------
++struct kuno_minimax_qkv_match {
++    kuno_minimax_qkv_args args;
++    kuno_minimax_rope_match rq, rk;
++    int first = -1, last = -1;
++};
++
++static bool kuno_minimax_qkv_find(ggml_cgraph * g, int i, kuno_minimax_qkv_match & m) {
++    if (i + 79 >= g->n_nodes) return false;
++    ggml_tensor ** n = g->nodes + i;
++    ggml_tensor * mm = n[0];
++    if (mm->op != GGML_OP_MUL_MAT || mm->src[0]->type != GGML_TYPE_I8 || mm->type != GGML_TYPE_F32 ||
++        ggml_node_get_use_count(g, i) != 3) return false;
++    const int64_t L = mm->ne[1];
++    if (mm->ne[0] % (3 * 128) || mm->ne[2] != 1 || mm->ne[3] != 1) return false;
++    const int64_t inner = mm->ne[0] / 3, H = inner / 128;
++    // q / k front: VIEW(mm, off) -> CONT -> RESHAPE [128,H,L] -> RMS_NORM -> MUL(w)
++    auto front = [&](int b, size_t off, const ggml_tensor *& w, float & eps) {
++        ggml_tensor * v = n[b], * c = n[b + 1], * r = n[b + 2], * rms = n[b + 3], * mul = n[b + 4];
++        if (v->op != GGML_OP_VIEW || v->src[0] != mm || v->view_src != mm || v->view_offs != off || v->ne[0] != inner ||
++            v->ne[1] != L || v->nb[1] != mm->nb[1]) return false;
++        if (c->op != GGML_OP_CONT || c->src[0] != v || !ggml_is_contiguous(c)) return false;
++        if (r->op != GGML_OP_RESHAPE || r->src[0] != c || !kuno_minimax_ne(r, 128, H, L, 1)) return false;
++        if (rms->op != GGML_OP_RMS_NORM || rms->src[0] != r || !kuno_minimax_ne(rms, 128, H, L, 1)) return false;
++        if (mul->op != GGML_OP_MUL || mul->src[0] != rms || !mul->src[1] || mul->src[2] || ggml_nelements(mul->src[1]) != 128 ||
++            ggml_node_get_use_count(g, i + b + 4) != 2) return false;
++        memcpy(&eps, rms->op_params, sizeof(float));
++        w = mul->src[1];
++        return true;
++    };
++    auto& a = m.args;
++    if (!front(1, 0, a.wq, a.eps_q)) return false;
++    if (!kuno_minimax_rope_find(g, i + 7, m.rq) || m.rq.x != n[5]) return false;          // q rope: nodes i+6 .. i+34
++    if (!front(35, size_t(inner) * sizeof(float), a.wk, a.eps_k)) return false;
++    if (!kuno_minimax_rope_find(g, i + 41, m.rk) || m.rk.x != n[39]) return false;         // k rope: nodes i+40 .. i+68
++    if (m.rq.R != m.rk.R || m.rq.pe->data != m.rk.pe->data || memcmp(m.rq.pe->nb, m.rk.pe->nb, sizeof(m.rq.pe->nb)) ||
++        m.rq.H != H || m.rq.L != L || m.rq.D != 128) return false;
++    // k: SCALE -> CPY F16
++    ggml_tensor * ks = n[69], * k16 = n[70];
++    if (ks->op != GGML_OP_SCALE || ks->src[0] != m.rk.out || k16->op != GGML_OP_CPY || k16->src[0] != ks || k16->type != GGML_TYPE_F16) return false;
++    // v: VIEW -> CONT -> RESHAPE -> PERMUTE(0,2,1,3) -> CONT -> RESHAPE -> SCALE -> CPY F16
++    ggml_tensor * vv = n[71], * vc = n[72], * vr = n[73], * vp = n[74], * vc2 = n[75], * vr2 = n[76], * vs = n[77], * v16 = n[78];
++    if (vv->op != GGML_OP_VIEW || vv->src[0] != mm || vv->view_src != mm || vv->view_offs != size_t(2 * inner) * sizeof(float) ||
++        vv->ne[0] != inner || vv->ne[1] != L || vv->nb[1] != mm->nb[1]) return false;
++    if (vc->op != GGML_OP_CONT || vc->src[0] != vv || !ggml_is_contiguous(vc)) return false;
++    if (vr->op != GGML_OP_RESHAPE || vr->src[0] != vc || !kuno_minimax_ne(vr, 128, H, L, 1)) return false;
++    const int32_t * pax = (const int32_t *) vp->op_params;
++    if (vp->op != GGML_OP_PERMUTE || vp->src[0] != vr || pax[0] != 0 || pax[1] != 2 || pax[2] != 1 || pax[3] != 3) return false;
++    if (vc2->op != GGML_OP_CONT || vc2->src[0] != vp || !ggml_is_contiguous(vc2) || !kuno_minimax_ne(vc2, 128, L, H, 1)) return false;
++    if (vr2->op != GGML_OP_RESHAPE || vr2->src[0] != vc2 || !kuno_minimax_ne(vr2, 128, L, H, 1)) return false;
++    if (vs->op != GGML_OP_SCALE || vs->src[0] != vr2 || v16->op != GGML_OP_CPY || v16->src[0] != vs || v16->type != GGML_TYPE_F16) return false;
++    for (ggml_tensor * t : {ks, k16, vs, v16}) if (!kuno_minimax_ne(t, 128, L, H, 1) || !ggml_is_contiguous(t)) return false;
++    // Everything in [i, i+78] except q, k16 and v16 is private; all computed nodes are scheduled.
++    const ggml_tensor * outs[3] = {m.rq.out, k16, v16};
++    for (int k = 0; k <= 78; ++k) {
++        ggml_tensor * t = n[k];
++        if (!ggml_op_is_empty(t->op) && !(t->flags & GGML_TENSOR_FLAG_COMPUTE)) return false;
++        if (t != outs[0] && t != outs[1] && t != outs[2] && (t->flags & GGML_TENSOR_FLAG_OUTPUT)) return false;
++    }
++    for (int k = 0; k < g->n_nodes; ++k) {
++        if (k >= i && k <= i + 78) continue;
++        const ggml_tensor * node = g->nodes[k];
++        for (int s = 0; s <= GGML_MAX_SRC; ++s) {
++            const ggml_tensor * src = s < GGML_MAX_SRC ? node->src[s] : node->view_src;
++            if (!src || src == outs[0] || src == outs[1] || src == outs[2]) continue;
++            for (int j = 0; j <= 78; ++j) if (src == n[j]) return false;
++        }
++    }
++    memcpy(&a.k_scale, (const float *) ks->op_params + 0, sizeof(float)); memcpy(&a.k_bias, (const float *) ks->op_params + 1, sizeof(float));
++    memcpy(&a.v_scale, (const float *) vs->op_params + 0, sizeof(float)); memcpy(&a.v_bias, (const float *) vs->op_params + 1, sizeof(float));
++    a.heads = H; a.rot = m.rq.R; a.pe = m.rq.pe; a.q = m.rq.out; a.k16 = k16; a.v16 = v16;
++    m.first = i; m.last = i + 78;
++    return true;
++}
 diff --git a/src/ggml-sycl/mul-add-policy.hpp b/src/ggml-sycl/mul-add-policy.hpp
 new file mode 100644
 index 0000000..8e833d6
