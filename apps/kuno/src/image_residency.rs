@@ -1,7 +1,17 @@
 //! Model-only idle residency. Active work is still protected by global admission.
 //! A worker becomes reusable only after its private request-cleanup acknowledgement.
 use crate::image_runtime::{ImageConfig, Output};
-use kuno_protocol::{ImageAttention, ImageRecipe};
+use kuno_protocol::{ImageAttention, ImageRecipe, VideoPhase};
+
+/// Latest content-free video progress for the response stream.
+pub type VideoProgress = watch::Sender<Option<(VideoPhase, u32, u32)>>;
+
+/// One request for the resident worker. Video needs a managed SYCL runtime with ABI 3.
+pub enum Job {
+    Image(ImageRecipe),
+    /// Cleared on drop on every path, including validation failures.
+    Video(kuno_image::worker_protocol::TransientVideoRecipe, VideoProgress),
+}
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
@@ -71,16 +81,42 @@ impl ImageRuntime {
         }
         Ok(())
     }
-    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         &self,
         executable: &Path,
         config: &ImageConfig,
         recipe: ImageRecipe,
         response: &mut oneshot::Sender<Output>,
+        shutdown: watch::Receiver<bool>,
+        previews: watch::Sender<Option<kuno_image::preview::Preview>>,
+    ) -> Finished {
+        self.run_job(executable, config, Job::Image(recipe), response, shutdown, previews)
+            .await
+    }
+
+    pub async fn run_job(
+        &self,
+        executable: &Path,
+        config: &ImageConfig,
+        job: Job,
+        response: &mut oneshot::Sender<Output>,
         mut shutdown: watch::Receiver<bool>,
         previews: watch::Sender<Option<kuno_image::preview::Preview>>,
     ) -> Finished {
+        let (recipe, video) = match job {
+            Job::Image(recipe) => (recipe, None),
+            Job::Video(video, progress) => {
+                if let Err(code) = config.validate().and_then(|_| video.validate()) {
+                    return Finished::failure(code);
+                }
+                if !config.video_enabled()
+                    || config.engine != crate::image_engine::ImageEngine::ManagedSycl
+                {
+                    return Finished::failure("video_generation_not_configured");
+                }
+                (video_identity_recipe(), Some((video, progress)))
+            }
+        };
         if let Err(code) = config.validate().and_then(|_| recipe.validate_execution()) {
             return Finished::failure(code);
         }
@@ -96,6 +132,13 @@ impl ImageRuntime {
         } else {
             None
         };
+        if video.is_some()
+            && !runtime.as_ref().is_some_and(|runtime| {
+                runtime.manifest.worker_abi >= crate::image_engine::VIDEO_WORKER_ABI
+            })
+        {
+            return Finished::failure("image_runtime_unavailable");
+        }
         // Legacy ABI1 remains usable during upgrade, but never receives ABI2 frames.
         if runtime
             .as_ref()
@@ -174,12 +217,20 @@ impl ImageRuntime {
         let mut terminal_error = false;
         let mut cleanup_ack = false;
         let work = async {
-            let mut payload =
-                Payload(serde_json::to_vec(&*recipe).map_err(|_| "image_request_encoding_failed")?);
+            let mut payload = Payload(
+                match &video {
+                    Some((v, _)) => serde_json::to_vec(&**v),
+                    None => serde_json::to_vec(&*recipe),
+                }
+                .map_err(|_| "image_request_encoding_failed")?,
+            );
             if payload.0.len() > kuno_protocol::MAX_IMAGE_REQUEST_BYTES {
                 return Err("image_request_too_large");
             }
             let mut header = *b"KIR2\x01\0\0\0\0";
+            if video.is_some() {
+                header[4] = kuno_image::worker_protocol::GENERATE_VIDEO;
+            }
             header[5..9].copy_from_slice(&(payload.0.len() as u32).to_be_bytes());
             worker
                 .input
@@ -203,10 +254,26 @@ impl ImageRuntime {
                 .await
                 .map_err(|_| "image_worker_input_failed")?;
             payload.clear();
+            if let Some((v, progress)) = &video {
+                let mp4 = read_result(
+                    &mut worker.output,
+                    &previews,
+                    Some(progress),
+                    VIDEO_STEPS,
+                    kuno_protocol::MAX_VIDEO_BYTES,
+                    &mut terminal_error,
+                    &mut cleanup_ack,
+                )
+                .await?;
+                crate::image_worker::video_output_matches(&mp4, v)?;
+                return Ok(mp4);
+            }
             let png = read_result(
                 &mut worker.output,
                 &previews,
+                None,
                 recipe.steps,
+                20 * 1024 * 1024,
                 &mut terminal_error,
                 &mut cleanup_ack,
             )
@@ -241,6 +308,26 @@ impl ImageRuntime {
             settled,
             forced,
         }
+    }
+}
+
+const VIDEO_STEPS: u32 = 8;
+
+/// Video shares the Qwen 2.1 standard-attention worker identity: one resident process
+/// serves both, and the native session swaps model contexts itself.
+fn video_identity_recipe() -> ImageRecipe {
+    ImageRecipe {
+        workflow: kuno_protocol::QWEN21_RECIPE.into(),
+        prompt: "video".into(),
+        negative_prompt: String::new(),
+        seed: "0".into(),
+        width: 64,
+        height: 64,
+        steps: VIDEO_STEPS,
+        cfg: 1.0,
+        attention: ImageAttention::Standard,
+        flow_shift: None,
+        reference_images: Vec::new(),
     }
 }
 
@@ -381,18 +468,26 @@ async fn stop(worker: &mut Worker, active: bool) -> (bool, bool, Option<&'static
 async fn frame<R: tokio::io::AsyncRead + Unpin>(
     pipe: &mut R,
 ) -> Result<(u8, Vec<u8>), &'static str> {
+    frame_bounded(pipe, 20 * 1024 * 1024).await
+}
+
+async fn frame_bounded<R: tokio::io::AsyncRead + Unpin>(
+    pipe: &mut R,
+    max_final: usize,
+) -> Result<(u8, Vec<u8>), &'static str> {
     let mut header = [0; 9];
     pipe.read_exact(&mut header)
         .await
         .map_err(|_| "image_worker_output_failed")?;
-    if &header[..4] != b"KIP1" || !(1..=5).contains(&header[4]) {
+    if &header[..4] != b"KIP1" || !(1..=6).contains(&header[4]) {
         return Err("image_worker_frame_invalid");
     }
     let size = u32::from_be_bytes(header[5..9].try_into().unwrap()) as usize;
     let maximum = match header[4] {
         1 => kuno_image::preview::MAX_PREVIEW_BYTES,
-        2 => 20 * 1024 * 1024,
+        2 => max_final,
         5 => 128,
+        6 => 9,
         _ => 0,
     };
     if size > maximum {
@@ -405,18 +500,37 @@ async fn frame<R: tokio::io::AsyncRead + Unpin>(
     Ok((header[4], bytes))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn read_result<R: tokio::io::AsyncRead + Unpin>(
     pipe: &mut R,
     previews: &watch::Sender<Option<kuno_image::preview::Preview>>,
+    progress: Option<&VideoProgress>,
     steps: u32,
+    max_final: usize,
     terminal_error: &mut bool,
     cleanup_ack: &mut bool,
 ) -> Output {
     let mut result = None;
     let mut count = 0;
+    let mut phase = None;
     loop {
-        let (kind, bytes) = frame(pipe).await?;
+        let (kind, bytes) = frame_bounded(pipe, max_final).await?;
         match kind {
+            6 if result.is_none() && progress.is_some() => {
+                count += 1;
+                let update = kuno_image::worker_protocol::parse_progress(&bytes)?;
+                // Phases only move forward; sampling steps only increase.
+                if count > steps.saturating_mul(4) + 8
+                    || phase.is_some_and(|p: (VideoPhase, u32, u32)| {
+                        (update.0 as u8, update.1) < (p.0 as u8, p.1)
+                    })
+                    || (update.0 == VideoPhase::Sampling && update.2 != steps)
+                {
+                    return Err("image_worker_frame_invalid");
+                }
+                phase = Some(update);
+                progress.unwrap().send_replace(Some(update));
+            }
             1 if result.is_none() => {
                 count += 1;
                 if count > steps.saturating_mul(2) + 2 {
@@ -443,6 +557,8 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
                     b"image_generation_failed" => "image_generation_failed",
                     b"image_attention_unsupported" => "image_attention_unsupported",
                     b"image_request_cleanup_failed" => "image_request_cleanup_failed",
+                    b"video_first_frame_invalid" => "video_first_frame_invalid",
+                    b"video_encode_failed" => "video_encode_failed",
                     _ => "image_worker_failed",
                 });
             }

@@ -19,7 +19,7 @@ import tempfile
 
 
 PINS = {
-    "version": 1, "id": "qwen21-sycl-2026.1-v1", "worker_abi": 2,
+    "version": 1, "id": "qwen21-sycl-2026.1-v1", "worker_abi": 3,
     "ggml_max_name": 160,
     "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
     "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",

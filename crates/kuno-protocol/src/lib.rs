@@ -33,3 +33,6 @@ pub use image::*;
 
 mod capabilities;
 pub use capabilities::*;
+
+mod video;
+pub use video::*;

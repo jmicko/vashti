@@ -77,6 +77,108 @@ pub(crate) fn response(
         .into_response()
 }
 
+/// Facts the result event repeats from the validated request.
+pub(crate) struct VideoMeta {
+    pub width: u32,
+    pub height: u32,
+    pub frames: u32,
+    pub audio: bool,
+}
+
+/// The video response: acceptance, latest progress/preview, then a terminal event.
+pub(crate) fn video_response(
+    result: oneshot::Receiver<crate::image_runtime::Output>,
+    previews: watch::Receiver<Option<kuno_image::preview::Preview>>,
+    progress: watch::Receiver<Option<(kuno_protocol::VideoPhase, u32, u32)>>,
+    meta: VideoMeta,
+    slot: Arc<OwnedSemaphorePermit>,
+) -> Response {
+    use kuno_protocol::{VideoPhase, VideoStreamEvent};
+    struct State {
+        result: oneshot::Receiver<crate::image_runtime::Output>,
+        previews: watch::Receiver<Option<kuno_image::preview::Preview>>,
+        progress: watch::Receiver<Option<(VideoPhase, u32, u32)>>,
+        meta: VideoMeta,
+        started: bool,
+        terminal: bool,
+        previews_open: bool,
+        progress_open: bool,
+    }
+    let state = State {
+        result,
+        previews,
+        progress,
+        meta,
+        started: false,
+        terminal: false,
+        previews_open: true,
+        progress_open: true,
+    };
+    let events = stream::unfold(state, |mut state| async move {
+        if state.terminal {
+            return None;
+        }
+        let event = if !state.started {
+            state.started = true;
+            VideoStreamEvent::Started
+        } else {
+            loop {
+                tokio::select! {
+                    biased;
+                    result = &mut state.result => {
+                        state.terminal = true;
+                        break match result {
+                            Ok(Ok(mp4)) => VideoStreamEvent::Result {
+                                mime_type: kuno_protocol::VIDEO_MIME_TYPE.into(),
+                                width: state.meta.width,
+                                height: state.meta.height,
+                                frames: state.meta.frames,
+                                fps: kuno_protocol::VIDEO_FPS,
+                                audio: state.meta.audio,
+                                video_base64: STANDARD.encode(mp4),
+                            },
+                            Ok(Err(error)) => VideoStreamEvent::Error { error: error.into() },
+                            Err(_) => VideoStreamEvent::Error { error: "image_worker_supervisor_failed".into() },
+                        };
+                    }
+                    changed = state.progress.changed(), if state.progress_open => {
+                        if changed.is_err() { state.progress_open = false; continue; }
+                        if let Some((phase, step, steps)) = *state.progress.borrow_and_update() {
+                            let sampling = phase == VideoPhase::Sampling;
+                            break VideoStreamEvent::Progress {
+                                phase,
+                                step: sampling.then_some(step),
+                                steps: sampling.then_some(steps),
+                            };
+                        }
+                    }
+                    changed = state.previews.changed(), if state.previews_open => {
+                        if changed.is_err() { state.previews_open = false; continue; }
+                        if let Some(frame) = state.previews.borrow_and_update().clone() {
+                            break VideoStreamEvent::Preview {
+                                step: frame.step, steps: frame.steps, width: frame.width,
+                                height: frame.height, png_base64: frame.png_base64,
+                            };
+                        }
+                    }
+                }
+            }
+        };
+        let mut bytes = serde_json::to_vec(&event).expect("video event has serializable fields");
+        bytes.push(b'\n');
+        Some((Ok::<_, Infallible>(bytes), state))
+    });
+    (
+        [
+            (header::CONTENT_TYPE, IMAGE_STREAM_MEDIA_TYPE),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
+        ],
+        retain_slot(Body::from_stream(events), slot),
+    )
+        .into_response()
+}
+
 /// Keep content capacity reserved while either cleanup or response delivery
 /// still owns request/image bytes, independently of the GPU admission lease.
 pub(crate) fn retain_slot(body: Body, slot: Arc<OwnedSemaphorePermit>) -> Body {
@@ -149,6 +251,37 @@ mod tests {
         );
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         (send, preview, response.into_body(), slots)
+    }
+    #[tokio::test]
+    async fn video_stream_reports_progress_then_the_mp4_result() {
+        use kuno_protocol::VideoPhase;
+        let (send, receive) = oneshot::channel();
+        let (_preview, frames) = watch::channel(None);
+        let (progress, updates) = watch::channel(None);
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slot = Arc::new(slots.clone().acquire_owned().await.unwrap());
+        let meta = VideoMeta { width: 832, height: 544, frames: 56, audio: true };
+        let mut body = video_response(receive, frames, updates, meta, slot).into_body();
+        assert_eq!(event(&mut body).await.unwrap()["type"], "started");
+        progress.send_replace(Some((VideoPhase::Conditioning, 0, 0)));
+        assert_eq!(
+            event(&mut body).await.unwrap(),
+            serde_json::json!({"type":"progress","phase":"conditioning"})
+        );
+        progress.send_replace(Some((VideoPhase::Sampling, 2, 8)));
+        assert_eq!(
+            event(&mut body).await.unwrap(),
+            serde_json::json!({"type":"progress","phase":"sampling","step":2,"steps":8})
+        );
+        send.send(Ok(b"mp4".to_vec())).unwrap();
+        let result = event(&mut body).await.unwrap();
+        assert_eq!(result["type"], "result");
+        assert_eq!(result["mime_type"], "video/mp4");
+        assert_eq!(result["frames"], 56);
+        assert_eq!(STANDARD.decode(result["video_base64"].as_str().unwrap()).unwrap(), b"mp4");
+        assert!(event(&mut body).await.is_none());
+        drop(body);
+        assert_eq!(slots.available_permits(), 1);
     }
     #[tokio::test]
     async fn previews_arrive_before_result_with_latest_only_backpressure_and_exact_png() {

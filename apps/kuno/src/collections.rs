@@ -22,6 +22,46 @@ pub struct Collection {
     pub revision: String,
     pub license: String,
     pub files: Vec<Artifact>,
+    /// Files Kuno builds locally from downloaded ones, with pinned checksums.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived: Vec<Derived>,
+}
+/// A LoRA merged into an INT8 ConvRot model (see `lora_merge`). Deterministic, so pinned.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Derived {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+    pub base: String,
+    pub lora: String,
+    pub multiplier: f64,
+}
+impl Derived {
+    fn artifact(&self) -> Artifact {
+        Artifact {
+            path: self.path.clone(),
+            size: self.size,
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+/// Downloaded and derived files, by local file name.
+fn local_artifacts(collection: Collection) -> Result<Vec<(String, Artifact)>> {
+    let mut out = Vec::new();
+    for artifact in collection.files {
+        let name = artifact
+            .path
+            .rsplit('/')
+            .next()
+            .ok_or("collection_invalid")?
+            .to_owned();
+        out.push((name, artifact));
+    }
+    for derived in &collection.derived {
+        out.push((derived.path.clone(), derived.artifact()));
+    }
+    Ok(out)
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +79,10 @@ pub fn collection(id: &str) -> Result<Collection> {
         "qwen-image-2512-fp8" => Ok(qwen()),
         "qwen-image-2.1-int8" => Ok(serde_json::from_str(include_str!(
             "../collections/qwen-image-2.1-int8.json"
+        ))
+        .expect("compiled collection")),
+        kuno_protocol::MINIMAX_H3_COLLECTION => Ok(serde_json::from_str(include_str!(
+            "../collections/minimax-h3-int8.json"
         ))
         .expect("compiled collection")),
         _ => Err("unknown_model_collection"),
@@ -86,12 +130,7 @@ fn matches(file: &mut File, artifact: &Artifact) -> Result<bool> {
 /// Installation verifies the exact curated files before exposing them through
 /// its read-only mount. The public weights contain no inference content.
 pub fn verify(directory: &Path, id: &str) -> Result<()> {
-    for artifact in collection(id)?.files {
-        let name = artifact
-            .path
-            .rsplit('/')
-            .next()
-            .ok_or("collection_invalid")?;
+    for (name, artifact) in local_artifacts(collection(id)?)? {
         eprintln!("kuno: Verifying {name}");
         let mut file = open(&directory.join(name), false)?;
         if !matches(&mut file, &artifact)? {
@@ -114,12 +153,7 @@ pub fn verify(directory: &Path, id: &str) -> Result<()> {
 /// Fast startup check after installation's full hash verification. Revalidating
 /// artifact contents remains the downloader/installer's responsibility.
 pub fn ready(directory: &Path, id: &str) -> Result<()> {
-    for artifact in collection(id)?.files {
-        let name = artifact
-            .path
-            .rsplit('/')
-            .next()
-            .ok_or("collection_invalid")?;
+    for (name, artifact) in local_artifacts(collection(id)?)? {
         let file = open(&directory.join(name), false)?;
         if file.metadata().map_err(|_| "model_file_unavailable")?.len() != artifact.size {
             return Err("image_model_size_mismatch");
@@ -299,6 +333,66 @@ pub fn fetch(id: &str, directory: &Path) -> Result<()> {
             .and_then(|f| f.sync_all())
             .map_err(|_| "model_sync_failed")?;
     }
+    for derived in &collection.derived {
+        derive(directory, derived)?;
+    }
+    Ok(())
+}
+
+/// Builds a derived file from verified downloads; an existing one must match its pin.
+fn derive(directory: &Path, derived: &Derived) -> Result<()> {
+    let destination = directory.join(&derived.path);
+    let artifact = derived.artifact();
+    if destination
+        .try_exists()
+        .map_err(|_| "model_file_unavailable")?
+    {
+        eprintln!("kuno: Verifying {}", derived.path);
+        if !matches(&mut open(&destination, false)?, &artifact)? {
+            return Err("existing_model_checksum_mismatch");
+        }
+        return Ok(());
+    }
+    let partial = directory.join(format!("{}.partial", derived.sha256));
+    match fs::remove_file(&partial) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("model_write_failed"),
+    }
+    if available(directory)? < derived.size + 512 * 1024 * 1024 {
+        return Err("insufficient_model_disk_space");
+    }
+    eprintln!("kuno: Merging the turbo LoRA into {}", derived.path);
+    let started = std::time::Instant::now();
+    let digest = crate::lora_merge::merge(
+        &directory.join(&derived.base),
+        &directory.join(&derived.lora),
+        &partial,
+        derived.multiplier,
+        |done, total| {
+            if done % 26 == 0 || done == total {
+                eprintln!("kuno: {}: {}%", derived.path, done * 100 / total);
+            }
+        },
+    )?;
+    let file = open(&partial, false)?;
+    let size = file.metadata().map_err(|_| "model_file_unavailable")?.len();
+    if digest != derived.sha256 || size != derived.size {
+        let _ = fs::remove_file(&partial);
+        return Err("derived_model_checksum_mismatch");
+    }
+    file.set_permissions(fs::Permissions::from_mode(0o644))
+        .map_err(|_| "model_permissions_failed")?;
+    fs::hard_link(&partial, &destination).map_err(|_| "model_activation_failed")?;
+    fs::remove_file(&partial).map_err(|_| "model_activation_failed")?;
+    File::open(directory)
+        .and_then(|f| f.sync_all())
+        .map_err(|_| "model_sync_failed")?;
+    eprintln!(
+        "kuno: {} ready in {} s",
+        derived.path,
+        started.elapsed().as_secs()
+    );
     Ok(())
 }
 #[cfg(test)]
@@ -323,6 +417,27 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+    #[test]
+    fn video_collection_pins_downloads_and_its_derived_model() {
+        let c = collection(kuno_protocol::MINIMAX_H3_COLLECTION).unwrap();
+        assert_eq!(c.files.len(), 5);
+        assert_eq!(c.revision.len(), 40);
+        let names: Vec<_> = local_artifacts(collection(&c.id).unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|(name, a)| {
+                assert_eq!(a.sha256.len(), 64);
+                name
+            })
+            .collect();
+        assert_eq!(c.derived.len(), 1);
+        let d = &c.derived[0];
+        assert!(names.contains(&d.base) && names.contains(&d.lora));
+        assert_eq!(names.last(), Some(&d.path));
+        // The merge rewrites tensors in place, so the size equals the base's.
+        let base = c.files.iter().find(|f| f.path.ends_with(&d.base)).unwrap();
+        assert_eq!(base.size, d.size);
     }
     #[test]
     fn immutable_manifest_has_complete_reference_dependencies() {

@@ -22,6 +22,7 @@ pub mod usage;
 
 mod gpu;
 pub mod learning;
+pub mod lora_merge;
 pub mod managed;
 pub mod placement;
 pub mod pool;

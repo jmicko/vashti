@@ -211,6 +211,7 @@ impl Gateway {
         let images = Router::new()
             .route("/kuno/v1/capabilities", get(capabilities))
             .route("/kuno/v1/images/generate", post(generate_image))
+            .route("/kuno/v1/videos/generate", post(generate_video))
             .layer(middleware::from_fn(inference_guard));
         images
             .fallback(compatibility_fallback)
@@ -327,7 +328,7 @@ async fn status(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
 }
 
 async fn capabilities(State(gateway): State<Arc<Gateway>>) -> Response {
-    let images = gateway
+    let discovery = gateway
         .image_readiness
         .snapshot(gateway.config.image.clone())
         .await;
@@ -338,7 +339,8 @@ async fn capabilities(State(gateway): State<Arc<Gateway>>) -> Response {
             discovery_version: 1,
             version: env!("CARGO_PKG_VERSION").into(),
             inference_auth: "none".into(),
-            images,
+            images: discovery.images,
+            videos: Some(discovery.videos),
         }),
     )
         .into_response()
@@ -494,6 +496,122 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
         let _ = send.send(result);
     });
     crate::image_stream::response(receive, stream_previews, slot)
+}
+
+async fn video_recipe(
+    request: Request,
+    privacy: impl std::future::Future<Output = Result<(), &'static str>>,
+) -> Result<kuno_protocol::VideoRecipe, (StatusCode, &'static str)> {
+    privacy
+        .await
+        .map_err(|code| (StatusCode::SERVICE_UNAVAILABLE, code))?;
+    let bytes = match tokio::time::timeout(
+        Duration::from_secs(60),
+        axum::body::to_bytes(request.into_body(), kuno_protocol::MAX_IMAGE_REQUEST_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return Err((StatusCode::PAYLOAD_TOO_LARGE, "image_request_too_large")),
+        Err(_) => return Err((StatusCode::REQUEST_TIMEOUT, "image_request_timeout")),
+    };
+    serde_json::from_slice(&bytes).map_err(|_| (StatusCode::BAD_REQUEST, "video_request_invalid"))
+}
+
+/// MiniMax H3 image-to-video. Same admission, eviction, worker and cleanup as images.
+async fn generate_video(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    let Some(config) = gateway.config.image.clone().filter(|c| c.video_enabled()) else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "video_generation_not_configured",
+        );
+    };
+    let slot = match gateway.image_requests.clone().try_acquire_owned() {
+        Ok(slot) => Arc::new(slot),
+        Err(_) => return error(StatusCode::SERVICE_UNAVAILABLE, "image_queue_full"),
+    };
+    let recipe = match video_recipe(request, crate::image_access::require_privacy()).await {
+        Ok(recipe) => kuno_image::worker_protocol::TransientVideoRecipe::from(recipe),
+        Err((status, code)) => return error(status, code),
+    };
+    if let Err(code) = recipe.validate() {
+        return error(StatusCode::BAD_REQUEST, code);
+    }
+    // Reject an undecodable first frame before admission; decoded pixels are cleared.
+    let encoded = recipe.first_frame.clone();
+    let decoded = tokio::task::spawn_blocking(move || {
+        let mut encoded = kuno_image::worker_protocol::TransientBytes(encoded.into_bytes());
+        let result = std::str::from_utf8(&encoded.0)
+            .ok()
+            .and_then(|s| kuno_image::references::decode(&[s]).ok())
+            .map(|mut pixels| {
+                for p in &mut pixels {
+                    kuno_image::worker_protocol::clear_bytes(&mut p.rgba);
+                }
+            });
+        kuno_image::worker_protocol::clear_bytes(&mut encoded.0);
+        result.is_some()
+    })
+    .await;
+    if !matches!(decoded, Ok(true)) {
+        return error(StatusCode::BAD_REQUEST, "video_first_frame_invalid");
+    }
+    if let Err(code) = crate::image_access::require_video(config.clone()).await {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    let meta = crate::image_stream::VideoMeta {
+        width: recipe.width,
+        height: recipe.height,
+        frames: recipe.frames,
+        audio: recipe.audio,
+    };
+    let mut lease = match gateway.admission.acquire().await {
+        Ok(lease) => lease,
+        Err(code) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
+    };
+    let (previews, stream_previews) = tokio::sync::watch::channel(None);
+    let (progress, stream_progress) = tokio::sync::watch::channel(None);
+    let (mut send, receive) = tokio::sync::oneshot::channel();
+    let task_slot = slot.clone();
+    tokio::spawn(async move {
+        let _request_slot = task_slot;
+        let result = async {
+            if send.is_closed() {
+                return Err("image_cancelled");
+            }
+            lease.dispatched()?;
+            let pool = gateway
+                .managed
+                .as_ref()
+                .ok_or("image_requires_managed_pool")?;
+            gateway.native_runtime.evict().await?;
+            pool.prepare_image(&config.pci_address).await?;
+            let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
+            let job = crate::image_residency::Job::Video(recipe, progress);
+            let finished = gateway
+                .image_runtime
+                .run_job(
+                    &executable,
+                    &config,
+                    job,
+                    &mut send,
+                    gateway.image_shutdown.subscribe(),
+                    previews,
+                )
+                .await;
+            if finished.settled
+                && !finished.forced
+                && !matches!(finished.output, Err("image_vulkan_device_lost"))
+            {
+                lease.complete();
+            }
+            finished.output
+        }
+        .await;
+        drop(lease);
+        let _ = send.send(result);
+    });
+    crate::image_stream::video_response(receive, stream_previews, stream_progress, meta, slot)
 }
 
 async fn pause(State(gateway): State<Arc<Gateway>>) -> Json<Status> {

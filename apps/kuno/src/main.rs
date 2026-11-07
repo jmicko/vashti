@@ -79,12 +79,15 @@ fn run_resident_image_worker() -> Result<(), &'static str> {
     if args.next().is_some() {
         return Err("unknown_argument");
     }
-    let mut session = kuno_image::native::Session::new(Path::new(&directory), &pci)?;
+    let session = kuno_image::native::Session::new(Path::new(&directory), &pci)?;
     let previews = std::env::var_os("KUNO_IMAGE_PREVIEWS").is_some();
-    kuno::image_worker::serve(
+    // Both closures borrow the one session; jobs are strictly sequential.
+    let session = std::cell::RefCell::new(session);
+    kuno::image_worker::serve_with_video(
         &mut std::io::stdin().lock(),
         &mut std::io::stdout(),
-        |recipe| session.generate(recipe, previews),
+        |recipe| session.borrow_mut().generate(recipe, previews),
+        |recipe| session.borrow_mut().generate_video(recipe, previews),
     )
 }
 

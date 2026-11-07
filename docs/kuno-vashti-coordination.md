@@ -1,5 +1,14 @@
 # Kuno and Vashti Coordination
 
+**Proposed Kuno video API (2026-11-07, backend in progress):** branch `claude/video-api`
+(worktree `/media/jmicko/faststore/dev/kuno-video-api`, based on the installed gateway
+commit `14227c6a` plus the cached-load worker and video speed commits). Contract:
+[Kuno video generation](kuno-video.md): additive `videos` discovery object,
+`POST /kuno/v1/videos/generate` (MiniMax H3 image-to-video with audio, first frame
+required), NDJSON progress/preview/result events, MP4 (AV1 + FLAC) result. The image API is
+unchanged. Per the user, Codex builds the Vashti connector and UI later; do not implement
+against it until a backend receipt is recorded here. Not a release or deployment.
+
 **Current source continuation (2026-10-24 UTC): dual cells composed, unvalidated.**
 
 Read [the complete two-C cohort policy and transfer audit](kuno-prefill-dual-cohort-cells.md).

@@ -1,7 +1,25 @@
 //! Single-threaded, private model-retaining worker entrypoint support.
 //! No Tokio, files, request diagnostics, or content-bearing process arguments.
 use kuno_image::worker_protocol::{self as protocol, Request, TransientBytes};
-use kuno_protocol::ImageRecipe;
+use kuno_protocol::{ImageRecipe, VideoRecipe};
+
+/// The MP4 a worker returns must match the request's geometry, length and audio choice.
+pub fn video_output_matches(mp4: &[u8], recipe: &VideoRecipe) -> Result<(), &'static str> {
+    let summary = kuno_image::video::validate_mp4(mp4, kuno_protocol::MAX_VIDEO_BYTES)
+        .map_err(|_| "image_worker_output_invalid")?;
+    if summary
+        != (kuno_image::video::Mp4Summary {
+            width: recipe.width,
+            height: recipe.height,
+            frames: recipe.frames,
+            fps: kuno_protocol::VIDEO_FPS,
+            audio: recipe.audio,
+        })
+    {
+        return Err("image_worker_output_invalid");
+    }
+    Ok(())
+}
 use std::io::{Read, Write};
 
 /// `generate` must clear all native request-derived state before returning.
@@ -9,7 +27,17 @@ use std::io::{Read, Write};
 pub fn serve(
     input: &mut impl Read,
     output: &mut impl Write,
+    generate: impl FnMut(&ImageRecipe) -> Result<Vec<u8>, &'static str>,
+) -> Result<(), &'static str> {
+    serve_with_video(input, output, generate, |_| Err("unsupported_video_workflow"))
+}
+
+/// As `serve`, also answering video jobs; the same CLEAN contract applies.
+pub fn serve_with_video(
+    input: &mut impl Read,
+    output: &mut impl Write,
     mut generate: impl FnMut(&ImageRecipe) -> Result<Vec<u8>, &'static str>,
+    mut generate_video: impl FnMut(&VideoRecipe) -> Result<Vec<u8>, &'static str>,
 ) -> Result<(), &'static str> {
     protocol::write_response(output, protocol::READY, &[])?;
     loop {
@@ -17,8 +45,28 @@ pub fn serve(
             Ok(request) => request,
             Err(code) => return fail(output, code),
         };
-        let Some(Request::Generate(recipe)) = request else {
-            return Ok(());
+        let recipe = match request {
+            Some(Request::Generate(recipe)) => recipe,
+            Some(Request::GenerateVideo(recipe)) => {
+                let mp4 = match generate_video(&recipe) {
+                    Ok(mp4) => TransientBytes(mp4),
+                    Err(code) => {
+                        drop(recipe);
+                        return fail(output, code);
+                    }
+                };
+                if let Err(code) = video_output_matches(&mp4.0, &recipe) {
+                    drop(mp4);
+                    drop(recipe);
+                    return fail(output, code);
+                }
+                protocol::write_response(output, protocol::FINAL, &mp4.0)?;
+                drop(mp4);
+                drop(recipe);
+                protocol::write_response(output, protocol::CLEAN, &[])?;
+                continue;
+            }
+            _ => return Ok(()),
         };
         let png = match generate(&recipe) {
             Ok(png) => TransientBytes(png),
@@ -60,7 +108,9 @@ fn fail(output: &mut impl Write, code: &'static str) -> Result<(), &'static str>
         | "image_request_cleanup_failed"
         | "image_encoding_failed"
         | "image_generation_failed"
-        | "image_engine_unavailable" => code,
+        | "image_engine_unavailable"
+        | "video_first_frame_invalid"
+        | "video_encode_failed" => code,
         _ => "image_generation_failed",
     };
     let _ = protocol::write_response(output, protocol::ERROR, code.as_bytes());

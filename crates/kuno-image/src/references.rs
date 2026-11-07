@@ -7,13 +7,14 @@ pub struct Pixels {
     pub height: u32,
     pub rgba: Vec<u8>,
 }
-pub fn decode(inputs: &[String]) -> Result<Vec<Pixels>> {
+pub fn decode<S: AsRef<str>>(inputs: &[S]) -> Result<Vec<Pixels>> {
     if inputs.len() > 10 {
         return Err("image_reference_count_invalid");
     }
     let mut result = Vec::new();
     let mut total_pixels = 0u64;
     for input in inputs {
+        let input = input.as_ref();
         if input.len() > 16 * 1024 * 1024 {
             return Err("image_reference_too_large");
         }
@@ -208,7 +209,7 @@ mod tests {
         assert_eq!(result[1].rgba, [0, 0, 255, 0]);
         assert!(decode(&vec![a.clone(); 11]).is_err());
         assert_eq!(decode(&vec![a; 10]).unwrap().len(), 10);
-        assert!(decode(&["/tmp/image.png".into()]).is_err());
+        assert!(decode(&["/tmp/image.png"]).is_err());
         assert!(decode(&[base64::engine::general_purpose::STANDARD.encode(b"not png")]).is_err());
     }
 }

@@ -1,8 +1,16 @@
 //! Cached, bounded prerequisite checks; never probe GPU work or user content.
 use crate::image_runtime::ImageConfig;
 use kuno_protocol::{
-    ImageCapabilities, ImageWorkflowCapability, QWEN_RECIPE, QWEN21_EDIT_RECIPE, QWEN21_RECIPE,
+    ImageCapabilities, ImageWorkflowCapability, MINIMAX_H3_COLLECTION, MINIMAX_H3_I2V_RECIPE,
+    QWEN_RECIPE, QWEN21_EDIT_RECIPE, QWEN21_RECIPE, VideoCapabilities, VideoWorkflowCapability,
 };
+
+/// Discovery snapshot: both media kinds come from one cached probe.
+#[derive(Clone)]
+pub(crate) struct Discovery {
+    pub images: ImageCapabilities,
+    pub videos: VideoCapabilities,
+}
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -10,7 +18,7 @@ use std::{
 
 const REFRESH: Duration = Duration::from_secs(5);
 struct Cache {
-    value: ImageCapabilities,
+    value: Discovery,
     checked: Option<Instant>,
     refreshing: bool,
 }
@@ -24,20 +32,23 @@ impl ImageReadiness {
         Arc::new(Self {
             fast_attention,
             cache: Mutex::new(Cache {
-                value: describe(
-                    config,
-                    cfg!(feature = "native-image"),
-                    fast_attention,
-                    Some("image_runtime_unavailable"),
-                    |_| true,
-                ),
+                value: Discovery {
+                    images: describe(
+                        config,
+                        cfg!(feature = "native-image"),
+                        fast_attention,
+                        Some("image_runtime_unavailable"),
+                        |_| true,
+                    ),
+                    videos: describe_videos(config, Some("image_runtime_unavailable"), |_| true),
+                },
                 checked: None,
                 refreshing: false,
             }),
         })
     }
 
-    pub async fn snapshot(self: &Arc<Self>, config: Option<ImageConfig>) -> ImageCapabilities {
+    pub async fn snapshot(self: &Arc<Self>, config: Option<ImageConfig>) -> Discovery {
         {
             let mut cache = self.cache.lock().unwrap();
             if cache.refreshing || cache.checked.is_some_and(|t| t.elapsed() < REFRESH) {
@@ -68,7 +79,7 @@ impl ImageReadiness {
     }
 }
 
-fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> ImageCapabilities {
+fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> Discovery {
     let managed = config.is_some_and(|c| c.engine == crate::image_engine::ImageEngine::ManagedSycl);
     let privacy = if (cfg!(feature = "native-image") || managed) && config.is_some() {
         (crate::image_privacy::require_no_swap().is_err()
@@ -84,12 +95,19 @@ fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> ImageCapabilitie
         privacy,
         |id| config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok()),
     );
+    // Video runs only on the managed SYCL runtime, and only on one with ABI 3.
+    let mut video_runtime = Some("image_engine_not_in_this_build");
     if let Some(config) = config.filter(|_| managed) {
         let runtime = config
             .runtime
             .as_deref()
             .ok_or("image_managed_runtime_incompatible")
             .and_then(crate::image_engine::VerifiedRuntime::load);
+        video_runtime = match &runtime {
+            Ok(r) if r.manifest.worker_abi >= crate::image_engine::VIDEO_WORKER_ABI => None,
+            Ok(_) => Some("image_runtime_unavailable"),
+            Err(code) => Some(*code),
+        };
         apply_runtime_status(
             &mut images,
             config,
@@ -97,7 +115,57 @@ fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> ImageCapabilitie
             cfg!(feature = "native-image"),
         );
     }
-    images
+    let videos = describe_videos(config, privacy.or(video_runtime), |id| {
+        config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok())
+    });
+    Discovery { images, videos }
+}
+
+/// `blocked` is the first privacy/runtime reason that prevents video, if any.
+fn describe_videos(
+    config: Option<&ImageConfig>,
+    blocked: Option<&str>,
+    mut models_ready: impl FnMut(&str) -> bool,
+) -> VideoCapabilities {
+    let mut videos = VideoCapabilities {
+        api_version: 1,
+        access: "inference".into(),
+        state: "disabled".into(),
+        reason: Some("image_generation_not_configured".into()),
+        generate_path: "/kuno/v1/videos/generate".into(),
+        response_formats: vec![kuno_protocol::IMAGE_STREAM_MEDIA_TYPE.into()],
+        workflows: Vec::new(),
+    };
+    let Some(config) = config.filter(|c| c.video_enabled()) else {
+        return videos;
+    };
+    if config.engine != crate::image_engine::ImageEngine::ManagedSycl {
+        videos.state = "unsupported".into();
+        videos.reason = Some("image_engine_not_in_this_build".into());
+        return videos;
+    }
+    let reason = if !models_ready(MINIMAX_H3_COLLECTION) {
+        Some("image_models_unavailable")
+    } else {
+        blocked
+    };
+    videos.state = if reason.is_some() { "unavailable" } else { "ready" }.into();
+    videos.reason = reason.map(str::to_owned);
+    videos.workflows.push(VideoWorkflowCapability {
+        id: MINIMAX_H3_I2V_RECIPE.into(),
+        state: videos.state.clone(),
+        reason: videos.reason.clone(),
+        first_frame: "required".into(),
+        fps: kuno_protocol::VIDEO_FPS,
+        frames: kuno_protocol::VIDEO_FRAMES.to_vec(),
+        max_pixels: kuno_protocol::VIDEO_MAX_PIXELS,
+        dimension_multiple: kuno_protocol::VIDEO_DIMENSION_MULTIPLE,
+        min_dimension: kuno_protocol::VIDEO_MIN_DIMENSION,
+        max_dimension: kuno_protocol::VIDEO_MAX_DIMENSION,
+        audio: true,
+        output_mime_type: kuno_protocol::VIDEO_MIME_TYPE.into(),
+    });
+    videos
 }
 
 fn apply_runtime_status(
@@ -185,6 +253,9 @@ fn describe(
         return images;
     }
     for collection in &config.unwrap().collections {
+        if collection == MINIMAX_H3_COLLECTION {
+            continue;
+        }
         let reason = if !models_ready(collection) {
             Some("image_models_unavailable")
         } else {
@@ -241,7 +312,8 @@ pub(crate) async fn require_workflow(
 ) -> Result<(), &'static str> {
     let images = tokio::task::spawn_blocking(move || probe(Some(&config), fast_attention))
         .await
-        .map_err(|_| "image_runtime_unavailable")?;
+        .map_err(|_| "image_runtime_unavailable")?
+        .images;
     match images.workflows.iter().find(|w| w.id == workflow) {
         Some(w) if w.state == "ready" => Ok(()),
         Some(w) if w.reason.as_deref() == Some("image_models_unavailable") => {
@@ -257,6 +329,26 @@ pub(crate) async fn require_workflow(
             _ => Err("image_privacy_unavailable"),
         },
         None => Err("image_engine_not_in_this_build"),
+    }
+}
+
+/// Rechecked per video request, like `require_workflow`.
+pub(crate) async fn require_video(config: ImageConfig) -> Result<(), &'static str> {
+    let videos = tokio::task::spawn_blocking(move || probe(Some(&config), false))
+        .await
+        .map_err(|_| "image_runtime_unavailable")?
+        .videos;
+    match videos.workflows.first() {
+        Some(w) if w.state == "ready" => Ok(()),
+        Some(w) => Err(match w.reason.as_deref() {
+            Some("image_models_unavailable") => "image_models_unavailable",
+            Some("image_privacy_unavailable") => "image_privacy_unavailable",
+            _ => "image_runtime_unavailable",
+        }),
+        None => Err(match videos.reason.as_deref() {
+            Some("image_engine_not_in_this_build") => "image_engine_not_in_this_build",
+            _ => "video_generation_not_configured",
+        }),
     }
 }
 
@@ -354,10 +446,32 @@ mod tests {
         let a = cache.snapshot(Some(c.clone())).await;
         let b = cache.snapshot(Some(c)).await;
         assert_eq!(
-            serde_json::to_value(&a).unwrap(),
-            serde_json::to_value(&b).unwrap()
+            serde_json::to_value(&a.images).unwrap(),
+            serde_json::to_value(&b.images).unwrap()
         );
-        assert!(!serde_json::to_string(&a).unwrap().contains("/synthetic"));
+        assert!(!serde_json::to_string(&a.images).unwrap().contains("/synthetic"));
+        assert!(!serde_json::to_string(&a.videos).unwrap().contains("/synthetic"));
         assert!(!cache.cache.lock().unwrap().refreshing);
+    }
+
+    #[test]
+    fn video_discovery_follows_configuration_engine_models_and_runtime() {
+        assert_eq!(describe_videos(None, None, |_| true).state, "disabled");
+        let mut c = config();
+        assert_eq!(describe_videos(Some(&c), None, |_| true).state, "disabled");
+        c.collections.push(MINIMAX_H3_COLLECTION.into());
+        assert_eq!(describe_videos(Some(&c), None, |_| true).state, "unsupported");
+        c.engine = crate::image_engine::ImageEngine::ManagedSycl;
+        c.runtime = Some(crate::image_engine::SYCL_RUNTIME.into());
+        let ready = describe_videos(Some(&c), None, |_| true);
+        assert_eq!(ready.state, "ready");
+        assert_eq!(ready.workflows[0].frames, kuno_protocol::VIDEO_FRAMES);
+        let missing = describe_videos(Some(&c), None, |id| id != MINIMAX_H3_COLLECTION);
+        assert_eq!(missing.workflows[0].reason.as_deref(), Some("image_models_unavailable"));
+        let old_runtime = describe_videos(Some(&c), Some("image_runtime_unavailable"), |_| true);
+        assert_eq!(old_runtime.state, "unavailable");
+        // The video collection never appears as an image workflow.
+        let images = describe(Some(&c), true, false, None, |_| true);
+        assert_eq!(images.workflows.len(), 3);
     }
 }

@@ -1,5 +1,5 @@
 //! Private, bounded resident-worker pipes. Frames never enter diagnostics.
-use kuno_protocol::{ImageRecipe, MAX_IMAGE_REQUEST_BYTES};
+use kuno_protocol::{ImageRecipe, MAX_IMAGE_REQUEST_BYTES, VideoPhase, VideoRecipe};
 use std::io::{Read, Write};
 
 pub const REQUEST_MAGIC: &[u8; 4] = b"KIR2";
@@ -11,14 +11,41 @@ pub const FINAL: u8 = 2;
 pub const CLEAN: u8 = 3;
 pub const READY: u8 = 4;
 pub const ERROR: u8 = 5;
+/// Content-free video progress: phase byte, step and steps (big-endian u32).
+pub const PROGRESS: u8 = 6;
+pub const GENERATE_VIDEO: u8 = 3;
 pub const MAX_FINAL_BYTES: usize = 20 * 1024 * 1024;
+pub const MAX_VIDEO_FINAL_BYTES: usize = kuno_protocol::MAX_VIDEO_BYTES;
 pub const MAX_ERROR_BYTES: usize = 128;
 
 /// This acknowledgement protocol permits retaining weights only after every
 /// request-owned buffer and the native derived state have been cleared.
 pub enum Request {
     Generate(TransientRecipe),
+    GenerateVideo(TransientVideoRecipe),
     Shutdown,
+}
+
+/// Request-owned video strings must not outlive the job's CLEAN frame.
+pub struct TransientVideoRecipe(VideoRecipe);
+impl From<VideoRecipe> for TransientVideoRecipe {
+    fn from(recipe: VideoRecipe) -> Self {
+        Self(recipe)
+    }
+}
+impl std::ops::Deref for TransientVideoRecipe {
+    type Target = VideoRecipe;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl Drop for TransientVideoRecipe {
+    fn drop(&mut self) {
+        clear_string(&mut self.0.workflow);
+        clear_string(&mut self.0.prompt);
+        clear_string(&mut self.0.seed);
+        clear_string(&mut self.0.first_frame);
+    }
 }
 
 /// Request-owned strings must not outlive the successful job's CLEAN frame.
@@ -111,7 +138,20 @@ pub fn read_request(reader: &mut impl Read) -> Result<Option<Request>, &'static 
             recipe.validate_execution()?;
             Ok(Some(Request::Generate(recipe)))
         }
-        GENERATE if size > MAX_IMAGE_REQUEST_BYTES => Err("image_request_too_large"),
+        GENERATE_VIDEO if size > 0 && size <= MAX_IMAGE_REQUEST_BYTES => {
+            let mut bytes = TransientBytes(vec![0; size]);
+            reader
+                .read_exact(&mut bytes.0)
+                .map_err(|_| "image_worker_request_invalid")?;
+            let recipe = TransientVideoRecipe(
+                serde_json::from_slice(&bytes.0).map_err(|_| "image_request_invalid")?,
+            );
+            recipe.validate()?;
+            Ok(Some(Request::GenerateVideo(recipe)))
+        }
+        GENERATE | GENERATE_VIDEO if size > MAX_IMAGE_REQUEST_BYTES => {
+            Err("image_request_too_large")
+        }
         SHUTDOWN if size == 0 => Ok(Some(Request::Shutdown)),
         _ => Err("image_worker_request_invalid"),
     }
@@ -142,6 +182,55 @@ pub fn write_generate(writer: &mut impl Write, recipe: &ImageRecipe) -> Result<(
     write_frame(writer, REQUEST_MAGIC, GENERATE, &bytes.0)
 }
 
+pub fn write_generate_video(
+    writer: &mut impl Write,
+    recipe: &VideoRecipe,
+) -> Result<(), &'static str> {
+    recipe.validate()?;
+    let bytes = TransientBytes(serde_json::to_vec(recipe).map_err(|_| "image_request_invalid")?);
+    if bytes.0.len() > MAX_IMAGE_REQUEST_BYTES {
+        return Err("image_request_too_large");
+    }
+    write_frame(writer, REQUEST_MAGIC, GENERATE_VIDEO, &bytes.0)
+}
+
+pub fn progress_payload(phase: VideoPhase, step: u32, steps: u32) -> [u8; 9] {
+    let mut payload = [0u8; 9];
+    payload[0] = phase as u8;
+    payload[1..5].copy_from_slice(&step.to_be_bytes());
+    payload[5..9].copy_from_slice(&steps.to_be_bytes());
+    payload
+}
+
+/// Decodes a PROGRESS payload; sampling carries 1..=steps, other phases none.
+pub fn parse_progress(payload: &[u8]) -> Result<(VideoPhase, u32, u32), &'static str> {
+    let payload: &[u8; 9] = payload.try_into().map_err(|_| "image_worker_frame_invalid")?;
+    let n = |i: usize| u32::from_be_bytes(payload[i..i + 4].try_into().unwrap());
+    let (step, steps) = (n(1), n(5));
+    let phase = match payload[0] {
+        0 => VideoPhase::Conditioning,
+        1 => VideoPhase::Sampling,
+        2 => VideoPhase::Decoding,
+        3 => VideoPhase::Encoding,
+        _ => return Err("image_worker_frame_invalid"),
+    };
+    let valid = match phase {
+        VideoPhase::Sampling => (1..=200).contains(&steps) && (1..=steps).contains(&step),
+        _ => step == 0 && steps == 0,
+    };
+    if !valid {
+        return Err("image_worker_frame_invalid");
+    }
+    Ok((phase, step, steps))
+}
+
+/// Worker-side progress through the same stdout pipe as previews.
+pub fn write_progress(phase: VideoPhase, step: u32, steps: u32) -> Result<(), &'static str> {
+    let payload = progress_payload(phase, step, steps);
+    parse_progress(&payload)?;
+    crate::preview::write_frame(PROGRESS, &payload).map_err(|_| "image_output_failed")
+}
+
 pub fn write_shutdown(writer: &mut impl Write) -> Result<(), &'static str> {
     write_frame(writer, REQUEST_MAGIC, SHUTDOWN, &[])
 }
@@ -153,7 +242,9 @@ pub fn write_response(
 ) -> Result<(), &'static str> {
     let valid = match kind {
         PREVIEW => (16..=crate::preview::MAX_PREVIEW_BYTES).contains(&payload.len()),
-        FINAL => (1..=MAX_FINAL_BYTES).contains(&payload.len()),
+        // The supervisor applies the per-request bound (image PNG or video MP4).
+        FINAL => (1..=MAX_FINAL_BYTES.max(MAX_VIDEO_FINAL_BYTES)).contains(&payload.len()),
+        PROGRESS => parse_progress(payload).is_ok(),
         CLEAN | READY => payload.is_empty(),
         ERROR => {
             !payload.is_empty()
@@ -255,6 +346,60 @@ mod tests {
         ] {
             assert!(write_response(&mut Vec::new(), kind, payload).is_err());
         }
+    }
+    fn video() -> VideoRecipe {
+        VideoRecipe {
+            workflow: kuno_protocol::MINIMAX_H3_I2V_RECIPE.into(),
+            prompt: "synthetic private prompt".into(),
+            seed: "7".into(),
+            width: 832,
+            height: 544,
+            frames: 56,
+            audio: true,
+            first_frame: "AAAA".into(),
+        }
+    }
+    #[test]
+    fn video_requests_round_trip_and_reject_invalid_recipes() {
+        let mut pipe = Vec::new();
+        write_generate_video(&mut pipe, &video()).unwrap();
+        write_generate(&mut pipe, &recipe()).unwrap();
+        let mut reader = pipe.as_slice();
+        let Some(Request::GenerateVideo(v)) = read_request(&mut reader).unwrap() else {
+            panic!("missing video request")
+        };
+        assert_eq!((v.width, v.frames), (832, 56));
+        assert!(matches!(read_request(&mut reader).unwrap(), Some(Request::Generate(_))));
+        let mut bad = video();
+        bad.frames = 57;
+        let payload = serde_json::to_vec(&bad).unwrap();
+        let mut pipe = Vec::new();
+        write_frame(&mut pipe, REQUEST_MAGIC, GENERATE_VIDEO, &payload).unwrap();
+        assert!(read_request(&mut pipe.as_slice()).is_err());
+    }
+    #[test]
+    fn progress_frames_are_content_free_and_bounded() {
+        for (phase, step, steps) in [
+            (VideoPhase::Conditioning, 0, 0),
+            (VideoPhase::Sampling, 3, 8),
+            (VideoPhase::Decoding, 0, 0),
+            (VideoPhase::Encoding, 0, 0),
+        ] {
+            let payload = progress_payload(phase, step, steps);
+            assert_eq!(parse_progress(&payload).unwrap(), (phase, step, steps));
+            write_response(&mut Vec::new(), PROGRESS, &payload).unwrap();
+        }
+        for payload in [
+            progress_payload(VideoPhase::Sampling, 0, 8),
+            progress_payload(VideoPhase::Sampling, 9, 8),
+            progress_payload(VideoPhase::Decoding, 1, 8),
+        ] {
+            assert!(parse_progress(&payload).is_err());
+        }
+        assert!(parse_progress(&[1, 2, 3]).is_err());
+        let mut unknown = progress_payload(VideoPhase::Encoding, 0, 0);
+        unknown[0] = 4;
+        assert!(parse_progress(&unknown).is_err());
     }
     #[test]
     fn clearing_covers_capacity_as_well_as_current_length() {
