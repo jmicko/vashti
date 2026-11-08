@@ -2770,6 +2770,21 @@ index 4a6027f..818fbe7 100644
      if (ops.size() == 2 && ops.begin()[0] == GGML_OP_RMS_NORM && ops.begin()[1] == GGML_OP_MUL) {
          const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
          const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
+diff --git a/src/ggml-sycl/gemm.hpp b/src/ggml-sycl/gemm.hpp
+index c202da1..21d0aa8 100644
+--- a/src/ggml-sycl/gemm.hpp
++++ b/src/ggml-sycl/gemm.hpp
+@@ -56,6 +56,10 @@ public:
+         const auto c_md    = dnnl::memory::desc(c_dims, ct, c_strides);
+         dnnl::primitive_attr primitive_attr;
+         primitive_attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
++        // Same inputs must give the same bits: GPU matmul implementations may otherwise
++        // split K and combine partial sums in a run-dependent order (seen on Xe2 for
++        // Qwen proj_out, BF16 64x4096), which changes same-seed images.
++        primitive_attr.set_deterministic(true);
+ 
+ #ifdef GGML_SYCL_F16
+         primitive_attr.set_fpmath_mode(dnnl::fpmath_mode::f16);
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
 index 18d5878..ceced7c 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
