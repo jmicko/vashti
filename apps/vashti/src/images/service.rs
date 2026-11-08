@@ -21,9 +21,9 @@ const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
 pub struct ImageJobs {
     pub cancellations: Mutex<HashMap<String, CancellationToken>>,
-    pub(super) slots: Arc<Semaphore>,
+    pub(crate) slots: Arc<Semaphore>,
     pub(super) private: super::transient::Jobs,
-    pub(super) kuno: super::kuno::KunoClient,
+    pub(crate) kuno: super::kuno::KunoClient,
     previews: std::sync::Mutex<HashMap<String, kuno_image::preview::Preview>>,
 }
 impl Default for ImageJobs {
@@ -440,13 +440,15 @@ pub async fn upload(pool: &SqlitePool, user: &str, bytes: Vec<u8>) -> Result<Val
     tx.commit().await?;
     Ok(json!({"id":asset_id,"width":dimensions.0,"height":dimensions.1,"mime_type":mime}))
 }
-async fn check_quota(
+pub(crate) async fn check_quota(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     user: &str,
     additional: usize,
 ) -> Result<(), ApiError> {
     let used: i64 =
-        sqlx::query_scalar("SELECT COALESCE(SUM(size_bytes),0) FROM image_assets WHERE user_id=?")
+        sqlx::query_scalar("SELECT COALESCE(SUM(size_bytes),0) FROM (SELECT size_bytes FROM image_assets WHERE user_id=? UNION ALL SELECT size_bytes FROM video_frames WHERE user_id=? UNION ALL SELECT size_bytes FROM video_runs WHERE user_id=?)")
+            .bind(user)
+            .bind(user)
             .bind(user)
             .fetch_one(&mut **tx)
             .await?;
@@ -892,7 +894,7 @@ async fn phase(pool: &SqlitePool, run: &str, status: &str) -> Result<(), ApiErro
     }
     Ok(())
 }
-pub(super) fn seed(base: &str, mode: SeedMode, index: u32) -> Result<String, ApiError> {
+pub(crate) fn seed(base: &str, mode: SeedMode, index: u32) -> Result<String, ApiError> {
     let initial = base.parse::<u64>().map_err(|_| invalid("Invalid seed"))?;
     let value = match mode {
         SeedMode::Fixed => initial,

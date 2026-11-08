@@ -12,10 +12,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     connections::{Connection, NativeState},
-    validation::api_url,
+    validation::{api_url, response_limit},
 };
-
-const MAX_NATIVE_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct HttpRequest {
@@ -348,9 +346,16 @@ async fn response_payload(
 }
 
 async fn response_bytes_limited(response: Response) -> Result<Vec<u8>, String> {
+    let limit = response_limit(
+        response.url().path(),
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+    );
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_NATIVE_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > limit as u64)
     {
         return Err("Server response was too large".to_string());
     }
@@ -359,12 +364,12 @@ async fn response_bytes_limited(response: Response) -> Result<Vec<u8>, String> {
         .content_length()
         .and_then(|length| usize::try_from(length).ok())
         .unwrap_or_default()
-        .min(MAX_NATIVE_RESPONSE_BYTES);
+        .min(limit);
     let mut bytes = Vec::with_capacity(capacity);
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(request_error)?;
-        if bytes.len().saturating_add(chunk.len()) > MAX_NATIVE_RESPONSE_BYTES {
+        if bytes.len().saturating_add(chunk.len()) > limit {
             return Err("Server response was too large".to_string());
         }
         bytes.extend_from_slice(&chunk);

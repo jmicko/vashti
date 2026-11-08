@@ -27,7 +27,7 @@ const CACHE_TTL: Duration = Duration::from_secs(5);
 type CachedHost = Arc<Mutex<Option<(Instant, Discovery)>>>;
 
 #[derive(Clone, Serialize)]
-pub(super) struct Discovery {
+pub(crate) struct Discovery {
     pub state: &'static str,
     pub message: String,
     pub capabilities: Option<Capabilities>,
@@ -94,7 +94,7 @@ impl Discovery {
     }
 }
 
-pub(super) struct KunoClient {
+pub(crate) struct KunoClient {
     http: Client,
     cache: Mutex<HashMap<String, CachedHost>>,
 }

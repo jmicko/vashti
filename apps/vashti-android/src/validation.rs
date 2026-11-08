@@ -1,5 +1,18 @@
 use url::Url;
 
+pub fn response_limit(path: &str, mime_type: Option<&str>) -> usize {
+    let video = mime_type == Some("video/mp4")
+        && path
+            .strip_prefix("/api/videos/runs/")
+            .and_then(|p| p.strip_suffix("/result"))
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
+    if video {
+        64 * 1024 * 1024
+    } else {
+        32 * 1024 * 1024
+    }
+}
+
 pub fn validate_file_export(
     filename: &str,
     mime_type: &str,
@@ -19,7 +32,12 @@ pub fn validate_file_export(
                     .chain(b.bytes())
                     .all(|c| c.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&c))
         });
-    if !valid_name || !valid_mime || data_len > 32 * 1024 * 1024 {
+    let max_encoded = if mime_type == "video/mp4" {
+        (64 * 1024 * 1024_usize).div_ceil(3) * 4
+    } else {
+        32 * 1024 * 1024
+    };
+    if !valid_name || !valid_mime || data_len > max_encoded {
         return Err("Invalid file export".into());
     }
     Ok(())
@@ -78,6 +96,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_mp4_result_routes_receive_the_larger_download_bound() {
+        let path = "/api/videos/runs/269ef6f3-f83d-4cc2-863b-d1d89f6a1a4d/result";
+        assert_eq!(response_limit(path, Some("video/mp4")), 64 * 1024 * 1024);
+        for (path, mime) in [
+            (path, None),
+            (path, Some("text/html")),
+            ("/api/notes/export", Some("video/mp4")),
+            ("/api/videos/runs/invalid/result", Some("video/mp4")),
+            (
+                "/api/other/api/videos/runs/269ef6f3-f83d-4cc2-863b-d1d89f6a1a4d/result",
+                Some("video/mp4"),
+            ),
+        ] {
+            assert_eq!(response_limit(path, mime), 32 * 1024 * 1024);
+        }
+    }
+
+    #[test]
     fn file_exports_are_bounded_and_cannot_choose_paths_or_inject_metadata() {
         assert!(validate_file_export("answer.csv", "text/csv", 1024).is_ok());
         assert!(validate_file_export("report.pdf", "application/pdf", 1024).is_ok());
@@ -88,6 +124,10 @@ mod tests {
             assert!(validate_file_export("answer.csv", mime, 1).is_err());
         }
         assert!(validate_file_export("answer.csv", "text/csv", 33 * 1024 * 1024).is_err());
+        let limit = (64 * 1024 * 1024_usize).div_ceil(3) * 4;
+        assert!(validate_file_export("clip.mp4", "video/mp4", limit).is_ok());
+        assert!(validate_file_export("clip.mp4", "video/mp4", limit + 1).is_err());
+        assert!(validate_file_export("clip.bin", "application/octet-stream", limit).is_err());
     }
 
     #[test]

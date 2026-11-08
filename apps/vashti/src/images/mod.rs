@@ -1,6 +1,6 @@
 pub mod chat;
 pub mod handlers;
-mod kuno;
+pub(crate) mod kuno;
 pub mod models;
 pub mod service;
 #[cfg(test)]

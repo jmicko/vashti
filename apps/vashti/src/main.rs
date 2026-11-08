@@ -30,6 +30,7 @@ mod uploads;
 mod user_setup;
 mod vector_index;
 mod version;
+mod videos;
 
 use std::{error::Error, net::SocketAddr, time::Duration};
 
@@ -87,6 +88,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     startup::secure_data_files(&config).await?;
     startup::migrations::run(&db).await?;
     images::service::recover(&db).await?;
+    videos::service::recover(&db, &config.data_dir).await?;
     assistant::service::recover(&db).await?;
     let interrupted_generations = chats::service::recover_interrupted_generations(&db).await?;
     if interrupted_generations > 0 {
@@ -136,6 +138,7 @@ fn router(state: AppState) -> Router {
     let api = Router::new()
         .nest("/assistant", assistant::handlers::router())
         .nest("/images", images::handlers::router())
+        .nest("/videos", videos::handlers::router())
         .route("/version", get(version::get_version))
         .route("/admin/update", get(updates::handlers::get_update_status))
         .route(

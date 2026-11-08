@@ -45,7 +45,7 @@ pub fn router() -> Router<AppState> {
         .route("/assets/{id}/thumbnail", get(thumbnail))
         .route("/assets/{id}/settings", get(import_settings))
 }
-pub(super) async fn user(state: &AppState, jar: &CookieJar) -> Result<String, ApiError> {
+pub(crate) async fn user(state: &AppState, jar: &CookieJar) -> Result<String, ApiError> {
     let user =
         auth::service::require_user(&state.db, jar, &state.config.session_cookie_name).await?;
     permissions::ensure_tool_records(&state.db).await?;
