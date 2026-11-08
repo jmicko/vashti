@@ -24,6 +24,14 @@ Protected Qwen image acceptance with the new worker passed (same speed; pixels w
 installed runtime's own same-seed variation). Codex can now build the Vashti connector and UI
 against this contract; Vashti must hide video when `videos` is absent or not `ready`.
 
+Update (2026-11-08, user-approved): installed the deterministic runtime from commit `9d012125`
+(oneDNN matmul `set_deterministic`; manifest
+`1c9d9c7f26e1588a62faaa9901c513ba83c4f43ed6b1890f26cd1e747959e6a5`; rollback copy
+`/usr/local/lib/kuno-test/qwen21-sycl-2026.1-v1-backup-20261108-004909`). The same
+seed and settings now give byte-identical images and MP4s over HTTP (4/4 images, 2/2 videos);
+speed unchanged; images for a given seed differ from those produced before this update. The
+API contract is unchanged.
+
 **Current source continuation (2026-10-24 UTC): dual cells composed, unvalidated.**
 
 Read [the complete two-C cohort policy and transfer audit](kuno-prefill-dual-cohort-cells.md).
