@@ -1,0 +1,151 @@
+{
+  "artifact": {
+    "cargo_binary_name": "kuno-text-lab",
+    "correction_receipt": "rust-native-artifact-binding-correction-20261005.json",
+    "frozen_executable": "/tmp/kuno-rust-native-model-max8-v11-20261005",
+    "selection": "actual --message-format=json compiler-artifact executable",
+    "sha256": "fca4b66911251cfcf8a74ce1399f0304e4f3f979e5dcedc688fd9e735d61ca15"
+  },
+  "base_commit": "bed3f9652b3e97cb7104eb7e1ec9a666c84cba7d",
+  "budget": {
+    "Moe_interior_windows": "Every interior consumer/miss window has completed fault + checked runtime cleanup before another window; only final-window component perlayer can survive. Mandatory native router cleanup additionally drains priorlayer spans. No ignored outstanding sources.",
+    "configured_examples": {
+      "B70_default64slots_cache8GiB_reserved26GiB": {
+        "actual_baseline_max": 5422874624,
+        "banks": 12884901888,
+        "cache": 8589934592,
+        "reserved_limit": 27917287424,
+        "sum_excluding_actual_baseline": 22494412800
+      },
+      "NVIDIA_default16slots_cache6GiB_reserved10GiB": {
+        "actual_baseline_max": 54165504,
+        "banks": 3221225472,
+        "cache": 6442450944,
+        "reserved_limit": 10737418240,
+        "sum_excluding_actual_baseline": 10683252736
+      }
+    },
+    "coordinator_metadata_proof": "256KiB cap now checks Pending arrays + upper bounds for actual36GDN/12QSA/PLE anchors + Workspace/Session +8KiB temporary capability headroom; each native MoE retained dynamic plan remains independently capacity checked in2MiB component",
+    "incremental_main_components": {
+      "GDN": 3932160,
+      "GR_shared_input": 1998848,
+      "MoE": 1409024,
+      "PLE": 6258688,
+      "QSA": 17825792,
+      "Shared": 262144,
+      "outer_block_pair": 262144,
+      "outer_residual_pair": 1048576,
+      "outer_router_pair": 65536
+    },
+    "independent_runtime_host_cap": 67108864,
+    "main_base_before_cache_banks_actual_baseline": 1019576320,
+    "new_head_logits_or_packet_or_fault_pages": 0,
+    "new_main_increment_sum": 33062912,
+    "new_private_sum": 818249728,
+    "new_public_pages": 0,
+    "old_private": 785186816,
+    "original_BankSlots_64bit_proof": {
+      "actual_max96_slots_512_experts_per_bank": 10568,
+      "inline_BankSlots_includes_State_Vec_headers_tick_revision_and_bank_id": 72,
+      "per48_max_sum": 507264,
+      "policy": "actual Vec capacities checked at constructor, after each real native layer, and after publication; candidate/next plans remain separately charged to native MoE2MiB",
+      "reserved_component": 524288
+    },
+    "private_application_host_component_caps": {
+      "QSA_selector": 1048576,
+      "actual_router_map_core_scratch_wave_packet": 65536,
+      "coordinator_pending_metadata": 262144,
+      "embedding_source_and_row_scratch": 786432,
+      "last_output_and_one_at_a_time_maps": 2097152,
+      "native_MoE_all48_tickets": 2097152,
+      "native_PLE_including_authoritative_old_CPU_history": 4194304,
+      "original48_committed_BankSlots": 524288
+    },
+    "private_application_host_hardcap": 12582912,
+    "private_application_host_margin": 1507328,
+    "private_application_host_reserved_sum": 11075584,
+    "public_fill_host_payload_cap": 41943040,
+    "public_pages_sum": 25165824,
+    "public_static_vector_entries": 341,
+    "public_total_sealed_prewarm_entries": 379,
+    "public_vector_inventory": {
+      "PLE_norms_and_convolution": 458752,
+      "all12_QSA_four_norms": 1572864,
+      "all36_GDN_static_vectors": 12976128,
+      "all48_shared_gate_vectors": 1572864,
+      "all48_two_GR_norms": 6291456,
+      "derived36_GDN_controls": 1179648,
+      "final_output_HC_norm": 65536,
+      "shared_public_sin_cos": 1048576
+    },
+    "retained_scalar_request_pages": 1286,
+    "runtime_components": {
+      "Embedding_full_source_and8_dispatch_audited": 1064960,
+      "GDN_36_audited": 4718592,
+      "GR_97_role_envelopes_64_dispatch_audited": 12713984,
+      "Head_actual_Q6_16_tiles_fence_and_maps_audited": 2230272,
+      "INFO_target_slab_rollover_alignment_headroom": 65536,
+      "MoE_last_window_per_layer_48_audited": 25165824,
+      "Outer_and_scalar_initial9_clear_INFO_audited": 18432,
+      "PLE_full_component_audited": 4587520,
+      "QSA_12_audited": 7864320,
+      "Router_48_8_dispatch_plus_full_page_audited": 3932160,
+      "Second_fault_map_audited": 65536,
+      "Shared_48_16_dispatch_audited": 1572864
+    },
+    "runtime_hardcap": 67108864,
+    "runtime_margin_worst_seven_types": 3018752,
+    "runtime_total_actual_Q6": 64000000,
+    "runtime_total_worst_seven_types_F32_head38tiles": 64090112,
+    "source_implementation": "Actual connected layer-major native MAX8 source; defaultoff; no physical whole-model acceptance/performance claim."
+  },
+  "date": "2026-10-05",
+  "execution": [
+    "Actual48 original model layers, original cached projections, GDN/QSA/PLE histories, actual routed banks and shared path.",
+    "Intermediate chunks omit complete final mixer/head; final column only reaches original head; ordinary scalar generation resumes same accepted model state.",
+    "Same-fault owning proof, PLE owning maps/lease destruction/audit, second same-fault/I/O/admission proof, all family preflight, then original history/state/bank publication and cursor/output.",
+    "Any failure/cancel/unwind/partial commit poisons model; explicit model+actual executor registry teardown outside admission guards; no retry/fallback."
+  ],
+  "files_sha256": {
+    "apps/kuno/benchmarks/native-text/src/bank_slots.rs": "9c2b7f101e468d71688673687a746c59fa35de03edd66a9bb1d24770cb1d9a6a",
+    "apps/kuno/benchmarks/native-text/src/executor.rs": "ff66f819999aa67a38df69c74497ac19994190eb4ebb77d0c9bdd4a978766f5c",
+    "apps/kuno/benchmarks/native-text/src/main.rs": "96996bad7a99de8536af19fe9f52484c0fb85fe75c1744c1dd6b96596ec397cb",
+    "apps/kuno/benchmarks/native-text/src/resident_model.rs": "4da5675e13a258ef45c1ccb519bf807a6a13fff2cd7f45171a721e8d10d362eb",
+    "apps/kuno/benchmarks/native-text/src/resident_model_batch.rs": "fa609af9f08b4507113c13707a68e7dabcf99343b0450ea6acf2e416758215ff"
+  },
+  "full_physical_matrix_or_performance_accepted": false,
+  "lab_controls": {
+    "KUNO_LAB_CANCEL_CHECK": "1 for fixed public lifecycle test",
+    "KUNO_LAB_NATIVE_BATCH_COUNT": "1..8; default8",
+    "KUNO_LAB_OWNED_ZERO_AUDIT": "1 for complete MAIN-page audits",
+    "modes": [
+      "resident-bang",
+      "resident-chat",
+      "resident-rainwater"
+    ],
+    "required": {
+      "KUNO_LAB_NATIVE_MAX8": "1",
+      "KUNO_LAB_TRANSIENT_IO": "1"
+    }
+  },
+  "limitations": [
+    "First protected device smokes are recorded separately and do not establish all partitions/full quality/long context.",
+    "Actual checked INFO/host bounds exclude opaque driver/register/OS-stack/abrupt-loss erasure.",
+    "No compiler-idle matched timing, production private worker, native default or explicit managed ollama. routing selection yet."
+  ],
+  "patch_sha256": "a27bd9b807f127b0d376f258301d33c464e728dc39ee54c859c862c4fa00238f",
+  "provenance_sha256": "b3534c592378e8572e40fee0fc3d8c995a916c36596cf68d6398f2ac4caf5c32",
+  "public_API_catalog_defaults_services_or_Vashti_changed": false,
+  "root_checks": {
+    "core_installed_checks_ignored": 2,
+    "core_tests_unchanged": 86,
+    "format_and_diff_checks": true,
+    "locked_offline_release_build": true,
+    "native_host_offline_tests": 369,
+    "parent_and_peer_source_review_no_material_blocker": true,
+    "strict_all_target_clippy": true
+  },
+  "scope": "connected-experimental-fixed-public-native-MAX8-model-source",
+  "source_acceptance_only": true,
+  "source_commit": "371b9d19d7faae393262c13c1ec1fe066b604d33"
+}

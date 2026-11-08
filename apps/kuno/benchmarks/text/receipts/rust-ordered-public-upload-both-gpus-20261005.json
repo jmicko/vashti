@@ -1,0 +1,1492 @@
+{
+  "scope": "fixed-public-synthetic-source-ownership-and-ABBA-laboratory-only",
+  "source_base_commit": "ecf3320",
+  "binary_sha256": "6582901d2324c9e1d534cf9c0eaace26eb87f1b41357f9aebc9b88b59f8a5073",
+  "model_manifest_sha256": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+  "model_blob_identity_sha256": "89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75",
+  "weights": "borrowed-readonly-Ollama-blob; no download/copy/conversion",
+  "seed": 424242,
+  "temperature": 0,
+  "source_limit_bytes": 41943040,
+  "runtime_limit_bytes": 67108864,
+  "compiled_public_fixtures": [
+    "resident-chat",
+    "resident-bang"
+  ],
+  "normal_router_bound_bytes": 44564480,
+  "cleanup": "explicit model close poisons admission; checked nonaudited stage drain/erase releases retained public sources without MAIN credit; then full private-main/source zero audits; failure retains owners/retires context; unchanged Drop",
+  "initial_failure": {
+    "binary_sha256": "01de1ee1ddf6691d4e72f0c3cce8dd37d3e768bddbf0258c1add3d06ec7faf34",
+    "gpu": "Intel Arc Pro B70",
+    "cadence": 0,
+    "full_zero_audit": true,
+    "location": "partial cancellation after QSA3",
+    "unit_exit": 1,
+    "success_receipt_written": false,
+    "diagnosis": "Source-derived: first-position QSA has no selector read;40MiB upload stages remain live and duplicated audit stages exceed64MiB. Explicit teardown-order fix passes all four later card/cadence cases."
+  },
+  "both_card_acceptance": [
+    {
+      "allocator_reserved_bytes": 14284413312,
+      "batch_experts": false,
+      "block_kernel": true,
+      "block_large_only": true,
+      "block_moe": true,
+      "cache_accounted_bytes": 18010341376,
+      "device_reserved_limit_bytes": 27917287424,
+      "expert_bank_accounted_limit_bytes": 12884901888,
+      "expert_bank_slots": 64,
+      "expert_batch_window_bytes": 8388608,
+      "expert_scatter_mode": "dynamic-1d",
+      "fixture": "resident-chat",
+      "gdn_calls": 0,
+      "generation_ms": 4548,
+      "gpu_gdn_cpu_state_owner": false,
+      "io_token_checkpoint": false,
+      "matrix_calls": 16292,
+      "model_bind_ms": 1269,
+      "moe_calls": 1056,
+      "ordered_public_source_limit_bytes": 41943040,
+      "ordered_public_source_peak_bytes": 41943040,
+      "ordered_public_source_pending_bytes_after_cleanup": 0,
+      "ordered_public_upload": true,
+      "owned_io_cleanup_accepted": true,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 330,
+          "source_bytes": 12255232
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 225,
+          "source_bytes": 8355840
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 1,
+          "source_bytes": 65536
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 4,
+          "source_bytes": 196608
+        }
+      ],
+      "prefill_last_head": true,
+      "prefill_ms": 18186,
+      "prompt_tokens": 15,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "public_resident_warm_phase_ns": {
+        "attention_combine_and_ffn_gr_enqueue": 300361476,
+        "attention_enqueue_and_host_fences": 544480789,
+        "attention_gr_enqueue": 12029121,
+        "expert_upload_and_enqueue": 1993929615,
+        "moe_route_and_upload_enqueue": 3473955701,
+        "ple_and_previous_owner": 60655960,
+        "router_fence": 1458185298
+      },
+      "public_warm_matrix_ns": {},
+      "resident_graph": true,
+      "resident_main_admitted_upper_bytes": 14284413312,
+      "resident_owned_zero_audit_enabled": true,
+      "resident_private_owned_bytes": 785186816,
+      "resident_runtime_io_limit_bytes": 67108864,
+      "resident_transient_io": true,
+      "scope": "fixed-public-synthetic-operator-test-only",
+      "seed": 424242,
+      "small_cpu_cache_bytes": 0,
+      "small_cpu_cache_matrices": 0,
+      "small_cpu_calls": 0,
+      "small_cpu_enabled": false,
+      "small_cpu_ms": 0,
+      "static_cache_budget_bytes": 8589934592,
+      "temperature": 0,
+      "total_gdn_ms": 0,
+      "total_matrix_ms": 0,
+      "total_moe_ms": 0,
+      "vendor": 32902,
+      "warm_expert_hits": 2569,
+      "warm_expert_uploads": 791,
+      "warm_gdn_ms": 0,
+      "warm_gpu_wait_ms": 0,
+      "warm_matrix_ms": 0,
+      "warm_moe_ms": 0,
+      "warm_uploaded_bytes": 2616832000,
+      "warm_weight_read_ms": 233,
+      "warm_weight_upload_ms": 317,
+      "weights": "borrowed-unmodified-ollama-blob",
+      "word_down": false
+    },
+    {
+      "allocator_reserved_bytes": 14284413312,
+      "batch_experts": false,
+      "block_kernel": true,
+      "block_large_only": true,
+      "block_moe": true,
+      "cache_accounted_bytes": 18010341376,
+      "device_reserved_limit_bytes": 27917287424,
+      "expert_bank_accounted_limit_bytes": 12884901888,
+      "expert_bank_slots": 64,
+      "expert_batch_window_bytes": 8388608,
+      "expert_scatter_mode": "dynamic-1d",
+      "fixture": "resident-chat",
+      "gdn_calls": 0,
+      "generation_ms": 5613,
+      "gpu_gdn_cpu_state_owner": false,
+      "io_token_checkpoint": true,
+      "matrix_calls": 16292,
+      "model_bind_ms": 1170,
+      "moe_calls": 1056,
+      "ordered_public_source_limit_bytes": 41943040,
+      "ordered_public_source_peak_bytes": 41943040,
+      "ordered_public_source_pending_bytes_after_cleanup": 0,
+      "ordered_public_upload": true,
+      "owned_io_cleanup_accepted": true,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 330,
+          "source_bytes": 12255232
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 225,
+          "source_bytes": 8355840
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 1,
+          "source_bytes": 65536
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 4,
+          "source_bytes": 196608
+        }
+      ],
+      "prefill_last_head": true,
+      "prefill_ms": 20772,
+      "prompt_tokens": 15,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "public_resident_warm_phase_ns": {
+        "attention_combine_and_ffn_gr_enqueue": 425826543,
+        "attention_enqueue_and_host_fences": 419822076,
+        "attention_gr_enqueue": 32092468,
+        "expert_upload_and_enqueue": 2602118938,
+        "moe_route_and_upload_enqueue": 4511970791,
+        "ple_and_previous_owner": 42106941,
+        "router_fence": 1881501938
+      },
+      "public_warm_matrix_ns": {},
+      "resident_graph": true,
+      "resident_main_admitted_upper_bytes": 14284413312,
+      "resident_owned_zero_audit_enabled": true,
+      "resident_private_owned_bytes": 785186816,
+      "resident_runtime_io_limit_bytes": 67108864,
+      "resident_transient_io": true,
+      "scope": "fixed-public-synthetic-operator-test-only",
+      "seed": 424242,
+      "small_cpu_cache_bytes": 0,
+      "small_cpu_cache_matrices": 0,
+      "small_cpu_calls": 0,
+      "small_cpu_enabled": false,
+      "small_cpu_ms": 0,
+      "static_cache_budget_bytes": 8589934592,
+      "temperature": 0,
+      "total_gdn_ms": 0,
+      "total_matrix_ms": 0,
+      "total_moe_ms": 0,
+      "vendor": 32902,
+      "warm_expert_hits": 2569,
+      "warm_expert_uploads": 791,
+      "warm_gdn_ms": 0,
+      "warm_gpu_wait_ms": 0,
+      "warm_matrix_ms": 0,
+      "warm_moe_ms": 0,
+      "warm_uploaded_bytes": 2616832000,
+      "warm_weight_read_ms": 548,
+      "warm_weight_upload_ms": 447,
+      "weights": "borrowed-unmodified-ollama-blob",
+      "word_down": false
+    },
+    {
+      "allocator_reserved_bytes": 6686984256,
+      "batch_experts": false,
+      "block_kernel": true,
+      "block_large_only": true,
+      "block_moe": true,
+      "cache_accounted_bytes": 8346664960,
+      "device_reserved_limit_bytes": 10737418240,
+      "expert_bank_accounted_limit_bytes": 3221225472,
+      "expert_bank_slots": 16,
+      "expert_batch_window_bytes": 8388608,
+      "expert_scatter_mode": "dynamic-1d",
+      "fixture": "resident-chat",
+      "gdn_calls": 0,
+      "generation_ms": 21836,
+      "gpu_gdn_cpu_state_owner": false,
+      "io_token_checkpoint": false,
+      "matrix_calls": 16292,
+      "model_bind_ms": 725,
+      "moe_calls": 1056,
+      "ordered_public_source_limit_bytes": 41943040,
+      "ordered_public_source_peak_bytes": 41943040,
+      "ordered_public_source_pending_bytes_after_cleanup": 0,
+      "ordered_public_upload": true,
+      "owned_io_cleanup_accepted": true,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 330,
+          "source_bytes": 12255232
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 225,
+          "source_bytes": 8355840
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 1,
+          "source_bytes": 65536
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 4,
+          "source_bytes": 196608
+        }
+      ],
+      "prefill_last_head": true,
+      "prefill_ms": 63200,
+      "prompt_tokens": 15,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "public_resident_warm_phase_ns": {
+        "attention_combine_and_ffn_gr_enqueue": 220033363,
+        "attention_enqueue_and_host_fences": 1940603039,
+        "attention_gr_enqueue": 19272210,
+        "expert_upload_and_enqueue": 13301193550,
+        "moe_route_and_upload_enqueue": 19079288272,
+        "ple_and_previous_owner": 220476318,
+        "router_fence": 5752313396
+      },
+      "public_warm_matrix_ns": {},
+      "resident_graph": true,
+      "resident_main_admitted_upper_bytes": 6686984256,
+      "resident_owned_zero_audit_enabled": true,
+      "resident_private_owned_bytes": 785186816,
+      "resident_runtime_io_limit_bytes": 67108864,
+      "resident_transient_io": true,
+      "scope": "fixed-public-synthetic-operator-test-only",
+      "seed": 424242,
+      "small_cpu_cache_bytes": 0,
+      "small_cpu_cache_matrices": 0,
+      "small_cpu_calls": 0,
+      "small_cpu_enabled": false,
+      "small_cpu_ms": 0,
+      "static_cache_budget_bytes": 6442450944,
+      "temperature": 0,
+      "total_gdn_ms": 0,
+      "total_matrix_ms": 0,
+      "total_moe_ms": 0,
+      "vendor": 4318,
+      "warm_expert_hits": 1892,
+      "warm_expert_uploads": 1468,
+      "warm_gdn_ms": 0,
+      "warm_gpu_wait_ms": 0,
+      "warm_matrix_ms": 0,
+      "warm_moe_ms": 0,
+      "warm_uploaded_bytes": 4820787200,
+      "warm_weight_read_ms": 925,
+      "warm_weight_upload_ms": 4484,
+      "weights": "borrowed-unmodified-ollama-blob",
+      "word_down": false
+    },
+    {
+      "allocator_reserved_bytes": 6686984256,
+      "batch_experts": false,
+      "block_kernel": true,
+      "block_large_only": true,
+      "block_moe": true,
+      "cache_accounted_bytes": 8346664960,
+      "device_reserved_limit_bytes": 10737418240,
+      "expert_bank_accounted_limit_bytes": 3221225472,
+      "expert_bank_slots": 16,
+      "expert_batch_window_bytes": 8388608,
+      "expert_scatter_mode": "dynamic-1d",
+      "fixture": "resident-chat",
+      "gdn_calls": 0,
+      "generation_ms": 20721,
+      "gpu_gdn_cpu_state_owner": false,
+      "io_token_checkpoint": true,
+      "matrix_calls": 16292,
+      "model_bind_ms": 757,
+      "moe_calls": 1056,
+      "ordered_public_source_limit_bytes": 41943040,
+      "ordered_public_source_peak_bytes": 41943040,
+      "ordered_public_source_pending_bytes_after_cleanup": 0,
+      "ordered_public_upload": true,
+      "owned_io_cleanup_accepted": true,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 330,
+          "source_bytes": 12255232
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 225,
+          "source_bytes": 8355840
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 1,
+          "source_bytes": 65536
+        },
+        {
+          "main_buffers": 1286,
+          "main_bytes": 785186816,
+          "source_buffers": 4,
+          "source_bytes": 196608
+        }
+      ],
+      "prefill_last_head": true,
+      "prefill_ms": 60556,
+      "prompt_tokens": 15,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "public_resident_warm_phase_ns": {
+        "attention_combine_and_ffn_gr_enqueue": 214183241,
+        "attention_enqueue_and_host_fences": 795711822,
+        "attention_gr_enqueue": 17451465,
+        "expert_upload_and_enqueue": 12508317620,
+        "moe_route_and_upload_enqueue": 19271657511,
+        "ple_and_previous_owner": 69411143,
+        "router_fence": 6737272822
+      },
+      "public_warm_matrix_ns": {},
+      "resident_graph": true,
+      "resident_main_admitted_upper_bytes": 6686984256,
+      "resident_owned_zero_audit_enabled": true,
+      "resident_private_owned_bytes": 785186816,
+      "resident_runtime_io_limit_bytes": 67108864,
+      "resident_transient_io": true,
+      "scope": "fixed-public-synthetic-operator-test-only",
+      "seed": 424242,
+      "small_cpu_cache_bytes": 0,
+      "small_cpu_cache_matrices": 0,
+      "small_cpu_calls": 0,
+      "small_cpu_enabled": false,
+      "small_cpu_ms": 0,
+      "static_cache_budget_bytes": 6442450944,
+      "temperature": 0,
+      "total_gdn_ms": 0,
+      "total_matrix_ms": 0,
+      "total_moe_ms": 0,
+      "vendor": 4318,
+      "warm_expert_hits": 1892,
+      "warm_expert_uploads": 1468,
+      "warm_gdn_ms": 0,
+      "warm_gpu_wait_ms": 0,
+      "warm_matrix_ms": 0,
+      "warm_moe_ms": 0,
+      "warm_uploaded_bytes": 4820787200,
+      "warm_weight_read_ms": 461,
+      "warm_weight_upload_ms": 4363,
+      "weights": "borrowed-unmodified-ollama-blob",
+      "word_down": false
+    }
+  ],
+  "compiler_idle_ABBA": {
+    "intel": {
+      "samples": [
+        {
+          "allocator_reserved_bytes": 14248385664,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 18010341376,
+          "device_reserved_limit_bytes": 27917287424,
+          "expert_bank_accounted_limit_bytes": 12884901888,
+          "expert_bank_slots": 64,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 1833,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 1254,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": null,
+          "ordered_public_source_peak_bytes": 0,
+          "ordered_public_upload": false,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 5218,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 137789721,
+            "attention_enqueue_and_host_fences": 132889387,
+            "attention_gr_enqueue": 5659788,
+            "expert_upload_and_enqueue": 962037564,
+            "moe_route_and_upload_enqueue": 1494312658,
+            "ple_and_previous_owner": 30512753,
+            "router_fence": 521983504
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 14248385664,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 8589934592,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 32902,
+          "warm_expert_hits": 769,
+          "warm_expert_uploads": 671,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2209484800,
+          "warm_weight_read_ms": 259,
+          "warm_weight_upload_ms": 302,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        },
+        {
+          "allocator_reserved_bytes": 14284324672,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 18010341376,
+          "device_reserved_limit_bytes": 27917287424,
+          "expert_bank_accounted_limit_bytes": 12884901888,
+          "expert_bank_slots": 64,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 3641,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 914,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": 41943040,
+          "ordered_public_source_peak_bytes": 41943040,
+          "ordered_public_source_pending_bytes_after_cleanup": 0,
+          "ordered_public_upload": true,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 8262,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 138665007,
+            "attention_enqueue_and_host_fences": 155264561,
+            "attention_gr_enqueue": 6331538,
+            "expert_upload_and_enqueue": 2046115364,
+            "moe_route_and_upload_enqueue": 3256370338,
+            "ple_and_previous_owner": 32249353,
+            "router_fence": 1199572516
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 14284324672,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 8589934592,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 32902,
+          "warm_expert_hits": 769,
+          "warm_expert_uploads": 671,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2209484800,
+          "warm_weight_read_ms": 220,
+          "warm_weight_upload_ms": 835,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        },
+        {
+          "allocator_reserved_bytes": 14284324672,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 18010341376,
+          "device_reserved_limit_bytes": 27917287424,
+          "expert_bank_accounted_limit_bytes": 12884901888,
+          "expert_bank_slots": 64,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 3584,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 991,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": 41943040,
+          "ordered_public_source_peak_bytes": 41943040,
+          "ordered_public_source_pending_bytes_after_cleanup": 0,
+          "ordered_public_upload": true,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 6473,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 133894938,
+            "attention_enqueue_and_host_fences": 156096184,
+            "attention_gr_enqueue": 5983232,
+            "expert_upload_and_enqueue": 2046603881,
+            "moe_route_and_upload_enqueue": 3208308654,
+            "ple_and_previous_owner": 29866034,
+            "router_fence": 1150814307
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 14284324672,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 8589934592,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 32902,
+          "warm_expert_hits": 769,
+          "warm_expert_uploads": 671,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2209484800,
+          "warm_weight_read_ms": 217,
+          "warm_weight_upload_ms": 845,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        },
+        {
+          "allocator_reserved_bytes": 14248385664,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 18010341376,
+          "device_reserved_limit_bytes": 27917287424,
+          "expert_bank_accounted_limit_bytes": 12884901888,
+          "expert_bank_slots": 64,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 1853,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 964,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": null,
+          "ordered_public_source_peak_bytes": 0,
+          "ordered_public_upload": false,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 5246,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 147870478,
+            "attention_enqueue_and_host_fences": 141003417,
+            "attention_gr_enqueue": 5619300,
+            "expert_upload_and_enqueue": 945704029,
+            "moe_route_and_upload_enqueue": 1509517036,
+            "ple_and_previous_owner": 15938951,
+            "router_fence": 553943602
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 14248385664,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 8589934592,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 32902,
+          "warm_expert_hits": 769,
+          "warm_expert_uploads": 671,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2209484800,
+          "warm_weight_read_ms": 223,
+          "warm_weight_upload_ms": 305,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        }
+      ],
+      "medians_ms": {
+        "prefill_ms": {
+          "legacy": 5232.0,
+          "candidate": 7367.5
+        },
+        "generation_ms": {
+          "legacy": 1843.0,
+          "candidate": 3612.5
+        }
+      }
+    },
+    "nvidia": {
+      "samples": [
+        {
+          "allocator_reserved_bytes": 6650956608,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 8346664960,
+          "device_reserved_limit_bytes": 10737418240,
+          "expert_bank_accounted_limit_bytes": 3221225472,
+          "expert_bank_slots": 16,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 3319,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 737,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": null,
+          "ordered_public_source_peak_bytes": 0,
+          "ordered_public_upload": false,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 7256,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 88583420,
+            "attention_enqueue_and_host_fences": 118047868,
+            "attention_gr_enqueue": 5766521,
+            "expert_upload_and_enqueue": 1968687934,
+            "moe_route_and_upload_enqueue": 3026297935,
+            "ple_and_previous_owner": 29534589,
+            "router_fence": 1047586333
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 6650956608,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 6442450944,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 4318,
+          "warm_expert_hits": 753,
+          "warm_expert_uploads": 687,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2260684800,
+          "warm_weight_read_ms": 318,
+          "warm_weight_upload_ms": 448,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        },
+        {
+          "allocator_reserved_bytes": 6686895616,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 8346664960,
+          "device_reserved_limit_bytes": 10737418240,
+          "expert_bank_accounted_limit_bytes": 3221225472,
+          "expert_bank_slots": 16,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 10390,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 712,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": 41943040,
+          "ordered_public_source_peak_bytes": 41943040,
+          "ordered_public_source_pending_bytes_after_cleanup": 0,
+          "ordered_public_upload": true,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 12202,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 88717894,
+            "attention_enqueue_and_host_fences": 227166297,
+            "attention_gr_enqueue": 6819169,
+            "expert_upload_and_enqueue": 6387458494,
+            "moe_route_and_upload_enqueue": 9805085173,
+            "ple_and_previous_owner": 102199136,
+            "router_fence": 3407206711
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 6686895616,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 6442450944,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 4318,
+          "warm_expert_hits": 753,
+          "warm_expert_uploads": 687,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2260684800,
+          "warm_weight_read_ms": 233,
+          "warm_weight_upload_ms": 2790,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        },
+        {
+          "allocator_reserved_bytes": 6686895616,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 8346664960,
+          "device_reserved_limit_bytes": 10737418240,
+          "expert_bank_accounted_limit_bytes": 3221225472,
+          "expert_bank_slots": 16,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 10253,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 710,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": 41943040,
+          "ordered_public_source_peak_bytes": 41943040,
+          "ordered_public_source_pending_bytes_after_cleanup": 0,
+          "ordered_public_upload": true,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 11881,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 87665328,
+            "attention_enqueue_and_host_fences": 231804017,
+            "attention_gr_enqueue": 6586289,
+            "expert_upload_and_enqueue": 6404760465,
+            "moe_route_and_upload_enqueue": 9701662404,
+            "ple_and_previous_owner": 85970252,
+            "router_fence": 3286133266
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 6686895616,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 6442450944,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 4318,
+          "warm_expert_hits": 753,
+          "warm_expert_uploads": 687,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2260684800,
+          "warm_weight_read_ms": 229,
+          "warm_weight_upload_ms": 2800,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        },
+        {
+          "allocator_reserved_bytes": 6650956608,
+          "batch_experts": false,
+          "block_kernel": true,
+          "block_large_only": true,
+          "block_moe": true,
+          "cache_accounted_bytes": 8346664960,
+          "device_reserved_limit_bytes": 10737418240,
+          "expert_bank_accounted_limit_bytes": 3221225472,
+          "expert_bank_slots": 16,
+          "expert_batch_window_bytes": 8388608,
+          "expert_scatter_mode": "dynamic-1d",
+          "fixture": "resident-bang",
+          "gdn_calls": 0,
+          "generation_ms": 3380,
+          "gpu_gdn_cpu_state_owner": false,
+          "io_token_checkpoint": false,
+          "matrix_calls": 3008,
+          "model_bind_ms": 727,
+          "moe_calls": 192,
+          "ordered_public_source_limit_bytes": null,
+          "ordered_public_source_peak_bytes": 0,
+          "ordered_public_upload": false,
+          "owned_io_cleanup_accepted": true,
+          "owned_zero_audits": [],
+          "prefill_last_head": true,
+          "prefill_ms": 6958,
+          "prompt_tokens": 1,
+          "public_generated_ids": [
+            49276,
+            2349,
+            1074,
+            5928
+          ],
+          "public_resident_warm_phase_ns": {
+            "attention_combine_and_ffn_gr_enqueue": 89000339,
+            "attention_enqueue_and_host_fences": 151616644,
+            "attention_gr_enqueue": 5244038,
+            "expert_upload_and_enqueue": 1956919702,
+            "moe_route_and_upload_enqueue": 3047527196,
+            "ple_and_previous_owner": 34853690,
+            "router_fence": 1080745949
+          },
+          "public_warm_matrix_ns": {},
+          "resident_graph": true,
+          "resident_main_admitted_upper_bytes": 6650956608,
+          "resident_owned_zero_audit_enabled": false,
+          "resident_private_owned_bytes": 785186816,
+          "resident_runtime_io_limit_bytes": 67108864,
+          "resident_transient_io": true,
+          "scope": "fixed-public-synthetic-operator-test-only",
+          "seed": 424242,
+          "small_cpu_cache_bytes": 0,
+          "small_cpu_cache_matrices": 0,
+          "small_cpu_calls": 0,
+          "small_cpu_enabled": false,
+          "small_cpu_ms": 0,
+          "static_cache_budget_bytes": 6442450944,
+          "temperature": 0,
+          "total_gdn_ms": 0,
+          "total_matrix_ms": 0,
+          "total_moe_ms": 0,
+          "vendor": 4318,
+          "warm_expert_hits": 753,
+          "warm_expert_uploads": 687,
+          "warm_gdn_ms": 0,
+          "warm_gpu_wait_ms": 0,
+          "warm_matrix_ms": 0,
+          "warm_moe_ms": 0,
+          "warm_uploaded_bytes": 2260684800,
+          "warm_weight_read_ms": 313,
+          "warm_weight_upload_ms": 424,
+          "weights": "borrowed-unmodified-ollama-blob",
+          "word_down": false
+        }
+      ],
+      "medians_ms": {
+        "prefill_ms": {
+          "legacy": 7107.0,
+          "candidate": 12041.5
+        },
+        "generation_ms": {
+          "legacy": 3349.5,
+          "candidate": 10321.5
+        }
+      }
+    }
+  },
+  "ABBA_order": [
+    false,
+    true,
+    true,
+    false
+  ],
+  "timing_scope": "fresh owner/executor per process, one prompt and three following graph steps; lazy public weight loading in prefill; OS file cache not flushed; full output IDs checked",
+  "host_limits": {
+    "swap_max_bytes": 0,
+    "core_limit_bytes": 0,
+    "memory_max_bytes": 12884901888,
+    "acceptance_unit_bound_seconds": 600,
+    "timing_unit_bound_seconds": 300
+  },
+  "selected": false,
+  "reason": "candidate slower in short paired prefill and decode on both cards",
+  "source_proof": {
+    "base_branch": "codex/kuno-native-text",
+    "base_snapshot": "current dirty secure/head/word/matmul/native lab plus kuno-text and public baseline",
+    "conservative_runtime_window_bytes": 44564480,
+    "device_acceptance": "not run by this agent; parent must prove both-GPU parity/cancellation/fresh reuse/owned cleanup and budget fit in both cadence modes before enabling outside opt-in fixed public candidate",
+    "dispatch_window_fit_proof": {
+      "conservative_all_dispatches_max": 512,
+      "final_window": "F32 vocabulary head ceil(248320 / floor(67108864/10240))=38 tiles; head plus output GR lower than nonhead 288 projection dispatch bound",
+      "fixed_scope": "current bound graph only; later geometry, stages or launch signatures require rederiving proof",
+      "main_accounting": "source pages precharged by existing fill_requests individually before allocation; successful completed cleanup releases owners before MAIN telemetry/fence; runtime ledger separate, no telemetry-only staging credit",
+      "matvec_plus_finite_dispatches_per_tile": 2,
+      "nonhead_matrix_inputs_max": 10240,
+      "nonhead_matrix_outputs_max": 12288,
+      "nonhead_projections_max": 18,
+      "other_dispatches_including_30_source_copies_max": 150,
+      "projection_dispatches_max": 288,
+      "tile_bytes": 67108864,
+      "tiles_per_nonhead_projection_max": 8,
+      "worst_supported_row_bytes": 40960
+    },
+    "feature": "KUNO_LAB_ORDERED_PUBLIC_UPLOAD=1; default off; requires owned transient full resident fixture and legacy nonbatch expert fill",
+    "fences": "original completed read drops every host Bytes lease; every router including cache-hit layers forces native sanitizer even under token cadence; checked sanitizer precedes public source release, memory_cleanup and MAIN completed_fence telemetry; final token fence and explicit teardown also mandatory",
+    "files": [
+      {
+        "base_sha256": "ad043d9d3ef350bc52758e804cf50bd219d8fde6d2c166b82cbdb5a10632d91e",
+        "patched_sha256": "6859a4699e14c720cf51d575f44be80910ad9fa72e289e731cee5eef72b65341",
+        "path": "apps/kuno/benchmarks/native-text/src/executor.rs",
+        "integrated_sha256_after_explicit_teardown_fix": "bb6f6faa7df21604b13cf0f0abee385bc7e394a956e926a0f70909cd10d00947"
+      },
+      {
+        "base_sha256": "4336572066c960cd55c540b2957af256d7ac7bad7366d7f3a3b7a7ba0ead3acc",
+        "patched_sha256": "cb92e6994aaa00231e0f8123d316b09efb2d883af815c9ddd34766b0d140b7d4",
+        "path": "apps/kuno/benchmarks/native-text/src/expert_banks.rs",
+        "integrated_sha256_after_explicit_teardown_fix": "cb92e6994aaa00231e0f8123d316b09efb2d883af815c9ddd34766b0d140b7d4"
+      },
+      {
+        "base_sha256": "34ace15c9c1e9d001c9b3878020f708c3b6c25a068a072c7583a58c1d8d53f2f",
+        "patched_sha256": "9e04469ab6a1f33e0aa3c51001fdcefa791d73d66de7add079f48a34c04ecae2",
+        "path": "apps/kuno/benchmarks/native-text/src/main.rs",
+        "integrated_sha256_after_explicit_teardown_fix": "9e04469ab6a1f33e0aa3c51001fdcefa791d73d66de7add079f48a34c04ecae2"
+      },
+      {
+        "base_sha256": null,
+        "patched_sha256": "8ece865ba03fd3cd6b77a048d69a70823ec4704d5bb966f7aacd585f9adc6276",
+        "path": "apps/kuno/benchmarks/native-text/src/ordered_public.rs",
+        "integrated_sha256_after_explicit_teardown_fix": "8ece865ba03fd3cd6b77a048d69a70823ec4704d5bb966f7aacd585f9adc6276"
+      },
+      {
+        "base_sha256": "84a849348072d9347eab10c199b80538cc4ba0e4731fbc1c11cab6bf3165f715",
+        "patched_sha256": "23d0262dc0d67c219fd5401dd5ffe52a27c7b999e4ead6c7fb1fc8619bedfc03",
+        "path": "apps/kuno/benchmarks/native-text/src/resident_model.rs",
+        "integrated_sha256_after_explicit_teardown_fix": "dc1b942ea5121eb1d0aa82e1c1d780e4e946ffbfb4aea2d09dddfc4064c9aae5"
+      }
+    ],
+    "independent_review": {
+      "agent": "strata_research",
+      "proof_maintenance": "actual InfoBuilder host tests cover <=40B copy INFO and <=512B worst raw-array/scalar INFO; exact operator signature/source SHA and dispatch bound inventory pinned here. No future-source fit claim.",
+      "result": "read-only: no lifetime blocker, retained-before-write and every-next-router match bound"
+    },
+    "operator_signature_inventory": [
+      {
+        "launches": [
+          {
+            "kernel": "copy_words",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 1
+          },
+          {
+            "kernel": "scatter_public_weights",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 13
+          },
+          {
+            "kernel": "scatter_public_weights_specialized",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 10
+          },
+          {
+            "kernel": "scatter_public_weights_planes",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 13
+          },
+          {
+            "kernel": "erase",
+            "raw_array_args": 1,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "erase_pair",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "erase_six",
+            "raw_array_args": 6,
+            "runtime_scalar_args": 0
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/expert_banks.rs",
+        "source_sha256": "cb92e6994aaa00231e0f8123d316b09efb2d883af815c9ddd34766b0d140b7d4"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "packed_matvec",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 2
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/quant_matvec.rs",
+        "source_sha256": "5c789a3c018467ecda0d4033e2eafa0badc039ecb515f50915d1abc7d686be2f"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "block_matvec",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 3
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/block_matvec.rs",
+        "source_sha256": "b6473340872c1e6d797a7b765c8aef6a5cf6c919811aa5788ff77cb8bbc05c7c"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "cooperative_matvec",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 3
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/cooperative_matvec.rs",
+        "source_sha256": "15b8c0967969ec9f5b92c01b44b91b6a22ad61a6c2020282e8ebf416dafe33b3"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "moe_gate_up",
+            "raw_array_args": 5,
+            "runtime_scalar_args": 3
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/moe_block.rs",
+        "source_sha256": "11efed07204ba06660741313b3d58ba043e71eab645fd94835781978da08bf06"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "moe_gate_up",
+            "raw_array_args": 5,
+            "runtime_scalar_args": 3
+          },
+          {
+            "kernel": "moe_down",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 3
+          },
+          {
+            "kernel": "moe_reduce",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 2
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/moe_gpu.rs",
+        "source_sha256": "ad8ba09888eeba8ce88ee87a40b6f778dd10d8e40b377d6ac9ae19a7f9ca41ab"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "moe_down",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 3
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/moe_word_down.rs",
+        "source_sha256": "7e56f18c4690fd6b5cb221ab27edb9479e1b0c696ed04cb3967b2ac2ed96081a"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "packed_matmul",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 6
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/quant_matmul.rs",
+        "source_sha256": "4d8c99e19262270535d66d471df55ebd6604183e33a5a45c1f487d19753cedd8"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "verify_finite",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "verify_status",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "copy_words",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "fence_packet",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 0
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/resident_util.rs",
+        "source_sha256": "373c47149eb21cd499fa0cde22a3b6ced5b15cf2caf09f488921a2ed5001eea3"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "finite_chunks",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 1
+          },
+          {
+            "kernel": "publish_selection",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 20
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/resident_moe.rs",
+        "source_sha256": "45226eb7ab476997cb79b45c1775fcb7668911de44c3db25d15e32ee1e2dda84"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "append_candidate",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 3
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/resident_qsa.rs",
+        "source_sha256": "99805e2680b8f74317404cd8b161d2cc5763d7fac3930f1fd669cb621568e9b4"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "conv_silu",
+            "raw_array_args": 6,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "prepare_qkv",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 1
+          },
+          {
+            "kernel": "prepare_controls",
+            "raw_array_args": 5,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "output_gate",
+            "raw_array_args": 5,
+            "runtime_scalar_args": 1
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/gdn_pointwise.rs",
+        "source_sha256": "4d37964f60516158e06a007d6fe5a422f527b98c087fcb90a0a4f13491742c83"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "gdn_step",
+            "raw_array_args": 8,
+            "runtime_scalar_args": 0
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/gdn_gpu.rs",
+        "source_sha256": "eeb55157e94f5c6494ce8931c1b5384f3f88a8ecf25d69d7d777488c80a84475"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "split_query_gate",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "pack_token",
+            "raw_array_args": 5,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "rms_rope",
+            "raw_array_args": 7,
+            "runtime_scalar_args": 3
+          },
+          {
+            "kernel": "pool_indexer_raw",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 2
+          },
+          {
+            "kernel": "score_blocks",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 1
+          },
+          {
+            "kernel": "attention_logits",
+            "raw_array_args": 6,
+            "runtime_scalar_args": 2
+          },
+          {
+            "kernel": "attention_softmax",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 1
+          },
+          {
+            "kernel": "attention_values_gated",
+            "raw_array_args": 7,
+            "runtime_scalar_args": 2
+          },
+          {
+            "kernel": "flag_regression",
+            "raw_array_args": 2,
+            "runtime_scalar_args": 0
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/qsa_gpu.rs",
+        "source_sha256": "4a448b598bfc96b4dfbdcb854f59d3ef920f4fd5367a47d5ac4a2500ef4bf8f8"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "grouped_rms_norm",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 1
+          },
+          {
+            "kernel": "activate_down",
+            "raw_array_args": 3,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "mix",
+            "raw_array_args": 4,
+            "runtime_scalar_args": 0
+          },
+          {
+            "kernel": "combine",
+            "raw_array_args": 5,
+            "runtime_scalar_args": 0
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/residual_gpu.rs",
+        "source_sha256": "ca2eb3a1b7657d10fe44d076d6b5e6faffe8a37f88cac78083cc99a9029f9f15"
+      },
+      {
+        "launches": [
+          {
+            "kernel": "erase_full_span",
+            "raw_array_args": 1,
+            "runtime_scalar_args": 0
+          }
+        ],
+        "path": "apps/kuno/benchmarks/native-text/src/private_arena.rs",
+        "source_sha256": "ac351625acfab1e44a0e694c5a354037aedd61ab2ff6a3d413d02d14dbd92985"
+      }
+    ],
+    "ownership": "retain full main Handle before moved write_private, fixed same bank/client stream, zero fullpage padding and exact original expert logical copy_words. Failed write/panic retains source owners; no fallback; failed explicit cleanup retires context and quarantines bounded public owners until process recovery. No bounded cleanup in enqueue/unaccepted inference.",
+    "parent_apply_target": "ecf3320",
+    "parent_integration_commit": "3de1bff",
+    "parent_root": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti",
+    "patch_sha256": "0726a8b62453c4031d4dd0ceb4c27e4a1d3e0a688800a38bc1dccb275e4b26dd",
+    "private_io_window_bytes": 2097152,
+    "runtime_info_bound": {
+      "dispatches": 512,
+      "each_info_bytes": 512,
+      "owned_uniform_plus_upload": 2
+    },
+    "runtime_limit_bytes": 67108864,
+    "scope": "isolated optional fixed-public native lab; no root edits, GPU, services, model payload reads or private worker acceptance",
+    "source_geometry": "10 * (round(921600)+round(921600)+round(1126400 or 1740800)) = 41943040 main and runtime upload bytes, 30 owners",
+    "source_limit_bytes": 41943040,
+    "unchanged": "original expert bytes, copy_words, noncandidate upload policy, dense/static public cache, math, batching kernel, runtime cap and ordinary inference polling",
+    "validation": {
+      "format": "cargo fmt --all -- --check: passed",
+      "host_tests": "cargo test --offline --all-targets --quiet: 176 passed",
+      "release": "cargo check --offline --release: passed",
+      "root_apply_check": "git apply --check: passed read-only against current ecf3320 integration root",
+      "strict_clippy": "cargo clippy --offline --all-targets -- -D warnings: passed"
+    }
+  },
+  "limits": "No production-private-worker, bank/copy trace cleanup, opaque driver padding, full128 timing or whole-engine/Ollama gain claim. Normal intermediate runtime cleanup erases/drains but does not inspect every prior stage. Full owned zero audits inspect every private-main/source page and their cleanup readback stages. Short systemd MemoryPeak summaries unreliable."
+}

@@ -1,0 +1,127 @@
+{
+  "fixture_kind": "public_synthetic_correctness_smoke",
+  "model": "qwen3.8-flash-next:125b-a6b-q4_K_M",
+  "manifest_digest": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+  "seed": 424242,
+  "temperature": 0,
+  "sampling": "greedy RNG unused",
+  "raw": true,
+  "fixtures": [
+    {
+      "name": "bang",
+      "prompt": "!",
+      "max_output_tokens": 4,
+      "prompt_tokens": 1,
+      "greedy_ids": [
+        49276,
+        2349,
+        1074,
+        5928
+      ],
+      "synthetic_output_sha256": "e9c2b72e4a0f2ea54561789d8bbdce4f513db7b2171e0a1710b40406faf4ef32"
+    },
+    {
+      "name": "chat",
+      "prompt": "<|im_start|>user\nSay hello.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "max_output_tokens": 8,
+      "prompt_tokens": 15,
+      "greedy_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "synthetic_output_sha256": "8a17fc0dc61e8520bdbe3a735b000358a6476cbe9f0e3d86c54a51cf26b5d009"
+    }
+  ],
+  "scalar_cpu": {
+    "source_commit": "44cb36f",
+    "bang_load_ms": 331,
+    "bang_prefill_ms": 8598,
+    "bang_generation_ms": 26638,
+    "chat_load_ms": 326,
+    "chat_generation_ms": 62732,
+    "chat_exact_total_prefill_ms_not_retained": true,
+    "all_synthetic_outputs_match_ollama_0_35_1": true
+  },
+  "ollama_0_35_1": {
+    "bang_wall_seconds": 16.853796206996776,
+    "bang_load_ns": 15943034741,
+    "bang_prefill_ns": 95035000,
+    "bang_decode_ns": 799524000,
+    "chat_wall_seconds": 4.163398650001909,
+    "chat_load_ns": 1804132,
+    "chat_prefill_ns": 2770783000,
+    "chat_decode_ns": 1298841000
+  },
+  "initial_gpu_prototype": {
+    "rust_owned_packed_matvec": true,
+    "complete_graph_verified_on": "Intel B70 Vulkan",
+    "bang_greedy_ids": [
+      49276,
+      2349,
+      1074,
+      5928
+    ],
+    "prefill_ms": 9891,
+    "generation_ms": 29837,
+    "cache_capacity_bytes": 4294967296,
+    "cache_bytes": 4294033920,
+    "reserved_bytes": 4494072832,
+    "weight_upload_bytes": 18454159360,
+    "cache_hits": 0,
+    "matvec_calls": 8736,
+    "observed_limitation": "cyclic working set exceeds small cache; no speedup"
+  },
+  "packed_numeric_probes": {
+    "adapters": [
+      "Intel vendor8086 devicee223",
+      "NVIDIA vendor10de device2504"
+    ],
+    "formats": [
+      0,
+      1,
+      30,
+      12,
+      6,
+      14,
+      8
+    ],
+    "rows_per_format": 7,
+    "max_abs_errors": [
+      1.1920929e-07,
+      7.275958e-12,
+      5.9604645e-08,
+      8.940697e-08,
+      7.450581e-09,
+      5.9604645e-08,
+      1.4901161e-08
+    ],
+    "each_test_has_same_errors_on_both_cards": true
+  },
+  "privacy": "Only fixed public synthetic fixtures and numeric/digest receipts. No production requests; protected subprocesses disable swap/core dumps. This is not production worker privacy acceptance.",
+  "limits": "Small single-sequence smoke, not long-context/vision/sampling/tool/API/performance acceptance. Cache and GPU prototype remain an operator laboratory.",
+  "serial_gpu_profile": {
+    "gpu": "B70 Vulkan",
+    "cache_capacity_bytes": 8589934592,
+    "prefill_ms": 11861,
+    "generation_ms": 15627,
+    "load_ms": 342,
+    "cache_bytes": 6823024640,
+    "reserved_bytes": 7022740480,
+    "weight_upload_bytes": 6823024640,
+    "cache_hits": 4539,
+    "matvec_calls": 8736,
+    "matrix_ms": 26825,
+    "weight_read_ms": 949,
+    "weight_upload_ms": 2838,
+    "gpu_wait_ms": 21663,
+    "cgroup_memory_peak_bytes": 563347456,
+    "swap_peak_bytes": 0,
+    "finding": "GPU matrix execution/readback dominates; larger cache avoids total cyclic misses. No native speedup."
+  }
+}

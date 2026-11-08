@@ -1,0 +1,180 @@
+# Fixed-public prefill operator timing
+
+The existing `--public-prefill-profile` worker diagnostic now requests one
+bounded native timestamp sample: request3, first4096-token chunk, expert layer24.
+The first request is a73-token ordinary-prompt warmup; request2 loads/executes the long
+fixture; request3 is its warm repeat. Input is compiled public text. There is no
+private-wire option, API, configuration field or Vashti change.
+
+Startup first scrubs inherited `KUNO_LAB_`, `KUNO_STRATA_`, `KUNO_TEST_` and
+`KUNO_PUBLIC_` variables. Only the explicit compiled-public profiling entry then
+sets `KUNO_STRATA_NATIVE_PROFILE=prefill-layer` and its public authorization before
+runtime threads exist. The existing target-window parser ignores this new mode,
+so it does not select another target-controller experiment. Ordinary private
+entry never enables the coarse collector or native sampling guard.
+
+`NativeExpertLayer` enters immediately before the real expert enqueue and remains
+active through `Timer::mark("experts")`, whose original `client.sync()` joins
+completion. Error/unwind disables sampling and does not report incomplete results.
+Success then emits a separate `public_prefill_native_gpu_profile` line containing
+only fixed class labels and numeric counts/nanoseconds. Generated small/macro
+expert kernels map to `matrix`; GU and DOWN are intentionally combined. Other
+classes are `dequant`, `gather`, `activate`, `ordered_copy`, `ordered_fill`, `other`.
+No expert IDs, route values, tensor names, tokens or request content are emitted.
+
+The same public coarse `experts` interval also reports two existing backend
+host counters: `expert_native_capture_cpu` and `expert_native_wait_cpu`.
+Each retains the collector's numeric triple format `[calls,total_ns,total_ns]`;
+the third field deliberately repeats the host elapsed counter rather than an
+enqueue slice. Despite the legacy `_cpu` names these use `Instant`: they are WALL
+intervals, not thread CPU utilization. Actual thread CPU is reported separately
+by `host_capture`, `host_batch` and `expert_boundary_*` CLOCK_THREAD_CPUTIME_ID.
+Deltas cover the interval through its existing real sync,
+with no new fence, timestamp pool or private profiling switch. These are
+process-global native counters, so the protected public worker must remain the
+sole workload. Capture includes native planning/descriptor/command recording and host queue
+submission calls; with rolling submission, its later portion overlaps already
+submitted GPU work. Wait includes actual native fence wait calls. Neither
+is a GPU kernel duration. The old `experts` enqueue field ends before native
+recording in sync and therefore does not include the later capture interval.
+
+The same public `experts` interval reports anonymous actual rolling issuance
+counters as `[count,0,0]`: `expert_native_rolling_recordings`,
+`expert_native_rolling_windows` and `expert_native_rolling_segments`.
+A recording is credited only after all original segments and the final joined
+fence have actually been queued and its matching original flight accepted.
+Windows count nonempty successful prefix submissions, not selector intentions.
+The existing Timer publishes deltas only after its actual completion sync;
+these process-global counters contain no request identity, route or content and
+are never logged/published by ordinary private inference. Timestamp-sampled
+recordings deliberately use the original nonrolling path and contribute zero.
+
+The existing backend owns every query pool through the actual matching fence,
+requires at least2048 compute nodes, caps recordings at16384 nodes, validates
+timestamp geometry, serializes the sampled plan and disables replay. Those
+semantics and resource caps are unchanged. A selected interval with no eligible
+recording honestly reports `timestamp_calls:0`; it is not a measured operator
+breakdown. Timestamps use `BOTTOM_OF_PIPE`; node timing excludes preceding
+per-node barrier gaps. This deliberately perturbs overlap and cannot establish
+uninstrumented throughput or replace whole-request/fault/erasure acceptance.
+
+The worker also exposes a separate `public_matrix_timing_check(path)` hook for
+root's opt-in `--public-prefill-matrix-timing-check` CLI. It invokes the existing
+fixed-public original expert microtiming helper, then requires the actual arena
+close and owned-zero audit before publishing `public_prefill_matrix_timing`.
+Original full numerical controls remain a separate unchanged branch.
+
+CPU preparation: `python3 apps/kuno/benchmarks/text/test-public-prefill-native-sample.py`
+compiles the actual marked selector/classifier and actual target-mode parser with
+`rustc --test -D warnings`. Three tests cover the unique authorized geometry,
+static real generated-kernel classification and separation from target profiling.
+Structural checks cover real startup scrubbing, guard lifetime through sync,
+unchanged native query caps/no-replay/fence collection, and microtiming close/audit.
+Rustfmt and diff checks pass. No full Cargo build, GPU, sudo, services, installation
+or hardware result was performed while preparing this change. Root must build and
+validate actual query sampling plus ordinary numerical/privacy/recovery gates.
+
+
+## Expert-batch host breakdown (2026-10-21)
+
+The same original fixed-public request3/layer24 guard also samples six consecutive
+backend expert-batch intervals, returned as `host_batch` alongside `host_capture`
+in the existing diagnostic JSON (never the inference API). Columns remain calls,
+wall_ns, actual CLOCK_THREAD_CPUTIME_ID ns, cpu_clock_unavailable. Labels cover
+scheduler drain/admission, exact binding inventory, pipeline/grammar, uniform+
+source scratch setup, actual node enqueue, and finishing the original I/O scopes.
+Private/disabled calls retain no clock, counter or content. Sampling adds no GPU
+command/fence, changes no batch/source/owner proof, and uses the existing public
+host-clock feature. Normal rolling issuance is unchanged. Nested node costs are
+included in batch enqueue; do not sum these into the parent expert interval.
+
+Purpose: distinguish backend CPU work from queue waits before selecting the next
+large performance change. This source-only checkpoint has no new hardware result,
+speed gain, API/config/frontend/release change or installation claim. Preserve
+original154 CPU/11 runtime/189 GPU controls and complete both-mode acceptance;
+these diagnostic fields cannot authorize narrower sources or relaxed limits.
+
+
+The completed first normal run (source7a7cd5b0/SHA8ed3be10) passes compute and
+actual physical recovery. Sampled390-group layer batch costs total about4.6ms
+actual thread CPU (bindings0.816ms, grammar0.870ms, uniforms0.351ms, nodes2.110ms,
+drain0.318ms, finish0.130ms); whole warm expert interval6.0357s includes1.5703s
+before final sync. These are not proof that backend table lookup dominates.
+Next public-only `expert_boundary_*` labels split original owner reset, route
+enqueue, route readback+original checkpoint, host grouping, map upload and expert
+collector/backend return. They retain [calls,wall_ns,thread_cpu_ns], with explicit
+`expert_boundary_cpu_clock_unavailable` count when needed. Ordinary disabled
+collection creates no clock or new fence. Existing CpuTimer triples are unchanged.
+The readback phase includes GPU waits/recycling; thread CPU disambiguates it.
+No generation/API/private logging behavior changes, and no gain is claimed.
+
+## Boundary result and symbol investigation (2026-10-21)
+
+Source4836abf2 / SHA025a2738 completes original73/4245/4245 normal compute and
+physical recovery with unchanged counts; warm prompt10.3612s, expert6.0602s.
+Original readback/checkpoint costs639.8ms wall /498.2ms thread CPU over96 calls;
+host grouping14.4ms, map upload9.5ms; expert collector/backend905.4ms thread CPU.
+The sampled backend itself is about4.94ms, not the entire905ms. These totals
+identify CPU work worth investigating but do not yet name its hot function.
+
+A second original normal fixed-public run uses the SAME frozen4836abf2 artifact
+under flat `perf record -e cycles:u -F499`, enabled only from public third-request
+rebind to prompt completion. It samples instruction pointers ONLY: no stacks,
+registers, branch trace, payload, system-wide recording or private workload.
+The protected unit retains swap/core0; raw perf data stays in a root-only `/run`
+directory and is removed after static symbol report extraction. Actual interval
+control commands must match enable/disable before accepting the report. This is
+attribution, not clean throughput. Source and normal byte/count/erasure/recovery
+checks remain original; no deployed worker or settings are changed.
+
+An opt-in `strata-route-registers` candidate is prepared but NOT hardware-tested
+or selected: it expands only five original fixed16 router loops and replaces
+the dynamically indexed private candidate array with16 scalars, like the pinned
+SYCL `route_kernel<16>` unrolls. All arithmetic/rank/tie/remap/fault operations
+remain in original order. Two CPU controls compile actual source and prove zero
+private arrays, identical descriptor/address-space/workgroup inventory, exact
+ordered substitution outside the removed array and rejection of source drift.
+It is deferred because only about142ms of observed routing boundary is non-CPU;
+changing router GPU arithmetic cannot fix the larger CPU expense. No speed or
+numerical GPU acceptance claim for this optional candidate. Existing full route
+and189 operator checks remain required before selecting it.
+
+The first flat capture incorrectly used `public_prefill_profile` as its disable
+marker; that report follows generation and request erasure. Its original artifact
+is preserved with `flat-cpu-interval-correction-20261021.json`; it is NOT accepted
+as prompt-only attribution. The corrected capture disables on the real
+`public_prefill_phase_time last_prompt_input` callback used by KNR2 prompt_ns.
+Artifact `strata-parity-exact-prompt-flat-cpu-20261021-cpu-symbol-report.txt`
+shows no lost samples and about16.61% user-cycle samples in libc memset; original
+full-span zero audit is only0.48% in this corrected interval. Neither percentages
+nor flat memcpy/memset symbols identify their caller by themselves.
+
+Root is now performing one additional FIXED-PUBLIC-ONLY caller capture on the
+same frozen4836abf2 binary: DWARF callchains at199Hz with4096-byte unwind samples,
+enabled/disabled at the same actual prompt boundaries. Unlike the flat captures,
+this temporarily reads stack/register samples; they are confined to root-only
+`/run` tmpfs under verified swap/core0 and a strict allowlist worker environment.
+No private inference is admitted. Only static memset caller names and counters
+are exported; raw samples are deleted before accepting recovery. This is an
+explicit public diagnostic, not a new engine/private flag or logging path.
+The purpose is to identify unnecessary initialization/allocation while keeping
+original full-owner erasure, padding, owner/source checks and numerical bounds.
+No initialization or erasure has yet been removed and no gain is claimed.
+
+
+## Completed caller attribution and coupled result
+
+Caller capture completed and raw public-only unwind data was removed. Static
+caller/disassembly evidence points into installed Intel Vulkan DSO build-id
+9e30c0f3d8ad967dbeaecdb782a2f3f030cb05a1; relative0x744c0 clears0xf538 bytes
+(caller return0x744de, parent0x7498d). Names stripped; command-state reset is an
+inference, not a resolved internal symbol. Original erasure is not bypassed.
+[Copy cohorts plus precise segment compaction](kuno-prefill-copy-cohorts.md)
+then pass all189 GPU and both full profile/recovery chains: warm normal expert
+capture host-wall809.7->574.3ms, segments37959->10704, reencoded commands40107->11409,
+route readback/checkpoint CPU498.2->291.4ms. Warm whole normal10.3612->9.7413s.
+Fresh clean first/repeat12.7915/9.2446s fails original first-position5% gate,
+so no staged/install claim. Keep the complete correct coupled component.
+Next [paired cache attention](kuno-prefill-packed-cache.md) is frozen after170
+CPU/421 WGSL/216 layout validation and now under original GPU proof chain.
+No caller capture or private instrumentation remains running.

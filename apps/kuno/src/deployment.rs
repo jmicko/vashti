@@ -13,7 +13,7 @@ use std::{
 
 type Result<T> = std::result::Result<T, &'static str>;
 
-/// Seven gateway artifacts plus a manifest and up to 96 optional-runtime
+/// Eight gateway artifacts plus a manifest and up to 96 optional-runtime
 /// members fit within this bound. Writers and readers must share the limit so
 /// a successful transaction can always be reopened and rolled back.
 pub const MAX_DEPLOYMENT_FILES: usize = 128;
@@ -190,6 +190,19 @@ impl Transaction {
         let files = self.describe(artifacts)?;
         if same_files(&record.files, &files) {
             return self.apply(artifacts, host);
+        }
+        // New artifacts must be checked before stopping a working installation.
+        // In particular, adding the CLI launcher cannot displace an unrelated
+        // existing executable and then rely on service rollback to recover.
+        for file in &files {
+            if !record.files.iter().any(|old| old.path == file.path) {
+                let path = self.checked_path(&file.path)?;
+                if fs::symlink_metadata(&path).is_ok()
+                    || fs::symlink_metadata(staged(&path)).is_ok()
+                {
+                    return Err("installation_path_already_exists");
+                }
+            }
         }
         let previous = record
             .files

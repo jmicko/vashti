@@ -1,0 +1,27 @@
+{
+  "fixtures": {
+    "iq3_xxs.bin": {
+      "blocks": 13,
+      "elements": 256,
+      "packed_bytes": 98,
+      "sha256": "e5f3866e198cc1e12c123dce53b755b95a44963bb4aa9d3e694b3bdd23ad77b2"
+    },
+    "iq4_nl.bin": {
+      "blocks": 11,
+      "elements": 32,
+      "packed_bytes": 18,
+      "sha256": "e8f04ccbf4c45dd55129f486ac8b483bc60ea4d3f20a2eee5227e459a2ac5df4"
+    },
+    "iq4_xs.bin": {
+      "blocks": 17,
+      "elements": 256,
+      "packed_bytes": 136,
+      "sha256": "c89c9dedeeafb9858289b5f5cbacca991e1e594d8325c8dcd088779cf02dedfc"
+    }
+  },
+  "reference": "https://github.com/ggml-org/llama.cpp/tree/b11232",
+  "source_sha256": {
+    "ggml-common.h": "0061131b615c5721fc88a78feeb22c1f8c450f1c2646a317d80796a653bf595c",
+    "ggml-quants.c": "7878680cc60493f98469a116e9b14af8b84789292ccf891c249230b2fa3d157f"
+  }
+}

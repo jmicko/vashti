@@ -1,0 +1,953 @@
+//! Compiled-public DAS target-conditioned original-GGUF Strata Q2 MTP oracle.
+//! Four teacher-forced rows and two provisional draft rows have distinct wire
+//! modes. Full vectors, not draft tokens alone, are the numerical acceptance.
+//! No private-request persistence, speculative acceptance or performance claim.
+//!
+//! Wire:384-byte header, then six records of eight little-endian u32 words
+//! (mode,position,input,greedy,completed cursor,conditioning cell,V,H), followed
+//! by V logits and H wide hidden values as little-endian F32. Teacher records
+//! use target.token(c)=T[c+1] and target.hidden(c)=R[c] at MTP/RoPE cell c,
+//! predicting T[c+2]. Draft records are c0 with target T1/R0, then c1 with
+//! draft greedy0/draft HC0. There is no dummy/zero-HC cell. The input hidden
+//! normalization spans all10240 HC values, before the two separate publisher FCs and broadcast-add.
+//! Field5 records the conditioning HC cell: c for target modes, c-1 for draft.
+//! Fixed header words pin version/counts/context/V/H/HC/D/main layers/MTP
+//! layers/first MTP layer/tensor count/Q2_0 ID/token0/seed/mode mask/threads/record
+//! words/Q heads/KV heads/head width/RoPE width/MTP context limit/experts/topk/
+//! expert FF/HC low rank/KV width/main GGUF version/sidecar version/hidden norm
+//! width. Version2 rejects the historical dummy-cell/per-stream version1.
+//! Remaining bytes pin original source extents and revisions, sidecar SHA,
+//! both DAS shard SHAs and the actual target-carry fixture SHA. Source digest
+//! verification remains the protected runner's gate before this fixed writer.
+//! The final64 bytes pin the Strata packer revision/source manifest and exact
+//! raw-Gemma/borrowed-two-target-tensors/separate-FC profile. KSTQ0001 is a
+//! distinct wire from every self-contained Q8 fixture, including aligned v2.
+//!
+//! Primary convention sources: official vLLM v0.30.0, full commit
+//! ced6857afa0ea7b2e3f0846a62e1394e90f15607 (verified tag ref).
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/v1/spec_decode/llm_base_proposer.py#L746-L780
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/nvidia/mtp.py#L211-L216
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/nvidia/mtp.py#L280-L289
+//! The AMD counterpart independently uses the same flattened input norm:
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/amd/mtp.py#L224-L226
+//! https://github.com/vllm-project/vllm/blob/ced6857afa0ea7b2e3f0846a62e1394e90f15607/vllm/models/qwen4_exp/amd/mtp.py#L289-L297
+//! Pinned Strata fb58e0dbc8399662c0e47c76578c6e878b14f6cf documents both:
+//! https://github.com/Niko1221/Strata/blob/fb58e0dbc8399662c0e47c76578c6e878b14f6cf/include/strata/core/mtp.hpp#L3-L10
+//! These establish the contract, not independent numerical acceptance of this
+//! quantized sidecar or a draft-quality/performance claim.
+//! This distinct profile keeps original BF16 dense weights, fused Q2_0 gate/up
+//! rows, raw Gemma norms folded once by the core binder, and borrows the exact
+//! DAS IQ4_XS embedding/Q6_K full head. Runtime dense.bin/experts.bin files and
+//! a pruned vocabulary are not accepted. Packer/runtime source is MIT Strata
+//! fb58e0dbc8399662c0e47c76578c6e878b14f6cf:
+//! https://github.com/Niko1221/Strata/blob/fb58e0dbc8399662c0e47c76578c6e878b14f6cf/tools/mtp_pack.py
+//! https://github.com/Niko1221/Strata/blob/fb58e0dbc8399662c0e47c76578c6e878b14f6cf/tools/mtp_rt.py
+//! Full file SHA verification is an external protected-runner prerequisite.
+
+use kuno_text::model::greedy;
+use kuno_text::{Error, GgufFile, Result};
+use std::io::{Read, Write};
+use std::path::Path;
+use zeroize::{Zeroize, Zeroizing};
+
+pub const TEACHER_ROWS: usize = 4;
+pub const TEACHER_AGREEMENT_ROWS: usize = TEACHER_ROWS - 1;
+pub const DRAFT_ROWS: usize = 2;
+pub const ROWS: usize = TEACHER_ROWS + DRAFT_ROWS;
+pub const CONTEXT: usize = 4;
+pub const VOCAB: usize = 248_320;
+pub const HIDDEN: usize = 10_240;
+pub const CONVENTION_VERSION: u32 = 2;
+pub const HIDDEN_NORM_WIDTH: usize = HIDDEN;
+pub const THREADS: usize = 16;
+pub const SIDECAR_BYTES: u64 = 889_017_216;
+/// Logical tensor sum excludes the2944-byte GGUF header/alignment.
+pub const SIDECAR_TENSOR_BYTES: u64 = 889_014_272;
+pub const SIDECAR_REVISION: &str = "de4b8e4d43b917e7706784d8bb445c9af86a3540";
+pub const SIDECAR_SHA256: &str = "a22206a4d74eafbf31063a84610292535fb3b49af9a339963817fd04aed81e4d";
+pub const PACKER_REVISION: &str = "fb58e0dbc8399662c0e47c76578c6e878b14f6cf";
+pub const SOURCE_MANIFEST_SHA256: &str =
+    "4ef372235caf4a756be32c0c62856c251d24df3d785a0c7a9e8c7181e27a6e8c";
+pub const TENSOR_COUNT: usize = 31;
+pub const RAW_GEMMA_NORM: u32 = 1;
+pub const BORROWED_TARGET_TENSORS: u32 = 2;
+pub const SEPARATE_FC_PROFILE: u32 = 1;
+pub const TARGET_CARRY_SHA256: &str =
+    "18788aee8ccb1defdbba624df3ae914c3cf574ab719c3d2a5f375e4048c67c20";
+pub const ABS_TOLERANCE: f32 = 0.006;
+pub const REL_TOLERANCE: f32 = 0.0003;
+pub const HEADER_BYTES: usize = 384;
+pub const ROW_BYTES: usize = 32 + 4 * (VOCAB + HIDDEN);
+pub const FILE_BYTES: usize = HEADER_BYTES + ROWS * ROW_BYTES;
+pub const OWNER_HOST_CAP: usize = 8 * 1024 * 1024;
+pub const COUPLED_HOST_CAP: usize = 32 * 1024 * 1024;
+const STREAM_BYTES: usize = 64 * 1024;
+const MAGIC: &[u8; 8] = b"KSTQ0001";
+const HEADER_FIELDS: [u32; 32] = [
+    CONVENTION_VERSION,
+    6,
+    4,
+    2,
+    4,
+    248320,
+    10240,
+    4,
+    2560,
+    48,
+    1,
+    48,
+    31,
+    42,
+    0,
+    424242,
+    7,
+    16,
+    8,
+    24,
+    2,
+    256,
+    64,
+    2048,
+    512,
+    10,
+    640,
+    320,
+    512,
+    3,
+    3,
+    HIDDEN_NORM_WIDTH as u32,
+];
+
+fn err() -> Error {
+    Error::InvalidFormat("fixed public Strata Q2 MTP oracle rejected")
+}
+fn pin<const N: usize>(text: &str) -> Result<[u8; N]> {
+    if text.len() != 2 * N {
+        return Err(err());
+    }
+    let nibble = |b| match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        _ => Err(err()),
+    };
+    let mut out = [0; N];
+    for (i, pair) in text.as_bytes().chunks_exact(2).enumerate() {
+        out[i] = nibble(pair[0])? * 16 + nibble(pair[1])?;
+    }
+    Ok(out)
+}
+fn header() -> Result<[u8; HEADER_BYTES]> {
+    use crate::daslab_carry_reference as target;
+    let mut out = [0; HEADER_BYTES];
+    out[..8].copy_from_slice(MAGIC);
+    for (i, value) in HEADER_FIELDS.into_iter().enumerate() {
+        out[8 + i * 4..12 + i * 4].copy_from_slice(&value.to_le_bytes());
+    }
+    out[136..144].copy_from_slice(&SIDECAR_BYTES.to_le_bytes());
+    out[144..152].copy_from_slice(&target::MODEL_BYTES.to_le_bytes());
+    out[152..172].copy_from_slice(&pin::<20>(target::REVISION)?);
+    out[172..192].copy_from_slice(&pin::<20>(SIDECAR_REVISION)?);
+    out[192..224].copy_from_slice(&pin::<32>(SIDECAR_SHA256)?);
+    out[224..256].copy_from_slice(&pin::<32>(target::SHARD_SHA256[0])?);
+    out[256..288].copy_from_slice(&pin::<32>(target::SHARD_SHA256[1])?);
+    // This digest also pins the source carry header's graph base and geometry.
+    // Protected runner verifies actual payload hashes; this module does not
+    // pretend a header digest alone verifies a file's content.
+    out[288..320].copy_from_slice(&pin::<32>(TARGET_CARRY_SHA256)?);
+    out[320..340].copy_from_slice(&pin::<20>(PACKER_REVISION)?);
+    out[340..372].copy_from_slice(&pin::<32>(SOURCE_MANIFEST_SHA256)?);
+    out[372..376].copy_from_slice(&RAW_GEMMA_NORM.to_le_bytes());
+    out[376..380].copy_from_slice(&BORROWED_TARGET_TENSORS.to_le_bytes());
+    out[380..384].copy_from_slice(&SEPARATE_FC_PROFILE.to_le_bytes());
+    Ok(out)
+}
+
+/// Cheap strict source checks before binding. Full payload authentication is
+/// deliberately the protected runner's gate, not inferred from metadata.
+pub fn require_sidecar(file: &GgufFile) -> Result<()> {
+    let mut formats = std::collections::BTreeMap::new();
+    let mut bytes = 0u64;
+    for tensor in file.tensors().values() {
+        *formats.entry(tensor.dtype().gguf_id()).or_insert(0usize) += 1;
+        bytes = bytes
+            .checked_add(tensor.byte_len())
+            .ok_or(Error::ArithmeticOverflow)?;
+    }
+    if file.file_len() != SIDECAR_BYTES
+        || file.shard_count() != 1
+        || file.version() != 3
+        || file.tensors().len() != TENSOR_COUNT
+        || bytes != SIDECAR_TENSOR_BYTES
+        || formats != [(0, 9), (30, 20), (42, 2)].into()
+    {
+        return Err(err());
+    }
+    // bind_strata_q2 independently checks all31 raw names/shapes/metadata,
+    // including the unused stored indexer and raw Gemma norm convention.
+    file.verify_file_unchanged()
+}
+pub fn require_target(file: &GgufFile) -> Result<()> {
+    use crate::{daslab_carry_reference as target, daslab_profile};
+    if file.file_len() != target::MODEL_BYTES
+        || file.shard_count() != 2
+        || file.version() != 3
+        || file.tensors().len() != daslab_profile::TENSOR_COUNT
+        || daslab_profile::REVISION != target::REVISION
+    {
+        return Err(err());
+    }
+    daslab_profile::validate_inventory(
+        file.tensors()
+            .values()
+            .map(|info| (info.name(), info.dtype().gguf_id())),
+    )
+    .map_err(|_| err())?;
+    file.verify_file_unchanged()
+}
+/// Exact named shard views; this never merges or duplicates a model payload.
+pub fn target_paths(directory: &Path) -> [std::path::PathBuf; 2] {
+    [1, 2].map(|i| {
+        directory.join(format!(
+            "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-{i:05}-of-00002.gguf"
+        ))
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Conditioning {
+    /// Cell c consumes target T[c+1] and actual target HC[c] at RoPE c.
+    TeacherForced,
+    /// Cell0 consumes target T1 + actual target HC0, with no dummy KV cell.
+    ProvisionalTarget,
+    /// Cell1 consumes provisional greedy0 + preceding MTP HC0.
+    ProvisionalDraft,
+}
+impl Conditioning {
+    fn wire(self) -> u32 {
+        match self {
+            Self::TeacherForced => 1,
+            Self::ProvisionalTarget => 2,
+            Self::ProvisionalDraft => 3,
+        }
+    }
+    fn from_wire(value: u32) -> Result<Self> {
+        match value {
+            1 => Ok(Self::TeacherForced),
+            2 => Ok(Self::ProvisionalTarget),
+            3 => Ok(Self::ProvisionalDraft),
+            _ => Err(err()),
+        }
+    }
+}
+
+/// Immutable full numeric row; metadata and both payload capacities wipe on
+/// drop. Binding identities are deliberately process-local and never serialized.
+pub struct Row {
+    metadata: Zeroizing<[u32; 6]>,
+    logits: Zeroizing<Vec<f32>>,
+    hidden: Zeroizing<Vec<f32>>,
+}
+impl Row {
+    pub fn new(
+        mode: Conditioning,
+        position: usize,
+        input: u32,
+        cursor: usize,
+        logits: Zeroizing<Vec<f32>>,
+        hidden: Zeroizing<Vec<f32>>,
+    ) -> Result<Self> {
+        if position >= CONTEXT
+            || cursor != position + 1
+            || input as usize >= VOCAB
+            || logits.len() != VOCAB
+            || hidden.len() != HIDDEN
+            || logits.capacity() != VOCAB
+            || hidden.capacity() != HIDDEN
+            || logits.iter().chain(hidden.iter()).any(|v| !v.is_finite())
+            || !logits.iter().any(|&v| v != 0.0)
+            || !hidden.iter().any(|&v| v != 0.0)
+        {
+            return Err(err());
+        }
+        let token = greedy(&logits)?;
+        let conditioning = match mode {
+            Conditioning::TeacherForced => position,
+            Conditioning::ProvisionalTarget if position == 0 => 0,
+            Conditioning::ProvisionalDraft if position == 1 => 0,
+            _ => return Err(err()),
+        };
+        Ok(Self {
+            metadata: Zeroizing::new([
+                mode.wire(),
+                position as u32,
+                input,
+                token,
+                cursor as u32,
+                conditioning as u32,
+            ]),
+            logits,
+            hidden,
+        })
+    }
+    pub fn conditioning(&self) -> Conditioning {
+        Conditioning::from_wire(self.metadata[0]).expect("validated MTP row mode")
+    }
+    pub fn position(&self) -> usize {
+        self.metadata[1] as usize
+    }
+    pub fn input_token(&self) -> u32 {
+        self.metadata[2]
+    }
+    pub fn token(&self) -> u32 {
+        self.metadata[3]
+    }
+    pub fn completed_cursor(&self) -> usize {
+        self.metadata[4] as usize
+    }
+    /// Source HC cell; the conditioning enum distinguishes target from draft.
+    pub fn conditioning_position(&self) -> usize {
+        self.metadata[5] as usize
+    }
+    pub fn logits(&self) -> &[f32] {
+        &self.logits
+    }
+    pub fn hidden(&self) -> &[f32] {
+        &self.hidden
+    }
+    fn owned_bytes(&self) -> usize {
+        (self.logits.capacity() + self.hidden.capacity()) * 4
+    }
+}
+
+pub struct Reference {
+    rows: Vec<Row>,
+}
+pub struct Report {
+    pub logits_max_abs_error: f64,
+    pub hidden_max_abs_error: f64,
+}
+pub struct Agreements {
+    pub teacher_forced: u32,
+    pub teacher_compared: u32,
+    pub provisional_first: u32,
+    pub provisional_second: u32,
+}
+impl Reference {
+    pub fn new(rows: Vec<Row>, target: &crate::daslab_carry_reference::Reference) -> Result<Self> {
+        if rows.len() != ROWS || rows.capacity() != ROWS {
+            return Err(err());
+        }
+        for (index, row) in rows.iter().enumerate() {
+            let (mode, position, input) = if index < TEACHER_ROWS {
+                (Conditioning::TeacherForced, index, target.token(index)?)
+            } else if index == TEACHER_ROWS {
+                (Conditioning::ProvisionalTarget, 0, target.token(0)?)
+            } else {
+                (
+                    Conditioning::ProvisionalDraft,
+                    1,
+                    rows[TEACHER_ROWS].token(),
+                )
+            };
+            if row.conditioning() != mode
+                || row.position() != position
+                || row.input_token() != input
+                || row.completed_cursor() != position + 1
+                || row.conditioning_position()
+                    != if mode == Conditioning::ProvisionalDraft {
+                        0
+                    } else {
+                        position
+                    }
+            {
+                return Err(err());
+            }
+        }
+        let result = Self { rows };
+        if result.owned_bytes() > OWNER_HOST_CAP
+            || result
+                .owned_bytes()
+                .checked_add(target.owned_bytes()?)
+                .and_then(|n| n.checked_add(STREAM_BYTES + HEADER_BYTES))
+                .is_none_or(|n| n > COUPLED_HOST_CAP)
+        {
+            return Err(err());
+        }
+        // First provisional cell has the exact teacher0 input/HC/empty cache.
+        // Its full output is bitwise identical, without a preceding dummy cell.
+        result.verify_bits(
+            Conditioning::TeacherForced,
+            0,
+            result.provisional(0)?.logits(),
+            result.provisional(0)?.hidden(),
+        )?;
+        Ok(result)
+    }
+    pub fn owned_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.rows.capacity() * std::mem::size_of::<Row>()
+            + self.rows.iter().map(Row::owned_bytes).sum::<usize>()
+    }
+    pub fn teacher_forced(&self, position: usize) -> Result<&Row> {
+        if position >= TEACHER_ROWS {
+            return Err(Error::OutOfBounds);
+        }
+        self.rows.get(position).ok_or_else(err)
+    }
+    pub fn provisional(&self, index: usize) -> Result<&Row> {
+        if index >= DRAFT_ROWS {
+            return Err(Error::OutOfBounds);
+        }
+        self.rows.get(TEACHER_ROWS + index).ok_or_else(err)
+    }
+    fn selected(&self, mode: Conditioning, index: usize) -> Result<&Row> {
+        let row = if mode == Conditioning::TeacherForced {
+            self.teacher_forced(index)?
+        } else {
+            self.provisional(index)?
+        };
+        if row.conditioning() != mode {
+            return Err(err());
+        }
+        Ok(row)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn verify(
+        &self,
+        mode: Conditioning,
+        index: usize,
+        input: u32,
+        cursor: usize,
+        logits: &[f32],
+        hidden: &[f32],
+    ) -> Result<Report> {
+        let row = self.selected(mode, index)?;
+        if input != row.input_token()
+            || cursor != row.completed_cursor()
+            || greedy(logits)? != row.token()
+        {
+            return Err(err());
+        }
+        Ok(Report {
+            logits_max_abs_error: compare(logits, row.logits())?,
+            hidden_max_abs_error: compare(hidden, row.hidden())?,
+        })
+    }
+    pub fn verify_bits(
+        &self,
+        mode: Conditioning,
+        index: usize,
+        logits: &[f32],
+        hidden: &[f32],
+    ) -> Result<()> {
+        let row = self.selected(mode, index)?;
+        for (actual, expected) in [(logits, row.logits()), (hidden, row.hidden())] {
+            if actual.len() != expected.len()
+                || actual
+                    .iter()
+                    .zip(expected)
+                    .any(|(a, b)| a.to_bits() != b.to_bits())
+            {
+                return Err(err());
+            }
+        }
+        Ok(())
+    }
+    pub fn agreements(
+        &self,
+        target: &crate::daslab_carry_reference::Reference,
+    ) -> Result<Agreements> {
+        let mut teacher_forced = 0;
+        // Row c predicts T[c+2]. The four-row target oracle supplies only T1..T4,
+        // so teacher3's T5 is deliberately not assigned an agreement score.
+        for c in 0..TEACHER_AGREEMENT_ROWS {
+            teacher_forced += u32::from(self.teacher_forced(c)?.token() == target.token(c + 1)?);
+        }
+        Ok(Agreements {
+            teacher_forced,
+            teacher_compared: TEACHER_AGREEMENT_ROWS as u32,
+            provisional_first: u32::from(self.provisional(0)?.token() == target.token(1)?),
+            provisional_second: u32::from(self.provisional(1)?.token() == target.token(2)?),
+        })
+    }
+    pub fn load(
+        path: impl AsRef<Path>,
+        target: &crate::daslab_carry_reference::Reference,
+    ) -> Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        if file.metadata()?.len() != FILE_BYTES as u64 {
+            return Err(err());
+        }
+        Self::read(&mut file, target)
+    }
+    fn read(
+        reader: &mut impl Read,
+        target: &crate::daslab_carry_reference::Reference,
+    ) -> Result<Self> {
+        let mut actual = [0; HEADER_BYTES];
+        reader.read_exact(&mut actual)?;
+        if actual != header()? {
+            return Err(err());
+        }
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(ROWS).map_err(|_| err())?;
+        if rows.capacity() != ROWS {
+            return Err(err());
+        }
+        for _ in 0..ROWS {
+            let mut fields = Zeroizing::new([0u32; 8]);
+            for value in fields.iter_mut() {
+                let mut bytes = [0; 4];
+                reader.read_exact(&mut bytes)?;
+                *value = u32::from_le_bytes(bytes);
+            }
+            if fields[6] as usize != VOCAB || fields[7] as usize != HIDDEN {
+                return Err(err());
+            }
+            let mode = Conditioning::from_wire(fields[0])?;
+            let row = Row::new(
+                mode,
+                fields[1] as usize,
+                fields[2],
+                fields[4] as usize,
+                values(reader, VOCAB)?,
+                values(reader, HIDDEN)?,
+            )?;
+            if row.metadata.as_slice() != &fields[..6] {
+                return Err(err());
+            }
+            rows.push(row);
+        }
+        if reader.read(&mut [0; 1])? != 0 {
+            return Err(err());
+        }
+        Self::new(rows, target)
+    }
+    pub fn write_new(&self, path: impl AsRef<Path>) -> Result<()> {
+        // No file exists before full source, CPU scheduling and replay gates.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        self.write(&mut file)?;
+        file.flush()?;
+        file.sync_all()?;
+        Ok(())
+    }
+    fn write(&self, writer: &mut impl Write) -> Result<()> {
+        writer.write_all(&header()?)?;
+        for row in &self.rows {
+            for value in row
+                .metadata
+                .iter()
+                .copied()
+                .chain([VOCAB as u32, HIDDEN as u32])
+            {
+                writer.write_all(&value.to_le_bytes())?;
+            }
+            write_values(writer, row.logits())?;
+            write_values(writer, row.hidden())?;
+        }
+        Ok(())
+    }
+}
+fn compare(actual: &[f32], expected: &[f32]) -> Result<f64> {
+    if actual.len() != expected.len() {
+        return Err(err());
+    }
+    let mut maximum = 0f64;
+    for (&a, &b) in actual.iter().zip(expected) {
+        if !a.is_finite()
+            || !b.is_finite()
+            || (a - b).abs() > ABS_TOLERANCE + REL_TOLERANCE * b.abs()
+        {
+            return Err(err());
+        }
+        maximum = maximum.max((f64::from(a) - f64::from(b)).abs());
+    }
+    Ok(maximum)
+}
+fn scratch() -> Result<Zeroizing<Vec<u8>>> {
+    let mut out = Zeroizing::new(Vec::new());
+    out.try_reserve_exact(STREAM_BYTES).map_err(|_| err())?;
+    if out.capacity() != STREAM_BYTES {
+        return Err(err());
+    }
+    out.resize(STREAM_BYTES, 0);
+    Ok(out)
+}
+fn values(reader: &mut impl Read, count: usize) -> Result<Zeroizing<Vec<f32>>> {
+    if !matches!(count, VOCAB | HIDDEN) {
+        return Err(err());
+    }
+    let mut out = Zeroizing::new(Vec::new());
+    out.try_reserve_exact(count).map_err(|_| err())?;
+    if out.capacity() != count {
+        return Err(err());
+    }
+    let mut bytes = scratch()?;
+    while out.len() < count {
+        let n = (count - out.len()).min(STREAM_BYTES / 4);
+        reader.read_exact(&mut bytes[..n * 4])?;
+        for word in bytes[..n * 4].chunks_exact(4) {
+            let v = f32::from_le_bytes(word.try_into().map_err(|_| err())?);
+            if !v.is_finite() {
+                return Err(err());
+            }
+            out.push(v);
+        }
+        bytes.as_mut_slice().zeroize();
+    }
+    Ok(out)
+}
+fn write_values(writer: &mut impl Write, values: &[f32]) -> Result<()> {
+    let mut bytes = scratch()?;
+    for chunk in values.chunks(STREAM_BYTES / 4) {
+        for (word, value) in bytes.chunks_exact_mut(4).zip(chunk) {
+            word.copy_from_slice(&value.to_le_bytes());
+        }
+        writer.write_all(&bytes[..chunk.len() * 4])?;
+        bytes.as_mut_slice().zeroize();
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn floats(count: usize, value: f32) -> Zeroizing<Vec<f32>> {
+        Zeroizing::new(vec![value; count])
+    }
+    fn target() -> crate::daslab_carry_reference::Reference {
+        use crate::daslab_carry_reference as target;
+        let mut rows = Vec::with_capacity(TEACHER_ROWS);
+        for p in 0..TEACHER_ROWS {
+            let mut logits = floats(VOCAB, 0.25);
+            logits[p + 1] = 3.0;
+            let hidden = floats(HIDDEN, p as f32 + 1.0);
+            rows.push(target::Row::new(p, p as u32, &logits, &hidden).unwrap());
+        }
+        target::Reference::new(rows).unwrap()
+    }
+    fn rows() -> Vec<Row> {
+        let mut rows = Vec::with_capacity(ROWS);
+        for p in 0..TEACHER_ROWS {
+            let mut logits = floats(VOCAB, 0.5);
+            logits[if p == 0 { 6 } else { p + 2 }] = 5.0;
+            rows.push(
+                Row::new(
+                    Conditioning::TeacherForced,
+                    p,
+                    p as u32 + 1,
+                    p + 1,
+                    logits,
+                    floats(HIDDEN, p as f32 + 0.75),
+                )
+                .unwrap(),
+            );
+        }
+        let first = &rows[0];
+        let mut logits = floats(VOCAB, 0.0);
+        logits.copy_from_slice(first.logits());
+        let mut hidden = floats(HIDDEN, 0.0);
+        hidden.copy_from_slice(first.hidden());
+        rows.push(Row::new(Conditioning::ProvisionalTarget, 0, 1, 1, logits, hidden).unwrap());
+        let mut logits = floats(VOCAB, 0.75);
+        logits[99] = 5.0;
+        rows.push(
+            Row::new(
+                Conditioning::ProvisionalDraft,
+                1,
+                6,
+                2,
+                logits,
+                floats(HIDDEN, 2.25),
+            )
+            .unwrap(),
+        );
+        rows
+    }
+    fn wire(reference: &Reference) -> Zeroizing<Vec<u8>> {
+        let mut bytes = Zeroizing::new(Vec::with_capacity(FILE_BYTES));
+        reference.write(&mut *bytes).unwrap();
+        assert_eq!(bytes.len(), FILE_BYTES);
+        assert_eq!(bytes.capacity(), FILE_BYTES);
+        bytes
+    }
+    fn word(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    #[test]
+    fn header_and_roundtrip_preserve_distinct_conditioning_and_full_vectors() {
+        let target = target();
+        let original = Reference::new(rows(), &target).unwrap();
+        let bytes = wire(&original);
+        let loaded = Reference::read(&mut Cursor::new(&bytes[..]), &target).unwrap();
+        assert_eq!(FILE_BYTES, 6_206_016);
+        assert_eq!(&bytes[..8], b"KSTQ0001");
+        assert_eq!(HEADER_FIELDS[0], CONVENTION_VERSION);
+        assert_eq!(HEADER_FIELDS[31] as usize, HIDDEN_NORM_WIDTH);
+        assert_eq!(&bytes[288..320], &pin::<32>(TARGET_CARRY_SHA256).unwrap());
+        assert!(original.owned_bytes() < OWNER_HOST_CAP);
+        for p in 0..TEACHER_ROWS {
+            let row = loaded.teacher_forced(p).unwrap();
+            assert_eq!(row.position(), p);
+            assert_eq!(row.input_token(), target.token(p).unwrap());
+            assert_ne!(row.input_token(), target.input_token(p).unwrap());
+            assert_eq!(row.conditioning_position(), p);
+            original
+                .verify_bits(Conditioning::TeacherForced, p, row.logits(), row.hidden())
+                .unwrap();
+        }
+        assert_eq!(loaded.provisional(1).unwrap().input_token(), 6);
+        assert_ne!(
+            loaded.provisional(1).unwrap().input_token(),
+            target.token(1).unwrap()
+        );
+        let agreements = loaded.agreements(&target).unwrap();
+        assert_eq!(agreements.teacher_forced, 2);
+        assert_eq!(agreements.teacher_compared, 3);
+        assert_eq!(agreements.provisional_first, 0);
+        assert_eq!(agreements.provisional_second, 0);
+        assert!(loaded.teacher_forced(4).is_err());
+        assert!(loaded.provisional(2).is_err());
+    }
+    #[test]
+    fn source_geometry_and_record_metadata_corruption_fail_closed() {
+        let target = target();
+        let reference = Reference::new(rows(), &target).unwrap();
+        let mut bytes = wire(&reference);
+        for offset in [
+            0, 8, 24, 56, 132, 136, 144, 152, 172, 192, 224, 256, 288, 320, 340, 372, 376, 380,
+        ] {
+            bytes[offset] ^= 1;
+            assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+            bytes[offset] ^= 1;
+        }
+        // Exact metadata must match the fixed target inputs and mode ordering.
+        for (record, index, value) in [
+            (0, 0, 2),
+            (0, 1, 4),
+            (0, 2, 0),
+            (0, 3, 99),
+            (0, 4, 2),
+            (0, 5, u32::MAX),
+            (0, 6, (VOCAB - 1) as u32),
+            (0, 7, (HIDDEN - 1) as u32),
+            (4, 0, 3),
+            (5, 2, 2),
+        ] {
+            let offset = HEADER_BYTES + record * ROW_BYTES + index * 4;
+            let previous: [u8; 4] = bytes[offset..offset + 4].try_into().unwrap();
+            word(&mut bytes, offset, value);
+            assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+            bytes[offset..offset + 4].copy_from_slice(&previous);
+        }
+        for n in [0, HEADER_BYTES - 1, HEADER_BYTES + 31, FILE_BYTES - 1] {
+            assert!(Reference::read(&mut Cursor::new(&bytes[..n]), &target).is_err());
+        }
+        // Stream exact EOF without making a second full numeric payload copy.
+        let mut extra = Cursor::new(&bytes[..]).chain(Cursor::new([0u8]));
+        assert!(Reference::read(&mut extra, &target).is_err());
+    }
+    #[test]
+    fn other_draft_profiles_dummy_cells_and_per_stream_norms_are_rejected() {
+        let target = target();
+        let reference = Reference::new(rows(), &target).unwrap();
+        let mut bytes = wire(&reference);
+        // The already-accepted Q8v2 full-vector wire cannot masquerade as Q2.
+        bytes[..8].copy_from_slice(b"KMTP0002");
+        assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+        bytes[..8].copy_from_slice(b"KMTP0001");
+        word(&mut bytes, 8, 1);
+        word(&mut bytes, 132, 0);
+        assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+        bytes[..HEADER_BYTES].copy_from_slice(&header().unwrap());
+        word(&mut bytes, 132, 2560);
+        assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+        bytes[..HEADER_BYTES].copy_from_slice(&header().unwrap());
+        // A former dummy input0/zero-preceding marker cannot masquerade as cell0.
+        word(&mut bytes, HEADER_BYTES + 8, target.input_token(0).unwrap());
+        word(&mut bytes, HEADER_BYTES + 20, u32::MAX);
+        assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+    }
+    #[test]
+    fn teacher_final_unknown_prediction_does_not_enter_agreement_denominator() {
+        let target = target();
+        let baseline = Reference::new(rows(), &target)
+            .unwrap()
+            .agreements(&target)
+            .unwrap();
+        let mut changed = rows();
+        let mut logits = floats(VOCAB, 0.5);
+        logits[target.token(3).unwrap() as usize] = 5.0;
+        changed[3] = Row::new(
+            Conditioning::TeacherForced,
+            3,
+            target.token(3).unwrap(),
+            4,
+            logits,
+            floats(HIDDEN, 3.75),
+        )
+        .unwrap();
+        let agreements = Reference::new(changed, &target)
+            .unwrap()
+            .agreements(&target)
+            .unwrap();
+        assert_eq!(agreements.teacher_compared, 3);
+        assert_eq!(agreements.teacher_forced, baseline.teacher_forced);
+    }
+    #[test]
+    fn full_tail_nonfinite_and_catchup_mismatch_are_rejected() {
+        let target = target();
+        let reference = Reference::new(rows(), &target).unwrap();
+        let mut bytes = wire(&reference);
+        for offset in [HEADER_BYTES + 32, FILE_BYTES - 4] {
+            let original: [u8; 4] = bytes[offset..offset + 4].try_into().unwrap();
+            for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                word(&mut bytes, offset, invalid.to_bits());
+                assert!(Reference::read(&mut Cursor::new(&bytes[..]), &target).is_err());
+            }
+            bytes[offset..offset + 4].copy_from_slice(&original);
+        }
+        let mut bad = rows();
+        bad[TEACHER_ROWS].hidden[HIDDEN - 1] += 0.00001;
+        assert!(Reference::new(bad, &target).is_err());
+        assert!(
+            Row::new(
+                Conditioning::TeacherForced,
+                0,
+                0,
+                1,
+                floats(VOCAB, 0.0),
+                floats(HIDDEN, 1.0)
+            )
+            .is_err()
+        );
+        assert!(
+            Row::new(
+                Conditioning::TeacherForced,
+                0,
+                0,
+                1,
+                floats(VOCAB, 1.0),
+                floats(HIDDEN, 0.0)
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn accepted_reference_checks_actual_input_cursor_greedy_and_complete_tails() {
+        let target = target();
+        let reference = Reference::new(rows(), &target).unwrap();
+        let row = reference.teacher_forced(1).unwrap();
+        assert!(
+            reference
+                .verify(
+                    Conditioning::TeacherForced,
+                    1,
+                    2,
+                    2,
+                    row.logits(),
+                    row.hidden()
+                )
+                .is_ok()
+        );
+        assert!(
+            reference
+                .verify(
+                    Conditioning::TeacherForced,
+                    1,
+                    target.input_token(1).unwrap(),
+                    2,
+                    row.logits(),
+                    row.hidden()
+                )
+                .is_err()
+        );
+        assert!(
+            reference
+                .verify(
+                    Conditioning::TeacherForced,
+                    1,
+                    2,
+                    3,
+                    row.logits(),
+                    row.hidden()
+                )
+                .is_err()
+        );
+        assert!(
+            reference
+                .verify(
+                    Conditioning::ProvisionalDraft,
+                    0,
+                    1,
+                    2,
+                    row.logits(),
+                    row.hidden()
+                )
+                .is_err()
+        );
+        let mut logits = floats(VOCAB, 0.0);
+        logits.copy_from_slice(row.logits());
+        logits[VOCAB - 1] += 0.02;
+        assert!(
+            reference
+                .verify(Conditioning::TeacherForced, 1, 2, 2, &logits, row.hidden())
+                .is_err()
+        );
+        logits.copy_from_slice(row.logits());
+        logits[99] = 5.1;
+        assert!(
+            reference
+                .verify(Conditioning::TeacherForced, 1, 2, 2, &logits, row.hidden())
+                .is_err()
+        );
+        let mut hidden = floats(HIDDEN, 0.0);
+        hidden.copy_from_slice(row.hidden());
+        hidden[HIDDEN - 1] += 0.0001;
+        assert!(
+            reference
+                .verify(Conditioning::TeacherForced, 1, 2, 2, row.logits(), &hidden)
+                .is_ok()
+        );
+        assert!(
+            reference
+                .verify_bits(Conditioning::TeacherForced, 1, row.logits(), &hidden)
+                .is_err()
+        );
+        hidden[HIDDEN - 1] += 0.02;
+        assert!(
+            reference
+                .verify(Conditioning::TeacherForced, 1, 2, 2, row.logits(), &hidden)
+                .is_err()
+        );
+        assert!(
+            reference
+                .verify(
+                    Conditioning::TeacherForced,
+                    1,
+                    2,
+                    2,
+                    &row.logits()[..VOCAB - 1],
+                    row.hidden()
+                )
+                .is_err()
+        );
+    }
+    #[test]
+    fn output_publication_never_overwrites_an_existing_file() {
+        let target = target();
+        let reference = Reference::new(rows(), &target).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("kuno-mtp-fixed-reference-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        reference.write_new(&path).unwrap();
+        assert!(Reference::load(&path, &target).is_ok());
+        assert!(reference.write_new(&path).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+}

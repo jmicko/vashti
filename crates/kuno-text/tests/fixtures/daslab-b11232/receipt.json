@@ -1,0 +1,37 @@
+{
+  "fixtures": {
+    "iq2_s.bin": {
+      "blocks": 41,
+      "elements": 256,
+      "gguf_id": 22,
+      "packed_bytes": 82,
+      "sha256": "3074e1ae43e1c50bf0cc80fee97c095ca5c11ec6f67218dba1b2b772023ff319"
+    },
+    "iq3_s.bin": {
+      "blocks": 17,
+      "elements": 256,
+      "gguf_id": 21,
+      "packed_bytes": 110,
+      "sha256": "2dcf2fb7813fd0c412362bd830c88de85f71885a19fd4e8358fa8a9e61df2315"
+    },
+    "q2_0.bin": {
+      "blocks": 13,
+      "elements": 64,
+      "gguf_id": 42,
+      "packed_bytes": 18,
+      "sha256": "5b212195c81ece2f3c4e36b484f83e5e1b9657dabbd17d08c40f1d8e63f132ae"
+    },
+    "q5_K.bin": {
+      "blocks": 17,
+      "elements": 256,
+      "gguf_id": 13,
+      "packed_bytes": 176,
+      "sha256": "751cec7616eaca31a01831f165c2545d2c746d84f9a6d3d836bad3fcce7fb2a6"
+    }
+  },
+  "reference": "https://github.com/ggml-org/llama.cpp/tree/b11232",
+  "source_sha256": {
+    "ggml-common.h": "0061131b615c5721fc88a78feeb22c1f8c450f1c2646a317d80796a653bf595c",
+    "ggml-quants.c": "7878680cc60493f98469a116e9b14af8b84789292ccf891c249230b2fa3d157f"
+  }
+}

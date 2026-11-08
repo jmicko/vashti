@@ -1,0 +1,202 @@
+{
+  "scope": "fixed-public-grouped-single-finite-and-short-model-lifecycle",
+  "source_commit": "91efea6a87b05b475a16aa4dfb8e8fa9cba03fef",
+  "native_host_tests": 459,
+  "strict_native_clippy_accepted": true,
+  "matched_performance_accepted": false,
+  "production_accepted": false,
+  "cards": [
+    {
+      "card": "intel",
+      "operator_receipt_path": "/media/jmicko/faststore/kuno-development/native-single-finite-build-20261007-v1/grouped-moe-chunk-probe-intel.json",
+      "operator_receipt_sha256": "b0f7bda5fc44d45aff9332de8f80fa92f9100a98ac84d3db76a85de0100d59ff",
+      "operator_run_record_sha256": "3e9603631d84be24badbf7e38cb354c561302625b6317e9c3536d24638cdab2f",
+      "operator_run_proof": {
+        "scope": "fixed-public-kernel-operator-numeric-only",
+        "card": "intel",
+        "mode": "grouped-moe-chunk-probe",
+        "executable_sha256": "d6b834687ac0865bd81f2c1eb732c69d4434a849bb3228487a3cfd9dd2ad6018",
+        "cargo_artifacts_sha256": "490b5cbc71ddf83dea2b5c5b47f81e257ad7a6cd9e6b0ee328ea73ba3620022d",
+        "source_commit": "91efea6a87b05b475a16aa4dfb8e8fa9cba03fef",
+        "worker_exit_status": 0,
+        "markers": [
+          "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+          "adapter=Intel(R) Graphics (BMG G31) vendor=8086 device=e223 backend=Vulkan",
+          "public_grouped_routed_acceptance cases=52 failures=12 main_bytes=153944064 main_buffers=1078",
+          "Finished with result: success",
+          "Main processes terminated with: code=exited/status=0",
+          "Service runtime: 50.475s",
+          "Memory peak: 256.0K",
+          "Memory swap peak: 0B"
+        ],
+        "model_receipt_exists": true,
+        "expected_vendor": 32902
+      },
+      "strict_operator_numeric_validator_accepted": true,
+      "routed_cases": 52,
+      "all_format_single_member_cases": 14,
+      "expected_failures": 12,
+      "model_receipt_path": "/media/jmicko/faststore/kuno-development/native-single-finite-build-20261007-v1/chat-intel.json",
+      "model_receipt_sha256": "6df83e238447863a8d27cdd9fc1c0530a265a183111c76096eaeb4f26f693870",
+      "model_run_record_sha256": "c579e165f7eca9156c85c71fa9764dbbce9a0888cf81fc251e18092cb48dfaaa",
+      "model_run_proof": {
+        "card": "intel",
+        "cargo_artifacts_sha256": "490b5cbc71ddf83dea2b5c5b47f81e257ad7a6cd9e6b0ee328ea73ba3620022d",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "d6b834687ac0865bd81f2c1eb732c69d4434a849bb3228487a3cfd9dd2ad6018",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "native_decode_kernels": "single-q4-all",
+        "native_decode_projection_tile": 1,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "6df83e238447863a8d27cdd9fc1c0530a265a183111c76096eaeb4f26f693870",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "profiling_overlaps_run": true,
+      "generation_ms": 5739,
+      "prefill_ms": 12147,
+      "model_bind_ms": 1316,
+      "warm_weight_read_ms": 962,
+      "warm_weight_upload_ms": 363,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1309780840,
+        "native_ffn_gr_and_router_enqueue": 113466842,
+        "native_route_and_expert_enqueue": 2170211621,
+        "native_router_fence": 1516760419,
+        "native_shared_and_ffn_combine_enqueue": 363685773
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "operator_receipt_path": "/media/jmicko/faststore/kuno-development/native-single-finite-build-20261007-v1/grouped-moe-chunk-probe-nvidia.json",
+      "operator_receipt_sha256": "8e6e727ad2e7b3c5041f71d1393ab83e2f4725e5d6a3e196b21ea4b43cd4be3a",
+      "operator_run_record_sha256": "c70cecf4382dc6851f306a562d380e45af525d1db7f28010a2b68564b461f43f",
+      "operator_run_proof": {
+        "scope": "fixed-public-kernel-operator-numeric-only",
+        "card": "nvidia",
+        "mode": "grouped-moe-chunk-probe",
+        "executable_sha256": "d6b834687ac0865bd81f2c1eb732c69d4434a849bb3228487a3cfd9dd2ad6018",
+        "cargo_artifacts_sha256": "490b5cbc71ddf83dea2b5c5b47f81e257ad7a6cd9e6b0ee328ea73ba3620022d",
+        "source_commit": "91efea6a87b05b475a16aa4dfb8e8fa9cba03fef",
+        "worker_exit_status": 0,
+        "markers": [
+          "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+          "adapter=NVIDIA GeForce RTX 3060 vendor=10de device=2504 backend=Vulkan",
+          "public_grouped_routed_acceptance cases=52 failures=12 main_bytes=153944064 main_buffers=1078",
+          "Finished with result: success",
+          "Main processes terminated with: code=exited/status=0",
+          "Service runtime: 57.489s",
+          "Memory peak: 512.0K",
+          "Memory swap peak: 0B"
+        ],
+        "model_receipt_exists": true,
+        "expected_vendor": 4318
+      },
+      "strict_operator_numeric_validator_accepted": true,
+      "routed_cases": 52,
+      "all_format_single_member_cases": 14,
+      "expected_failures": 12,
+      "model_receipt_path": "/media/jmicko/faststore/kuno-development/native-single-finite-build-20261007-v1/chat-nvidia.json",
+      "model_receipt_sha256": "3f84ed5b619b6a371a0c2a22de82971e4b0077f5805ff67ab72fa89403f9e5ab",
+      "model_run_record_sha256": "358c0a3947ad6ad42a324a57255fc4bd6201a7847b66c9ceedeb22b9df0a669b",
+      "model_run_proof": {
+        "card": "nvidia",
+        "cargo_artifacts_sha256": "490b5cbc71ddf83dea2b5c5b47f81e257ad7a6cd9e6b0ee328ea73ba3620022d",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "d6b834687ac0865bd81f2c1eb732c69d4434a849bb3228487a3cfd9dd2ad6018",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "native_decode_kernels": "single-q4-all",
+        "native_decode_projection_tile": 1,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "3f84ed5b619b6a371a0c2a22de82971e4b0077f5805ff67ab72fa89403f9e5ab",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "profiling_overlaps_run": false,
+      "generation_ms": 8525,
+      "prefill_ms": 20222,
+      "model_bind_ms": 736,
+      "warm_weight_read_ms": 545,
+      "warm_weight_upload_ms": 767,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1335073055,
+        "native_ffn_gr_and_router_enqueue": 78461654,
+        "native_route_and_expert_enqueue": 4375723901,
+        "native_router_fence": 2014670614,
+        "native_shared_and_ffn_combine_enqueue": 378440731
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    }
+  ],
+  "executable_sha256": "d6b834687ac0865bd81f2c1eb732c69d4434a849bb3228487a3cfd9dd2ad6018",
+  "cpu_profile": {
+    "scope": "fixed-public-lab-process-cpu-symbol-profile-only",
+    "executable_sha256": "d6b834687ac0865bd81f2c1eb732c69d4434a849bb3228487a3cfd9dd2ad6018",
+    "pid": 759814,
+    "duration_seconds": 30,
+    "sample_frequency_hz": 99,
+    "perf_exit_status": 0,
+    "private_user_requests_profiled": false,
+    "matched_performance_accepted": false,
+    "artifact_path": "/media/jmicko/faststore/kuno-development/native-single-finite-build-20261007-v1/intel-fixed-public-cpu-profile.json",
+    "receipt_sha256": "d290448c8b0c3dfc4e79edbff8f7bea3fd24ce5857fb0a59252662c71c907817",
+    "scope_limitation": "30s covers startup/prefill/decode and potentially recovery/cleanup, not isolated decode; leaf symbols do not assign copying/clearing to individual call sites",
+    "selected_leaf_samples_percent": {
+      "__memmove_avx_unaligned_erms": 30.64,
+      "__memset_avx2_unaligned_erms": 10.97
+    }
+  }
+}

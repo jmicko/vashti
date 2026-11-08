@@ -1,0 +1,575 @@
+{
+  "scope": "fixed-public-ranked-native-optimization-lab-only",
+  "user_reference_decode_tokens_per_second": 10,
+  "new_ollama_baseline": false,
+  "preceding_selected_decode_tokens_per_second": 9.594318954445871,
+  "samples": [
+    {
+      "run": "cpu-144-binding-long-v48",
+      "role": "binding-initial",
+      "source_commit": "37fe3ca843abdb41c5b47a7b39c002c3ec67fee5",
+      "frozen_executable_sha256": "04f01a611209fb1bb526d48613deade7e2ec7413b9d6b69e7f03de1b9ea61d8b",
+      "raw_receipt_sha256": "983406babe634f4eb5c7076750b9442bac9ad12060be92bb9208742dd94d2329",
+      "run_record_sha256": "d6a576c4c81eb2c6406b82d91b78c59230605d78bd71580744b0b85e5e09c7c9",
+      "cargo_artifacts_sha256": "65cafe23fcc728db7ed8a9d08a65071045de5ea5934833b0b82c10f594770965",
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 10.64275538422861,
+      "seed": 424242,
+      "temperature": 0,
+      "model_bind_ms": 1288,
+      "prefill_ms": 15272,
+      "generation_ms": 11933,
+      "native_decode_steps": 127,
+      "bind_group_reuse": true,
+      "warm_binding_cache_stats": [
+        216192,
+        146831,
+        256,
+        1296351846,
+        66447786
+      ],
+      "cpu_q8_residual": false,
+      "cpu_q8_two_pass": false,
+      "observed_cpu_q8_residual_passes": 0,
+      "cpu_work_stealing": true,
+      "warm_cpu_operator_host_phase_ns": [
+        310041215,
+        1192512368,
+        851029039,
+        2404594396
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 84,
+        "minor_faults": 185776,
+        "read_bytes": 0,
+        "system_ticks": 745,
+        "user_ticks": 3466,
+        "write_bytes": 0
+      },
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 151911815,
+        "native_all_family_preflight": 111392032,
+        "native_attention_and_gr_enqueue": 2995131344,
+        "native_completed_final_proofs": 955756297,
+        "native_ffn_gr_and_router_enqueue": 172821036,
+        "native_final_head_enqueue": 8765369,
+        "native_route_and_expert_enqueue": 4370063178,
+        "native_router_fence": 2989777663,
+        "native_shared_and_ffn_combine_enqueue": 91965830
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_close_ms": 9,
+      "model_bind_private_upload_bytes": [
+        20643840,
+        20643840,
+        0
+      ],
+      "prefill_private_upload_bytes": [
+        58982400,
+        14672064,
+        44310336
+      ],
+      "warm_upload_transfer_bytes": [
+        1747845120,
+        229218304,
+        1518626816
+      ],
+      "build_directory": "next-offload-build-20261008-v48-binding",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ]
+    },
+    {
+      "run": "cpu-144-binding-off-control-long-v48",
+      "role": "same-binary-binding-off-control",
+      "source_commit": "37fe3ca843abdb41c5b47a7b39c002c3ec67fee5",
+      "frozen_executable_sha256": "04f01a611209fb1bb526d48613deade7e2ec7413b9d6b69e7f03de1b9ea61d8b",
+      "raw_receipt_sha256": "918033db7f667a319672abc6f457632426107709cb0d8743c45e67fbe4c44802",
+      "run_record_sha256": "dc5d18f51e757fa5c956e1caa34c3dba08fe4d28f590bf0c36cd4abd8cb864d2",
+      "cargo_artifacts_sha256": "65cafe23fcc728db7ed8a9d08a65071045de5ea5934833b0b82c10f594770965",
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 9.531672170519364,
+      "seed": 424242,
+      "temperature": 0,
+      "model_bind_ms": 1262,
+      "prefill_ms": 15051,
+      "generation_ms": 13324,
+      "native_decode_steps": 127,
+      "bind_group_reuse": false,
+      "warm_binding_cache_stats": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "cpu_q8_residual": false,
+      "cpu_q8_two_pass": false,
+      "observed_cpu_q8_residual_passes": 0,
+      "cpu_work_stealing": true,
+      "warm_cpu_operator_host_phase_ns": [
+        315848074,
+        1177141288,
+        860251525,
+        2403738860
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 83,
+        "minor_faults": 185849,
+        "read_bytes": 0,
+        "system_ticks": 751,
+        "user_ticks": 3610,
+        "write_bytes": 0
+      },
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 148395089,
+        "native_all_family_preflight": 112859011,
+        "native_attention_and_gr_enqueue": 3831732907,
+        "native_completed_final_proofs": 969442865,
+        "native_ffn_gr_and_router_enqueue": 169007185,
+        "native_final_head_enqueue": 8588963,
+        "native_route_and_expert_enqueue": 4418682759,
+        "native_router_fence": 3489884777,
+        "native_shared_and_ffn_combine_enqueue": 90654706
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_close_ms": 8,
+      "model_bind_private_upload_bytes": [
+        20643840,
+        20643840,
+        0
+      ],
+      "prefill_private_upload_bytes": [
+        58982400,
+        14672064,
+        44310336
+      ],
+      "warm_upload_transfer_bytes": [
+        1747845120,
+        229218304,
+        1518626816
+      ],
+      "build_directory": "next-offload-build-20261008-v48-binding",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ]
+    },
+    {
+      "run": "cpu-144-gdn-shard-long-v49",
+      "role": "retained-gdn-shard-no-speed-win",
+      "source_commit": "f73970f9706a2a99835495850c8a77cdb7571213",
+      "frozen_executable_sha256": "64669a1b8c63e775eb8f2ca9265edf60d2d6d1146a54f7d8b7d7e0cb7fbbddc5",
+      "raw_receipt_sha256": "2a453103039034eed7e9ae1441aec5eeb3884c7402ea24f1baf87b1d85ca73c1",
+      "run_record_sha256": "e1f91161a799c032fef4a58b6e7e8b6723c2fe9c9bdd676a59e805b746c82d35",
+      "cargo_artifacts_sha256": "da07f9510c00e16ad6f3e20d3728ee00f1f603e2adacb21137d2625cd63041da",
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 10.508025814992553,
+      "seed": 424242,
+      "temperature": 0,
+      "model_bind_ms": 1392,
+      "prefill_ms": 15809,
+      "generation_ms": 12086,
+      "native_decode_steps": 127,
+      "bind_group_reuse": true,
+      "warm_binding_cache_stats": [
+        216192,
+        146831,
+        256,
+        1305431992,
+        69684633
+      ],
+      "cpu_q8_residual": false,
+      "cpu_q8_two_pass": false,
+      "observed_cpu_q8_residual_passes": 0,
+      "cpu_work_stealing": true,
+      "warm_cpu_operator_host_phase_ns": [
+        314374027,
+        1220736779,
+        880825268,
+        2467041476
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 82,
+        "minor_faults": 185811,
+        "read_bytes": 0,
+        "system_ticks": 745,
+        "user_ticks": 3475,
+        "write_bytes": 0
+      },
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 153206327,
+        "native_all_family_preflight": 112677263,
+        "native_attention_and_gr_enqueue": 3019521813,
+        "native_completed_final_proofs": 963605603,
+        "native_ffn_gr_and_router_enqueue": 172592495,
+        "native_final_head_enqueue": 8542867,
+        "native_route_and_expert_enqueue": 4456667394,
+        "native_router_fence": 3020139704,
+        "native_shared_and_ffn_combine_enqueue": 92775555
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_close_ms": 9,
+      "model_bind_private_upload_bytes": [
+        20643840,
+        20643840,
+        0
+      ],
+      "prefill_private_upload_bytes": [
+        58982400,
+        14672064,
+        44310336
+      ],
+      "warm_upload_transfer_bytes": [
+        1747845120,
+        229218304,
+        1518626816
+      ],
+      "build_directory": "next-offload-build-20261008-v49-gdn-shard",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ]
+    },
+    {
+      "run": "cpu-144-q8-three-long-v50",
+      "role": "refined-q8-three-no-speed-win",
+      "source_commit": "89ea1bc03ab22c1e834363d46c2736627d03b8da",
+      "frozen_executable_sha256": "88fb8aa7cd55e001b57458ba746bf8dc7ddaa614d6404926ea8f489eeeed89b4",
+      "raw_receipt_sha256": "de7f97e8b07ebbd32f858033d891c05054d9e00cc403c8d277370cc58cefe74a",
+      "run_record_sha256": "302cf6ddf71eec0384d31b7c3758f71a46c15dec49e8b08a86e11840dee8a73a",
+      "cargo_artifacts_sha256": "e378c0518d3e3e3f69a914f47619ff7029a8baa778f84de5ae8566771669451f",
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 9.758721376978638,
+      "seed": 424242,
+      "temperature": 0,
+      "model_bind_ms": 1258,
+      "prefill_ms": 15065,
+      "generation_ms": 13014,
+      "native_decode_steps": 127,
+      "bind_group_reuse": true,
+      "warm_binding_cache_stats": [
+        216192,
+        146831,
+        256,
+        1295620527,
+        68922336
+      ],
+      "cpu_q8_residual": true,
+      "cpu_q8_two_pass": false,
+      "observed_cpu_q8_residual_passes": 3,
+      "cpu_work_stealing": true,
+      "warm_cpu_operator_host_phase_ns": [
+        715347520,
+        1293302176,
+        932529524,
+        3356452119
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 80,
+        "minor_faults": 185518,
+        "read_bytes": 0,
+        "system_ticks": 742,
+        "user_ticks": 3767,
+        "write_bytes": 0
+      },
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 156714897,
+        "native_all_family_preflight": 114291382,
+        "native_attention_and_gr_enqueue": 3054316569,
+        "native_completed_final_proofs": 968288901,
+        "native_ffn_gr_and_router_enqueue": 184910056,
+        "native_final_head_enqueue": 8792720,
+        "native_route_and_expert_enqueue": 5351356886,
+        "native_router_fence": 2995007138,
+        "native_shared_and_ffn_combine_enqueue": 97915511
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_close_ms": 9,
+      "model_bind_private_upload_bytes": [
+        20643840,
+        20643840,
+        0
+      ],
+      "prefill_private_upload_bytes": [
+        58982400,
+        14672064,
+        44310336
+      ],
+      "warm_upload_transfer_bytes": [
+        1747845120,
+        229218304,
+        1518626816
+      ],
+      "build_directory": "next-offload-build-20261008-v50-q8-three",
+      "build_features": [
+        "direct-device",
+        "cpu-work-stealing"
+      ]
+    },
+    {
+      "run": "cpu-144-q8-two-long-v51",
+      "role": "refined-q8-two-no-speed-win",
+      "source_commit": "89ea1bc03ab22c1e834363d46c2736627d03b8da",
+      "frozen_executable_sha256": "a18fbb04b6a99ade0640d3596b683aa7924637718aa64d0ff0bb34c569512355",
+      "raw_receipt_sha256": "ffaef0fc93529a2d97627004fd2f0a3ecdafe14d003bb54a41f60792747792b4",
+      "run_record_sha256": "5e7d461d1be254a5d0f935d9c88b336c1ceac2209f27f843bfed703ab0da02a7",
+      "cargo_artifacts_sha256": "8d9a39638aba1394046d698259b0a565a697da9fd172a2533c0a1cd245f5b456",
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 10.029218984442865,
+      "seed": 424242,
+      "temperature": 0,
+      "model_bind_ms": 1141,
+      "prefill_ms": 15490,
+      "generation_ms": 12663,
+      "native_decode_steps": 127,
+      "bind_group_reuse": true,
+      "warm_binding_cache_stats": [
+        216192,
+        146831,
+        256,
+        1295159788,
+        65182823
+      ],
+      "cpu_q8_residual": true,
+      "cpu_q8_two_pass": true,
+      "observed_cpu_q8_residual_passes": 2,
+      "cpu_work_stealing": true,
+      "warm_cpu_operator_host_phase_ns": [
+        582831123,
+        1307025418,
+        909238232,
+        3110709819
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 84,
+        "minor_faults": 185863,
+        "read_bytes": 0,
+        "system_ticks": 763,
+        "user_ticks": 3593,
+        "write_bytes": 0
+      },
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 144468941,
+        "native_all_family_preflight": 113548626,
+        "native_attention_and_gr_enqueue": 3002936274,
+        "native_completed_final_proofs": 949311063,
+        "native_ffn_gr_and_router_enqueue": 173773830,
+        "native_final_head_enqueue": 8510026,
+        "native_route_and_expert_enqueue": 5080412730,
+        "native_router_fence": 3017624544,
+        "native_shared_and_ffn_combine_enqueue": 91526551
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_close_ms": 9,
+      "model_bind_private_upload_bytes": [
+        20643840,
+        20643840,
+        0
+      ],
+      "prefill_private_upload_bytes": [
+        58982400,
+        14672064,
+        44310336
+      ],
+      "warm_upload_transfer_bytes": [
+        1747845120,
+        229218304,
+        1518626816
+      ],
+      "build_directory": "next-offload-build-20261008-v51-q8-two",
+      "build_features": [
+        "direct-device",
+        "cpu-work-stealing",
+        "cpu-q8-two-pass"
+      ]
+    },
+    {
+      "run": "cpu-144-binding-repeat-long-v52",
+      "role": "binding-selected-repeat",
+      "source_commit": "89ea1bc03ab22c1e834363d46c2736627d03b8da",
+      "frozen_executable_sha256": "04f01a611209fb1bb526d48613deade7e2ec7413b9d6b69e7f03de1b9ea61d8b",
+      "raw_receipt_sha256": "ef72f6e4733f5c051248e04bf25863a6cd41cb626d1a5985f844ce9b53343fda",
+      "run_record_sha256": "e6f7e5ed4514d49f1d4bb9415e7e09f93074ad3b1ec6c657e2888f0c36202369",
+      "cargo_artifacts_sha256": "f47d38358ce121a9cf4b8ac3920fb8a6a9b0ae8dec8983dd446f4a5cdb850859",
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 10.729976343359242,
+      "seed": 424242,
+      "temperature": 0,
+      "model_bind_ms": 1305,
+      "prefill_ms": 15887,
+      "generation_ms": 11836,
+      "native_decode_steps": 127,
+      "bind_group_reuse": true,
+      "warm_binding_cache_stats": [
+        216192,
+        146831,
+        256,
+        1305075004,
+        66302048
+      ],
+      "cpu_q8_residual": false,
+      "cpu_q8_two_pass": false,
+      "observed_cpu_q8_residual_passes": 0,
+      "cpu_work_stealing": true,
+      "warm_cpu_operator_host_phase_ns": [
+        308462251,
+        1167300989,
+        858524242,
+        2384866731
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 84,
+        "minor_faults": 185808,
+        "read_bytes": 0,
+        "system_ticks": 749,
+        "user_ticks": 3459,
+        "write_bytes": 0
+      },
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 144177545,
+        "native_all_family_preflight": 112202089,
+        "native_attention_and_gr_enqueue": 2981313874,
+        "native_completed_final_proofs": 949018651,
+        "native_ffn_gr_and_router_enqueue": 171430771,
+        "native_final_head_enqueue": 8644073,
+        "native_route_and_expert_enqueue": 4314023258,
+        "native_router_fence": 2980049006,
+        "native_shared_and_ffn_combine_enqueue": 90230889
+      },
+      "request_io_closed_and_audited": true,
+      "request_io_close_ms": 9,
+      "model_bind_private_upload_bytes": [
+        20643840,
+        20643840,
+        0
+      ],
+      "prefill_private_upload_bytes": [
+        58982400,
+        14672064,
+        44310336
+      ],
+      "warm_upload_transfer_bytes": [
+        1747845120,
+        229218304,
+        1518626816
+      ],
+      "build_directory": "next-offload-build-20261008-v52-binding-selected",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ]
+    }
+  ],
+  "runtime_patch_sha256": "5af5a45bbc3d11c976411a2d89408fc9995fd9de3f751306e1634e3767af0ade",
+  "selection": {
+    "engine_source_commit": "89ea1bc03ab22c1e834363d46c2736627d03b8da",
+    "binding_implementation_commit": "37fe3ca843abdb41c5b47a7b39c002c3ec67fee5",
+    "withdrawn_gdn_trial_commit": "f73970f9706a2a99835495850c8a77cdb7571213",
+    "frozen_executable_sha256": "04f01a611209fb1bb526d48613deade7e2ec7413b9d6b69e7f03de1b9ea61d8b",
+    "selected_repeat_executable_byte_identical": true,
+    "build_features": [
+      "direct-device",
+      "cpu-fma",
+      "cpu-work-stealing"
+    ],
+    "binding_reuse": true,
+    "gdn_retained_state": false,
+    "cpu_residual_q8": false,
+    "selected_runs": [
+      "cpu-144-binding-long-v48",
+      "cpu-144-binding-repeat-long-v52"
+    ],
+    "control_run": "cpu-144-binding-off-control-long-v48",
+    "target_met_on_fixed_public_fixture": true,
+    "throughput_gain_fraction_vs_same_binary_off_control": [
+      0.11656750188552745,
+      0.12571814802298054
+    ],
+    "decode_time_reduction_fraction_vs_same_binary_off_control": [
+      0.10439807865505857,
+      0.11167817472230557
+    ]
+  },
+  "source_tests": {
+    "native_controls": 498,
+    "one_test_shader_suites": 2,
+    "runtime_host": 97,
+    "runtime_allocator": 3,
+    "runtime_logger": 2,
+    "python_hybrid_controls": 44,
+    "core_two_pass_work_stealing_passed": 131,
+    "core_two_pass_work_stealing_ignored": 3,
+    "strict_release_all_target_clippy_passed": true,
+    "formatting_whitespace_and_provenance_checked": true,
+    "new_external_agent_review": false
+  },
+  "limitations": [
+    "one fixed public 75-token/128-output fixture, seed 424242, temperature 0",
+    "user 10-token/s reference, no fresh Ollama baseline",
+    "selected binding reuse has two samples and one same-binary off control, other candidates have one sample each",
+    "retained GDN registers/spills unmeasured; no additional gain established",
+    "residual Q8 activation arithmetic is approximate, excluded from selection",
+    "host CPU/binding phase counters overlap GPU execution and are not GPU timers",
+    "encoded copy extents are not hardware PCIe traffic",
+    "no cold-storage end-to-end loading, broad quality, long-context, sampling, mixed-card or soak acceptance",
+    "standalone laboratory only; no installed-worker, public API/catalog/default routing, Vashti or release change"
+  ],
+  "restoration": {
+    "all_lab_jobs_exited": true,
+    "intel_memory_used_bytes": 50688000,
+    "kernel_classified_at_utc": "2026-10-08T19:21:59.447749+00:00",
+    "boot_id": "665344a9-0e39-4e45-90de-465fa11df0ca",
+    "kernel_release": "7.0.0-38-generic",
+    "xe_counts": {
+      "wedged": 0,
+      "timeout": 0,
+      "gt_reset": 0,
+      "memory_fault": 0
+    },
+    "admission": {
+      "active": false,
+      "waiting": 0,
+      "paused": false,
+      "recovery_required": false
+    },
+    "http_status": {
+      "kuno_11434": 200,
+      "ollama_11435": 200,
+      "vashti_7771": 200
+    },
+    "gpu_reset_unbind_reboot_used": false,
+    "installed_services_changed": false,
+    "required_vashti_changes": [],
+    "goal_status": "paused"
+  }
+}

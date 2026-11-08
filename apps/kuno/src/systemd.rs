@@ -21,6 +21,7 @@ type Result<T> = std::result::Result<T, &'static str>;
 const SETUP: &str = "/var/lib/kuno-setup";
 pub(crate) const READY: &str = "/etc/kuno/activation-ready";
 const BINARY: &str = "/usr/local/lib/kuno/kuno";
+const CLI_LAUNCHER: &str = "#!/bin/sh\nexec /usr/local/lib/kuno/kuno \"$@\"\n";
 const GATEWAY: &str = "kuno.service";
 const RECOVERY_TIMER: &str = "kuno-recovery.timer";
 const RECOVERY_PENDING: &str = "/var/lib/kuno-setup/auto-recovery-pending";
@@ -324,6 +325,15 @@ fn version(address: SocketAddr) -> Result<String> {
         .ok_or("ollama_version_invalid")
 }
 
+fn verify_gateway_version(upstream: SocketAddr, gateway: SocketAddr) -> Result<()> {
+    // The recorded setup version is historical. A normal Ollama upgrade must
+    // not prevent Kuno upgrades or rollback; compare the owned live endpoints.
+    if version(gateway)? != version(upstream)? {
+        return Err("gateway_upstream_mismatch");
+    }
+    Ok(())
+}
+
 fn wait(mut check: impl FnMut() -> Result<()>) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
@@ -434,6 +444,9 @@ pub(crate) fn ollama_drop_in(upstream: SocketAddr) -> String {
 fn artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Vec<Artifact>> {
     let mut artifacts = base_artifacts(installation, executable)?;
     artifacts.extend(crate::image_engine::installed_artifacts()?);
+    artifacts.extend(native_text_artifacts(
+        installation.config.native_text.as_ref(),
+    )?);
     Ok(artifacts)
 }
 
@@ -479,6 +492,11 @@ fn base_artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Ve
         Artifact {
             path: BINARY.trim_start_matches('/').into(),
             bytes: executable,
+            mode: 0o755,
+        },
+        Artifact {
+            path: "usr/local/bin/kuno".into(),
+            bytes: CLI_LAUNCHER.as_bytes().to_vec(),
             mode: 0o755,
         },
     ])
@@ -585,9 +603,7 @@ impl Host for SystemdHost {
             {
                 return Err("private_upstream_environment_incorrect");
             }
-            if version(i.config.upstream)? != i.ollama_version {
-                return Err("ollama_version_changed");
-            }
+            version(i.config.upstream)?;
             Ok(())
         })
     }
@@ -613,15 +629,14 @@ impl Host for SystemdHost {
             {
                 return Err("gateway_not_ready");
             }
-            if version(i.config.listen)? != i.ollama_version {
-                return Err("gateway_upstream_mismatch");
-            }
+            verify_gateway_version(i.config.upstream, i.config.listen)?;
             if i.config.listen
                 == SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), i.config.listen.port())
-                && version(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    i.config.listen.port(),
-                ))? != i.ollama_version
+                && verify_gateway_version(
+                    i.config.upstream,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), i.config.listen.port()),
+                )
+                .is_err()
             {
                 return Err("gateway_ipv4_compatibility_failed");
             }
@@ -765,11 +780,13 @@ fn validate_installed_config(original: &Config, current: &Config) -> Result<()> 
     let mut expected = original.clone();
     expected.managed = None;
     expected.image = None;
+    expected.native_text = None;
     expected.response_header_timeout_seconds = current.response_header_timeout_seconds;
     expected.stream_idle_timeout_seconds = current.stream_idle_timeout_seconds;
     let mut actual = current.clone();
     actual.managed = None;
     actual.image = None;
+    actual.native_text = None;
     if serde_json::to_value(expected).map_err(|_| "config_encoding_failed")?
         != serde_json::to_value(actual).map_err(|_| "config_encoding_failed")?
     {
@@ -843,6 +860,139 @@ pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Resu
     )
 }
 
+const NATIVE_TEXT_WORKER: &str = "/usr/local/lib/kuno/native-text-worker";
+const NATIVE_TEXT_SETTINGS: &str = "/etc/kuno/native-text-settings.json";
+fn native_text_artifacts(config: Option<&crate::native_text::Config>) -> Result<Vec<Artifact>> {
+    let Some(config) = config else {
+        return Ok(Vec::new());
+    };
+    trusted_file(&config.executable)?;
+    trusted_file(&config.settings)?;
+    let worker = fs::read(&config.executable).map_err(|_| "native_runtime_read_failed")?;
+    let settings = fs::read(&config.settings).map_err(|_| "native_settings_read_failed")?;
+    if worker.is_empty() || worker.len() > 256 * 1024 * 1024 || settings.len() > 64 * 1024 {
+        return Err("native_runtime_invalid");
+    }
+    let _: serde_json::Value =
+        serde_json::from_slice(&settings).map_err(|_| "native_settings_invalid")?;
+    Ok(vec![
+        Artifact {
+            path: NATIVE_TEXT_WORKER.trim_start_matches('/').into(),
+            bytes: worker,
+            mode: 0o755,
+        },
+        Artifact {
+            path: NATIVE_TEXT_SETTINGS.trim_start_matches('/').into(),
+            bytes: settings,
+            mode: 0o644,
+        },
+    ])
+}
+fn attest_native_models(
+    native: &crate::native_text::Config,
+    installation: &crate::config::Config,
+    assets: &mut [Artifact],
+) -> Result<()> {
+    let settings = assets
+        .iter_mut()
+        .find(|a| a.path == Path::new(NATIVE_TEXT_SETTINGS.trim_start_matches('/')))
+        .ok_or("native_settings_invalid")?;
+    let mut model: crate::native_artifact::Settings =
+        serde_json::from_slice(&settings.bytes).map_err(|_| "native_settings_invalid")?;
+    if model.shards.len() != 2 || model.device_id != 0xe223 {
+        return Err("native_settings_unsupported");
+    }
+    let source = fs::File::open(&native.settings).map_err(|_| "native_settings_unavailable")?;
+    let trusted = native.settings == Path::new(NATIVE_TEXT_SETTINGS)
+        && crate::native_artifact::trusted_settings(&source);
+    for item in model
+        .shards
+        .iter_mut()
+        .chain(std::iter::once(&mut model.mtp))
+    {
+        let namespace_path = item.path.clone();
+        if let Ok(tail) = item.path.strip_prefix("/var/lib/kuno/models") {
+            let store = installation
+                .managed
+                .as_ref()
+                .and_then(|m| m.workers.first())
+                .ok_or("native_model_store_unavailable")?;
+            if tail
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            {
+                return Err("native_artifact_invalid");
+            }
+            item.path = Path::new(&store.models).join(tail);
+        }
+        let identity = crate::native_artifact::verify(item, trusted)?.0;
+        item.path = namespace_path;
+        item.identity = Some(identity);
+    }
+    settings.bytes = serde_json::to_vec_pretty(&model).map_err(|_| "native_settings_invalid")?;
+    Ok(())
+}
+/// Enroll optional source assets as OWNED files in the same reversible deployment
+/// as the gateway/configuration. Ordinary upgrades retain these exact assets.
+pub fn configure_native_text(native: Option<crate::native_text::Config>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let mut installation = current_installation()?;
+    let mut native_assets = native_text_artifacts(native.as_ref())?;
+    if let Some(config) = &native {
+        attest_native_models(config, &installation.config, &mut native_assets)?;
+    }
+    if let Some(config) = &native {
+        config.validate()?;
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|_| "native_catalog_unavailable")?;
+        let response = client
+            .get(format!("http://{}/api/tags", installation.config.upstream))
+            .send()
+            .map_err(|_| "native_catalog_unavailable")?;
+        let value: serde_json::Value = response
+            .error_for_status()
+            .map_err(|_| "native_catalog_unavailable")?
+            .json()
+            .map_err(|_| "native_catalog_invalid")?;
+        if value["models"]
+            .as_array()
+            .ok_or("native_catalog_invalid")?
+            .iter()
+            .any(|m| m["name"] == config.model || m["model"] == config.model)
+        {
+            return Err("native_model_name_conflict");
+        }
+    }
+    installation.config.native_text = native.map(|mut config| {
+        config.executable = NATIVE_TEXT_WORKER.into();
+        config.settings = NATIVE_TEXT_SETTINGS.into();
+        config
+    });
+    installation.config.validate()?;
+    if installation.config.image.as_ref().is_some_and(|image| {
+        image
+            .collections
+            .iter()
+            .any(|id| id == "qwen-image-2512-fp8")
+            || image.engine == crate::image_engine::ImageEngine::Native
+    }) && !cfg!(feature = "native-image")
+    {
+        return Err("image_engine_not_in_this_build");
+    }
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    let mut artifacts = base_artifacts(&installation, executable)?;
+    artifacts.extend(crate::image_engine::installed_artifacts()?);
+    artifacts.extend(native_assets);
+    transaction.replace(&artifacts, &mut SystemdHost { installation })
+}
+
 /// Install a verified optional runtime through the existing reversible setup
 /// transaction. This does not enable it or change image collections/GPU choice.
 pub fn install_image_runtime(directory: &Path, manifest_sha256: &str) -> Result<()> {
@@ -864,6 +1014,9 @@ pub fn install_image_runtime(directory: &Path, manifest_sha256: &str) -> Result<
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
     let mut artifacts = base_artifacts(&installation, executable)?;
+    artifacts.extend(native_text_artifacts(
+        installation.config.native_text.as_ref(),
+    )?);
     artifacts.extend(runtime);
     transaction.replace(&artifacts, &mut SystemdHost { installation })
 }
@@ -914,6 +1067,10 @@ pub fn configure_timeouts(response_headers: Option<u64>, stream_idle: Option<u64
 }
 
 pub fn install(service: &str, config: &Config) -> Result<()> {
+    install_for_user(service, config, None)
+}
+
+pub fn install_for_user(service: &str, config: &Config, cli_user: Option<&str>) -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     let phase = transaction.phase()?;
@@ -935,13 +1092,20 @@ pub fn install(service: &str, config: &Config) -> Result<()> {
     };
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
+    let cli = crate::shell_export::prepare_for_user(installation.config.upstream, cli_user)?;
     transaction.apply(
         &artifacts(&installation, executable)?,
         &mut SystemdHost { installation },
-    )
+    )?;
+    apply_cli_configuration(cli)?;
+    Ok(())
 }
 
 pub fn upgrade() -> Result<()> {
+    upgrade_for_user(None)
+}
+
+pub fn upgrade_for_user(cli_user: Option<&str>) -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_installed()?;
@@ -958,21 +1122,73 @@ pub fn upgrade() -> Result<()> {
     }
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
+    let cli = crate::shell_export::prepare_for_user(installation.config.upstream, cli_user)?;
     transaction.replace(
         &artifacts(&installation, executable)?,
         &mut SystemdHost { installation },
-    )
+    )?;
+    apply_cli_configuration(cli)?;
+    Ok(())
+}
+
+/// Enroll or repair the CLI environment without restarting inference services.
+pub fn configure_cli(user: Option<&str>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let installation = current_installation()?;
+    let cli = crate::shell_export::prepare_for_user(installation.config.upstream, user)?;
+    SystemdHost { installation }.verify_private_upstream()?;
+    apply_cli_configuration(cli)?;
+    Ok(())
+}
+
+fn apply_cli_configuration(cli: crate::shell_export::ShellExportPlan) -> Result<()> {
+    match cli.apply() {
+        Ok(activation) => {
+            report_cli_activation(activation);
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!(
+                "kuno: Inference services passed verification, but CLI environment setup failed. After resolving the reported conflict, retry: sudo kuno configure-cli"
+            );
+            Err(error)
+        }
+    }
+}
+
+fn report_cli_activation(activation: crate::shell_export::Activation) {
+    eprintln!(
+        "kuno: Ollama CLI environment configured for {}.",
+        activation.user
+    );
+    eprintln!(
+        "kuno: Open a new terminal, or run: {}",
+        activation.activation_command()
+    );
 }
 
 pub fn restore() -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    let cli = crate::shell_export::prepare_restore()?;
     if matches!(transaction.phase()?, None | Some(Phase::Restored)) {
+        if let Some(cli) = cli {
+            cli.apply()?;
+        }
         return Ok(());
     }
     transaction.restore(&mut SystemdHost {
         installation: load_installation()?,
-    })
+    })?;
+    if let Some(cli) = cli {
+        cli.apply()?;
+    }
+    eprintln!(
+        "kuno: CLI export removed. Existing terminals retain their environment; reopen them or unset OLLAMA_HOST."
+    );
+    Ok(())
 }
 
 /// Explicit operator recovery: restart only the managed runtimes, then clear
@@ -1370,6 +1586,52 @@ pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn gateway_health_uses_live_upstream_after_an_ollama_upgrade() {
+        fn server(reply: &'static str) -> (SocketAddr, std::thread::JoinHandle<()>) {
+            use std::io::Write;
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let thread = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = [0; 1024];
+                let count = socket.read(&mut request).unwrap();
+                assert!(
+                    std::str::from_utf8(&request[..count])
+                        .unwrap()
+                        .starts_with("GET /api/version ")
+                );
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    reply.len(),
+                    reply
+                )
+                .unwrap();
+            });
+            (address, thread)
+        }
+        // An installation may have recorded 0.34.2. Both owned live endpoints
+        // now serve the upgraded daemon, so verification must accept 0.35.1.
+        for (upstream_reply, gateway_reply, expected) in [
+            (r#"{"version":"0.35.1"}"#, r#"{"version":"0.35.1"}"#, Ok(())),
+            (
+                r#"{"version":"0.35.1"}"#,
+                r#"{"version":"0.34.2"}"#,
+                Err("gateway_upstream_mismatch"),
+            ),
+        ] {
+            let (upstream, a) = server(upstream_reply);
+            let (gateway, b) = server(gateway_reply);
+            assert_eq!(verify_gateway_version(upstream, gateway), expected);
+            a.join().unwrap();
+            b.join().unwrap();
+        }
+    }
+
     fn configured_installation() -> Config {
         Config {
             listen: "[::]:11434".parse().unwrap(),
@@ -1377,6 +1639,7 @@ mod tests {
             upstream: "127.0.0.1:11435".parse().unwrap(),
             state_dir: "/var/lib/kuno".into(),
             activation_file: Some(READY.into()),
+            native_text: None,
             max_waiting: 17,
             queue_timeout_seconds: 57,
             response_header_timeout_seconds: 300,
@@ -1441,6 +1704,22 @@ mod tests {
             timeout_config(&invalid_queue, Some(0), Some(0)).unwrap_err(),
             "invalid_admission_bounds"
         );
+    }
+
+    #[test]
+    fn native_enrollment_is_mutable_without_relaxing_listener_identity() {
+        let original = configured_installation();
+        let mut current = original.clone();
+        current.native_text = Some(crate::native_text::Config {
+            model: "kuno-test:iq3_s".into(),
+            executable: NATIVE_TEXT_WORKER.into(),
+            settings: NATIVE_TEXT_SETTINGS.into(),
+            pci_address: "0000:2d:00.0".into(),
+        });
+        current.validate().unwrap();
+        validate_installed_config(&original, &current).unwrap();
+        current.upstream = "127.0.0.1:11999".parse().unwrap();
+        assert!(validate_installed_config(&original, &current).is_err());
     }
 
     #[test]

@@ -1,0 +1,41 @@
+Rust/WGSL adaptation of Strata native IQ/GU/DOWN/group planning and speculative decoding.
+Pinned revision fb58e0dbc8399662c0e47c76578c6e878b14f6cf.
+Source modules: sycl/src/core/verify.cpp, sycl/src/core/speculation.cpp,
+sycl/src/kernels/cuda/iq_kernels.dp.cpp and quantize_act.dp.cpp.
+The connected MTP front/rest and packed KV adaptations also follow
+sycl/src/core/mtp.cpp, fused_gr.dp.cpp, native_rope.dp.cpp,
+qsa_decode_attn.dp.cpp and include/strata/kernels/qsa.hpp.
+MTP MoE uses s2_expert_grouped.dp.cpp, native_bf16.dp.cpp,
+native_router.dp.cpp, native_mmvq.dp.cpp, shared_expert.dp.cpp,
+native_moe.dp.cpp and the SYCL q8_1_finite.hpp contract.
+Native PLE follows native_ple_postops.dp.cpp, native_bf16.dp.cpp,
+ple.dp.cpp, verify.cpp and the original ngram.cpp/table gather contract.
+Prompt operand images, GR/AB consumers and the Rust/Vulkan GEMM substitution
+follow sycl/src/prefill/gemm.dp.cpp, kernels.dp.cpp and prefill.cpp.
+Sampler adaptation follows sycl/src/kernels/cuda/sampler.dp.cpp,
+sycl/include/strata/kernels/sampler.hpp and core/coupled_draft.hpp.
+Argmax/top-probability and confidence consumption also follow
+verify_kernels.dp.cpp, core/mtp.cpp and program/generate.cpp.
+Existing iq_moe_integer-NOTICE.txt retains additional llama.cpp/ggml attribution.
+
+MIT License
+
+Copyright (c) 2026 Niko1221 and the Strata contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

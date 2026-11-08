@@ -1,0 +1,105 @@
+{
+  "scope": "Host/offline source candidate only; both-GPU numeric and complete-model acceptance pending",
+  "source_base": "e43ea22974f56876126b0dedbdf3c3314d2487fb",
+  "frozen_executable": {
+    "path": "/tmp/kuno-rust-ple-qsa-layer-benchmark-20261005",
+    "sha256": "b7b2e40955d39829f71bf8a6dc09620b38f658ada3725dc311e77e13cf328983",
+    "includes_shared_cache_batch_projector_and_sealed_gdn_fields": true
+  },
+  "root_checks": {
+    "native_host_tests_passed": 284,
+    "native_tests_failed": 0,
+    "strict_all_target_clippy": true,
+    "locked_offline_release_build": true,
+    "format_and_diff_check": true,
+    "normal_core_tests_passed": 75,
+    "installed_core_tests_ignored": 2
+  },
+  "public_contract_or_service_changes": false,
+  "gpu_acceptance_or_performance_claim": false,
+  "shared_source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/main.rs": "469dfb425939cb179a0e6266d35b640cc4a0c5502dc4e52db96804b4a182ae9b",
+    "apps/kuno/benchmarks/native-text/src/gdn_layer_batch.rs": "f29c58657e84867793e896a111efdfc6c77e502e134f066111134fea87ecf752",
+    "apps/kuno/benchmarks/native-text/src/resident_batch_projection.rs": "e4d1ceb16a873d65db027ec7af46521f729433b13dafe5a820e749c66b2948bf"
+  },
+  "fixture": "qsa-layer-batch-probe",
+  "patch_sha256": "d71cd56af09867082afb94838371adaea431bd97beab6834f676bf5ae3f23a53",
+  "main_hook_integration": "only early mode/module lines manually composed with earlier PLE main hunk",
+  "focused_new_native_tests": 11,
+  "source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/qsa_layer_batch.rs": "f846a6bf22e633d8fbcb64540409f204478ab26ca38e80bfd3e5e8f0629f5be0",
+    "apps/kuno/benchmarks/native-text/src/qsa_layer_batch_probe.rs": "9bc176ce4f153f9b16797e43112594947bea22266c38f6cf10e939d6fb465b26"
+  },
+  "budget": {
+    "capacity": 2064,
+    "max_batch": 8,
+    "main_cap": 67108864,
+    "dual_full_main_pages": 58818560,
+    "runtime_io_cap": 67108864,
+    "audited_io_peak_bound": 35491840,
+    "private_host_cap": 268435456,
+    "private_host_upper_bound": 169577300,
+    "conservative_public_cap": 134217728,
+    "conservative_original_packed_and_vector_pages": 59899904,
+    "decoded_public_cap": 268435456,
+    "original_decoded_matrix_bytes": 205783040,
+    "decoded_plus_largest_packed_source_and_tables_peak": 241434624,
+    "dual_context4096_main_pages": 100925440,
+    "context4096_dual_probe_rejected": true,
+    "metadata_bytes_max": 512,
+    "pre_score_dispatches": 18,
+    "post_selection_dispatches": 5,
+    "independent_io_accounting": "Phase maxima and full audit duplicates; completed-score cleanup before selection source, completed-final-status cleanup before one-page diagnostics; 17 scalar status source pages+input+cache retained until score fence."
+  },
+  "contract": {
+    "original_layer": 3,
+    "original_packed_matrices": 6,
+    "all_parameters_and_rotary_tables_original": true,
+    "max_batch": 8,
+    "committed_old_cache_input_immutable": true,
+    "prepared_geometry_buffers_sealed": true,
+    "selector": "accepted exact complete blocks plus incomplete tail; future blocks excluded",
+    "statuses": 17,
+    "original_scalar_gpu_and_independent_core_comparison": true,
+    "scalar_status_planes_reset_each_token": true,
+    "no_state_cursor_commit_or_fallback": true,
+    "exact_full_owned_read_before_decode": true,
+    "failed_attempt_retires_before_best_effort_close": true,
+    "inherited_tolerance": {
+      "absolute": 5e-05,
+      "relative": 0.0005
+    }
+  },
+  "pending_device_cases": {
+    "numeric": 24,
+    "counts": [
+      1,
+      3,
+      5,
+      8
+    ],
+    "previous": [
+      0,
+      3,
+      4,
+      2047,
+      2049,
+      2051
+    ],
+    "capacity": 2064,
+    "negative_cases": [
+      "last-input nonfinite",
+      "completed cancellation",
+      "stale arena epoch",
+      "duplicate owner alias"
+    ],
+    "fresh_parity_and_full_main_owned_io_audit": true
+  },
+  "remaining": [
+    "Both-card physical numeric/cancel/cleanup acceptance",
+    "Dual4096 fixture exceeds unchanged64MiB main cap and is explicitly rejected; not context4096 device acceptance",
+    "Whole-model layer-major transaction, native owners and production private worker",
+    "Compiler-idle complete-model performance and updated Ollama win",
+    "Only API-visible pages/tracked IO; opaque driver/register/spill/abrupt-loss copies outside proof"
+  ]
+}

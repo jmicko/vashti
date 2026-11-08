@@ -1,0 +1,16 @@
+{
+  "borrowed_manifest_sha256": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+  "cold_definition": "no model resident; OS page cache not flushed",
+  "core_base_commit": "f8b2d2d5442f65cc772503074e1ab6670d3d70ce",
+  "eval_count": 128,
+  "eval_duration": 26930385000,
+  "fixture": "rainwater",
+  "load_duration": 16743690844,
+  "production_native_api": false,
+  "prompt_eval_count": 75,
+  "prompt_eval_duration": 26833441000,
+  "response_sha256": "03095da322ed258d16f7548365a10fe15b5f3a234879d7fd1d01e79577ce1858",
+  "scope": "fixed-public-synthetic-operator-test-only",
+  "seed": 424242,
+  "wall_s": 70.523422526996
+}

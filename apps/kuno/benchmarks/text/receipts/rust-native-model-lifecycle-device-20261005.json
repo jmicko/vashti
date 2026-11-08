@@ -1,0 +1,903 @@
+{
+  "all24_greedy_comparisons_equal": true,
+  "cargo_build_snapshot_sha256": "1453bda8103b4cb5d0d2657d748155977f3061f03f604f6573403f8be5c56809",
+  "date": "2026-10-05",
+  "executable_sha256": "110b99265bf180fea3f2a0c21dc1e678c7df24d483b2651644fab3231b8630f2",
+  "lifecycle_accepted_both_cards": true,
+  "limitations": [
+    "all44 actual owner lifecycle cases accepted; full-vocabulary scores differ from original scalar reference and remain numerically unaccepted",
+    "no inference/public quality tolerance is inferred from diagnostic bound outside0",
+    "identical aggregate stats cannot prove exact native-partition vector identity",
+    "same frozen binary; simultaneous opposite-card runs and diagnostic inspections make timings unsuitable for speed comparisons",
+    "original scalar exhaustion preflight behavior preserved; diagnostic explicitly closes it",
+    "only genuine context4/8 boundaries; no2048/2049/2052/4096 acceptance",
+    "no production private worker/API/default/frontend/installed/release/reset/reboot change"
+  ],
+  "numerical_tolerance_relaxed": false,
+  "protection": {
+    "core_limit": 0,
+    "inside_both_units_verified": true,
+    "lab_runtime_max_seconds": 1800,
+    "memory_max": 8589934592,
+    "swap_max": 0
+  },
+  "reports": [
+    {
+      "card": "intel",
+      "concurrent_other_card_lifecycle_run": true,
+      "diagnostic_outside_count": 0,
+      "max_absolute_logit_difference": 1.0371208190917969e-05,
+      "numeric_accepted": false,
+      "observed_outer_runner_exit": 1,
+      "observed_runtime_seconds_diagnostic": 347.67,
+      "observed_worker_unit_exit": 0,
+      "protected_output_sha256": "a6d8955b44424f8e28b11a817371e13860583162a79d20e6fe4252224b7a51c8",
+      "report": {
+        "all_greedy_equal": true,
+        "all_logits_bit_equal": false,
+        "cases": [
+          {
+            "audit": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 60,
+              "source_bytes": 2228224
+            },
+            "case": 0,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 2,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 5,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 120,
+              "source_bytes": 4456448
+            },
+            "case": 1,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 3,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 228781,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 7.62939453125e-06,
+              "max_relative": 0.08602150537634409
+            },
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 4,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 228781,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 7.62939453125e-06,
+              "max_relative": 0.08602150537634409
+            },
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 6,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 228781,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 7.62939453125e-06,
+              "max_relative": 0.08602150537634409
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 60,
+              "source_bytes": 2228224
+            },
+            "case": 7,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 8,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 11,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 9,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 12,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 10,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 13,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 14,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 18,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 15,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 19,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 16,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 20,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 17,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 21,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 236259,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 1.0371208190917969e-05,
+              "max_relative": 0.15625
+            },
+            "terminal_cleanup": false
+          }
+        ],
+        "context_retired": false,
+        "extra_main_bytes": 0,
+        "fixed_public_input": "original tokenizer ! repeated4/8",
+        "fixture": "actual-native-model-lifecycle",
+        "independent_runtime_cap": 67108864,
+        "lifecycle_accepted": true,
+        "live_source_cap": 67108864,
+        "model_host_cap": 12582912,
+        "native_main_bytes": 818249728,
+        "native_main_pages": 1376,
+        "numeric_not_accepted": true,
+        "owned_io_cleanup_accepted": true,
+        "performance_claim": false,
+        "probe_host_cap": 4194304,
+        "probe_metadata_cap": 65536,
+        "scalar_main_bytes": 785186816,
+        "scalar_main_pages": 1286,
+        "scope": "fixed-public whole-model lifecycle; numeric mismatch needs parent review",
+        "seed": 424242,
+        "source_audits_cumulative": true,
+        "vendor": 32902,
+        "weights": "borrowed-unmodified-ollama-blob",
+        "whole_model_numeric_accepted": false
+      },
+      "report_sha256": "79dd0f483a202cd44b1dc21ad497bab93e7fed5e81346f63737d965dafdef944",
+      "run_record": {
+        "card": "intel",
+        "cargo_artifacts_sha256": "1453bda8103b4cb5d0d2657d748155977f3061f03f604f6573403f8be5c56809",
+        "frozen_executable_sha256": "110b99265bf180fea3f2a0c21dc1e678c7df24d483b2651644fab3231b8630f2",
+        "matched_performance_measurement": false,
+        "protected_lifecycle_completion_checked": true,
+        "protected_output_sha256": "a6d8955b44424f8e28b11a817371e13860583162a79d20e6fe4252224b7a51c8",
+        "receipt_sha256": "79dd0f483a202cd44b1dc21ad497bab93e7fed5e81346f63737d965dafdef944",
+        "scope": "fixed-public actual-model lifecycle and full-vocabulary numeric fixture only",
+        "whole_model_numeric_accepted": false
+      },
+      "run_record_sha256": "6ba2d75a6b44f6cbb6501791ced46cedac44077bb55902e8b8af1eb711e7a53d"
+    },
+    {
+      "card": "nvidia",
+      "concurrent_other_card_lifecycle_run": true,
+      "diagnostic_outside_count": 0,
+      "max_absolute_logit_difference": 8.702278137207031e-06,
+      "numeric_accepted": false,
+      "observed_outer_runner_exit": 1,
+      "observed_runtime_seconds_diagnostic": 355.71,
+      "observed_worker_unit_exit": 0,
+      "protected_output_sha256": "f5cdb7944665d1695a90042d189df5a419f0c4eb8947bf6a1595ce50423133d6",
+      "report": {
+        "all_greedy_equal": true,
+        "all_logits_bit_equal": false,
+        "cases": [
+          {
+            "audit": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 60,
+              "source_bytes": 2228224
+            },
+            "case": 0,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 2,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 5,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 120,
+              "source_bytes": 4456448
+            },
+            "case": 1,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 3,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 228552,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 7.62939453125e-06,
+              "max_relative": 0.12431444241316271
+            },
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 4,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 228552,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 7.62939453125e-06,
+              "max_relative": 0.12431444241316271
+            },
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 6,
+            "context": 8,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 228552,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 7.62939453125e-06,
+              "max_relative": 0.12431444241316271
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 60,
+              "source_bytes": 2228224
+            },
+            "case": 7,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 8,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 11,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 9,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 12,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 10,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 13,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 14,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 18,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 15,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 19,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 16,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 20,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 17,
+            "context": 4,
+            "hook_observed": true,
+            "numeric": null,
+            "terminal_cleanup": true
+          },
+          {
+            "audit": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "case": 21,
+            "context": 4,
+            "hook_observed": false,
+            "numeric": {
+              "bit_equal": false,
+              "bit_mismatches": 235605,
+              "diagnostic_bound_only": "1e-4+3e-4*abs(reference)",
+              "diagnostic_outside": 0,
+              "greedy_equal": true,
+              "max_absolute": 8.702278137207031e-06,
+              "max_relative": 0.08547008547008547
+            },
+            "terminal_cleanup": false
+          }
+        ],
+        "context_retired": false,
+        "extra_main_bytes": 0,
+        "fixed_public_input": "original tokenizer ! repeated4/8",
+        "fixture": "actual-native-model-lifecycle",
+        "independent_runtime_cap": 67108864,
+        "lifecycle_accepted": true,
+        "live_source_cap": 67108864,
+        "model_host_cap": 12582912,
+        "native_main_bytes": 818249728,
+        "native_main_pages": 1376,
+        "numeric_not_accepted": true,
+        "owned_io_cleanup_accepted": true,
+        "performance_claim": false,
+        "probe_host_cap": 4194304,
+        "probe_metadata_cap": 65536,
+        "scalar_main_bytes": 785186816,
+        "scalar_main_pages": 1286,
+        "scope": "fixed-public whole-model lifecycle; numeric mismatch needs parent review",
+        "seed": 424242,
+        "source_audits_cumulative": true,
+        "vendor": 4318,
+        "weights": "borrowed-unmodified-ollama-blob",
+        "whole_model_numeric_accepted": false
+      },
+      "report_sha256": "db3b818a29cdd5af7c83adfc9f44fe8a0abe9e39b491d5f6ef2456af5346b26d",
+      "run_record": {
+        "card": "nvidia",
+        "cargo_artifacts_sha256": "1453bda8103b4cb5d0d2657d748155977f3061f03f604f6573403f8be5c56809",
+        "frozen_executable_sha256": "110b99265bf180fea3f2a0c21dc1e678c7df24d483b2651644fab3231b8630f2",
+        "matched_performance_measurement": false,
+        "protected_lifecycle_completion_checked": true,
+        "protected_output_sha256": "f5cdb7944665d1695a90042d189df5a419f0c4eb8947bf6a1595ce50423133d6",
+        "receipt_sha256": "db3b818a29cdd5af7c83adfc9f44fe8a0abe9e39b491d5f6ef2456af5346b26d",
+        "scope": "fixed-public actual-model lifecycle and full-vocabulary numeric fixture only",
+        "whole_model_numeric_accepted": false
+      },
+      "run_record_sha256": "82f7ef2e9d80795c497c3fc1b2716d5f69e2b0b93ea1f7e484d05a3b40385139"
+    }
+  ],
+  "root_source_commits": [
+    "19e12af",
+    "cdb3524"
+  ],
+  "scope": "both-card actual22-owner lifecycle acceptance per card; full-logit numeric explicitly rejected",
+  "source_fixture_cases": 22,
+  "whole_model_numeric_accepted": false
+}

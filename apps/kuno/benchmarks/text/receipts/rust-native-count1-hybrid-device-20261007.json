@@ -1,0 +1,321 @@
+{
+  "scope": "fixed-public-chat-count1-hybrid-short-token-lifecycle-and-owning-erasure-only",
+  "source_commit": "ff3c7d186b5828b6e7b43e9a68b99f048167ca70",
+  "source_registration_commit": "a8cb5e00b00f6bb8938df59bc819cef68ad0a7ca",
+  "constructor_correction_commit": "ff3c7d186b5828b6e7b43e9a68b99f048167ca70",
+  "normal_executable_sha256": "4382edf25862e600c82eaf59a141fdba37a8fc056a47105da601a9dc3654de4c",
+  "cargo_artifacts_sha256": "eae6bd8b13ba56b93859189e410e34ee0603eb3f884a00f2dd6fac9a9c3ca8cc",
+  "native_host_tests": 463,
+  "python_controls_previous_acceptance": 106,
+  "strict_all_target_clippy_accepted": true,
+  "short_output_ids_and_lifecycle_accepted": true,
+  "full_vocabulary_logit_acceptance": false,
+  "hybrid_late_finality_acceptance": false,
+  "long_fixture_acceptance": false,
+  "matched_repeated_performance_accepted": false,
+  "cpu_gpu_overlap": false,
+  "production_accepted": false,
+  "new_ollama_baseline_run": false,
+  "runs": [
+    {
+      "card": "intel",
+      "cpu_miss_cap": 0,
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-hybrid-device-20261007-v2/intel-cap0.json",
+      "receipt_sha256": "6beb535e3d3040d9b741e0b3d625821f80d569da6922cec0a36297ed710a0b10",
+      "run_record_sha256": "bcf83c364ac36065918afef476450567e1a52e27d4ada95d4b0fa47d64afd97e",
+      "log_sha256": "d6795c0d82e55036e23211e21faf895a57516b80385a9884721daedc0d7a6a7b",
+      "run_record": {
+        "card": "intel",
+        "cargo_artifacts_sha256": "eae6bd8b13ba56b93859189e410e34ee0603eb3f884a00f2dd6fac9a9c3ca8cc",
+        "cpu_gpu_overlap": false,
+        "cpu_miss_cap": 0,
+        "fixture": "resident-count1-hybrid-chat",
+        "frozen_executable_sha256": "4382edf25862e600c82eaf59a141fdba37a8fc056a47105da601a9dc3654de4c",
+        "matched_performance_measurement": false,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "6beb535e3d3040d9b741e0b3d625821f80d569da6922cec0a36297ed710a0b10",
+        "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only"
+      },
+      "short_output_and_lifecycle_accepted": true,
+      "prefill_ms": 6498,
+      "generation_ms": 5440,
+      "native_decode_steps": 7,
+      "observed_decode_tokens_per_second": 1.286764705882353,
+      "completed_cpu_misses": 0,
+      "fresh_completed_cpu_misses": 0,
+      "warm_expert_weight_upload_bytes": 2619187200,
+      "warm_expert_uploads": 792,
+      "public_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1200470558,
+        "native_ffn_gr_and_router_enqueue": 87026440,
+        "native_route_and_expert_enqueue": 2066715987,
+        "native_router_fence": 1584929529,
+        "native_shared_and_ffn_combine_enqueue": 271323254
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "intel",
+      "cpu_miss_cap": 10,
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-hybrid-device-20261007-v2/intel-cap10.json",
+      "receipt_sha256": "247a8ddd3b2257a293ab9bbb18d1ab39c836c4b45330c9722c92fe37e5e6d3d2",
+      "run_record_sha256": "26470a5c87c784f5ece6b92c08a72f3bd6927df329289a38af73989942ab21f7",
+      "log_sha256": "23d7ca8d216dfad004d36005b12d5d04c002026ecf30d22bdf4d3cb45ff3e018",
+      "run_record": {
+        "card": "intel",
+        "cargo_artifacts_sha256": "eae6bd8b13ba56b93859189e410e34ee0603eb3f884a00f2dd6fac9a9c3ca8cc",
+        "cpu_gpu_overlap": false,
+        "cpu_miss_cap": 10,
+        "fixture": "resident-count1-hybrid-chat",
+        "frozen_executable_sha256": "4382edf25862e600c82eaf59a141fdba37a8fc056a47105da601a9dc3654de4c",
+        "matched_performance_measurement": false,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "247a8ddd3b2257a293ab9bbb18d1ab39c836c4b45330c9722c92fe37e5e6d3d2",
+        "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only"
+      },
+      "short_output_and_lifecycle_accepted": true,
+      "prefill_ms": 7770,
+      "generation_ms": 5448,
+      "native_decode_steps": 7,
+      "observed_decode_tokens_per_second": 1.2848751835535976,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "warm_expert_weight_upload_bytes": 0,
+      "warm_expert_uploads": 0,
+      "public_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1205360453,
+        "native_ffn_gr_and_router_enqueue": 98924673,
+        "native_route_and_expert_enqueue": 2136356474,
+        "native_router_fence": 1505600437,
+        "native_shared_and_ffn_combine_enqueue": 282062031
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "cpu_miss_cap": 0,
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-hybrid-device-20261007-v2/nvidia-cap0.json",
+      "receipt_sha256": "6f5aa767f7deec16a3ae6f73f6915f99f85b2a1486be39d2959a2184bc750b25",
+      "run_record_sha256": "ea46a8bab945fea4574b3a57670528c197204df5e3f3b287abbcb6c6c3c90ea8",
+      "log_sha256": "4cf70c72b6ab08831ad9770be3aee739e492fb137147d75f92a9649793227f60",
+      "run_record": {
+        "card": "nvidia",
+        "cargo_artifacts_sha256": "eae6bd8b13ba56b93859189e410e34ee0603eb3f884a00f2dd6fac9a9c3ca8cc",
+        "cpu_gpu_overlap": false,
+        "cpu_miss_cap": 0,
+        "fixture": "resident-count1-hybrid-chat",
+        "frozen_executable_sha256": "4382edf25862e600c82eaf59a141fdba37a8fc056a47105da601a9dc3654de4c",
+        "matched_performance_measurement": false,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "6f5aa767f7deec16a3ae6f73f6915f99f85b2a1486be39d2959a2184bc750b25",
+        "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only"
+      },
+      "short_output_and_lifecycle_accepted": true,
+      "prefill_ms": 16268,
+      "generation_ms": 9056,
+      "native_decode_steps": 7,
+      "observed_decode_tokens_per_second": 0.7729681978798587,
+      "completed_cpu_misses": 0,
+      "fresh_completed_cpu_misses": 0,
+      "warm_expert_weight_upload_bytes": 4829081600,
+      "warm_expert_uploads": 1471,
+      "public_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1345173908,
+        "native_ffn_gr_and_router_enqueue": 76563944,
+        "native_route_and_expert_enqueue": 4916586575,
+        "native_router_fence": 2092144128,
+        "native_shared_and_ffn_combine_enqueue": 287596811
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "cpu_miss_cap": 10,
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-hybrid-device-20261007-v2/nvidia-cap10.json",
+      "receipt_sha256": "9ac81401e932df84ae2723b24ecb6b1f76ea5c5236032d9ce5f116d04924faf2",
+      "run_record_sha256": "ec7c5e07fcf225ac695691e421f3929d96204bfb8e7ef4cf2df93e80d24bf5a1",
+      "log_sha256": "368b9006f5c012900d53758f611a19ee3256193446b3dd2189e2e4119ea4036c",
+      "run_record": {
+        "card": "nvidia",
+        "cargo_artifacts_sha256": "eae6bd8b13ba56b93859189e410e34ee0603eb3f884a00f2dd6fac9a9c3ca8cc",
+        "cpu_gpu_overlap": false,
+        "cpu_miss_cap": 10,
+        "fixture": "resident-count1-hybrid-chat",
+        "frozen_executable_sha256": "4382edf25862e600c82eaf59a141fdba37a8fc056a47105da601a9dc3654de4c",
+        "matched_performance_measurement": false,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "9ac81401e932df84ae2723b24ecb6b1f76ea5c5236032d9ce5f116d04924faf2",
+        "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only"
+      },
+      "short_output_and_lifecycle_accepted": true,
+      "prefill_ms": 15728,
+      "generation_ms": 6849,
+      "native_decode_steps": 7,
+      "observed_decode_tokens_per_second": 1.0220470141626514,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "warm_expert_weight_upload_bytes": 0,
+      "warm_expert_uploads": 0,
+      "public_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1158432382,
+        "native_ffn_gr_and_router_enqueue": 72360538,
+        "native_route_and_expert_enqueue": 3136146331,
+        "native_router_fence": 1895084056,
+        "native_shared_and_ffn_combine_enqueue": 265950177
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    }
+  ],
+  "observations": {
+    "intel_single_pair_duration_change_percent": -0.14705882352941124,
+    "nvidia_single_pair_duration_change_percent": 24.370583038869253,
+    "qualification": "One compiler-idle seven-step control/offload pair per card; no repeated ABBA or cold-load/long-throughput claim."
+  },
+  "rejected_initial_attempt": {
+    "artifact_sha256": "1c44a37a3c2cd44d41a03946bdd2286bfdab1c727c0843fbe925619cf0ff2197",
+    "log_path": "/media/jmicko/faststore/kuno-development/native-count1-hybrid-device-20261007-v1/intel-cap0.log",
+    "cause": "constructor reentered its held MAIN admission mutex",
+    "manual_unit_stop": true,
+    "accepted_receipt_created": false,
+    "owned_erasure_accepted": false,
+    "physical_release_verified": true,
+    "hardware_reset_performed": false
+  },
+  "postflight": {
+    "intel_physical_vram": {
+      "scope": "read-only-xe-physical-vram-query",
+      "pci": "0000:2d:00.0",
+      "total_bytes": 34242297856,
+      "used_bytes": 50688000,
+      "root_query": true
+    },
+    "kernel_classification": {
+      "scope": "read-only-content-free-xe-kernel-classification",
+      "boot_id": "665344a9-0e39-4e45-90de-465fa11df0ca",
+      "kernel": "7.0.0-38-generic",
+      "utc": "2026-10-07T19:49:01.851806+00:00",
+      "classified_messages": {
+        "wedged": 0,
+        "timeout": 0,
+        "gt_reset": 0,
+        "memory_fault": 0
+      }
+    },
+    "nvidia_snapshot": "NVIDIA GeForce RTX 3060, 388 MiB, 12288 MiB, 76 %",
+    "nvidia_second_snapshot_mib": 391,
+    "nvidia_desktop_active": true,
+    "kuno_admission": {
+      "active": false,
+      "waiting": 0,
+      "paused": false,
+      "recovery_required": false
+    },
+    "kuno_listener": "127.0.0.1:11434",
+    "direct_ollama_listener": "127.0.0.1:11435",
+    "both_api_ps_http_200_and_empty": true,
+    "lab_jobs_left_running": false,
+    "installed_binary_or_configuration_changed": false,
+    "services_restarted": false,
+    "hardware_reset_or_reboot": false
+  }
+}

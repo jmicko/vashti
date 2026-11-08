@@ -1,0 +1,316 @@
+{
+  "scope": "fixed-public operator calibration only; no complete-model dual-device throughput claim",
+  "samples": [
+    {
+      "run": "resident-nvidia-v59",
+      "source_commit": "d8245e469922bb12c1da92356389ea3a5e2b6d3d",
+      "build_directory": "/media/jmicko/faststore/kuno-development/next-offload-build-20261008-v59-secondary-resident-calibration",
+      "frozen_executable_sha256": "6d5cb0a8450206fd3c480d632bb8f9d86b3e010181c61bf6f6df24cb3571678e",
+      "raw_receipt_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/resident-nvidia-v59.json",
+      "raw_receipt_sha256": "49cc953562dbe1f3882010b1bb28810de33c7b0734d23248cf336a2218967b22",
+      "run_record_sha256": "c2642c8b4fc1b24188737219a3b555689e09758dee3aa6bc602f5dfcf01875b7",
+      "protected_log_sha256": "817f5bc67ef4d231f4be3da975fc34a706130b80e87d4b99f4c4bdcae4b0cb27",
+      "cargo_artifacts_sha256": "96ad53dacecc8cb73149ef354e9647761e63cc9c66272fdb9bb784466eb6c18c",
+      "scope": "fixed-public-original-resident-expert-calibration",
+      "complete_original_numeric_and_owning_acceptance": true,
+      "cpu_weight_access": "buffered-original-expert-source",
+      "selected_cpu_baseline_comparable": false,
+      "kernel": "original isolated expert shader; not optimized native shared shader",
+      "points": [
+        {
+          "down_dtype": 6,
+          "kind": "resident-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 4.071032,
+          "median_joined_ms": 3.062778,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 3.062713,
+          "median_bridge_and_merge_ms": 1.003259,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 3.544846549630165e-08
+          }
+        },
+        {
+          "down_dtype": 6,
+          "kind": "upload-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 42.8255705,
+          "median_joined_ms": 41.4839185,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 41.4838285,
+          "median_bridge_and_merge_ms": 1.2385415,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 3.544846549630165e-08
+          }
+        },
+        {
+          "down_dtype": 6,
+          "kind": "cpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 24.244822,
+          "median_joined_ms": 18.695918,
+          "median_cpu_ms": 15.414993,
+          "median_gpu_ms": 2.8700305,
+          "median_bridge_and_merge_ms": 3.8777395,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 6.984919309616089e-09,
+            "max_core_error": 3.725290298461914e-08
+          }
+        },
+        {
+          "down_dtype": 8,
+          "kind": "resident-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 9.712797,
+          "median_joined_ms": 7.1994195,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 7.1993645,
+          "median_bridge_and_merge_ms": 1.2642765,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 5.448237061500549e-08
+          }
+        },
+        {
+          "down_dtype": 8,
+          "kind": "upload-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 48.2275685,
+          "median_joined_ms": 47.0813735,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 47.0812585,
+          "median_bridge_and_merge_ms": 1.145615,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 5.448237061500549e-08
+          }
+        },
+        {
+          "down_dtype": 8,
+          "kind": "cpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 10.1682045,
+          "median_joined_ms": 7.4291355,
+          "median_cpu_ms": 6.5014825,
+          "median_gpu_ms": 0.771852,
+          "median_bridge_and_merge_ms": 2.2212945,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 9.313225746154785e-09,
+            "max_core_error": 5.8673322200775146e-08
+          }
+        }
+      ]
+    },
+    {
+      "run": "resident-nvidia-v60",
+      "source_commit": "34cdeaf71d8b29ffe186439a35e77b19be1150af",
+      "build_directory": "/media/jmicko/faststore/kuno-development/next-offload-build-20261008-v60-secondary-resident-calibration",
+      "frozen_executable_sha256": "21ed239b5c71551ae36e55ea39781b19f8abbe64f0bcfa3ab42ae8367b7e0881",
+      "raw_receipt_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/resident-nvidia-v60.json",
+      "raw_receipt_sha256": "32ceb2ac9fba3816ec664b97bd71502a103f1a5f67d62edeb1ededcbe26ad627",
+      "run_record_sha256": "89691052fe6e0b0a3da8b620ad90e9090bffff4e920c648246e7a01c4eaee8d3",
+      "protected_log_sha256": "2ce03b01ccea07369309dab1b1475365f859c673c58045c5d88012f9c769936d",
+      "cargo_artifacts_sha256": "d9009f4b80ff615cecfd2e32f6707a820bbf15442f15478553e6f98f0a23a64d",
+      "scope": "fixed-public-original-resident-expert-calibration",
+      "complete_original_numeric_and_owning_acceptance": true,
+      "cpu_weight_access": "mapped-original-with-selected-prefetch",
+      "selected_cpu_baseline_comparable": true,
+      "kernel": "original isolated expert shader; not optimized native shared shader",
+      "points": [
+        {
+          "down_dtype": 6,
+          "kind": "resident-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 4.2636255,
+          "median_joined_ms": 3.2811885,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 3.2811235,
+          "median_bridge_and_merge_ms": 0.979317,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 3.544846549630165e-08
+          }
+        },
+        {
+          "down_dtype": 6,
+          "kind": "upload-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 43.6062505,
+          "median_joined_ms": 42.1861005,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 42.1859955,
+          "median_bridge_and_merge_ms": 1.1943685,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 3.544846549630165e-08
+          }
+        },
+        {
+          "down_dtype": 6,
+          "kind": "cpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 4.93881,
+          "median_joined_ms": 2.3050915,
+          "median_cpu_ms": 1.214248,
+          "median_gpu_ms": 1.3710545,
+          "median_bridge_and_merge_ms": 2.417017,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 6.984919309616089e-09,
+            "max_core_error": 3.725290298461914e-08
+          }
+        },
+        {
+          "down_dtype": 8,
+          "kind": "resident-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 7.299507,
+          "median_joined_ms": 3.683261,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 3.683211,
+          "median_bridge_and_merge_ms": 3.6456715,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 5.448237061500549e-08
+          }
+        },
+        {
+          "down_dtype": 8,
+          "kind": "upload-gpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 52.6224855,
+          "median_joined_ms": 51.266171,
+          "median_cpu_ms": 0.0,
+          "median_gpu_ms": 51.266121,
+          "median_bridge_and_merge_ms": 1.36819,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 0.0,
+            "max_core_error": 5.448237061500549e-08
+          }
+        },
+        {
+          "down_dtype": 8,
+          "kind": "cpu",
+          "numeric_gates": 2,
+          "abba_samples": 4,
+          "median_candidate_completed_wall_ms": 5.0261055,
+          "median_joined_ms": 2.566063,
+          "median_cpu_ms": 1.6651465,
+          "median_gpu_ms": 2.071574,
+          "median_bridge_and_merge_ms": 2.206461,
+          "maximum_numeric_errors": {
+            "max_tree_error": 5.960464477539063e-08,
+            "max_legacy_error": 9.313225746154785e-09,
+            "max_core_error": 5.8673322200775146e-08
+          }
+        }
+      ]
+    }
+  ],
+  "excluded_setup_attempts": [
+    {
+      "run": "resident-nvidia-v57",
+      "acceptance": false,
+      "failure": "Compiled row-scheduling selection rejected before GPU/model access.",
+      "protected_log_sha256": "713201460bc9cd0f8bac4a88b735d6298f70e5b005b07e67bcc5801c59013242"
+    },
+    {
+      "run": "resident-nvidia-v58",
+      "acceptance": false,
+      "failure": "Old64-lane reference rejected selected FMA32 arithmetic. Kept the old reference and added independent exact FMA reference; no tolerance relaxation.",
+      "protected_log_sha256": "47b4d2ef1b52b62520ba4c501d325f91ebdd1e7663b05e98f91e2c8f040a86e5"
+    }
+  ],
+  "findings": [
+    "Stationary residency avoids most upload cost. RTX3060 mapped trial resident Q5/Q8 completed medians4.264/7.300ms vs upload43.606/52.622ms.",
+    "Same mapped pooled FMA CPU completed medians4.939/5.026ms; resident GPU is not always faster in this isolated audited operator.",
+    "CPU arithmetic itself1.2\u20131.7ms per ten experts; full operator includes GPU-empty checks, bridges and owning fences.",
+    "These tests use original isolated expert kernels and per-case cleanup; optimized native shared kernels/request reuse and the second-device bridge remain unmeasured.",
+    "Prioritize disjoint resident secondary bank; do not assign all misses to GPU or select whole-model placement from this local cost alone."
+  ],
+  "proposed_secondary_bank": {
+    "status": "not implemented",
+    "experts_per_layer": 48,
+    "shards": [
+      32,
+      16
+    ],
+    "layers": 48,
+    "public_bank_allocation_bytes": 9663676416,
+    "allocation_method": "For either Q5/Q8 down family, original full bins32/32/64MiB +16/16/32MiB per layer. Leaves room on12GiB3060 for desktop/runtime/private work.",
+    "selection": "Use transient prefill frequency to select experts absent from the frozen B70 banks; leave both banks stationary during decode.",
+    "private_persistence": "No routes, vectors, expert histories, prompts or outputs persisted. Erase transient histories and full owning buffers on exit/error.",
+    "execution": "Reuse optimized native kernels and overlap B70/NVIDIA/CPU; bridge only existing mixed input and original-rank partials, join before publication.",
+    "source_windows": "Round full original source pages; bounded batches of up to8 experts, within existing40MiB source-window limit.",
+    "remaining_gates": [
+      "Actual secondary-device owner/lifecycle and cancellation/error erasure",
+      "Exact original-rank membership and partial merge",
+      "Both-device numerical/fault acceptance",
+      "Complete original75/128 token fixture and matched total decode timing",
+      "Physical recovery on both cards"
+    ]
+  },
+  "installed_services_or_api_changed": false,
+  "new_ollama_baseline": false,
+  "extra_ram_recommended": false,
+  "limitations": [
+    "Only ten fixed expert IDs/input vectors across original Q5/Q8 families and one card.",
+    "No optimized secondary native kernel benchmark, disjoint set coverage, whole-model two-card execution or broad quality/context/soak acceptance."
+  ],
+  "restoration": {
+    "verified_at_utc": "2026-10-08T21:54:25.400396+00:00",
+    "boot_id": "b32654b7-a49b-493d-8305-46da15b6eac6",
+    "kernel_release": "7.0.0-38-generic",
+    "all_lab_jobs_exited": true,
+    "running_lab_unit_count": 0,
+    "intel_memory_used_bytes": 50688000,
+    "intel_memory_total_bytes": 34242297856,
+    "nvidia_memory_used_mib": 372,
+    "nvidia_compute_process_count": 0,
+    "kernel_counts": {
+      "xe_wedged": 0,
+      "xe_timeouts": 0,
+      "xe_reset_failures": 0,
+      "xe_memory_faults": 0,
+      "nvidia_xid": 0
+    },
+    "admission": {
+      "active": false,
+      "waiting": 0,
+      "paused": false,
+      "recovery_required": false
+    },
+    "http_status": {
+      "kuno_11434": 200,
+      "ollama_11435": 200,
+      "vashti_7771": 200
+    },
+    "resident_model_count": 0,
+    "gpu_reset_unbind_reboot_used": false,
+    "installed_services_changed": false,
+    "required_vashti_changes": []
+  }
+}

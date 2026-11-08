@@ -1,0 +1,77 @@
+{
+  "experiment_identity": {
+    "binary_sha256": "72d11350c1412de8eeeca33a3e0d275b21c687f7673e483411b23374b3735ab9",
+    "borrowed_manifest_sha256": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+    "cold_definition": "no model resident; OS page cache not flushed",
+    "core_base_commit": "f8b2d2d5442f65cc772503074e1ab6670d3d70ce",
+    "core_dumps_disabled": true,
+    "production_native_api": false,
+    "scope": "fixed-public-synthetic-operator-test-only",
+    "source_status": "development changes after stated core base; subsequent source commit is linked in performance guide",
+    "swap_max_bytes": 0,
+    "variant": "same process ABBA cached shuffled all10 experts"
+  },
+  "fixture": "moe-bench",
+  "results": [
+    {
+      "block_ns": [
+        1101560,
+        1110690,
+        1127040,
+        1132640,
+        1135340,
+        1135501,
+        1151970,
+        1160161,
+        1160611,
+        1180171
+      ],
+      "cache_misses_during_measurement": 0,
+      "down_dtype": 6,
+      "generic_ns": [
+        1692665,
+        1730526,
+        1731946,
+        1737246,
+        1738286,
+        1756946,
+        2101589,
+        2166530,
+        2356812,
+        3238839
+      ],
+      "max_abs_difference": 0.0
+    },
+    {
+      "block_ns": [
+        896998,
+        912348,
+        916608,
+        926709,
+        967149,
+        988819,
+        993499,
+        994759,
+        999079,
+        1200811
+      ],
+      "cache_misses_during_measurement": 0,
+      "down_dtype": 8,
+      "generic_ns": [
+        1611765,
+        1664926,
+        1680425,
+        1728465,
+        1737086,
+        1743446,
+        1749736,
+        1767526,
+        2197950,
+        2802535
+      ],
+      "max_abs_difference": 0.0
+    }
+  ],
+  "scope": "fixed-public-synthetic-operator-test-only",
+  "vendor": 4318
+}

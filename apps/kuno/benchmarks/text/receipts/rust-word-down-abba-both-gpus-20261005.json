@@ -1,0 +1,288 @@
+{
+  "scope": "fixed-public-synthetic-laboratory-only",
+  "source_head_before_followup": "9649c864734136d43e4314df346a1ac39f8b78a6",
+  "model_manifest_sha256": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+  "model_blob_sha256_identity": "89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75",
+  "weights": "borrowed-original-read-only; no duplicate conversion or download",
+  "model_payload_hash_recomputed": false,
+  "swap_max_bytes": 0,
+  "core_limit_bytes": 0,
+  "cubecl_debug_log": 0,
+  "ordinary_inference_deadline_changed": false,
+  "installation_api_vashti_changes": false,
+  "units_completed_successfully": true,
+  "limitations": [
+    "public operator fixtures only; no production private request API",
+    "API-visible owned buffers only; opaque driver padding excluded",
+    "short systemd MemoryPeak summaries not accepted as memory measurements",
+    "host builds overlap acceptance runs; no matched whole-engine speed win"
+  ],
+  "binary_sha256": "30f6e4490c5d66fb78fc43437bd37503dccfbe1c42b95d8428d7a8b6fb977416",
+  "host_limit_bytes": 8589934592,
+  "operator_unit_bound_seconds": 240,
+  "timing_compiler_idle": true,
+  "tests": {
+    "intel": {
+      "fixture": "moe-word-bench",
+      "results": [
+        {
+          "down_dtype": 6,
+          "max_abs_difference": 0.0,
+          "pass": 0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "down_dtype": 6,
+          "max_abs_difference": 0.0,
+          "pass": 1,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "block_gate_up": true,
+          "cache_misses_during_measurement": 0,
+          "down_dtype": 6,
+          "generic_ns": [
+            868471,
+            868581,
+            868690,
+            870021,
+            872511,
+            996783,
+            2047925,
+            2481701,
+            2485671,
+            3276061
+          ],
+          "max_abs_difference": 0.0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64,
+          "word_ns": [
+            1040593,
+            1046633,
+            1075363,
+            1079604,
+            1082294,
+            1164144,
+            3425663,
+            3440853,
+            3486813,
+            3514104
+          ]
+        },
+        {
+          "down_dtype": 6,
+          "max_abs_difference": 0.0,
+          "pass": 2,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "down_dtype": 8,
+          "max_abs_difference": 0.0,
+          "pass": 0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "down_dtype": 8,
+          "max_abs_difference": 0.0,
+          "pass": 1,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "block_gate_up": true,
+          "cache_misses_during_measurement": 0,
+          "down_dtype": 8,
+          "generic_ns": [
+            1071493,
+            1083444,
+            1085663,
+            1089474,
+            1094094,
+            1279136,
+            1279366,
+            1281526,
+            1283666,
+            1285005
+          ],
+          "max_abs_difference": 0.0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64,
+          "word_ns": [
+            1230925,
+            1282496,
+            1285276,
+            1285676,
+            1285926,
+            1288546,
+            1290866,
+            1292226,
+            1299226,
+            1306806
+          ]
+        },
+        {
+          "down_dtype": 8,
+          "max_abs_difference": 0.0,
+          "pass": 2,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        }
+      ],
+      "scope": "fixed-public-synthetic-operator-test-only",
+      "vendor": 32902,
+      "word_down": true
+    },
+    "nvidia": {
+      "fixture": "moe-word-bench",
+      "results": [
+        {
+          "down_dtype": 6,
+          "max_abs_difference": 0.0,
+          "pass": 0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "down_dtype": 6,
+          "max_abs_difference": 0.0,
+          "pass": 1,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "block_gate_up": true,
+          "cache_misses_during_measurement": 0,
+          "down_dtype": 6,
+          "generic_ns": [
+            1086803,
+            1115774,
+            1129554,
+            1134035,
+            1146384,
+            1158995,
+            1162934,
+            1317306,
+            1493558,
+            1534989
+          ],
+          "max_abs_difference": 0.0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64,
+          "word_ns": [
+            1131185,
+            1132405,
+            1269496,
+            1314926,
+            1316506,
+            1322766,
+            1324167,
+            1336297,
+            1340576,
+            1344927
+          ]
+        },
+        {
+          "down_dtype": 6,
+          "max_abs_difference": 0.0,
+          "pass": 2,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "down_dtype": 8,
+          "max_abs_difference": 0.0,
+          "pass": 0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "down_dtype": 8,
+          "max_abs_difference": 0.0,
+          "pass": 1,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        },
+        {
+          "block_gate_up": true,
+          "cache_misses_during_measurement": 0,
+          "down_dtype": 8,
+          "generic_ns": [
+            894951,
+            916932,
+            920311,
+            942592,
+            961722,
+            1007942,
+            1160724,
+            1346257,
+            1347427,
+            1399318
+          ],
+          "max_abs_difference": 0.0,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64,
+          "word_ns": [
+            1126634,
+            1128134,
+            1133484,
+            1136244,
+            1148005,
+            1149814,
+            1154414,
+            1171405,
+            1204075,
+            1423377
+          ]
+        },
+        {
+          "down_dtype": 8,
+          "max_abs_difference": 0.0,
+          "pass": 2,
+          "physical_lanes": 16,
+          "rows_per_cube": 1,
+          "selected": 10,
+          "virtual_lanes": 64
+        }
+      ],
+      "scope": "fixed-public-synthetic-operator-test-only",
+      "vendor": 4318,
+      "word_down": true
+    }
+  },
+  "selected": false,
+  "reason": "same numeric output; slower cached all-ten MoE on both cards/dtypes"
+}

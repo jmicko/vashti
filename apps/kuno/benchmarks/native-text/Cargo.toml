@@ -1,0 +1,181 @@
+[package]
+name = "kuno-text-lab"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ornith-resident-lab"
+path = "src/ornith_main.rs"
+
+[[bin]]
+name = "flash-kernel-lab"
+path = "src/flash_fast_main.rs"
+
+[[bin]]
+name = "kuno-text-lab"
+path = "src/main.rs"
+
+[[bin]]
+name = "kuno-strata-rust"
+path = "src/main.rs"
+required-features = ["strata-rust-port"]
+
+[dependencies]
+ash = "=0.38.0"
+cubecl-common = "=0.10.0"
+cubecl-wgpu = { version = "=0.10.0", default-features = false, features = ["std"] }
+cubecl-runtime = "=0.10.0"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+libc = "0.2"
+zeroize = "1.9"
+half = "=2.7.1"
+kuno-text = { path = "../../../../crates/kuno-text" }
+cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wgpu"] }
+cubek-matmul = { version = "=0.2.0", default-features = false, features = ["std"], optional = true }
+cubek-std = { version = "=0.2.0", default-features = false, optional = true }
+wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
+
+[patch.crates-io]
+wgpu = { path = "vendor/wgpu" }
+wgpu-core = { path = "vendor/wgpu-core" }
+wgpu-hal = { path = "vendor/wgpu-hal" }
+cubecl-common = { path = "vendor/cubecl-common" }
+cubecl-runtime = { path = "vendor/cubecl-runtime" }
+cubecl-core = { path = "vendor/cubecl-core" }
+cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
+
+[features]
+# Complete paired LARGE producers/consumers; never mix formats in one layer.
+strata-large-packed-tiles = ["strata-layer-gather", "cubecl-wgpu/kuno-large-packed-tiles"]
+strata-large-shared-panels = ["strata-large-packed-tiles", "cubecl-wgpu/kuno-large-shared-panels"]
+strata-large-cohorts = ["strata-regular-cohorts", "strata-wide32-local-routes", "cubecl-wgpu/kuno-large-cohorts"]
+strata-layer-gather = ["strata-large-cohorts", "strata-small-dual-cells", "cubecl-wgpu/kuno-layer-gather"]
+strata-small-dual-cells = ["strata-regular-cohorts", "cubecl-wgpu/kuno-small-dual-cells"]
+strata-regular-four-cell = ["strata-layer-gather", "cubecl-wgpu/kuno-regular-four-cell"]
+strata-regular-cohorts = ["strata-host-expert-blobs", "strata-dequant-direct8", "strata-global-image-experts", "strata-raw-lookahead", "strata-native-expert-bulk", "cubecl-wgpu/kuno-regular-cohorts"]
+strata-host-expert-blobs = ["strata-small-granular"]
+strata-small-granular = ["strata-small-local-carry", "cubecl-wgpu/kuno-small-granular"]
+strata-small-local-carry = ["strata-local-prefetch"]
+strata-local-prefetch = ["strata-balanced-wide32", "cubecl-wgpu/kuno-local-prefetch"]
+strata-balanced-wide32 = ["strata-cohort-row-order", "cubecl-wgpu/kuno-balanced-wide32"]
+strata-small-full-walk = ["strata-global-small-products", "cubecl-wgpu/kuno-small-full-walk"]
+strata-single-k-walk = ["strata-small-full-walk"]
+strata-padded-global = ["strata-single-k-walk", "cubecl-wgpu/kuno-padded-global"]
+strata-balanced-global = ["strata-padded-global", "cubecl-wgpu/kuno-balanced-global"]
+strata-balanced-preload = ["strata-balanced-global"]
+strata-balanced-carry = ["strata-balanced-preload"]
+strata-cohort-row-order = ["strata-balanced-carry", "strata-expert-ordered-output"]
+strata-global-small-products = ["strata-wide32-local-routes", "cubecl-wgpu/kuno-global-small-products"]
+strata-wide32-local-routes = ["strata-global-wide32"]
+strata-global-register-n64 = ["strata-global-image-experts", "cubecl-wgpu/kuno-global-register-n64"]
+strata-global-transpose = ["strata-global-register-n64", "cubecl-wgpu/kuno-global-transpose"]
+strata-global-wide32 = ["strata-global-transpose", "cubecl-wgpu/kuno-global-wide32"]
+strata-global-image-experts = ["strata-deep-matrix", "strata-small-direct-publish", "strata-expert-cohorts", "strata-wide-shared-reuse", "cubecl-wgpu/kuno-global-image-experts"]
+strata-expert-cohorts = ["strata-narrow-global", "strata-dequant-record32", "cubecl-runtime/kuno-expert-cohorts", "cubecl-wgpu/kuno-expert-cohorts"]
+strata-expert-register-prefetch = ["strata-expert-cohorts"]
+strata-native-prepared = ["strata-intel-core", "cubecl-wgpu/kuno-native-prepared"]
+strata-compute-main = ["strata-intel-core", "cubecl-wgpu/kuno-compute-main"]
+strata-narrow-global = ["strata-native-expert-wide", "strata-native-expert-bulk", "strata-expert-scratch-ring", "strata-intel-core"]
+strata-dequant-record32 = ["strata-intel-core"]
+strata-copy-cohorts = ["strata-prefill-miss-ring", "strata-native-expert-bulk", "strata-public-host-clock", "cubecl-wgpu/kuno-copy-cohorts"]
+strata-native-expert-medium = ["strata-native-direct-gu", "cubecl-runtime/kuno-native-expert-medium"]
+strata-route-registers = ["strata-intel-core"]
+# Compiled experiment; every invocation must explicitly select it in the runner.
+direct-device = ["cubecl-common/kuno-direct-device"]
+# Whole-model Strata precision/scheduling port; isolated from installed Kuno.
+strata-rust-port = ["direct-device"]
+strata-eight-window = ["strata-rust-port"]
+strata-resident-224 = ["strata-rust-port"]
+strata-resident-240 = ["strata-resident-224"]
+strata-intel-core = ["strata-resident-240", "cubecl/wgpu-spirv", "cubecl-wgpu/kuno-strata-shared"]
+# Explicit dense-projection candidate; original expert and fallback kernels remain.
+strata-cubek-gemm = ["strata-intel-core", "dep:cubek-matmul", "dep:cubek-std"]
+strata-cubek-tilewise = ["strata-cubek-gemm"]
+strata-cubek-m64 = ["strata-cubek-tilewise"]
+strata-cubek-balanced = ["strata-cubek-tilewise"]
+strata-cubek-wide = ["strata-cubek-balanced"]
+strata-native-wide = ["strata-intel-core"]
+strata-native-wide32 = ["strata-native-wide"]
+# Routed wide prefix and authentic original tails are a separate coherent candidate.
+strata-native-expert-wide = ["strata-native-wide32"]
+strata-native-subgroup-publish = ["strata-native-expert-wide"]
+strata-native-direct-gu = ["strata-native-subgroup-publish", "strata-native-expert-bulk", "strata-expert-scratch-ring"]
+strata-native-unused-descriptors = ["strata-native-direct-gu", "cubecl-wgpu/kuno-native-unused-descriptors"]
+# Explicit paired-cell prompt QK candidate; original scalar oracle is unchanged.
+strata-qsa-paired = ["strata-intel-core"]
+# Coherent experiments remain explicit until full runtime acceptance.
+strata-qsa-pv-gather = ["strata-intel-core"]
+# Preserve fault predicates while removing fault-only workgroup reductions.
+strata-qsa-local-fault = ["strata-intel-core"]
+strata-native-expert-bulk = ["strata-intel-core"]
+# One connected original-source miss-only transfer ring and release policy.
+strata-prefill-miss-ring = ["strata-native-expert-bulk"]
+# Complete two-slot activation/GU/DQ views; original graph owns all hazards.
+strata-expert-scratch-ring = ["strata-prefill-miss-ring"]
+strata-parallel-loading = ["strata-intel-core"]
+strata-native-push-descriptors = ["strata-intel-core"]
+strata-gdn-subgroup16 = ["strata-intel-core"]
+strata-qsa-fma = ["strata-intel-core"]
+strata-qsa-uniform = ["strata-qsa-fma", "strata-qsa-paired", "strata-qsa-pv-gather", "strata-qsa-local-fault"]
+# Retain paired/uniform/FMA QK in its exact single guarded body.
+strata-qsa-compact = ["strata-qsa-uniform"]
+# Bounded raw-pair/Q-head/four-cell lookahead; no precision or owner change.
+strata-qsa-prefetch = ["strata-qsa-compact"]
+strata-qsa-native-xor = ["strata-qsa-prefetch"]
+strata-qsa-scale-finite = ["strata-qsa-native-xor"]
+strata-subgroup-quad-vertical = ["strata-subgroup-quad", "cubecl-wgpu/kuno-subgroup-quad-vertical"]
+strata-macro64-static-geometry = ["strata-qsa-head-frontier"]
+strata-gr-wide-tail = ["strata-macro64-static-geometry", "strata-native-wide32"]
+strata-tiny-output = ["strata-gr-wide-tail"]
+strata-dense-direct-store = ["strata-tiny-output"]
+strata-dense-slm40 = ["strata-dense-direct-store"]
+strata-dense-prefix = ["strata-dense-slm40"]
+strata-wide-register-stage = ["strata-dense-prefix"]
+strata-gr-register-norm = ["strata-wide-register-stage"]
+strata-hc-down-inject = ["strata-gr-register-norm", "strata-native-subgroup-publish", "strata-native-wide32"]
+strata-raw-lookahead = ["strata-gr-register-norm", "strata-expert-cohorts", "strata-copy-cohorts"]
+strata-deep-matrix = ["strata-hc-down-inject", "strata-native-direct-gu", "cubecl-runtime/kuno-deep-matrix", "cubecl-wgpu/kuno-deep-matrix"]
+strata-raw-slot-overlap = ["strata-raw-lookahead", "cubecl-wgpu/kuno-raw-slot-overlap"]
+strata-dequant-quad32 = ["strata-dequant-record32", "strata-intel-core", "cubecl-runtime/kuno-dequant-quad32", "cubecl-wgpu/kuno-dequant-quad32"]
+strata-dequant-direct8 = ["strata-dequant-quad32", "cubecl-runtime/kuno-dequant-direct8", "cubecl-wgpu/kuno-dequant-direct8"]
+# One coherent expert-ordered producer/inverse-gather consumer layout.
+strata-expert-ordered-output = ["strata-native-direct-gu", "strata-expert-cohorts", "cubecl-runtime/kuno-expert-ordered-output", "cubecl-wgpu/kuno-expert-ordered-output"]
+strata-wide-shared-reuse = ["strata-expert-ordered-output", "strata-native-subgroup-publish", "cubecl-runtime/kuno-wide-shared-reuse", "cubecl-wgpu/kuno-wide-shared-reuse"]
+strata-small-direct-publish = ["strata-native-subgroup-publish", "strata-native-direct-gu", "strata-expert-ordered-output", "strata-expert-cohorts", "cubecl-runtime/kuno-small-direct-publish", "cubecl-wgpu/kuno-small-direct-publish"]
+strata-small-quantized-matrix = ["strata-small-direct-publish", "strata-intel-core", "cubecl-runtime/kuno-small-quantized-matrix", "cubecl-wgpu/kuno-small-quantized-matrix"]
+strata-qsa-head-frontier = ["strata-qsa-head-scatter"]
+strata-qsa-head-scatter = ["strata-gdn-coalesce-faults"]
+strata-gdn-coalesce-faults = ["strata-qsa-query-planes"]
+strata-qsa-query-planes = ["strata-expert-macro64"]
+strata-expert-macro64 = ["strata-subgroup-quad-vertical"]
+strata-subgroup-quad = ["strata-qsa-scale-finite", "cubecl-wgpu/kuno-subgroup-quad"]
+# Original QK bytes/scales read in pairs; equivalent finite checks factored.
+strata-qsa-packed-cache = ["strata-qsa-compact"]
+strata-qsa-reference-schedule = ["strata-qsa-fma", "strata-qsa-local-fault"]
+# Complete full-batch QK/softmax/PV cooperative-matrix attention.
+strata-qsa-xmx = ["strata-qsa-compact"]
+# Fixed-public timing diagnosis only; never enabled by deployed worker policy.
+strata-public-host-clock = ["strata-intel-core", "cubecl-wgpu/kuno-public-host-clock"]
+# Fixed public completion check; changes only the harness request, not the engine.
+strata-public-cap-check = ["strata-intel-core"]
+# Beyond pinned SYCL NO_HOST: count GPU routes to train actual promotions.
+# Never selected implicitly by the faithful Intel port or its builder.
+strata-gpu-adaptive-usage = ["strata-intel-core"]
+# Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
+cpu-fma = []
+cpu-buffered-weights = []
+cpu-work-stealing = ["kuno-text/cpu-work-stealing-lab"]
+cpu-q8-two-pass = ["kuno-text/cpu-q8-two-pass"]
+
+[dev-dependencies]
+wgpu-types = "=29.0.4"
+rspirv = "=0.12.0"
+tempfile = "3"
+
+[profile.release]
+debug = 0
+
+# Operator laboratory stays out of deployed Kuno dependency/release builds.
+[workspace]

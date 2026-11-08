@@ -45,7 +45,7 @@ impl ImageConfig {
             _ => {}
         }
         if self.collections.is_empty()
-            || self.collections.len() > 2
+            || self.collections.len() > 3
             || self
                 .collections
                 .iter()
@@ -67,6 +67,12 @@ impl ImageConfig {
             return Err("image_configuration_invalid");
         }
         Ok(())
+    }
+    /// Whether the MiniMax video collection is enabled (it needs the managed SYCL engine).
+    pub fn video_enabled(&self) -> bool {
+        self.collections
+            .iter()
+            .any(|id| id == kuno_protocol::MINIMAX_H3_COLLECTION)
     }
     pub fn uses_sycl(&self, workflow: &str) -> bool {
         self.engine == crate::image_engine::ImageEngine::ManagedSycl

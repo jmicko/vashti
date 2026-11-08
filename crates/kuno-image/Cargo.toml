@@ -12,9 +12,13 @@ crc32fast = "1"
 png = "0.18"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
+# Pure-Rust video output, only in the private worker build.
+rav1e = { version = "0.8", default-features = false, features = ["threading", "asm"], optional = true }
+flacenc = { version = "0.5", optional = true }
 
 [features]
-native-sd = ["dep:cc"]
+native-sd = ["dep:cc", "video-encode"]
+video-encode = ["dep:rav1e", "dep:flacenc"]
 
 [build-dependencies]
 cc = { version = "1", optional = true }

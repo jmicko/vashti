@@ -153,6 +153,44 @@ fn successful_setup_repeat_and_restore_preserve_preexisting_settings() {
 }
 
 #[test]
+fn adding_a_cli_launcher_rejects_conflicts_before_stopping_services() {
+    for staged in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let transaction = Transaction::open(root.path(), state.path()).unwrap();
+        let mut host = FakeHost {
+            active: true,
+            ..Default::default()
+        };
+        let original = artifacts();
+        transaction.apply(&original, &mut host).unwrap();
+        let mut upgraded = original.clone();
+        upgraded.push(Artifact {
+            path: "usr/local/bin/kuno".into(),
+            bytes: b"new CLI launcher".to_vec(),
+            mode: 0o755,
+        });
+        let occupied = root.path().join(if staged {
+            "usr/local/bin/kuno.kuno-pending"
+        } else {
+            "usr/local/bin/kuno"
+        });
+        std::fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+        std::fs::write(&occupied, b"unrelated executable").unwrap();
+        let calls = host.events.len();
+        assert_eq!(
+            transaction.replace(&upgraded, &mut host),
+            Err("installation_path_already_exists")
+        );
+        assert_eq!(host.events.len(), calls);
+        assert!(host.active && host.gateway && host.private);
+        assert_eq!(transaction.phase().unwrap(), Some(Phase::Complete));
+        assert_eq!(std::fs::read(&occupied).unwrap(), b"unrelated executable");
+        transaction.verify_installed().unwrap();
+    }
+}
+
+#[test]
 fn each_service_failure_rolls_back_and_preserves_the_original_active_state() {
     for active in [false, true] {
         for failure in [

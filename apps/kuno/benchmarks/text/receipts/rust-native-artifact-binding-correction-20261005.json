@@ -1,0 +1,41 @@
+{
+  "affected_receipts": [
+    "rust-native-moe-router-source-20261005.json",
+    "rust-native-batch-io-source-20261005.json"
+  ],
+  "affected_source_commits": [
+    "09a9164",
+    "99f6e73"
+  ],
+  "cause": "Copied stale target/release/kuno-rust-gpu-probe. Current manifest package and bin name is kuno-text-lab. Identical old hashes did not establish dead-code elimination or source provenance.",
+  "correction": {
+    "artifact_metadata_sha256": "70337b09dc7ae7d5ec84e7da0807bd7a292d7d6ea27eda358de0324b64393b7f",
+    "cargo_artifact_selection": "--message-format=json compiler-artifact with target.name=kuno-text-lab and non-null executable",
+    "cargo_executable": "/tmp/kuno-rust-gpu-probe/target/release/kuno-text-lab",
+    "frozen_executable": "/tmp/kuno-rust-native-model-max8-v11-20261005",
+    "sha256": "fca4b66911251cfcf8a74ce1399f0304e4f3f979e5dcedc688fd9e735d61ca15",
+    "source_commit": "371b9d19d7faae393262c13c1ec1fe066b604d33",
+    "status": "correct current combined369-test source frozen; full model device run separately pending"
+  },
+  "date": "2026-10-05",
+  "invalid_executable_paths": [
+    "/tmp/kuno-rust-native-moe-source-v8-20261005",
+    "/tmp/kuno-rust-native-io-source-v9-20261005",
+    "/tmp/kuno-rust-native-model-max8-v10-20261005"
+  ],
+  "invalid_executable_sha256": "27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950",
+  "no_new_device_acceptance_or_performance_claim": true,
+  "observed_incorrect_launch": {
+    "actual_work": "historical small packed projection probe only; no whole-model GGUF/native test",
+    "requested_public_receipt_created": false,
+    "runtime_ms": 357,
+    "terminal_exit_code": 0,
+    "unit": "kuno-user-native-max8-intel-bang-c8-20261005-v1"
+  },
+  "scope": "forward-correction-of-source-only-frozen-executable-binding",
+  "unaffected": [
+    "350/361 source tests, strict Clippy, formatting/diff and successful Cargo release builds.",
+    "Earlier861b285a336-source and a4601b22343-source frozen model binaries are distinct20MB-class artifacts. Earlier actual model/device receipts retain their separate identities.",
+    "Installed Kuno/Ollama services, public API/defaults and previous completed GPU test receipts."
+  ]
+}

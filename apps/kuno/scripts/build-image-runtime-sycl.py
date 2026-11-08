@@ -15,6 +15,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[3]
 CLEARED_BUILD_ENV = ("CFLAGS", "CXXFLAGS", "LDFLAGS", "CARGO_ENCODED_RUSTFLAGS")
+# Ahead-of-time device code for the supported Intel GPU (Arc Pro B70); the
+# worker then starts without JIT-compiling the GGML SYCL kernels.
+AOT_DEVICE = "bmg-g31"
 
 
 def require(condition, message):
@@ -89,7 +92,7 @@ def plan(args):
         "-DGGML_SYCL_F16=ON", "-DGGML_SYCL_DNN=ON", "-DGGML_SYCL_GRAPH=OFF",
         "-DGGML_SYCL_HOST_MEM_FALLBACK=OFF", "-DGGML_SYCL_SUPPORT_LEVEL_ZERO_API=ON",
         "-DGGML_NATIVE=OFF", "-DGGML_BUILD_TESTS=OFF", "-DGGML_BUILD_EXAMPLES=OFF",
-        "-DKUNO_SYCL_WHOLE_ROPE_BYPASS=ON",
+        "-DKUNO_SYCL_WHOLE_ROPE_BYPASS=ON", "-DGGML_SYCL_DEVICE_ARCH=" + AOT_DEVICE,
         "-DOpenMP_CXX_FLAGS=-fiopenmp", "-DOpenMP_CXX_LIB_NAMES=iomp5;pthread",
         "-DOpenMP_iomp5_LIBRARY=" + str(compiler / "lib/libiomp5.so"),
         "-DOpenMP_pthread_LIBRARY=/lib/x86_64-linux-gnu/libpthread.a", "-DMKL_DIR=" + mkl,
@@ -98,13 +101,16 @@ def plan(args):
     environment = dict(ONEAPI_ROOT=str(sdk), KUNO_ONEAPI_ROOT=str(sdk), LD_LIBRARY_PATH=libs,
         KUNO_DEV_SYCL_BUILD="1", KUNO_SD_SOURCE_DIR=str(source), KUNO_SD_BUILD_DIR=str(native),
         CARGO_TARGET_DIR=str(cargo), CARGO_BUILD_JOBS="1",
-        RUSTFLAGS="-Clinker=" + str(ROOT / "apps/kuno/scripts/sycl-runtime-linker.sh"))
+        RUSTFLAGS="-Clinker=" + str(ROOT / "apps/kuno/scripts/sycl-runtime-linker.sh"),
+        KUNO_SYCL_AOT_DEVICE=AOT_DEVICE,
+        KUNO_OCLOC_DIR=str(args.ocloc.resolve()) if args.ocloc else "<KUNO_OCLOC_DIR>")
     return dict(source_pins=pins, source=str(source), output=str(output), configure=configure,
                 build=["cmake", "--build", str(native), "--parallel", "1"],
                 cargo=["cargo", "build", "--locked", "--release", "-p", "kuno", "--features", "native-image"],
                 environment=environment, worker=str(cargo / "release/kuno"),
                 O_level="-O3", whole_default="source remains unset/OFF; managed builder explicitly ON",
-                missing_inputs=[] if args.mkl_config and (args.mkl_config / "MKLConfig.cmake").is_file() else ["reviewed MKLConfig.cmake"],
+                missing_inputs=([] if args.mkl_config and (args.mkl_config / "MKLConfig.cmake").is_file() else ["reviewed MKLConfig.cmake"]) +
+                               ([] if args.ocloc and (args.ocloc / "ocloc").is_file() else ["ocloc for " + AOT_DEVICE + " AOT"]),
                 cleared_environment=list(CLEARED_BUILD_ENV),
                 runtime_execution=False, installation=False, packaging=False)
 
@@ -122,6 +128,8 @@ def main():
     parser.add_argument("--source", type=Path, default=os.environ.get("KUNO_SD_SOURCE_DIR"), required="KUNO_SD_SOURCE_DIR" not in os.environ)
     parser.add_argument("--oneapi", type=Path, default=os.environ.get("KUNO_ONEAPI_ROOT"), required="KUNO_ONEAPI_ROOT" not in os.environ)
     parser.add_argument("--mkl-config", type=Path, default=os.environ.get("KUNO_MKL_CONFIG_DIR"))
+    parser.add_argument("--ocloc", type=Path, default=os.environ.get("KUNO_OCLOC_DIR"),
+                        help="directory containing ocloc (Intel GPU offline compiler) for AOT device code")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--plan", action="store_true")
     args = parser.parse_args()
@@ -130,7 +138,7 @@ def main():
         if args.plan:
             print(json.dumps(receipt, indent=2))
             return
-        require(not receipt["missing_inputs"], "set KUNO_MKL_CONFIG_DIR to the reviewed MKL CMake configuration")
+        require(not receipt["missing_inputs"], "set KUNO_MKL_CONFIG_DIR to the reviewed MKL CMake configuration and KUNO_OCLOC_DIR to ocloc")
         for name in ["compiler/2026.1/bin/icx", "compiler/2026.1/bin/icpx", "compiler/2026.1/lib/libiomp5.so"]:
             require((args.oneapi / name).is_file(), "reviewed oneAPI build input missing")
         environment = build_environment(receipt["environment"])

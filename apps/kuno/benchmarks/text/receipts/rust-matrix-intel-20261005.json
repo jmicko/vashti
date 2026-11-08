@@ -1,0 +1,103 @@
+{
+  "experiment_identity": {
+    "binary_sha256": "a2c3d69c6380488a9b964e4ce92d97b99e91db2297af724cba6b7c3bbc039748",
+    "borrowed_manifest_sha256": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+    "cold_definition": "no model resident; OS page cache not flushed",
+    "core_base_commit": "f8b2d2d5442f65cc772503074e1ab6670d3d70ce",
+    "core_dumps_disabled": true,
+    "production_native_api": false,
+    "scope": "fixed-public-synthetic-operator-test-only",
+    "source_status": "development changes after stated core base; subsequent source commit is linked in performance guide",
+    "swap_max_bytes": 0,
+    "variant": "same process ABBA cached public matrices"
+  },
+  "fixture": "matrix-bench",
+  "results": [
+    {
+      "block_ns": [
+        4816142,
+        4823462,
+        4861872,
+        4878612,
+        4888213,
+        4909343,
+        4918743,
+        5031734,
+        5055694,
+        6535400
+      ],
+      "generic_ns": [
+        9821486,
+        9923147,
+        9942047,
+        9969957,
+        9971637,
+        10010128,
+        10030597,
+        10077669,
+        10118769,
+        11323741
+      ],
+      "max_abs_error": 0.0,
+      "tensor": "output.weight"
+    },
+    {
+      "block_ns": [
+        300824,
+        301464,
+        307314,
+        309904,
+        313903,
+        465165,
+        469015,
+        479325,
+        487365,
+        516026
+      ],
+      "generic_ns": [
+        342273,
+        342813,
+        343234,
+        344824,
+        348083,
+        364434,
+        510945,
+        526535,
+        531016,
+        601776
+      ],
+      "max_abs_error": 0.0,
+      "tensor": "blk.0.hc_attn_down.weight"
+    },
+    {
+      "block_ns": [
+        292133,
+        299483,
+        299603,
+        302023,
+        310864,
+        474335,
+        491566,
+        497676,
+        499676,
+        504845
+      ],
+      "generic_ns": [
+        326294,
+        326733,
+        333364,
+        337404,
+        341944,
+        343474,
+        517236,
+        531825,
+        538025,
+        538705
+      ],
+      "max_abs_error": 0.0,
+      "tensor": "blk.0.hc_ffn_down.weight"
+    }
+  ],
+  "scope": "fixed-public-synthetic-operator-test-only",
+  "vendor": 32902
+}

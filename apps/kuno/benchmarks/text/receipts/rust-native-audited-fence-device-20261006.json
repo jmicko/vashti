@@ -1,0 +1,127 @@
+{
+  "scope": "fixed-public-single-mandatory-audited-native-model-lifecycle",
+  "source_commit": "4d4ecbe5dffc9796d316f43453d8fcd3c91ae10e",
+  "executable_sha256": "3b192df34bf0c9cfa45d462afc14e341cd270c7cdf03f64ffd7197d3a035d71a",
+  "native_host_tests": 439,
+  "runtime_host_tests_unchanged": 49,
+  "python_native_lab_tests_unchanged": 81,
+  "strict_native_clippy_accepted": true,
+  "matched_performance_accepted": false,
+  "production_accepted": false,
+  "cards": [
+    {
+      "card": "intel",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-audited-fence-build-20261006-v1/chat-intel.json",
+      "receipt_sha256": "b8271677d3394cd56149ebd826d2d1c3b372b7b502c95233fb3084b253367608",
+      "run_record_sha256": "b56fcb8559ae1500ea302d83917e072b8608aed519f2dfeba0ff5df12418879a",
+      "run_proof": {
+        "card": "intel",
+        "cargo_artifacts_sha256": "7d5d539ff4b5566340320c252feb39333b3586475490ea8749ca17bb2d448662",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "3b192df34bf0c9cfa45d462afc14e341cd270c7cdf03f64ffd7197d3a035d71a",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "native_decode_kernels": "single-q4-all",
+        "native_decode_projection_tile": 1,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "b8271677d3394cd56149ebd826d2d1c3b372b7b502c95233fb3084b253367608",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "generation_ms": 4820,
+      "prefill_ms": 9175,
+      "warm_weight_read_ms": 237,
+      "warm_weight_upload_ms": 371,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1224841828,
+        "native_ffn_gr_and_router_enqueue": 85821033,
+        "native_route_and_expert_enqueue": 1410084958,
+        "native_router_fence": 1558145622,
+        "native_shared_and_ffn_combine_enqueue": 319040858
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-audited-fence-build-20261006-v1/chat-nvidia.json",
+      "receipt_sha256": "58d82bfc0f4b775d3e64eae1a7a95b857b2a5eb3504a263cc559cd69904b43c8",
+      "run_record_sha256": "0e3d04881ed93bf807ae886d46f8b1136c5a88811b1c5426cbea9a350e0a1276",
+      "run_proof": {
+        "card": "nvidia",
+        "cargo_artifacts_sha256": "7d5d539ff4b5566340320c252feb39333b3586475490ea8749ca17bb2d448662",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "3b192df34bf0c9cfa45d462afc14e341cd270c7cdf03f64ffd7197d3a035d71a",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "native_decode_kernels": "single-q4-all",
+        "native_decode_projection_tile": 1,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "58d82bfc0f4b775d3e64eae1a7a95b857b2a5eb3504a263cc559cd69904b43c8",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "generation_ms": 8701,
+      "prefill_ms": 20380,
+      "warm_weight_read_ms": 568,
+      "warm_weight_upload_ms": 751,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1364933823,
+        "native_ffn_gr_and_router_enqueue": 77933822,
+        "native_route_and_expert_enqueue": 4359304016,
+        "native_router_fence": 2165231343,
+        "native_shared_and_ffn_combine_enqueue": 381489198
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    }
+  ]
+}

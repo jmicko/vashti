@@ -1,0 +1,70 @@
+{
+  "acceptance_boundary": [
+    "All stateful families retain opaque staged candidates and graph-derived complete layer masks.",
+    "Future caller must complete original global fault/output fence, owning read lease drop, checked runtime cleanup/admission/cancellation, then preflight every family before any swap.",
+    "Components of runtime I/O are not aggregate budget approval or allocation credit.",
+    "Fixture device receipts predate these actual cache-backed adapters and do not prove their device correctness.",
+    "Native MoE/PLE adapter deliveries, whole-model constructor/transaction and actual adapter device acceptance remain pending.",
+    "No API/catalog/default routing/production private worker/installed service/Vashti change."
+  ],
+  "base_commit": "d918a1022d9d92275c6bf710faa721ffdb354377",
+  "date": "2026-10-05",
+  "families": {
+    "gdn": {
+      "added_full_main_bytes": 3932160,
+      "new_public_bytes": 0,
+      "real_state_history_borrowed": true,
+      "runtime_audited_component_all36": 4718592,
+      "runtime_info_component_all36": 2359296,
+      "scratch_pages": 16,
+      "status_folds_into_shared_fault": 5
+    },
+    "gr": {
+      "added_full_main_bytes": 1998848,
+      "full_physical_owner_extent_required": true,
+      "last_original_column_only_for_final_head": true,
+      "scratch_pages": 10
+    },
+    "qsa": {
+      "added_full_main_bytes": 17825792,
+      "guarded_selector_dependency_fence_per_layer": true,
+      "new_public_bytes": 0,
+      "original_six_cached_matrices_and_committed_cache": true,
+      "runtime_audited_component_all12": 7864320,
+      "scratch_pages": 29
+    },
+    "shared_expert": {
+      "added_full_main_bytes": 262144,
+      "new_public_bytes": 0,
+      "original_three_cached_matrices_and_scalar_gate": true,
+      "scratch_pages": 5,
+      "separate_original_shared_path": true
+    }
+  },
+  "files_sha256": {
+    "executor.rs": "8f08d9746b3cded4bb80bc1f17191e926b299d0c8cb45d3ef0a61506927f407b",
+    "matmul_probe.rs": "3f50a6f173a266a732e936f3a415bc11ace56a7650904da528a4f06e8bb78217",
+    "private_arena.rs": "3687bd28fa931e590b3ed8e18f786275b8b8d5cf4fa6a7e07e412839d37a865d",
+    "resident_gdn.rs": "b361def9ad8c3a45ea2c8b61b65c8a8ed7f8483a69a26e95ebb4d5501883df2a",
+    "resident_gdn_batch.rs": "29e36a50d98e4b634f388cdf1333e577a3ec5bb02e09ccbc0eb2f8d402a76542",
+    "resident_gr.rs": "ff0ecd462c48590568a8f394f65aec5f10d8350493edaa4cc0e1309e4ecb60ce",
+    "resident_gr_batch.rs": "f86a8519be143118170128683c02bec079e62fffeef72da9131cfd5a22bf03b2",
+    "resident_model.rs": "552e764ce8905107b95144699c24440f6906f152711c6c12f1e26dc2b6af5390",
+    "resident_qsa.rs": "4c26aefe39528c03ed81e3abc302ed0009e7458c70db5050b0fd54a40db80249",
+    "resident_qsa_batch.rs": "fb46a4da893c1650ccd263db01facf0edd1b6fe3184f077235138f3d62e31e0d",
+    "resident_shared_batch.rs": "1b11824260048a76a677233884d69335188162afacfe3d375b12a48e0b2b6c9a"
+  },
+  "fmt_and_diff_checks_passed": true,
+  "frozen_source_binary_sha256": "861b285a0dc581ec6c03c1d16dd7814269e33f1a103cbece43fc7ebd9416409e",
+  "locked_offline_release_build_passed": true,
+  "logical_owner": {
+    "actual_admission_sequence_poison_arc": true,
+    "admission_rechecks_poison_under_existing_guard": true,
+    "drop_stores_atomic_without_reentering_admission_mutex": true,
+    "logical_poison_does_not_reset_gpu": true,
+    "no_whole_model_consumer_selected": true
+  },
+  "scope": "native-cache-backed-adapter-source-only",
+  "source_tests_passed": 336,
+  "strict_all_target_clippy_passed": true
+}

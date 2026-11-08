@@ -1,0 +1,45 @@
+{
+  "scope": "fixed-public-whole-model-count1-hybrid-source-and-host-controls-only",
+  "source_commit": "a8cb5e00b00f6bb8938df59bc819cef68ad0a7ca",
+  "native_host_tests": 461,
+  "python_host_controls": 106,
+  "strict_all_target_clippy_accepted": true,
+  "formatting_accepted": true,
+  "normal_release_build_accepted": true,
+  "normal_executable_sha256": "1c44a37a3c2cd44d41a03946bdd2286bfdab1c727c0843fbe925619cf0ff2197",
+  "cargo_artifacts_sha256": "5b54282c60f65ee5add3a0aa179b91ea76534b846712ca9c65a70875d3af1da2",
+  "artifact_directory": "/media/jmicko/faststore/kuno-development/native-count1-hybrid-build-20261007-v1",
+  "predevice_rejection_cases": [
+    {
+      "case": "missing-protections",
+      "rejected": true,
+      "no_adapter_output": true,
+      "no_receipt": true
+    },
+    {
+      "case": "invalid-cap",
+      "rejected": true,
+      "no_adapter_output": true,
+      "no_receipt": true
+    },
+    {
+      "case": "extra-argument",
+      "rejected": true,
+      "no_adapter_output": true,
+      "no_receipt": true
+    },
+    {
+      "case": "disabled-policy-override",
+      "rejected": true,
+      "no_adapter_output": true,
+      "no_receipt": true
+    }
+  ],
+  "hybrid_whole_model_device_accepted": false,
+  "hybrid_late_fault_device_accepted": false,
+  "matched_performance_accepted": false,
+  "cpu_gpu_overlap": false,
+  "production_accepted": false,
+  "installed_services_changed": false,
+  "gpu_tests_run_this_pass": false
+}

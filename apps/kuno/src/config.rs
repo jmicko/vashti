@@ -24,6 +24,7 @@ pub struct Config {
     pub stream_idle_timeout_seconds: u64,
     pub managed: Option<crate::pool::PoolConfig>,
     pub image: Option<crate::image_runtime::ImageConfig>,
+    pub native_text: Option<crate::native_text::Config>,
 }
 
 impl Default for Config {
@@ -40,6 +41,7 @@ impl Default for Config {
             stream_idle_timeout_seconds: 0,
             managed: None,
             image: None,
+            native_text: None,
         }
     }
 }
@@ -74,6 +76,12 @@ impl Config {
         }
         if let Some(managed) = &self.managed {
             managed.validate(&ports)?;
+        }
+        if let Some(native) = &self.native_text {
+            native.validate()?;
+            if self.managed.is_none() {
+                return Err("native_text_requires_managed_pool");
+            }
         }
         if let Some(image) = &self.image {
             image.validate()?;

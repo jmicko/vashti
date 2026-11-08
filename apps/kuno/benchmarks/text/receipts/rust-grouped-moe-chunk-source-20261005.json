@@ -1,0 +1,116 @@
+{
+  "scope": "Native laboratory source/offline only; no GPU or complete-model acceptance",
+  "source_base": "25246bc3531de3056e833e54aaa91ae1ff4f8021",
+  "combined_root_checks": {
+    "native_host_tests": 300,
+    "failed": 0,
+    "strict_all_target_clippy": true,
+    "locked_offline_release_build": true,
+    "format_and_diff_check": true
+  },
+  "frozen_executable": {
+    "path": "/tmp/kuno-rust-native-batch-owner-benchmark-20261005",
+    "sha256": "0c1b3f553ae24ee497f2f9637324778582feeeb89b9427e0c451d67d157438f5"
+  },
+  "public_api_default_or_service_change": false,
+  "whole_model_batching_or_ollama_speedup": false,
+  "fixture": "grouped-moe-chunk-probe",
+  "patch_sha256": "faaef4ce2e103ffb7a850db1a8cb5f71d733da1d13c534b0aa327f7931d09a5b",
+  "source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/bank_slots.rs": "1cb8193906c6e522804ce6c397ff69812fcf9622fc2424149b059b4e9e4519a9",
+    "apps/kuno/benchmarks/native-text/src/main.rs": "8809996703f71b77fc9a743fb03ab3fe0f48da9f656eacfbcf6604bf48ef9f82",
+    "apps/kuno/benchmarks/native-text/src/quant_matvec.rs": "4077539b544476ffc4b788cd4a2b17b2125fc5b5d716f9574ccd2c4db4a442af",
+    "apps/kuno/benchmarks/native-text/src/grouped_moe_chunk.rs": "5b6843ddb3d22ddef27dbadab7d316fbd0a4d6699a610dc40986410418eca35f",
+    "apps/kuno/benchmarks/native-text/src/grouped_moe_chunk_probe.rs": "6b694fac9d4060cd2111182a0ada57e14820edd4c27595e7567cfe546acdc3bd"
+  },
+  "focused_new_host_tests": 14,
+  "budget": {
+    "one_layer_main_cap": 1073741824,
+    "candidate_full_private": 1671168,
+    "scalar_full_private": 327680,
+    "combined_full_private": 1998848,
+    "private_cap": 2097152,
+    "source_window_max": 41943040,
+    "runtime_io_cap": 67108864,
+    "per_checkpoint_io_bound": 8388608,
+    "guarded_host_upper": 15872000,
+    "guarded_host_cap": 33554432,
+    "q5_q8_bank_upper_by_slots": {
+      "16": [
+        117440512,
+        134217728
+      ],
+      "64_or_72": [
+        318767104,
+        335544320
+      ],
+      "96": [
+        452984832,
+        469762048
+      ]
+    }
+  },
+  "ownership": {
+    "original_graph_layer_and_bank_instance_constructor_sealed": true,
+    "full_private_physical_page_and_epoch_proof": true,
+    "actual_staged_original_bank_id_revision": true,
+    "complete_wave_union_pinned_through_fill_and_completed_consumers": true,
+    "max_misses_per_window": 10,
+    "canonical_pending_and_reverse_mapping_before_mutation": true,
+    "later_waves_preserve_completed_route_bits": true,
+    "original_ledger_never_published_by_operator": true,
+    "no_shared_expert_or_full_ffn_claim": true,
+    "error_cancel_panic_after_partial_mutation_poison": true,
+    "unexpected_runtime_failure_retires_before_close": true,
+    "owning_lease_drop_before_audit_and_main_source_credit": true
+  },
+  "peer_review": {
+    "scope": "source pin/order/consumer/staged-generation/lease/failure boundaries",
+    "material_issues_repaired": [
+      "mutable owner fields sealed",
+      "unexpected error retirement",
+      "guarded scalar route scratch before fill"
+    ],
+    "focused_source_recheck": "passed; no remaining material blocker identified"
+  },
+  "pending_device_cases": {
+    "positive": 40,
+    "rejected": 12,
+    "fresh_owners": 12,
+    "both_physical_gpus": true,
+    "counts": [
+      1,
+      3,
+      5,
+      8
+    ],
+    "tiles": [
+      4,
+      8
+    ],
+    "capacity": [
+      16,
+      64,
+      96
+    ],
+    "down_types": [
+      "Q5_0",
+      "Q8_0"
+    ],
+    "boundary_slots": [
+      0,
+      63,
+      64,
+      95
+    ]
+  },
+  "remaining": [
+    "Both-card operator numeric/cancel/full page/IO checks",
+    "Native adapter borrowing actual full-model banks rather than fixture-owned banks",
+    "Separate original shared expert and complete FFN",
+    "Whole-model transaction and true layer-major prefill",
+    "Production private worker, full options/quality and managed native/ollama routing",
+    "Compiler-idle matched full-model cold/warm improvement",
+    "Opaque driver/register/spill and abrupt-loss proof outside audits"
+  ]
+}

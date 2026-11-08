@@ -1,0 +1,577 @@
+//! Compact actual-cache proof. No timing or publication authority is exposed.
+//! The all-ten plan is temporary; only the canonical GPU subset survives in the
+//! original native Pending, whose bank identity and full handles pin the owner.
+use super::*;
+use crate::cpu_gpu_expert_schedule::Split;
+use crate::secondary_experts::HostPartials as Partials;
+
+pub(super) struct Proof {
+    ids: Zeroizing<[usize; 10]>,
+    probabilities: Zeroizing<[u32; 10]>,
+    cap: Zeroizing<usize>,
+    gpu_limit: Zeroizing<usize>,
+    empty_slot_fill: Zeroizing<bool>,
+    misses: Zeroizing<u16>,
+    hit_slots: Zeroizing<[usize; 10]>,
+    cpu_count: Zeroizing<usize>,
+    joined: Zeroizing<bool>,
+    secondary_mask: Zeroizing<u16>,
+    secondary_instance: Option<expert_banks::BankInstance>,
+}
+impl Proof {
+    pub(super) fn prepare(
+        source: &crate::bank_slots::BankSlots,
+        ids: &[usize; 10],
+        probabilities: &[f32; 10],
+        cap: usize,
+        gpu_limit: usize,
+    ) -> Result<(Self, StagedSlots, Last, Split)> {
+        Self::prepare_with_policy(source, ids, probabilities, cap, gpu_limit, false)
+    }
+    /// Fixed-public original-Q3 experiment: admit current misses only into
+    /// genuinely unused slots. Full banks retain the existing CPU-miss policy.
+    pub(super) fn prepare_empty_slots(
+        source: &crate::bank_slots::BankSlots,
+        ids: &[usize; 10],
+        probabilities: &[f32; 10],
+        cap: usize,
+        gpu_limit: usize,
+    ) -> Result<(Self, StagedSlots, Last, Split)> {
+        Self::prepare_with_policy(source, ids, probabilities, cap, gpu_limit, true)
+    }
+    fn effective_cpu_cap(
+        source: &crate::bank_slots::BankSlots,
+        misses: usize,
+        cap: usize,
+        gpu_limit: usize,
+        empty_slot_fill: bool,
+    ) -> Result<usize> {
+        if !empty_slot_fill {
+            return Ok(cap);
+        }
+        if cap != 10
+            || gpu_limit != 10
+            || source.capacity() != crate::daslab_profile::BANK_SLOTS
+            || source.experts() != 512
+        {
+            return Err(err("native Q3 empty-slot policy"));
+        }
+        let mut empty = Zeroizing::new(0usize);
+        for slot in 0..source.capacity() {
+            if source
+                .resident_expert(slot)
+                .map_err(|_| err("native Q3 original empty slots"))?
+                .is_none()
+            {
+                *empty += 1;
+            }
+        }
+        // Existing Split preserves every original rank/probability. Overflow
+        // misses take CPU in rank order; the remaining misses can all fit.
+        Ok(misses.saturating_sub(*empty))
+    }
+    fn prepare_with_policy(
+        source: &crate::bank_slots::BankSlots,
+        ids: &[usize; 10],
+        probabilities: &[f32; 10],
+        cap: usize,
+        gpu_limit: usize,
+        empty_slot_fill: bool,
+    ) -> Result<(Self, StagedSlots, Last, Split)> {
+        if cap > 10 || probabilities.iter().any(|p| !p.is_finite() || *p < 0.) {
+            return Err(err("native count1 fixed miss policy"));
+        }
+        let mut staged = StagedSlots::begin(source).map_err(|_| err("native count1 origin"))?;
+        let all = staged
+            .plan(source, ids)
+            .map_err(|_| err("native count1 all-rank plan"))?;
+        staged
+            .validate_pending(source, &all, ids)
+            .map_err(|_| err("native count1 all-rank classification"))?;
+        let mut misses = Zeroizing::new([0usize; 10]);
+        if all.uploads.len() > 10 {
+            return Err(Error::InvalidBufferLength);
+        }
+        for (i, &(id, _)) in all.uploads.iter().enumerate() {
+            misses[i] = id;
+        }
+        let effective_cap =
+            Self::effective_cpu_cap(source, all.uploads.len(), cap, gpu_limit, empty_slot_fill)?;
+        let split =
+            Split::with_gpu_limit(ids, &misses[..all.uploads.len()], effective_cap, gpu_limit)?;
+        let mut proof = Self {
+            ids: Zeroizing::new(*ids),
+            probabilities: Zeroizing::new(probabilities.map(f32::to_bits)),
+            cap: Zeroizing::new(cap),
+            gpu_limit: Zeroizing::new(gpu_limit),
+            empty_slot_fill: Zeroizing::new(empty_slot_fill),
+            misses: Zeroizing::new(0),
+            hit_slots: Zeroizing::new([0; 10]),
+            cpu_count: Zeroizing::new(split.cpu().len()),
+            joined: Zeroizing::new(false),
+            secondary_mask: Zeroizing::new(0),
+            secondary_instance: None,
+        };
+        for (rank, &id) in ids.iter().enumerate() {
+            if misses[..all.uploads.len()].contains(&id) {
+                *proof.misses |= 1 << rank;
+            } else {
+                proof.hit_slots[rank] = all.slots[rank];
+            }
+        }
+        // Drop its full Plan.next before retaining another candidate. The
+        // compact exact miss/hit proof is rederived at final all-family preflight.
+        drop(all);
+        let gpu = staged
+            .plan(source, split.gpu())
+            .map_err(|_| err("native count1 canonical GPU subset"))?;
+        let mut selected = Zeroizing::new([0usize; 80]);
+        selected[..split.gpu().len()].copy_from_slice(split.gpu());
+        let last = Last {
+            pending: gpu,
+            selected,
+            len: Zeroizing::new(split.gpu().len()),
+        };
+        proof.validate_source(source, &staged, &last, false)?;
+        Ok((proof, staged, last, split))
+    }
+    pub(super) fn native_map(split: &Split) -> Zeroizing<[u32; 20]> {
+        let mut map = Zeroizing::new(*split.map());
+        for rank in 0..10 {
+            if map[rank * 2] == 0 {
+                map[rank * 2 + 1] = rank as u32;
+            }
+        }
+        map
+    }
+    pub(super) fn ids(&self) -> &[usize; 10] {
+        &self.ids
+    }
+    pub(super) fn probabilities(&self) -> Zeroizing<[f32; 10]> {
+        Zeroizing::new((*self.probabilities).map(f32::from_bits))
+    }
+    pub(super) fn misses(&self) -> usize {
+        self.misses.count_ones() as usize
+    }
+    pub(super) fn cpu_miss_count(&self) -> usize {
+        if *self.empty_slot_fill {
+            *self.cpu_count
+        } else {
+            self.misses().min(*self.cap) - self.secondary_mask.count_ones() as usize
+        }
+    }
+    pub(super) fn cpu_count(&self) -> usize {
+        *self.cpu_count - self.secondary_mask.count_ones() as usize
+    }
+    pub(super) fn mark_secondary(
+        &mut self,
+        ids: &[usize],
+        instance: expert_banks::BankInstance,
+    ) -> Result<()> {
+        if !*self.joined
+            || *self.cap != 10
+            || *self.gpu_limit != 10
+            || *self.secondary_mask != 0
+            || *self.empty_slot_fill
+        {
+            return Err(err("native secondary completion policy"));
+        }
+        for (i, id) in ids.iter().enumerate() {
+            if ids[..i].contains(id) {
+                return Err(Error::InvalidBufferLength);
+            }
+            let rank = self
+                .ids
+                .iter()
+                .position(|v| v == id)
+                .ok_or(Error::InvalidBufferLength)?;
+            if *self.misses & (1 << rank) == 0 {
+                return Err(err("native secondary must be primary miss"));
+            }
+            *self.secondary_mask |= 1 << rank;
+        }
+        self.secondary_instance = Some(instance);
+        Ok(())
+    }
+    pub(super) fn validate_secondary(
+        &self,
+        secondary: Option<&crate::secondary_experts::Secondary>,
+        layer: usize,
+        primary: &expert_banks::ExpertBanks,
+    ) -> Result<()> {
+        if *self.secondary_mask == 0 {
+            return Ok(());
+        }
+        secondary
+            .ok_or(err("native secondary owner absent"))?
+            .check_membership(
+                layer,
+                primary,
+                &self.ids,
+                *self.secondary_mask,
+                self.secondary_instance,
+            )
+    }
+    pub(super) fn gpu_limit(&self) -> usize {
+        *self.gpu_limit
+    }
+    pub(super) fn cap(&self) -> usize {
+        *self.cap
+    }
+    pub(super) fn empty_slot_fill(&self) -> bool {
+        *self.empty_slot_fill
+    }
+    pub(super) fn complete(&mut self, partials: Option<&Partials>) -> Result<()> {
+        if *self.joined {
+            return Err(err("native count1 repeated CPU completion"));
+        }
+        match partials {
+            None if *self.cpu_count == 0 => (),
+            Some(p)
+                if p.ranks() == *self.cpu_count
+                    && p.hidden() == 2560
+                    && p.full().len() == CPU_WORDS
+                    && p.owned_bytes() <= HYBRID_HOST
+                    && p.active().iter().all(|v| v.is_finite())
+                    && p.full()[p.active().len()..]
+                        .iter()
+                        .all(|v| v.to_bits() == 0) => {}
+            _ => return Err(err("native count1 actual joined CPU owner")),
+        }
+        *self.joined = true;
+        Ok(())
+    }
+    pub(super) fn validate_source(
+        &self,
+        source: &crate::bank_slots::BankSlots,
+        staged: &StagedSlots,
+        last: &Last,
+        require_join: bool,
+    ) -> Result<()> {
+        if *self.cap > 10
+            || require_join && !*self.joined
+            || staged.accepted_waves() != 0
+            || *last.len > 10
+            || self.probabilities.iter().any(|&bits| {
+                let p = f32::from_bits(bits);
+                !p.is_finite() || p < 0.
+            })
+        {
+            return Err(err("native count1 compact pending state"));
+        }
+        staged
+            .validate_pending(source, &last.pending, &last.selected[..*last.len])
+            .map_err(|_| err("native count1 unchanged GPU source"))?;
+        let mut classifier = StagedSlots::begin(source)
+            .map_err(|_| err("native count1 final original classifier"))?;
+        let all = classifier
+            .plan(source, &*self.ids)
+            .map_err(|_| err("native count1 final all-rank classifier"))?;
+        classifier
+            .validate_pending(source, &all, &*self.ids)
+            .map_err(|_| err("native count1 final all-rank proof"))?;
+        let mut misses = Zeroizing::new([0usize; 10]);
+        if all.uploads.len() > 10 {
+            return Err(Error::InvalidBufferLength);
+        }
+        for (i, &(id, _)) in all.uploads.iter().enumerate() {
+            misses[i] = id;
+        }
+        let effective_cap = Self::effective_cpu_cap(
+            source,
+            all.uploads.len(),
+            *self.cap,
+            *self.gpu_limit,
+            *self.empty_slot_fill,
+        )?;
+        let split = Split::with_gpu_limit(
+            &self.ids,
+            &misses[..all.uploads.len()],
+            effective_cap,
+            *self.gpu_limit,
+        )?;
+        let cpu_misses = split
+            .cpu()
+            .iter()
+            .filter(|id| misses[..all.uploads.len()].contains(id))
+            .count();
+        if split.cpu().len() != *self.cpu_count
+            || split.gpu() != &last.selected[..*last.len]
+            || last.selected[*last.len..].iter().any(|&x| x != 0)
+            || last.pending.uploads.len() != all.uploads.len() - cpu_misses
+        {
+            return Err(err("native count1 actual miss ownership changed"));
+        }
+        if *self.empty_slot_fill {
+            if *self.secondary_mask != 0 || self.secondary_instance.is_some() {
+                return Err(err("native Q3 empty slots exclude secondary owners"));
+            }
+            for &(_, slot) in &last.pending.uploads {
+                if source
+                    .resident_expert(slot)
+                    .map_err(|_| err("native Q3 pending empty slot"))?
+                    .is_some()
+                {
+                    return Err(err("native Q3 empty-slot fill cannot evict"));
+                }
+            }
+        }
+        let mut mask = Zeroizing::new(0u16);
+        for (rank, &id) in self.ids.iter().enumerate() {
+            if misses[..all.uploads.len()].contains(&id) {
+                *mask |= 1 << rank;
+            } else {
+                let index = split.gpu().iter().position(|&v| v == id);
+                if self.hit_slots[rank] != all.slots[rank]
+                    || index.is_some_and(|index| last.pending.slots[index] != all.slots[rank])
+                {
+                    return Err(err("native count1 protected hit slot changed"));
+                }
+            }
+        }
+        if *mask != *self.misses {
+            return Err(err("native count1 miss classification changed"));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bank_slots::BankSlots;
+    #[test]
+    fn empty_slots_admit_all_ten_original_ranks_and_publish_only_after_staging() {
+        let mut source = BankSlots::new(144, 512).unwrap();
+        let ids = std::array::from_fn(|rank| rank * 3 + 1);
+        let probabilities = std::array::from_fn(|rank| (rank + 1) as f32 / 55.);
+        let (mut proof, mut staged, last, split) =
+            Proof::prepare_empty_slots(&source, &ids, &probabilities, 10, 10).unwrap();
+        assert_eq!(proof.misses(), 10);
+        assert_eq!(proof.cpu_miss_count(), 0);
+        assert_eq!(proof.cpu_count(), 0);
+        assert!(proof.empty_slot_fill());
+        assert!(split.cpu().is_empty());
+        assert_eq!(split.gpu(), &ids);
+        assert_eq!(last.pending.uploads.len(), 10);
+        for (rank, &id) in ids.iter().enumerate() {
+            assert_eq!(split.map()[rank * 2..rank * 2 + 2], [0, rank as u32]);
+            assert_eq!(last.pending.uploads[rank], (id, rank));
+            assert_eq!(source.resident_slot(id).unwrap(), None);
+            assert_eq!(
+                proof.probabilities()[rank].to_bits(),
+                probabilities[rank].to_bits()
+            );
+        }
+        proof.complete(None).unwrap();
+        proof
+            .validate_source(&source, &staged, &last, true)
+            .unwrap();
+        staged
+            .advance_after_completed_consumers(&source, last.pending, &last.selected[..*last.len])
+            .unwrap();
+        // Host policy test only; production obtains the original all-family
+        // owning completion before calling this publication seam.
+        staged
+            .publish_after_whole_model_acceptance(&mut source, 1)
+            .unwrap();
+        for (rank, &id) in ids.iter().enumerate() {
+            assert_eq!(source.resident_slot(id).unwrap(), Some(rank));
+        }
+    }
+    #[test]
+    fn partial_bank_fills_only_unused_slots_and_full_bank_retains_cpu_misses() {
+        let mut source = BankSlots::new(144, 512).unwrap();
+        let prime: Vec<_> = (0..142).collect();
+        let initial = source.plan(&prime).unwrap();
+        source.commit(initial).unwrap();
+        let ids = [0, 145, 2, 147, 4, 149, 6, 151, 8, 153];
+        let (proof, mut staged, last, split) =
+            Proof::prepare_empty_slots(&source, &ids, &[0.1; 10], 10, 10).unwrap();
+        assert_eq!(proof.misses(), 5);
+        assert_eq!(proof.cpu_miss_count(), 3);
+        assert_eq!(split.cpu(), &[145, 147, 149]);
+        assert_eq!(split.gpu(), &[0, 2, 4, 6, 151, 8, 153]);
+        assert_eq!(last.pending.uploads, [(151, 142), (153, 143)]);
+        proof
+            .validate_source(&source, &staged, &last, false)
+            .unwrap();
+        for (rank, &id) in ids.iter().enumerate() {
+            let cpu = split.cpu().contains(&id);
+            assert_eq!(split.map()[rank * 2], u32::from(cpu));
+            if !cpu {
+                assert_eq!(Proof::native_map(&split)[rank * 2 + 1], rank as u32);
+            }
+        }
+        staged
+            .advance_after_completed_consumers(&source, last.pending, &last.selected[..*last.len])
+            .unwrap();
+        staged
+            .publish_after_whole_model_acceptance(&mut source, 1)
+            .unwrap();
+        for id in prime {
+            assert_eq!(source.resident_slot(id).unwrap(), Some(id));
+        }
+        assert_eq!(source.resident_slot(151).unwrap(), Some(142));
+        assert_eq!(source.resident_slot(153).unwrap(), Some(143));
+        let misses = std::array::from_fn(|rank| rank + 200);
+        let (full, staged, last, split) =
+            Proof::prepare_empty_slots(&source, &misses, &[0.1; 10], 10, 10).unwrap();
+        assert_eq!(split.cpu(), &misses);
+        assert!(split.gpu().is_empty());
+        assert!(last.pending.uploads.is_empty());
+        assert_eq!(full.cpu_miss_count(), 10);
+        full.validate_source(&source, &staged, &last, false)
+            .unwrap();
+        for id in 0..142 {
+            assert_eq!(source.resident_slot(id).unwrap(), Some(id));
+        }
+    }
+    #[test]
+    fn empty_fill_policy_origin_geometry_and_every_canonical_upload_are_bound() {
+        let source = BankSlots::new(144, 512).unwrap();
+        let ids = std::array::from_fn(|rank| rank);
+        let (mut proof, staged, mut last, _) =
+            Proof::prepare_empty_slots(&source, &ids, &[0.1; 10], 10, 10).unwrap();
+        *proof.empty_slot_fill = false;
+        assert!(
+            proof
+                .validate_source(&source, &staged, &last, false)
+                .is_err()
+        );
+        *proof.empty_slot_fill = true;
+        for index in 0..10 {
+            let original = last.pending.uploads[index];
+            last.pending.uploads[index] = (original.0, (original.1 + 1) % 144);
+            assert!(
+                proof
+                    .validate_source(&source, &staged, &last, false)
+                    .is_err()
+            );
+            last.pending.uploads[index] = original;
+        }
+        proof
+            .validate_source(&source, &staged, &last, false)
+            .unwrap();
+        for (cap, gpu_limit) in [(0, 10), (9, 10), (10, 0), (10, 9), (10, 11)] {
+            assert!(Proof::prepare_empty_slots(&source, &ids, &[0.1; 10], cap, gpu_limit).is_err());
+        }
+        for capacity in [10, 16, 72, 128, 160] {
+            let foreign = BankSlots::new(capacity, 512).unwrap();
+            assert!(Proof::prepare_empty_slots(&foreign, &ids, &[0.1; 10], 10, 10).is_err());
+        }
+        let foreign = BankSlots::new(144, 256).unwrap();
+        assert!(Proof::prepare_empty_slots(&foreign, &ids, &[0.1; 10], 10, 10).is_err());
+        let mut changed = source;
+        let update = changed.plan(&[511]).unwrap();
+        changed.commit(update).unwrap();
+        assert!(
+            proof
+                .validate_source(&changed, &staged, &last, false)
+                .is_err()
+        );
+    }
+    #[test]
+    fn resident_balancing_keeps_actual_misses_and_canonical_bank_separate() {
+        let mut source = BankSlots::new(16, 512).unwrap();
+        let ids = std::array::from_fn(|r| r);
+        let prime = source.plan(&ids[..8]).unwrap();
+        source.commit(prime).unwrap();
+        for limit in 0..=10 {
+            let (mut proof, staged, last, split) =
+                Proof::prepare(&source, &ids, &[0.1; 10], 10, limit).unwrap();
+            assert_eq!(proof.misses(), 2);
+            assert_eq!(proof.cpu_miss_count(), 2);
+            assert_eq!(split.gpu(), &ids[..limit.min(8)]);
+            assert_eq!(split.cpu().len(), 10 - limit.min(8));
+            assert!(last.pending.uploads.is_empty());
+            proof
+                .validate_source(&source, &staged, &last, false)
+                .unwrap();
+            *proof.gpu_limit = (limit + 1) % 11;
+            if limit < 8 || limit == 10 {
+                assert!(
+                    proof
+                        .validate_source(&source, &staged, &last, false)
+                        .is_err()
+                );
+            }
+        }
+        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 9, 6).is_err());
+        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 10, 11).is_err());
+    }
+    #[test]
+    fn compact_noncontiguous_misses_keep_original_gpu_ranks_and_hit_slots() {
+        for cap in 0..=10 {
+            let mut source = BankSlots::new(16, 512).unwrap();
+            let prime = source
+                .plan(&[0, 481, 2, 483, 4, 485, 6, 487, 8, 489])
+                .unwrap();
+            source.commit(prime).unwrap();
+            let ids = std::array::from_fn(|r| r);
+            let probabilities = [0.1; 10];
+            let (mut p, staged, last, split) =
+                Proof::prepare(&source, &ids, &probabilities, cap, 10).unwrap();
+            assert_eq!(p.misses(), 5);
+            assert_eq!(split.cpu(), &[1, 3, 5, 7, 9][..cap.min(5)]);
+            assert_eq!(last.pending.uploads.len(), 5 - cap.min(5));
+            let map = Proof::native_map(&split);
+            for rank in 0..10 {
+                if map[rank * 2] == 0 {
+                    assert_eq!(map[rank * 2 + 1], rank as u32);
+                }
+            }
+            assert!(p.validate_source(&source, &staged, &last, true).is_err());
+            if cap == 0 {
+                p.complete(None).unwrap();
+                p.validate_source(&source, &staged, &last, true).unwrap();
+            } else {
+                assert!(p.complete(None).is_err());
+            }
+            p.validate_source(&source, &staged, &last, false).unwrap();
+            *p.misses ^= 1;
+            assert!(p.validate_source(&source, &staged, &last, false).is_err());
+        }
+    }
+    #[test]
+    fn real_empty_gpu_plan_requires_all_cpu_and_rejects_stale_origin() {
+        let mut source = BankSlots::new(16, 512).unwrap();
+        let ids = std::array::from_fn(|r| r);
+        let (p, staged, last, split) = Proof::prepare(&source, &ids, &[0.1; 10], 10, 10).unwrap();
+        assert!(split.gpu().is_empty());
+        assert_eq!(*last.len, 0);
+        p.validate_source(&source, &staged, &last, false).unwrap();
+        let update = source.plan(&[481]).unwrap();
+        source.commit(update).unwrap();
+        assert!(p.validate_source(&source, &staged, &last, false).is_err());
+        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 11, 10).is_err());
+    }
+
+    #[test]
+    fn bounded_caps_admit_only_canonical_gpu_misses_and_cannot_change_after_classification() {
+        let source = BankSlots::new(16, 512).unwrap();
+        let ids = std::array::from_fn(|rank| rank);
+        for cap in 0..=10 {
+            let (mut proof, staged, last, split) =
+                Proof::prepare(&source, &ids, &[0.1; 10], cap, 10).unwrap();
+            assert_eq!(split.cpu(), &ids[..cap]);
+            assert_eq!(split.gpu(), &ids[cap..]);
+            assert_eq!(last.pending.uploads.len(), 10 - cap);
+            assert!(
+                last.pending
+                    .uploads
+                    .iter()
+                    .all(|(id, _)| split.gpu().contains(id))
+            );
+            proof
+                .validate_source(&source, &staged, &last, false)
+                .unwrap();
+            *proof.cap = (cap + 1) % 11;
+            assert!(
+                proof
+                    .validate_source(&source, &staged, &last, false)
+                    .is_err()
+            );
+        }
+    }
+}

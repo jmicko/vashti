@@ -1,4 +1,5 @@
 pub mod admission;
+pub mod cli;
 pub mod collections;
 pub mod config;
 pub mod deployment;
@@ -13,6 +14,7 @@ pub mod image_worker;
 mod journal;
 mod lifecycle;
 mod observe;
+pub mod shell_export;
 mod storage;
 pub mod systemd;
 pub mod takeover;
@@ -20,6 +22,7 @@ pub mod usage;
 
 mod gpu;
 pub mod learning;
+pub mod lora_merge;
 pub mod managed;
 pub mod placement;
 pub mod pool;
@@ -27,3 +30,9 @@ pub mod recovery;
 pub mod reservations;
 pub mod resources;
 pub mod worker;
+
+pub mod native_protocol;
+
+mod native_artifact;
+mod native_chat;
+pub mod native_text;

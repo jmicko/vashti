@@ -92,6 +92,7 @@ pub struct Gateway {
     image_requests: Arc<tokio::sync::Semaphore>,
     image_readiness: Arc<crate::image_access::ImageReadiness>,
     image_fast_attention: bool,
+    native_runtime: crate::native_text::Runtime,
     image_runtime: crate::image_residency::ImageRuntime,
 }
 
@@ -178,6 +179,7 @@ impl Gateway {
             image_requests: Arc::new(tokio::sync::Semaphore::new(2)),
             image_readiness,
             image_fast_attention,
+            native_runtime: Default::default(),
             image_runtime: Default::default(),
         }))
     }
@@ -196,6 +198,9 @@ impl Gateway {
     pub fn stop_images(&self) {
         self.image_shutdown.send_replace(true);
     }
+    pub async fn evict_native_text(&self) -> Result<(), &'static str> {
+        self.native_runtime.evict().await
+    }
     pub async fn evict_images(&self) -> Result<(), &'static str> {
         self.image_runtime.evict().await
     }
@@ -206,6 +211,7 @@ impl Gateway {
         let images = Router::new()
             .route("/kuno/v1/capabilities", get(capabilities))
             .route("/kuno/v1/images/generate", post(generate_image))
+            .route("/kuno/v1/videos/generate", post(generate_video))
             .layer(middleware::from_fn(inference_guard));
         images
             .fallback(compatibility_fallback)
@@ -322,7 +328,7 @@ async fn status(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
 }
 
 async fn capabilities(State(gateway): State<Arc<Gateway>>) -> Response {
-    let images = gateway
+    let discovery = gateway
         .image_readiness
         .snapshot(gateway.config.image.clone())
         .await;
@@ -333,7 +339,8 @@ async fn capabilities(State(gateway): State<Arc<Gateway>>) -> Response {
             discovery_version: 1,
             version: env!("CARGO_PKG_VERSION").into(),
             inference_auth: "none".into(),
-            images,
+            images: discovery.images,
+            videos: Some(discovery.videos),
         }),
     )
         .into_response()
@@ -462,6 +469,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
                 .managed
                 .as_ref()
                 .ok_or("image_requires_managed_pool")?;
+            gateway.native_runtime.evict().await?;
             pool.prepare_image(&config.pci_address).await?;
             let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
             let finished = gateway
@@ -488,6 +496,123 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
         let _ = send.send(result);
     });
     crate::image_stream::response(receive, stream_previews, slot)
+}
+
+async fn video_recipe(
+    request: Request,
+    privacy: impl std::future::Future<Output = Result<(), &'static str>>,
+) -> Result<kuno_protocol::VideoRecipe, (StatusCode, &'static str)> {
+    privacy
+        .await
+        .map_err(|code| (StatusCode::SERVICE_UNAVAILABLE, code))?;
+    let bytes = match tokio::time::timeout(
+        Duration::from_secs(60),
+        axum::body::to_bytes(request.into_body(), kuno_protocol::MAX_IMAGE_REQUEST_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return Err((StatusCode::PAYLOAD_TOO_LARGE, "image_request_too_large")),
+        Err(_) => return Err((StatusCode::REQUEST_TIMEOUT, "image_request_timeout")),
+    };
+    serde_json::from_slice(&bytes).map_err(|_| (StatusCode::BAD_REQUEST, "video_request_invalid"))
+}
+
+/// MiniMax H3 image-to-video. Same admission, eviction, worker and cleanup as images.
+async fn generate_video(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    let Some(config) = gateway.config.image.clone().filter(|c| c.video_enabled()) else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "video_generation_not_configured",
+        );
+    };
+    let slot = match gateway.image_requests.clone().try_acquire_owned() {
+        Ok(slot) => Arc::new(slot),
+        Err(_) => return error(StatusCode::SERVICE_UNAVAILABLE, "image_queue_full"),
+    };
+    let recipe = match video_recipe(request, crate::image_access::require_privacy()).await {
+        Ok(recipe) => kuno_image::worker_protocol::TransientVideoRecipe::from(recipe),
+        Err((status, code)) => return error(status, code),
+    };
+    if let Err(code) = recipe.validate() {
+        return error(StatusCode::BAD_REQUEST, code);
+    }
+    // Reject an undecodable first frame before admission; decoded pixels are cleared.
+    let encoded = recipe.first_frame.clone();
+    let decoded = tokio::task::spawn_blocking(move || {
+        let mut encoded = kuno_image::worker_protocol::TransientBytes(encoded.into_bytes());
+        let result = std::str::from_utf8(&encoded.0)
+            .ok()
+            .and_then(|s| kuno_image::references::decode(&[s]).ok())
+            .map(|mut pixels| {
+                for p in &mut pixels {
+                    kuno_image::worker_protocol::clear_bytes(&mut p.rgba);
+                }
+            });
+        kuno_image::worker_protocol::clear_bytes(&mut encoded.0);
+        result.is_some()
+    })
+    .await;
+    if !matches!(decoded, Ok(true)) {
+        return error(StatusCode::BAD_REQUEST, "video_first_frame_invalid");
+    }
+    if let Err(code) = crate::image_access::require_video(config.clone()).await {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    let meta = crate::image_stream::VideoMeta {
+        width: recipe.width,
+        height: recipe.height,
+        frames: recipe.frames,
+        audio: recipe.audio,
+        steps: crate::image_residency::VIDEO_STEPS,
+    };
+    let mut lease = match gateway.admission.acquire().await {
+        Ok(lease) => lease,
+        Err(code) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
+    };
+    let (previews, stream_previews) = tokio::sync::watch::channel(None);
+    let (progress, stream_progress) = tokio::sync::watch::channel(None);
+    let (mut send, receive) = tokio::sync::oneshot::channel();
+    let task_slot = slot.clone();
+    tokio::spawn(async move {
+        let _request_slot = task_slot;
+        let result = async {
+            if send.is_closed() {
+                return Err("image_cancelled");
+            }
+            lease.dispatched()?;
+            let pool = gateway
+                .managed
+                .as_ref()
+                .ok_or("image_requires_managed_pool")?;
+            gateway.native_runtime.evict().await?;
+            pool.prepare_image(&config.pci_address).await?;
+            let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
+            let job = crate::image_residency::Job::Video(recipe, progress);
+            let finished = gateway
+                .image_runtime
+                .run_job(
+                    &executable,
+                    &config,
+                    job,
+                    &mut send,
+                    gateway.image_shutdown.subscribe(),
+                    previews,
+                )
+                .await;
+            if finished.settled
+                && !finished.forced
+                && !matches!(finished.output, Err("image_vulkan_device_lost"))
+            {
+                lease.complete();
+            }
+            finished.output
+        }
+        .await;
+        drop(lease);
+        let _ = send.send(result);
+    });
+    crate::image_stream::video_response(receive, stream_previews, stream_progress, meta, slot)
 }
 
 async fn pause(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
@@ -560,13 +685,27 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
     if request.method() == Method::CONNECT || request.headers().contains_key(header::UPGRADE) {
         return error(StatusCode::NOT_IMPLEMENTED, "protocol_upgrade_unsupported");
     }
+    if gateway.config.native_text.is_some()
+        && request.method() == Method::GET
+        && matches!(request.uri().path(), "/api/tags" | "/v1/models")
+    {
+        return native_catalog(gateway, request).await;
+    }
     let class = classify(request.method(), request.uri().path());
     if request.method() == Method::GET
         && request.uri().path() == "/api/ps"
         && let Some(pool) = &gateway.managed
     {
         return match pool.running().await {
-            Ok(report) => Json(report).into_response(),
+            Ok(mut report) => {
+                if gateway.native_runtime.resident()
+                    && let Some(config) = &gateway.config.native_text
+                    && let Some(models) = report["models"].as_array_mut()
+                {
+                    models.push(config.metadata());
+                }
+                Json(report).into_response()
+            }
             Err(code) => error(StatusCode::SERVICE_UNAVAILABLE, code),
         };
     }
@@ -594,6 +733,57 @@ async fn forward(
     mut lease: Option<Lease>,
 ) -> Response {
     let (mut parts, mut body) = request.into_parts();
+    if let Some(config) = &gateway.config.native_text {
+        if matches!(
+            parts.uri.path(),
+            "/api/chat"
+                | "/api/generate"
+                | "/api/embed"
+                | "/api/embeddings"
+                | "/api/show"
+                | "/api/create"
+                | "/api/delete"
+                | "/api/pull"
+                | "/api/push"
+                | "/api/copy"
+                | "/v1/chat/completions"
+                | "/v1/completions"
+                | "/v1/embeddings"
+                | "/v1/responses"
+                | "/v1/messages"
+        ) {
+            let bytes = match tokio::time::timeout(
+                Duration::from_secs(300),
+                axum::body::to_bytes(body, 64 * 1024 * 1024),
+            )
+            .await
+            {
+                Ok(Ok(b)) => b,
+                _ => return error(StatusCode::BAD_REQUEST, "native_request_body_unavailable"),
+            };
+            if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if ["model", "name", "source", "destination"]
+                    .iter()
+                    .any(|key| {
+                        value.get(key).and_then(serde_json::Value::as_str)
+                            == Some(config.model.as_str())
+                    })
+                {
+                    if parts.uri.path() == "/api/show" {
+                        return Json(config.show()).into_response();
+                    }
+                    return native_inference(gateway, value, parts.uri.path(), lease).await;
+                }
+                crate::native_text::scrub_json(&mut value);
+            }
+            body = Body::from(bytes);
+        }
+        if class != RequestClass::Metadata
+            && let Err(code) = gateway.native_runtime.evict().await
+        {
+            return error(StatusCode::SERVICE_UNAVAILABLE, code);
+        }
+    }
     let mut managed_job = None;
     let mut address = gateway.config.upstream;
     if let Some(pool) = &gateway.managed {
@@ -992,6 +1182,247 @@ impl Drop for LeasedBody {
             }
         });
     }
+}
+
+async fn native_catalog(gateway: Arc<Gateway>, request: Request) -> Response {
+    let path = request.uri().path().to_owned();
+    let (mut parts, body) = request.into_parts();
+    let target = parts
+        .uri
+        .path_and_query()
+        .map(|p| p.as_str())
+        .unwrap_or("/");
+    parts.uri = match format!("http://{}{}", gateway.config.upstream, target).parse() {
+        Ok(uri) => uri,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "upstream_uri_invalid"),
+    };
+    strip_hop_headers(&mut parts.headers);
+    parts.headers.insert(
+        header::HOST,
+        HeaderValue::from_str(&gateway.config.upstream.to_string()).unwrap(),
+    );
+    let response = match gateway
+        .client
+        .request(Request::from_parts(parts, body))
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "upstream_connection_failed"),
+    };
+    if !response.status().is_success() {
+        return response.map(Body::new);
+    }
+    let bytes = match axum::body::to_bytes(Body::new(response.into_body()), 2 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "native_catalog_unavailable"),
+    };
+    let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return error(StatusCode::BAD_GATEWAY, "native_catalog_invalid"),
+    };
+    let config = gateway.config.native_text.as_ref().unwrap();
+    let key = if path == "/api/tags" {
+        "models"
+    } else {
+        "data"
+    };
+    let Some(models) = value.get_mut(key).and_then(serde_json::Value::as_array_mut) else {
+        return error(StatusCode::BAD_GATEWAY, "native_catalog_invalid");
+    };
+    if !models
+        .iter()
+        .any(|m| m["name"] == config.model || m["id"] == config.model)
+    {
+        models.push(if key=="models" {config.metadata()} else {serde_json::json!({"id":config.model,"object":"model","owned_by":"kuno","created":1792368000})});
+    }
+    Json(value).into_response()
+}
+
+async fn native_inference(
+    gateway: Arc<Gateway>,
+    value: serde_json::Value,
+    path: &str,
+    mut lease: Option<Lease>,
+) -> Response {
+    let mut value = value;
+    let prepared = crate::native_text::prepare(path, &value);
+    crate::native_text::scrub_json(&mut value);
+    drop(value);
+    let prepared = match prepared {
+        Ok(p) => p,
+        Err(code) => return error(StatusCode::BAD_REQUEST, code),
+    };
+    let config = gateway.config.native_text.clone().unwrap();
+    let chat = prepared.chat;
+    let stream = prepared.stream;
+    if let Err(code) = gateway.evict_images().await {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    if let Some(pool) = &gateway.managed
+        && let Err(code) = pool.prepare_native_text().await
+    {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    if let Some(lease) = &mut lease
+        && let Err(code) = lease.dispatched()
+    {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
+    let Some(request) = prepared.request else {
+        let result = gateway.native_runtime.evict().await;
+        // evict only returns after wait/reap; a live process retains uncertainty.
+        if result != Err("native_worker_reap_failed")
+            && let Some(lease) = &mut lease
+        {
+            lease.complete();
+        }
+        return match result {
+            Ok(()) => {
+                let mut v = crate::native_text::chunk(&config.model, chat, "", None);
+                v["done"] = true.into();
+                v["done_reason"] = "unload".into();
+                Json(v).into_response()
+            }
+            Err(code) => error(StatusCode::SERVICE_UNAVAILABLE, code),
+        };
+    };
+    let preload = request.outputs == 0;
+    let mut output = prepared.output;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+    let task_gateway = gateway.clone();
+    let model = config.model.clone();
+    tokio::spawn(async move {
+        let settled = task_gateway
+            .native_runtime
+            .run(&config, request, sender)
+            .await;
+        let closed = if !prepared.keep_alive {
+            task_gateway.native_runtime.evict().await
+        } else {
+            Ok(())
+        };
+        if settled
+            && closed != Err("native_worker_reap_failed")
+            && let Some(lease) = &mut lease
+        {
+            lease.complete();
+        }
+    });
+    if !stream {
+        let mut collected = crate::native_chat::Collected::default();
+        while let Some(event) = receiver.recv().await {
+            match event {
+                crate::native_text::Event::Text(bytes) => {
+                    let part = match std::str::from_utf8(&bytes) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return error(StatusCode::BAD_GATEWAY, "native_worker_utf8_invalid");
+                        }
+                    };
+                    match output.feed(part, false) {
+                        Ok(delta) => collected.push(delta),
+                        Err(code) => return error(StatusCode::BAD_GATEWAY, code),
+                    }
+                }
+                crate::native_text::Event::Done(metrics) => {
+                    match output.feed("", true) {
+                        Ok(delta) => collected.push(delta),
+                        Err(code) => return error(StatusCode::BAD_GATEWAY, code),
+                    }
+                    let mut v =
+                        crate::native_text::chunk(&model, chat, &collected.content, Some(&metrics));
+                    collected.annotate(&mut v, chat);
+                    if preload {
+                        v["done_reason"] = "load".into();
+                    }
+                    return Json(v).into_response();
+                }
+                crate::native_text::Event::Failed(code) => {
+                    return error(crate::native_text::error_status(code), code);
+                }
+            }
+        }
+        return error(StatusCode::BAD_GATEWAY, "native_worker_response_incomplete");
+    }
+    // Hold headers through startup/load: an OOM before the first token is a
+    // real HTTP503. Later stream failures use the ordinary NDJSON error form.
+    let first = match receiver.recv().await {
+        Some(crate::native_text::Event::Failed(code)) => {
+            return error(crate::native_text::error_status(code), code);
+        }
+        Some(event) => event,
+        None => return error(StatusCode::BAD_GATEWAY, "native_worker_response_incomplete"),
+    };
+    let events = futures_util::stream::unfold(
+        (receiver, model, Some(first), output, false),
+        move |(mut receiver, model, mut first, mut output, mut terminal)| async move {
+            if terminal {
+                return None;
+            }
+            let event = match first.take() {
+                Some(event) => event,
+                None => receiver.recv().await?,
+            };
+            let mut value = match event {
+                crate::native_text::Event::Text(bytes) => match std::str::from_utf8(&bytes) {
+                    Ok(text) => match output.feed(text, false) {
+                        Ok(mut delta) => {
+                            let mut v =
+                                crate::native_text::chunk(&model, chat, &delta.content, None);
+                            delta.annotate(&mut v, chat);
+                            v
+                        }
+                        Err(code) => {
+                            terminal = true;
+                            serde_json::json!({"error":code})
+                        }
+                    },
+                    Err(_) => {
+                        terminal = true;
+                        serde_json::json!({"error":"native_worker_utf8_invalid"})
+                    }
+                },
+                crate::native_text::Event::Done(metrics) => {
+                    terminal = true;
+                    match output.feed("", true) {
+                        Ok(mut delta) => {
+                            let mut v = crate::native_text::chunk(
+                                &model,
+                                chat,
+                                &delta.content,
+                                Some(&metrics),
+                            );
+                            delta.annotate(&mut v, chat);
+                            if preload {
+                                v["done_reason"] = "load".into();
+                            }
+                            v
+                        }
+                        Err(code) => serde_json::json!({"error":code}),
+                    }
+                }
+                crate::native_text::Event::Failed(code) => {
+                    terminal = true;
+                    serde_json::json!({"error":code})
+                }
+            };
+            let mut encoded = serde_json::to_vec(&value).unwrap();
+            crate::native_text::scrub_json(&mut value);
+            encoded.push(b'\n');
+            Some((
+                Ok::<_, std::convert::Infallible>(encoded),
+                (receiver, model, first, output, terminal),
+            ))
+        },
+    );
+    (
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Body::from_stream(events),
+    )
+        .into_response()
 }
 
 #[cfg(test)]

@@ -3,13 +3,24 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno upgrade [--yes]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno install-image-runtime --directory ABSOLUTE_DIRECTORY --manifest-sha256 SHA256 [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno [--host URL] [--config FILE] run MODEL [PROMPT] [OLLAMA_OPTIONS]\n  kuno [--host URL] [--config FILE] COMMAND [ARGS]\n    Commands: list (ls), ps, show, pull, push, stop, cp, rm, create\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service] [--cli-user USER]\n  kuno upgrade [--yes] [--cli-user USER]\n  kuno configure-cli [--user USER]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno configure-native-text (--settings FILE | --disable) [--yes]\n  kuno install-image-runtime --directory ABSOLUTE_DIRECTORY --manifest-sha256 SHA256 [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Inference CLI endpoint: --host, KUNO_HOST, selected/installed config.listen, then 127.0.0.1:11434.\n\
+The original Ollama client is required on PATH; its readline history starts disabled.\n\
+OLLAMA_HOST never selects Kuno's CLI endpoint.\n\
 serve requires KUNO_CONTROL_TOKEN or KUNO_CONTROL_TOKEN_FILE (32–256 URL-safe characters).\n\
 configure-timeouts requires at least one timeout; 0 disables that inference deadline.\n\
 Default gateway: 127.0.0.1:11433; control: 127.0.0.1:11432; upstream: 127.0.0.1:11434.\n\
 takeover-plan is read-only. It never changes services, ports, or model limits.\n";
 
 fn main() {
+    match kuno::cli::run_if_requested(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(code) => {
+            eprintln!("kuno: {code}");
+            std::process::exit(1);
+        }
+    }
     // Enter the private worker before creating any Tokio threads. All native
     // threads must inherit its filesystem policy from this initial thread.
     let result = if std::env::args().nth(1).as_deref() == Some("image-worker-launch") {
@@ -68,12 +79,15 @@ fn run_resident_image_worker() -> Result<(), &'static str> {
     if args.next().is_some() {
         return Err("unknown_argument");
     }
-    let mut session = kuno_image::native::Session::new(Path::new(&directory), &pci)?;
+    let session = kuno_image::native::Session::new(Path::new(&directory), &pci)?;
     let previews = std::env::var_os("KUNO_IMAGE_PREVIEWS").is_some();
-    kuno::image_worker::serve(
+    // Both closures borrow the one session; jobs are strictly sequential.
+    let session = std::cell::RefCell::new(session);
+    kuno::image_worker::serve_with_video(
         &mut std::io::stdin().lock(),
         &mut std::io::stdout(),
-        |recipe| session.generate(recipe, previews),
+        |recipe| session.borrow_mut().generate(recipe, previews),
+        |recipe| session.borrow_mut().generate_video(recipe, previews),
     )
 }
 
@@ -144,6 +158,32 @@ async fn run() -> Result<(), &'static str> {
         println!("model_collection_ready");
         return Ok(());
     }
+    if command == "configure-native-text" {
+        let action = args.next().ok_or("missing_native_configuration")?;
+        let native = match action.as_str() {
+            "--disable" => None,
+            "--settings" => {
+                let path = args.next().ok_or("missing_native_configuration")?;
+                let bytes = std::fs::read(path).map_err(|_| "native_configuration_read_failed")?;
+                Some(serde_json::from_slice(&bytes).map_err(|_| "native_configuration_invalid")?)
+            }
+            _ => return Err("unknown_argument"),
+        };
+        let yes = match args.next().as_deref() {
+            Some("--yes") => true,
+            None => false,
+            _ => return Err("unknown_argument"),
+        };
+        if args.next().is_some() {
+            return Err("unknown_argument");
+        }
+        confirm_interruption(yes)?;
+        tokio::task::spawn_blocking(move || systemd::configure_native_text(native))
+            .await
+            .map_err(|_| "native_configuration_task_failed")??;
+        println!("native_text_configuration_active");
+        return Ok(());
+    }
     if command == "configure-image" {
         let action = args.next().ok_or("missing_image_configuration")?;
         let image = match action.as_str() {
@@ -205,8 +245,21 @@ async fn run() -> Result<(), &'static str> {
     let mut disable_managed = false;
     let mut response_headers = None;
     let mut stream_idle = None;
+    let mut cli_user = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--cli-user" if matches!(command.as_str(), "install" | "upgrade") => {
+                if cli_user.is_some() {
+                    return Err("duplicate_cli_user");
+                }
+                cli_user = Some(args.next().ok_or("missing_cli_user")?);
+            }
+            "--user" if command == "configure-cli" => {
+                if cli_user.is_some() {
+                    return Err("duplicate_cli_user");
+                }
+                cli_user = Some(args.next().ok_or("missing_cli_user")?);
+            }
             "--response-headers" if command == "configure-timeouts" => {
                 if response_headers.is_some() {
                     return Err("duplicate_response_header_timeout");
@@ -306,18 +359,27 @@ async fn run() -> Result<(), &'static str> {
         "serve" => serve(config).await,
         "install" => {
             confirm_interruption(yes)?;
-            tokio::task::spawn_blocking(move || systemd::install(&service, &config))
-                .await
-                .map_err(|_| "installation_task_failed")??;
+            tokio::task::spawn_blocking(move || {
+                systemd::install_for_user(&service, &config, cli_user.as_deref())
+            })
+            .await
+            .map_err(|_| "installation_task_failed")??;
             println!("kuno_installed_and_active");
             Ok(())
         }
         "upgrade" => {
             confirm_interruption(yes)?;
-            tokio::task::spawn_blocking(systemd::upgrade)
+            tokio::task::spawn_blocking(move || systemd::upgrade_for_user(cli_user.as_deref()))
                 .await
                 .map_err(|_| "upgrade_task_failed")??;
             println!("kuno_upgraded_and_active");
+            Ok(())
+        }
+        "configure-cli" => {
+            tokio::task::spawn_blocking(move || systemd::configure_cli(cli_user.as_deref()))
+                .await
+                .map_err(|_| "cli_configuration_task_failed")??;
+            println!("ollama_cli_environment_configured");
             Ok(())
         }
         "configure-managed" => {
@@ -525,6 +587,7 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
                 gateway.evict_images().await?;
+                gateway.evict_native_text().await?;
                 Ok(())
             };
             match tokio::time::timeout(Duration::from_secs(grace), cleanup).await {

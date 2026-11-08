@@ -1,0 +1,63 @@
+{
+  "actual_Cargo_release_snapshot_sha256": "1453bda8103b4cb5d0d2657d748155977f3061f03f604f6573403f8be5c56809",
+  "actual_case_count": 22,
+  "author_commit": "c2f120c2c489bd90cf1e9b51f1f74f7a635aad8e",
+  "author_handoff_sha256": "78921fef8aaf9fa728609eef5d30028e14d55c393b37bb96c14f88f72bb6927d",
+  "cli_negative_checks": {
+    "transient0_audit1": "reject before device",
+    "transient1_audit0": "reject before device",
+    "unconfigured": "reject before device"
+  },
+  "date": "2026-10-05",
+  "entry": "intel|nvidia resident-lifecycle-probe, explicit KUNO_LAB_TRANSIENT_IO=1 and KUNO_LAB_OWNED_ZERO_AUDIT=1",
+  "extra_main_bytes": 0,
+  "files_sha256": {
+    "apps/kuno/benchmarks/native-text/src/main.rs": "7bf98d273e27c5271566cb83690e4503fe70ac05af76f3d360989355180674f0",
+    "apps/kuno/benchmarks/native-text/src/resident_lifecycle_hooks.rs": "171ae7620217198e8fe816d25f60c923446bfa883960f6a7bdc27b47f049fe9e",
+    "apps/kuno/benchmarks/native-text/src/resident_model.rs": "41a2944abefd61b1cdde063009f1452d0e3514c181e361a3ddb884b0cbb6a16e",
+    "apps/kuno/benchmarks/native-text/src/resident_model_batch.rs": "cf30ab353345b333b7c4641879d4bffc16a9139e24db529731879ed6b3258661",
+    "apps/kuno/benchmarks/native-text/src/resident_model_lifecycle_probe.rs": "2262517e7a885eae58dc772516ce35d4d6fd8f5224c6fdb8b01ca7a7bf351f27",
+    "apps/kuno/benchmarks/text/run-native-lifecycle-lab.py": "a1b8d5b601bf4e36b9a846f1875b486c49781efb7985e33b0626edb9978e2080"
+  },
+  "host_checks": {
+    "clippy_log_sha256": "abb8d7340d99bfc1a7352e714ab9b0b19feca4cadd6adeb784cbd3f9db7488d3",
+    "format_and_diff": true,
+    "locked_offline_release": true,
+    "native_passed": 376,
+    "strict_all_target_clippy": true,
+    "tests_log_sha256": "fa7c627db544cbcaa80b1de2f861a98ae8156dbeb78845956fcca5068bc0ee2c"
+  },
+  "immutable_executable_sha256": "110b99265bf180fea3f2a0c21dc1e678c7df24d483b2651644fab3231b8630f2",
+  "independent_limits": {
+    "model_private_controlled_host_bytes": 12582912,
+    "probe_metadata_bytes": 65536,
+    "probe_private_host_bytes": 4194304,
+    "runtime_bytes": 67108864,
+    "source_live_bytes": 67108864
+  },
+  "limits": [
+    "source and compile gates only; both-card physical cases and full-logit bit comparison pending",
+    "numeric mismatch returns cleaned diagnostic, then runner nonzero with numeric_not_accepted; no relaxed tolerance",
+    "real context4/8 only; 2048/2049/2052/4096 remain unaccepted",
+    "scalar exhaustion remains preflight rejection followed by explicit diagnostic close; native exhaustion auto-close required",
+    "no production private worker/API/default/frontend/installed/release/reset/reboot change"
+  ],
+  "production_inference_deadline_change": false,
+  "protected_runner_lab_only_seconds": 1800,
+  "root_source_commits": [
+    "19e12af",
+    "cdb3524"
+  ],
+  "scope": "actual model lifecycle source and protected CLI only; devices pending",
+  "serialized_original_owners": {
+    "native_full_bytes": 818249728,
+    "native_full_pages": 1376,
+    "scalar_full_bytes": 785186816,
+    "scalar_full_pages": 1286
+  },
+  "source_hooks": [
+    "layer47 after actual routed/shared combine enqueue",
+    "real PLE ticket after first owning proof before second proof: error and panic",
+    "cancellation after genuine first GDN family state/history commit"
+  ]
+}

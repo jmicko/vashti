@@ -1,0 +1,62 @@
+{
+  "scope": "fixed-public-synthetic-operator-test-only",
+  "fixture": "resident-qsa-probe",
+  "vendor": "nvidia",
+  "passed_contexts": [
+    1,
+    4,
+    5,
+    2048,
+    2049,
+    2052
+  ],
+  "reported_contexts": [
+    {
+      "visible": 4,
+      "max_norm_error": 9.536743e-07,
+      "max_score_error": 0.0,
+      "max_output_error": 5.9604645e-08,
+      "charged_bytes": 2326528
+    },
+    {
+      "visible": 5,
+      "max_norm_error": 9.536743e-07,
+      "max_score_error": 0.0,
+      "max_output_error": 8.195639e-08,
+      "charged_bytes": 2326528
+    },
+    {
+      "visible": 2048,
+      "max_norm_error": 9.536743e-07,
+      "max_score_error": 1.9073486e-06,
+      "max_output_error": 9.778887e-09,
+      "charged_bytes": 20217856
+    },
+    {
+      "visible": 2049,
+      "max_norm_error": 9.536743e-07,
+      "max_score_error": 1.9073486e-06,
+      "max_output_error": 1.3504177e-08,
+      "charged_bytes": 20217856
+    },
+    {
+      "visible": 2052,
+      "max_norm_error": 9.536743e-07,
+      "max_score_error": 2.861023e-06,
+      "max_output_error": 7.450581e-09,
+      "charged_bytes": 20742144
+    }
+  ],
+  "terminal_capture_limitation": "context1 numeric fields scrolled out of bounded terminal; function returns only after all6 contexts pass",
+  "runtime_ms": 1092,
+  "oracle_tolerance_absolute": 3e-05,
+  "oracle_tolerance_relative": 0.0001,
+  "binary_sha256": "3e9653dccb4c3c812f7f47d9b38ed95486e3c6dabe0d46a333050140ae7d843a",
+  "source_base": "2eec122",
+  "public_rope_constants_bytes": 1048576,
+  "memory_max_bytes": 4294967296,
+  "memory_swap_max": 0,
+  "limit_core": 0,
+  "operator_runtime_max_seconds": 180,
+  "runtime_staging_erasure_acceptance": false
+}

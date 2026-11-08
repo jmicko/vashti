@@ -1,0 +1,289 @@
+# Coupled GU publication and activation checks
+
+Implementation in progress; **not yet validated or selected**. Keep the complete
+matrix-attention and subgroup-publication work. Do not remove finite checks to
+make cooperative stores appear faster.
+
+## Evidence and scope
+
+Subgroup publication source3228cd9e/SHA0e45b16a passes145 selected CPU controls,
+420 WGSL/208 matrix layouts, original171 GPU numerical controls, both complete
+original profiles and all compiler/count/pool/source/owner/recovery proofs.
+Normal first/repeat11.645375742/10.189380043s versus the same scalar/pool
+predecessor11.608595581/10.128802681s is not a measurable gain. It stays
+unselected; no new clean, staged or installation acceptance was run.
+
+The native M128xN128 kernels currently store every cooperative fragment to a
+subgroup's128-F32 SLM slot, synchronize, read it back, check/sanitize each value
+and publish it. This remains an actual round trip after narrowing the barriers.
+GU output is contiguous at member*1280+feature. DOWN output instead scatters
+through the original route map and retains its status policy. Target only GU
+wide prefixes first; keep DOWN and checked standalone primitives intact.
+
+The next activation already reads every GU element. A direct cooperative GU
+store must be implemented together with its mandatory validating activation,
+not tried separately. Eliminating scratch might reduce GU shared storage from
+49152 to32768B. Actual compiled envelopes must prove that; no hardware occupancy
+or speed gain follows from this calculation alone. Do not sum sampled GPU class
+intervals as isolated kernel costs or attribute all end-to-end time to them.
+
+## Exact semantic boundary
+
+The original checked GU primitive sets fault128 and stores positive zero for
+each nonfinite result. It remains available with exactly that immediate
+contract for standalone callers and original reference controls.
+
+Introduce a distinct internal direct-GU kernel only inside a genuine closed
+native expert batch. It keeps original map/header, shape, device, whole-owner,
+stream, grid, prefix/tail, INFO and original source checks. It writes its full
+128-member prefix through cooperative global stores to the existing GU owner;
+it does not expose an independently valid unchecked primitive.
+
+Its mandatory activation must, before computing SwiGLU:
+
+1. Check all four original GU values for each existing two-output invocation.
+2. Replace each nonfinite GU value with positive zero in the original GU owner
+   and set the original fault128. Preserve finite values, including signed zero.
+3. Run the original activation, infinity-saturation, F16 packing and status
+   expressions on these sanitized inputs, with unchanged operation order.
+
+Keep the original activation `good`/status policy after sanitization. A bad GU
+input already sets fault128, but must not independently change `status[route]`
+relative to checked GU followed by original activation. In particular, do not
+replace the original `hf_sat` behavior with a generic all-finite test: activation
+infinities saturate; NaNs remain faults. Positive and negative zero also matter.
+
+After the coupled pair completes, the complete GU bytes, packed hidden output,
+status, fault and original padding must match checked GU + original activation.
+The checker covers the full active group, including any existing checked tail.
+Do not add a GPU pass; fuse the check into the activation that already consumes
+these values. Private failure/erasure behavior stays original even if failure
+occurs between the two stages.
+
+## Authority and complete pipeline changes
+
+Use distinct role-bearing kernel identities. The closed original six-phase
+collector must require the validating activation after a direct prefix and its
+required adjacent original tail. It must reject plain activation, missing or
+reordered checking, mismatched GU/fault/map views, incomplete pairs and unrelated
+commands before GPU submission. A flag or fabricated public/prompt scope is not
+a substitute for the original active batch/owner/epoch authority.
+
+Checked standalone matrix calls and original numerical references keep their
+immediate sanitization behavior. Direct publication may not silently replace
+those calls just because a build feature is enabled. If the genuine coupled
+context cannot be established, select the original checked implementation.
+
+The new activation genuinely writes GU when sanitizing, so its binding, actual
+SPIR-V write inventory, sealed access manifest, graph declarations and collector
+view validation must all reflect that read/write access. Never report a read-only
+buffer to avoid a hazard. Preserve complete original owner ranges, allocator
+retention, phase dependencies, queues, real completion and quarantine. No
+scheduler-only narrowing, cached private certificate, invented completion or
+weakened source mutation guard.
+
+Retain original8MiB command tape,4096 views,32 exact pipelines,24MiB parent batch
+reservation and64MiB graph cap. Derive actual simultaneous inventories; do not
+increase limits to accommodate the experiment. Prefer replacing the selected
+GU/activation roles rather than retaining both as extra active batch pipelines.
+Logical phases remain six; report actual direct prefixes and validating
+activations from actual accepted commands only in the existing fixed-public sink.
+
+Both ordinary and retained-native compilation must preserve the same matrix
+precision, actual global cooperative stores and original subgroup memory fences
+where scratch is still used. Keep input-stage workgroup barriers. A new shared
+envelope is proved per real definition/layout, not inferred by subtracting an
+unused source variable from a constant. No new model, runtime dependency, network
+API, KNT2/KNR2, configuration or Vashti consumer change is required.
+
+## Acceptance
+
+Add CPU controls for the genuine collector pair and all mismatch/reorder/escape/
+epoch/view/capacity negatives. Prove original prefix/tail output bounds and
+complete coverage, actual global cooperative stores, correct GU write access,
+unchanged arithmetic/precision and all real compiled memory layouts.
+
+Add genuine fixed-public GPU pair controls comparing the checked original pair
+with the direct+validating pair, including full and nonzero-tail groups and
+bounded NaN/+Inf/-Inf inputs on both gate/up channels. Use authentic private
+owners and exact raw-bit uploads when finite-only convenience upload rejects
+deliberate poison. Compare full GU, hidden, status, fault and owning padding;
+close and verify complete owned erasure. A diagnostic fixture may not manufacture
+production request/batch authority. Keep all original171 controls and their
+existing bounds, and require real whole-model counters to prove the new pair
+actually ran under the production closed-batch collector.
+
+Then complete both original profile/proof modes and physical recovery. Only a
+promising complete result proceeds to original terminal-negative, fresh clean
+45/4245/4245 at-EACH5%, staged thinking/tools/MAX8/semantic/privacy/sustained and
+official reversible installation. Preserve all failures. Do not change warmup,
+exclude cold compilation, select repeat alone or replace original scalar/F64
+oracles. Installed worker3fffc266/SHAeac78ce0 stays until acceptance.
+
+## Route-preservation implementation correction (2026-10-21)
+
+Code review found that a raw cooperative global store would overwrite GU for an
+invalid mapped route. The original checked kernel leaves that member's GU bytes
+untouched and sets fault128. The coupled activation cannot restore overwritten
+bytes, so direct publication now checks the eight fragment routes with a genuine
+subgroup vote. All lanes take a uniform branch: valid fragments store directly;
+otherwise the unchanged checked publication handles the fragment, preserving
+both valid rows and untouched invalid rows. Original shared scratch therefore
+remains49152B. No reduced-memory/occupancy claim is made. The objective remains
+eliminating the publication round trip on valid fragments, with unchanged guards.
+Both real compiler paths still apply original subgroup shared-memory semantics.
+
+## Coherent CPU implementation checkpoint (2026-10-21 00:31UTC)
+
+`strata-native-direct-gu` / builder `--direct-gu` requires the complete native32,
+subgroup-publication, scoped bulk and scratch-ring feature bundle. Production
+selection queries the genuine scoped client; a closed/foreign/failed collector
+rejects rather than executing immediately. The original standalone GU remains
+checked. The closed six-phase grammar requires exact generated direct GU role,
+its original adjacent tail and `StrataPromptExpertF16SwigluCheckGu` with original
+map/GU/input/status/fault views, metadata and member grid. Actual accepted-command
+receipts report direct prefixes and validating activations through the existing
+fixed-public-only profile sink. No private content counters or persistence.
+
+147 selected CPU controls pass with the exact release feature list, preserving
+all145 subgroup controls and adding real direct-module/global-store provenance
+and activation source/usage controls. All8 layouts retain49152B, original input
+and subgroup fallback fences,8 matrix products,4 global GU cooperative stores
+plus4 original scratch fallback stores. Original full/tail numerical controls
+are unchanged. Naga's actual activation use inventory is READ|WRITE for GU;
+retained graph registration derives its exact hazard access from that inventory.
+The matrix's actual compiled output visibility is also ReadWrite. Original math,
+hf_sat/status tail is byte-identical after the fused per-component sanitization.
+11 controls over actual runtime grammar/capture sources pass, including sealing
+on success/error/panic and paired role/view/INFO/grid/order/tail negatives.
+Artifacts `native-direct-gu-{complete-cpu,cpu-selection,cpu-features,runtime-cpu}-20261021*`
+live under the existing artifact base; all are CPU/compiler evidence only.
+
+New fixed-public GPU controls are prepared, NOT yet executed. They compare full
+GU/hidden/status/fault/source owners and padding for256/257 members across finite,
+both gate/up NaN/+Inf/-Inf and invalid first/last routes, then reset/verify owned
+erasure. They use the existing explicit public-audit arena; they do not fabricate
+production prompt or batch authority. Production whole-model accepted-command
+counters are separately required. Offline release, original171 GPU controls,
+new18 pair cases, BOTH full profiles/recovery and original clean/staged/install
+gates remain pending. No speed result, reduced SLM/occupancy or install claim.
+
+
+### Preserved first GPU diagnostic setup failure
+
+Frozen2babfde3/SHA6fe832e2 passes421 WGSL/216 matrix layouts. The protected
+operator run exits1 in the NEW pair harness: the activation helper called the
+production dispatch wrapper, which requires a genuine parent STAGES scope.
+The standalone public-audit pair has no such scope; `invalid buffer length`
+therefore correctly stopped it before any timing. The run recovered physically
+and resumed admission; no reset/installation occurred. Evidence
+`native-direct-gu-connected-20261021.log` and
+`native-direct-gu-public-failure-20261021.json`. This does not prove the new pair's
+numerical acceptance. The diagnostic helper now validates exact actual public
+owner sizes/grid and launches its original activation directly, like the other
+standalone controls, without inventing a production prompt scope. Production
+parent dispatch and the real closed-batch selection are unchanged. Rebuild and
+repeat numerical acceptance before profiling.
+
+
+## Complete accepted numerical/profile outcome (2026-10-21 00:48UTC)
+
+Frozen source`bb6c65342751a33b968e6c7b18112934b52b441f`, worker
+SHA256`59e76f48ffed1f957c760ef248c6d0d439391ce6c046fd389619cf27bb0e9640`,
+build`strata-parity-direct-gu-public-launch-20261021` completes147 selected CPU,
+11 actual runtime grammar/capture controls,421 WGSL/216 actual matrix layouts,
+all ORIGINAL129+42 GPU controls and18 new paired GPU cases. Complete GU, hidden,
+status, fault, source and padding comparison has zero bit mismatches, including
+both gate/up NaN/+Inf/-Inf and invalid first/last routes across256/257 members.
+All original bounds/oracles and complete owned erasure remain. The first setup
+failure above is preserved separately.
+
+BOTH full original73/4245/4245 request/profile modes pass every original compiler,
+source/count/queue/pool/scratch/owner/erasure/recovery proof. Real accepted-command
+counts prove production used the pair: each long request has2344 direct GU
+prefixes,4688 total wide prefixes and26673 validating activations; short request
+has0/0/7663. Original FMA group populations7663/26673/26673 are unchanged. Actual
+unit properties AND wrapper checks establish swap/core0 before any worker.
+
+| Mode | First4245 prompt | Repeat4245 prompt |
+| --- | ---: | ---: |
+| Subgroup predecessor3228cd9e, profile |11.718102135s|10.321304380s|
+| Direct GU, profile |11.675534147s|10.268863056s|
+| Subgroup predecessor3228cd9e, normal |11.645375742s|10.189380043s|
+| Direct GU, normal |11.728765729s|10.125904949s|
+
+This is effectively neutral, not a demonstrated speed gain. Normal repeat expert
+interval5.902606639s versus5.945952864s; collection CPU1.492020708s. These coarse
+intervals are not isolated additive kernel costs. Keep the complete correct pair
+for further connected work. No fresh clean, staged, new terminal-negative or
+installation acceptance was run; no selection based on one favorable repeat.
+Installed worker3fffc266/SHAeac78ce0 and gateway36626d30/SHAd3ed07f4 were freshly
+rehashed unchanged. Same-host Strata5.3515s still governs the unmet goal.
+
+Exact artifacts under`/media/jmicko/faststore/kuno-development`:
+- `native-direct-gu-public-launch-{release-build,offline,complete-cpu,connected}-20261021.log`;
+- `native-direct-gu-runtime-cpu-20261021.log` and original matching feature/selection JSON;
+- `check-native-direct-gu-public-launch-connected-20261021.py` pins exact source,
+  artifact, CPU/release features, original proof chain and real pair counts;
+- `strata-parity-direct-gu-public-launch-20261021-direct-gu-public-summary.json`;
+- `strata-parity-direct-gu-public-launch-20261021-outcome-public.json` exports ONLY
+  compiled-public aggregate metrics/profiles; root receipts retain full protections;
+- `native-direct-gu-final-state-20261021.json` confirms00:47:37UTC Intel50,688,000B,
+  NVIDIA compute0(720MiB desktop), faults0, all3 services200, admission inactive,
+  unpaused, no recovery, waiting0. No lab unit remains and boot is unchanged.
+
+No API/KNT2/KNR2/config/model/frontend/version/release change. Required Vashti
+changes: none. Ordinary checked primitives and all optional previous components
+remain. Keep the first failed artifact/receipt; do not overwrite it.
+
+## Next source investigation: declared versus actual descriptor use
+
+UNIMPLEMENTED hypothesis, not a speed explanation yet. The retained SPIR-V path
+in`cubecl-wgpu/src/compute/strata_graph.rs::register_spirv_module` derives memory
+accesses from declared `kernel.bindings` Visibility, treating every binding as a
+read and every ReadWrite as a write. Its WGSL path instead uses Naga's actual
+entry-point `GlobalUse`. GU's common matrix signature includes mutable status,
+although status operations are compile-time DOWN-only. Inspect the actual final
+compiled checked/direct GU modules before concluding status is unaccessed.
+
+If real modules prove an unused descriptor, a future coupled change must bind
+that fact to the exact immutable final program, original descriptor/set/index,
+compiled inventory and all graph consumers. A shader name, build feature,
+comment, assumed valid route or guessed narrower subview cannot grant it. Retain
+complete original views/owners, private mutation/source/epoch/batch checks and
+all physical address dependencies/indirect accesses, lifetimes and memory caps.
+Reject ambiguous/malformed/unsupported pointer uses; ordinary full access is the
+fallback. Preserve actual ordinary/native compilation and replay signatures.
+Prove live declared-unused accesses and false dependency counts before claiming
+queue overlap or speed. No production hazard has been narrowed at this checkpoint.
+
+
+### Actual descriptor diagnostic completed (2026-10-21 00:51UTC)
+
+A CPU-only control compiles the real checked GU, direct GU and DOWN definitions,
+applies the actual final workgroup/fence/FP16 transforms and disassembles those
+exact words with pinned `spirv-dis --raw-id`. All keep the genuine status
+binding4 and declare it ReadWrite. Its actual variable ID appears in ZERO
+function operands for both GU modules; DOWN has64 references, a real negative
+control. No shader name or guessed source substring supplies this result.
+`actual_gu_status_is_declared_mutable_but_has_no_instruction_reference` passes;
+log`native-gu-status-declaration-diagnostic-cpu-20261021.log`. This adds one actual
+module diagnostic to the prior147 selected CPU controls. It is not a general
+adversarial unused-descriptor proof and grants no changed production access.
+Production/source artifactbb6c6534/SHA59e76f48 and its full outcome stay valid;
+the only subsequent code change is cfg(test) inspection.
+
+Next implement a bounded, allocation-free conservative proof over the exact final
+SPIR-V and its original descriptor types, with fail-closed default full access.
+Bind every proven descriptor to genuine set/binding/variable/type and reject
+ambiguity, malformed instructions, aliases/escapes/unsupported use and physical
+addressing. Verify all original resource admission, private mutation/source checks,
+physical/indirect dependencies, allocator retention, replay signatures, views and
+full owner caps independently of the memory-access mask: an unused instruction
+operand cannot mean an unowned/unvalidated resource. Same-source actual program
+proof may remove an access that does not exist; a scheduler-only guessed flag
+may not. Keep actual WGSL accesses unchanged. No extra descriptor cache, model
+state, GPU allocation or host reservation. Require actual GU/DOWN compiler
+controls, original three-queue/byte/hazard/admission negatives and actual use/count
+proofs before whole-model speed/selection. Whether this materially improves queue
+execution is still unmeasured; downstream genuine hazards may dominate it.

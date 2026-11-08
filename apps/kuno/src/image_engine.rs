@@ -12,6 +12,8 @@ use std::{
 
 pub const SYCL_RUNTIME: &str = "qwen21-sycl-2026.1-v1";
 pub const RUNTIME_ROOT: &str = "/usr/local/lib/kuno/runtimes";
+/// ABI 3 is the resident ABI 2 plus MiniMax video jobs and progress frames.
+pub const VIDEO_WORKER_ABI: u32 = 3;
 const ENGINE_REVISION: &str = "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be";
 const GGML_REVISION: &str = "4bf5f6000653b7881d00963cd6ddb665ccd62a8d";
 const MAX_MANIFEST: u64 = 64 * 1024;
@@ -76,7 +78,7 @@ impl RuntimeManifest {
     fn validate(&self) -> Result<()> {
         if self.version != 1
             || self.id != SYCL_RUNTIME
-            || !matches!(self.worker_abi, 1 | 2)
+            || !matches!(self.worker_abi, 1..=VIDEO_WORKER_ABI)
             || self.ggml_max_name != 160
             || self.engine_revision != ENGINE_REVISION
             || self.ggml_revision != GGML_REVISION
@@ -404,7 +406,7 @@ pub fn launch(id: &str, models: &str, pci: &str, previews: bool, resident: bool)
     crate::image_privacy::require_no_swap()?;
     crate::image_privacy::restrict_filesystem()?;
     let runtime = VerifiedRuntime::load(id)?;
-    if resident && runtime.manifest.worker_abi != 2 {
+    if resident && runtime.manifest.worker_abi < 2 {
         return Err("image_managed_runtime_incompatible");
     }
     let _error = sycl_command(&runtime, models, pci, previews, resident).exec();
@@ -486,6 +488,8 @@ mod tests {
         m.worker_abi = 2;
         assert!(m.validate().is_ok());
         m.worker_abi = 3;
+        assert!(m.validate().is_ok());
+        m.worker_abi = 4;
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.ggml_max_name = 64;

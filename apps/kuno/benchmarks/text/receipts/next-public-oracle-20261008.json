@@ -1,0 +1,343 @@
+{
+  "build_features": [
+    "direct-device",
+    "cpu-fma",
+    "cpu-work-stealing"
+  ],
+  "cargo_artifacts_sha256": "f43e0ee2dd7ecae1e609aef27a4b486d13b9fce35d7ee66d640146eff75b47b1",
+  "engine_source_commit": "aef04f24254b6019fa3a61e1275e2bf38eeee98c",
+  "expert_union_max_per_layer": 63,
+  "expert_union_min_per_layer": 18,
+  "expert_union_total": 1826,
+  "frozen_executable_sha256": "7e18edff2d5413b48b834f391f6637497bf5d157acd3507542afa2602887c8a7",
+  "installed_runtime_changed": false,
+  "limitations": [
+    "One seven-step measurement; short timing is sensitive to overhead and variance.",
+    "Current correct all-GPU expert-residency path, not a hardware maximum or proof all-GPU beats optimal mixed execution.",
+    "Training, prefill and original expert preload are excluded from replay timing.",
+    "Private activation transfers and ordinary routing, numeric and owning checks remain in timing.",
+    "Original 127-step throughput has a different length and expert distribution; it is not a matched seven-step cache-speed comparison.",
+    "No smaller quantization or MTP was tested; published third-party figures are not reproduced."
+  ],
+  "model_file_bytes": 119150722112,
+  "model_modified": false,
+  "new_ollama_baseline": false,
+  "observed_cgroup_limits_and_usage": {
+    "ActiveState": "active",
+    "LimitCORE": "0",
+    "MemoryCurrent": "21332717568",
+    "MemoryMax": "51539607552",
+    "MemoryPeak": "21332848640",
+    "MemorySwapCurrent": "0",
+    "MemorySwapMax": "0",
+    "RuntimeMaxUSec": "15min"
+  },
+  "oracle_probe": {
+    "adaptive_promotions": 0,
+    "context_tokens": 203,
+    "cpu_misses": 0,
+    "decode_steps": 7,
+    "elapsed_ns": 596125512,
+    "expert_union_counts": [
+      63,
+      48,
+      55,
+      30,
+      36,
+      39,
+      44,
+      42,
+      40,
+      32,
+      40,
+      40,
+      55,
+      43,
+      36,
+      27,
+      33,
+      43,
+      47,
+      44,
+      43,
+      41,
+      56,
+      30,
+      35,
+      32,
+      39,
+      37,
+      53,
+      35,
+      37,
+      22,
+      30,
+      36,
+      42,
+      36,
+      33,
+      38,
+      51,
+      18,
+      20,
+      34,
+      38,
+      21,
+      30,
+      32,
+      32,
+      38
+    ],
+    "expert_uploads": 0,
+    "gpu_hits": 3360,
+    "output_ids_hash_encoding": "compact JSON UTF-8",
+    "output_ids_sha256": "dea6ef12bd2a6b198f0b3a7c5e5e76f2815f092dd484fea231b5202738c3aeae",
+    "owned_io_cleanup_accepted": true,
+    "prefix_tokens": 8,
+    "preload_original_bytes": 1420390400,
+    "prompt_tokens": 75,
+    "public_weight_upload_bytes": 0,
+    "replay_owned_zero_audit": {
+      "main_buffers": 1378,
+      "main_bytes": 818413568,
+      "source_buffers": 0,
+      "source_bytes": 0
+    },
+    "replay_prefix_matches": true,
+    "resources": {
+      "major_faults": 3,
+      "minor_faults": 398,
+      "read_bytes": 0,
+      "system_ticks": 10,
+      "user_ticks": 49,
+      "write_bytes": 0
+    },
+    "scope": "fixed-public-exact-expert-replay-ceiling",
+    "seed": 424242,
+    "tokens_per_second": 11.742493584136355,
+    "trace_membership_verified": true,
+    "train_prefix_matches": true,
+    "training_owned_zero_audit": {
+      "main_buffers": 1378,
+      "main_bytes": 818413568,
+      "source_buffers": 0,
+      "source_bytes": 0
+    }
+  },
+  "original_fixture": {
+    "all_original_output_lifecycle_and_owning_gates_pass": true,
+    "decode_steps": 127,
+    "generation_ms": 12994,
+    "output_id_count": 128,
+    "owned_zero_audits": [
+      {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      }
+    ],
+    "prefill_ms": 41669,
+    "prompt_tokens": 75,
+    "tokens_per_second": 9.7737417269509,
+    "warm_host_resource_delta": {
+      "major_faults": 85,
+      "minor_faults": 182678,
+      "read_bytes": 6926336,
+      "system_ticks": 708,
+      "user_ticks": 3500,
+      "write_bytes": 0
+    },
+    "warm_phase_ns": {
+      "native_all_family_commit": 150718165,
+      "native_all_family_preflight": 113788765,
+      "native_attention_and_gr_enqueue": 4017798102,
+      "native_completed_final_proofs": 933996897,
+      "native_ffn_gr_and_router_enqueue": 172170322,
+      "native_final_head_enqueue": 8967300,
+      "native_route_and_expert_enqueue": 4366350868,
+      "native_router_fence": 2981283779,
+      "native_shared_and_ffn_combine_enqueue": 91689563
+    }
+  },
+  "post_run_host_state": {
+    "admission": {
+      "action": "status",
+      "state": {
+        "admission": {
+          "active": false,
+          "completed": 0,
+          "paused": false,
+          "recovery_required": false,
+          "rejected": 0,
+          "waiting": 0
+        }
+      },
+      "status": 200
+    },
+    "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+    "http_statuses": {
+      "kuno": 200,
+      "ollama": 200,
+      "vashti": 200
+    },
+    "intel": {
+      "xe_memory": [
+        {
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000
+        }
+      ]
+    },
+    "kernel": "7.0.0-38-generic",
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
+    "nvidia_compute_process_count": 0,
+    "nvidia_memory_mib": 478,
+    "time": "2026-10-09T00:54:07.706692+00:00"
+  },
+  "pre_run_host_state": {
+    "admission": {
+      "action": "status",
+      "state": {
+        "admission": {
+          "active": false,
+          "completed": 0,
+          "paused": false,
+          "recovery_required": false,
+          "rejected": 0,
+          "waiting": 0
+        }
+      },
+      "status": 200
+    },
+    "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+    "http_statuses": {
+      "kuno": 200,
+      "ollama": 200,
+      "vashti": 200
+    },
+    "intel": {
+      "xe_memory": [
+        {
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000
+        }
+      ]
+    },
+    "kernel": "7.0.0-38-generic",
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
+    "nvidia_compute_process_count": 0,
+    "nvidia_memory_mib": 476,
+    "time": "2026-10-09T00:49:34.696693+00:00"
+  },
+  "protected_log_sha256": "3636fc98df0c0285bc3bbc34bc2f6ef2ce0448fdaeddd18dd65f4d9b65a057e7",
+  "protected_options": {
+    "adaptive_direct_upload": false,
+    "adaptive_experts": false,
+    "bank_profile": "intel144",
+    "batch_tasks": true,
+    "bind_group_reuse": true,
+    "binding_cache_capacity": 256,
+    "card": "intel",
+    "cargo_artifacts_sha256": "f43e0ee2dd7ecae1e609aef27a4b486d13b9fce35d7ee66d640146eff75b47b1",
+    "compact_info": true,
+    "compute_scratch_clear": true,
+    "cpu_gpu_overlap": true,
+    "cpu_miss_cap": 10,
+    "cpu_q8_activations": false,
+    "cpu_work_stealing": true,
+    "cpu_workers": "pooled",
+    "defer_router_io": true,
+    "device_dispatch": "inline",
+    "fast_gpu": true,
+    "fast_gpu_fault": true,
+    "fixture": "resident-count1-hybrid-chat",
+    "frozen_executable_sha256": "7e18edff2d5413b48b834f391f6637497bf5d157acd3507542afa2602887c8a7",
+    "fused_experts": false,
+    "gpu_expert_limit": 10,
+    "gpu_router": true,
+    "gpu_upload_clear": false,
+    "grouped_status": true,
+    "info_batch_upload": true,
+    "inline_readback": true,
+    "integer_experts": false,
+    "kernel_profile": false,
+    "large_weight_cache": true,
+    "long_fixture": true,
+    "mapped_weights": true,
+    "matched_performance_measurement": false,
+    "next_shared_gdn": true,
+    "next_shared_kernels": true,
+    "oracle_public": true,
+    "protected_lifecycle_completion_checked": true,
+    "readback_reuse": true,
+    "receipt_sha256": "f212077321bb3fcb76de7fbbb89a1b171cbc5cc44dc9f52385ac5699e4a65a21",
+    "request_io_reuse": true,
+    "requested_cpu_buffered_weights": false,
+    "requested_cpu_fma_arithmetic": true,
+    "requested_cpu_mapped_prefetch": true,
+    "requested_cpu_q8_residual": false,
+    "requested_cpu_q8_two_pass": false,
+    "requested_cpu_threads": 16,
+    "requested_gpu_source_cache_advice": true,
+    "requested_native_scratch_clear": false,
+    "requested_pageout_gpu_sources": true,
+    "retained_metadata": true,
+    "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
+    "secondary_experts": false,
+    "steady_public": false
+  },
+  "public_api_changed": false,
+  "receipt_sha256": "f212077321bb3fcb76de7fbbb89a1b171cbc5cc44dc9f52385ac5699e4a65a21",
+  "run_name": "cpu-144-public-oracle-v76",
+  "run_record_sha256": "9e74b3b6751577ddada90d2026ee7be29c19e85b449a81e64198819d7bcd8bf4",
+  "runner_integration_commit": "366d847",
+  "scope": "compiled-public-ideal-expert-residency-diagnostic",
+  "source_tests": {
+    "formatting": true,
+    "native": 525,
+    "python_controls": 181,
+    "shader_suites": [
+      1,
+      1
+    ],
+    "strict_release_all_target_clippy": true
+  },
+  "trace_preload_integration_commit": "d45dc4b"
+}

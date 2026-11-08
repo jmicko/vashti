@@ -1,0 +1,20 @@
+{
+  "all_signed_i8_subscales_covered": true,
+  "c_runtime_linked": false,
+  "fixture": {
+    "block_bytes": 210,
+    "block_elements": 256,
+    "blocks": 28,
+    "bytes": 34552,
+    "gguf_id": 14,
+    "sha256": "5dbb2c1f1d82d2061ddf4c8fd74a412badc1751467b393c03bf6708ad7defa28"
+  },
+  "nonfinite_half_blocks": 3,
+  "ordinary_blocks": 16,
+  "reference": "https://github.com/ggml-org/llama.cpp/tree/b11232",
+  "scope": "synthetic-public-original-Q6_K-development-reference-only",
+  "source_sha256": {
+    "ggml-common.h": "0061131b615c5721fc88a78feeb22c1f8c450f1c2646a317d80796a653bf595c",
+    "ggml-quants.c": "7878680cc60493f98469a116e9b14af8b84789292ccf891c249230b2fa3d157f"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "base_commit": "526f31dce211c9f9abdfc31cf44068c97460deb3",
+  "date": "2026-10-05",
+  "delivered_patch_sha256": "6bc801847f782f58d2bd7bec05b2a7a6465a5a4aacba271ee42669cdb2df22a3",
+  "failure_boundary": [
+    "Enqueue never maps/syncs/audits/commits.",
+    "Future caller must complete whole-model fence, prepare maps and destroy raw leases, complete second actual fault/IO/admission/health/cancel proof, preflight all families before any swap.",
+    "Ordinary cancellation/error/unwind/abandonment poisons complete logical owner; source constructor retains partial GPU pages in model arena until owned cleanup.",
+    "Core factory has no arbitrary imported-history setter; reserve before copy, full-capacity wipe on error/drop/discarded prior history."
+  ],
+  "files_sha256": {
+    "apps/kuno/benchmarks/native-text/src/resident_model.rs": "1655d847cade50f6e361d838dd6c044ae97b23d6e02dcbc83682e509a3d6d33a",
+    "apps/kuno/benchmarks/native-text/src/resident_ple_batch.rs": "e9687a3d7f81709f0eb5f319cd3a7e03dc209e8ea91a7cac94fe16df384337de",
+    "crates/kuno-text/src/ops.rs": "ff9f3119bf90301c83ea553ff05d11671795f3f3450c503ceb728321143f10fd",
+    "crates/kuno-text/src/ops_ple_transition.rs": "b4423d11445cfdc973a6374b1b16e907a95d41372ebb85b125bde81d2f053d90"
+  },
+  "frozen_executable": "/tmp/kuno-rust-native-ple-source-v7-20261005",
+  "frozen_executable_sha256": "a4601b22ecf5fb512abbec53f48932300e80f002afd5db0f7e7156f9fa6489ba",
+  "memory": {
+    "audited_runtime_component": 4587520,
+    "conservative_host_envelope_including_original_history": 3559432,
+    "new_PUBLIC_bytes": 0,
+    "new_full_MAIN_bytes": 6258688,
+    "new_full_MAIN_pages": 19,
+    "original_authoritative_CPU_history_bytes": 368640,
+    "private_host_cap": 4194304,
+    "readonly_GPU_OLD_mirror_bytes": 524288,
+    "runtime_component": 2293760,
+    "separate_outer_residual_pair_bytes": 1048576,
+    "whole_runtime_cap_unchanged": 67108864
+  },
+  "native_adapters_or_whole_model_device_accepted": false,
+  "public_API_catalog_defaults_services_or_Vashti_changed": false,
+  "real_owners": [
+    "Original actual CPU PleTokenHistory and CausalConvState remain authoritative.",
+    "Original cached key/value projections and sealed original public cache/client.",
+    "Actual admission same sequence-poison Arc validated before construction.",
+    "Guarded IEEE OLD/NORMALIZED/NEXT maps validate full extent, inactive/padding, exact original history bits and ordered extension.",
+    "Opaque core ticket mutably pins only actual histories/anchor through all-family and second fault proof."
+  ],
+  "root_checks": {
+    "core_installed_checks_ignored": 2,
+    "core_tests": 80,
+    "format_and_diff_checks": true,
+    "native_tests": 343,
+    "peer_source_review_no_material_blocker": true,
+    "release_build": true,
+    "strict_all_target_clippy_both_manifests": true
+  },
+  "scope": "unconnected-native-PLE-actual-history-bridge-source-only"
+}

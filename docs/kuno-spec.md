@@ -1,5 +1,12 @@
 # Kuno inference host specification
 
+**Native text preview update (2026-10-19 UTC):** the selected Rust Intel engine
+now has an opt-in owned model entry, protected private worker and reversible
+administrator enrollment. The [native service contract](kuno-native-text-service.md)
+specifies its exact supported routes/options, model artifacts and live acceptance
+scope. It uses a unique native name; ordinary Ollama names remain unchanged.
+The original milestones below remain broader than this narrow preview.
+
 Status: M1 gateway development release installed on the target Linux Mint host
 (2026-09-22). Privileged installation, post-install diagnostics, IPv4/IPv6
 forwarding, and startup enablement passed. Recovery and restore/reinstall passed on 2026-09-23, followed by remote streamed
@@ -82,6 +89,24 @@ Kuno must own admission through completion of the upstream operation.
 
 ## 3. Content privacy and persistence
 
+**Intent (clarified by the owner, 2026-10-31):** Kuno is stateless *on disk*.
+The goal is that an administrator of a Vashti deployment has no easy or tempting
+way to read other users' conversations (no stored prompts, no content logs, no
+command or endpoint that prints them). It is not a defense against a malicious
+administrator, who controls the host and network. Therefore:
+
+- Never persist request content to disk, logs, or diagnostics (unchanged below).
+- Request state may live in RAM/VRAM between requests. Cross-turn prompt/prefix
+  (KV) caching in memory is desired for speed.
+- Request state must be reset for correctness before reuse, but read-back
+  verification that freed memory is zero is a test-only check
+  (`KUNO_ZERO_AUDIT=1`), not part of serving. Public model weights need no
+  erasure at close.
+- Content-free persistent caches (compiled GPU code, profiles) are allowed.
+
+Where the detailed rules below demand stricter in-memory erasure or verification,
+this intent takes precedence.
+
 Kuno and its managed workers must not persist inference content. This applies to
 normal execution, background profiling, failure recovery, and diagnostics.
 
@@ -150,17 +175,65 @@ A Kuno restart loses in-flight work. The caller detects interruption and decides
 whether to resubmit. Do not promise exactly-once execution across restarts, or
 silently replay an operation after it may have executed or emitted output.
 
-## 4. Ollama compatibility and optional port takeover
+## 4. Ollama compatibility and port takeover
 
-Kuno offers two setup modes:
+The selected normal installation adopts the existing Ollama listener so API
+clients retain their URLs. Separate-listener manual setup remains available:
 
 - A separately configured gateway in front of an explicitly selected Ollama
   instance, useful for development and manual installations.
-- Optional takeover of the existing Ollama listener, preserving client URLs.
+- Takeover of the existing Ollama listener, preserving client URLs.
 
-For example, Kuno can inherit `0.0.0.0:11434`, with Ollama relocated to
-`127.0.0.1:11435`. The actual address and private port are discovered and stored;
-neither port is assumed available.
+For example, Kuno can inherit `0.0.0.0:11434`, with original Ollama relocated to
+`127.0.0.1:11433`. The actual address and private port are discovered and stored;
+neither port is assumed available. Existing installations retain their recorded
+private port (this host currently uses 11435) until an approved, tested migration.
+
+The intended CLI split is `kuno run MODEL` to the Kuno inference listener and
+ordinary `ollama run MODEL` to original Ollama. Ollama's CLI selects its host
+from its own process environment; the systemd daemon's `OLLAMA_HOST` setting does
+not propagate to a terminal client or make that client discover the service
+port. **Selected configuration (2026-10-06):** setup configures the selected
+user's shell startup to export `OLLAMA_HOST` to the actual recorded private
+Ollama client endpoint, independently of the service override. Record the
+enrolled non-root user; later root/admin upgrades must not silently enroll a
+different account. For example,
+`export OLLAMA_HOST=http://127.0.0.1:11433` is appropriate only when that is the
+verified private listener. Keep the original executable; no shell function or
+executable wrapper is required. This supersedes the earlier CLI-scoped helper
+proposal.
+
+The user explicitly accepts that applications inheriting and honoring this
+export also connect directly to Ollama and bypass Kuno scheduling. Applications
+explicitly targeting Kuno's adopted listener retain that route. The export
+configures the selected user's shell environment, not all users, existing
+processes or unrelated systemd services. Shell activation instructions must
+explain how to apply it to the current shell and future terminals. Manage a
+marked installer block after endpoint verification, retaining previous user
+settings for restoration while supplying the selected effective host. Record
+the prior state and update/remove only the unchanged owned block; preserve
+unrelated edits and report conflicts. Already-running shells retain their
+environment after uninstall too. Automatic setup now supports Linux/Bash:
+the selected login startup file and `.bashrc` receive managed blocks, with a
+noninteractive block before Bash's common early return. Other shells require
+separate configuration. Initial root setup without `SUDO_USER` requires
+`--cli-user USER`; later upgrades reuse the recorded account. `configure-cli
+[--user USER]` repairs/enrolls the export without restarting inference services.
+Shell publication happens after verified service activation and may fail
+separately; report the active inference service and `configure-cli` retry rather
+than claiming the entire deployment was rolled back.
+
+Kuno's CLI resolves its inference endpoint independently of
+`OLLAMA_HOST`: explicit endpoint, `KUNO_HOST`, installed configuration, then the
+normal Kuno API default (11434). `--config FILE` selects the configuration source
+below explicit `--host` and `KUNO_HOST`. The supported inference/model commands
+invoke the original Ollama CLI with that endpoint in its child environment,
+preserving terminal streaming/cancellation and exit status. The executable is
+unchanged and must be on `PATH`; this does not register the native text
+prototype. Kuno's client defaults Ollama history off, while explicit local
+Ollama save/history/editor features remain inherited client behavior. Inference
+remains keyless. Changing only the service port is insufficient to claim
+ordinary CLI separation.
 
 ### Takeover transaction
 
@@ -315,9 +388,19 @@ and a conservative reserve. Image peaks are evaluated across encoding,
 denoising, and VAE phases. Avoid double-counting memory already accounted for
 when comparing a proposed resident set with current free memory.
 
-Full GPU model placement is the default. Explicit CPU/offload modes, if exposed,
-are separately selected policies. Slow output is not sufficient evidence of CPU
-spill. Combine managed device assignments, runtime diagnostics, residency, and
+Full GPU model placement is the default. Kuno must also support deliberately
+selected mixed CPU/GPU placement for models that require it. The policy must
+distinguish intentional offloading from accidental CPU spill; reported partial
+placement must not be rejected solely for failing a GPU-only condition when
+that model/request is admitted under the mixed policy. Keep CPU-only placement
+and missing/inconsistent residency evidence distinct from partial offloading.
+Account for host RAM as well as GPU reservations, and retain request lifecycle,
+cancellation and privacy requirements. Exact policy configuration and adapter
+acceptance remain to be implemented; the currently installed managed-worker
+path still requires fully GPU-reported placement.
+
+Explicit CPU/offload modes are separately selected policies. Slow output is not
+sufficient evidence of CPU spill. Combine managed device assignments, runtime diagnostics, residency, and
 performance observations. Ollama's [`/api/ps`](https://docs.ollama.com/api/ps)
 reports model/VRAM sizes; it does not prove where every operation executes.
 

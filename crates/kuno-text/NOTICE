@@ -1,0 +1,101 @@
+GGML packing layouts and scalar decoding equations were checked against ggml
+revision 4bf5f6000653b7881d00963cd6ddb665ccd62a8d. Kuno's reader and decoding
+implementation are safe Rust; no ggml library or C/C++ engine is linked.
+
+IQ3_XXS, IQ4_NL and IQ4_XS scalar packing/decoding and nonlinear codebooks were
+checked against llama.cpp tag b11232, ggml/src/ggml-common.h and
+ggml/src/ggml-quants.c. IQ3's 256-entry grid and IQ4's nonlinear values are
+derived from those MIT-licensed GGML tables. The public synthetic fixture
+generator compiles extracted upstream dequantizers for development validation;
+Kuno runtime and Rust tests do not link or invoke that C reference. Pinned
+source SHA256 values and fixture hashes are recorded in
+tests/fixtures/iq-b11232/receipt.json.
+
+IQ2_S, IQ3_S, Q5_K and ID42 Q2_0 layouts/scalar equations and the IQ2_S
+1024-entry/IQ3_S 512-entry public grids are derived from the same MIT-licensed
+llama.cpp b11232 GGML sources. Native packed AVX2 execution preserves these
+original scalar scale round points, F32 activations and the original 64-lane
+separate multiply/add reduction. No upstream inference engine is linked.
+The independent synthetic C reference's exact source/fixture hashes and geometry
+are recorded in tests/fixtures/daslab-b11232/receipt.json. C and Python are
+used only to regenerate committed development fixtures, not by Kuno runtime.
+
+MTP's KV-only teacher-forced cache preparation is an independent split of the
+existing Rust reference graph. The front-only/catch-up mechanism was inspected
+in MIT-licensed Strata revision fb58e0dbc8399662c0e47c76578c6e878b14f6cf,
+src/core/mtp.cpp. Strata's accepted-prefix recurrence replay is documented as a
+future native implementation reference; its code is not linked or copied into
+Kuno's execution path. Exact source locations and outstanding owner gates are
+recorded in docs/kuno-native-mtp-prefix-notes.md at the repository root.
+
+The explicit Strata Q2 MTP GGUF profile's tensor inventory, fused gate/up row
+order, Gemma norm convention and split input projections were checked against
+the same MIT Strata v0.1.41 revision, tools/mtp_pack.py, tools/mtp_rt.py and
+sycl/src/core/mtp.cpp. Kuno's original-packed reader, equations and tests are
+Rust; neither Strata's runtime engine nor its Python tools execute here. The
+GGUF source manifest field is provenance, not a whole-artifact integrity hash.
+
+Qwen35 pretokenizer/special-token semantics were checked against llama.cpp
+revision 806eee9841de5f2c20f9d43914117f157d2baacc, src/llama-vocab.cpp, and
+Strata revision 6f32ec070f23ced9f50e704d854d775da52591ab,
+tools/strata_tokenizer.py. The synthetic test fixture's expected token IDs were
+generated with that pinned Python reference and regex 2025.11.3. No upstream
+inference engine is linked or invoked by Kuno's Rust tokenizer.
+
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+Copyright (c) 2026 Niko1221 and the Strata contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The separate cpu_expert::native backend ports the MIT GGML native CPU Q8_K
+quantizer and IQ2_S/IQ3_XXS/IQ3_S/IQ4_XS/IQ4_NL integer equations from llama.cpp
+3cf03257f219afbe7334045ff7c6a06ac68c627d, the ggml revision pinned by MIT Strata
+fb58e0dbc8399662c0e47c76578c6e878b14f6cf. Its ID42 Q2_0 path follows Strata's
+CPU Q8_1 activation rounding and original four-code signed layout. Runtime is
+Rust; no ggml or Strata C/C++ engine/library is linked. Existing public GGML
+codebook attribution and license below/above continue to apply. Native SIMD
+integer sums are exact; floating-point multi-token reduction parity remains an
+explicit validation gate rather than an original64 arithmetic claim.
+
+The experimental connected Intel QSA and MTP families port the INT8 KV storage
+and FP16 per64-value scales from kv_q8.dp.cpp, including quantization against
+the stored scale and nearest-even signed codes. The QSA family also ports
+fused RMSNorm/RoPE, scalar Intel indexer scoring and 64-cell attention chunk /
+merge equations from the same MIT Strata fb58e0 revision's native_rope.dp.cpp,
+native_qsa_indexer.dp.cpp, qsa_select.dp.cpp and qsa_decode_attn.dp.cpp. Rust
+owns execution and state; WGSL/Vulkan is the kernel backend. Neither upstream
+SYCL nor C/C++ inference code is linked. Backend layout/state substitutions
+and outstanding numerical acceptance are recorded in the rewrite completion
+guide; this notice does not assert complete engine parity.
+
+The experimental Intel GDN family translates the same Strata revision's
+verify_kernels.dp.cpp multirow convolution/L2 and four-row-group FMA state
+recurrence/output normalization into WGSL, including accepted-prefix replay.
+Rust owns the graph and private state. Existing MIT attribution applies;
+no upstream SYCL/C++ graph or inference library is linked.
+
+The experimental grouped MTP front translates the same revision's
+MtpDrafter::record_front/capture_prefill into a Rust-owned MAX8 workspace and
+WGSL producers: original IQ4_XS embedding, native weighted normalization,
+Q8 dense input branches, native BF16 GR and grouped KV preparation/append.
+Teacher forcing, draft fronts and accepted-prefix repair share the connected
+producer. Remaining KV storage, rest-graph and queue/capture substitutions
+are explicit in the completion guide; no foreign inference library is linked.

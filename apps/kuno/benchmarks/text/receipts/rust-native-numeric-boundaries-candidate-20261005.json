@@ -1,0 +1,55 @@
+{
+  "base": "862130887e05c4820f05d03d881d7f71636d2b46",
+  "commit": "2439d732966c066d39ef9ee745d208206d98e5ee",
+  "branch": "codex/kuno-native-numeric-boundaries",
+  "worktree": "/home/jmicko/.codex/worktrees/kuno-text-loader/vashti",
+  "preserved_branch": "codex/kuno-native-model-failures",
+  "preserved_commit": "c2f120c2c489bd90cf1e9b51f1f74f7a635aad8e",
+  "patch_sha256": "d08b1ce856efbdf42782455cfade771130c26c436b40ba718422f38ceb74aecc",
+  "checks": [
+    "5 focused numeric-boundary tests pass;376 filtered",
+    "cargo clippy --offline --all-targets -- -D warnings",
+    "cargo fmt --all -- --check",
+    "git diff --check"
+  ],
+  "target": "/media/jmicko/faststore/kuno-development/kuno-native-numeric-boundaries-20261005/target",
+  "host_bound_bytes": 610304,
+  "host_cap_bytes": 1048576,
+  "extra_audited_runtime_bytes": 1114112,
+  "worst_combined_runtime_bytes": 65204224,
+  "runtime_cap_bytes": 67108864,
+  "extra_main_bytes": 0,
+  "remaining": [
+    "parent integration/CLI selection",
+    "protected both-card normal full-model acceptance and all-owner physical cleanup",
+    "actual four boundary bitwise comparisons",
+    "attribution of measured count4/count8 logit differences; no tolerance change"
+  ],
+  "device_model_service_actions": false,
+  "scope": "isolated_source_candidate_only; user_paused_goal",
+  "source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/resident_numeric_boundaries.rs": "b72bd8888c925a064fa8764bfff2f1ce5f5caaff955a48e0f4a3dc91cc3aaf0a",
+    "apps/kuno/benchmarks/native-text/src/resident_model.rs": "591d2d7dc5e18aba3c928302786be49f3e40eabf170317d3b217047e5c41fd30",
+    "apps/kuno/benchmarks/native-text/src/resident_model_batch.rs": "1f1ad443f721b06816e74af6c8a38cec89779e2d87d45d5442f0b2ba0fa6f40e",
+    "apps/kuno/benchmarks/native-text/src/resident_model_lifecycle_probe.rs": "7337c0c60f46e855f615ab023d5c4484bdaaddcba24aaba0695b2143da2e1e35",
+    "apps/kuno/benchmarks/native-text/src/resident_ple_batch.rs": "ce79d3d6519bd5c0c58fe6b4543c77de7c7b8de83551ba4fb54514006c7b5ddb",
+    "apps/kuno/benchmarks/native-text/src/main.rs": "1a8c575089de3610744adf7122aee50d70d9db5ced4b21a31a2415b63e307e34",
+    "apps/kuno/benchmarks/native-text/numeric-boundaries-source.md": "01cd78feb2d9bf3467d8753fe8ca44f601392414410d2147dcf23b1f997de60c"
+  },
+  "source_provenance_path": "/tmp/kuno-native-numeric-boundaries-20261005/provenance.json",
+  "source_provenance_sha256": "92d64afb1ad8346353eb4cee00672352352d805af35d01d27acab48c3b1a46af",
+  "integrated_in_root": false,
+  "public_cli_registered": false,
+  "parent_review": {
+    "scope": "read_only_source",
+    "material_blockers": 0,
+    "physical_acceptance": false
+  },
+  "additional_peer_review": "requested_not_returned",
+  "full_suite_run": false,
+  "release_build_run": false,
+  "gpu_numeric_accepted": false,
+  "cause_of_whole_model_deltas_accepted": false,
+  "whole_model_tolerance_changed": false,
+  "required_vashti_changes": []
+}

@@ -1,0 +1,458 @@
+{
+  "scope": "fixed-public-count1-short-pooled-serial-overlap-ABBA-output-lifecycle-and-owning-erasure",
+  "source_commit": "44fd9bc506eedfd701f68c71cb07f47c423cb533",
+  "executable_sha256": "ae9c293443445458ff02faaa79bd88aa29d3222b5dfc3144ab5fa0caa21a61f9",
+  "cargo_artifacts_sha256": "15b10aeedcac43320c3c0d41e49d8f575e15b96e584835d4b880896671f3c9ae",
+  "source_tests": {
+    "native": 465,
+    "kuno_text": 111,
+    "python": 108,
+    "strict_clippy": true
+  },
+  "short_ABBA_summary": {
+    "intel": {
+      "serial_mean_generation_ms": 4819.0,
+      "overlap_mean_generation_ms": 4724.5,
+      "duration_reduction_percent": 1.9609877567960157,
+      "overlap_short_decode_steps_per_second": 1.481638268599852
+    },
+    "nvidia": {
+      "serial_mean_generation_ms": 6219.5,
+      "overlap_mean_generation_ms": 6008.0,
+      "duration_reduction_percent": 3.400594903127261,
+      "overlap_short_decode_steps_per_second": 1.1651131824234353
+    }
+  },
+  "runs": [
+    {
+      "card": "intel",
+      "sample": 1,
+      "overlap": false,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/intel-1-serial.json",
+      "receipt_sha256": "76a6355f889ca9033e4f655fdb273409542920bbdb957ac44406fda273a2d263",
+      "run_record_sha256": "7b0ffdd32001848fc2d24b922532930aa09c2fdd5dba60b93f95986a9ade5db7",
+      "log_sha256": "2d032762565d766c74e359dae4755303f5dfb5ba7700adb1e670a34187958beb",
+      "generation_ms": 4777,
+      "prefill_ms": 5480,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "intel",
+      "sample": 2,
+      "overlap": true,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/intel-2-overlap.json",
+      "receipt_sha256": "82975ee5d8a4954700c0e229ed58165e7a3cb55d0e093f9bd563e163f6e43e9e",
+      "run_record_sha256": "6d5de8f5bdb2be80c86205ce89fcdf5942163ee11649d953a61fc5dea39e03d6",
+      "log_sha256": "5cc8eaffcdb2488892f3a0df8c101a44a52bb9b2d0993d01c2ded552605c1163",
+      "generation_ms": 4653,
+      "prefill_ms": 5438,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "intel",
+      "sample": 3,
+      "overlap": true,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/intel-3-overlap.json",
+      "receipt_sha256": "d3d04da1bbde44785fcdca5901bd3cb0de5054209ed48c8a8ae868198974c69c",
+      "run_record_sha256": "241dc07ebc420076ee566c4f6842da5f02e51ec55e6966a8cba48f00d248bc5d",
+      "log_sha256": "0faf8199e9b8224d579d3bfc6b50d00a4bc4ea2343e02825f7b0865ab7fe4347",
+      "generation_ms": 4796,
+      "prefill_ms": 5514,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "intel",
+      "sample": 4,
+      "overlap": false,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/intel-4-serial.json",
+      "receipt_sha256": "dc55a3657b115f9e3a69d205881ac135dbcdc31218de96f25d1e00188022028e",
+      "run_record_sha256": "353fd34dce08128de9cf69c1b4649413e2991e4272def776bf4ef00346df7d36",
+      "log_sha256": "58cfcfddc9c4494b9fdd2928269a6532ba8d8a38a6ccffc4ca939b5c85eaa002",
+      "generation_ms": 4861,
+      "prefill_ms": 5458,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 1,
+      "overlap": false,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/nvidia-1-serial.json",
+      "receipt_sha256": "f5e2bafe206a7439048e94c9a5e87592a0409e5716564f44e492e9bd4672770a",
+      "run_record_sha256": "199ff9322288e172cc8597c97e6d9dd9966aad7cb4eea3c16b52745847460513",
+      "log_sha256": "5d33e27ca5469d18587f2ce9344d51f0e7d8b344cbb205a9ea3ec0eb090b1a7e",
+      "generation_ms": 6460,
+      "prefill_ms": 16235,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 2,
+      "overlap": true,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/nvidia-2-overlap.json",
+      "receipt_sha256": "4b4afd607d212d5bcfb66c56c2a0aed3f11c8ab1577dbdc3d32cb6669972635b",
+      "run_record_sha256": "8a6e8e485117b8a4b01742ca3d5e1f6bfa51a5a1a2bfbe4385c69fe7825c92e6",
+      "log_sha256": "fd4261ad0476a534f16d89ec7f4ef737aa1f60b6e8e0f7689c7b915d8fd11258",
+      "generation_ms": 6075,
+      "prefill_ms": 15578,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 3,
+      "overlap": true,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/nvidia-3-overlap.json",
+      "receipt_sha256": "5063ba0898ade2c8ad5b6f79d37c055ddbda82c8ccd76fd33e8f7337335e9432",
+      "run_record_sha256": "32e6e9bdd301a248e1f8f41ffd7f240f615d9305ef2740dfb0ebebe3cdea143c",
+      "log_sha256": "18054566dd9d8ad23ff8496650efa927170578eae942e3a85384de9f137057dc",
+      "generation_ms": 5941,
+      "prefill_ms": 15306,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 4,
+      "overlap": false,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-overlap-device-20261007-v1/nvidia-4-serial.json",
+      "receipt_sha256": "3bb2a128a7f6c1542c267404400f78030765f0780befab9668fc9bab3508c40c",
+      "run_record_sha256": "f84da82063445c1bfa790b1c1e4d156a8768a4a8f6bf84b99c04bffcf94d374e",
+      "log_sha256": "a67d0323d794eee64075006a11366c61d2194ec583985fdf10d986784c173181",
+      "generation_ms": 5979,
+      "prefill_ms": 15056,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    }
+  ],
+  "full_vocabulary_logits_accepted": false,
+  "late_hybrid_finality_accepted": false,
+  "long_fixture_accepted": false,
+  "production_accepted": false,
+  "physical_kernel_simultaneity_instrumented": false,
+  "new_ollama_baseline": false,
+  "installed_change": false,
+  "postflight": {
+    "xe": {
+      "scope": "read-only-xe-physical-vram-query",
+      "pci": "0000:2d:00.0",
+      "total_bytes": 34242297856,
+      "used_bytes": 50688000,
+      "root_query": true
+    },
+    "kernel": {
+      "scope": "read-only-content-free-xe-kernel-classification",
+      "boot_id": "665344a9-0e39-4e45-90de-465fa11df0ca",
+      "kernel": "7.0.0-38-generic",
+      "utc": "2026-10-07T20:35:16.729470+00:00",
+      "classified_messages": {
+        "wedged": 0,
+        "timeout": 0,
+        "gt_reset": 0,
+        "memory_fault": 0
+      }
+    },
+    "nvidia": "388 MiB, 12288 MiB, 29 %",
+    "admission_resumed": true
+  }
+}

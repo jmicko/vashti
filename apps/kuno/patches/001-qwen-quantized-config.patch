@@ -673,6 +673,30 @@ index ec82245..3f5d197 100644
      __STATIC_INLINE__ ggml_tensor* attention(GGMLRunnerContext* ctx,
                                               ggml_tensor* q,
                                               ggml_tensor* k,
+diff --git a/src/model/diffusion/minimax_h3.hpp b/src/model/diffusion/minimax_h3.hpp
+index ed7c5ac..7739106 100644
+--- a/src/model/diffusion/minimax_h3.hpp
++++ b/src/model/diffusion/minimax_h3.hpp
+@@ -976,6 +976,19 @@ namespace MiniMaxH3 {
+             return "minimax_h3";
+         }
+ 
++        // Kuno: the input caches hold request latents; release them with the runner state.
++        bool clear_request_state() override {
++            const bool cleared = GGMLRunner::clear_request_state();
++            video_input_cache            = {};
++            audio_input_cache            = {};
++            position_input_cache         = {};
++            timestep_feature_input_cache = {};
++            curve_index_input_cache      = {};
++            curve_upper_index_input_cache = {};
++            curve_fraction_input_cache   = {};
++            return cleared;
++        }
++
+         void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors,
+                                const std::string& prefix) override {
+             model.get_param_tensors(tensors, prefix);
 diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
 index c82b9d7..46e9574 100644
 --- a/src/model/diffusion/model.hpp
@@ -953,6 +977,63 @@ index da59cfa..b98f6c4 100644
          static ggml_tensor* process_image_common(ggml_context* ctx,
                                                   ggml_tensor* image,
                                                   const LLMVisionConfig& vision_params) {
+diff --git a/src/model/vae/minimax_h3_vae.hpp b/src/model/vae/minimax_h3_vae.hpp
+index 7775664..3200042 100644
+--- a/src/model/vae/minimax_h3_vae.hpp
++++ b/src/model/vae/minimax_h3_vae.hpp
+@@ -625,6 +625,7 @@ namespace MiniMaxH3VAE {
+                 input = repeat_last_frame(input, pad);
+             }
+             auto plan   = make_vae_temporal_tile_plan(input.shape()[2], {17, 0});
++            DeferRunnerEnd keep_runner(*this);
+             auto result = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& chunk, const VAETemporalTile& tile) {
+                 SD_UNUSED(tile);
+                 return VAE::encode(n_threads, chunk, tiling, circular_x, circular_y);
+@@ -688,6 +689,7 @@ namespace MiniMaxH3VAE {
+                 input.shape()[2],
+                 {static_cast<int>(tokens_per_chunk + token_overlap), static_cast<int>(token_overlap)});
+             GGML_ASSERT(plan.tiles.size() == static_cast<size_t>(num_chunks));
++            DeferRunnerEnd keep_runner(*this);
+             auto result = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& chunk, const VAETemporalTile& tile) {
+                 auto decoded = VAE::decode(n_threads,
+                                            chunk,
+diff --git a/src/model/vae/vae.hpp b/src/model/vae/vae.hpp
+index 4d8d135..6fb36a8 100644
+--- a/src/model/vae/vae.hpp
++++ b/src/model/vae/vae.hpp
+@@ -12,6 +12,14 @@ protected:
+     SDVersion version;
+     std::string weight_prefix;
+     bool scale_input                                      = true;
++    // Kuno: chunked callers (e.g. MiniMax H3 temporal chunks) keep the runner's staged
++    // weights, compute workspace and graph cache across chunks and end it once.
++    bool defer_runner_end_                                = false;
++    struct DeferRunnerEnd {
++        VAE& vae;
++        explicit DeferRunnerEnd(VAE& v) : vae(v) { vae.defer_runner_end_ = true; }
++        ~DeferRunnerEnd() { vae.defer_runner_end_ = false; vae.runner_end(); }
++    };
+     virtual sd::Tensor<float> _compute(const int n_threads,
+                                        const sd::Tensor<float>& z,
+                                        bool decode_graph) = 0;
+@@ -252,7 +260,7 @@ public:
+                                                   tiling_params);
+         }
+ 
+-        runner_end();
++        if (!defer_runner_end_) runner_end();
+ 
+         if (output.empty()) {
+             LOG_ERROR("vae encode compute failed");
+@@ -306,7 +314,7 @@ public:
+                                                   tiling_params);
+         }
+ 
+-        runner_end();
++        if (!defer_runner_end_) runner_end();
+ 
+         if (output.empty()) {
+             LOG_ERROR("vae decode compute failed");
 diff --git a/src/model/vae/wan_vae.hpp b/src/model/vae/wan_vae.hpp
 index 8d14cf9..4c105fa 100644
 --- a/src/model/vae/wan_vae.hpp
@@ -1275,17 +1356,17 @@ index 5bdf59c..d705e04 100644
          state.compute_backend != nullptr) {
          ggml_backend_dev_t compute_dev = ggml_backend_get_device(state.compute_backend);
 diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
-index 0220939..8dbc296 100644
+index 0220939..3ceacfe 100644
 --- a/src/pipeline/diffusion_engine.cpp
 +++ b/src/pipeline/diffusion_engine.cpp
-@@ -206,6 +206,39 @@ void StableDiffusionGGML::end_runners() {
+@@ -206,6 +206,40 @@ void StableDiffusionGGML::end_runners() {
              lora.model->runner_end();
  }
  
 +bool StableDiffusionGGML::kuno_prepare_request(bool prefix_cache, bool cache_f16, bool host_cache) {
 +    ContextOperation operation(*this);
 +    if (!operation.acquired || !model_manager ||
-+        (version != VERSION_QWEN_IMAGE && version != VERSION_QWEN_IMAGE_2_1)) return false;
++        (version != VERSION_QWEN_IMAGE && version != VERSION_QWEN_IMAGE_2_1 && !sd_version_is_minimax_h3(version))) return false;
 +    if (!refresh_model_sources()) return false;
 +    model_manager->retain_weights_between_requests = true;
 +    conditioning_cache_->set_capacity(0);
@@ -1297,7 +1378,7 @@ index 0220939..8dbc296 100644
 +bool StableDiffusionGGML::kuno_clear_request_state() {
 +    ContextOperation operation(*this);
 +    if (!operation.acquired || !model_manager ||
-+        (version != VERSION_QWEN_IMAGE && version != VERSION_QWEN_IMAGE_2_1)) return false;
++        (version != VERSION_QWEN_IMAGE && version != VERSION_QWEN_IMAGE_2_1 && !sd_version_is_minimax_h3(version))) return false;
 +    conditioning_cache_->clear();
 +    std::vector<ModelManager::LoraSpec>().swap(conditioning_loras_);
 +    ip_adapter_tokens = {};
@@ -1308,6 +1389,7 @@ index 0220939..8dbc296 100644
 +    if (high_noise_diffusion_model) cleared = high_noise_diffusion_model->clear_request_state() && cleared;
 +    if (first_stage_model) cleared = first_stage_model->clear_request_state() && cleared;
 +    if (preview_vae) cleared = preview_vae->clear_request_state() && cleared;
++    if (audio_vae_model) cleared = audio_vae_model->clear_request_state() && cleared;
 +    rng->manual_seed(0);
 +    if (sampler_rng) sampler_rng->manual_seed(0);
 +    reset_cancel_flag();
@@ -1318,7 +1400,7 @@ index 0220939..8dbc296 100644
  bool StableDiffusionGGML::reset_runners(const RunnerGroups& groups) {
      conditioning_cache_->clear();
      conditioning_loras_.clear();
-@@ -2691,7 +2724,7 @@ int StableDiffusionGGML::get_diffusion_model_down_factor() {
+@@ -2691,7 +2725,7 @@ int StableDiffusionGGML::get_diffusion_model_down_factor() {
      if (sd_version_is_dit(version)) {
          if (sd_version_is_sensenova_u1(version)) {
              down_factor = 32;
@@ -1327,7 +1409,7 @@ index 0220939..8dbc296 100644
              down_factor = 2;
          } else {
              down_factor = 1;
-@@ -2829,6 +2862,14 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+@@ -2829,6 +2863,14 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
      while (decoded.empty() &&
             sd::backend_fit::prepare_vae_decode_retry_tiling(vae_tiling_params, prefer_temporal_tiling,
                                                              first_stage_model->last_compute_status())) {
@@ -1355,6 +1437,23 @@ index d1a8866..349f5aa 100644
  
      bool reset_runners(const RunnerGroups& groups);
  
+diff --git a/src/pipeline/model_builders.cpp b/src/pipeline/model_builders.cpp
+index 9b8819a..7dc3fb8 100644
+--- a/src/pipeline/model_builders.cpp
++++ b/src/pipeline/model_builders.cpp
+@@ -615,6 +615,12 @@ namespace sd::model_builders {
+                 result.preview->set_conv3d_direct_enabled(true);
+             }
+         }
++        else if (result.vae && sd_backend_is(ctx.backends.runtime_backend(SDBackendModule::VAE), "SYCL")) {
++            // The SYCL CONV_2D op runs banded im2col + the regular F16 GEMM:
++            // identical results without the full im2col matrix (19+ GB for a
++            // 1184x1776 Wan VAE decode), so model weights stay resident.
++            result.vae->set_conv2d_direct_enabled(true);
++        }
+         if (result.vae) {
+             result.vae->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
+         }
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
 index b13c055..91dfccc 100644
 --- a/src/stable-diffusion.cpp

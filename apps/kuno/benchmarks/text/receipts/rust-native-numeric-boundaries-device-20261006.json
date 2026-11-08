@@ -1,0 +1,277 @@
+{
+  "binary_source_commit": "962c37d",
+  "candidate_integrated_commit": "195d8a5",
+  "cargo_build_snapshot_sha256": "79e0f766678c2fd80b0d9826d78017d1992c783026b2b8295010d94225b04a29",
+  "checks": {
+    "focused_cli_guard_after_extraction": 1,
+    "focused_python_numeric_validator_tests": 11,
+    "focused_python_performance_lane_tests": 11,
+    "host_suite_before_cli_guard_extraction": 396,
+    "strict_all_target_clippy": "passed"
+  },
+  "date": "2026-10-06",
+  "executable_sha256": "73ce13b2b9fdac27cb85b655bc5543960b9decafafb326900d9656ee931a53a2",
+  "launch_failure_preserved": {
+    "cause": "systemd user unit starts in home; relative wrapper path was missing",
+    "correction": "absolute wrapper and frozen executable paths",
+    "exit_code": 2,
+    "gpu_work_started": false,
+    "name": "numeric-intel-20261006-v1"
+  },
+  "limitations": [
+    "position0/count1 only; does not establish count4/8 full-logit cause or later contexts",
+    "exact KEY/VALUE use separate token embedding, not the differing residual",
+    "no arithmetic or tolerances changed",
+    "no production private worker, API, routing, install, frontend, or release changes"
+  ],
+  "performance_accepted": false,
+  "protection": {
+    "core_limit": 0,
+    "memory_max": 8589934592,
+    "memory_swap_max": 0,
+    "runtime_max_seconds": 900
+  },
+  "reports": [
+    {
+      "card": "intel",
+      "memory_peak_display_is_not_matched_engine_memory": true,
+      "observed_systemd_memory_peak_display": "4.9G",
+      "observed_unit_seconds_diagnostic": 82.178,
+      "protected_output_sha256": "74c77d0c62e6244dec02b5aeb94c3141450f38f7a933b0ba73508bfb77077da0",
+      "report": {
+        "boundaries": [
+          {
+            "bit_equal": false,
+            "bit_mismatches": 750,
+            "boundary": "layer0_combined_ple_input",
+            "logical_values": 10240,
+            "max_absolute": 7.450580596923828e-09,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 524288,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 65536
+          },
+          {
+            "bit_equal": true,
+            "bit_mismatches": 0,
+            "boundary": "ple_projected_key",
+            "logical_values": 10240,
+            "max_absolute": 0.0,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 524288,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 65536
+          },
+          {
+            "bit_equal": true,
+            "bit_mismatches": 0,
+            "boundary": "ple_projected_value",
+            "logical_values": 2560,
+            "max_absolute": 0.0,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 131072,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 32768
+          },
+          {
+            "bit_equal": false,
+            "bit_mismatches": 6579,
+            "boundary": "ple_injected_residual",
+            "logical_values": 10240,
+            "max_absolute": 1.4901161193847656e-08,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 524288,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 65536
+          }
+        ],
+        "combined_runtime_bytes": 65114112,
+        "count": 1,
+        "explicit_full_cleanup": true,
+        "extra_audited_runtime_bytes": 1114112,
+        "extra_main_bytes": 0,
+        "fixed_public_input": "original tokenizer ! position0 count1",
+        "fixture": "public_native_numeric_boundaries_v1",
+        "guarded_host_bound": 610304,
+        "guarded_host_cap": 1048576,
+        "normal_family_acceptance": true,
+        "original_runtime_bytes": 64000000,
+        "owners_serialized": 8,
+        "pairs": 4,
+        "performance_accepted": false,
+        "position": 0,
+        "runtime_hard_cap": 67108864,
+        "seed": 424242,
+        "vendor": 32902,
+        "weights": "borrowed-unmodified-ollama-blob",
+        "whole_model_numeric_accepted": false
+      },
+      "report_sha256": "428fb5c275e70d194ddb8767d71a5c7bb0bac2793bfed06d80df0d77a1d6af7a",
+      "unit": "kuno-user-numeric-intel-20261006-v2.service",
+      "validator_exit_code": 0,
+      "worker_exit_code": 0
+    },
+    {
+      "card": "nvidia",
+      "memory_peak_display_is_not_matched_engine_memory": true,
+      "observed_systemd_memory_peak_display": "427.5M",
+      "observed_unit_seconds_diagnostic": 90.438,
+      "protected_output_sha256": "fc949518d8ada107b71f2bbbf979ffe6c310a15e1ac74f52f896e99af7460018",
+      "report": {
+        "boundaries": [
+          {
+            "bit_equal": true,
+            "bit_mismatches": 0,
+            "boundary": "layer0_combined_ple_input",
+            "logical_values": 10240,
+            "max_absolute": 0.0,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 524288,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 65536
+          },
+          {
+            "bit_equal": true,
+            "bit_mismatches": 0,
+            "boundary": "ple_projected_key",
+            "logical_values": 10240,
+            "max_absolute": 0.0,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 524288,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 65536
+          },
+          {
+            "bit_equal": true,
+            "bit_mismatches": 0,
+            "boundary": "ple_projected_value",
+            "logical_values": 2560,
+            "max_absolute": 0.0,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 131072,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 32768
+          },
+          {
+            "bit_equal": false,
+            "bit_mismatches": 4185,
+            "boundary": "ple_injected_residual",
+            "logical_values": 10240,
+            "max_absolute": 5.960464477539063e-08,
+            "native_cleanup": {
+              "main_buffers": 1376,
+              "main_bytes": 818249728,
+              "source_buffers": 0,
+              "source_bytes": 0
+            },
+            "native_owned_map_bytes": 524288,
+            "scalar_cleanup": {
+              "main_buffers": 1286,
+              "main_bytes": 785186816,
+              "source_buffers": 15,
+              "source_bytes": 557056
+            },
+            "scalar_owned_map_bytes": 65536
+          }
+        ],
+        "combined_runtime_bytes": 65114112,
+        "count": 1,
+        "explicit_full_cleanup": true,
+        "extra_audited_runtime_bytes": 1114112,
+        "extra_main_bytes": 0,
+        "fixed_public_input": "original tokenizer ! position0 count1",
+        "fixture": "public_native_numeric_boundaries_v1",
+        "guarded_host_bound": 610304,
+        "guarded_host_cap": 1048576,
+        "normal_family_acceptance": true,
+        "original_runtime_bytes": 64000000,
+        "owners_serialized": 8,
+        "pairs": 4,
+        "performance_accepted": false,
+        "position": 0,
+        "runtime_hard_cap": 67108864,
+        "seed": 424242,
+        "vendor": 4318,
+        "weights": "borrowed-unmodified-ollama-blob",
+        "whole_model_numeric_accepted": false
+      },
+      "report_sha256": "1c9f0767b65841151c43dde47b7128225c52d116e5cec7105047e2f7b29f02b8",
+      "unit": "kuno-user-numeric-nvidia-20261006-v1.service",
+      "validator_exit_code": 0,
+      "worker_exit_code": 0
+    }
+  ],
+  "scope": "fixed-public position0 count1 intermediate boundaries only",
+  "validator_integrated_commit": "80aef9d",
+  "whole_model_numeric_accepted": false
+}
