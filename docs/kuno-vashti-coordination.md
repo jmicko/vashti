@@ -1,13 +1,28 @@
 # Kuno and Vashti Coordination
 
-**Proposed Kuno video API (2026-11-07, backend in progress):** branch `claude/video-api`
-(worktree `/media/jmicko/faststore/dev/kuno-video-api`, based on the installed gateway
-commit `14227c6a` plus the cached-load worker and video speed commits). Contract:
-[Kuno video generation](kuno-video.md): additive `videos` discovery object,
-`POST /kuno/v1/videos/generate` (MiniMax H3 image-to-video with audio, first frame
+**Kuno video API backend receipt (2026-11-07): installed and tested; Vashti not started.**
+Branch `claude/video-api` (worktree `/media/jmicko/faststore/dev/kuno-video-api`, commit
+`c65c7fc0`; based on installed gateway commit `14227c6a` plus the cached-load worker and video
+speed commits). Contract: [Kuno video generation](kuno-video.md): additive `videos` discovery
+object, `POST /kuno/v1/videos/generate` (MiniMax H3 image-to-video with audio, first frame
 required), NDJSON progress/preview/result events, MP4 (AV1 + FLAC) result. The image API is
-unchanged. Per the user, Codex builds the Vashti connector and UI later; do not implement
-against it until a backend receipt is recorded here. Not a release or deployment.
+unchanged.
+
+Installed with user approval: this gateway, the managed SYCL runtime
+`qwen21-sycl-2026.1-v1` with worker ABI 3 (manifest
+`e1e6f6ffdc405d5c8dc1cb491762bd2650ab5a1aec1a6bf387bca80e0ea83bfb`), and
+`minimax-h3-int8` added to `image.collections`. Rollback copies:
+`/var/backups/kuno/{kuno,config.json}.20261107-183531` and
+`/usr/local/lib/kuno-test/qwen21-sycl-2026.1-v1-backup-20261107-183531`.
+
+Tested on the installed service over HTTP: discovery reports the workflow `ready`; the five
+validation errors return 400 before streaming; 832x544 56-frame clips stream started,
+conditioning, sampling 1..8 (always including 8/8), decoding, encoding, 8 previews and a result
+(72 s cold, 58.6 s warm); the MP4 decodes (AV1 56 frames, FLAC 32 kHz stereo, no metadata);
+closing the response cancels and the next image request succeeds; logs stay content-free.
+Protected Qwen image acceptance with the new worker passed (same speed; pixels within the
+installed runtime's own same-seed variation). Codex can now build the Vashti connector and UI
+against this contract; Vashti must hide video when `videos` is absent or not `ready`.
 
 **Current source continuation (2026-10-24 UTC): dual cells composed, unvalidated.**
 

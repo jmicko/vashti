@@ -1,8 +1,8 @@
-# Kuno video generation (proposal, 2026-11-07)
+# Kuno video generation (2026-11-07)
 
-Status: **proposed contract, backend in progress** on branch `claude/video-api`. Nothing
-here is implemented in an installed Kuno yet. Vashti must not depend on it until the
-backend receipt in the [coordination guide](kuno-vashti-coordination.md) says so.
+Status: **backend installed and tested (2026-11-07)** from branch `claude/video-api`; see the
+backend receipt in the [coordination guide](kuno-vashti-coordination.md). The Vashti
+connector and UI are not built yet.
 
 The first workflow is MiniMax H3 image-to-video with generated audio, running on the
 managed SYCL image runtime (stable-diffusion.cpp). The engine will later be rewritten in
