@@ -48,13 +48,19 @@ export function advancedImageSeed(
 }
 
 export function imageModelGroups(hosts: ImageHost[]): BackendModelGroup[] {
+  return mediaModelGroups(hosts.map(host => ({
+    backend: host.backend,
+    models: (host.service.capabilities?.images.workflows ?? []).map(workflow => ({name: workflow.id, supports_images: workflow.reference_images_max > 0})),
+  })));
+}
+
+export function mediaModelGroups(hosts: Array<{ backend: ImageHost["backend"]; models: Array<Pick<ModelInfo, "name" | "supports_images">> }>): BackendModelGroup[] {
   return hosts.map((host) => ({
     backend: host.backend,
-    models: (host.service.capabilities?.images.workflows ?? []).map(
-      (workflow) =>
+    models: host.models.map(
+      (model) =>
         ({
-          name: workflow.id,
-          supports_images: workflow.reference_images_max > 0,
+          ...model,
           capabilities: [],
           avatar_asset_id: null,
           avatar_crop_x: 0.5,

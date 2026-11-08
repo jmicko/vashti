@@ -53,7 +53,7 @@ export function routeFromLocation(): AppRoute {
     const view = path.split("/")[3];
     const params = new URLSearchParams(window.location.hash.slice(1));
     const sessionId = params.get("session") ?? undefined;
-    return { page: "images", view: view === "generate" || view === "edit" || view === "gallery" || view === "flow" ? view : "home", sessionId, storageMode: params.get("mode") === "device" ? "device" : "server" };
+    return { page: "images", view: view === "generate" || view === "edit" || view === "gallery" || view === "flow" || view === "video" ? view : "home", sessionId, storageMode: params.get("mode") === "device" ? "device" : "server" };
   }
 
   if (path.startsWith("/app/settings")) {

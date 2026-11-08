@@ -1,5 +1,21 @@
 # Kuno and Vashti Coordination
 
+**Vashti video consumer checkpoint (2026-11-08):** `codex/personal-assistant`
+merged `main` and implements the existing additive video contract without
+changing Kuno. Images gains a discovery-gated Video app with conversational
+first-frame generation, lower composer settings, retry versions, saved/private
+flows and video history. Mobile Settings returns to a horizontal section row;
+image inference controls return to the lower composer. Read
+[the Vashti video workflow and validation boundaries](vashti-video.md).
+Offline checks passed, followed by user-authorized installed-Kuno acceptance:
+a synthetic first frame produced a 672x672, 22-frame AV1/FLAC clip through Vashti;
+retry grouping, browser playback/download and independent software decoding
+passed. The consumer accepts independent previews/latest-only progress while
+strictly validating final metadata, container, terminal uniqueness and EOF.
+No Kuno changes were required. Physical Android playback/export remains pending;
+ARM64 cross-compilation is not physical-device acceptance. No release or
+deployment is authorized.
+
 **Vashti Assistant checkpoint (2026-11-03/04):** `codex/personal-assistant`
 adds a conversational Assistant workspace backed by durable tasks,
 approval-bound existing tools, and an optional offline rootless Podman worker.

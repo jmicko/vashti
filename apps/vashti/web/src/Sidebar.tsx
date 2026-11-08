@@ -27,6 +27,7 @@ import type {
   PrivatePersonaVersion
 } from "./privateChatStore";
 import type { BackendModelGroup, ChatSummary, PersonaVersion } from "./types";
+import { VideoFlowHistory } from "./videos/VideoFlowHistory";
 
 export function Sidebar({
   chats,
@@ -35,6 +36,7 @@ export function Sidebar({
   currentPrivateChatId,
   isNotesActive,
   isImagesActive,
+  isVideosActive = false,
   isAssistantActive = false,
   assistantAttention = 0,
   currentImageFlowId,
@@ -65,6 +67,7 @@ export function Sidebar({
   currentPrivateChatId: string | null;
   isNotesActive: boolean;
   isImagesActive: boolean;
+  isVideosActive?: boolean;
   isAssistantActive?: boolean;
   assistantAttention?: number;
   currentImageFlowId?: string;
@@ -210,7 +213,7 @@ export function Sidebar({
         </nav>
       </div>
       <div className="chat-history" hidden={isAssistantActive}>
-        {isImagesActive ? <ImageFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
+        {isVideosActive ? <VideoFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow}/> : isImagesActive ? <ImageFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
         <p className="eyebrow">Previous Chats</p>
         {(combinedChats.length > 5 || search) && <label className="history-search"><Search size={16} /><input aria-label="Search chats" placeholder="Search chats" value={search} onChange={(event) => setSearch(event.target.value)} /></label>}
         {isLoadingAnyChats && combinedChats.length === 0 ? (

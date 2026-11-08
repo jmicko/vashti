@@ -1325,13 +1325,14 @@ export function AppShell({
             currentPrivateChatId={currentPrivateChatId}
             isNotesActive={isNotesPage}
             isImagesActive={isImagesPage}
+            isVideosActive={route.page === "images" && route.view === "video"}
             isAssistantActive={isAssistantPage}
             assistantAttention={assistantAttention}
             onOpenAssistant={() => navigate({ page: "assistant" })}
             currentImageFlowId={route.page === "images" ? route.sessionId : undefined}
             imageStorageMode={route.page === "images" ? route.storageMode ?? "server" : "server"}
             onOpenImageFlow={(id) => {
-              navigate({ page: "images", view: "flow", sessionId: id, storageMode: route.page === "images" ? route.storageMode : "server" });
+              navigate({ page: "images", view: route.page === "images" && route.view === "video" ? "video" : "flow", sessionId: id, storageMode: route.page === "images" ? route.storageMode : "server" });
               setIsSidebarOpen(false);
             }}
             onRemoveImageFlow={(id) => {
@@ -1354,7 +1355,7 @@ export function AppShell({
                 setIsSidebarOpen(false);
               } else if (isImagesPage) {
                 setNewImageFlowKey(value => value + 1);
-                navigate({ page: "images", view: "flow", storageMode: route.page === "images" ? route.storageMode : "server" });
+                navigate({ page: "images", view: route.page === "images" && route.view === "video" ? "video" : "flow", storageMode: route.page === "images" ? route.storageMode : "server" });
                 setIsSidebarOpen(false);
               } else {
                 openChat();

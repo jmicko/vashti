@@ -49,7 +49,7 @@ Check at 390x844 and desktop sizes:
   must use that edited output.
 - Tap reference thumbnails to inspect them, then close the viewer. Neither the
   reference order nor the unsent prompt should change.
-- Open image inference settings from the header. Settings must appear separately
+- Open image inference settings beside the attachment button. Settings must appear separately
   from the composer; closing them preserves the prompt/reference summary.
 - At 390px width, reference sheets, model menus, and Gallery View must have no
   horizontal overflow. Check 844x390 and desktop without resetting photo zoom
@@ -69,3 +69,31 @@ block, question choices, failed-send injection, and local encrypted drafts.
 Check mobile and desktop controls, run history, save/defaults, schedules,
 archive/restore, exact-action review, question replies, and draft retention.
 The remote-image fixture must render as a link, never an `img` request.
+
+## Video
+
+Open `/tests/videos.html`. This synthetic fixture intercepts all API requests;
+it must never reach Kuno. Its small AV1/FLAC clip is CPU-generated using
+`video-fixture-generator`, not real inference output. Its device vault is
+separate from every signed-in user's data.
+
+Check 390x844, 844x390, 320px-wide and desktop layouts:
+
+- Apps > Video opens the model picker and compact first-frame/prompt composer.
+  Attach `apps/vashti/src/images/fixtures/64.png` and inspect its enlarged view.
+- Open lower Video inference settings. Choose aspect ratios (including Original
+  image), clip length, audio and exact seeds above JavaScript's safe integer
+  range. Save defaults/reset without losing the prompt/source.
+- Send with and without prompt text. Inspect progress, completed playback,
+  download, another ordinary turn and numbered regenerate versions. Prompt and
+  source remain in the composer; recipe inspection follows the selected version.
+- Toggle offline during polling; it must not discard a pending private result
+  on a transient failure. Restore connectivity and recover it.
+- Switch storage and repeat. Device-only history/result reopening must use the
+  encrypted fixture vault, not saved-session endpoints. Confirm recipe/source
+  preservation after navigating away and back.
+- Settings restores horizontal section navigation on mobile and the normal
+  sidebar on desktop, with visible selected-section feedback and 44px targets.
+
+Pure offline tests: `node --test src/videos/videos.test.mjs`.
+Browser playback does not establish physical Android playback or native export.

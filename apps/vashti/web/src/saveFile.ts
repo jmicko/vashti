@@ -3,7 +3,8 @@ import { invokeNative, isNativeRuntime } from "./runtime";
 export type FileSaveOutcome = "saved" | "cancelled" | "requested";
 
 export async function saveFile(blob: Blob, name: string, mimeType = blob.type): Promise<FileSaveOutcome> {
-  if (blob.size > 20 * 1024 * 1024) throw new Error("File exceeds the 20 MiB download limit");
+  const limit = mimeType === "video/mp4" ? 64 : 20;
+  if (blob.size > limit * 1024 * 1024) throw new Error(`File exceeds the ${limit} MiB download limit`);
   const filename = name.replace(/[^a-zA-Z0-9_. -]/g, "_").slice(0, 160);
   if (!filename.trim().replace(/\./g, "")) throw new Error("Invalid filename");
   if (isNativeRuntime()) {
