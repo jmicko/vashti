@@ -112,7 +112,9 @@ for images. Events:
 ```
 
 - `progress` phases are `conditioning`, `sampling` (with `step`/`steps`), `decoding` and
-  `encoding`, in that order. They carry no content.
+  `encoding`, in that order. They carry no content. Like previews, progress is latest-only
+  for slow clients (intermediate steps may be skipped), but the final sampling step
+  (`step == steps`) is always reported before `decoding`.
 - `preview` is a small, coarse PNG of the middle latent frame after a sampling step (its
   size follows the latent grid, at most 512x512). Only the latest is held for slow clients.
 - The terminal event is exactly one `result` or `error`, then EOF. EOF without one is an

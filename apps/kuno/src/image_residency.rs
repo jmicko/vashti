@@ -321,7 +321,7 @@ impl ImageRuntime {
     }
 }
 
-const VIDEO_STEPS: u32 = 8;
+pub(crate) const VIDEO_STEPS: u32 = 8;
 
 /// Video shares the Qwen 2.1 standard-attention worker identity: one resident process
 /// serves both, and the native session swaps model contexts itself.
@@ -523,6 +523,7 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
     let mut result = None;
     let mut count = 0;
     let mut phase = None;
+    let mut sampled = false;
     loop {
         let (kind, bytes) = frame_bounded(pipe, max_final).await?;
         match kind {
@@ -535,9 +536,12 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
                         (update.0 as u8, update.1) < (p.0 as u8, p.1)
                     })
                     || (update.0 == VideoPhase::Sampling && update.2 != steps)
+                    // Decoding and encoding only follow a completed final step.
+                    || (update.0 as u8 > VideoPhase::Sampling as u8 && !sampled)
                 {
                     return Err("image_worker_frame_invalid");
                 }
+                sampled |= update == (VideoPhase::Sampling, steps, steps);
                 phase = Some(update);
                 progress.unwrap().send_replace(Some(update));
             }

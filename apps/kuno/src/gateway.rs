@@ -564,6 +564,7 @@ async fn generate_video(State(gateway): State<Arc<Gateway>>, request: Request) -
         height: recipe.height,
         frames: recipe.frames,
         audio: recipe.audio,
+        steps: crate::image_residency::VIDEO_STEPS,
     };
     let mut lease = match gateway.admission.acquire().await {
         Ok(lease) => lease,

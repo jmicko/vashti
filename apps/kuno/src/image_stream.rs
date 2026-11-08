@@ -83,9 +83,13 @@ pub(crate) struct VideoMeta {
     pub height: u32,
     pub frames: u32,
     pub audio: bool,
+    pub steps: u32,
 }
 
 /// The video response: acceptance, latest progress/preview, then a terminal event.
+/// Progress is latest-only for slow clients, but the final sampling step is always
+/// reported: the supervisor only admits decoding after it, so when a later phase
+/// replaced it before delivery the stream reports it first.
 pub(crate) fn video_response(
     result: oneshot::Receiver<crate::image_runtime::Output>,
     previews: watch::Receiver<Option<kuno_image::preview::Preview>>,
@@ -103,6 +107,8 @@ pub(crate) fn video_response(
         terminal: bool,
         previews_open: bool,
         progress_open: bool,
+        last_step: u32,
+        pending: Option<VideoStreamEvent>,
     }
     let state = State {
         result,
@@ -113,6 +119,8 @@ pub(crate) fn video_response(
         terminal: false,
         previews_open: true,
         progress_open: true,
+        last_step: 0,
+        pending: None,
     };
     let events = stream::unfold(state, |mut state| async move {
         if state.terminal {
@@ -121,6 +129,8 @@ pub(crate) fn video_response(
         let event = if !state.started {
             state.started = true;
             VideoStreamEvent::Started
+        } else if let Some(event) = state.pending.take() {
+            event
         } else {
             loop {
                 tokio::select! {
@@ -145,11 +155,25 @@ pub(crate) fn video_response(
                         if changed.is_err() { state.progress_open = false; continue; }
                         if let Some((phase, step, steps)) = *state.progress.borrow_and_update() {
                             let sampling = phase == VideoPhase::Sampling;
-                            break VideoStreamEvent::Progress {
+                            let event = VideoStreamEvent::Progress {
                                 phase,
                                 step: sampling.then_some(step),
                                 steps: sampling.then_some(steps),
                             };
+                            if sampling {
+                                state.last_step = step;
+                            } else if phase != VideoPhase::Conditioning
+                                && state.last_step != state.meta.steps
+                            {
+                                state.last_step = state.meta.steps;
+                                state.pending = Some(event);
+                                break VideoStreamEvent::Progress {
+                                    phase: VideoPhase::Sampling,
+                                    step: Some(state.meta.steps),
+                                    steps: Some(state.meta.steps),
+                                };
+                            }
+                            break event;
                         }
                     }
                     changed = state.previews.changed(), if state.previews_open => {
@@ -265,6 +289,7 @@ mod tests {
             height: 544,
             frames: 56,
             audio: true,
+            steps: 8,
         };
         let mut body = video_response(receive, frames, updates, meta, slot).into_body();
         assert_eq!(event(&mut body).await.unwrap()["type"], "started");
@@ -277,6 +302,22 @@ mod tests {
         assert_eq!(
             event(&mut body).await.unwrap(),
             serde_json::json!({"type":"progress","phase":"sampling","step":2,"steps":8})
+        );
+        // Steps 3..8 were replaced by decoding before delivery: the final step is still reported.
+        progress.send_replace(Some((VideoPhase::Sampling, 8, 8)));
+        progress.send_replace(Some((VideoPhase::Decoding, 0, 0)));
+        assert_eq!(
+            event(&mut body).await.unwrap(),
+            serde_json::json!({"type":"progress","phase":"sampling","step":8,"steps":8})
+        );
+        assert_eq!(
+            event(&mut body).await.unwrap(),
+            serde_json::json!({"type":"progress","phase":"decoding"})
+        );
+        progress.send_replace(Some((VideoPhase::Encoding, 0, 0)));
+        assert_eq!(
+            event(&mut body).await.unwrap(),
+            serde_json::json!({"type":"progress","phase":"encoding"})
         );
         send.send(Ok(b"mp4".to_vec())).unwrap();
         let result = event(&mut body).await.unwrap();
