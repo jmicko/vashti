@@ -399,17 +399,6 @@ export function ImageFlow({
       <button
         type="button"
         className="icon-button"
-        aria-label="Image inference settings"
-        title="Image inference settings"
-        aria-expanded={expanded}
-        data-image-composer-control
-        onClick={toggleSettings}
-      >
-        <Settings2 />
-      </button>
-      <button
-        type="button"
-        className="icon-button"
         title="Image tree"
         aria-label="Image tree"
         disabled={!tree.length}
@@ -1415,6 +1404,7 @@ export function ImageFlow({
                 </div>
                 <footer>
                   <div className="images-actions">
+                    <button type="button" className="icon-button primary-action" aria-label="Image inference settings" title="Image inference settings" aria-expanded={expanded} data-image-composer-control onClick={toggleSettings}><Settings2 /></button>
                     <button
                       type="button"
                       className="icon-button primary-action"

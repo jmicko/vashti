@@ -126,17 +126,6 @@ export function SettingsPage({
 
   return (
     <div className="settings-page">
-      <label className="settings-section-picker">
-        <span>Settings</span>
-        <select aria-label="Settings section" value={selectedSection} onChange={(event) => onSelectSection(event.target.value as SettingsSection)}>
-          <optgroup label="Personal">
-            {visibleSections.filter((section) => section.group === "personal").map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
-          </optgroup>
-          {isAdmin && <optgroup label="Administration">
-            {visibleSections.filter((section) => section.group === "admin").map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
-          </optgroup>}
-        </select>
-      </label>
       <nav className="settings-nav" aria-label="Settings sections">
         {visibleSections.map((section, index) => (
           <Fragment key={section.id}>

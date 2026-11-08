@@ -8883,7 +8883,6 @@ textarea {
 .history-empty { padding: 12px; color: var(--muted); }
 .notes-drawer-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(var(--shadow-rgb),.55); }
 .persona-avatar-crop-selection:focus-visible { outline: 3px solid var(--text); outline-offset: 4px; }
-.settings-section-picker { display: none; }
 .note-editor-actions > :not(.note-primary-action):not(.note-editor-more-wrap) { display: none; }
 .note-editor-more-wrap { display: block; }
 .note-editor-actions > .note-primary-action { display: inline-flex; }
@@ -9027,9 +9026,8 @@ textarea {
   .assistant-followup { padding: 12px 14px max(12px, env(safe-area-inset-bottom)); }
 }
 @media (max-width: 900px) {
-  .settings-page { grid-template-rows: auto minmax(0,1fr); }
-  .settings-nav { display: none; }
-  .settings-section-picker { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); margin: 0; }
-  .settings-section-picker > span { color: var(--muted); font-size: .85rem; }
-  .settings-section-picker select { flex: 1; min-width: 0; min-height: 44px; margin: 0; }
+  .settings-page { grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
+  .settings-nav { display: flex; gap: 8px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line-soft); padding: 10px 12px; }
+  .settings-tab { width: auto; flex: 0 0 auto; min-height: 44px; }
+  .settings-nav-divider { flex: 0 0 1px; border-top: 0; border-left: 1px solid var(--line-soft); margin: 4px; }
 }
