@@ -1,5 +1,37 @@
 # Kuno and Vashti Coordination
 
+**Kuno video modes contract (2026-11-08): text-only, first/last frame and reference images.
+Backend built and tested on branch `claude/video-api`; NOT installed yet (awaiting user
+approval).** Requested by the user: describe a video without a first frame, first+last frame,
+and reference images. See [Kuno video generation](kuno-video.md). Additive for clients:
+
+- `minimax-h3-image-to-video/v1` is unchanged (first frame required), so the current Vashti
+  keeps working.
+- New `minimax-h3-video/v1`: `first_frame` and `last_frame` both optional (neither = text
+  only). New `minimax-h3-reference-video/v1`: `reference_images` (1 to 4, base64), no
+  keyframes; the prompt names them `<Picture 1>`, `<Picture 2>`, ... in order, and the UI
+  should explain that. The reference model runs 4 steps (discovery `steps`), and switching
+  between it and the other workflows reloads the model, so the first clip after a switch is
+  slower.
+- Discovery workflow entries gain `last_frame` (`optional`/`unsupported`),
+  `max_reference_images` and `steps`; each workflow appears only when its collection
+  (`minimax-h3-int8` or `minimax-h3-ref2va-int8`) is configured, with its own state.
+- Rust: `kuno_protocol::VideoRecipe.first_frame` is now `Option<String>`, plus
+  `last_frame: Option<String>` and `reference_images: Vec<String>`. Vashti's
+  `videos::models::Draft::recipe` must be updated when it merges `main` (JSON is unchanged
+  for existing requests). New error codes: `video_last_frame_invalid`,
+  `video_reference_images_invalid`.
+- Worker ABI 4 is required for video; install the gateway and runtime together.
+- Tested 2026-11-09 through the dev worker, 56 frames (2.3 s), warm: image-to-video and
+  first-frame-only are byte-identical to the installed output (2.7 s/step); text-only
+  2.9 s/step; first+last and last-only 3.4 to 3.9 s/step; reference 3.4 s/step (1 image)
+  and 3.9 s/step (2 images). Total 59 to 78 s per clip; a Qwen image after video still works.
+- Engine fixes in `003-sycl-convrot.patch`: an off-by-one in the MiniMax AdaLN segment
+  matcher (crashed first+last and reference clips; the cap is now 16 segments, which those
+  layouts need), and fused INT8 epilogues now read activation scales from private scratch
+  (the allocator could hand that memory to the fused outputs, which turned text-only clips
+  into noise). Image-to-video output is unchanged.
+
 **Kuno video API backend receipt (2026-11-07): installed and tested; Vashti not started.**
 Branch `claude/video-api` (worktree `/media/jmicko/faststore/dev/kuno-video-api`, commit
 `c65c7fc0`; based on installed gateway commit `14227c6a` plus the cached-load worker and video

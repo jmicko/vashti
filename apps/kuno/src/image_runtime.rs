@@ -68,11 +68,12 @@ impl ImageConfig {
         }
         Ok(())
     }
-    /// Whether the MiniMax video collection is enabled (it needs the managed SYCL engine).
+    /// Whether a MiniMax video collection is enabled (it needs the managed SYCL engine).
     pub fn video_enabled(&self) -> bool {
-        self.collections
-            .iter()
-            .any(|id| id == kuno_protocol::MINIMAX_H3_COLLECTION)
+        self.collections.iter().any(|id| {
+            id == kuno_protocol::MINIMAX_H3_COLLECTION
+                || id == kuno_protocol::MINIMAX_H3_REFERENCE_COLLECTION
+        })
     }
     pub fn uses_sycl(&self, workflow: &str) -> bool {
         self.engine == crate::image_engine::ImageEngine::ManagedSycl

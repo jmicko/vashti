@@ -85,6 +85,10 @@ pub fn collection(id: &str) -> Result<Collection> {
             "../collections/minimax-h3-int8.json"
         ))
         .expect("compiled collection")),
+        kuno_protocol::MINIMAX_H3_REFERENCE_COLLECTION => Ok(serde_json::from_str(include_str!(
+            "../collections/minimax-h3-ref2va-int8.json"
+        ))
+        .expect("compiled collection")),
         _ => Err("unknown_model_collection"),
     }
 }
@@ -419,8 +423,20 @@ mod tests {
             .unwrap();
     }
     #[test]
-    fn video_collection_pins_downloads_and_its_derived_model() {
-        let c = collection(kuno_protocol::MINIMAX_H3_COLLECTION).unwrap();
+    fn video_collections_pin_downloads_and_their_derived_models() {
+        let keyframe = collection(kuno_protocol::MINIMAX_H3_COLLECTION).unwrap();
+        let reference = collection(kuno_protocol::MINIMAX_H3_REFERENCE_COLLECTION).unwrap();
+        // The models share the text encoder and VAEs; only the DiT and LoRA differ.
+        let shared = |c: &Collection| -> Vec<String> {
+            c.files.iter().skip(2).map(|f| f.sha256.clone()).collect()
+        };
+        assert_eq!(shared(&keyframe), shared(&reference));
+        assert_ne!(keyframe.files[0].sha256, reference.files[0].sha256);
+        for c in [keyframe, reference] {
+            video_collection_is_complete(c);
+        }
+    }
+    fn video_collection_is_complete(c: Collection) {
         assert_eq!(c.files.len(), 5);
         assert_eq!(c.revision.len(), 40);
         let names: Vec<_> = local_artifacts(collection(&c.id).unwrap())

@@ -232,10 +232,10 @@ index 0000000..7899841
 +}
 diff --git a/src/ggml-sycl/convrot.cpp b/src/ggml-sycl/convrot.cpp
 new file mode 100644
-index 0000000..1d6077c
+index 0000000..b579b25
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.cpp
-@@ -0,0 +1,763 @@
+@@ -0,0 +1,768 @@
 +// Experimental native signed INT8 tensorwise GEMM for Qwen ConvRot weights.
 +#include "convrot.hpp"
 +#include "binbcast.hpp"
@@ -476,8 +476,13 @@ index 0000000..1d6077c
 +        auto queue = ctx.stream();
 +        GGML_ASSERT(queue->has_property<sycl::property::queue::in_order>());
 +        const int8_t * q = static_cast<const int8_t *>(input->data);
-+        if (input->type == GGML_TYPE_I8) activation_scales = reinterpret_cast<const float *>(q+k*padded);
-+        else {
++        if (input->type == GGML_TYPE_I8) {
++            // The row scales live inside the input tensor. Fused epilogues write later graph nodes that the
++            // allocator may place over this (by then dead) input, so read the scales from private scratch.
++            float * scales = temporary_scales.alloc(rows);
++            queue->memcpy(scales, q + k*padded, size_t(rows) * sizeof(float));
++            activation_scales = scales;
++        } else {
 +            q = temporary_input.alloc(k*padded);
 +            activation_scales = temporary_scales.alloc(rows);
 +            quantize(ctx, static_cast<const float *>(input->data), const_cast<int8_t *>(q),
@@ -1001,7 +1006,7 @@ index 0000000..1d6077c
 +}
 diff --git a/src/ggml-sycl/convrot.hpp b/src/ggml-sycl/convrot.hpp
 new file mode 100644
-index 0000000..77666f3
+index 0000000..66446d7
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.hpp
 @@ -0,0 +1,42 @@
@@ -1032,7 +1037,7 @@ index 0000000..77666f3
 +    const float * q = nullptr;   // mod: shift row
 +};
 +struct kuno_minimax_seg_desc {
-+    static constexpr int max_segs = 8;
++    static constexpr int max_segs = 16;
 +    kuno_minimax_seg seg[max_segs];
 +    int nseg = 0;
 +    int64_t C = 0, L = 0;
@@ -3558,10 +3563,10 @@ index 976d109..c422d3b 100644
  #endif // GGML_SYCL_IM2COL_HPP
 diff --git a/src/ggml-sycl/kuno-minimax.hpp b/src/ggml-sycl/kuno-minimax.hpp
 new file mode 100644
-index 0000000..26caf93
+index 0000000..2e8da75
 --- /dev/null
 +++ b/src/ggml-sycl/kuno-minimax.hpp
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,610 @@
 +// Kuno: exact fusions for MiniMax H3 DiT graph patterns. Included by ggml-sycl.cpp only.
 +#pragma once
 +
@@ -3858,7 +3863,9 @@ index 0000000..26caf93
 +    vals.push_back(t);
 +    std::reverse(vals.begin(), vals.end());
 +    const int nseg = (int) vals.size();
-+    if (nseg < 2) return false;
++    // The final push above can exceed the bound checked in the loop (first+last frame and
++    // reference layouts have more segments than first-frame only); never overrun d.seg.
++    if (nseg < 2 || nseg > kuno_minimax_seg_desc::max_segs) return false;
 +    auto & d = job.d;
 +    d.nseg = nseg; d.C = C; d.L = L;
 +    std::vector<const ggml_tensor *> skipped(concats.begin(), concats.end()), path;

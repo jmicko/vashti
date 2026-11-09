@@ -280,17 +280,26 @@ extern "C" int kuno_qwen_session_generate(void* opaque, const char* prompt, cons
     return result;
 }
 
-// MiniMax H3 image-to-video with audio. Session version 2. The first frame is RGB at the
-// requested size (Rust scales and crops it). Frames and audio are delivered through the
-// callbacks before request state is cleared; nothing request-derived outlives the call.
+// MiniMax H3 video with audio. Session version 2 is the first/last-frame model, 3 the
+// reference model; switching reloads. Keyframes are RGB at the requested size (Rust scales
+// and crops them) and may be null (text only); references are RGB at their own size and
+// the engine scales them. Frames and audio are delivered through the callbacks before
+// request state is cleared; nothing request-derived outlives the call.
 using FrameReceiver = void (*)(const uint8_t*, size_t, void*);
 using AudioReceiver = void (*)(const float*, uint64_t, uint32_t, uint32_t, void*);
-extern "C" int kuno_minimax_session_generate(void* opaque, const char* prompt,
+struct KunoRgbImage { uint32_t width; uint32_t height; const uint8_t* data; };
+extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, const char* prompt,
     int width, int height, int frames, int fps, int steps, int64_t seed, const uint8_t* first_frame,
+    const uint8_t* last_frame, const KunoRgbImage* references, int reference_count,
     FrameReceiver receive_frame, AudioReceiver receive_audio, PreviewReceiver preview_receiver,
     PhaseReceiver phase, void* userdata) {
     auto* session = static_cast<KunoQwenSession*>(opaque);
-    if (!session || !prompt || !first_frame || !receive_frame || !receive_audio || !phase) return 5;
+    if (!session || !prompt || !receive_frame || !receive_audio || !phase) return 5;
+    if (reference_count < 0 || reference_count > 4 || (reference_count > 0) != (reference_model != 0) ||
+        (reference_count > 0 && (!references || first_frame || last_frame))) return 5;
+    for (int i = 0; i < reference_count; ++i)
+        if (!references[i].data || references[i].width == 0 || references[i].height == 0) return 5;
+    const int version = reference_model ? 3 : 2;
     if (!begin_request()) return 7;
     Progress state;
     state.preview = preview_receiver;
@@ -318,14 +327,16 @@ extern "C" int kuno_minimax_session_generate(void* opaque, const char* prompt,
         // Video is supported on the managed SYCL runtime only.
         if (backend.compare(0, 4, "SYCL") != 0 || !kuno_image_sycl_experiment_enabled()) return 9;
         if (!supports_qwen_int8(device)) return 9;
-        if (!session->context || session->version != 2 || session->fast || session->mlp_f16 || session->backend != backend) {
+        if (!session->context || session->version != version || session->fast || session->mlp_f16 || session->backend != backend) {
             session->context.reset();
             ggml_backend_dev_get_props(device, &props);
             const size_t reserve = std::max<size_t>(1024ull*1024*1024, props.memory_total/10);
             if (props.memory_free <= reserve) return 6;
             session->budget_bytes = props.memory_free - reserve;
             const std::string budget = std::to_string(double(session->budget_bytes)/(1024.0*1024*1024));
-            const auto diffusion = session->directory + "/minimax_h3_fl2va_turbo8_int8_convrot.safetensors";
+            const auto diffusion = session->directory + (reference_model
+                ? "/minimax_h3_ref2va_turbo4_int8_convrot.safetensors"
+                : "/minimax_h3_fl2va_turbo8_int8_convrot.safetensors");
             const auto encoder = session->directory + "/qwen3vl_32b_minimax_h3_int8_convrot.safetensors";
             const auto vae = session->directory + "/minimax_h3_video_vae_fp16.safetensors";
             const auto audio_vae = session->directory + "/minimax_h3_audio_vae_fp32.safetensors";
@@ -352,7 +363,7 @@ extern "C" int kuno_minimax_session_generate(void* opaque, const char* prompt,
             std::fprintf(stderr, "kuno-image: loading models\n");
             session->context.reset(new_sd_ctx(&context));
             if (!session->context) return device_lost.load() ? 8 : 3;
-            session->version = 2;
+            session->version = version;
             session->fast = false;
             session->mlp_f16 = false;
             session->backend = backend;
@@ -371,7 +382,14 @@ extern "C" int kuno_minimax_session_generate(void* opaque, const char* prompt,
             sd_vid_gen_params_init(&request);
             request.prompt = prompt;
             request.negative_prompt = "";
-            request.init_image = {uint32_t(width), uint32_t(height), 3, const_cast<uint8_t*>(first_frame)};
+            if (first_frame) request.init_image = {uint32_t(width), uint32_t(height), 3, const_cast<uint8_t*>(first_frame)};
+            if (last_frame) request.end_image = {uint32_t(width), uint32_t(height), 3, const_cast<uint8_t*>(last_frame)};
+            std::vector<sd_image_t> reference_images;
+            for (int i = 0; i < reference_count; ++i)
+                reference_images.push_back({references[i].width, references[i].height, 3,
+                                            const_cast<uint8_t*>(references[i].data)});
+            request.ref_images = reference_images.empty() ? nullptr : reference_images.data();
+            request.ref_images_count = reference_count;
             request.width = width;
             request.height = height;
             request.video_frames = frames;

@@ -112,6 +112,8 @@ fn fail(output: &mut impl Write, code: &'static str) -> Result<(), &'static str>
         | "image_generation_failed"
         | "image_engine_unavailable"
         | "video_first_frame_invalid"
+        | "video_last_frame_invalid"
+        | "video_reference_images_invalid"
         | "video_encode_failed" => code,
         _ => "image_generation_failed",
     };

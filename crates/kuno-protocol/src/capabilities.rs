@@ -45,12 +45,26 @@ pub struct VideoCapabilities {
     pub workflows: Vec<VideoWorkflowCapability>,
 }
 
+fn unsupported() -> String {
+    "unsupported".into()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VideoWorkflowCapability {
     pub id: String,
     pub state: String,
     pub reason: Option<String>,
+    /// "required", "optional" or "unsupported".
     pub first_frame: String,
+    /// "optional" or "unsupported". Absent from older Kuno (treat as unsupported).
+    #[serde(default = "unsupported")]
+    pub last_frame: String,
+    /// Most reference images accepted; 0 when the workflow takes none.
+    #[serde(default)]
+    pub max_reference_images: u32,
+    /// Sampling steps reported in progress events. 0 from older Kuno (8 was used).
+    #[serde(default)]
+    pub steps: u32,
     pub fps: u32,
     pub frames: Vec<u32>,
     pub max_pixels: u32,
