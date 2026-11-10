@@ -44,8 +44,11 @@ impl ImageConfig {
             }
             _ => {}
         }
+        // Every known collection may be enabled at once; duplicates are rejected.
         if self.collections.is_empty()
-            || self.collections.len() > 3
+            || self.collections.len() > crate::collections::KNOWN_COLLECTIONS
+            || (1..self.collections.len())
+                .any(|i| self.collections[..i].contains(&self.collections[i]))
             || self
                 .collections
                 .iter()

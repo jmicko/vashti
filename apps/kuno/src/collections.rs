@@ -74,6 +74,8 @@ pub fn qwen() -> Collection {
     serde_json::from_str(include_str!("../collections/qwen-image-2512-fp8.json"))
         .expect("compiled collection")
 }
+/// Number of collections `collection` knows; keep in step with its match arms.
+pub const KNOWN_COLLECTIONS: usize = 4;
 pub fn collection(id: &str) -> Result<Collection> {
     match id {
         "qwen-image-2512-fp8" => Ok(qwen()),
