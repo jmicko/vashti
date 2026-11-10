@@ -628,6 +628,29 @@ mod tests {
             "frames {frames}, load {loaded:.2?}, decode {seconds:.2?} s; from exact: Rust {rust_exact:.1} dB, C++ {cpp_exact:.1} dB; Rust from C++ {rust_cpp:.1} dB"
         );
         assert!(rust_exact > 100.0 && rust_cpp > 45.0);
+        // Accuracy must not depend on the content: latents far louder than the sampler makes.
+        for scale in [1.0, 3.0, 8.0] {
+            let frames = 24;
+            let hot: Vec<f32> = noise(frames * STREAMS * LATENT_CHANNELS, 11)
+                .into_iter()
+                .map(|v| v * scale)
+                .collect();
+            let got = decoder.decode(&hot, frames).unwrap();
+            let exact = exact::decode(&Safetensors::open(&model).unwrap(), &hot, frames);
+            let (mut noise, mut signal, mut clipped) = (0f64, 0f64, 0usize);
+            for channel in 0..STREAMS {
+                for (t, truth) in exact[channel].iter().enumerate() {
+                    noise += (got[t * STREAMS + channel] as f64 - truth).powi(2);
+                    signal += truth.powi(2);
+                    clipped += usize::from(truth.abs() >= 1.0);
+                }
+            }
+            let db = 10.0 * (signal / noise.max(1e-30)).log10();
+            eprintln!(
+                "synthetic latent x{scale}: Rust {db:.1} dB from exact, {clipped} clipped samples"
+            );
+            assert!(db > 100.0);
+        }
     }
     #[test]
     fn invalid_latents_are_rejected_without_a_model_file() {
