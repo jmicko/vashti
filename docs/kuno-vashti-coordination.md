@@ -11,6 +11,15 @@ frames are byte-identical; audio is closer to the model (129 dB from an exact de
 against 51 dB before), so it differs slightly from earlier clips. `audio: false` now skips
 the audio decode. No Vashti change is needed.
 
+- Checks (2026-11-09): dev worker `4949209a…` (commit `5e7545f2`), all seven video modes
+  (image-to-video, first frame, text-only, first+last, last-only, 1 and 2 references):
+  video tracks byte-identical to the installed worker; audio 34 to 53 dB from the old
+  decoder, which is the old decoder's error (Rust stays above 109 dB from exact even on
+  latents far louder than real ones). Warm clip 59 s as before; Qwen image after video OK.
+- Protected Qwen acceptance with candidate `/usr/local/lib/kuno-test/qwen21-video-v3`
+  (manifest `b6e9e45b…`, ABI 4): passed, pixel-identical in all four runs, privacy checks
+  pass, no kernel GPU events. Runtime-only install; the installed gateway `e52c1cf2` stays.
+
 **Kuno video modes contract (2026-11-08): text-only, first/last frame and reference images.
 Installed 2026-11-09 and tested over HTTP; Vashti handoff below.** Requested by the user: describe a video without a first frame, first+last frame,
 and reference images. See [Kuno video generation](kuno-video.md). Additive for clients:
