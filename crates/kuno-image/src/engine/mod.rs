@@ -4,4 +4,5 @@ pub mod audio_vae;
 pub mod conv;
 pub mod gpu;
 pub mod safetensors;
+pub mod video_gpu;
 pub mod video_vae;

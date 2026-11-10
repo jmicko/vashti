@@ -1,0 +1,26 @@
+// Gated activation between the feed-forward projections, written as f16:
+//   h[token][i] = silu(g[token][i] + b[i]) * (g[token][8192 + i] + b[8192 + i])
+// One vec4 per invocation. Padded tokens are written as zeros.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Gates { vec4 g[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { vec4 v[]; };
+layout(set = 0, binding = 2) writeonly buffer Half { f16vec4 h[]; };
+// Offsets are in values and multiples of 4.
+layout(push_constant) uniform Constants { uint tokens; uint bias_first; } p;
+const uint INNER4 = 2048;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    uint bias = (p.bias_first >> 2) + c;
+    vec4 gate = g[token * 2 * INNER4 + c] + v[bias];
+    vec4 value = g[token * 2 * INNER4 + INNER4 + c] + v[bias + INNER4];
+    vec4 result = gate / (1.0 + exp(-gate)) * value;
+    h[token * INNER4 + c] = f16vec4(token < p.tokens ? result : vec4(0.0));
+}

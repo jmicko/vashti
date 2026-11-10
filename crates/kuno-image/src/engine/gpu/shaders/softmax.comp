@@ -1,0 +1,55 @@
+// Row-wise attention weights: w[head][query][key] = softmax over live keys of score / 8.
+// Keys from `tokens` up to `padded`, and whole rows of padded queries, are written as zeros.
+// One workgroup per row; lanes read neighbouring vec4s. `padded` is at most 2048.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Scores { vec4 s[]; };
+layout(set = 0, binding = 1) writeonly buffer Weights { f16vec4 w[]; };
+layout(push_constant) uniform Constants { uint tokens; uint padded; } p;
+
+shared float part[64];
+
+void main() {
+    uint query = gl_WorkGroupID.x;
+    uint lane = gl_LocalInvocationIndex;
+    uint base = (gl_WorkGroupID.y * p.padded + query) * (p.padded >> 2);
+    // 64 lanes cover 256 keys per step; `padded` is a multiple of 128, so the last step may
+    // be half used. Keys past `tokens` are masked either way.
+    uint steps = (p.padded + 255) >> 8;
+    bool live = query < p.tokens;
+    vec4 e[8];
+    float top = -3.0e38;
+    for (uint j = 0; j < steps; j++) {
+        uint c = lane + j * 64;
+        bvec4 keep = lessThan(uvec4(c * 4) + uvec4(0, 1, 2, 3), uvec4(p.tokens));
+        e[j] = c < (p.padded >> 2) ? mix(vec4(-3.0e38), s[base + c], keep) : vec4(-3.0e38);
+        top = max(top, max(max(e[j].x, e[j].y), max(e[j].z, e[j].w)));
+    }
+    part[lane] = top;
+    memoryBarrierShared();
+    barrier();
+    for (uint i = 0; i < 64; i++) top = max(top, part[i]);
+    memoryBarrierShared();
+    barrier();
+    float sum = 0.0;
+    for (uint j = 0; j < steps; j++) {
+        // Masked keys sit at -3e38 and come out as exactly zero.
+        e[j] = exp((e[j] - top) * 0.125);
+        sum += e[j].x + e[j].y + e[j].z + e[j].w;
+    }
+    part[lane] = sum;
+    memoryBarrierShared();
+    barrier();
+    sum = 0.0;
+    for (uint i = 0; i < 64; i++) sum += part[i];
+    float scale = live ? 1.0 / sum : 0.0;
+    for (uint j = 0; j < steps; j++) {
+        uint c = lane + j * 64;
+        if (c < (p.padded >> 2)) w[base + c] = f16vec4(e[j] * scale);
+    }
+}

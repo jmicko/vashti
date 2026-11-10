@@ -1,0 +1,54 @@
+// Splits the query/key/value projection into attention operands, one invocation per token
+// and head. Queries and keys get the bias, unit RMS over their 64 channels and the rotary
+// turn (pair i is channels i and i + 24; the last 16 channels are not rotated).
+//   in:  g[token][head][query 64, key 64, value 64] (f32, no bias yet)
+//   out: q[head][token][64], k[head][token][64], vt[head][128][token] (rows 64.. stay zero)
+// Tokens from `tokens` up to `padded` are written as zeros.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) readonly buffer Projected { float g[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { float v[]; };
+layout(set = 0, binding = 2) readonly buffer Rotary { vec2 turn[]; };
+layout(set = 0, binding = 3) writeonly buffer Query { float16_t q[]; };
+layout(set = 0, binding = 4) writeonly buffer Key { float16_t k[]; };
+layout(set = 0, binding = 5) writeonly buffer Value { float16_t vt[]; };
+layout(push_constant) uniform Constants { uint tokens; uint padded; uint bias_first; } p;
+const uint HEAD = 64;
+const uint PAIRS = 24;
+
+void main() {
+    uint head = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    uint to = (head * p.padded + token) * HEAD;
+    bool live = token < p.tokens;
+    uint from = token * 6144 + head * 192;
+    uint bias = p.bias_first + head * 192;
+    float row[64];
+    for (uint side = 0; side < 2; side++) {
+        float squares = 0.0;
+        for (uint c = 0; c < HEAD; c++) {
+            row[c] = live ? g[from + side * HEAD + c] + v[bias + side * HEAD + c] : 0.0;
+            squares += row[c] * row[c];
+        }
+        float scale = inversesqrt(squares / float(HEAD) + 1e-5);
+        for (uint pair = 0; pair < PAIRS; pair++) {
+            vec2 cs = live ? turn[token * PAIRS + pair] : vec2(1.0, 0.0);
+            float a = row[pair], b = row[pair + PAIRS];
+            row[pair] = cs.x * a - cs.y * b;
+            row[pair + PAIRS] = cs.y * a + cs.x * b;
+        }
+        for (uint c = 0; c < HEAD; c++) {
+            float16_t value = float16_t(row[c] * scale);
+            if (side == 0) q[to + c] = value; else k[to + c] = value;
+        }
+    }
+    for (uint c = 0; c < HEAD; c++) {
+        float value = live ? g[from + 2 * HEAD + c] + v[bias + 2 * HEAD + c] : 0.0;
+        vt[(head * 128 + c) * p.padded + token] = float16_t(value);
+    }
+}

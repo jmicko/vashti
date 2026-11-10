@@ -2,6 +2,12 @@
 //! below recompiles every source with `glslangValidator` when it is installed and fails if a
 //! checked-in binary is stale (`KUNO_UPDATE_SHADERS=1` rewrites them).
 pub const GEMM: &[u8] = include_bytes!("shaders/gemm.spv");
+pub const NORM: &[u8] = include_bytes!("shaders/norm.spv");
+pub const HEADS: &[u8] = include_bytes!("shaders/heads.spv");
+pub const SOFTMAX: &[u8] = include_bytes!("shaders/softmax.spv");
+pub const MERGE: &[u8] = include_bytes!("shaders/merge.spv");
+pub const RESIDUAL: &[u8] = include_bytes!("shaders/residual.spv");
+pub const GATE: &[u8] = include_bytes!("shaders/gate.spv");
 
 #[cfg(test)]
 mod tests {

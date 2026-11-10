@@ -13,18 +13,18 @@ pub const LATENT_CHANNELS: usize = 24;
 /// Output frames per latent frame, and output pixels per latent position on each side.
 pub const PATCH_FRAMES: usize = 4;
 pub const PATCH: usize = 16;
-const DIM: usize = 2048;
-const HEADS: usize = 32;
-const HEAD: usize = DIM / HEADS;
-const LAYERS: usize = 36;
-const INNER: usize = DIM * 4;
-const REGISTERS: usize = 4;
+pub(super) const DIM: usize = 2048;
+pub(super) const HEADS: usize = 32;
+pub(super) const HEAD: usize = DIM / HEADS;
+pub(super) const LAYERS: usize = 36;
+pub(super) const INNER: usize = DIM * 4;
+pub(super) const REGISTERS: usize = 4;
 /// Tokens appended after the latent positions: the registers and one zero token.
-const EXTRA: usize = REGISTERS + 1;
+pub(super) const EXTRA: usize = REGISTERS + 1;
 /// Rotary pairs per axis (time, height, width). The last 16 of 64 head channels stay fixed.
 const AXIS_PAIRS: usize = 8;
-const PAIRS: usize = AXIS_PAIRS * 3;
-const PIXELS: usize = 3 * PATCH_FRAMES * PATCH * PATCH;
+pub(super) const PAIRS: usize = AXIS_PAIRS * 3;
+pub(super) const PIXELS: usize = 3 * PATCH_FRAMES * PATCH * PATCH;
 const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
@@ -141,7 +141,7 @@ impl VideoDecoder {
     }
 }
 /// `x` is `[rows][inputs]`, `weight` is `[outputs][inputs]`; returns `[rows][outputs]`.
-fn linear(x: &[f32], inputs: usize, weight: &[f32], bias: &[f32]) -> Vec<f32> {
+pub(super) fn linear(x: &[f32], inputs: usize, weight: &[f32], bias: &[f32]) -> Vec<f32> {
     let (rows, outputs) = (x.len() / inputs, bias.len());
     assert!(x.len() == rows * inputs && weight.len() == outputs * inputs);
     let mut out = vec![0f32; rows * outputs];
@@ -209,7 +209,7 @@ fn add_scaled(x: &mut [f32], update: &[f32], scale: &[f32]) {
 }
 /// Cosine and sine per token and rotary pair: `[tokens][24][2]`. Positions are centred and
 /// span -2*pi..2*pi on each axis; the appended tokens sit at zero (no rotation).
-fn rotary(width: usize, height: usize, frames: usize) -> Vec<[f32; 2]> {
+pub(super) fn rotary(width: usize, height: usize, frames: usize) -> Vec<[f32; 2]> {
     let mut out = Vec::with_capacity((width * height * frames + EXTRA) * PAIRS);
     let place = |index: usize, count: usize| {
         (2.0 * ((index as f64 + 0.5) / count as f64) - 1.0) * std::f64::consts::TAU
@@ -332,7 +332,7 @@ fn attention(qkv: &[f32], rotary: &[[f32; 2]]) -> Vec<f32> {
 }
 /// `patches` is `[positions][3][4][16][16]`; scatters blocks into frames and applies the
 /// pixel mean and deviation.
-fn unpatchify(patches: &[f32], width: usize, height: usize, frames: usize) -> Vec<f32> {
+pub(super) fn unpatchify(patches: &[f32], width: usize, height: usize, frames: usize) -> Vec<f32> {
     let (out_w, out_h, out_t) = (width * PATCH, height * PATCH, frames * PATCH_FRAMES);
     let plane = out_w * out_h * out_t;
     let mut out = vec![0f32; 3 * plane];
