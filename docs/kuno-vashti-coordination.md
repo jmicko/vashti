@@ -1,8 +1,7 @@
 # Kuno and Vashti Coordination
 
 **Kuno video modes contract (2026-11-08): text-only, first/last frame and reference images.
-Backend built and tested on branch `claude/video-api`; NOT installed yet (awaiting user
-approval).** Requested by the user: describe a video without a first frame, first+last frame,
+Installed 2026-11-09 and tested over HTTP; Vashti handoff below.** Requested by the user: describe a video without a first frame, first+last frame,
 and reference images. See [Kuno video generation](kuno-video.md). Additive for clients:
 
 - `minimax-h3-image-to-video/v1` is unchanged (first frame required), so the current Vashti
@@ -31,6 +30,30 @@ and reference images. See [Kuno video generation](kuno-video.md). Additive for c
   layouts need), and fused INT8 epilogues now read activation scales from private scratch
   (the allocator could hand that memory to the fused outputs, which turned text-only clips
   into noise). Image-to-video output is unchanged.
+- **Install receipt (2026-11-09, user-approved).** Gateway commit `e52c1cf2` (`--features
+  native-image`, sha256 `c9f111d9…`), runtime `qwen21-sycl-2026.1-v1` manifest `ef3f8983…`
+  (worker ABI 4, sha256 `58c4dede…`), collections now `qwen-image-2512-fp8`,
+  `qwen-image-2.1-int8`, `minimax-h3-int8`, `minimax-h3-ref2va-int8`. `e52c1cf2` raised the
+  configured-collection cap from 3 to every known collection (duplicates rejected); the first
+  attempt stopped at `image_collections_invalid` with the gateway and runtime already in place.
+  Backups: `/var/backups/kuno/{kuno,config.json}.20261109-*` and
+  `/usr/local/lib/kuno-test/qwen21-sycl-2026.1-v1-backup-20261109-194356`.
+- **HTTP acceptance (installed service, 832x544, 56 frames, seed 42):** all three workflows
+  `ready` in discovery; every mode's MP4 is byte-identical to the dev-worker run (I2V and
+  first-frame-only `e42ba8d1`, text-only, first+last, last-only, 1 and 2 references). Wall time
+  48 to 80 s per clip. `video_last_frame_invalid`, `video_reference_images_invalid` and
+  `video_first_frame_invalid` (first frame on the reference workflow, missing on I2V) return
+  400 before streaming. A Qwen 2.1 image afterwards returned a result in 21 s. Service logs
+  hold only lifecycle records (no prompt text); no kernel GPU resets.
+- **Vashti handoff (Codex):** merge `main`, then (1) fix `videos::models::Draft::recipe` for
+  `first_frame: Option<String>` plus `last_frame: None, reference_images: vec![]`;
+  (2) read each workflow's `first_frame`/`last_frame`/`max_reference_images`/`steps`/`state`
+  from discovery rather than hard-coding; (3) offer text-only (no image), first+last frame and
+  reference images (1 to 4) as the user asked, with a hint that the prompt names references
+  `<Picture 1>`, `<Picture 2>`, ...; (4) show the new error codes in plain language; (5) note
+  that the first clip after switching to or from reference mode is slower (model reload).
+  Propose the UI layout to the user before building it (AGENTS.md). Test against the
+  installed Kuno, not only unit tests.
 
 **Kuno video API backend receipt (2026-11-07): installed and tested; Vashti not started.**
 Branch `claude/video-api` (worktree `/media/jmicko/faststore/dev/kuno-video-api`, commit
