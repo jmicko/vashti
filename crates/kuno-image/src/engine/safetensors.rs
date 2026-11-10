@@ -128,9 +128,55 @@ pub fn widen(half: u16) -> f32 {
     };
     f32::from_bits(sign | bits)
 }
+/// binary32 to binary16, rounding to nearest even; overflow becomes infinity.
+pub fn narrow(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 255) as i32 - 112;
+    let fraction = bits & 0x7f_ffff;
+    if exponent == 143 {
+        return sign | 0x7c00 | if fraction != 0 { 0x200 } else { 0 };
+    }
+    if exponent >= 31 {
+        return sign | 0x7c00;
+    }
+    // Shift out the bits that do not fit, then round on what was shifted out.
+    let (kept, shift) = if exponent <= 0 {
+        if exponent < -10 {
+            return sign;
+        }
+        (fraction | 0x80_0000, (14 - exponent) as u32)
+    } else {
+        ((exponent as u32) << 23 | fraction, 13)
+    };
+    let (half, rest, middle) = (kept >> shift, kept & ((1 << shift) - 1), 1 << (shift - 1));
+    let up = rest > middle || (rest == middle && half & 1 == 1);
+    sign | (half + u32::from(up)) as u16
+}
 #[cfg(test)]
 mod tests {
-    use super::widen;
+    use super::{narrow, widen};
+    #[test]
+    fn narrows_to_nearest_even_and_round_trips() {
+        for half in 0..=u16::MAX {
+            let wide = widen(half);
+            if wide.is_nan() {
+                assert!(widen(narrow(wide)).is_nan());
+            } else {
+                assert_eq!(narrow(wide), half);
+            }
+        }
+        assert_eq!(narrow(1.0 + 2f32.powi(-11)), 0x3c00); // tie to even, down
+        assert_eq!(narrow(1.0 + 3.0 * 2f32.powi(-11)), 0x3c02); // tie to even, up
+        assert_eq!(narrow(1.0 + 2f32.powi(-11) + 2f32.powi(-20)), 0x3c01);
+        assert_eq!(narrow(65520.0), 0x7c00);
+        assert_eq!(narrow(65519.0), 0x7bff);
+        assert_eq!(narrow(1e9), 0x7c00);
+        assert_eq!(narrow(-1e-9), 0x8000);
+        assert_eq!(narrow(2f32.powi(-25)), 0);
+        assert_eq!(narrow(2f32.powi(-25) * 1.5), 1);
+        assert_eq!(narrow(2f32.powi(-14) - 2f32.powi(-26)), 0x0400); // rounds up into normals
+    }
     #[test]
     fn widens_half_precision_exactly() {
         assert_eq!(widen(0x3c00), 1.0);
