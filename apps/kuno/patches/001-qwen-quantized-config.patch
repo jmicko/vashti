@@ -1,8 +1,8 @@
 diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
-index a2bfdb6..525c774 100644
+index a2bfdb6..7cf52c2 100644
 --- a/include/stable-diffusion.h
 +++ b/include/stable-diffusion.h
-@@ -503,6 +503,10 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
+@@ -503,6 +503,15 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
  
  SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
  SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
@@ -10,6 +10,11 @@ index a2bfdb6..525c774 100644
 +// cache selection, and synchronous request-derived state cleanup acknowledgement.
 +SD_API bool sd_kuno_prepare_image_request(sd_ctx_t* sd_ctx, bool prefix_cache, bool cache_f16, bool host_cache);
 +SD_API bool sd_kuno_clear_image_request(sd_ctx_t* sd_ctx);
++// Kuno decodes MiniMax H3 audio in Rust. With a receiver set, generate_video hands over the
++// audio latent ([frames][streams][channels], frames varying fastest) during the call and
++// skips its own audio decode, so no audio VAE needs to be loaded.
++typedef void (*sd_kuno_audio_latent_cb_t)(const float* latent, int64_t frames, int64_t streams, int64_t channels, void* data);
++SD_API void sd_kuno_set_audio_latent_receiver(sd_ctx_t* sd_ctx, sd_kuno_audio_latent_cb_t receiver, void* data);
  SD_API void free_sd_audio(sd_audio_t* audio);
  
  SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
@@ -1425,10 +1430,19 @@ index 0220939..3ceacfe 100644
      }
      return decoded;
 diff --git a/src/pipeline/diffusion_engine.h b/src/pipeline/diffusion_engine.h
-index d1a8866..349f5aa 100644
+index d1a8866..636b51d 100644
 --- a/src/pipeline/diffusion_engine.h
 +++ b/src/pipeline/diffusion_engine.h
-@@ -198,6 +198,8 @@ public:
+@@ -69,6 +69,8 @@ public:
+     std::shared_ptr<VAE> first_stage_model;
+     std::shared_ptr<VAE> preview_vae;
+     std::shared_ptr<AudioVAERunner> audio_vae_model;
++    sd_kuno_audio_latent_cb_t kuno_audio_latent_receiver = nullptr;
++    void* kuno_audio_latent_receiver_data                = nullptr;
+     std::shared_ptr<Wav2Vec2::Wav2Vec2ModelRunner> audio_encoder;
+     std::shared_ptr<ControlNet> control_net;
+     std::shared_ptr<IPAdapter::IPAdapterRunner> ip_adapter;
+@@ -198,6 +200,8 @@ public:
      void capture_runner_sources();
  
      void end_runners();
@@ -1454,11 +1468,40 @@ index 9b8819a..7dc3fb8 100644
          if (result.vae) {
              result.vae->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
          }
+diff --git a/src/pipeline/video.cpp b/src/pipeline/video.cpp
+index 2fcff4c..6f8f09b 100644
+--- a/src/pipeline/video.cpp
++++ b/src/pipeline/video.cpp
+@@ -1885,7 +1885,8 @@ namespace sd::pipeline {
+         }
+         if ((sd_version_is_ltxav(sd->version) || sd_version_is_minimax_h3(sd->version)) &&
+             latents.audio_length > 0 &&
+-            sd->audio_vae_model != nullptr) {
++            (sd->audio_vae_model != nullptr ||
++             (sd->kuno_audio_latent_receiver != nullptr && sd_version_is_minimax_h3(sd->version)))) {
+             if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
+                 LOG_ERROR("cancelling generation before audio decode");
+                 return false;
+@@ -1899,7 +1900,13 @@ namespace sd::pipeline {
+                                     : unpack_ltxav_audio_latent(final_latent,
+                                                                 latents.audio_length,
+                                                                 sd->get_latent_channel());
+-            if (!audio_latent.empty()) {
++            if (!audio_latent.empty() && sd->kuno_audio_latent_receiver != nullptr && sd_version_is_minimax_h3(sd->version)) {
++                sd->kuno_audio_latent_receiver(audio_latent.data(),
++                                               audio_latent.shape()[0],
++                                               audio_latent.shape()[1],
++                                               audio_latent.shape()[2],
++                                               sd->kuno_audio_latent_receiver_data);
++            } else if (!audio_latent.empty()) {
+                 LOG_VERBOSE("decode audio latent %dx%dx%dx%d",
+                             (int)audio_latent.shape()[0],
+                             (int)audio_latent.shape()[1],
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
-index b13c055..91dfccc 100644
+index b13c055..199eb80 100644
 --- a/src/stable-diffusion.cpp
 +++ b/src/stable-diffusion.cpp
-@@ -662,6 +662,14 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
+@@ -662,6 +662,21 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
      free(sd_ctx);
  }
  
@@ -1468,6 +1511,13 @@ index b13c055..91dfccc 100644
 +
 +SD_API bool sd_kuno_clear_image_request(sd_ctx_t* sd_ctx) {
 +    return sd_ctx && sd_ctx->sd && sd_ctx->sd->kuno_clear_request_state();
++}
++
++SD_API void sd_kuno_set_audio_latent_receiver(sd_ctx_t* sd_ctx, sd_kuno_audio_latent_cb_t receiver, void* data) {
++    if (sd_ctx && sd_ctx->sd) {
++        sd_ctx->sd->kuno_audio_latent_receiver      = receiver;
++        sd_ctx->sd->kuno_audio_latent_receiver_data = data;
++    }
 +}
 +
  SD_API void sd_cancel_generation(sd_ctx_t* sd_ctx, enum sd_cancel_mode_t mode) {

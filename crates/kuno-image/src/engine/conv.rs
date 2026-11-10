@@ -77,7 +77,7 @@ impl Conv1d {
         dilation: usize,
     ) -> Result<Self, &'static str> {
         if weight.len() != cout * cin * kernel
-            || kernel % 2 == 0
+            || kernel.is_multiple_of(2)
             || dilation == 0
             || bias.as_ref().is_some_and(|b| b.len() != cout)
         {
@@ -157,7 +157,7 @@ impl ConvTranspose1d {
         if weight.len() != cin * cout * kernel
             || stride == 0
             || kernel < stride
-            || (kernel - stride) % 2 != 0
+            || !(kernel - stride).is_multiple_of(2)
             || bias.len() != cout
         {
             return Err("model_tensor_invalid");

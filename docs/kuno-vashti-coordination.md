@@ -1,5 +1,16 @@
 # Kuno and Vashti Coordination
 
+**Kuno Rust engine, first model (2026-11-09): MiniMax H3 audio decode in Rust. Backend
+only, no contract change; NOT installed yet (awaiting user approval).** Branch
+`claude/rust-engine`. See [Kuno Rust model engine](kuno-rust-engine.md) for the plan (one
+model at a time, each checked against an exact reference and the C++ engine) and status.
+The worker now decodes audio with `kuno-image`'s `engine::audio_vae` on CPU threads while
+the GPU decodes video; stable-diffusion.cpp hands over the audio latent
+(`sd_kuno_set_audio_latent_receiver`, patch 001) and no longer loads its audio VAE. Video
+frames are byte-identical; audio is closer to the model (129 dB from an exact decode
+against 51 dB before), so it differs slightly from earlier clips. `audio: false` now skips
+the audio decode. No Vashti change is needed.
+
 **Kuno video modes contract (2026-11-08): text-only, first/last frame and reference images.
 Installed 2026-11-09 and tested over HTTP; Vashti handoff below.** Requested by the user: describe a video without a first frame, first+last frame,
 and reference images. See [Kuno video generation](kuno-video.md). Additive for clients:

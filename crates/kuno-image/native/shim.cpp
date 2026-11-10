@@ -283,18 +283,20 @@ extern "C" int kuno_qwen_session_generate(void* opaque, const char* prompt, cons
 // MiniMax H3 video with audio. Session version 2 is the first/last-frame model, 3 the
 // reference model; switching reloads. Keyframes are RGB at the requested size (Rust scales
 // and crops them) and may be null (text only); references are RGB at their own size and
-// the engine scales them. Frames and audio are delivered through the callbacks before
-// request state is cleared; nothing request-derived outlives the call.
+// the engine scales them. Audio is decoded in Rust: its latent ([frames][streams][channels])
+// is handed over during generation, before the video frames are decoded. Frames are
+// delivered through the callback before request state is cleared; nothing request-derived
+// outlives the call.
 using FrameReceiver = void (*)(const uint8_t*, size_t, void*);
-using AudioReceiver = void (*)(const float*, uint64_t, uint32_t, uint32_t, void*);
+using AudioLatentReceiver = void (*)(const float*, int64_t, int64_t, int64_t, void*);
 struct KunoRgbImage { uint32_t width; uint32_t height; const uint8_t* data; };
 extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, const char* prompt,
     int width, int height, int frames, int fps, int steps, int64_t seed, const uint8_t* first_frame,
     const uint8_t* last_frame, const KunoRgbImage* references, int reference_count,
-    FrameReceiver receive_frame, AudioReceiver receive_audio, PreviewReceiver preview_receiver,
+    FrameReceiver receive_frame, AudioLatentReceiver receive_audio_latent, PreviewReceiver preview_receiver,
     PhaseReceiver phase, void* userdata) {
     auto* session = static_cast<KunoQwenSession*>(opaque);
-    if (!session || !prompt || !receive_frame || !receive_audio || !phase) return 5;
+    if (!session || !prompt || !receive_frame || !receive_audio_latent || !phase) return 5;
     if (reference_count < 0 || reference_count > 4 || (reference_count > 0) != (reference_model != 0) ||
         (reference_count > 0 && (!references || first_frame || last_frame))) return 5;
     for (int i = 0; i < reference_count; ++i)
@@ -339,19 +341,17 @@ extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, 
                 : "/minimax_h3_fl2va_turbo8_int8_convrot.safetensors");
             const auto encoder = session->directory + "/qwen3vl_32b_minimax_h3_int8_convrot.safetensors";
             const auto vae = session->directory + "/minimax_h3_video_vae_fp16.safetensors";
-            const auto audio_vae = session->directory + "/minimax_h3_audio_vae_fp32.safetensors";
             sd_ctx_params_t context;
             sd_ctx_params_init(&context);
             context.diffusion_model_path = diffusion.c_str();
             context.llm_path = encoder.c_str();
             context.vae_path = vae.c_str();
-            context.audio_vae_path = audio_vae.c_str();
             context.backend = backend.c_str();
             // Automatic placement, as measured with sd-cli: weights on the GPU, then RAM.
             context.auto_fit = true;
             context.max_vram = budget.c_str();
             context.conditioning_cache_size = 0;
-            // CPU-side work (tokenizing, audio, tiling glue) scales with physical cores.
+            // CPU-side work (tokenizing, tiling glue) scales with physical cores.
             context.n_threads = std::max(4, sd_get_num_physical_cores());
             context.flash_attn = true;
             context.diffusion_flash_attn = true;
@@ -408,21 +408,22 @@ extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, 
             } output;
             int fps_out = 0;
             std::fprintf(stderr, "kuno-image: generating\n");
+            struct LatentReceiver {
+                sd_ctx_t* context;
+                ~LatentReceiver() { sd_kuno_set_audio_latent_receiver(context, nullptr, nullptr); }
+            } latent_receiver{state.context};
+            sd_kuno_set_audio_latent_receiver(state.context, receive_audio_latent, userdata);
             const bool ok = generate_video(state.context, &request, &output.frames, &output.count, &output.audio, &fps_out);
             bool frames_valid = ok && output.frames && output.count == frames && fps_out == fps;
             for (int i = 0; frames_valid && i < output.count; ++i) {
                 const auto& f = output.frames[i];
                 frames_valid = f.data && f.channel == 3 && f.width == uint32_t(width) && f.height == uint32_t(height);
             }
-            const bool audio_valid = output.audio && output.audio->data && output.audio->sample_count > 0 &&
-                output.audio->channels >= 1 && output.audio->channels <= 2 && output.audio->sample_rate > 0;
             if (cancelled) result = device_lost.load() ? 8 : 7;
-            else if (!frames_valid || !audio_valid) result = device_lost.load() ? 8 : 4;
+            else if (!frames_valid) result = device_lost.load() ? 8 : 4;
             else {
                 for (int i = 0; i < output.count; ++i)
                     receive_frame(output.frames[i].data, size_t(width) * height * 3, userdata);
-                receive_audio(output.audio->data, output.audio->sample_count, output.audio->channels,
-                              output.audio->sample_rate, userdata);
                 result = 0;
             }
             // Clear decoded content before the engine frees it.

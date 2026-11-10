@@ -95,19 +95,19 @@ impl Activation {
         odd.resize(len + 5, 0.0);
         let snake = |v: f32| v + sin_squared(v * alpha) * inverse_beta;
         for (q, out) in odd[2..len + 2].iter_mut().enumerate() {
-            let w = &padded[q + 2..q + 8];
-            let mut v = 0.0;
-            for i in 0..6 {
-                v += self.up_even[i] * w[i];
-            }
+            let v = self
+                .up_even
+                .iter()
+                .zip(&padded[q + 2..q + 8])
+                .fold(0.0, |v, (f, x)| v + f * x);
             *out = snake(v);
         }
         for (q, out) in even[3..len + 3].iter_mut().enumerate() {
-            let w = &padded[q + 3..q + 9];
-            let mut v = 0.0;
-            for i in 0..6 {
-                v += self.up_odd[i] * w[i];
-            }
+            let v = self
+                .up_odd
+                .iter()
+                .zip(&padded[q + 3..q + 9])
+                .fold(0.0, |v, (f, x)| v + f * x);
             *out = snake(v);
         }
         let (first, last) = (odd[2], even[len + 2]);
@@ -116,12 +116,11 @@ impl Activation {
         even[len + 3..].fill(last);
         odd[len + 2..].fill(last);
         for (t, out) in x.iter_mut().enumerate() {
-            let (e, o) = (&even[t..t + 6], &odd[t..t + 6]);
-            let mut v = 0.0;
-            for i in 0..6 {
-                v += self.down_even[i] * e[i] + self.down_odd[i] * o[i];
-            }
-            *out = v;
+            let taps = self.down_even.iter().zip(&self.down_odd);
+            let window = even[t..t + 6].iter().zip(&odd[t..t + 6]);
+            *out = taps
+                .zip(window)
+                .fold(0.0, |v, ((fe, fo), (e, o))| v + (fe * e + fo * o));
         }
     }
     #[cfg(target_arch = "x86_64")]
@@ -377,6 +376,7 @@ mod tests {
         use crate::engine::safetensors::Safetensors;
         use rayon::prelude::*;
         type Rows = Vec<Vec<f64>>;
+        #[allow(clippy::too_many_arguments)]
         fn conv(
             file: &Safetensors,
             name: &str,

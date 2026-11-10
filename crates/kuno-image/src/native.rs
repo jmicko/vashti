@@ -131,7 +131,7 @@ unsafe extern "C" {
         references: *const RgbImage,
         reference_count: i32,
         receive_frame: extern "C" fn(*const u8, usize, *mut c_void),
-        receive_audio: extern "C" fn(*const f32, u64, u32, u32, *mut c_void),
+        receive_audio_latent: extern "C" fn(*const f32, i64, i64, i64, *mut c_void),
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
         phase: extern "C" fn(i32, i32, i32, *mut c_void),
         userdata: *mut c_void,
@@ -144,7 +144,9 @@ struct VideoOutput {
     frames: u32,
     steps: u32,
     rgb: Vec<u8>,
-    audio: Option<crate::video::Audio>,
+    /// The loaded audio decoder when the request wants audio.
+    decoder: Option<std::sync::Arc<crate::engine::audio_vae::AudioDecoder>>,
+    audio: Option<std::thread::JoinHandle<Result<crate::video::Audio, &'static str>>>,
     invalid: bool,
     previews: bool,
 }
@@ -153,8 +155,6 @@ impl Drop for VideoOutput {
         crate::worker_protocol::clear_bytes(&mut self.rgb);
     }
 }
-/// At most a minute of stereo audio at 48 kHz.
-const MAX_AUDIO_VALUES: u64 = 48_000 * 60 * 2;
 extern "C" fn receive_video_frame(bytes: *const u8, len: usize, data: *mut c_void) {
     // SAFETY: the shim calls synchronously with a live frame of `len` bytes; data is the
     // VideoOutput owned by generate_video. No pointer escapes the callback.
@@ -169,30 +169,43 @@ extern "C" fn receive_video_frame(bytes: *const u8, len: usize, data: *mut c_voi
     out.rgb
         .extend_from_slice(unsafe { std::slice::from_raw_parts(bytes, len) });
 }
-extern "C" fn receive_video_audio(
-    samples: *const f32,
-    count: u64,
-    channels: u32,
-    rate: u32,
+/// The engine hands over the audio latent before it decodes the video frames, so the Rust
+/// audio decoder runs on CPU threads while the GPU decodes video.
+extern "C" fn receive_audio_latent(
+    latent: *const f32,
+    frames: i64,
+    streams: i64,
+    channels: i64,
     data: *mut c_void,
 ) {
-    // SAFETY: as receive_video_frame; `count` samples per channel, interleaved.
+    use crate::engine::audio_vae::{LATENT_CHANNELS, STREAMS};
+    // SAFETY: as receive_video_frame; the latent holds frames * streams * channels values.
     let out = unsafe { &mut *(data as *mut VideoOutput) };
-    let values = count.saturating_mul(u64::from(channels));
-    if samples.is_null()
+    if latent.is_null()
         || out.audio.is_some()
-        || !(1..=2).contains(&channels)
-        || values == 0
-        || values > MAX_AUDIO_VALUES
+        || !(1..=4096).contains(&frames)
+        || streams != STREAMS as i64
+        || channels != LATENT_CHANNELS as i64
     {
         out.invalid = true;
         return;
     }
-    out.audio = Some(crate::video::Audio {
-        sample_rate: rate,
-        channels,
-        samples: unsafe { std::slice::from_raw_parts(samples, values as usize) }.to_vec(),
-    });
+    let Some(decoder) = out.decoder.clone() else {
+        // Audio was not requested: nothing to decode.
+        return;
+    };
+    let frames = frames as usize;
+    let mut latent =
+        unsafe { std::slice::from_raw_parts(latent, frames * STREAMS * LATENT_CHANNELS) }.to_vec();
+    out.audio = Some(std::thread::spawn(move || {
+        let samples = decoder.decode(&latent, frames);
+        latent.iter_mut().for_each(|v| *v = 0.0);
+        Ok(crate::video::Audio {
+            sample_rate: crate::engine::audio_vae::SAMPLE_RATE,
+            channels: STREAMS as u32,
+            samples: samples?,
+        })
+    }));
 }
 extern "C" fn video_preview(
     step: i32,
@@ -232,10 +245,14 @@ static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Keep the session on its worker thread; callbacks are process-global.
 pub struct Session {
     native: NonNull<c_void>,
+    directory: std::path::PathBuf,
+    /// Rust audio decoder for MiniMax H3, loaded on first use and kept with the session.
+    audio: Option<std::sync::Arc<crate::engine::audio_vae::AudioDecoder>>,
 }
 
 impl Session {
     pub fn new(directory: &Path, pci: &str) -> Result<Self, &'static str> {
+        let models = directory.to_path_buf();
         let directory = CString::new(directory.to_str().ok_or("image_model_directory_invalid")?)
             .map_err(|_| "native_image_string_invalid")?;
         let pci = CString::new(pci).map_err(|_| "native_image_string_invalid")?;
@@ -247,6 +264,8 @@ impl Session {
         }
         Ok(Self {
             native: NonNull::new(native).ok_or("image_engine_unavailable")?,
+            directory: models,
+            audio: None,
         })
     }
 
@@ -413,12 +432,25 @@ impl Session {
                 rgb.as_ptr()
             }
         };
+        let decoder = if recipe.audio {
+            if self.audio.is_none() {
+                let path = self.directory.join("minimax_h3_audio_vae_fp32.safetensors");
+                self.audio = Some(std::sync::Arc::new(
+                    crate::engine::audio_vae::AudioDecoder::load(&path)
+                        .map_err(|_| "image_model_load_failed")?,
+                ));
+            }
+            self.audio.clone()
+        } else {
+            None
+        };
         crate::worker_protocol::write_progress(VideoPhase::Conditioning, 0, 0)?;
         let mut output = VideoOutput {
             frame_bytes: recipe.width as usize * recipe.height as usize * 3,
             frames: recipe.frames,
             steps,
             rgb: Vec::new(),
+            decoder,
             audio: None,
             invalid: false,
             previews,
@@ -442,7 +474,7 @@ impl Session {
                 references.as_ptr(),
                 references.len() as i32,
                 receive_video_frame,
-                receive_video_audio,
+                receive_audio_latent,
                 Some(video_preview),
                 video_phase,
                 &mut output as *mut _ as *mut c_void,
@@ -450,6 +482,8 @@ impl Session {
         };
         drop(references);
         drop(inputs);
+        // Always join, so no request-derived work outlives the call.
+        let audio = output.audio.take().map(|decode| decode.join());
         match code {
             0 => (),
             2 => return Err("image_physical_gpu_not_found"),
@@ -463,11 +497,15 @@ impl Session {
             _ => return Err("image_native_runtime_failed"),
         }
         if output.invalid
-            || output.audio.is_none()
+            || audio.is_some() != recipe.audio
             || output.rgb.len() != output.frame_bytes * recipe.frames as usize
         {
             return Err("image_native_output_invalid");
         }
+        let audio = match audio {
+            Some(decoded) => Some(decoded.map_err(|_| "image_native_runtime_failed")??),
+            None => None,
+        };
         crate::worker_protocol::write_progress(VideoPhase::Encoding, 0, 0)?;
         let clip = crate::video::Clip {
             width: recipe.width,
@@ -475,11 +513,7 @@ impl Session {
             fps: kuno_protocol::VIDEO_FPS,
             frames: recipe.frames,
             rgb: std::mem::take(&mut output.rgb),
-            audio: if recipe.audio {
-                output.audio.take()
-            } else {
-                None
-            },
+            audio,
         };
         drop(output);
         crate::video::encode_mp4(&clip)

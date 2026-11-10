@@ -118,8 +118,8 @@ are what has been tested on the B70; they may grow additively. `max_pixels` boun
   runs at CFG 1, where a negative prompt has no effect.
 - `width`/`height`: multiples of 32 in 256..1280, `width * height <= max_pixels`.
 - `frames`: one of the advertised counts; duration is `frames / 24` seconds.
-- `audio` (default `true`): include the generated audio track. Audio is always generated
-  jointly by the model; `false` only omits the track.
+- `audio` (default `true`): include the generated audio track. The model always samples
+  audio jointly with video; `false` omits the track and skips the audio decode.
 - `first_frame`: required for `minimax-h3-image-to-video/v1`, optional for
   `minimax-h3-video/v1`, rejected for the reference workflow. At most 16 MiB of base64,
   decoded at most 4096x4096. Kuno scales it to cover `width x height` and centre-crops
