@@ -2,7 +2,7 @@
 //! Each kernel tap is one matrix product on an unpadded window, so nothing is copied.
 use gemm::Parallelism;
 
-fn threads() -> Parallelism {
+pub(super) fn threads() -> Parallelism {
     Parallelism::Rayon(0)
 }
 /// dst[rows x n] (row stride `dst_rs`, column stride `dst_cs`) += lhs[rows x k] * rhs[k x n].
