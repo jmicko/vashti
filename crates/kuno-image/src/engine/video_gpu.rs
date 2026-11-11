@@ -237,13 +237,30 @@ impl GpuVideoDecoder {
         let token_tiles = np / TILE as u32;
         type Call<'a> = (&'a Kernel, Vec<&'a Buffer>, Vec<u32>, [u32; 3]);
         // output[token][row] = input[token][..columns] . weight[row][..columns]
-        let gemm = |input, weight, output, rows: usize, columns: usize| -> Call<'_> {
-            (
-                &k.gemm,
-                vec![input, weight, output],
-                vec![columns as u32, 0, 0, 0, 0, 0, 0, rows as u32],
-                [(rows / TILE) as u32, token_tiles, 1],
-            )
+        // A few thousand weight rows per dispatch: the weight block then stays cached while
+        // every token tile passes over it, instead of being re-read from video memory.
+        let block = 4096;
+        let gemm = |input, weight, output, rows: usize, columns: usize| -> Vec<Call<'_>> {
+            (0..rows)
+                .step_by(block)
+                .map(|first| {
+                    (
+                        &k.gemm,
+                        vec![input, weight, output],
+                        vec![
+                            columns as u32,
+                            0,
+                            0,
+                            (first * columns) as u32,
+                            0,
+                            first as u32,
+                            0,
+                            rows as u32,
+                        ],
+                        [(block.min(rows - first) / TILE) as u32, token_tiles, 1],
+                    )
+                })
+                .collect()
         };
         let mut steps: Vec<Call<'_>> = Vec::new();
         for layer in &self.layers {
@@ -254,7 +271,7 @@ impl GpuVideoDecoder {
                 vec![n, NORM1 as u32, 0, 0],
                 [np, 1, 1],
             ));
-            steps.push(gemm(half, &layer.qkv, wide, DIM * 3, DIM));
+            steps.extend(gemm(half, &layer.qkv, wide, DIM * 3, DIM));
             steps.push((
                 &k.heads,
                 vec![wide, v, turns, query, key, value],
@@ -302,7 +319,7 @@ impl GpuVideoDecoder {
                 ));
             }
             steps.push((&k.merge, vec![mixed, half], vec![n, np], [1, np, 1]));
-            steps.push(gemm(half, &layer.out, wide, DIM, DIM));
+            steps.extend(gemm(half, &layer.out, wide, DIM, DIM));
             steps.push((
                 &k.residual,
                 vec![stream, wide, v],
@@ -315,14 +332,14 @@ impl GpuVideoDecoder {
                 vec![n, NORM2 as u32, 0, 0],
                 [np, 1, 1],
             ));
-            steps.push(gemm(half, &layer.w1, wide, INNER * 2, DIM));
+            steps.extend(gemm(half, &layer.w1, wide, INNER * 2, DIM));
             steps.push((
                 &k.gate,
                 vec![wide, v, half],
                 vec![n, W1_BIAS as u32],
                 [(INNER / 4 / 64) as u32, np, 1],
             ));
-            steps.push(gemm(half, &layer.w2, wide, DIM, INNER));
+            steps.extend(gemm(half, &layer.w2, wide, DIM, INNER));
             steps.push((
                 &k.residual,
                 vec![stream, wide, v],
@@ -336,7 +353,7 @@ impl GpuVideoDecoder {
             vec![n, 0, DIM as u32, 1],
             [np, 1, 1],
         ));
-        steps.push(gemm(half, &self.project, wide, PIXELS, DIM));
+        steps.extend(gemm(half, &self.project, wide, PIXELS, DIM));
         let steps: Vec<Step> = steps
             .iter()
             .map(|(kernel, buffers, constants, groups)| Step {
