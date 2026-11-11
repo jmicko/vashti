@@ -27,7 +27,7 @@ paths from the environment.
 | Stage (MiniMax H3) | C++ today | Rust | State |
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
-| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU, 36 tiles for a 2.3 s clip | one tile on CPU, checked | GPU kernels next |
+| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.39 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
 | DiT sampling (INT8, 8 or 4 steps) | 2.7 to 3.9 s per step | not started | |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
@@ -61,17 +61,71 @@ about 55 TFLOPS on the same card, so this stage has room for a real speedup.
 
 `engine/video_vae.rs` is the CPU form of one tile (`VideoDecoder::decode_tile`). It streams
 one layer's weights at a time and is the numeric reference for the GPU kernels, not a
-production path. On a tile captured from the C++ engine
-(16x16x7 latents, 28 frames of 256x256) it is 130.8 dB from the exact double-precision
-decode; the C++ engine, which computes in half precision, is 70.9 dB from exact, and the two
-agree to 70.9 dB. The CPU form takes 32 s per tile, which is why this stage needs the GPU.
+production path. On a tile captured from the C++ engine (16x16x7 latents, 28 frames of
+256x256) it is 130.8 dB from the exact double-precision decode; the C++ engine, which
+computes in half precision, is 70.9 dB from exact. The CPU form takes 32 s per tile.
 
-Still to port for this stage: the GPU kernels, the spatial tile plan and blending, the time
-chunking with its 5-frame cross-fade, and the encoder.
+### GPU form
+
+`engine/gpu` is a small Vulkan compute layer on `ash`: one device (chosen by PCI address in
+the worker), storage buffers, compute kernels and batched dispatch. Kernels are GLSL in
+`engine/gpu/shaders` with their SPIR-V checked in, so a build needs no shader compiler; a
+test recompiles them when `glslangValidator` is installed and fails on stale binaries
+(`KUNO_UPDATE_SHADERS=1` rewrites them).
+
+| Kernel | Job |
+|---|---|
+| `gemm` | Batched matrix product, f16 operands, f32 accumulation, cooperative matrices |
+| `norm` | RMS or layer normalization of the f32 stream, written as f16 |
+| `heads` | Query/key/value split with bias, unit RMS and rotary positions |
+| `softmax` | Attention weights per row, padded keys masked |
+| `merge` | Per-head attention output back into token rows |
+| `residual` | `x += scale * (update + bias)` on the f32 stream |
+| `gate` | Gated activation between the feed-forward projections |
+
+`engine/video_gpu.rs` chains them (`GpuVideoDecoder`): the residual stream stays in f32,
+matrix operands are f16, and tokens are padded to a multiple of 128 so the matrix kernel
+needs no bounds checks. `engine/video_tiles.rs` is the clip level: the reference engine's
+tile plan, cross-fades and time chunks, unit-tested with fake tile decoders.
+
+Measured on the B70 (Mesa 26.2.6):
+
+| | C++ engine | Rust |
+|---|---|---|
+| Matrix kernel at the decoder's largest shape | about 15 TFLOPS effective | 63.5 TFLOPS |
+| One 16x16x7 tile | 0.59 s, 70.9 dB from exact | 0.39 s, 83.5 dB from the CPU reference |
+| 832x544, 73-frame decode (48 tiles), standalone | 31.4 s | 18.2 s, 69.7 dB from the C++ frames |
+| Weights to the GPU | part of the above | 1.1 s per clip |
+
+What shaped the kernels:
+
+- Cooperative-matrix load strides are in elements of the array being read (vec4s for a
+  `f16vec4` array), not in scalars.
+- Half-precision subnormals read as zero unless the shader asks for `DenormPreserve` on
+  16-bit floats; all kernels do.
+- Elementwise kernels must have neighbouring lanes touch neighbouring memory. One invocation
+  per row with a long loop was 10 to 40 times slower than one vec4 per invocation.
+- The matrix kernel needs a few dispatches to reach full speed (31 TFLOPS over 8 runs, 63
+  over 64).
+
+In the worker the C++ pipeline hands the video latent (VAE scale) to Rust through
+`sd_kuno_set_video_decoder` and decodes itself only if Rust reports failure. The decoder is
+loaded for the call and dropped after, so it holds no GPU memory while other models run.
+
+Still to do for this stage: a fused attention kernel (scores, softmax and mixing are about a
+third of a tile and write 700 MB of intermediates), and the encoder.
 
 ## Running the comparisons
 
-Video decoder tile (the exact decode takes about 4 minutes on 16 cores):
+GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
+
+```
+KUNO_VIDEO_VAE=<models>/minimax_h3_video_vae_fp16.safetensors \
+KUNO_VIDEO_GOLDEN=<tile dir> KUNO_VIDEO_CLIP=<dir with clip-latent.f32, clip-pixels.f32, clip-shape.txt> \
+cargo test --release -p kuno-image gpu -- --include-ignored --nocapture
+```
+
+Video decoder tile on CPU (the exact decode takes about 4 minutes on 16 cores):
 
 ```
 KUNO_VIDEO_VAE=<models>/minimax_h3_video_vae_fp16.safetensors \

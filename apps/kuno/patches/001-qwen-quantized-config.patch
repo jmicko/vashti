@@ -1477,21 +1477,22 @@ index 9b8819a..7dc3fb8 100644
              result.vae->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
          }
 diff --git a/src/pipeline/video.cpp b/src/pipeline/video.cpp
-index 2fcff4c..f1ebe14 100644
+index 2fcff4c..d1c1bb0 100644
 --- a/src/pipeline/video.cpp
 +++ b/src/pipeline/video.cpp
-@@ -1238,7 +1238,26 @@ namespace sd::pipeline {
+@@ -1238,7 +1238,27 @@ namespace sd::pipeline {
                      (int)video_latent.shape()[3]);
          // auto z = sd::load_tensor_from_file_as_tensor<float>("ltx_vae_z.bin");
          int64_t t4            = ggml_time_ms();
 -        sd::Tensor<float> vid = sd->decode_first_stage(video_latent, true);
 +        sd::Tensor<float> vid;
-+        if (sd->kuno_video_decoder != nullptr && sd_version_is_minimax_h3(sd->version) && video_latent.dim() == 4) {
++        if (sd->kuno_video_decoder != nullptr && sd_version_is_minimax_h3(sd->version) && video_latent.dim() >= 4) {
 +            auto vae_latent      = sd->first_stage_model->diffusion_to_vae_latents(video_latent);
 +            int64_t frames       = vae_latent.shape()[2];
 +            int64_t pixel_frames = frames <= 1 ? 1 : ((frames - 2) / 5) * 17 + 5;
-+            sd::Tensor<float> pixels({vae_latent.shape()[0] * 16, vae_latent.shape()[1] * 16, pixel_frames, 3});
++            sd::Tensor<float> pixels({vae_latent.shape()[0] * 16, vae_latent.shape()[1] * 16, pixel_frames, 3, 1});
 +            if (vae_latent.shape()[3] == 24 &&
++                vae_latent.numel() == vae_latent.shape()[0] * vae_latent.shape()[1] * frames * 24 &&
 +                sd->kuno_video_decoder(vae_latent.data(),
 +                                       vae_latent.shape()[0],
 +                                       vae_latent.shape()[1],
@@ -1508,7 +1509,7 @@ index 2fcff4c..f1ebe14 100644
          int64_t t5            = ggml_time_ms();
          LOG_INFO("decode_first_stage completed, taking %.2fs", (t5 - t4) * 1.0f / 1000);
          if (vid.empty()) {
-@@ -1885,7 +1904,8 @@ namespace sd::pipeline {
+@@ -1885,7 +1905,8 @@ namespace sd::pipeline {
          }
          if ((sd_version_is_ltxav(sd->version) || sd_version_is_minimax_h3(sd->version)) &&
              latents.audio_length > 0 &&
@@ -1518,7 +1519,7 @@ index 2fcff4c..f1ebe14 100644
              if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
                  LOG_ERROR("cancelling generation before audio decode");
                  return false;
-@@ -1899,7 +1919,13 @@ namespace sd::pipeline {
+@@ -1899,7 +1920,13 @@ namespace sd::pipeline {
                                      : unpack_ltxav_audio_latent(final_latent,
                                                                  latents.audio_length,
                                                                  sd->get_latent_channel());
