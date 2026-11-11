@@ -38,6 +38,7 @@ struct Layer {
 }
 struct Kernels {
     gemm: Kernel,
+    gemm16: Kernel,
     norm: Kernel,
     heads: Kernel,
     softmax: Kernel,
@@ -125,6 +126,7 @@ impl GpuVideoDecoder {
         Ok(Self {
             kernels: Kernels {
                 gemm: gpu.kernel(shaders::GEMM, 3, 8, Some(16))?,
+                gemm16: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
                 norm: kernel(shaders::NORM, 3, 4)?,
                 heads: kernel(shaders::HEADS, 6, 3)?,
                 softmax: kernel(shaders::SOFTMAX, 2, 2)?,
@@ -245,19 +247,16 @@ impl GpuVideoDecoder {
                 .step_by(block)
                 .map(|first| {
                     (
-                        &k.gemm,
+                        &k.gemm16,
                         vec![input, weight, output],
                         vec![
                             columns as u32,
                             0,
-                            0,
                             (first * columns) as u32,
-                            0,
                             first as u32,
-                            0,
                             rows as u32,
                         ],
-                        [(block.min(rows - first) / TILE) as u32, token_tiles, 1],
+                        [(block.min(rows - first) / 256) as u32, token_tiles, 1],
                     )
                 })
                 .collect()
@@ -367,6 +366,7 @@ impl GpuVideoDecoder {
             // Development aid: one submission per dispatch, summed per kernel.
             let names = [
                 (&k.gemm, "gemm"),
+                (&k.gemm16, "gemm16"),
                 (&k.norm, "norm"),
                 (&k.heads, "heads"),
                 (&k.softmax, "softmax"),
