@@ -75,10 +75,12 @@ test recompiles them when `glslangValidator` is installed and fails on stale bin
 
 | Kernel | Job |
 |---|---|
-| `gemm` | Batched matrix product, f16 operands, f32 accumulation, cooperative matrices |
+| `gemm16` | Linear layers: f16 operands, f32 accumulation, eight accumulators per subgroup |
+| `gemm8` | The same plan for INT8 operands with exact int32 sums (DiT) |
+| `gemm` | Batched f16 product in 128 x 128 tiles, used for attention scores |
 | `norm` | RMS or layer normalization of the f32 stream, written as f16 |
 | `heads` | Query/key/value split with bias, unit RMS and rotary positions |
-| `softmax` | Unnormalized attention weights `exp(score / 8)`, padded keys masked |
+| `mix` | Attention weights `exp(score / 8)` computed while the mixing product copies its operand, padded keys masked |
 | `merge` | Per-head attention output back into token rows, divided by the weight sum |
 | `residual` | `x += scale * (update + bias)` on the f32 stream |
 | `gate` | Gated activation between the feed-forward projections |
@@ -93,12 +95,15 @@ Measured on the B70 (Mesa 26.2.6):
 | | C++ engine | Rust |
 |---|---|---|
 | Matrix kernel at the decoder's largest shape | about 15 TFLOPS effective | 63.5 TFLOPS |
-| One 16x16x7 tile | 0.59 s, 70.9 dB from exact | 0.34 s, 83.7 dB from the CPU reference |
-| 832x544, 73-frame decode (48 tiles), standalone | 31.4 s | 16.5 s, 69.7 dB from the C++ frames |
+| One 16x16x7 tile | 0.59 s, 70.9 dB from exact | 0.27 s, 83.7 dB from the CPU reference |
+| 832x544, 73-frame decode (48 tiles), standalone | 31.4 s | 13.1 s, 69.7 dB from the C++ frames |
 | Weights to the GPU | part of the above | 1.1 s per clip |
-| Decode inside the worker, 2.3 s clip (36 tiles) | about 21 s | 1.5 s load + 12.7 s decode |
-| Warm 2.3 s clip end to end | 59.1 to 59.5 s | 49.9 to 50.1 s |
-| First clip after worker start | about 90 s | 62.8 s |
+| Decode inside the worker, 2.3 s clip (36 tiles) | about 21 s | 1.5 s load + 12.7 s decode (0.34 s tiles) |
+| Warm 2.3 s clip end to end | 59.1 to 59.5 s | 49.9 to 50.1 s (0.34 s tiles) |
+| First clip after worker start | about 90 s | 62.8 s (0.34 s tiles) |
+
+The three worker rows were measured with the first GPU form (0.34 s per tile); the worker
+has not been rebuilt with the 0.27 s kernels yet.
 
 What shaped the kernels:
 
@@ -113,6 +118,10 @@ What shaped the kernels:
 - Queries and keys have unit RMS, so `score / 8` stays within -8..8 and `exp` needs no row
   maximum. A row of ones in the value operand makes the mixing product return each row's
   weight sum for free, so the softmax needs no reduction pass.
+- The linear layers moved to the DiT's eight-accumulator plan with 4096 weight rows per
+  dispatch (0.335 s to 0.30 s per tile), and the attention weights moved into the mixing
+  product's operand copy, which removed a pass over every score (0.30 s to 0.27 s).
+  Half-precision scores would save another 3% but cost 6 dB, so scores stay f32.
 - Attention is limited by memory traffic, not arithmetic: making the softmax elementwise
   saved little. Per tile, hot: linear layers 151 ms (57 TFLOPS), scores 32 ms, weights
   about 50 ms, mixing 20 ms, operand split 20 ms, everything else about 25 ms.

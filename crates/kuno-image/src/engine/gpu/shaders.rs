@@ -4,9 +4,9 @@
 pub const GEMM: &[u8] = include_bytes!("shaders/gemm.spv");
 pub const GEMM16: &[u8] = include_bytes!("shaders/gemm16.spv");
 pub const GEMM8: &[u8] = include_bytes!("shaders/gemm8.spv");
+pub const MIX: &[u8] = include_bytes!("shaders/mix.spv");
 pub const NORM: &[u8] = include_bytes!("shaders/norm.spv");
 pub const HEADS: &[u8] = include_bytes!("shaders/heads.spv");
-pub const SOFTMAX: &[u8] = include_bytes!("shaders/softmax.spv");
 pub const MERGE: &[u8] = include_bytes!("shaders/merge.spv");
 pub const RESIDUAL: &[u8] = include_bytes!("shaders/residual.spv");
 pub const GATE: &[u8] = include_bytes!("shaders/gate.spv");

@@ -39,9 +39,9 @@ struct Layer {
 struct Kernels {
     gemm: Kernel,
     gemm16: Kernel,
+    mix: Kernel,
     norm: Kernel,
     heads: Kernel,
-    softmax: Kernel,
     merge: Kernel,
     residual: Kernel,
     gate: Kernel,
@@ -57,7 +57,6 @@ struct Work {
     key: Buffer,
     value: Buffer,
     scores: Buffer,
-    weights: Buffer,
     mixed: Buffer,
     readback: Readback,
 }
@@ -127,9 +126,9 @@ impl GpuVideoDecoder {
             kernels: Kernels {
                 gemm: gpu.kernel(shaders::GEMM, 3, 8, Some(16))?,
                 gemm16: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+                mix: gpu.kernel(shaders::MIX, 3, 9, Some(16))?,
                 norm: kernel(shaders::NORM, 3, 4)?,
                 heads: kernel(shaders::HEADS, 6, 3)?,
-                softmax: kernel(shaders::SOFTMAX, 2, 2)?,
                 merge: kernel(shaders::MERGE, 2, 2)?,
                 residual: kernel(shaders::RESIDUAL, 3, 3)?,
                 gate: kernel(shaders::GATE, 3, 2)?,
@@ -210,7 +209,6 @@ impl GpuVideoDecoder {
                 // Rows 65..128 of each head are never written and stay zero.
                 value: gpu.buffer((HEADS * TILE * padded) as u64 * 2)?,
                 scores: gpu.buffer((GROUP * padded * padded) as u64 * 4)?,
-                weights: gpu.buffer((GROUP * padded * padded) as u64 * 2)?,
                 mixed: gpu.buffer((HEADS * padded * TILE) as u64 * 4)?,
                 readback: gpu.readback((padded * PIXELS) as u64 * 4)?,
             });
@@ -224,7 +222,6 @@ impl GpuVideoDecoder {
             key,
             value,
             scores,
-            weights,
             mixed,
             readback,
             ..
@@ -277,8 +274,8 @@ impl GpuVideoDecoder {
                 vec![n, np, QKV_BIAS as u32],
                 [1, np, 1],
             ));
-            // A few heads at a time keeps the scores and weights small (88 MB instead of
-            // 700 MB for all heads) at the same speed.
+            // A few heads at a time keeps the scores small (118 MB instead of 472 MB for all
+            // heads) at the same speed. The weights exist only inside `mix`.
             for head in (0..HEADS as u32).step_by(GROUP) {
                 steps.push((
                     &k.gemm,
@@ -296,14 +293,8 @@ impl GpuVideoDecoder {
                     [token_tiles, token_tiles, GROUP as u32],
                 ));
                 steps.push((
-                    &k.softmax,
-                    vec![scores, weights],
-                    vec![n, np],
-                    [np.div_ceil(256), np, GROUP as u32],
-                ));
-                steps.push((
-                    &k.gemm,
-                    vec![weights, value, mixed],
+                    &k.mix,
+                    vec![scores, value, mixed],
                     vec![
                         np,
                         0,
@@ -313,6 +304,7 @@ impl GpuVideoDecoder {
                         head * np * TILE as u32,
                         np * TILE as u32,
                         TILE as u32,
+                        n,
                     ],
                     [1, token_tiles, GROUP as u32],
                 ));
@@ -369,7 +361,7 @@ impl GpuVideoDecoder {
                 (&k.gemm16, "gemm16"),
                 (&k.norm, "norm"),
                 (&k.heads, "heads"),
-                (&k.softmax, "softmax"),
+                (&k.mix, "mix"),
                 (&k.merge, "merge"),
                 (&k.residual, "residual"),
                 (&k.gate, "gate"),

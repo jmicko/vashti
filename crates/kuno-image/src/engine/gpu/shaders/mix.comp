@@ -1,0 +1,110 @@
+// Attention mixing with the weights computed on the way in:
+//   out[z][q][r] = sum_k exp(score[z][q][k] / 8) * value[z][r][k]     (live keys only)
+// This is gemm.comp with one change: the token operand is read as f32 scores and turned into
+// unnormalized attention weights while it is copied to shared memory, so the weights never
+// exist in video memory. Queries and keys have unit RMS over the head's channels, so
+// score / 8 lies in -8..8 and the weights (0.0003 to 2981) are normal f16 values without
+// subtracting a row maximum; the row sum comes out of the product itself (see `heads` and
+// `merge`).
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// Keep half-precision subnormals (tiny weights) instead of reading them as zero.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 512) in;
+layout(set = 0, binding = 0) readonly buffer Scores { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { f16vec4 w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { float y[]; };
+// Offsets are in values; the half-precision ones are multiples of 4.
+layout(push_constant) uniform Constants {
+    uint columns;
+    uint in_first;
+    uint in_batch;
+    uint weight_first;
+    uint weight_batch;
+    uint out_first;
+    uint out_batch;
+    uint out_stride;
+    uint keys;
+} p;
+
+shared f16vec4 a[2048];
+shared f16vec4 b[2048];
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
+
+// Fills one shared buffer pair with 32 columns of 128 tokens and 128 rows. Tokens are stored
+// fragment-contiguous: [column half][token][16 values].
+void stage(uint in4, uint weight4, uint cols4, uint k4, uint buf) {
+    uint lane = gl_SubgroupID * 16 + gl_SubgroupInvocationID;
+    for (uint j = 0; j < 2; j++) {
+        uint index = lane + j * 512;
+        uint row = index >> 3;
+        uint c = index & 7;
+        bvec4 live = lessThan(uvec4((k4 + c) * 4) + uvec4(0, 1, 2, 3), uvec4(p.keys));
+        a[buf * 1024 + (c >> 2) * 512 + row * 4 + (c & 3)] =
+            f16vec4(mix(vec4(0.0), exp(x[in4 + row * cols4 + k4 + c] * 0.125), live));
+        b[buf * 1024 + row * 8 + c] = w[weight4 + row * cols4 + k4 + c];
+    }
+}
+
+void main() {
+    uint sg = gl_SubgroupID;
+    uint am = (sg >> 3) * 32;
+    uint bn = (sg & 7) * 16;
+    uint token = gl_WorkGroupID.y * 128;
+    uint row = gl_WorkGroupID.x * 128;
+    uint z = gl_WorkGroupID.z;
+    uint cols4 = p.columns >> 2;
+    uint in4 = ((p.in_first + z * p.in_batch) >> 2) + token * cols4;
+    uint weight4 = ((p.weight_first + z * p.weight_batch) >> 2) + row * cols4;
+    A a0, a1, a2, a3, a4, a5, a6, a7;
+    B b0, b1;
+    C c0 = C(0.0), c1 = C(0.0), c2 = C(0.0), c3 = C(0.0);
+    stage(in4, weight4, cols4, 0, 0);
+    memoryBarrierShared();
+    barrier();
+    uint cur = 0;
+    for (uint k = 0; k < p.columns; k += 32) {
+        uint next = 1 - cur;
+        if (k + 32 < p.columns) {
+            stage(in4, weight4, cols4, (k + 32) >> 2, next);
+        }
+        uint aa = cur * 1024 + am * 4;
+        uint bb = cur * 1024 + bn * 8;
+        coopMatLoad(a0, a, aa, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a1, a, aa + 32, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a2, a, aa + 64, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a3, a, aa + 96, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(b0, b, bb, 8, gl_CooperativeMatrixLayoutColumnMajor);
+        coopMatLoad(a4, a, aa + 512, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a5, a, aa + 544, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a6, a, aa + 576, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a7, a, aa + 608, 4, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(b1, b, bb + 4, 8, gl_CooperativeMatrixLayoutColumnMajor);
+        c0 = coopMatMulAdd(a0, b0, c0);
+        c1 = coopMatMulAdd(a1, b0, c1);
+        c2 = coopMatMulAdd(a2, b0, c2);
+        c3 = coopMatMulAdd(a3, b0, c3);
+        c0 = coopMatMulAdd(a4, b1, c0);
+        c1 = coopMatMulAdd(a5, b1, c1);
+        c2 = coopMatMulAdd(a6, b1, c2);
+        c3 = coopMatMulAdd(a7, b1, c3);
+        memoryBarrierShared();
+        barrier();
+        cur = next;
+    }
+    uint first = p.out_first + z * p.out_batch + (token + am) * p.out_stride + row + bn;
+    coopMatStore(c0, y, first, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c1, y, first + 8 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c2, y, first + 16 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c3, y, first + 24 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
+}
