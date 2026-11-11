@@ -1,5 +1,23 @@
 # Kuno and Vashti Coordination
 
+**Kuno Rust engine, second model (2026-11-10): MiniMax H3 video decode in Rust on the GPU.
+Backend only, no contract change; NOT installed (the user asked to hold installs unless a
+rewrite brings a large speed gain; this one takes a warm 2.3 s clip from 59 s to 50 s).**
+Branch `claude/rust-engine`. The worker decodes video frames with `kuno-image`'s
+`engine::video_gpu` (Vulkan compute through `ash`, kernels in `engine/gpu/shaders`);
+stable-diffusion.cpp hands over the video latent (`sd_kuno_set_video_decoder`, patch 001)
+and decodes itself only if the Rust decoder reports failure. Frames agree with the C++
+decoder to 69.7 dB (its own distance from an exact decode is 70.9 dB), so clips are not
+byte-identical to earlier ones. No Vashti change is needed. Details and measurements:
+[Kuno Rust model engine](kuno-rust-engine.md).
+
+- Checks (2026-11-10): dev worker `7ac0b9ee…`: all seven video modes produce clips and
+  the Qwen image after video is OK; three same-seed clips are byte-identical; warm clip
+  49.9 to 50.1 s, first clip 62.8 s; no kernel GPU resets. Re-encoded frames are 43 to
+  45 dB PSNR from the previous worker's clips (two lossy encodes of near-identical frames).
+- Not yet done: install candidate and protected Qwen acceptance (to run before any
+  install).
+
 **Kuno Rust engine, first model (2026-11-09): MiniMax H3 audio decode in Rust. Backend
 only, no contract change; NOT installed yet (awaiting user approval).** Branch
 `claude/rust-engine`. See [Kuno Rust model engine](kuno-rust-engine.md) for the plan (one

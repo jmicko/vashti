@@ -78,8 +78,8 @@ test recompiles them when `glslangValidator` is installed and fails on stale bin
 | `gemm` | Batched matrix product, f16 operands, f32 accumulation, cooperative matrices |
 | `norm` | RMS or layer normalization of the f32 stream, written as f16 |
 | `heads` | Query/key/value split with bias, unit RMS and rotary positions |
-| `softmax` | Attention weights per row, padded keys masked |
-| `merge` | Per-head attention output back into token rows |
+| `softmax` | Unnormalized attention weights `exp(score / 8)`, padded keys masked |
+| `merge` | Per-head attention output back into token rows, divided by the weight sum |
 | `residual` | `x += scale * (update + bias)` on the f32 stream |
 | `gate` | Gated activation between the feed-forward projections |
 
@@ -93,9 +93,12 @@ Measured on the B70 (Mesa 26.2.6):
 | | C++ engine | Rust |
 |---|---|---|
 | Matrix kernel at the decoder's largest shape | about 15 TFLOPS effective | 63.5 TFLOPS |
-| One 16x16x7 tile | 0.59 s, 70.9 dB from exact | 0.39 s, 83.5 dB from the CPU reference |
-| 832x544, 73-frame decode (48 tiles), standalone | 31.4 s | 18.2 s, 69.7 dB from the C++ frames |
+| One 16x16x7 tile | 0.59 s, 70.9 dB from exact | 0.34 s, 83.7 dB from the CPU reference |
+| 832x544, 73-frame decode (48 tiles), standalone | 31.4 s | 16.5 s, 69.7 dB from the C++ frames |
 | Weights to the GPU | part of the above | 1.1 s per clip |
+| Decode inside the worker, 2.3 s clip (36 tiles) | about 21 s | 1.5 s load + 12.7 s decode |
+| Warm 2.3 s clip end to end | 59.1 to 59.5 s | 49.9 to 50.1 s |
+| First clip after worker start | about 90 s | 62.8 s |
 
 What shaped the kernels:
 
@@ -107,13 +110,19 @@ What shaped the kernels:
   per row with a long loop was 10 to 40 times slower than one vec4 per invocation.
 - The matrix kernel needs a few dispatches to reach full speed (31 TFLOPS over 8 runs, 63
   over 64).
+- Queries and keys have unit RMS, so `score / 8` stays within -8..8 and `exp` needs no row
+  maximum. A row of ones in the value operand makes the mixing product return each row's
+  weight sum for free, so the softmax needs no reduction pass.
+- Attention is limited by memory traffic, not arithmetic: making the softmax elementwise
+  saved little. Per tile, hot: linear layers 151 ms (57 TFLOPS), scores 32 ms, weights
+  about 50 ms, mixing 20 ms, operand split 20 ms, everything else about 25 ms.
 
 In the worker the C++ pipeline hands the video latent (VAE scale) to Rust through
 `sd_kuno_set_video_decoder` and decodes itself only if Rust reports failure. The decoder is
 loaded for the call and dropped after, so it holds no GPU memory while other models run.
 
-Still to do for this stage: a fused attention kernel (scores, softmax and mixing are about a
-third of a tile and write 700 MB of intermediates), and the encoder.
+Still to do for this stage: a fused attention kernel (scores, weights and mixing are about a
+third of a tile and limited by memory traffic), and the encoder.
 
 ## Running the comparisons
 
