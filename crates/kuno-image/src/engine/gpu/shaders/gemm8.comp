@@ -1,12 +1,19 @@
-// Batched integer matrix product for the INT8 linear layers:
+// Integer matrix product for the INT8 linear layers:
 //   out[t][r] = sum_k in[t][k] * weight[r][k]      (int8 operands, exact int32 sums)
-// Rows of `in` and `weight` hold `columns` contiguous bytes, read as 32-bit words. One
-// workgroup computes a 128 x 128 tile; the caller pads tokens and rows to multiples of 128
-// and columns to 64.
+// Rows of `in` and `weight` hold `columns` contiguous bytes, read as 16-byte words. One
+// workgroup computes a 128 x 256 tile; the caller pads tokens to a multiple of 128, rows to
+// 256 and columns to 32, and keeps offsets multiples of 16 bytes.
 //
-// Same plan as gemm.comp: 32 subgroups of 16 lanes, each owning 32 tokens x 16 rows as four
-// 8 x 16 accumulators, operands staged 64 columns per step through double-buffered shared
-// memory. An integer fragment covers 32 columns, twice the half-precision one.
+// 32 subgroups of 16 lanes each own 32 tokens x 32 rows as eight 8 x 16 accumulators, the
+// most that fit the register file without spilling. The operands advance 32 columns per step
+// through double-buffered shared memory. Each step first requests the next step's operands
+// from global memory, then multiplies, then stores what it requested: the multiply overlaps
+// the wait for global memory.
+//
+// Measured on Intel Xe2 with Mesa (docs/kuno-rust-engine.md): the multiply instructions
+// alone could run 2.2 times faster; what limits the kernel is copying operands from global
+// memory, so callers should dispatch a few thousand weight rows at a time to keep the
+// weight block cached while all tokens pass over it.
 #version 460
 #extension GL_KHR_cooperative_matrix : require
 #extension GL_KHR_memory_scope_semantics : require
@@ -14,10 +21,10 @@
 #extension GL_KHR_shader_subgroup_basic : require
 
 layout(local_size_x = 512) in;
-layout(set = 0, binding = 0) readonly buffer In { uvec2 x[]; };
-layout(set = 0, binding = 1) readonly buffer Weight { uvec2 w[]; };
+layout(set = 0, binding = 0) readonly buffer In { uvec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { uvec4 w[]; };
 layout(set = 0, binding = 2) writeonly buffer Out { int y[]; };
-// Operand offsets are in bytes (multiples of 8); output offsets in values.
+// Operand offsets are in bytes (multiples of 16); output offsets in values.
 layout(push_constant) uniform Constants {
     uint columns;
     uint in_first;
@@ -26,74 +33,83 @@ layout(push_constant) uniform Constants {
     uint out_stride;
 } p;
 
-shared uvec2 a[2048];
-shared uvec2 b[2048];
+// Per buffer: 128 tokens x 2 words, 256 rows x 2 words.
+shared uvec4 a[512];
+shared uvec4 b[1024];
 
 #define A coopmat<int8_t, gl_ScopeSubgroup, 8, 32, gl_MatrixUseA>
 #define B coopmat<int8_t, gl_ScopeSubgroup, 32, 16, gl_MatrixUseB>
 #define C coopmat<int32_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
 
-// Fills one shared buffer pair with 64 columns of 128 tokens and 128 rows. Tokens are stored
-// fragment-contiguous: [column half][token][32 bytes].
-void stage(uint in8, uint weight8, uint cols8, uint k8, uint buf) {
-    uint lane = gl_SubgroupID * 16 + gl_SubgroupInvocationID;
-    for (uint j = 0; j < 2; j++) {
-        uint index = lane + j * 512;
-        uint row = index >> 3;
-        uint c = index & 7;
-        a[buf * 1024 + (c >> 2) * 512 + row * 4 + (c & 3)] = x[in8 + row * cols8 + k8 + c];
-        b[buf * 1024 + row * 8 + c] = w[weight8 + row * cols8 + k8 + c];
-    }
-}
-
 void main() {
     uint sg = gl_SubgroupID;
+    uint lane = sg * 16 + gl_SubgroupInvocationID;
     uint am = (sg >> 3) * 32;
-    uint bn = (sg & 7) * 16;
+    uint bn = (sg & 7) * 32;
     uint token = gl_WorkGroupID.y * 128;
-    uint row = gl_WorkGroupID.x * 128;
-    uint cols8 = p.columns >> 3;
-    uint in8 = (p.in_first >> 3) + token * cols8;
-    uint weight8 = (p.weight_first >> 3) + row * cols8;
-    A a0, a1, a2, a3, a4, a5, a6, a7;
+    uint row = gl_WorkGroupID.x * 256;
+    uint cols16 = p.columns >> 4;
+    // Every lane copies one word of a weight row per step; the first 256 also one word of a
+    // token row.
+    bool copies = lane < 256;
+    uint in16 = (p.in_first >> 4) + (token + (lane >> 1)) * cols16 + (lane & 1);
+    uint weight16 = (p.weight_first >> 4) + (row + (lane >> 1)) * cols16 + (lane & 1);
+    uvec4 ta, tb;
+    A a0, a1, a2, a3;
     B b0, b1;
-    C c0 = C(0), c1 = C(0), c2 = C(0), c3 = C(0);
-    stage(in8, weight8, cols8, 0, 0);
+    C c00 = C(0), c01 = C(0), c10 = C(0), c11 = C(0);
+    C c20 = C(0), c21 = C(0), c30 = C(0), c31 = C(0);
+    if (copies) {
+        a[lane] = x[in16];
+    }
+    b[lane] = w[weight16];
     memoryBarrierShared();
     barrier();
     uint cur = 0;
-    for (uint k = 0; k < p.columns; k += 64) {
+    for (uint k = 0; k < p.columns; k += 32) {
         uint next = 1 - cur;
-        if (k + 64 < p.columns) {
-            stage(in8, weight8, cols8, (k + 64) >> 3, next);
+        bool more = k + 32 < p.columns;
+        uint k16 = (k + 32) >> 4;
+        if (more) {
+            if (copies) {
+                ta = x[in16 + k16];
+            }
+            tb = w[weight16 + k16];
         }
-        uint aa = cur * 1024 + am * 4;
-        uint bb = cur * 1024 + bn * 8;
-        coopMatLoad(a0, a, aa, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(a1, a, aa + 32, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(a2, a, aa + 64, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(a3, a, aa + 96, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(b0, b, bb, 8, gl_CooperativeMatrixLayoutColumnMajor);
-        coopMatLoad(a4, a, aa + 512, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(a5, a, aa + 544, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(a6, a, aa + 576, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(a7, a, aa + 608, 4, gl_CooperativeMatrixLayoutRowMajor);
-        coopMatLoad(b1, b, bb + 4, 8, gl_CooperativeMatrixLayoutColumnMajor);
-        c0 = coopMatMulAdd(a0, b0, c0);
-        c1 = coopMatMulAdd(a1, b0, c1);
-        c2 = coopMatMulAdd(a2, b0, c2);
-        c3 = coopMatMulAdd(a3, b0, c3);
-        c0 = coopMatMulAdd(a4, b1, c0);
-        c1 = coopMatMulAdd(a5, b1, c1);
-        c2 = coopMatMulAdd(a6, b1, c2);
-        c3 = coopMatMulAdd(a7, b1, c3);
+        uint aa = cur * 256 + am * 2;
+        uint bb = cur * 512 + bn * 2;
+        coopMatLoad(a0, a, aa, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a1, a, aa + 16, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a2, a, aa + 32, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a3, a, aa + 48, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(b0, b, bb, 2, gl_CooperativeMatrixLayoutColumnMajor);
+        coopMatLoad(b1, b, bb + 32, 2, gl_CooperativeMatrixLayoutColumnMajor);
+        c00 = coopMatMulAdd(a0, b0, c00);
+        c10 = coopMatMulAdd(a1, b0, c10);
+        c20 = coopMatMulAdd(a2, b0, c20);
+        c30 = coopMatMulAdd(a3, b0, c30);
+        c01 = coopMatMulAdd(a0, b1, c01);
+        c11 = coopMatMulAdd(a1, b1, c11);
+        c21 = coopMatMulAdd(a2, b1, c21);
+        c31 = coopMatMulAdd(a3, b1, c31);
+        if (more) {
+            if (copies) {
+                a[next * 256 + lane] = ta;
+            }
+            b[next * 512 + lane] = tb;
+        }
         memoryBarrierShared();
         barrier();
         cur = next;
     }
     uint first = p.out_first + (token + am) * p.out_stride + row + bn;
-    coopMatStore(c0, y, first, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(c1, y, first + 8 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(c2, y, first + 16 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(c3, y, first + 24 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
+    uint s = p.out_stride;
+    coopMatStore(c00, y, first, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c01, y, first + 16, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c10, y, first + 8 * s, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c11, y, first + 8 * s + 16, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c20, y, first + 16 * s, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c21, y, first + 16 * s + 16, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c30, y, first + 24 * s, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c31, y, first + 24 * s + 16, s, gl_CooperativeMatrixLayoutRowMajor);
 }

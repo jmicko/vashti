@@ -823,8 +823,8 @@ mod tests {
             flops / seconds / 1e12
         );
     }
-    /// The integer kernel is exact, so it is compared bit for bit, then timed at the shape of
-    /// the DiT's widest layer.
+    /// The integer kernel is exact, so it is compared bit for bit, then timed at the shapes of
+    /// the DiT's four linear layers.
     #[test]
     #[ignore = "needs the Intel GPU"]
     fn gemm8_is_exact_and_reports_speed() {
@@ -836,10 +836,10 @@ mod tests {
                 .map(|v| (v * 90.0).clamp(-127.0, 127.0) as i8)
                 .collect()
         };
-        let (tokens, rows, columns) = (256usize, 384usize, 192usize);
+        let (tokens, rows, columns) = (384usize, 512usize, 160usize);
         let (input, weight) = (
-            bytes(tokens * columns + 8, 1),
-            bytes(rows * columns + 16, 2),
+            bytes(tokens * columns + 16, 1),
+            bytes(rows * columns + 32, 2),
         );
         let (a, b) = (
             gpu.buffer(input.len() as u64).unwrap(),
@@ -852,8 +852,8 @@ mod tests {
         gpu.pass(&[Step {
             kernel: &kernel,
             buffers: &[&a, &b, &out],
-            constants: &[columns as u32, 8, 16, 3, stride as u32],
-            groups: [(rows / 128) as u32, (tokens / 128) as u32, 1],
+            constants: &[columns as u32, 16, 32, 3, stride as u32],
+            groups: [(rows / 256) as u32, (tokens / 128) as u32, 1],
         }])
         .unwrap();
         let got = gpu.download(&out, 0, out.bytes() as usize).unwrap();
@@ -865,14 +865,19 @@ mod tests {
             for r in 0..rows {
                 let want: i32 = (0..columns)
                     .map(|k| {
-                        i32::from(input[8 + t * columns + k])
-                            * i32::from(weight[16 + r * columns + k])
+                        i32::from(input[16 + t * columns + k])
+                            * i32::from(weight[32 + r * columns + k])
                     })
                     .sum();
                 assert_eq!(got[3 + t * stride + r], want, "t{t} r{r}");
             }
         }
+        // Untouched gaps between rows stay zero.
+        assert!(got[..3].iter().all(|v| *v == 0) && got[3 + rows] == 0);
 
+        // 4096 weight rows per dispatch keep the weight block cached while every token
+        // passes over it; one dispatch for all rows is a quarter slower.
+        const BLOCK: usize = 16;
         for (tokens, rows, columns) in [
             (8448usize, 21504usize, 5376usize),
             (8448, 28672, 5376),
@@ -886,19 +891,41 @@ mod tests {
                 .unwrap();
             gpu.upload(&b, 0, bytes_of(&bytes(rows * columns, 4)))
                 .unwrap();
-            let constants = [columns as u32, 0, 0, 0, rows as u32];
             let buffers = [&a, &b, &out];
-            let step = || Step {
-                kernel: &kernel,
-                buffers: &buffers,
-                constants: &constants,
-                groups: [(rows / 128) as u32, (tokens / 128) as u32, 1],
+            let tiles = rows / 256;
+            let constants: Vec<[u32; 5]> = (0..tiles)
+                .step_by(BLOCK)
+                .map(|first| {
+                    [
+                        columns as u32,
+                        0,
+                        (first * 256 * columns) as u32,
+                        (first * 256) as u32,
+                        rows as u32,
+                    ]
+                })
+                .collect();
+            let pass = || -> Vec<Step> {
+                constants
+                    .iter()
+                    .enumerate()
+                    .map(|(i, constants)| Step {
+                        kernel: &kernel,
+                        buffers: &buffers,
+                        constants,
+                        groups: [
+                            BLOCK.min(tiles - i * BLOCK) as u32,
+                            (tokens / 128) as u32,
+                            1,
+                        ],
+                    })
+                    .collect()
             };
-            gpu.pass(&[step()]).unwrap();
-            let steps: Vec<Step> = (0..4).map(|_| step()).collect();
+            gpu.pass(&pass()).unwrap();
+            let steps: Vec<Step> = (0..4).flat_map(|_| pass()).collect();
             let started = std::time::Instant::now();
             gpu.pass(&steps).unwrap();
-            let seconds = started.elapsed().as_secs_f64() / steps.len() as f64;
+            let seconds = started.elapsed().as_secs_f64() / 4.0;
             let ops = 2.0 * (tokens * rows * columns) as f64;
             println!(
                 "{tokens}x{rows}x{columns} in {:.1} ms, {:.1} TOPS",

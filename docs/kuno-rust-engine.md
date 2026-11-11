@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.39 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | 2.7 to 3.9 s per step | not started | |
+| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per layer) | CPU reference checked; GPU matrix kernel within 15% of the C++ one | in progress, C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -124,6 +124,73 @@ loaded for the call and dropped after, so it holds no GPU memory while other mod
 Still to do for this stage: a fused attention kernel (scores, weights and mixing are about a
 third of a tile and limited by memory traffic), and the encoder.
 
+## Diffusion transformer
+
+The DiT is 50 blocks of width 5376 (56 heads of 128, gated feed-forward of 14336) over one
+sequence of text, condition, audio and video tokens: about 8600 tokens for a 2.3 s clip at
+832x544. Its four linear layers per block are INT8 with a per-row scale in a rotated basis
+("ConvRot"): activations are rotated by a Hadamard transform in groups of 256, rounded to
+INT8 with one scale per token, and multiplied as integers. Each token carries one of a few
+time/modality rows that shift, scale and gate the block (text tokens tagged as image
+placeholders use the video row).
+
+`engine/dit.rs` is the CPU reference for one evaluation (`Dit::forward`): token layout and
+positions, the quantizer in the C++ engine's arithmetic order, modulated blocks, partial
+rotary attention (96 of 128 head channels, pairs `(i, i + 48)`) and the output heads. It is
+only practical for small latents (58 s for a 192x128 clip's step on 16 cores).
+
+There is no separate exact arbiter for this model, because rounding to INT8 in every layer
+amplifies any arithmetic difference. On a step captured from the C++ engine the reference is
+27.9 dB (video) and 23.6 dB (audio) away; the reference with attention operands rounded to
+half precision, as the C++ engine has them, differs from itself by 30 and 23 dB. So whole
+network outputs can only confirm structure. The GPU form has to be checked per block against
+this reference on identical inputs.
+
+### What the C++ engine spends per block
+
+Profiled on the 2.3 s clip (8611 tokens), per block per step:
+
+| Part | C++ engine | How |
+|---|---|---|
+| Attention | 24.8 ms | oneDNN scaled dot-product attention, about 83 TFLOPS |
+| Query/key/value product (5376 to 21504) | 13.4 ms | oneMKL INT8 product plus fused norm and rotary |
+| Feed-forward in (5376 to 28672) | 12.2 ms | oneMKL, about 217 TOPS |
+| Attention out and feed-forward out (to 5376) | 8.0 ms | oneMKL |
+| Norms, modulation, quantizers, residuals | about 8 ms | fused SYCL kernels |
+
+The two libraries are Intel's own hand-tuned GPU code, so this stage is the hard one: the
+Rust kernels have to match them through Mesa's compiler.
+
+### The INT8 matrix kernel
+
+`gemm8` is the integer form of the cooperative-matrix kernel and is bit-exact. Measured at
+the four layer shapes with 8448 tokens:
+
+| Kernel | Per block | Rate |
+|---|---|---|
+| First port of the half-precision kernel's plan | 56 ms | 96 to 122 TOPS |
+| Current `gemm8` | 38 ms | 126 to 178 TOPS |
+| C++ engine (oneMKL, with its fused epilogues) | about 34 ms | 150 to 260 TOPS |
+
+What the measurements showed, in order:
+
+- The multiply instructions alone (operands kept in registers) run at 268 to 331 TOPS, and
+  with shared-memory loads and barriers at about 190. The first port ran at 120 because of
+  the copy from global to shared memory: a kernel doing only that copy took as long as the
+  whole kernel.
+- The weight copy cost twice the token copy for the same bytes. Workgroups run across weight
+  tiles first, so a token tile stays cached while every workgroup reads a new weight tile
+  from video memory (7.6 GB per product, close to the card's memory bandwidth). Dispatching
+  4096 weight rows at a time keeps the weight block cached while all tokens pass over it.
+- Reordering each step to request the next operands first, multiply, then store them lets
+  the multiply overlap the wait.
+- Eight accumulators per subgroup (32 tokens by 32 rows) halve the bytes copied per multiply
+  and still fit the 128 registers when each step loads only one 32-column fragment set.
+  Staging 64 or more columns per step with eight accumulators spills and halves the speed.
+- Loading operands straight from global memory without shared memory was slower (75 TOPS),
+  also on Kuno's own Mesa build. Tile shapes with more weight fragments than token fragments
+  were slower too. 1024-lane workgroups gained nothing.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
@@ -140,6 +207,15 @@ Video decoder tile on CPU (the exact decode takes about 4 minutes on 16 cores):
 KUNO_VIDEO_VAE=<models>/minimax_h3_video_vae_fp16.safetensors \
 KUNO_VIDEO_GOLDEN=<dir with tile-latent.f32, tile-pixels.f32, tile-shape.txt> \
 cargo test --release -p kuno-image engine::video_vae -- --include-ignored --nocapture
+```
+
+DiT reference against a captured step, and the integer kernel:
+
+```
+KUNO_DIT=<models>/minimax_h3_fl2va_turbo8_int8_convrot.safetensors \
+KUNO_DIT_GOLDEN=<dir>/step0 \
+cargo test --release -p kuno-image engine::dit -- --include-ignored --nocapture
+cargo test --release -p kuno-image gemm8 -- --include-ignored --nocapture
 ```
 
 Audio decoder:
