@@ -132,6 +132,7 @@ unsafe extern "C" {
         reference_count: i32,
         receive_frame: extern "C" fn(*const u8, usize, *mut c_void),
         receive_audio_latent: extern "C" fn(*const f32, i64, i64, i64, *mut c_void),
+        decode_video: Option<extern "C" fn(*const f32, i64, i64, i64, *mut f32, i64, *mut c_void) -> bool>,
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
         phase: extern "C" fn(i32, i32, i32, *mut c_void),
         userdata: *mut c_void,
@@ -147,6 +148,9 @@ struct VideoOutput {
     /// The loaded audio decoder when the request wants audio.
     decoder: Option<std::sync::Arc<crate::engine::audio_vae::AudioDecoder>>,
     audio: Option<std::thread::JoinHandle<Result<crate::video::Audio, &'static str>>>,
+    /// Where the Rust video decoder finds its GPU and model.
+    pci: String,
+    video_model: std::path::PathBuf,
     invalid: bool,
     previews: bool,
 }
@@ -207,6 +211,52 @@ extern "C" fn receive_audio_latent(
         })
     }));
 }
+/// Decodes the video latent with the Rust GPU decoder. The decoder lives only for this
+/// call, so its weights do not hold GPU memory while other models run. Returning false
+/// hands the latent back to the C++ engine.
+extern "C" fn decode_video_latent(
+    latent: *const f32,
+    width: i64,
+    height: i64,
+    frames: i64,
+    pixels: *mut f32,
+    pixel_frames: i64,
+    data: *mut c_void,
+) -> bool {
+    use crate::engine::{gpu, video_gpu::GpuVideoDecoder, video_tiles, video_vae::LATENT_CHANNELS};
+    // SAFETY: as receive_video_frame; the latent holds 24 * frames * height * width values
+    // and `pixels` 3 * pixel_frames * height * 16 * width * 16.
+    let out = unsafe { &mut *(data as *mut VideoOutput) };
+    if latent.is_null()
+        || pixels.is_null()
+        || !(1..=4096).contains(&width)
+        || !(1..=4096).contains(&height)
+        || !(1..=4096).contains(&frames)
+    {
+        return false;
+    }
+    let (width, height, frames) = (width as usize, height as usize, frames as usize);
+    if video_tiles::output_frames(frames) as i64 != pixel_frames {
+        return false;
+    }
+    let latent =
+        unsafe { std::slice::from_raw_parts(latent, LATENT_CHANNELS * frames * width * height) };
+    let decoded = gpu::Gpu::open(gpu::Select::Pci(out.pci.clone()))
+        .and_then(|gpu| GpuVideoDecoder::load(&gpu, &out.video_model))
+        .and_then(|decoder| decoder.decode(latent, width, height, frames));
+    match decoded {
+        Ok(mut decoded) => {
+            // SAFETY: lengths match by the frame-count check above.
+            unsafe { std::ptr::copy_nonoverlapping(decoded.as_ptr(), pixels, decoded.len()) };
+            decoded.iter_mut().for_each(|v| *v = 0.0);
+            true
+        }
+        Err(code) => {
+            eprintln!("kuno-image: rust video decode unavailable ({code}); engine decodes");
+            false
+        }
+    }
+}
 extern "C" fn video_preview(
     step: i32,
     bytes: *const u8,
@@ -248,6 +298,7 @@ pub struct Session {
     directory: std::path::PathBuf,
     /// Rust audio decoder for MiniMax H3, loaded on first use and kept with the session.
     audio: Option<std::sync::Arc<crate::engine::audio_vae::AudioDecoder>>,
+    pci: String,
 }
 
 impl Session {
@@ -255,6 +306,7 @@ impl Session {
         let models = directory.to_path_buf();
         let directory = CString::new(directory.to_str().ok_or("image_model_directory_invalid")?)
             .map_err(|_| "native_image_string_invalid")?;
+        let address = pci.to_owned();
         let pci = CString::new(pci).map_err(|_| "native_image_string_invalid")?;
         let mut native = std::ptr::null_mut();
         // SAFETY: the shim copies both strings and only returns an owned pointer.
@@ -266,6 +318,7 @@ impl Session {
             native: NonNull::new(native).ok_or("image_engine_unavailable")?,
             directory: models,
             audio: None,
+            pci: address,
         })
     }
 
@@ -452,6 +505,8 @@ impl Session {
             rgb: Vec::new(),
             decoder,
             audio: None,
+            pci: self.pci.clone(),
+            video_model: self.directory.join("minimax_h3_video_vae_fp16.safetensors"),
             invalid: false,
             previews,
         };
@@ -475,6 +530,7 @@ impl Session {
                 references.len() as i32,
                 receive_video_frame,
                 receive_audio_latent,
+                Some(decode_video_latent),
                 Some(video_preview),
                 video_phase,
                 &mut output as *mut _ as *mut c_void,

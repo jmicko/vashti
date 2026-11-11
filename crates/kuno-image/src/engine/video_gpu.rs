@@ -3,6 +3,8 @@
 //! residual stream kept in f32.
 use std::path::Path;
 
+use rayon::prelude::*;
+
 use super::{
     gpu::{Buffer, Gpu, Kernel, Step, bytes_of, floats, shaders},
     safetensors::Safetensors,
@@ -74,41 +76,46 @@ impl GpuVideoDecoder {
         let file = Safetensors::open(path)?;
         file.metadata("minimax_h3_video_vae")
             .ok_or("model_file_invalid")?;
+        // Matrices go from the file straight into mapped GPU staging memory.
         let matrix = |name: &str, rows: usize, columns: usize| {
-            let bytes = file.f16_bytes(name, &[rows, columns])?;
-            let buffer = gpu.buffer(bytes.len() as u64)?;
-            gpu.upload(&buffer, 0, &bytes)?;
-            Ok::<_, &'static str>(buffer)
+            gpu.filled((rows * columns) as u64 * 2, |to| {
+                file.f16_into(name, &[rows, columns], to)
+            })
         };
         let vectors = |values: &[f32]| {
-            let buffer = gpu.buffer(values.len() as u64 * 4)?;
-            gpu.upload(&buffer, 0, bytes_of(values))?;
-            Ok::<_, &'static str>(buffer)
+            gpu.filled(values.len() as u64 * 4, |to| {
+                to.copy_from_slice(bytes_of(values));
+                Ok(())
+            })
         };
-        let mut layers = Vec::with_capacity(LAYERS);
-        for layer in 0..LAYERS {
-            let name = |part: &str| format!("decoder.transformer_blocks.{layer}.{part}");
-            let mut small = Vec::with_capacity(VECTORS);
-            for (part, len) in [
-                ("norm1.weight", DIM),
-                ("attn.to_qkv.bias", DIM * 3),
-                ("attn.to_out.bias", DIM),
-                ("scale1", DIM),
-                ("norm2.weight", DIM),
-                ("ff.w1.bias", INNER * 2),
-                ("ff.w2.bias", DIM),
-                ("scale2", DIM),
-            ] {
-                small.extend(file.f16(&name(part), &[len])?);
-            }
-            layers.push(Layer {
-                qkv: matrix(&name("attn.to_qkv.weight"), DIM * 3, DIM)?,
-                out: matrix(&name("attn.to_out.weight"), DIM, DIM)?,
-                w1: matrix(&name("ff.w1.weight"), INNER * 2, DIM)?,
-                w2: matrix(&name("ff.w2.weight"), DIM, INNER)?,
-                vectors: vectors(&small)?,
-            });
-        }
+        // Layers load in parallel: reading is the slow part and the file is in page cache.
+        let layers: Result<Vec<Layer>, &'static str> = (0..LAYERS)
+            .into_par_iter()
+            .map(|layer| {
+                let name = |part: &str| format!("decoder.transformer_blocks.{layer}.{part}");
+                let mut small = Vec::with_capacity(VECTORS);
+                for (part, len) in [
+                    ("norm1.weight", DIM),
+                    ("attn.to_qkv.bias", DIM * 3),
+                    ("attn.to_out.bias", DIM),
+                    ("scale1", DIM),
+                    ("norm2.weight", DIM),
+                    ("ff.w1.bias", INNER * 2),
+                    ("ff.w2.bias", DIM),
+                    ("scale2", DIM),
+                ] {
+                    small.extend(file.f16(&name(part), &[len])?);
+                }
+                Ok(Layer {
+                    qkv: matrix(&name("attn.to_qkv.weight"), DIM * 3, DIM)?,
+                    out: matrix(&name("attn.to_out.weight"), DIM, DIM)?,
+                    w1: matrix(&name("ff.w1.weight"), INNER * 2, DIM)?,
+                    w2: matrix(&name("ff.w2.weight"), DIM, INNER)?,
+                    vectors: vectors(&small)?,
+                })
+            })
+            .collect();
+        let layers = layers?;
         let mut tail = file.f16("decoder.norm_out.weight", &[DIM])?;
         tail.extend(file.f16("decoder.norm_out.bias", &[DIM])?);
         let kernel = |spirv, bindings, constants| gpu.kernel(spirv, bindings, constants, None);

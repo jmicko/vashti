@@ -11,6 +11,8 @@ use ash::vk;
 pub enum Select {
     /// The first discrete adapter of a PCI vendor (0x8086 Intel, 0x10de NVIDIA).
     Vendor(u32),
+    /// The adapter at a PCI address such as `0000:04:00.0`.
+    Pci(String),
 }
 struct Core {
     _entry: ash::Entry,
@@ -21,6 +23,8 @@ struct Core {
     descriptors: vk::DescriptorPool,
     memory: vk::PhysicalDeviceMemoryProperties,
     name: String,
+    /// Command and descriptor pools and the queue are used by one thread at a time.
+    turn: std::sync::Mutex<()>,
 }
 impl Drop for Core {
     fn drop(&mut self) {
@@ -97,12 +101,26 @@ impl Gpu {
                 ),
                 "gpu_unavailable",
             )?;
-            let Select::Vendor(vendor) = select;
             let physical = check(instance.enumerate_physical_devices(), "gpu_unavailable")?
                 .into_iter()
-                .find(|device| {
-                    let p = instance.get_physical_device_properties(*device);
-                    p.vendor_id == vendor && p.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
+                .find(|device| match &select {
+                    Select::Vendor(vendor) => {
+                        let p = instance.get_physical_device_properties(*device);
+                        p.vendor_id == *vendor
+                            && p.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
+                    }
+                    Select::Pci(address) => {
+                        let mut bus = vk::PhysicalDevicePCIBusInfoPropertiesEXT::default();
+                        let mut properties =
+                            vk::PhysicalDeviceProperties2::default().push_next(&mut bus);
+                        instance.get_physical_device_properties2(*device, &mut properties);
+                        // Software adapters leave the structure zeroed; they are never wanted.
+                        properties.properties.device_type != vk::PhysicalDeviceType::CPU
+                            && format!(
+                                "{:04x}:{:02x}:{:02x}.{:x}",
+                                bus.pci_domain, bus.pci_bus, bus.pci_device, bus.pci_function
+                            ) == address.to_ascii_lowercase()
+                    }
                 });
             let Some(physical) = physical else {
                 instance.destroy_instance(None);
@@ -185,6 +203,7 @@ impl Gpu {
                     descriptors,
                     memory,
                     name,
+                    turn: std::sync::Mutex::new(()),
                 }),
             })
         }
@@ -256,6 +275,45 @@ impl Gpu {
         })?;
         Ok(buffer)
     }
+    /// A storage buffer whose contents `fill` writes straight into mapped staging memory
+    /// (zeroed first is not guaranteed: `fill` must write every byte).
+    pub fn filled(
+        &self,
+        bytes: u64,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), &'static str>,
+    ) -> Result<Buffer, &'static str> {
+        let buffer = self.allocate(
+            bytes,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
+        if bytes == 0 {
+            return Ok(buffer);
+        }
+        let stage = self.staging(bytes)?;
+        // SAFETY: the mapping covers `bytes` bytes and is unmapped before the copy.
+        unsafe {
+            let device = &self.core.device;
+            let at = check(
+                device.map_memory(stage.memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()),
+                "gpu_memory",
+            )?;
+            let filled = fill(std::slice::from_raw_parts_mut(
+                at.cast::<u8>(),
+                bytes as usize,
+            ));
+            device.unmap_memory(stage.memory);
+            filled?;
+        }
+        let region = [vk::BufferCopy::default().size(bytes)];
+        self.run(|device, commands| unsafe {
+            // SAFETY: both buffers hold `bytes` bytes.
+            device.cmd_copy_buffer(commands, stage.buffer, buffer.buffer, &region);
+        })?;
+        Ok(buffer)
+    }
     fn staging(&self, bytes: u64) -> Result<Buffer, &'static str> {
         self.allocate(
             bytes,
@@ -265,6 +323,14 @@ impl Gpu {
     }
     /// Records commands with `record`, submits them and waits for completion.
     fn run(
+        &self,
+        record: impl FnOnce(&ash::Device, vk::CommandBuffer),
+    ) -> Result<(), &'static str> {
+        let _turn = self.core.turn.lock().map_err(|_| "gpu_failed")?;
+        self.run_locked(record)
+    }
+    /// `run` for callers that already hold the turn.
+    fn run_locked(
         &self,
         record: impl FnOnce(&ash::Device, vk::CommandBuffer),
     ) -> Result<(), &'static str> {
@@ -452,6 +518,7 @@ impl Gpu {
     /// Runs a batch of dispatches in order in one submission and waits for it.
     pub fn pass(&self, steps: &[Step]) -> Result<(), &'static str> {
         let core = &self.core;
+        let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
         let mut sets = Vec::with_capacity(steps.len());
         let result = (|| {
             for step in steps {
@@ -494,7 +561,7 @@ impl Gpu {
                 // SAFETY: the set and every buffer are alive.
                 unsafe { core.device.update_descriptor_sets(&writes, &[]) };
             }
-            self.run(|device, commands| {
+            self.run_locked(|device, commands| {
                 for (step, set) in steps.iter().zip(&sets) {
                     // SAFETY: bindings and constants were checked against the kernel; each
                     // dispatch is separated from the next by a full compute barrier.

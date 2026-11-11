@@ -123,7 +123,7 @@ pub fn decode_clip(
                     for t in first..first + count {
                         // Frames past the clip repeat its last frame.
                         let from = (channel * frames + t.min(frames - 1)) * area;
-                        for row in y + 0..y + rows.size {
+                        for row in *y..y + rows.size {
                             let at = from + row * width + x;
                             cut.extend_from_slice(&latent[at..at + columns.size]);
                         }

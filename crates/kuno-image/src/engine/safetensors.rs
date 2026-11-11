@@ -94,18 +94,21 @@ impl Safetensors {
         }
         Ok(out)
     }
-    /// Reads one F16 tensor as its little-endian bytes, checking its exact shape.
-    pub fn f16_bytes(&self, name: &str, shape: &[usize]) -> Result<Vec<u8>, &'static str> {
+    /// Reads one F16 tensor's little-endian bytes into `to` (two bytes per value), checking
+    /// its exact shape.
+    pub fn f16_into(&self, name: &str, shape: &[usize], to: &mut [u8]) -> Result<(), &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
         let count: usize = shape.iter().product();
-        if !entry.f16 || entry.shape != shape || entry.end - entry.begin != count as u64 * 2 {
+        if !entry.f16
+            || entry.shape != shape
+            || entry.end - entry.begin != count as u64 * 2
+            || to.len() != count * 2
+        {
             return Err("model_tensor_invalid");
         }
-        let mut bytes = vec![0u8; count * 2];
         self.file
-            .read_exact_at(&mut bytes, self.data + entry.begin)
-            .map_err(|_| "model_file_invalid")?;
-        Ok(bytes)
+            .read_exact_at(to, self.data + entry.begin)
+            .map_err(|_| "model_file_invalid")
     }
     /// Reads one little-endian F16 tensor widened to f32 (exact), checking its exact shape.
     pub fn f16(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
