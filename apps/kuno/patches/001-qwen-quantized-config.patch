@@ -1,8 +1,8 @@
 diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
-index a2bfdb6..7cf52c2 100644
+index a2bfdb6..25ed4ba 100644
 --- a/include/stable-diffusion.h
 +++ b/include/stable-diffusion.h
-@@ -503,6 +503,15 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
+@@ -503,6 +503,21 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
  
  SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
  SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
@@ -15,6 +15,12 @@ index a2bfdb6..7cf52c2 100644
 +// skips its own audio decode, so no audio VAE needs to be loaded.
 +typedef void (*sd_kuno_audio_latent_cb_t)(const float* latent, int64_t frames, int64_t streams, int64_t channels, void* data);
 +SD_API void sd_kuno_set_audio_latent_receiver(sd_ctx_t* sd_ctx, sd_kuno_audio_latent_cb_t receiver, void* data);
++// Kuno decodes MiniMax H3 video in Rust. With a decoder set, generate_video hands it the
++// video latent in VAE scale ([24][frames][height][width], width varying fastest) and a buffer
++// for RGB in 0..1 ([3][pixel_frames][height * 16][width * 16]). When it returns false the
++// engine decodes the latent itself.
++typedef bool (*sd_kuno_video_decoder_cb_t)(const float* latent, int64_t width, int64_t height, int64_t frames, float* pixels, int64_t pixel_frames, void* data);
++SD_API void sd_kuno_set_video_decoder(sd_ctx_t* sd_ctx, sd_kuno_video_decoder_cb_t decoder, void* data);
  SD_API void free_sd_audio(sd_audio_t* audio);
  
  SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
@@ -1430,19 +1436,21 @@ index 0220939..3ceacfe 100644
      }
      return decoded;
 diff --git a/src/pipeline/diffusion_engine.h b/src/pipeline/diffusion_engine.h
-index d1a8866..636b51d 100644
+index d1a8866..fda64f7 100644
 --- a/src/pipeline/diffusion_engine.h
 +++ b/src/pipeline/diffusion_engine.h
-@@ -69,6 +69,8 @@ public:
+@@ -69,6 +69,10 @@ public:
      std::shared_ptr<VAE> first_stage_model;
      std::shared_ptr<VAE> preview_vae;
      std::shared_ptr<AudioVAERunner> audio_vae_model;
 +    sd_kuno_audio_latent_cb_t kuno_audio_latent_receiver = nullptr;
 +    void* kuno_audio_latent_receiver_data                = nullptr;
++    sd_kuno_video_decoder_cb_t kuno_video_decoder        = nullptr;
++    void* kuno_video_decoder_data                        = nullptr;
      std::shared_ptr<Wav2Vec2::Wav2Vec2ModelRunner> audio_encoder;
      std::shared_ptr<ControlNet> control_net;
      std::shared_ptr<IPAdapter::IPAdapterRunner> ip_adapter;
-@@ -198,6 +200,8 @@ public:
+@@ -198,6 +202,8 @@ public:
      void capture_runner_sources();
  
      void end_runners();
@@ -1469,10 +1477,38 @@ index 9b8819a..7dc3fb8 100644
              result.vae->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
          }
 diff --git a/src/pipeline/video.cpp b/src/pipeline/video.cpp
-index 2fcff4c..6f8f09b 100644
+index 2fcff4c..f1ebe14 100644
 --- a/src/pipeline/video.cpp
 +++ b/src/pipeline/video.cpp
-@@ -1885,7 +1885,8 @@ namespace sd::pipeline {
+@@ -1238,7 +1238,26 @@ namespace sd::pipeline {
+                     (int)video_latent.shape()[3]);
+         // auto z = sd::load_tensor_from_file_as_tensor<float>("ltx_vae_z.bin");
+         int64_t t4            = ggml_time_ms();
+-        sd::Tensor<float> vid = sd->decode_first_stage(video_latent, true);
++        sd::Tensor<float> vid;
++        if (sd->kuno_video_decoder != nullptr && sd_version_is_minimax_h3(sd->version) && video_latent.dim() == 4) {
++            auto vae_latent      = sd->first_stage_model->diffusion_to_vae_latents(video_latent);
++            int64_t frames       = vae_latent.shape()[2];
++            int64_t pixel_frames = frames <= 1 ? 1 : ((frames - 2) / 5) * 17 + 5;
++            sd::Tensor<float> pixels({vae_latent.shape()[0] * 16, vae_latent.shape()[1] * 16, pixel_frames, 3});
++            if (vae_latent.shape()[3] == 24 &&
++                sd->kuno_video_decoder(vae_latent.data(),
++                                       vae_latent.shape()[0],
++                                       vae_latent.shape()[1],
++                                       frames,
++                                       pixels.data(),
++                                       pixel_frames,
++                                       sd->kuno_video_decoder_data)) {
++                vid = std::move(pixels);
++            }
++        }
++        if (vid.empty()) {
++            vid = sd->decode_first_stage(video_latent, true);
++        }
+         int64_t t5            = ggml_time_ms();
+         LOG_INFO("decode_first_stage completed, taking %.2fs", (t5 - t4) * 1.0f / 1000);
+         if (vid.empty()) {
+@@ -1885,7 +1904,8 @@ namespace sd::pipeline {
          }
          if ((sd_version_is_ltxav(sd->version) || sd_version_is_minimax_h3(sd->version)) &&
              latents.audio_length > 0 &&
@@ -1482,7 +1518,7 @@ index 2fcff4c..6f8f09b 100644
              if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
                  LOG_ERROR("cancelling generation before audio decode");
                  return false;
-@@ -1899,7 +1900,13 @@ namespace sd::pipeline {
+@@ -1899,7 +1919,13 @@ namespace sd::pipeline {
                                      : unpack_ltxav_audio_latent(final_latent,
                                                                  latents.audio_length,
                                                                  sd->get_latent_channel());
@@ -1498,10 +1534,10 @@ index 2fcff4c..6f8f09b 100644
                              (int)audio_latent.shape()[0],
                              (int)audio_latent.shape()[1],
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
-index b13c055..199eb80 100644
+index b13c055..1efa1ab 100644
 --- a/src/stable-diffusion.cpp
 +++ b/src/stable-diffusion.cpp
-@@ -662,6 +662,21 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
+@@ -662,6 +662,28 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
      free(sd_ctx);
  }
  
@@ -1517,6 +1553,13 @@ index b13c055..199eb80 100644
 +    if (sd_ctx && sd_ctx->sd) {
 +        sd_ctx->sd->kuno_audio_latent_receiver      = receiver;
 +        sd_ctx->sd->kuno_audio_latent_receiver_data = data;
++    }
++}
++
++SD_API void sd_kuno_set_video_decoder(sd_ctx_t* sd_ctx, sd_kuno_video_decoder_cb_t decoder, void* data) {
++    if (sd_ctx && sd_ctx->sd) {
++        sd_ctx->sd->kuno_video_decoder      = decoder;
++        sd_ctx->sd->kuno_video_decoder_data = data;
 +    }
 +}
 +
