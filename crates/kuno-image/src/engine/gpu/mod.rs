@@ -156,6 +156,7 @@ impl Gpu {
                 .uniform_and_storage_buffer16_bit_access(true);
             let mut v12 = vk::PhysicalDeviceVulkan12Features::default()
                 .shader_float16(true)
+                .shader_int8(true)
                 .vulkan_memory_model(true);
             let mut v13 = vk::PhysicalDeviceVulkan13Features::default()
                 .subgroup_size_control(true)
@@ -821,5 +822,89 @@ mod tests {
             seconds * 1e3,
             flops / seconds / 1e12
         );
+    }
+    /// The integer kernel is exact, so it is compared bit for bit, then timed at the shape of
+    /// the DiT's widest layer.
+    #[test]
+    #[ignore = "needs the Intel GPU"]
+    fn gemm8_is_exact_and_reports_speed() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let kernel = gpu.kernel(shaders::GEMM8, 3, 5, Some(16)).unwrap();
+        let bytes = |count: usize, seed: u64| -> Vec<i8> {
+            noise(count, seed)
+                .iter()
+                .map(|v| (v * 90.0).clamp(-127.0, 127.0) as i8)
+                .collect()
+        };
+        let (tokens, rows, columns) = (256usize, 384usize, 192usize);
+        let (input, weight) = (
+            bytes(tokens * columns + 8, 1),
+            bytes(rows * columns + 16, 2),
+        );
+        let (a, b) = (
+            gpu.buffer(input.len() as u64).unwrap(),
+            gpu.buffer(weight.len() as u64).unwrap(),
+        );
+        gpu.upload(&a, 0, bytes_of(&input)).unwrap();
+        gpu.upload(&b, 0, bytes_of(&weight)).unwrap();
+        let stride = rows + 5;
+        let out = gpu.buffer((3 + tokens * stride) as u64 * 4).unwrap();
+        gpu.pass(&[Step {
+            kernel: &kernel,
+            buffers: &[&a, &b, &out],
+            constants: &[columns as u32, 8, 16, 3, stride as u32],
+            groups: [(rows / 128) as u32, (tokens / 128) as u32, 1],
+        }])
+        .unwrap();
+        let got = gpu.download(&out, 0, out.bytes() as usize).unwrap();
+        let got: Vec<i32> = got
+            .chunks_exact(4)
+            .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        for t in 0..tokens {
+            for r in 0..rows {
+                let want: i32 = (0..columns)
+                    .map(|k| {
+                        i32::from(input[8 + t * columns + k])
+                            * i32::from(weight[16 + r * columns + k])
+                    })
+                    .sum();
+                assert_eq!(got[3 + t * stride + r], want, "t{t} r{r}");
+            }
+        }
+
+        for (tokens, rows, columns) in [
+            (8448usize, 21504usize, 5376usize),
+            (8448, 28672, 5376),
+            (8448, 5376, 14336),
+            (8448, 5376, 7168),
+        ] {
+            let a = gpu.buffer((tokens * columns) as u64).unwrap();
+            let b = gpu.buffer((rows * columns) as u64).unwrap();
+            let out = gpu.buffer((tokens * rows) as u64 * 4).unwrap();
+            gpu.upload(&a, 0, bytes_of(&bytes(tokens * columns, 3)))
+                .unwrap();
+            gpu.upload(&b, 0, bytes_of(&bytes(rows * columns, 4)))
+                .unwrap();
+            let constants = [columns as u32, 0, 0, 0, rows as u32];
+            let buffers = [&a, &b, &out];
+            let step = || Step {
+                kernel: &kernel,
+                buffers: &buffers,
+                constants: &constants,
+                groups: [(rows / 128) as u32, (tokens / 128) as u32, 1],
+            };
+            gpu.pass(&[step()]).unwrap();
+            let steps: Vec<Step> = (0..4).map(|_| step()).collect();
+            let started = std::time::Instant::now();
+            gpu.pass(&steps).unwrap();
+            let seconds = started.elapsed().as_secs_f64() / steps.len() as f64;
+            let ops = 2.0 * (tokens * rows * columns) as f64;
+            println!(
+                "{tokens}x{rows}x{columns} in {:.1} ms, {:.1} TOPS",
+                seconds * 1e3,
+                ops / seconds / 1e12
+            );
+        }
     }
 }

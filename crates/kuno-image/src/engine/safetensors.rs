@@ -1,9 +1,16 @@
 //! Minimal safetensors reader: header index plus positioned reads of single tensors.
 use std::{collections::HashMap, fs::File, os::unix::fs::FileExt, path::Path};
 
+#[derive(PartialEq)]
+enum Kind {
+    F32,
+    F16,
+    Bf16,
+    I8,
+    Other,
+}
 struct Entry {
-    f32: bool,
-    f16: bool,
+    kind: Kind,
     shape: Vec<usize>,
     begin: u64,
     end: u64,
@@ -53,8 +60,13 @@ impl Safetensors {
                 let offsets = value["data_offsets"].as_array()?;
                 let (begin, end) = (offsets.first()?.as_u64()?, offsets.get(1)?.as_u64()?);
                 (begin <= end && end <= size - data).then_some(Entry {
-                    f32: value["dtype"].as_str()? == "F32",
-                    f16: value["dtype"].as_str()? == "F16",
+                    kind: match value["dtype"].as_str()? {
+                        "F32" => Kind::F32,
+                        "F16" => Kind::F16,
+                        "BF16" => Kind::Bf16,
+                        "I8" => Kind::I8,
+                        _ => Kind::Other,
+                    },
                     shape,
                     begin,
                     end,
@@ -77,7 +89,10 @@ impl Safetensors {
     pub fn f32(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
         let count: usize = shape.iter().product();
-        if !entry.f32 || entry.shape != shape || entry.end - entry.begin != count as u64 * 4 {
+        if entry.kind != Kind::F32
+            || entry.shape != shape
+            || entry.end - entry.begin != count as u64 * 4
+        {
             return Err("model_tensor_invalid");
         }
         let mut out = vec![0f32; count];
@@ -99,7 +114,7 @@ impl Safetensors {
     pub fn f16_into(&self, name: &str, shape: &[usize], to: &mut [u8]) -> Result<(), &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
         let count: usize = shape.iter().product();
-        if !entry.f16
+        if entry.kind != Kind::F16
             || entry.shape != shape
             || entry.end - entry.begin != count as u64 * 2
             || to.len() != count * 2
@@ -114,7 +129,10 @@ impl Safetensors {
     pub fn f16(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
         let count: usize = shape.iter().product();
-        if !entry.f16 || entry.shape != shape || entry.end - entry.begin != count as u64 * 2 {
+        if entry.kind != Kind::F16
+            || entry.shape != shape
+            || entry.end - entry.begin != count as u64 * 2
+        {
             return Err("model_tensor_invalid");
         }
         let mut bytes = vec![0u8; count * 2];
@@ -125,6 +143,59 @@ impl Safetensors {
             .chunks_exact(2)
             .map(|b| widen(u16::from_le_bytes([b[0], b[1]])))
             .collect())
+    }
+    /// Reads one INT8 tensor's bytes, checking its exact shape.
+    pub fn i8(&self, name: &str, shape: &[usize]) -> Result<Vec<i8>, &'static str> {
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        let count: usize = shape.iter().product();
+        if entry.kind != Kind::I8 || entry.shape != shape || entry.end - entry.begin != count as u64
+        {
+            return Err("model_tensor_invalid");
+        }
+        let mut out = vec![0i8; count];
+        // SAFETY: `out` owns `count` initialized bytes; any bit pattern is a valid i8.
+        let bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u8>(), count) };
+        self.file
+            .read_exact_at(bytes, self.data + entry.begin)
+            .map_err(|_| "model_file_invalid")?;
+        Ok(out)
+    }
+    /// Reads one F32, F16 or BF16 tensor as f32 (all exact), checking its exact shape.
+    pub fn floats(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        match entry.kind {
+            Kind::F32 => self.f32(name, shape),
+            Kind::F16 => self.f16(name, shape),
+            Kind::Bf16 => {
+                let count: usize = shape.iter().product();
+                if entry.shape != shape || entry.end - entry.begin != count as u64 * 2 {
+                    return Err("model_tensor_invalid");
+                }
+                let mut bytes = vec![0u8; count * 2];
+                self.file
+                    .read_exact_at(&mut bytes, self.data + entry.begin)
+                    .map_err(|_| "model_file_invalid")?;
+                // BF16 is the upper half of the f32 bit pattern.
+                Ok(bytes
+                    .chunks_exact(2)
+                    .map(|b| f32::from_bits(u32::from(u16::from_le_bytes([b[0], b[1]])) << 16))
+                    .collect())
+            }
+            _ => Err("model_tensor_invalid"),
+        }
+    }
+    /// Number of distinct `<prefix><index>.` groups, for counting layers.
+    pub fn count(&self, prefix: &str) -> usize {
+        let mut seen = std::collections::HashSet::new();
+        for name in self.entries.keys() {
+            if let Some((index, _)) = name
+                .strip_prefix(prefix)
+                .and_then(|rest| rest.split_once('.'))
+            {
+                seen.insert(index);
+            }
+        }
+        seen.len()
     }
 }
 /// IEEE 754 binary16 to binary32, exact for every input.
