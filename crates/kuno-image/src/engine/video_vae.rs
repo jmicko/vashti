@@ -334,25 +334,20 @@ fn attention(qkv: &[f32], rotary: &[[f32; 2]]) -> Vec<f32> {
 /// pixel mean and deviation.
 pub(super) fn unpatchify(patches: &[f32], width: usize, height: usize, frames: usize) -> Vec<f32> {
     let (out_w, out_h, out_t) = (width * PATCH, height * PATCH, frames * PATCH_FRAMES);
-    let plane = out_w * out_h * out_t;
-    let mut out = vec![0f32; 3 * plane];
-    for (position, patch) in patches.chunks_exact(PIXELS).enumerate() {
-        let (w, h, t) = (
-            position % width,
-            position / width % height,
-            position / (width * height),
-        );
-        for (index, value) in patch.iter().enumerate() {
-            let (channel, dt, dh, dw) = (
-                index / (PATCH_FRAMES * PATCH * PATCH),
-                index / (PATCH * PATCH) % PATCH_FRAMES,
-                index / PATCH % PATCH,
-                index % PATCH,
-            );
-            let at = ((t * PATCH_FRAMES + dt) * out_h + h * PATCH + dh) * out_w + w * PATCH + dw;
-            out[channel * plane + at] = (value * STD[channel] + MEAN[channel]).clamp(0.0, 1.0);
-        }
-    }
+    let mut out = vec![0f32; 3 * out_t * out_h * out_w];
+    out.par_chunks_exact_mut(out_w)
+        .enumerate()
+        .for_each(|(line, out)| {
+            let (channel, t, h) = (line / (out_t * out_h), line / out_h % out_t, line % out_h);
+            let first = ((t / PATCH_FRAMES) * height + h / PATCH) * width;
+            let inside = ((channel * PATCH_FRAMES + t % PATCH_FRAMES) * PATCH + h % PATCH) * PATCH;
+            for (w, out) in out.chunks_exact_mut(PATCH).enumerate() {
+                let from = &patches[(first + w) * PIXELS + inside..][..PATCH];
+                for (out, value) in out.iter_mut().zip(from) {
+                    *out = (value * STD[channel] + MEAN[channel]).clamp(0.0, 1.0);
+                }
+            }
+        });
     out
 }
 

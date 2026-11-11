@@ -41,7 +41,22 @@ struct Kernels {
     residual: Kernel,
     gate: Kernel,
 }
+/// Scratch buffers for one padded token count, kept between tiles.
+struct Work {
+    padded: usize,
+    stream: Buffer,
+    turns: Buffer,
+    half: Buffer,
+    wide: Buffer,
+    query: Buffer,
+    key: Buffer,
+    value: Buffer,
+    scores: Buffer,
+    weights: Buffer,
+    mixed: Buffer,
+}
 pub struct GpuVideoDecoder {
+    work: std::sync::Mutex<Option<Work>>,
     gpu: Gpu,
     kernels: Kernels,
     layers: Vec<Layer>,
@@ -121,6 +136,19 @@ impl GpuVideoDecoder {
             registers: file.f16("decoder.register_tokens", &[1, REGISTERS, DIM])?,
             project_bias: file.f16("decoder.proj_out.bias", &[PIXELS])?,
             gpu: gpu.clone(),
+            work: std::sync::Mutex::new(None),
+        })
+    }
+    /// Decodes a whole clip; see `video_tiles::decode_clip` for the layouts.
+    pub fn decode(
+        &self,
+        latent: &[f32],
+        width: usize,
+        height: usize,
+        frames: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        super::video_tiles::decode_clip(latent, width, height, frames, |tile, w, h, t| {
+            self.decode_tile(tile, w, h, t)
         })
     }
     /// Same contract as `VideoDecoder::decode_tile`.
@@ -159,19 +187,45 @@ impl GpuVideoDecoder {
         let gpu = &self.gpu;
         let k = &self.kernels;
         let (n, np) = (tokens as u32, padded as u32);
-        let stream = gpu.buffer((padded * DIM) as u64 * 4)?;
-        gpu.upload(&stream, 0, bytes_of(&start))?;
-        let turns = gpu.buffer((tokens * PAIRS) as u64 * 8)?;
-        gpu.upload(&turns, 0, bytes_of(&rotary(width, height, frames)))?;
-        let half = gpu.buffer((padded * INNER) as u64 * 2)?;
-        let wide = gpu.buffer((padded * INNER * 2) as u64 * 4)?;
-        let query = gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?;
-        let key = gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?;
-        let value = gpu.buffer((HEADS * TILE * padded) as u64 * 2)?;
-        let scores = gpu.buffer((HEADS * padded * padded) as u64 * 4)?;
-        let weights = gpu.buffer((HEADS * padded * padded) as u64 * 2)?;
-        let mixed = gpu.buffer((HEADS * padded * TILE) as u64 * 4)?;
-
+        let mut cached = self.work.lock().map_err(|_| "gpu_failed")?;
+        if cached.as_ref().is_none_or(|work| work.padded != padded) {
+            // Drop the old set before allocating the new one.
+            *cached = None;
+            *cached = Some(Work {
+                padded,
+                stream: gpu.buffer((padded * DIM) as u64 * 4)?,
+                turns: gpu.buffer((padded * PAIRS) as u64 * 8)?,
+                half: gpu.buffer((padded * INNER) as u64 * 2)?,
+                wide: gpu.buffer((padded * INNER * 2) as u64 * 4)?,
+                query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
+                key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
+                // Rows 64..128 of each head are never written and stay zero.
+                value: gpu.buffer((HEADS * TILE * padded) as u64 * 2)?,
+                scores: gpu.buffer((HEADS * padded * padded) as u64 * 4)?,
+                weights: gpu.buffer((HEADS * padded * padded) as u64 * 2)?,
+                mixed: gpu.buffer((HEADS * padded * TILE) as u64 * 4)?,
+            });
+        }
+        let Some(Work {
+            stream,
+            turns,
+            half,
+            wide,
+            query,
+            key,
+            value,
+            scores,
+            weights,
+            mixed,
+            ..
+        }) = cached.as_ref()
+        else {
+            return Err("gpu_failed");
+        };
+        // Padded rows of the stream must be zero; every other buffer is rewritten in full.
+        start.resize(padded * DIM, 0.0);
+        gpu.upload(stream, 0, bytes_of(&start))?;
+        gpu.upload(turns, 0, bytes_of(&rotary(width, height, frames)))?;
         let token_tiles = np / TILE as u32;
         type Call<'a> = (&'a Kernel, Vec<&'a Buffer>, Vec<u32>, [u32; 3]);
         // output[token][row] = input[token][..columns] . weight[row][..columns]
@@ -188,20 +242,20 @@ impl GpuVideoDecoder {
             let v = &layer.vectors;
             steps.push((
                 &k.norm,
-                vec![&stream, v, &half],
+                vec![stream, v, half],
                 vec![n, NORM1 as u32, 0, 0],
                 [np, 1, 1],
             ));
-            steps.push(gemm(&half, &layer.qkv, &wide, DIM * 3, DIM));
+            steps.push(gemm(half, &layer.qkv, wide, DIM * 3, DIM));
             steps.push((
                 &k.heads,
-                vec![&wide, v, &turns, &query, &key, &value],
+                vec![wide, v, turns, query, key, value],
                 vec![n, np, QKV_BIAS as u32],
                 [1, np, 1],
             ));
             steps.push((
                 &k.gemm,
-                vec![&query, &key, &scores],
+                vec![query, key, scores],
                 vec![
                     HEAD as u32,
                     0,
@@ -216,13 +270,13 @@ impl GpuVideoDecoder {
             ));
             steps.push((
                 &k.softmax,
-                vec![&scores, &weights],
+                vec![scores, weights],
                 vec![n, np],
                 [np, HEADS as u32, 1],
             ));
             steps.push((
                 &k.gemm,
-                vec![&weights, &value, &mixed],
+                vec![weights, value, mixed],
                 vec![
                     np,
                     0,
@@ -235,42 +289,42 @@ impl GpuVideoDecoder {
                 ],
                 [1, token_tiles, HEADS as u32],
             ));
-            steps.push((&k.merge, vec![&mixed, &half], vec![np], [1, np, 1]));
-            steps.push(gemm(&half, &layer.out, &wide, DIM, DIM));
+            steps.push((&k.merge, vec![mixed, half], vec![np], [1, np, 1]));
+            steps.push(gemm(half, &layer.out, wide, DIM, DIM));
             steps.push((
                 &k.residual,
-                vec![&stream, &wide, v],
+                vec![stream, wide, v],
                 vec![n, OUT_BIAS as u32, SCALE1 as u32],
                 [(DIM / 4 / 64) as u32, np, 1],
             ));
             steps.push((
                 &k.norm,
-                vec![&stream, v, &half],
+                vec![stream, v, half],
                 vec![n, NORM2 as u32, 0, 0],
                 [np, 1, 1],
             ));
-            steps.push(gemm(&half, &layer.w1, &wide, INNER * 2, DIM));
+            steps.push(gemm(half, &layer.w1, wide, INNER * 2, DIM));
             steps.push((
                 &k.gate,
-                vec![&wide, v, &half],
+                vec![wide, v, half],
                 vec![n, W1_BIAS as u32],
                 [(INNER / 4 / 64) as u32, np, 1],
             ));
-            steps.push(gemm(&half, &layer.w2, &wide, DIM, INNER));
+            steps.push(gemm(half, &layer.w2, wide, DIM, INNER));
             steps.push((
                 &k.residual,
-                vec![&stream, &wide, v],
+                vec![stream, wide, v],
                 vec![n, W2_BIAS as u32, SCALE2 as u32],
                 [(DIM / 4 / 64) as u32, np, 1],
             ));
         }
         steps.push((
             &k.norm,
-            vec![&stream, &self.tail, &half],
+            vec![stream, &self.tail, half],
             vec![n, 0, DIM as u32, 1],
             [np, 1, 1],
         ));
-        steps.push(gemm(&half, &self.project, &wide, PIXELS, DIM));
+        steps.push(gemm(half, &self.project, wide, PIXELS, DIM));
         let steps: Vec<Step> = steps
             .iter()
             .map(|(kernel, buffers, constants, groups)| Step {
@@ -309,7 +363,7 @@ impl GpuVideoDecoder {
         } else {
             gpu.pass(&steps)?;
         }
-        let mut patches = floats(&gpu.download(&wide, 0, positions * PIXELS * 4)?);
+        let mut patches = floats(&gpu.download(wide, 0, positions * PIXELS * 4)?);
         for row in patches.chunks_exact_mut(PIXELS) {
             for (value, bias) in row.iter_mut().zip(&self.project_bias) {
                 *value += bias;
@@ -375,5 +429,44 @@ mod tests {
             "load {load:.1} s; tile {seconds:.3?} s; gpu vs reference {gpu_db:.1} dB, c++ vs reference {cpp_db:.1} dB"
         );
         assert!(gpu_db >= cpp_db);
+    }
+    /// Needs the Intel GPU, the model and a whole decode captured from the C++ engine:
+    /// `KUNO_VIDEO_CLIP=<dir>` with `clip-latent.f32`, `clip-pixels.f32` and
+    /// `clip-shape.txt` ("width height latent-frames decoded-frames").
+    #[test]
+    #[ignore]
+    fn gpu_clip_matches_cpp_engine_and_reports_speed() {
+        let model = std::env::var("KUNO_VIDEO_VAE").unwrap();
+        let golden = std::path::PathBuf::from(std::env::var("KUNO_VIDEO_CLIP").unwrap());
+        let shape: Vec<usize> = std::fs::read_to_string(golden.join("clip-shape.txt"))
+            .unwrap()
+            .split_whitespace()
+            .map(|v| v.parse().unwrap())
+            .collect();
+        let (width, height, frames) = (shape[0], shape[1], shape[2]);
+        assert_eq!(super::super::video_tiles::output_frames(frames), shape[3]);
+        let latent = read(&golden.join("clip-latent.f32"));
+        let cpp = read(&golden.join("clip-pixels.f32"));
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let started = std::time::Instant::now();
+        let decoder = GpuVideoDecoder::load(&gpu, Path::new(&model)).unwrap();
+        let load = started.elapsed().as_secs_f64();
+        let mut seconds = Vec::new();
+        let mut pixels = Vec::new();
+        for _ in 0..2 {
+            let started = std::time::Instant::now();
+            pixels = decoder.decode(&latent, width, height, frames).unwrap();
+            seconds.push(started.elapsed().as_secs_f64());
+        }
+        let db = decibels(&cpp, &pixels);
+        let worst = cpp
+            .iter()
+            .zip(&pixels)
+            .fold(0f32, |m, (a, b)| m.max((a - b).abs()));
+        println!(
+            "{width}x{height}x{frames} -> {} frames: load {load:.1} s, decode {seconds:.2?} s; vs c++ {db:.1} dB, largest pixel difference {worst:.4}",
+            shape[3]
+        );
+        assert!(db > 55.0);
     }
 }
