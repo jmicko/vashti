@@ -6,7 +6,7 @@ use std::path::Path;
 use rayon::prelude::*;
 
 use super::{
-    gpu::{Buffer, Gpu, Kernel, Step, bytes_of, floats, shaders},
+    gpu::{Buffer, Gpu, Kernel, Readback, Step, bytes_of, shaders},
     safetensors::Safetensors,
     video_vae::{
         DIM, EXTRA, HEAD, HEADS, INNER, LATENT_CHANNELS, LAYERS, PAIRS, PIXELS, REGISTERS, linear,
@@ -26,6 +26,8 @@ const SCALE2: usize = W2_BIAS + DIM;
 const VECTORS: usize = SCALE2 + DIM;
 /// The matrix kernel works on 128-token tiles.
 const TILE: usize = 128;
+/// Attention heads processed per dispatch.
+const GROUP: usize = 8;
 
 struct Layer {
     qkv: Buffer,
@@ -56,6 +58,7 @@ struct Work {
     scores: Buffer,
     weights: Buffer,
     mixed: Buffer,
+    readback: Readback,
 }
 pub struct GpuVideoDecoder {
     work: std::sync::Mutex<Option<Work>>,
@@ -125,7 +128,7 @@ impl GpuVideoDecoder {
                 norm: kernel(shaders::NORM, 3, 4)?,
                 heads: kernel(shaders::HEADS, 6, 3)?,
                 softmax: kernel(shaders::SOFTMAX, 2, 2)?,
-                merge: kernel(shaders::MERGE, 2, 1)?,
+                merge: kernel(shaders::MERGE, 2, 2)?,
                 residual: kernel(shaders::RESIDUAL, 3, 3)?,
                 gate: kernel(shaders::GATE, 3, 2)?,
             },
@@ -172,10 +175,6 @@ impl GpuVideoDecoder {
         }
         let tokens = positions + EXTRA;
         let padded = tokens.div_ceil(TILE) * TILE;
-        if padded > 2048 {
-            // The softmax kernel keeps one row in registers.
-            return Err("video_latent_invalid");
-        }
         let mut start = vec![0f32; positions * LATENT_CHANNELS];
         for (channel, plane) in latent.chunks_exact(positions).enumerate() {
             for (position, value) in plane.iter().enumerate() {
@@ -206,11 +205,12 @@ impl GpuVideoDecoder {
                 wide: gpu.buffer((padded * INNER * 2) as u64 * 4)?,
                 query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
                 key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
-                // Rows 64..128 of each head are never written and stay zero.
+                // Rows 65..128 of each head are never written and stay zero.
                 value: gpu.buffer((HEADS * TILE * padded) as u64 * 2)?,
-                scores: gpu.buffer((HEADS * padded * padded) as u64 * 4)?,
-                weights: gpu.buffer((HEADS * padded * padded) as u64 * 2)?,
+                scores: gpu.buffer((GROUP * padded * padded) as u64 * 4)?,
+                weights: gpu.buffer((GROUP * padded * padded) as u64 * 2)?,
                 mixed: gpu.buffer((HEADS * padded * TILE) as u64 * 4)?,
+                readback: gpu.readback((padded * PIXELS) as u64 * 4)?,
             });
         }
         let Some(Work {
@@ -224,6 +224,7 @@ impl GpuVideoDecoder {
             scores,
             weights,
             mixed,
+            readback,
             ..
         }) = cached.as_ref()
         else {
@@ -260,43 +261,47 @@ impl GpuVideoDecoder {
                 vec![n, np, QKV_BIAS as u32],
                 [1, np, 1],
             ));
-            steps.push((
-                &k.gemm,
-                vec![query, key, scores],
-                vec![
-                    HEAD as u32,
-                    0,
-                    np * HEAD as u32,
-                    0,
-                    np * HEAD as u32,
-                    0,
-                    np * np,
-                    np,
-                ],
-                [token_tiles, token_tiles, HEADS as u32],
-            ));
-            steps.push((
-                &k.softmax,
-                vec![scores, weights],
-                vec![n, np],
-                [np, HEADS as u32, 1],
-            ));
-            steps.push((
-                &k.gemm,
-                vec![weights, value, mixed],
-                vec![
-                    np,
-                    0,
-                    np * np,
-                    0,
-                    TILE as u32 * np,
-                    0,
-                    np * TILE as u32,
-                    TILE as u32,
-                ],
-                [1, token_tiles, HEADS as u32],
-            ));
-            steps.push((&k.merge, vec![mixed, half], vec![np], [1, np, 1]));
+            // A few heads at a time keeps the scores and weights small (88 MB instead of
+            // 700 MB for all heads) at the same speed.
+            for head in (0..HEADS as u32).step_by(GROUP) {
+                steps.push((
+                    &k.gemm,
+                    vec![query, key, scores],
+                    vec![
+                        HEAD as u32,
+                        head * np * HEAD as u32,
+                        np * HEAD as u32,
+                        head * np * HEAD as u32,
+                        np * HEAD as u32,
+                        0,
+                        np * np,
+                        np,
+                    ],
+                    [token_tiles, token_tiles, GROUP as u32],
+                ));
+                steps.push((
+                    &k.softmax,
+                    vec![scores, weights],
+                    vec![n, np],
+                    [np.div_ceil(256), np, GROUP as u32],
+                ));
+                steps.push((
+                    &k.gemm,
+                    vec![weights, value, mixed],
+                    vec![
+                        np,
+                        0,
+                        np * np,
+                        head * TILE as u32 * np,
+                        TILE as u32 * np,
+                        head * np * TILE as u32,
+                        np * TILE as u32,
+                        TILE as u32,
+                    ],
+                    [1, token_tiles, GROUP as u32],
+                ));
+            }
+            steps.push((&k.merge, vec![mixed, half], vec![n, np], [1, np, 1]));
             steps.push(gemm(half, &layer.out, wide, DIM, DIM));
             steps.push((
                 &k.residual,
@@ -370,19 +375,23 @@ impl GpuVideoDecoder {
         } else {
             gpu.pass(&steps)?;
         }
-        let mut patches = floats(&gpu.download(wide, 0, positions * PIXELS * 4)?);
-        for row in patches.chunks_exact_mut(PIXELS) {
+        let mut patches = vec![0f32; positions * PIXELS];
+        gpu.read_floats(wide, 0, readback, &mut patches)?;
+        patches.par_chunks_exact_mut(PIXELS).for_each(|row| {
             for (value, bias) in row.iter_mut().zip(&self.project_bias) {
                 *value += bias;
             }
-        }
+        });
         Ok(unpatchify(&patches, width, height, frames))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{super::gpu::Select, *};
+    use super::{
+        super::gpu::{Select, floats},
+        *,
+    };
 
     fn read(path: &Path) -> Vec<f32> {
         floats(&std::fs::read(path).unwrap())

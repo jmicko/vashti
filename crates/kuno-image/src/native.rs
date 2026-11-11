@@ -132,7 +132,9 @@ unsafe extern "C" {
         reference_count: i32,
         receive_frame: extern "C" fn(*const u8, usize, *mut c_void),
         receive_audio_latent: extern "C" fn(*const f32, i64, i64, i64, *mut c_void),
-        decode_video: Option<extern "C" fn(*const f32, i64, i64, i64, *mut f32, i64, *mut c_void) -> bool>,
+        decode_video: Option<
+            extern "C" fn(*const f32, i64, i64, i64, *mut f32, i64, *mut c_void) -> bool,
+        >,
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
         phase: extern "C" fn(i32, i32, i32, *mut c_void),
         userdata: *mut c_void,
@@ -241,11 +243,21 @@ extern "C" fn decode_video_latent(
     }
     let latent =
         unsafe { std::slice::from_raw_parts(latent, LATENT_CHANNELS * frames * width * height) };
+    let started = std::time::Instant::now();
+    let mut loaded = started;
     let decoded = gpu::Gpu::open(gpu::Select::Pci(out.pci.clone()))
         .and_then(|gpu| GpuVideoDecoder::load(&gpu, &out.video_model))
-        .and_then(|decoder| decoder.decode(latent, width, height, frames));
+        .and_then(|decoder| {
+            loaded = std::time::Instant::now();
+            decoder.decode(latent, width, height, frames)
+        });
     match decoded {
         Ok(mut decoded) => {
+            eprintln!(
+                "kuno-image: rust video decode: load {} ms, decode {} ms",
+                (loaded - started).as_millis(),
+                loaded.elapsed().as_millis()
+            );
             // SAFETY: lengths match by the frame-count check above.
             unsafe { std::ptr::copy_nonoverlapping(decoded.as_ptr(), pixels, decoded.len()) };
             decoded.iter_mut().for_each(|v| *v = 0.0);

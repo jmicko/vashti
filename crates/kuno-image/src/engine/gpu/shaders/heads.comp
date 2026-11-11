@@ -2,7 +2,9 @@
 // and head. Queries and keys get the bias, unit RMS over their 64 channels and the rotary
 // turn (pair i is channels i and i + 24; the last 16 channels are not rotated).
 //   in:  g[token][head][query 64, key 64, value 64] (f32, no bias yet)
-//   out: q[head][token][64], k[head][token][64], vt[head][128][token] (rows 64.. stay zero)
+//   out: q[head][token][64], k[head][token][64], vt[head][128][token]
+// Row 64 of vt is 1 for live tokens, so the mixing product's column 64 is the sum of each
+// query's attention weights; rows 65.. stay zero.
 // Tokens from `tokens` up to `padded` are written as zeros.
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types : require
@@ -51,4 +53,5 @@ void main() {
         float value = live ? g[from + 2 * HEAD + c] + v[bias + 2 * HEAD + c] : 0.0;
         vt[(head * 128 + c) * p.padded + token] = float16_t(value);
     }
+    vt[(head * 128 + HEAD) * p.padded + token] = float16_t(live ? 1.0 : 0.0);
 }

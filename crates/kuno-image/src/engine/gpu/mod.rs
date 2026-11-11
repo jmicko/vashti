@@ -58,6 +58,15 @@ impl Drop for Buffer {
         }
     }
 }
+/// Host-visible memory kept mapped for reading results back.
+pub struct Readback {
+    stage: Buffer,
+    at: *mut u8,
+}
+// SAFETY: the pointer is the buffer's own mapping, valid until the buffer is dropped, and
+// only read through `Gpu::read_floats`, which holds the device turn while copying into it.
+unsafe impl Send for Readback {}
+unsafe impl Sync for Readback {}
 impl Buffer {
     pub fn bytes(&self) -> u64 {
         self.bytes
@@ -313,6 +322,52 @@ impl Gpu {
             device.cmd_copy_buffer(commands, stage.buffer, buffer.buffer, &region);
         })?;
         Ok(buffer)
+    }
+    /// A reusable host-side landing area for reading results back.
+    pub fn readback(&self, bytes: u64) -> Result<Readback, &'static str> {
+        let stage = self.staging(bytes)?;
+        // SAFETY: the mapping lives as long as the staging buffer, which `Readback` owns.
+        let at = unsafe {
+            check(
+                self.core.device.map_memory(
+                    stage.memory,
+                    0,
+                    vk::WHOLE_SIZE,
+                    vk::MemoryMapFlags::empty(),
+                ),
+                "gpu_memory",
+            )?
+        };
+        Ok(Readback {
+            stage,
+            at: at.cast::<u8>(),
+        })
+    }
+    /// Copies `to.len()` f32 values starting at byte `offset` of `from` into `to`.
+    pub fn read_floats(
+        &self,
+        from: &Buffer,
+        offset: u64,
+        through: &Readback,
+        to: &mut [f32],
+    ) -> Result<(), &'static str> {
+        let bytes = std::mem::size_of_val(to) as u64;
+        if offset + bytes > from.bytes || bytes > through.stage.bytes {
+            return Err("gpu_range");
+        }
+        if bytes == 0 {
+            return Ok(());
+        }
+        let region = [vk::BufferCopy::default().src_offset(offset).size(bytes)];
+        self.run(|device, commands| unsafe {
+            // SAFETY: the range was checked against both buffers above.
+            device.cmd_copy_buffer(commands, from.buffer, through.stage.buffer, &region);
+        })?;
+        // SAFETY: the mapping holds at least `bytes` bytes; f32 has no invalid bit patterns.
+        unsafe {
+            std::ptr::copy_nonoverlapping(through.at, to.as_mut_ptr().cast::<u8>(), bytes as usize);
+        }
+        Ok(())
     }
     fn staging(&self, bytes: u64) -> Result<Buffer, &'static str> {
         self.allocate(

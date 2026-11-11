@@ -1,5 +1,6 @@
-// Gathers per-head attention output o[head][token][128] (first 64 used) into f16 token rows
-// h[token][head][64].
+// Gathers per-head attention output o[head][token][128] into f16 token rows
+// h[token][head][64]: columns 0..64 are the weighted values and column 64 the weight sum
+// they are divided by. Padded tokens are written as zeros.
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 #extension GL_EXT_shader_16bit_storage : require
@@ -9,12 +10,14 @@ spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
 layout(local_size_x = 32) in;
 layout(set = 0, binding = 0) readonly buffer Mixed { float o[]; };
 layout(set = 0, binding = 1) writeonly buffer Half { float16_t h[]; };
-layout(push_constant) uniform Constants { uint padded; } p;
+layout(push_constant) uniform Constants { uint tokens; uint padded; } p;
 
 void main() {
     uint head = gl_GlobalInvocationID.x;
     uint token = gl_GlobalInvocationID.y;
+    uint from = (head * p.padded + token) * 128;
+    float scale = token < p.tokens ? 1.0 / o[from + 64] : 0.0;
     for (uint c = 0; c < 64; c++) {
-        h[token * 2048 + head * 64 + c] = float16_t(o[(head * p.padded + token) * 128 + c]);
+        h[token * 2048 + head * 64 + c] = float16_t(o[from + c] * scale);
     }
 }
