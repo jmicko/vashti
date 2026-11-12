@@ -1,22 +1,22 @@
-// Largest attention score of each query row over the live keys:
-//   top[z][query] = max over key < keys of s[z][query][key]
-// One workgroup per row; lanes read neighbouring vec4s.
+// Largest value of each row:  top[z][row] = max of s[z][row][..columns]
+// Rows hold `stride` values (a multiple of 4), of which the first `columns` count; `scoremax`
+// already left out padded keys. One workgroup per row; lanes read neighbouring vec4s.
 #version 460
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0) readonly buffer Scores { vec4 s[]; };
 layout(set = 0, binding = 1) writeonly buffer Top { float top[]; };
-// `top_first` is the first row's index in `top`.
-layout(push_constant) uniform Constants { uint keys; uint padded; uint top_first; } p;
+// `padded` is the rows per z; `top_first` the first row's index in `top`.
+layout(push_constant) uniform Constants { uint columns; uint stride; uint padded; uint top_first; } p;
 
 shared float part[64];
 
 void main() {
     uint row = gl_WorkGroupID.z * p.padded + gl_WorkGroupID.y;
     uint lane = gl_LocalInvocationIndex;
-    uint words = p.padded >> 2;
+    uint words = p.stride >> 2;
     vec4 best = vec4(-3.0e38);
     for (uint c = lane; c < words; c += 64) {
-        bvec4 live = lessThan(uvec4(c * 4) + uvec4(0, 1, 2, 3), uvec4(p.keys));
+        bvec4 live = lessThan(uvec4(c * 4) + uvec4(0, 1, 2, 3), uvec4(p.columns));
         best = max(best, mix(vec4(-3.0e38), s[row * words + c], live));
     }
     part[lane] = max(max(best.x, best.y), max(best.z, best.w));

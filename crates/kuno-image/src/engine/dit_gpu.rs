@@ -56,7 +56,7 @@ const GROUP: usize = 8;
 pub struct Kernels {
     rotate8: Kernel,
     gemm8: Kernel,
-    gemm: Kernel,
+    scoremax: Kernel,
     modnorm: Kernel,
     qk8: Kernel,
     value8: Kernel,
@@ -71,11 +71,11 @@ impl Kernels {
         Ok(Self {
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 2, Some(16))?,
             gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
-            gemm: gpu.kernel(shaders::GEMM, 3, 8, Some(16))?,
+            scoremax: gpu.kernel(shaders::SCOREMAX, 4, 11, Some(16))?,
             modnorm: gpu.kernel(shaders::MODNORM, 5, 5, None)?,
             qk8: gpu.kernel(shaders::QK8, 5, 5, Some(16))?,
             value8: gpu.kernel(shaders::VALUE8, 4, 3, None)?,
-            rowmax: gpu.kernel(shaders::ROWMAX, 2, 3, None)?,
+            rowmax: gpu.kernel(shaders::ROWMAX, 2, 4, None)?,
             mixtop: gpu.kernel(shaders::MIXTOP, 5, 12, Some(16))?,
             merge8: gpu.kernel(shaders::MERGE8, 3, 2, None)?,
             resid8: gpu.kernel(shaders::RESID8, 6, 4, None)?,
@@ -191,6 +191,8 @@ pub struct Work {
     key: Buffer,
     value: Buffer,
     scores: Buffer,
+    /// Largest score per key tile, `[GROUP][padded][tiles rounded up to 4]`.
+    best: Buffer,
     top: Buffer,
     weights: Buffer,
     mixed: Buffer,
@@ -215,6 +217,7 @@ impl Work {
             key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
             value: gpu.buffer((HEADS * HEAD * padded) as u64 * 2)?,
             scores: f32s(GROUP * padded * padded)?,
+            best: f32s(GROUP * padded * (padded / TILE).next_multiple_of(4))?,
             top: f32s(HEADS * padded)?,
             weights: f32s(HEADS * padded * 8)?,
             mixed: f32s(HEADS * padded * HEAD)?,
@@ -264,10 +267,11 @@ impl Kernels {
         });
         let tiles = np / TILE as u32;
         let (head_width, group) = (HEAD as u32, GROUP as u32);
+        let best_stride = tiles.next_multiple_of(4);
         for head in (0..HEADS as u32).step_by(GROUP) {
             calls.push(Call {
-                kernel: &self.gemm,
-                buffers: vec![&w.query, &w.key, &w.scores],
+                kernel: &self.scoremax,
+                buffers: vec![&w.query, &w.key, &w.scores, &w.best],
                 constants: vec![
                     head_width,
                     head * np * head_width,
@@ -277,13 +281,16 @@ impl Kernels {
                     0,
                     np * np,
                     np,
+                    n,
+                    best_stride,
+                    np * best_stride,
                 ],
                 groups: [tiles, tiles, group],
             });
             calls.push(Call {
                 kernel: &self.rowmax,
-                buffers: vec![&w.scores, &w.top],
-                constants: vec![n, np, head * np],
+                buffers: vec![&w.best, &w.top],
+                constants: vec![tiles, best_stride, np, head * np],
                 groups: [1, np, group],
             });
             calls.push(Call {
@@ -576,7 +583,7 @@ mod tests {
         let names = [
             (&kernels.rotate8, "quantize"),
             (&kernels.gemm8, "linear"),
-            (&kernels.gemm, "scores"),
+            (&kernels.scoremax, "scores"),
             (&kernels.modnorm, "norm"),
             (&kernels.qk8, "queries and keys"),
             (&kernels.value8, "values"),

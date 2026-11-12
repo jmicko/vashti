@@ -11,6 +11,7 @@ pub const MERGE: &[u8] = include_bytes!("shaders/merge.spv");
 pub const MODNORM: &[u8] = include_bytes!("shaders/modnorm.spv");
 pub const QK8: &[u8] = include_bytes!("shaders/qk8.spv");
 pub const VALUE8: &[u8] = include_bytes!("shaders/value8.spv");
+pub const SCOREMAX: &[u8] = include_bytes!("shaders/scoremax.spv");
 pub const ROWMAX: &[u8] = include_bytes!("shaders/rowmax.spv");
 pub const MIXTOP: &[u8] = include_bytes!("shaders/mixtop.spv");
 pub const MERGE8: &[u8] = include_bytes!("shaders/merge8.spv");
