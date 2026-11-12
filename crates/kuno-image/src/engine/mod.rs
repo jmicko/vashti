@@ -3,6 +3,7 @@
 pub mod audio_vae;
 pub mod conv;
 pub mod dit;
+pub mod dit_gpu;
 pub mod gpu;
 pub mod safetensors;
 pub mod video_gpu;

@@ -8,6 +8,7 @@ pub const MIX: &[u8] = include_bytes!("shaders/mix.spv");
 pub const NORM: &[u8] = include_bytes!("shaders/norm.spv");
 pub const HEADS: &[u8] = include_bytes!("shaders/heads.spv");
 pub const MERGE: &[u8] = include_bytes!("shaders/merge.spv");
+pub const ROTATE8: &[u8] = include_bytes!("shaders/rotate8.spv");
 pub const RESIDUAL: &[u8] = include_bytes!("shaders/residual.spv");
 pub const GATE: &[u8] = include_bytes!("shaders/gate.spv");
 

@@ -163,11 +163,13 @@ impl Gpu {
                 .compute_full_subgroups(true);
             let mut matrix =
                 vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
+            let features = vk::PhysicalDeviceFeatures::default().shader_float64(true);
             let created = instance.create_device(
                 physical,
                 &vk::DeviceCreateInfo::default()
                     .queue_create_infos(&queues)
                     .enabled_extension_names(&extensions)
+                    .enabled_features(&features)
                     .push_next(&mut v11)
                     .push_next(&mut v12)
                     .push_next(&mut v13)

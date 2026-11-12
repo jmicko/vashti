@@ -1,0 +1,96 @@
+// ConvRot quantizer: rotates each f32 row by a regular Hadamard transform in groups of 256
+// values, then rounds the row to INT8 with one scale (largest magnitude / 127).
+// One workgroup per row. Each of its 16 subgroups rotates one group per round: a lane holds
+// 16 neighbouring values and does the two short-stride butterfly stages on them, the
+// subgroup transposes its 16 x 16 block through shared memory, and the same two stages then
+// cover the long strides. Stage order and expressions are the reference's (dit.rs), so bytes
+// and scales are bit-identical to it.
+// Pass one finds the row's largest magnitude, pass two rotates again and rounds.
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { vec4 x[]; };
+layout(set = 0, binding = 1) writeonly buffer Out { uvec4 q[]; };
+layout(set = 0, binding = 2) writeonly buffer Scales { float s[]; };
+// `width` is a multiple of 256; `rounds` is ceil(width / 256 / 16).
+layout(push_constant) uniform Constants { uint width; uint rounds; } p;
+
+shared float tile[4096];
+shared uint bytes[4096];
+shared float maxima[16];
+
+float v[16];
+
+void quad(uint a, uint b, uint c, uint d) {
+    precise float va = v[a], vb = v[b], vc = v[c], vd = v[d];
+    precise float ra = va + vb + vc - vd;
+    precise float rb = va + vb - vc + vd;
+    precise float rc = va - vb + vc + vd;
+    precise float rd = -va + vb + vc + vd;
+    v[a] = ra;
+    v[b] = rb;
+    v[c] = rc;
+    v[d] = rd;
+}
+void stages() {
+    for (uint m = 0; m < 4; m++) quad(4 * m, 4 * m + 1, 4 * m + 2, 4 * m + 3);
+    for (uint m = 0; m < 4; m++) quad(m, m + 4, m + 8, m + 12);
+}
+// Leaves value `16 * j + lane` of the group in v[j].
+void rotate(uint at, bool live) {
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    for (uint j = 0; j < 4; j++) {
+        vec4 part = live ? x[at + lane * 4 + j] : vec4(0.0);
+        for (uint e = 0; e < 4; e++) v[j * 4 + e] = part[e] * 0.0625;
+    }
+    stages();
+    for (uint j = 0; j < 16; j++) tile[sg * 256 + lane * 16 + j] = v[j];
+    memoryBarrierShared();
+    barrier();
+    for (uint j = 0; j < 16; j++) v[j] = tile[sg * 256 + j * 16 + lane];
+    stages();
+}
+
+void main() {
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint row = gl_WorkGroupID.x;
+    uint groups = p.width >> 8;
+    uint first = row * (p.width >> 2);
+    float top = 0.0;
+    for (uint r = 0; r < p.rounds; r++) {
+        uint g = r * 16 + sg;
+        rotate(first + g * 64, g < groups);
+        for (uint j = 0; j < 16; j++) top = max(top, abs(v[j]));
+        memoryBarrierShared();
+        barrier();
+    }
+    top = subgroupMax(top);
+    if (lane == 0) maxima[sg] = top;
+    memoryBarrierShared();
+    barrier();
+    for (uint i = 0; i < 16; i++) top = max(top, maxima[i]);
+    // The GPU's single-precision divide is not correctly rounded; a last-bit difference in
+    // the scale would move bytes at rounding ties. Dividing in double precision and rounding
+    // once gives the reference's values.
+    float scale = float(double(top) / 127.0lf);
+    float inverse = float(1.0lf / double(scale));
+    if (gl_LocalInvocationIndex == 0) s[row] = scale;
+    for (uint r = 0; r < p.rounds; r++) {
+        uint g = r * 16 + sg;
+        rotate(first + g * 64, g < groups);
+        for (uint j = 0; j < 16; j++) {
+            precise float scaled = v[j] * inverse;
+            int value = scale == 0.0 ? 0 : int(clamp(roundEven(scaled), -127.0, 127.0));
+            bytes[sg * 256 + j * 16 + lane] = uint(value) & 255u;
+        }
+        memoryBarrierShared();
+        barrier();
+        uvec4 word = uvec4(0);
+        for (uint b = 0; b < 16; b++) {
+            word[b >> 2] |= bytes[sg * 256 + lane * 16 + b] << ((b & 3) * 8);
+        }
+        if (g < groups) q[row * (p.width >> 4) + g * 16 + lane] = word;
+    }
+}
