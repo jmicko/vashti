@@ -27,7 +27,7 @@ paths from the environment.
 | Stage (MiniMax H3) | C++ today | Rust | State |
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
-| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.39 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
+| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
 | DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per layer) | CPU reference checked; GPU matrix kernel within 15% of the C++ one | in progress, C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
@@ -98,12 +98,11 @@ Measured on the B70 (Mesa 26.2.6):
 | One 16x16x7 tile | 0.59 s, 70.9 dB from exact | 0.27 s, 83.7 dB from the CPU reference |
 | 832x544, 73-frame decode (48 tiles), standalone | 31.4 s | 13.1 s, 69.7 dB from the C++ frames |
 | Weights to the GPU | part of the above | 1.1 s per clip |
-| Decode inside the worker, 2.3 s clip (36 tiles) | about 21 s | 1.5 s load + 12.7 s decode (0.34 s tiles) |
-| Warm 2.3 s clip end to end | 59.1 to 59.5 s | 49.9 to 50.1 s (0.34 s tiles) |
-| First clip after worker start | about 90 s | 62.8 s (0.34 s tiles) |
+| Decode inside the worker, 2.3 s clip (36 tiles) | about 21 s | 1.5 s load + 10.2 s decode |
+| Warm 2.3 s clip end to end | 59.1 to 59.5 s | 47.4 to 47.5 s |
 
-The three worker rows were measured with the first GPU form (0.34 s per tile); the worker
-has not been rebuilt with the 0.27 s kernels yet.
+The worker's clips are byte-identical between the first GPU form (0.34 s tiles, 50 s clips)
+and the current kernels, and three same-seed clips are byte-identical to each other.
 
 What shaped the kernels:
 
