@@ -631,10 +631,14 @@ mod tests {
         let step = captured.step();
         let mut got = Vec::new();
         for _ in 0..2 {
-            let prepared = network.model.prepare(&step).unwrap();
             let started = std::time::Instant::now();
+            let prepared = network.model.prepare(&step).unwrap();
+            let ready = started.elapsed().as_secs_f64();
             got = network.blocks(&step, prepared).unwrap();
-            println!("blocks and heads: {:.2} s", started.elapsed().as_secs_f64());
+            println!(
+                "embedding and refiner {ready:.2} s, blocks and heads {:.2} s",
+                started.elapsed().as_secs_f64() - ready
+            );
         }
         let plane = captured.shape[0] * captured.shape[1] * captured.shape[2];
         let report = |name: &str, range: std::ops::Range<usize>| {

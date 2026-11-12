@@ -742,6 +742,8 @@ pub struct Dit {
     pub(super) layers: usize,
     refiners: usize,
     grid: usize,
+    /// The last text encoder output and its refined form.
+    refined: std::sync::Mutex<Option<(Vec<f32>, Vec<f32>)>>,
 }
 impl Dit {
     pub fn open(path: &Path) -> Result<Self, &'static str> {
@@ -760,6 +762,7 @@ impl Dit {
             layers,
             refiners,
             grid,
+            refined: std::sync::Mutex::new(None),
         })
     }
     fn linear8(
@@ -776,6 +779,25 @@ impl Dit {
             .file
             .f32(&format!("{name}.weight_scale"), &[outputs, 1])?;
         Ok(linear8(x, inputs, &weight, &scale))
+    }
+    /// `refine` with the last result kept: the text is the same for every step of a clip.
+    /// The copy lives in RAM only, until the next clip's text or `forget`.
+    fn refined(&self, context: &[f32]) -> Result<Vec<f32>, &'static str> {
+        let mut kept = self.refined.lock().map_err(|_| "model_state_lost")?;
+        if let Some((text, refined)) = kept.as_ref()
+            && text == context
+        {
+            return Ok(refined.clone());
+        }
+        let refined = self.refine(context)?;
+        *kept = Some((context.to_vec(), refined.clone()));
+        Ok(refined)
+    }
+    /// Drops the kept text features.
+    pub fn forget(&self) {
+        if let Ok(mut kept) = self.refined.lock() {
+            *kept = None;
+        }
     }
     /// Text encoder output to model width: projection and the unmodulated refiner blocks.
     pub fn refine(&self, context: &[f32]) -> Result<Vec<f32>, &'static str> {
@@ -889,7 +911,7 @@ impl Dit {
         let mut x = Vec::with_capacity(tokens * DIM);
         for (_, _, source) in &layout.order {
             x.extend(match source {
-                Source::Text => self.refine(step.context)?,
+                Source::Text => self.refined(step.context)?,
                 Source::Video(index) => patch(&step.videos[*index])?,
                 Source::Audio(index) => {
                     sound(step.audios[*index].data, step.audios[*index].length, 1.0)?
