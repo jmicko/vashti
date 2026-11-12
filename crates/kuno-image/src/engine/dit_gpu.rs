@@ -54,7 +54,8 @@ pub struct Kernels {
     gemm8: Kernel,
     gemm: Kernel,
     modnorm: Kernel,
-    heads8: Kernel,
+    qk8: Kernel,
+    value8: Kernel,
     rowmax: Kernel,
     mixtop: Kernel,
     merge8: Kernel,
@@ -68,7 +69,8 @@ impl Kernels {
             gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
             gemm: gpu.kernel(shaders::GEMM, 3, 8, Some(16))?,
             modnorm: gpu.kernel(shaders::MODNORM, 5, 4, None)?,
-            heads8: gpu.kernel(shaders::HEADS8, 7, 5, None)?,
+            qk8: gpu.kernel(shaders::QK8, 5, 5, Some(16))?,
+            value8: gpu.kernel(shaders::VALUE8, 4, 3, None)?,
             rowmax: gpu.kernel(shaders::ROWMAX, 2, 3, None)?,
             mixtop: gpu.kernel(shaders::MIXTOP, 5, 12, Some(16))?,
             merge8: gpu.kernel(shaders::MERGE8, 3, 2, None)?,
@@ -238,11 +240,19 @@ impl Kernels {
         calls.push(modnorm(NORM1, 0, 1));
         calls.push(quantize(DIM));
         calls.extend(self.product(&w.bytes, &layer.qkv, &w.sums, w.padded, INNER * 3, DIM));
+        for (side, to, weight) in [(0, &w.query, QUERY_NORM), (1, &w.key, KEY_NORM)] {
+            calls.push(Call {
+                kernel: &self.qk8,
+                buffers: vec![&w.sums, &w.scales, v, &w.turns, to],
+                constants: vec![n, np, side, SCALE_QKV as u32, weight as u32],
+                groups: [(HEADS / 4) as u32, np, 1],
+            });
+        }
         calls.push(Call {
-            kernel: &self.heads8,
-            buffers: vec![&w.sums, &w.scales, v, &w.turns, &w.query, &w.key, &w.value],
-            constants: vec![n, np, SCALE_QKV as u32, QUERY_NORM as u32, KEY_NORM as u32],
-            groups: [1, np, 1],
+            kernel: &self.value8,
+            buffers: vec![&w.sums, &w.scales, v, &w.value],
+            constants: vec![n, np, SCALE_QKV as u32],
+            groups: [HEADS as u32, np / 32, 1],
         });
         let tiles = np / TILE as u32;
         let (head_width, group) = (HEAD as u32, GROUP as u32);
@@ -292,7 +302,7 @@ impl Kernels {
             kernel: &self.merge8,
             buffers: vec![&w.mixed, &w.weights, &w.wide],
             constants: vec![n, np],
-            groups: [1, np, 1],
+            groups: [HEADS as u32, np, 1],
         });
         calls.push(quantize(INNER));
         calls.extend(self.product(&w.bytes, &layer.out, &w.sums, w.padded, DIM, INNER));
@@ -477,7 +487,8 @@ mod tests {
             (&kernels.gemm8, "linear"),
             (&kernels.gemm, "scores"),
             (&kernels.modnorm, "norm"),
-            (&kernels.heads8, "operands"),
+            (&kernels.qk8, "queries and keys"),
+            (&kernels.value8, "values"),
             (&kernels.rowmax, "row maximum"),
             (&kernels.mixtop, "mixing"),
             (&kernels.merge8, "merge"),

@@ -1,0 +1,68 @@
+// DiT attention queries or keys from the INT8 query/key/value product:
+//   g[token][query 7168, key 7168, value 7168] (int32 sums), each [head][128]
+//   value = sum * activation scale[token] * weight scale[column]
+// then unit RMS over the head's 128 channels times a weight, then the rotary turn on pairs
+// (i, i + 48) for i < 48; the last 32 channels are not rotated.
+//   out: o[head][token][128] (f16); tokens from `tokens` up to `padded` are zeros.
+// One subgroup of 16 lanes is one token and head; a lane owns 8 neighbouring channels, so
+// loads and stores are contiguous and the sum of squares is one subgroup reduction. Lanes
+// 0..5 pair with lanes 6..11; each also reads its partner's channels.
+// Dispatch: x = heads / 4, y = padded tokens; `side` is 0 for queries, 1 for keys.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Sums { ivec4 g[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
+layout(set = 0, binding = 2) readonly buffer Vectors { vec4 v[]; };
+layout(set = 0, binding = 3) readonly buffer Rotary { vec4 turn[]; };
+layout(set = 0, binding = 4) writeonly buffer Out { f16vec4 o[]; };
+// Offsets are in values and multiples of 4.
+layout(push_constant) uniform Constants {
+    uint tokens;
+    uint padded;
+    uint side;
+    uint scale_first;
+    uint weight_first;
+} p;
+const uint INNER4 = 1792;
+
+void main() {
+    uint head = gl_WorkGroupID.x * 4 + gl_SubgroupID;
+    uint token = gl_WorkGroupID.y;
+    uint lane = gl_SubgroupInvocationID;
+    bool live = token < p.tokens;
+    float row_scale = live ? as[token] : 0.0;
+    uint from = token * (3 * INNER4) + p.side * INNER4 + head * 32;
+    uint scales = (p.scale_first >> 2) + p.side * INNER4 + head * 32;
+    uint weights = p.weight_first >> 2;
+    // Channels of the pair's partner lane: +48 for lanes 0..5, -48 for lanes 6..11.
+    bool low = lane < 6, high = lane >= 6 && lane < 12;
+    uint other = low ? lane + 6 : (high ? lane - 6 : lane);
+    vec4 mine[2], theirs[2];
+    float squares = 0.0;
+    for (uint j = 0; j < 2; j++) {
+        uint c = lane * 2 + j, d = other * 2 + j;
+        mine[j] = vec4(g[from + c]) * row_scale * v[scales + c];
+        theirs[j] = vec4(g[from + d]) * row_scale * v[scales + d];
+        squares += dot(mine[j], mine[j]);
+    }
+    float norm = 1.0 / sqrt(subgroupAdd(squares) / 128.0 + 1e-5);
+    uint to = (head * p.padded + token) * 32 + lane * 2;
+    for (uint j = 0; j < 2; j++) {
+        vec4 a = mine[j] * (norm * v[weights + lane * 2 + j]);
+        vec4 b = theirs[j] * (norm * v[weights + other * 2 + j]);
+        // Cosine and sine of the pair's four turns: two vec4 per four pairs.
+        uint pair = (low ? lane : other) * 2 + j;
+        vec4 t0 = live ? turn[(token * 12 + pair) * 2] : vec4(1.0, 0.0, 1.0, 0.0);
+        vec4 t1 = live ? turn[(token * 12 + pair) * 2 + 1] : vec4(1.0, 0.0, 1.0, 0.0);
+        vec4 cosine = vec4(t0.x, t0.z, t1.x, t1.z), sine = vec4(t0.y, t0.w, t1.y, t1.w);
+        vec4 result = low ? cosine * a - sine * b : (high ? sine * b + cosine * a : a);
+        o[to + j] = f16vec4(result);
+    }
+}

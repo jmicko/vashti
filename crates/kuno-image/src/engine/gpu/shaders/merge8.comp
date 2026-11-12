@@ -1,21 +1,20 @@
 // Gathers per-head attention output o[head][token][128] into f32 token rows
 // h[token][head][128], divided by the token's weight sum for that head (eight partial sums
-// from `mixtop`). Padded tokens are written as zeros.
+// from `mixtop`). One vec4 per invocation; padded tokens are written as zeros.
+// Dispatch: x = heads, y = padded tokens.
 #version 460
-layout(local_size_x = 56) in;
-layout(set = 0, binding = 0) readonly buffer Mixed { float o[]; };
-layout(set = 0, binding = 1) readonly buffer Sums { float w[]; };
-layout(set = 0, binding = 2) writeonly buffer Out { float h[]; };
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) readonly buffer Mixed { vec4 o[]; };
+layout(set = 0, binding = 1) readonly buffer Sums { vec4 w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { vec4 h[]; };
 layout(push_constant) uniform Constants { uint tokens; uint padded; } p;
 
 void main() {
-    uint head = gl_GlobalInvocationID.x;
-    uint token = gl_GlobalInvocationID.y;
+    uint head = gl_WorkGroupID.x;
+    uint token = gl_WorkGroupID.y;
+    uint c = gl_LocalInvocationIndex;
     uint row = head * p.padded + token;
-    float sum = 0.0;
-    for (uint i = 0; i < 8; i++) sum += w[row * 8 + i];
-    float scale = token < p.tokens ? 1.0 / sum : 0.0;
-    for (uint c = 0; c < 128; c++) {
-        h[token * 7168 + head * 128 + c] = o[row * 128 + c] * scale;
-    }
+    vec4 parts = w[row * 2] + w[row * 2 + 1];
+    float scale = token < p.tokens ? 1.0 / (parts.x + parts.y + parts.z + parts.w) : 0.0;
+    h[token * 1792 + head * 32 + c] = o[row * 32 + c] * scale;
 }
