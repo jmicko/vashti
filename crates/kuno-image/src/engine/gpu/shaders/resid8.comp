@@ -9,8 +9,9 @@ layout(set = 0, binding = 2) readonly buffer Scales { float as[]; };
 layout(set = 0, binding = 3) readonly buffer Vectors { vec4 v[]; };
 layout(set = 0, binding = 4) readonly buffer Parts { vec4 m[]; };
 layout(set = 0, binding = 5) readonly buffer Rows { uint r[]; };
-// `scale_first` is in values and a multiple of 4; `gate` picks one of the six vectors.
-layout(push_constant) uniform Constants { uint tokens; uint scale_first; uint gate; } p;
+// `scale_first` and `parts_first` (this block's vectors in `m`) are in values and multiples
+// of 4; `gate` picks one of the six vectors.
+layout(push_constant) uniform Constants { uint tokens; uint scale_first; uint gate; uint parts_first; } p;
 const uint DIM4 = 1344;
 
 void main() {
@@ -19,5 +20,5 @@ void main() {
     if (token >= p.tokens) return;
     uint at = token * DIM4 + c;
     vec4 update = vec4(g[at]) * as[token] * v[(p.scale_first >> 2) + c];
-    x[at] += update * m[(r[token] * 6 + p.gate) * DIM4 + c];
+    x[at] += update * m[(p.parts_first >> 2) + (r[token] * 6 + p.gate) * DIM4 + c];
 }

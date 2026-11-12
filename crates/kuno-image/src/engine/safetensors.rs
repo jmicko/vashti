@@ -144,6 +144,21 @@ impl Safetensors {
             .map(|b| widen(u16::from_le_bytes([b[0], b[1]])))
             .collect())
     }
+    /// Reads one INT8 tensor's bytes into `to`, checking its exact shape.
+    pub fn i8_into(&self, name: &str, shape: &[usize], to: &mut [u8]) -> Result<(), &'static str> {
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        let count: usize = shape.iter().product();
+        if entry.kind != Kind::I8
+            || entry.shape != shape
+            || entry.end - entry.begin != count as u64
+            || to.len() != count
+        {
+            return Err("model_tensor_invalid");
+        }
+        self.file
+            .read_exact_at(to, self.data + entry.begin)
+            .map_err(|_| "model_file_invalid")
+    }
     /// Reads one INT8 tensor's bytes, checking its exact shape.
     pub fn i8(&self, name: &str, shape: &[usize]) -> Result<Vec<i8>, &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;

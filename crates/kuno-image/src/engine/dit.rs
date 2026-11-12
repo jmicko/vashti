@@ -897,13 +897,27 @@ impl Dit {
     }
     /// Evaluates the network; returns the packed velocity with `step.packed`'s layout.
     pub fn forward(&self, step: &Step) -> Result<Vec<f32>, &'static str> {
-        let f = &self.file;
         let Prepared {
             mut x,
             layout,
             times,
             rotary,
         } = self.prepare(step)?;
+        for layer in 0..self.layers {
+            let parts = self.parts(layer, &times)?;
+            self.block(layer, &mut x, &parts, &layout.spans, &rotary)?;
+        }
+        self.finish(step, &x, &layout, &times)
+    }
+    /// The output heads on the last block's token stream `x`: the packed velocity.
+    pub(super) fn finish(
+        &self,
+        step: &Step,
+        x: &[f32],
+        layout: &Layout,
+        times: &[f32],
+    ) -> Result<Vec<f32>, &'static str> {
+        let f = &self.file;
         let plane = step.width * step.height * step.frames;
         let (video_values, audio_values) = (
             plane * VIDEO_CHANNELS,
@@ -914,14 +928,9 @@ impl Dit {
         let audio_scale = step.video_shift / step.audio_shift;
         let carrier = &step.packed[video_values..video_values + audio_values];
         let restore = audio_sigma / sigma;
-        for layer in 0..self.layers {
-            let parts = self.parts(layer, &times)?;
-            self.block(layer, &mut x, &parts, &layout.spans, &rotary)?;
-        }
-
         // `[timesteps][shift, scale][DIM]`.
         let parts = linear(
-            &times,
+            times,
             TIME_WIDTH,
             &f.floats(
                 "final_layer.adaln_proj.linear.weight",

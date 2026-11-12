@@ -10,9 +10,9 @@ layout(set = 0, binding = 1) readonly buffer Vectors { vec4 v[]; };
 layout(set = 0, binding = 2) readonly buffer Parts { vec4 m[]; };
 layout(set = 0, binding = 3) readonly buffer Rows { uint r[]; };
 layout(set = 0, binding = 4) writeonly buffer Out { vec4 h[]; };
-// `weight_first` is in values and a multiple of 4; `shift` and `scale` pick two of the six
-// vectors.
-layout(push_constant) uniform Constants { uint tokens; uint weight_first; uint shift; uint scale; } p;
+// `weight_first` and `parts_first` (this block's vectors in `m`) are in values and multiples
+// of 4; `shift` and `scale` pick two of the six vectors.
+layout(push_constant) uniform Constants { uint tokens; uint weight_first; uint shift; uint scale; uint parts_first; } p;
 const uint DIM4 = 1344;
 
 shared float part[64];
@@ -34,7 +34,8 @@ void main() {
     for (uint i = 0; i < 64; i++) sum += part[i];
     float norm = 1.0 / sqrt(sum / 5376.0 + 1e-5);
     uint row = live ? r[token] : 0;
-    uint shift = (row * 6 + p.shift) * DIM4, scale = (row * 6 + p.scale) * DIM4;
+    uint first = p.parts_first >> 2;
+    uint shift = first + (row * 6 + p.shift) * DIM4, scale = first + (row * 6 + p.scale) * DIM4;
     for (uint j = 0; j < 21; j++) {
         uint c = lane + j * 64;
         vec4 t = x[base + c] * (norm * v[(p.weight_first >> 2) + c]);
