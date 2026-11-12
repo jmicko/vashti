@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per layer) | CPU reference checked; GPU matrix kernel within 15% of the C++ one | in progress, C++ still runs it |
+| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 7.95 s per step (155 ms per block) | correct, 2.3 times too slow; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -199,6 +199,58 @@ What the measurements showed, in order:
   also on Kuno's own Mesa build. Tile shapes with more weight fragments than token fragments
   were slower too. 1024-lane workgroups gained nothing.
 
+### The GPU form
+
+`engine/dit_gpu.rs` runs the 50 blocks on the GPU (`GpuDit`); embedding, the text refiner and
+the output heads still use the CPU reference's code. Weights load in 4 s from page cache
+(19 GB). One submission per block, because the kernel driver ends jobs that run for several
+seconds.
+
+| Kernel | Job |
+|---|---|
+| `modnorm` | RMS norm with weight, then the token's shift and scale |
+| `rotate8` | ConvRot quantizer, bit-identical to the reference |
+| `gemm8` | INT8 products, 4096 weight rows per dispatch |
+| `qk8`, `value8` | Attention operands from the integer sums: unit RMS, weights, rotary; values transposed |
+| `gemm`, `rowmax`, `mixtop` | Scores, each row's largest score, true-softmax mixing with weight sums |
+| `merge8`, `resid8`, `gate8` | Head outputs to token rows, gated residuals, gated activation |
+
+Scores reach about 30 in most blocks and 300 in the last (large query and key norm weights),
+so the decoder's shortcut of exponentiating without a row maximum does not apply here.
+
+Checks:
+
+- Quantizer: bytes and scales equal the reference's at all three widths. The GPU's
+  single-precision divide is not correctly rounded, so the scale is divided in double
+  precision.
+- Single blocks on identical inputs (blocks 0, 20, 49): 54 to 56, 40 and 45 dB from the
+  reference's update, the same at 317 and at 8611 tokens. The gap is the half-precision
+  attention operands, which the C++ engine also has.
+- Whole network against steps captured from the C++ engine: 29.4 / 24.4 dB (video / audio)
+  at 317 tokens, 23.9 / 18.1 dB at 8611.
+- Sampling: all eight captured steps of a small clip are 27 to 32 dB from the C++ outputs.
+  Running the Euler loop on this DiT's own outputs from the same noise ends 24.6 dB from the
+  C++ final latent; decoded, the two clips are 27.7 dB PSNR apart and show the same picture.
+
+Time per block at 8611 tokens (C++ engine: 66 ms):
+
+| Part | Rust now | C++ engine |
+|---|---|---|
+| INT8 products | 40 ms | about 34 ms |
+| Scores, row maximum, mixing | 33 + 30 + 33 ms | 24.8 ms |
+| Operands, norms, quantizers, residuals, gate, merge | 15 ms | about 8 ms |
+
+The attention path writes every score to video memory and reads it twice (17 GB per pass per
+block), which is what bounds it; it needs a kernel that keeps a query tile's scores inside
+the workgroup. Tried and dropped: having the scores kernel read back its own output to
+pre-reduce the maximum (lanes read values other lanes had not finished storing, and it was
+slower). bfloat16 weights would remove the row maximum for all but the last block; the driver
+supports them, the installed shader compiler (glslang 15.1) does not.
+
+Not done: the worker hand-over. The C++ engine keeps its own DiT weights and a text encoder
+cache in video memory and does not see Rust's 19 GB, so sampling in Rust inside the worker
+needs the two to agree on memory first.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
@@ -224,6 +276,15 @@ KUNO_DIT=<models>/minimax_h3_fl2va_turbo8_int8_convrot.safetensors \
 KUNO_DIT_GOLDEN=<dir>/step0 \
 cargo test --release -p kuno-image engine::dit -- --include-ignored --nocapture
 cargo test --release -p kuno-image gemm8 -- --include-ignored --nocapture
+```
+
+GPU DiT (the whole-network tests need about 25 GB of free video memory):
+
+```
+KUNO_DIT=<model> KUNO_DIT_GOLDEN=<dir>/step0 \
+cargo test --release -p kuno-image engine::dit_gpu -- --include-ignored --nocapture --test-threads 1
+KUNO_DIT=<model> KUNO_DIT_STEPS=<dir with step0.. of one clip> KUNO_VIDEO_VAE=<decoder> \
+cargo test --release -p kuno-image sampling_follows -- --include-ignored --nocapture
 ```
 
 Audio decoder:

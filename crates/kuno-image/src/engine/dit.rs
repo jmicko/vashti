@@ -34,6 +34,69 @@ const EPS: f32 = 1e-5;
 const FRAME_RESCALE: f32 = 5.0 / 3.0;
 const VISUAL_CONDITION_TIME: f32 = 0.999;
 
+/// Per-channel mean and deviation of the video decoder's latents; the DiT works on
+/// normalized ones.
+const LATENT_MEAN: [f32; VIDEO_CHANNELS] = [
+    0.858_090_34,
+    -0.960_659_15,
+    1.066_164,
+    -0.509_032_55,
+    -0.272_758_2,
+    -1.367_541_4,
+    -0.255_325_5,
+    -0.269_075_54,
+    -0.537_684_1,
+    -0.046_409_73,
+    0.665_737,
+    0.196_901_28,
+    -0.546_060_8,
+    -0.403_534_2,
+    -0.236_830_25,
+    0.259_284_53,
+    -0.301_339_45,
+    0.211_342,
+    -1.120_684_9,
+    0.358_193_34,
+    -0.042_251_438,
+    0.260_483,
+    0.228_640_93,
+    0.705_603_2,
+];
+const LATENT_STD: [f32; VIDEO_CHANNELS] = [
+    1.222_377_4,
+    1.276_726_4,
+    1.683_177_5,
+    1.754_945_5,
+    1.563_621_6,
+    2.194_143_5,
+    0.965_313_8,
+    1.056_988_6,
+    0.841_948_9,
+    0.772_995_3,
+    1.895_593_8,
+    0.946_841_84,
+    0.799_680_95,
+    0.449_889,
+    0.719_74,
+    0.693_629_3,
+    2.961_095,
+    2.769_42,
+    3.049_618_5,
+    2.108_805_4,
+    3.276_226_3,
+    3.162_735_7,
+    2.281_681_3,
+    2.612_784_4,
+];
+/// A DiT video latent `[24][...]` at the decoder's scale.
+pub fn decoder_latent(latent: &[f32]) -> Vec<f32> {
+    let plane = latent.len() / VIDEO_CHANNELS;
+    latent
+        .chunks_exact(plane)
+        .zip(LATENT_MEAN.iter().zip(&LATENT_STD))
+        .flat_map(|(channel, (mean, deviation))| channel.iter().map(move |v| v * deviation + mean))
+        .collect()
+}
 /// A latent video `[24][frames][height][width]`.
 pub struct Video<'a> {
     pub data: &'a [f32],

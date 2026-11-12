@@ -651,4 +651,98 @@ mod tests {
         // blocks agree with the reference to 40 dB and better. These bounds catch structure.
         assert!(video > 20.0 && audio > 15.0);
     }
+
+    /// Replays a captured clip's sampler steps: every step from the C++ engine's input, and
+    /// the whole Euler loop from the first noise on this DiT's own outputs. Optionally
+    /// decodes both final latents and compares frames.
+    #[test]
+    #[ignore = "needs the Intel GPU with 25 GB free, the model and a captured clip"]
+    fn sampling_follows_cpp_engine() {
+        let model = std::env::var("KUNO_DIT").unwrap();
+        let dir = std::env::var("KUNO_DIT_STEPS").unwrap();
+        let steps: Vec<_> = (0..)
+            .map(|i| format!("{dir}/step{i}"))
+            .take_while(|prefix| std::path::Path::new(&format!("{prefix}.txt")).exists())
+            .map(|prefix| dit::tests::Captured::read(&prefix))
+            .collect();
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let network = GpuDit::load(&gpu, std::path::Path::new(&model)).unwrap();
+        let decibels = |got: &[f32], want: &[f32]| {
+            let (mut error, mut power) = (0f64, 0f64);
+            for (got, want) in got.iter().zip(want) {
+                error += f64::from(got - want).powi(2);
+                power += f64::from(*want).powi(2);
+            }
+            10.0 * (power / error.max(1e-30)).log10()
+        };
+        let sigma = |i: usize| steps.get(i).map_or(0.0, |s| s.timestep / 1000.0);
+        let euler = |x: &[f32], out: &[f32], i: usize| -> Vec<f32> {
+            let change = sigma(i + 1) - sigma(i);
+            x.iter().zip(out).map(|(x, v)| x + change * v).collect()
+        };
+        let mut own = steps[0].x.clone();
+        for (i, captured) in steps.iter().enumerate() {
+            let out = network.forward(&captured.step()).unwrap();
+            let mut step = captured.step();
+            step.packed = &own;
+            let next = euler(&own, &network.forward(&step).unwrap(), i);
+            println!(
+                "step {i} (sigma {:.3}): output {:.1} dB from the C++ engine; own loop's latent {:.1} dB",
+                sigma(i),
+                decibels(&out, &captured.out),
+                decibels(&own, &captured.x),
+            );
+            own = next;
+        }
+        let last = steps.len() - 1;
+        let theirs = euler(&steps[last].x, &steps[last].out, last);
+        let shape = &steps[0].shape;
+        let video = shape[0] * shape[1] * shape[2] * dit::VIDEO_CHANNELS;
+        println!(
+            "final video latent: {:.1} dB from the C++ engine's",
+            decibels(&own[..video], &theirs[..video])
+        );
+        let Ok(vae) = std::env::var("KUNO_VIDEO_VAE") else {
+            return;
+        };
+        drop(network);
+        let decoder =
+            super::super::video_gpu::GpuVideoDecoder::load(&gpu, std::path::Path::new(&vae))
+                .unwrap();
+        let decode = |latent: &[f32]| {
+            decoder
+                .decode(
+                    &dit::decoder_latent(&latent[..video]),
+                    shape[0],
+                    shape[1],
+                    shape[2],
+                )
+                .unwrap()
+        };
+        let (mine, theirs) = (decode(&own), decode(&theirs));
+        let mut error = 0f64;
+        for (a, b) in mine.iter().zip(&theirs) {
+            error += f64::from(a.clamp(0.0, 1.0) - b.clamp(0.0, 1.0)).powi(2);
+        }
+        println!(
+            "decoded frames: {:.1} dB PSNR between the two",
+            10.0 * (mine.len() as f64 / error.max(1e-30)).log10()
+        );
+        if let Ok(out) = std::env::var("KUNO_DIT_FRAMES_OUT") {
+            let (width, height) = (shape[0] * 16, shape[1] * 16);
+            let frames = mine.len() / (3 * width * height);
+            for (name, pixels) in [("rust", &mine), ("cpp", &theirs)] {
+                for frame in [0, frames / 2, frames - 1] {
+                    let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+                    for at in 0..width * height {
+                        for c in 0..3 {
+                            let v = pixels[(c * frames + frame) * width * height + at];
+                            ppm.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
+                        }
+                    }
+                    std::fs::write(format!("{out}/{name}-{frame}.ppm"), ppm).unwrap();
+                }
+            }
+        }
+    }
 }
