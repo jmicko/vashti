@@ -664,9 +664,19 @@ fn add_gated(x: &mut [f32], update: &[f32], spans: &[Span], parts: &[f32], gate:
     }
 }
 
+/// The state of one evaluation before the first block.
+pub(super) struct Prepared {
+    /// `[tokens][DIM]`.
+    pub x: Vec<f32>,
+    pub layout: Layout,
+    /// `[timesteps][TIME_WIDTH]`.
+    pub times: Vec<f32>,
+    /// `[tokens][PAIRS]` cosine and sine.
+    pub rotary: Vec<[f32; 2]>,
+}
 pub struct Dit {
-    file: Safetensors,
-    layers: usize,
+    pub(super) file: Safetensors,
+    pub(super) layers: usize,
     refiners: usize,
     grid: usize,
 }
@@ -773,8 +783,8 @@ impl Dit {
         }
         Ok(out)
     }
-    /// Evaluates the network; returns the packed velocity with `step.packed`'s layout.
-    pub fn forward(&self, step: &Step) -> Result<Vec<f32>, &'static str> {
+    /// Token stream, layout, time features and rotary turns at the first block's input.
+    pub(super) fn prepare(&self, step: &Step) -> Result<Prepared, &'static str> {
         let f = &self.file;
         let plane = step.width * step.height * step.frames;
         let (video_values, audio_values) = (
@@ -790,7 +800,6 @@ impl Dit {
         }
         let sigma = (step.timestep / 1000.0).clamp(1e-6, 1.0);
         let audio_sigma = shift_sigma(sigma, step.video_shift, step.audio_shift);
-        let audio_scale = step.video_shift / step.audio_shift;
         // The sampler carries the audio latent scaled so both follow the video schedule.
         let carrier = &step.packed[video_values..video_values + audio_values];
         let restore = audio_sigma / sigma;
@@ -835,31 +844,79 @@ impl Dit {
 
         let times = self.times(&layout.timesteps)?;
         let rotary = rotary(&layout.positions, &f.f32("rope.inv_freq", &[FREQUENCIES])?);
+        Ok(Prepared {
+            x,
+            layout,
+            times,
+            rotary,
+        })
+    }
+    /// One block's modulation rows `[timesteps][3 modalities][shift, scale, gate, shift,
+    /// scale, gate][DIM]`.
+    pub(super) fn parts(&self, layer: usize, times: &[f32]) -> Result<Vec<f32>, &'static str> {
+        let name = |part: &str| format!("blocks.{layer}.{part}");
+        Ok(linear(
+            times,
+            TIME_WIDTH,
+            &self
+                .file
+                .floats(&name("adaln_proj.linear.weight"), &[DIM * 18, TIME_WIDTH])?,
+            &self
+                .file
+                .floats(&name("adaln_proj.linear.bias"), &[DIM * 18])?,
+        ))
+    }
+    /// Applies block `layer` to the token stream `x`.
+    pub(super) fn block(
+        &self,
+        layer: usize,
+        x: &mut [f32],
+        parts: &[f32],
+        spans: &[Span],
+        rotary: &[[f32; 2]],
+    ) -> Result<(), &'static str> {
+        let f = &self.file;
+        let name = |part: &str| format!("blocks.{layer}.{part}");
+        let mut h = rms_norm(x, &f.floats(&name("norm1.weight"), &[DIM])?);
+        modulate(&mut h, spans, parts, 6, 0, 1);
+        let qkv = self.linear8(&name("attn.qkv_proj"), &h, DIM, INNER * 3)?;
+        let mixed = attention(
+            &qkv,
+            &f.floats(&name("attn.q_norm.weight"), &[HEAD])?,
+            &f.floats(&name("attn.k_norm.weight"), &[HEAD])?,
+            Some(rotary),
+        );
+        let update = self.linear8(&name("attn.out_proj"), &mixed, INNER, DIM)?;
+        add_gated(x, &update, spans, parts, 2);
+        let mut h = rms_norm(x, &f.floats(&name("norm2.weight"), &[DIM])?);
+        modulate(&mut h, spans, parts, 6, 3, 4);
+        let h = self.linear8(&name("mlp.fc1"), &h, DIM, HIDDEN * 2)?;
+        let update = self.linear8(&name("mlp.fc2"), &gate(&h), HIDDEN, DIM)?;
+        add_gated(x, &update, spans, parts, 5);
+        Ok(())
+    }
+    /// Evaluates the network; returns the packed velocity with `step.packed`'s layout.
+    pub fn forward(&self, step: &Step) -> Result<Vec<f32>, &'static str> {
+        let f = &self.file;
+        let Prepared {
+            mut x,
+            layout,
+            times,
+            rotary,
+        } = self.prepare(step)?;
+        let plane = step.width * step.height * step.frames;
+        let (video_values, audio_values) = (
+            plane * VIDEO_CHANNELS,
+            step.audio_length * 2 * AUDIO_CHANNELS,
+        );
+        let sigma = (step.timestep / 1000.0).clamp(1e-6, 1.0);
+        let audio_sigma = shift_sigma(sigma, step.video_shift, step.audio_shift);
+        let audio_scale = step.video_shift / step.audio_shift;
+        let carrier = &step.packed[video_values..video_values + audio_values];
+        let restore = audio_sigma / sigma;
         for layer in 0..self.layers {
-            let name = |part: &str| format!("blocks.{layer}.{part}");
-            // `[timesteps][3 modalities][shift, scale, gate, shift, scale, gate][DIM]`.
-            let parts = linear(
-                &times,
-                TIME_WIDTH,
-                &f.floats(&name("adaln_proj.linear.weight"), &[DIM * 18, TIME_WIDTH])?,
-                &f.floats(&name("adaln_proj.linear.bias"), &[DIM * 18])?,
-            );
-            let mut h = rms_norm(&x, &f.floats(&name("norm1.weight"), &[DIM])?);
-            modulate(&mut h, &layout.spans, &parts, 6, 0, 1);
-            let qkv = self.linear8(&name("attn.qkv_proj"), &h, DIM, INNER * 3)?;
-            let mixed = attention(
-                &qkv,
-                &f.floats(&name("attn.q_norm.weight"), &[HEAD])?,
-                &f.floats(&name("attn.k_norm.weight"), &[HEAD])?,
-                Some(&rotary),
-            );
-            let update = self.linear8(&name("attn.out_proj"), &mixed, INNER, DIM)?;
-            add_gated(&mut x, &update, &layout.spans, &parts, 2);
-            let mut h = rms_norm(&x, &f.floats(&name("norm2.weight"), &[DIM])?);
-            modulate(&mut h, &layout.spans, &parts, 6, 3, 4);
-            let h = self.linear8(&name("mlp.fc1"), &h, DIM, HIDDEN * 2)?;
-            let update = self.linear8(&name("mlp.fc2"), &gate(&h), HIDDEN, DIM)?;
-            add_gated(&mut x, &update, &layout.spans, &parts, 5);
+            let parts = self.parts(layer, &times)?;
+            self.block(layer, &mut x, &parts, &layout.spans, &rotary)?;
         }
 
         // `[timesteps][shift, scale][DIM]`.
@@ -908,7 +965,7 @@ impl Dit {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]

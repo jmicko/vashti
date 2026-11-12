@@ -1,0 +1,24 @@
+// Gated activation between the DiT's feed-forward projections, from the INT8 product:
+//   u = value(g[token][i]), w = value(g[token][14336 + i]),  h[token][i] = silu(u) * w
+// with value = sum * activation scale[token] * weight scale[column]. One vec4 per
+// invocation; padded tokens are written as zeros.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Sums { ivec4 g[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
+layout(set = 0, binding = 2) readonly buffer Vectors { vec4 v[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { vec4 h[]; };
+// `scale_first` is in values and a multiple of 4.
+layout(push_constant) uniform Constants { uint tokens; uint scale_first; } p;
+const uint HIDDEN4 = 3584;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    bool live = token < p.tokens;
+    float row_scale = live ? as[token] : 0.0;
+    uint scale = (p.scale_first >> 2) + c;
+    vec4 u = vec4(g[token * 2 * HIDDEN4 + c]) * row_scale * v[scale];
+    vec4 w = vec4(g[token * 2 * HIDDEN4 + HIDDEN4 + c]) * row_scale * v[scale + HIDDEN4];
+    h[token * HIDDEN4 + c] = live ? u / (1.0 + exp(-u)) * w : vec4(0.0);
+}

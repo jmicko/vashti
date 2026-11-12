@@ -1,0 +1,76 @@
+// DiT attention operands from the INT8 query/key/value product, one invocation per token
+// and head:
+//   g[token][query 7168, key 7168, value 7168] (int32 sums), each [head][128]
+//   value = sum * activation scale[token] * weight scale[column]
+// Queries and keys get unit RMS over their 128 channels times a weight, then the rotary turn
+// on pairs (i, i + 48) for i < 48; the last 32 channels are not rotated.
+//   out: q[head][token][128], k[head][token][128], vt[head][128][token]   (f16)
+// Tokens from `tokens` up to `padded` are written as zeros.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 56) in;
+layout(set = 0, binding = 0) readonly buffer Sums { int g[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
+layout(set = 0, binding = 2) readonly buffer Vectors { float v[]; };
+layout(set = 0, binding = 3) readonly buffer Rotary { vec2 turn[]; };
+layout(set = 0, binding = 4) writeonly buffer Query { float16_t q[]; };
+layout(set = 0, binding = 5) writeonly buffer Key { float16_t k[]; };
+layout(set = 0, binding = 6) writeonly buffer Value { float16_t vt[]; };
+layout(push_constant) uniform Constants {
+    uint tokens;
+    uint padded;
+    uint scale_first;
+    uint query_first;
+    uint key_first;
+} p;
+const uint HEAD = 128;
+const uint INNER = 7168;
+const uint PAIRS = 48;
+
+void main() {
+    uint head = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    uint to = (head * p.padded + token) * HEAD;
+    bool live = token < p.tokens;
+    float row_scale = live ? as[token] : 0.0;
+    for (uint side = 0; side < 2; side++) {
+        uint from = token * (3 * INNER) + side * INNER + head * HEAD;
+        uint scales = p.scale_first + side * INNER + head * HEAD;
+        uint weight = side == 0 ? p.query_first : p.key_first;
+        float squares = 0.0;
+        for (uint c = 0; c < HEAD; c++) {
+            float value = float(g[from + c]) * row_scale * v[scales + c];
+            squares += value * value;
+        }
+        float norm = 1.0 / sqrt(squares / float(HEAD) + 1e-5);
+        for (uint c = 0; c < HEAD; c++) {
+            float a = float(g[from + c]) * row_scale * v[scales + c] * (norm * v[weight + c]);
+            if (c < PAIRS) {
+                float b = float(g[from + c + PAIRS]) * row_scale * v[scales + c + PAIRS]
+                    * (norm * v[weight + c + PAIRS]);
+                vec2 cs = live ? turn[token * PAIRS + c] : vec2(1.0, 0.0);
+                float16_t first = float16_t(cs.x * a - cs.y * b);
+                float16_t second = float16_t(cs.y * a + cs.x * b);
+                if (side == 0) {
+                    q[to + c] = first;
+                    q[to + c + PAIRS] = second;
+                } else {
+                    k[to + c] = first;
+                    k[to + c + PAIRS] = second;
+                }
+            } else if (c >= 2 * PAIRS) {
+                if (side == 0) q[to + c] = float16_t(a); else k[to + c] = float16_t(a);
+            }
+        }
+    }
+    uint from = token * (3 * INNER) + 2 * INNER + head * HEAD;
+    uint scales = p.scale_first + 2 * INNER + head * HEAD;
+    for (uint c = 0; c < HEAD; c++) {
+        float value = float(g[from + c]) * row_scale * v[scales + c];
+        vt[(head * HEAD + c) * p.padded + token] = float16_t(value);
+    }
+}

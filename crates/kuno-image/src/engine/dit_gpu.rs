@@ -1,7 +1,10 @@
 //! MiniMax H3 diffusion transformer on the GPU (Vulkan). Built kernel by kernel; every piece
 //! is checked against the CPU reference in `dit.rs` on identical inputs, because whole-network
 //! outputs only agree loosely (see the engine document).
-use super::gpu::{Buffer, Gpu, Kernel, Step, shaders};
+use super::{
+    dit,
+    gpu::{Buffer, Gpu, Kernel, Step, bytes_of, shaders},
+};
 
 /// One dispatch with its arguments owned, so a pass can be assembled as a list.
 pub struct Call<'a> {
@@ -24,14 +27,53 @@ pub fn run(gpu: &Gpu, calls: &[Call]) -> Result<(), &'static str> {
     gpu.pass(&steps)
 }
 
+const DIM: usize = dit::DIM;
+const INNER: usize = dit::INNER;
+const HIDDEN: usize = dit::HIDDEN;
+const HEADS: usize = dit::HEADS;
+const HEAD: usize = dit::HEAD;
+/// Offsets (in values) into a layer's vector buffer.
+const NORM1: usize = 0;
+const NORM2: usize = NORM1 + DIM;
+const QUERY_NORM: usize = NORM2 + DIM;
+const KEY_NORM: usize = QUERY_NORM + HEAD;
+const SCALE_QKV: usize = KEY_NORM + HEAD;
+const SCALE_OUT: usize = SCALE_QKV + INNER * 3;
+const SCALE_FC1: usize = SCALE_OUT + DIM;
+const SCALE_FC2: usize = SCALE_FC1 + HIDDEN * 2;
+/// Tokens are padded to the matrix kernels' token tile.
+const TILE: usize = 128;
+/// Weight rows per dispatch of the integer product (see gemm8.comp).
+const ROW_BLOCK: usize = 4096;
+/// Heads per attention dispatch; bounds the score buffer.
+const GROUP: usize = 8;
+
 /// Kernels of one DiT evaluation.
 pub struct Kernels {
     rotate8: Kernel,
+    gemm8: Kernel,
+    gemm: Kernel,
+    modnorm: Kernel,
+    heads8: Kernel,
+    rowmax: Kernel,
+    mixtop: Kernel,
+    merge8: Kernel,
+    resid8: Kernel,
+    gate8: Kernel,
 }
 impl Kernels {
     pub fn new(gpu: &Gpu) -> Result<Self, &'static str> {
         Ok(Self {
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 2, Some(16))?,
+            gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
+            gemm: gpu.kernel(shaders::GEMM, 3, 8, Some(16))?,
+            modnorm: gpu.kernel(shaders::MODNORM, 5, 4, None)?,
+            heads8: gpu.kernel(shaders::HEADS8, 7, 5, None)?,
+            rowmax: gpu.kernel(shaders::ROWMAX, 2, 3, None)?,
+            mixtop: gpu.kernel(shaders::MIXTOP, 5, 12, Some(16))?,
+            merge8: gpu.kernel(shaders::MERGE8, 3, 2, None)?,
+            resid8: gpu.kernel(shaders::RESID8, 6, 3, None)?,
+            gate8: gpu.kernel(shaders::GATE8, 4, 2, None)?,
         })
     }
     /// Quantizes `rows` f32 rows of `width` values in `input` to INT8 rows in `bytes` and one
@@ -51,15 +93,231 @@ impl Kernels {
             groups: [rows as u32, 1, 1],
         }
     }
+    /// `sums[token][row] = bytes[token][..columns] . weight[row][..columns]` for `rows` weight
+    /// rows, a block of rows per dispatch.
+    fn product<'a>(
+        &'a self,
+        bytes: &'a Buffer,
+        weight: &'a Buffer,
+        sums: &'a Buffer,
+        padded: usize,
+        rows: usize,
+        columns: usize,
+    ) -> impl Iterator<Item = Call<'a>> {
+        (0..rows).step_by(ROW_BLOCK).map(move |first| Call {
+            kernel: &self.gemm8,
+            buffers: vec![bytes, weight, sums],
+            constants: vec![
+                columns as u32,
+                0,
+                (first * columns) as u32,
+                first as u32,
+                rows as u32,
+            ],
+            groups: [
+                (ROW_BLOCK.min(rows - first) / 256) as u32,
+                (padded / TILE) as u32,
+                1,
+            ],
+        })
+    }
+}
+
+/// One block's weights on the GPU.
+pub struct Layer {
+    qkv: Buffer,
+    out: Buffer,
+    fc1: Buffer,
+    fc2: Buffer,
+    /// Norm weights and the linear layers' row scales, at the offsets above.
+    vectors: Buffer,
+}
+impl Layer {
+    pub fn load(gpu: &Gpu, model: &dit::Dit, layer: usize) -> Result<Self, &'static str> {
+        let f = &model.file;
+        let name = |part: &str| format!("blocks.{layer}.{part}");
+        let matrix = |part: &str, rows: usize, columns: usize| -> Result<Buffer, &'static str> {
+            let bytes = f.i8(&name(&format!("{part}.weight")), &[rows, columns])?;
+            let buffer = gpu.buffer(bytes.len() as u64)?;
+            gpu.upload(&buffer, 0, bytes_of(&bytes))?;
+            Ok(buffer)
+        };
+        let mut vectors = Vec::with_capacity(SCALE_FC2 + DIM);
+        vectors.extend(f.floats(&name("norm1.weight"), &[DIM])?);
+        vectors.extend(f.floats(&name("norm2.weight"), &[DIM])?);
+        vectors.extend(f.floats(&name("attn.q_norm.weight"), &[HEAD])?);
+        vectors.extend(f.floats(&name("attn.k_norm.weight"), &[HEAD])?);
+        vectors.extend(f.f32(&name("attn.qkv_proj.weight_scale"), &[INNER * 3, 1])?);
+        vectors.extend(f.f32(&name("attn.out_proj.weight_scale"), &[DIM, 1])?);
+        vectors.extend(f.f32(&name("mlp.fc1.weight_scale"), &[HIDDEN * 2, 1])?);
+        vectors.extend(f.f32(&name("mlp.fc2.weight_scale"), &[DIM, 1])?);
+        let buffer = gpu.buffer(vectors.len() as u64 * 4)?;
+        gpu.upload(&buffer, 0, bytes_of(&vectors))?;
+        Ok(Self {
+            qkv: matrix("attn.qkv_proj", INNER * 3, DIM)?,
+            out: matrix("attn.out_proj", DIM, INNER)?,
+            fc1: matrix("mlp.fc1", HIDDEN * 2, DIM)?,
+            fc2: matrix("mlp.fc2", DIM, HIDDEN)?,
+            vectors: buffer,
+        })
+    }
+}
+
+/// Buffers of one evaluation for a padded token count.
+pub struct Work {
+    pub tokens: usize,
+    pub padded: usize,
+    /// `[padded][DIM]` f32; padded rows are zero.
+    pub stream: Buffer,
+    /// Modulation row of each token.
+    pub rows: Buffer,
+    /// `[padded][48]` cosine and sine.
+    pub turns: Buffer,
+    /// One block's modulation vectors `[rows][6][DIM]`.
+    pub parts: Buffer,
+    wide: Buffer,
+    bytes: Buffer,
+    scales: Buffer,
+    sums: Buffer,
+    query: Buffer,
+    key: Buffer,
+    value: Buffer,
+    scores: Buffer,
+    top: Buffer,
+    weights: Buffer,
+    mixed: Buffer,
+}
+impl Work {
+    pub fn new(gpu: &Gpu, tokens: usize, rows: usize) -> Result<Self, &'static str> {
+        let padded = tokens.next_multiple_of(TILE);
+        let f32s = |count: usize| gpu.buffer(count as u64 * 4);
+        Ok(Self {
+            tokens,
+            padded,
+            stream: f32s(padded * DIM)?,
+            rows: f32s(padded)?,
+            turns: f32s(padded * dit::PAIRS * 2)?,
+            parts: f32s(rows * 6 * DIM)?,
+            wide: f32s(padded * HIDDEN)?,
+            bytes: gpu.buffer((padded * HIDDEN) as u64)?,
+            scales: f32s(padded)?,
+            sums: f32s(padded * HIDDEN * 2)?,
+            query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
+            key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
+            value: gpu.buffer((HEADS * HEAD * padded) as u64 * 2)?,
+            scores: f32s(GROUP * padded * padded)?,
+            top: f32s(HEADS * padded)?,
+            weights: f32s(HEADS * padded * 8)?,
+            mixed: f32s(HEADS * padded * HEAD)?,
+        })
+    }
+}
+
+impl Kernels {
+    /// The dispatches of one block on `work.stream`, with the block's modulation vectors
+    /// already in `work.parts`.
+    pub fn block<'a>(&'a self, layer: &'a Layer, work: &'a Work) -> Vec<Call<'a>> {
+        let (n, np) = (work.tokens as u32, work.padded as u32);
+        let w = work;
+        let v = &layer.vectors;
+        let mut calls = Vec::new();
+        let modnorm = |weight: usize, shift: u32, scale: u32| Call {
+            kernel: &self.modnorm,
+            buffers: vec![&w.stream, v, &w.parts, &w.rows, &w.wide],
+            constants: vec![n, weight as u32, shift, scale],
+            groups: [np, 1, 1],
+        };
+        let residual = |scale: usize, gate: u32| Call {
+            kernel: &self.resid8,
+            buffers: vec![&w.stream, &w.sums, &w.scales, v, &w.parts, &w.rows],
+            constants: vec![n, scale as u32, gate],
+            groups: [(DIM / 4 / 64) as u32, np, 1],
+        };
+        let quantize = |width: usize| self.quantize(&w.wide, &w.bytes, &w.scales, w.padded, width);
+
+        calls.push(modnorm(NORM1, 0, 1));
+        calls.push(quantize(DIM));
+        calls.extend(self.product(&w.bytes, &layer.qkv, &w.sums, w.padded, INNER * 3, DIM));
+        calls.push(Call {
+            kernel: &self.heads8,
+            buffers: vec![&w.sums, &w.scales, v, &w.turns, &w.query, &w.key, &w.value],
+            constants: vec![n, np, SCALE_QKV as u32, QUERY_NORM as u32, KEY_NORM as u32],
+            groups: [1, np, 1],
+        });
+        let tiles = np / TILE as u32;
+        let (head_width, group) = (HEAD as u32, GROUP as u32);
+        for head in (0..HEADS as u32).step_by(GROUP) {
+            calls.push(Call {
+                kernel: &self.gemm,
+                buffers: vec![&w.query, &w.key, &w.scores],
+                constants: vec![
+                    head_width,
+                    head * np * head_width,
+                    np * head_width,
+                    head * np * head_width,
+                    np * head_width,
+                    0,
+                    np * np,
+                    np,
+                ],
+                groups: [tiles, tiles, group],
+            });
+            calls.push(Call {
+                kernel: &self.rowmax,
+                buffers: vec![&w.scores, &w.top],
+                constants: vec![n, np, head * np],
+                groups: [1, np, group],
+            });
+            calls.push(Call {
+                kernel: &self.mixtop,
+                buffers: vec![&w.scores, &w.value, &w.mixed, &w.top, &w.weights],
+                constants: vec![
+                    np,
+                    0,
+                    np * np,
+                    head * head_width * np,
+                    head_width * np,
+                    head * np * head_width,
+                    np * head_width,
+                    head_width,
+                    n,
+                    head * np,
+                    np,
+                    (1.0 / (HEAD as f32).sqrt()).to_bits(),
+                ],
+                groups: [1, tiles, group],
+            });
+        }
+        calls.push(Call {
+            kernel: &self.merge8,
+            buffers: vec![&w.mixed, &w.weights, &w.wide],
+            constants: vec![n, np],
+            groups: [1, np, 1],
+        });
+        calls.push(quantize(INNER));
+        calls.extend(self.product(&w.bytes, &layer.out, &w.sums, w.padded, DIM, INNER));
+        calls.push(residual(SCALE_OUT, 2));
+
+        calls.push(modnorm(NORM2, 3, 4));
+        calls.push(quantize(DIM));
+        calls.extend(self.product(&w.bytes, &layer.fc1, &w.sums, w.padded, HIDDEN * 2, DIM));
+        calls.push(Call {
+            kernel: &self.gate8,
+            buffers: vec![&w.sums, &w.scales, v, &w.wide],
+            constants: vec![n, SCALE_FC1 as u32],
+            groups: [(HIDDEN / 4 / 64) as u32, np, 1],
+        });
+        calls.push(quantize(HIDDEN));
+        calls.extend(self.product(&w.bytes, &layer.fc2, &w.sums, w.padded, DIM, HIDDEN));
+        calls.push(residual(SCALE_FC2, 5));
+        calls
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        super::{
-            dit,
-            gpu::{Select, bytes_of, floats},
-        },
+        super::gpu::{Select, floats},
         *,
     };
 
@@ -126,5 +384,125 @@ mod tests {
                 started.elapsed().as_secs_f64() * 250.0
             );
         }
+    }
+
+    /// One block on the GPU against the reference on the same input, from a captured step.
+    #[test]
+    #[ignore = "needs the Intel GPU, the model and a captured step"]
+    fn block_matches_reference() {
+        let (Ok(model), Ok(golden)) = (std::env::var("KUNO_DIT"), std::env::var("KUNO_DIT_GOLDEN"))
+        else {
+            panic!("set KUNO_DIT and KUNO_DIT_GOLDEN (a captured step's path prefix)");
+        };
+        let captured = dit::tests::Captured::read(&golden);
+        let model = dit::Dit::open(std::path::Path::new(&model)).unwrap();
+        let prepared = model.prepare(&captured.step()).unwrap();
+        let tokens = prepared.layout.positions.len();
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let kernels = Kernels::new(&gpu).unwrap();
+        let rows = prepared.layout.timesteps.len() * 3;
+        let work = Work::new(&gpu, tokens, rows).unwrap();
+        let mut token_rows = vec![0u32; work.padded];
+        for span in &prepared.layout.spans {
+            token_rows[span.start..span.end].fill(span.row as u32);
+        }
+        let mut turns: Vec<f32> = prepared.rotary.iter().flatten().copied().collect();
+        turns.resize(work.padded * dit::PAIRS * 2, 0.0);
+        gpu.upload(&work.rows, 0, bytes_of(&token_rows)).unwrap();
+        gpu.upload(&work.turns, 0, bytes_of(&turns)).unwrap();
+        for index in [0usize, 20, 49] {
+            let layer = Layer::load(&gpu, &model, index).unwrap();
+            let parts = model.parts(index, &prepared.times).unwrap();
+            let mut want = prepared.x.clone();
+            model
+                .block(
+                    index,
+                    &mut want,
+                    &parts,
+                    &prepared.layout.spans,
+                    &prepared.rotary,
+                )
+                .unwrap();
+            let mut start = prepared.x.clone();
+            start.resize(work.padded * DIM, 0.0);
+            gpu.upload(&work.stream, 0, bytes_of(&start)).unwrap();
+            gpu.upload(&work.parts, 0, bytes_of(&parts)).unwrap();
+            let calls = kernels.block(&layer, &work);
+            let started = std::time::Instant::now();
+            run(&gpu, &calls).unwrap();
+            let seconds = started.elapsed().as_secs_f64();
+            let got = floats(&gpu.download(&work.stream, 0, tokens * DIM * 4).unwrap());
+            let (mut error, mut change) = (0f64, 0f64);
+            for ((got, want), before) in got.iter().zip(&want).zip(&prepared.x) {
+                error += f64::from(got - want).powi(2);
+                change += f64::from(want - before).powi(2);
+            }
+            let db = 10.0 * (change / error.max(1e-30)).log10();
+            println!(
+                "block {index}: {db:.1} dB from the reference's update, {tokens} tokens, {:.1} ms",
+                seconds * 1e3
+            );
+            assert!(db > 30.0);
+        }
+    }
+
+    /// Time of one block at a real clip's size (2.3 s at 832x544 is 8611 tokens).
+    #[test]
+    #[ignore = "needs the Intel GPU and the model"]
+    fn block_speed_at_clip_size() {
+        let model =
+            dit::Dit::open(std::path::Path::new(&std::env::var("KUNO_DIT").unwrap())).unwrap();
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let kernels = Kernels::new(&gpu).unwrap();
+        let (tokens, rows) = (8611, 12);
+        let work = Work::new(&gpu, tokens, rows).unwrap();
+        let mut start = noise(tokens * DIM, 5);
+        start.resize(work.padded * DIM, 0.0);
+        gpu.upload(&work.stream, 0, bytes_of(&start)).unwrap();
+        gpu.upload(&work.rows, 0, bytes_of(&vec![0u32; work.padded]))
+            .unwrap();
+        let mut turns = vec![[1f32, 0.0]; work.padded * dit::PAIRS];
+        for (i, turn) in turns.iter_mut().enumerate() {
+            let angle = i as f32 * 0.01;
+            *turn = [angle.cos(), angle.sin()];
+        }
+        gpu.upload(&work.turns, 0, bytes_of(&turns)).unwrap();
+        gpu.upload(&work.parts, 0, bytes_of(&noise(rows * 6 * DIM, 6)))
+            .unwrap();
+        let layer = Layer::load(&gpu, &model, 10).unwrap();
+        let calls = kernels.block(&layer, &work);
+        run(&gpu, &calls).unwrap();
+        let names = [
+            (&kernels.rotate8, "quantize"),
+            (&kernels.gemm8, "linear"),
+            (&kernels.gemm, "scores"),
+            (&kernels.modnorm, "norm"),
+            (&kernels.heads8, "operands"),
+            (&kernels.rowmax, "row maximum"),
+            (&kernels.mixtop, "mixing"),
+            (&kernels.merge8, "merge"),
+            (&kernels.resid8, "residual"),
+            (&kernels.gate8, "gate"),
+        ];
+        let mut totals = std::collections::BTreeMap::new();
+        for call in &calls {
+            let started = std::time::Instant::now();
+            run(&gpu, std::slice::from_ref(call)).unwrap();
+            let name = names
+                .iter()
+                .find(|n| std::ptr::eq(n.0, call.kernel))
+                .unwrap()
+                .1;
+            *totals.entry(name).or_insert(0.0) += started.elapsed().as_secs_f64();
+        }
+        for (name, seconds) in &totals {
+            println!("{:8.1} ms  {name}", seconds * 1e3);
+        }
+        let started = std::time::Instant::now();
+        run(&gpu, &calls).unwrap();
+        println!(
+            "one block, {tokens} tokens: {:.1} ms in one submission",
+            started.elapsed().as_secs_f64() * 1e3
+        );
     }
 }
