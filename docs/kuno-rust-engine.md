@@ -264,9 +264,35 @@ What moved attention:
 Even with scores never leaving the workgroup, the two products alone take about 43 ms at the
 rate these kernels reach; the C++ engine's whole attention is 25 ms.
 
-Not done: the worker hand-over. The C++ engine keeps its own DiT weights and a text encoder
-cache in video memory and does not see Rust's 19 GB, so sampling in Rust inside the worker
-needs the two to agree on memory first.
+### In the worker
+
+Built with the `rust-dit` feature (`cargo build -p kuno --features native-image,rust-dit`),
+the worker samples MiniMax H3 with the Rust DiT. The feature is off by default, because a
+step still takes longer than the C++ engine's; a default build is unchanged.
+
+The engine patch adds `sd_kuno_set_dit`: every network evaluation is offered to the
+evaluator with its inputs (packed latent, timestep, text features and tags, condition
+latents, key-frame and reference layout, schedule shifts). Before sampling the engine
+releases the text encoder's and the VAE's device memory, which it does not need while the
+evaluator holds the device, and since its own DiT is never evaluated its weights are never
+staged. The worker loads the Rust DiT at a clip's first evaluation (4.6 s) and drops it
+before decoding, so it holds no GPU memory while other models run. An error hands the
+remaining steps back to the engine.
+
+Checked with the feature on (dev worker, 2.3 s clips at 832x544):
+
+- All seven modes (image to video, first frame, text only, first and last frame, last frame
+  only, two references, one reference) produce clips, and a Qwen image after a video still
+  works. The reference modes use the second DiT file and the reference token layout, which
+  no captured step had covered.
+- Side by side with clips the C++ sampler made from the same requests, each mode shows the
+  same scene at the same quality. Frames are not identical: 32 to 34 dB PSNR for the
+  image-conditioned modes, 23 dB for text only, 16 dB for the 4-step reference modes, where
+  the composition drifts in details.
+- Two same-seed clips are byte-identical to each other.
+- A step takes 6.2 s (C++ engine 3.4 s): 5.4 s in the blocks, 0.3 s reading the stream back,
+  0.2 s embedding, 0.3 s for modulation vectors, uploads and output heads on the CPU. The
+  first clip of a worker takes 80 s where the C++ sampler takes 63 s.
 
 ## Running the comparisons
 
