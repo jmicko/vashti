@@ -1,8 +1,8 @@
 diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
-index a2bfdb6..25ed4ba 100644
+index a2bfdb6..dddab33 100644
 --- a/include/stable-diffusion.h
 +++ b/include/stable-diffusion.h
-@@ -503,6 +503,21 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
+@@ -503,6 +503,52 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
  
  SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
  SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
@@ -21,6 +21,37 @@ index a2bfdb6..25ed4ba 100644
 +// engine decodes the latent itself.
 +typedef bool (*sd_kuno_video_decoder_cb_t)(const float* latent, int64_t width, int64_t height, int64_t frames, float* pixels, int64_t pixel_frames, void* data);
 +SD_API void sd_kuno_set_video_decoder(sd_ctx_t* sd_ctx, sd_kuno_video_decoder_cb_t decoder, void* data);
++// Kuno can evaluate the MiniMax H3 diffusion transformer in Rust. With an evaluator set, every
++// network evaluation of generate_video is offered to it: `x` is the packed latent
++// ([channels][frames][height][width], width varying fastest), `out` receives the result in the
++// same layout. Condition videos are [24][frames][height][width] with three shape values each
++// (width, height, frames); condition audios are [32][2][length]; references are (kind, video
++// index, audio index) triples. Before sampling, the engine releases the text encoder's and
++// the VAE's device memory, which it does not need while the evaluator holds the device. When
++// the evaluator returns false the engine evaluates the step itself.
++typedef struct {
++    const float* x;
++    int64_t width, height, frames, channels;
++    float timestep;
++    const float* context;
++    int64_t text_tokens, text_width;
++    const int32_t* tags;
++    int64_t tag_count;
++    const float* const* videos;
++    const int64_t* video_shapes;
++    int64_t video_count;
++    const float* const* audios;
++    const int64_t* audio_lengths;
++    int64_t audio_count;
++    const int32_t* keyframes;
++    int64_t keyframe_count;
++    const int32_t* references;
++    int64_t reference_count;
++    int32_t audio_length;
++    float video_shift, audio_shift;
++} sd_kuno_dit_step_t;
++typedef bool (*sd_kuno_dit_cb_t)(const sd_kuno_dit_step_t* step, float* out, void* data);
++SD_API void sd_kuno_set_dit(sd_ctx_t* sd_ctx, sd_kuno_dit_cb_t evaluator, void* data);
  SD_API void free_sd_audio(sd_audio_t* audio);
  
  SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
@@ -685,7 +716,7 @@ index ec82245..3f5d197 100644
                                               ggml_tensor* q,
                                               ggml_tensor* k,
 diff --git a/src/model/diffusion/minimax_h3.hpp b/src/model/diffusion/minimax_h3.hpp
-index ed7c5ac..7739106 100644
+index ed7c5ac..d59996e 100644
 --- a/src/model/diffusion/minimax_h3.hpp
 +++ b/src/model/diffusion/minimax_h3.hpp
 @@ -976,6 +976,19 @@ namespace MiniMaxH3 {
@@ -708,11 +739,92 @@ index ed7c5ac..7739106 100644
          void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors,
                                 const std::string& prefix) override {
              model.get_param_tensors(tensors, prefix);
+@@ -1161,6 +1174,60 @@ namespace MiniMaxH3 {
+                                                ? empty_reference_blocks
+                                                : *extra->reference_blocks;
+             const sd::Tensor<int32_t> empty_int;
++            // Kuno: offer the evaluation to the external evaluator first.
++            if (kuno_minimax_h3_dit != nullptr && params.x->dim() >= 4 && params.context->dim() >= 2) {
++                const auto& x_shape = params.x->shape();
++                std::vector<const float*> videos, audios;
++                std::vector<int64_t> video_shapes, audio_lengths;
++                bool usable = true;
++                for (const auto& condition : conditions) {
++                    usable = usable && condition.dim() >= 4 && condition.shape()[3] == config.video_latent_channels;
++                    videos.push_back(condition.data());
++                    for (int i = 0; i < 3 && usable; ++i) {
++                        video_shapes.push_back(condition.shape()[static_cast<size_t>(i)]);
++                    }
++                }
++                for (const auto& condition : audio_conditions) {
++                    usable = usable && condition.dim() >= 3;
++                    audios.push_back(condition.data());
++                    audio_lengths.push_back(usable ? condition.shape()[0] : 0);
++                }
++                std::vector<int32_t> references;
++                for (const auto& block : reference_blocks) {
++                    references.push_back(static_cast<int32_t>(block.kind));
++                    references.push_back(block.video_index);
++                    references.push_back(block.audio_index);
++                }
++                sd_kuno_dit_step_t step{};
++                step.x              = params.x->data();
++                step.width          = x_shape[0];
++                step.height         = x_shape[1];
++                step.frames         = x_shape[2];
++                step.channels       = x_shape[3];
++                step.timestep       = (*params.timesteps)[0];
++                step.context        = params.context->data();
++                step.text_width     = params.context->shape()[0];
++                step.text_tokens    = params.context->shape()[1];
++                step.tags           = extra->text_token_tags == nullptr ? nullptr : extra->text_token_tags->data();
++                step.tag_count      = extra->text_token_tags == nullptr ? 0 : extra->text_token_tags->numel();
++                step.videos         = videos.data();
++                step.video_shapes   = video_shapes.data();
++                step.video_count    = static_cast<int64_t>(videos.size());
++                step.audios         = audios.data();
++                step.audio_lengths  = audio_lengths.data();
++                step.audio_count    = static_cast<int64_t>(audios.size());
++                step.keyframes      = extra->keyframe_indices == nullptr ? nullptr : extra->keyframe_indices->data();
++                step.keyframe_count = extra->keyframe_indices == nullptr ? 0 : extra->keyframe_indices->numel();
++                step.references     = references.data();
++                step.reference_count = static_cast<int64_t>(reference_blocks.size());
++                step.audio_length   = extra->audio_length;
++                step.video_shift    = extra->video_sigma_shift;
++                step.audio_shift    = extra->audio_sigma_shift;
++                sd::Tensor<float> result(x_shape);
++                if (usable && kuno_minimax_h3_dit(&step, result.data(), kuno_minimax_h3_dit_data)) {
++                    return result;
++                }
++            }
+             auto get_graph = [&]() {
+                 return build_graph(*params.x,
+                                    *params.timesteps,
 diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
-index c82b9d7..46e9574 100644
+index c82b9d7..907e481 100644
 --- a/src/model/diffusion/model.hpp
 +++ b/src/model/diffusion/model.hpp
-@@ -196,6 +196,10 @@ public:
+@@ -6,6 +6,7 @@
+ #include <variant>
+ 
+ #include "core/ggml_runner.h"
++#include "stable-diffusion.h"
+ #include "core/tensor_ggml.hpp"
+ #include "model/common/rope_circular.hpp"
+ #include "model_manager.h"
+@@ -111,6 +112,11 @@ struct MiniMaxH3ReferenceBlock {
+     int32_t audio_index         = -1;
+ };
+ 
++// Kuno: optional external evaluator of the MiniMax H3 network (see sd_kuno_set_dit). One
++// context owns the process, so the hook is process-wide.
++inline sd_kuno_dit_cb_t kuno_minimax_h3_dit = nullptr;
++inline void* kuno_minimax_h3_dit_data       = nullptr;
++
+ struct MiniMaxH3DiffusionExtra {
+     const sd::Tensor<int32_t>* text_token_tags                    = nullptr;
+     const sd::Tensor<int32_t>* keyframe_indices                   = nullptr;
+@@ -196,6 +202,10 @@ public:
          : GGMLRunner(backend, weight_manager),
            prefix(prefix) {}
  
@@ -1477,7 +1589,7 @@ index 9b8819a..7dc3fb8 100644
              result.vae->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
          }
 diff --git a/src/pipeline/video.cpp b/src/pipeline/video.cpp
-index 2fcff4c..d1c1bb0 100644
+index 2fcff4c..4eeb979 100644
 --- a/src/pipeline/video.cpp
 +++ b/src/pipeline/video.cpp
 @@ -1238,7 +1238,27 @@ namespace sd::pipeline {
@@ -1509,7 +1621,30 @@ index 2fcff4c..d1c1bb0 100644
          int64_t t5            = ggml_time_ms();
          LOG_INFO("decode_first_stage completed, taking %.2fs", (t5 - t4) * 1.0f / 1000);
          if (vid.empty()) {
-@@ -1885,7 +1905,8 @@ namespace sd::pipeline {
+@@ -1676,6 +1696,22 @@ namespace sd::pipeline {
+             return false;
+         }
+         LOG_VERBOSE("sample %dx%dx%d", W, H, T);
++        // Kuno: an external evaluator brings its own weights; make room for them.
++        if (kuno_minimax_h3_dit != nullptr && sd_version_is_minimax_h3(sd->version) && sd->model_manager != nullptr) {
++            std::map<std::string, ggml_tensor*> named;
++            if (sd->cond_stage_model != nullptr) {
++                sd->cond_stage_model->get_param_tensors(named);
++            }
++            if (sd->first_stage_model != nullptr) {
++                sd->first_stage_model->get_param_tensors(named);
++            }
++            std::vector<ggml_tensor*> tensors;
++            tensors.reserve(named.size());
++            for (const auto& entry : named) {
++                tensors.push_back(entry.second);
++            }
++            sd->model_manager->evict_compute_backend_params(tensors);
++        }
+         int64_t sampling_start         = ggml_time_ms();
+         sd::Tensor<float> final_latent = sd->sample(sd->diffusion_model,
+                                                     true,
+@@ -1885,7 +1921,8 @@ namespace sd::pipeline {
          }
          if ((sd_version_is_ltxav(sd->version) || sd_version_is_minimax_h3(sd->version)) &&
              latents.audio_length > 0 &&
@@ -1519,7 +1654,7 @@ index 2fcff4c..d1c1bb0 100644
              if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
                  LOG_ERROR("cancelling generation before audio decode");
                  return false;
-@@ -1899,7 +1920,13 @@ namespace sd::pipeline {
+@@ -1899,7 +1936,13 @@ namespace sd::pipeline {
                                      : unpack_ltxav_audio_latent(final_latent,
                                                                  latents.audio_length,
                                                                  sd->get_latent_channel());
@@ -1535,10 +1670,10 @@ index 2fcff4c..d1c1bb0 100644
                              (int)audio_latent.shape()[0],
                              (int)audio_latent.shape()[1],
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
-index b13c055..1efa1ab 100644
+index b13c055..ba9c9d1 100644
 --- a/src/stable-diffusion.cpp
 +++ b/src/stable-diffusion.cpp
-@@ -662,6 +662,28 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
+@@ -662,6 +662,35 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
      free(sd_ctx);
  }
  
@@ -1561,6 +1696,13 @@ index b13c055..1efa1ab 100644
 +    if (sd_ctx && sd_ctx->sd) {
 +        sd_ctx->sd->kuno_video_decoder      = decoder;
 +        sd_ctx->sd->kuno_video_decoder_data = data;
++    }
++}
++
++SD_API void sd_kuno_set_dit(sd_ctx_t* sd_ctx, sd_kuno_dit_cb_t evaluator, void* data) {
++    if (sd_ctx && sd_ctx->sd) {
++        kuno_minimax_h3_dit      = evaluator;
++        kuno_minimax_h3_dit_data = data;
 +    }
 +}
 +

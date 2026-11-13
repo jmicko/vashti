@@ -135,10 +135,39 @@ unsafe extern "C" {
         decode_video: Option<
             extern "C" fn(*const f32, i64, i64, i64, *mut f32, i64, *mut c_void) -> bool,
         >,
+        evaluate_dit: Option<extern "C" fn(*const DitStep, *mut f32, *mut c_void) -> bool>,
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
         phase: extern "C" fn(i32, i32, i32, *mut c_void),
         userdata: *mut c_void,
     ) -> i32;
+}
+/// `sd_kuno_dit_step_t`: one evaluation of the diffusion transformer.
+#[repr(C)]
+struct DitStep {
+    x: *const f32,
+    width: i64,
+    height: i64,
+    frames: i64,
+    channels: i64,
+    timestep: f32,
+    context: *const f32,
+    text_tokens: i64,
+    text_width: i64,
+    tags: *const i32,
+    tag_count: i64,
+    videos: *const *const f32,
+    video_shapes: *const i64,
+    video_count: i64,
+    audios: *const *const f32,
+    audio_lengths: *const i64,
+    audio_count: i64,
+    keyframes: *const i32,
+    keyframe_count: i64,
+    references: *const i32,
+    reference_count: i64,
+    audio_length: i32,
+    video_shift: f32,
+    audio_shift: f32,
 }
 
 /// Request-owned video output, filled synchronously by the shim callbacks.
@@ -153,6 +182,11 @@ struct VideoOutput {
     /// Where the Rust video decoder finds its GPU and model.
     pci: String,
     video_model: std::path::PathBuf,
+    /// The Rust DiT: loaded at the clip's first evaluation, dropped before decoding so its
+    /// weights do not hold GPU memory while other models run.
+    dit_model: std::path::PathBuf,
+    dit: Option<crate::engine::dit_gpu::GpuDit>,
+    dit_failed: bool,
     invalid: bool,
     previews: bool,
 }
@@ -237,6 +271,8 @@ extern "C" fn decode_video_latent(
     {
         return false;
     }
+    // Sampling is over: free the DiT's memory before the decoder loads.
+    out.dit = None;
     let (width, height, frames) = (width as usize, height as usize, frames as usize);
     if video_tiles::output_frames(frames) as i64 != pixel_frames {
         return false;
@@ -265,6 +301,149 @@ extern "C" fn decode_video_latent(
         }
         Err(code) => {
             eprintln!("kuno-image: rust video decode unavailable ({code}); engine decodes");
+            false
+        }
+    }
+}
+/// Evaluates the diffusion transformer with the Rust GPU DiT. Returning false hands the
+/// step back to the C++ engine, for this and every later step of the clip.
+extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_void) -> bool {
+    use crate::engine::{dit, dit_gpu::GpuDit, gpu};
+    // SAFETY: as receive_video_frame; the shim passes a live step whose pointers hold the
+    // counts and shapes it states, and `result` has the packed latent's size.
+    let (out, step) = unsafe { (&mut *(data as *mut VideoOutput), &*step) };
+    if out.dit_failed || step.x.is_null() || step.context.is_null() || result.is_null() {
+        return false;
+    }
+    let size = |v: i64, most: i64| (1..=most).contains(&v).then_some(v as usize);
+    let count = |v: i64, most: i64| (0..=most).contains(&v).then_some(v as usize);
+    let evaluated = (|| -> Result<(), &'static str> {
+        let invalid = "video_input_invalid";
+        let (width, height, frames, channels) = (
+            size(step.width, 4096).ok_or(invalid)?,
+            size(step.height, 4096).ok_or(invalid)?,
+            size(step.frames, 4096).ok_or(invalid)?,
+            size(step.channels, 4096).ok_or(invalid)?,
+        );
+        let tokens = size(step.text_tokens, 1 << 16).ok_or(invalid)?;
+        if step.text_width != dit::TEXT_WIDTH as i64 {
+            return Err(invalid);
+        }
+        let slice = |from: *const f32, len: usize| -> Result<&[f32], &'static str> {
+            if from.is_null() {
+                return Err(invalid);
+            }
+            // SAFETY: the engine's tensor holds `len` values (shape checked by the caller).
+            Ok(unsafe { std::slice::from_raw_parts(from, len) })
+        };
+        let ints = |from: *const i32, len: usize| -> &[i32] {
+            if from.is_null() || len == 0 {
+                return &[];
+            }
+            // SAFETY: as above.
+            unsafe { std::slice::from_raw_parts(from, len) }
+        };
+        let packed = slice(step.x, width * height * frames * channels)?;
+        let (video_count, audio_count, reference_count) = (
+            count(step.video_count, 64).ok_or(invalid)?,
+            count(step.audio_count, 64).ok_or(invalid)?,
+            count(step.reference_count, 64).ok_or(invalid)?,
+        );
+        let mut videos = Vec::with_capacity(video_count);
+        for i in 0..video_count {
+            // SAFETY: `videos` holds `video_count` pointers and `video_shapes` three values each.
+            let (data, shape) = unsafe {
+                (
+                    *step.videos.add(i),
+                    std::slice::from_raw_parts(step.video_shapes.add(i * 3), 3),
+                )
+            };
+            let (w, h, t) = (
+                size(shape[0], 4096).ok_or(invalid)?,
+                size(shape[1], 4096).ok_or(invalid)?,
+                size(shape[2], 4096).ok_or(invalid)?,
+            );
+            videos.push(dit::Video {
+                data: slice(data, dit::VIDEO_CHANNELS * w * h * t)?,
+                width: w,
+                height: h,
+                frames: t,
+            });
+        }
+        let mut audios = Vec::with_capacity(audio_count);
+        for i in 0..audio_count {
+            // SAFETY: as for the videos.
+            let (data, length) = unsafe { (*step.audios.add(i), *step.audio_lengths.add(i)) };
+            let length = size(length, 1 << 20).ok_or(invalid)?;
+            audios.push(dit::Audio {
+                data: slice(data, dit::AUDIO_CHANNELS * 2 * length)?,
+                length,
+            });
+        }
+        let mut references = Vec::with_capacity(reference_count);
+        for triple in ints(step.references, reference_count * 3).chunks_exact(3) {
+            let index = |v: i32, len: usize| match v {
+                v if v < 0 => Ok(None),
+                v if (v as usize) < len => Ok(Some(v as usize)),
+                _ => Err(invalid),
+            };
+            references.push(dit::Reference {
+                kind: match triple[0] {
+                    0 => dit::ReferenceKind::Image,
+                    1 => dit::ReferenceKind::Video,
+                    2 => dit::ReferenceKind::Audio,
+                    3 => dit::ReferenceKind::VideoAudio,
+                    _ => return Err(invalid),
+                },
+                video: index(triple[1], videos.len())?,
+                audio: index(triple[2], audios.len())?,
+            });
+        }
+        let started = std::time::Instant::now();
+        if out.dit.is_none() {
+            let gpu = gpu::Gpu::open(gpu::Select::Pci(out.pci.clone()))?;
+            out.dit = Some(GpuDit::load(&gpu, &out.dit_model)?);
+            eprintln!(
+                "kuno-image: rust dit: load {} ms",
+                started.elapsed().as_millis()
+            );
+        }
+        let network = out.dit.as_ref().ok_or("gpu_failed")?;
+        let started = std::time::Instant::now();
+        let mut values = network.forward(&dit::Step {
+            packed,
+            width,
+            height,
+            frames,
+            audio_length: count(i64::from(step.audio_length), 1 << 20).ok_or(invalid)?,
+            timestep: step.timestep,
+            context: slice(step.context, tokens * dit::TEXT_WIDTH)?,
+            tags: ints(step.tags, count(step.tag_count, 1 << 16).ok_or(invalid)?),
+            videos: &videos,
+            audios: &audios,
+            keyframes: ints(
+                step.keyframes,
+                count(step.keyframe_count, 64).ok_or(invalid)?,
+            ),
+            references: &references,
+            video_shift: step.video_shift,
+            audio_shift: step.audio_shift,
+        })?;
+        eprintln!(
+            "kuno-image: rust dit: step {} ms",
+            started.elapsed().as_millis()
+        );
+        // SAFETY: `result` has the packed latent's size, which `forward` returns.
+        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), result, values.len()) };
+        values.iter_mut().for_each(|v| *v = 0.0);
+        Ok(())
+    })();
+    match evaluated {
+        Ok(()) => true,
+        Err(code) => {
+            eprintln!("kuno-image: rust dit unavailable ({code}); engine samples");
+            out.dit = None;
+            out.dit_failed = true;
             false
         }
     }
@@ -519,6 +698,13 @@ impl Session {
             audio: None,
             pci: self.pci.clone(),
             video_model: self.directory.join("minimax_h3_video_vae_fp16.safetensors"),
+            dit_model: self.directory.join(if recipe.uses_reference_model() {
+                "minimax_h3_ref2va_turbo4_int8_convrot.safetensors"
+            } else {
+                "minimax_h3_fl2va_turbo8_int8_convrot.safetensors"
+            }),
+            dit: None,
+            dit_failed: false,
             invalid: false,
             previews,
         };
@@ -543,6 +729,7 @@ impl Session {
                 receive_video_frame,
                 receive_audio_latent,
                 Some(decode_video_latent),
+                cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
                 Some(video_preview),
                 video_phase,
                 &mut output as *mut _ as *mut c_void,
@@ -550,6 +737,7 @@ impl Session {
         };
         drop(references);
         drop(inputs);
+        output.dit = None;
         // Always join, so no request-derived work outlives the call.
         let audio = output.audio.take().map(|decode| decode.join());
         match code {

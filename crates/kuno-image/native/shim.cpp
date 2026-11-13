@@ -291,11 +291,14 @@ using FrameReceiver = void (*)(const uint8_t*, size_t, void*);
 using AudioLatentReceiver = void (*)(const float*, int64_t, int64_t, int64_t, void*);
 // Decodes the video latent in Rust; false makes the engine decode it instead.
 using VideoDecoder = bool (*)(const float*, int64_t, int64_t, int64_t, float*, int64_t, void*);
+// Evaluates the diffusion transformer in Rust; false makes the engine evaluate the step.
+using DitEvaluator = bool (*)(const sd_kuno_dit_step_t*, float*, void*);
 struct KunoRgbImage { uint32_t width; uint32_t height; const uint8_t* data; };
 extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, const char* prompt,
     int width, int height, int frames, int fps, int steps, int64_t seed, const uint8_t* first_frame,
     const uint8_t* last_frame, const KunoRgbImage* references, int reference_count,
     FrameReceiver receive_frame, AudioLatentReceiver receive_audio_latent, VideoDecoder decode_video,
+    DitEvaluator evaluate_dit,
     PreviewReceiver preview_receiver,
     PhaseReceiver phase, void* userdata) {
     auto* session = static_cast<KunoQwenSession*>(opaque);
@@ -416,10 +419,12 @@ extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, 
                 ~LatentReceiver() {
                     sd_kuno_set_audio_latent_receiver(context, nullptr, nullptr);
                     sd_kuno_set_video_decoder(context, nullptr, nullptr);
+                    sd_kuno_set_dit(context, nullptr, nullptr);
                 }
             } latent_receiver{state.context};
             sd_kuno_set_audio_latent_receiver(state.context, receive_audio_latent, userdata);
             sd_kuno_set_video_decoder(state.context, decode_video, userdata);
+            sd_kuno_set_dit(state.context, evaluate_dit, userdata);
             const bool ok = generate_video(state.context, &request, &output.frames, &output.count, &output.audio, &fps_out);
             bool frames_valid = ok && output.frames && output.count == frames && fps_out == fps;
             for (int i = 0; frames_valid && i < output.count; ++i) {

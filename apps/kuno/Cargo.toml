@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 native-image = ["kuno-image/native-sd"]
+rust-dit = ["kuno-image/rust-dit"]
 
 [dependencies]
 kuno-image = { path = "../../crates/kuno-image" }
