@@ -45,7 +45,9 @@ const SCALE_QKV: usize = KEY_NORM + HEAD;
 const SCALE_OUT: usize = SCALE_QKV + INNER * 3;
 const SCALE_FC1: usize = SCALE_OUT + DIM;
 const SCALE_FC2: usize = SCALE_FC1 + HIDDEN * 2;
-/// Tokens are padded to the matrix kernels' token tile.
+/// Tokens are padded to the mixing kernel's query tile.
+const PAD: usize = 256;
+/// Token tile of the other matrix kernels.
 const TILE: usize = 128;
 /// Weight rows per dispatch of the integer product (see gemm8.comp).
 const ROW_BLOCK: usize = 4096;
@@ -76,7 +78,7 @@ impl Kernels {
             qk8: gpu.kernel(shaders::QK8, 5, 5, Some(16))?,
             value8: gpu.kernel(shaders::VALUE8, 4, 3, None)?,
             rowmax: gpu.kernel(shaders::ROWMAX, 2, 4, None)?,
-            mixtop: gpu.kernel(shaders::MIXTOP, 5, 12, Some(16))?,
+            mixtop: gpu.kernel(shaders::MIXTOP, 6, 13, Some(16))?,
             merge8: gpu.kernel(shaders::MERGE8, 3, 2, None)?,
             resid8: gpu.kernel(shaders::RESID8, 6, 4, None)?,
             gate8: gpu.kernel(shaders::GATE8, 4, 2, None)?,
@@ -199,7 +201,7 @@ pub struct Work {
 }
 impl Work {
     pub fn new(gpu: &Gpu, tokens: usize, rows: usize, blocks: usize) -> Result<Self, &'static str> {
-        let padded = tokens.next_multiple_of(TILE);
+        let padded = tokens.next_multiple_of(PAD);
         let f32s = |count: usize| gpu.buffer(count as u64 * 4);
         Ok(Self {
             tokens,
@@ -216,7 +218,7 @@ impl Work {
             query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
             key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
             value: gpu.buffer((HEADS * HEAD * padded) as u64 * 2)?,
-            scores: f32s(GROUP * padded * padded)?,
+            scores: gpu.buffer((GROUP * padded * padded) as u64 * 2)?,
             best: f32s(GROUP * padded * (padded / TILE).next_multiple_of(4))?,
             top: f32s(HEADS * padded)?,
             weights: f32s(HEADS * padded * 8)?,
@@ -295,7 +297,7 @@ impl Kernels {
             });
             calls.push(Call {
                 kernel: &self.mixtop,
-                buffers: vec![&w.scores, &w.value, &w.mixed, &w.top, &w.weights],
+                buffers: vec![&w.scores, &w.value, &w.mixed, &w.top, &w.weights, &w.best],
                 constants: vec![
                     np,
                     0,
@@ -309,8 +311,9 @@ impl Kernels {
                     head * np,
                     np,
                     (1.0 / (HEAD as f32).sqrt()).to_bits(),
+                    best_stride,
                 ],
-                groups: [1, tiles, group],
+                groups: [1, np / PAD as u32, group],
             });
         }
         calls.push(Call {
@@ -391,7 +394,7 @@ impl GpuDit {
         let mut cached = self.work.lock().map_err(|_| "gpu_failed")?;
         if cached
             .as_ref()
-            .is_none_or(|w| w.padded != tokens.next_multiple_of(TILE) || w.rows_count != rows)
+            .is_none_or(|w| w.padded != tokens.next_multiple_of(PAD) || w.rows_count != rows)
         {
             // Drop the old set before allocating the new one.
             *cached = None;

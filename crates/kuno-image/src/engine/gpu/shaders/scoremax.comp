@@ -1,15 +1,15 @@
-// Attention scores with each row's largest score per key tile found on the way out:
-//   out[z][t][r] = sum_k in[z][t][k] * weight[z][r][k]                 (gemm.comp, unchanged)
-//   best[z][t][r / 128] = max of out[z][t][r .. r + 128] over rows r < keys
-// After the product the staging memory is free, so the tile is stored there a second time in
-// half precision (a maximum used only as an exponent offset needs no more), and the lanes
-// reduce it: four lanes per token row. `rowmax` then scans one value per key tile instead of
-// every score.
+// Attention scores in half precision, relative to each row's largest score in the key tile:
+//   best[z][t][r / 128] = max over rows r < keys of the tile of  in[z][t] . weight[z][r]
+//   out[z][t][r] = in[z][t] . weight[z][r] - best[z][t][r / 128]          (f16)
+// The product is gemm.comp. Afterwards the staging memory is free, so the f32 accumulators
+// are stored there, 64 token rows at a time, and the lanes (eight per row) find the row's
+// maximum, subtract it and write half precision. Scores near a row's maximum, the ones that
+// carry weight, keep nearly full precision, at half the video memory traffic of f32 scores.
+// Offsets and strides are in values and multiples of 8.
 #version 460
 #extension GL_KHR_cooperative_matrix : require
 #extension GL_KHR_memory_scope_semantics : require
 #extension GL_EXT_shader_explicit_arithmetic_types : require
-#extension GL_EXT_shader_16bit_storage : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_EXT_spirv_intrinsics : require
 
@@ -17,11 +17,10 @@
 spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
 
 layout(local_size_x = 512) in;
-layout(set = 0, binding = 0) readonly buffer In { f16vec4 x[]; };
-layout(set = 0, binding = 1) readonly buffer Weight { f16vec4 w[]; };
-layout(set = 0, binding = 2) writeonly buffer Out { float y[]; };
+layout(set = 0, binding = 0) readonly buffer In { uvec2 x[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { uvec2 w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { uvec4 y[]; };
 layout(set = 0, binding = 3) writeonly buffer Best { float best[]; };
-// Offsets are in values; the half-precision ones are multiples of 4.
 layout(push_constant) uniform Constants {
     uint columns;
     uint in_first;
@@ -37,15 +36,14 @@ layout(push_constant) uniform Constants {
     uint best_batch;
 } p;
 
-// Token operand in the first half, weight operand in the second; afterwards the whole
-// 128 x 128 tile in half precision.
-shared f16vec4 ab[4096];
+// Token operand in the first half, weight operand in the second (8 bytes per element);
+// afterwards 64 token rows of f32 scores.
+shared uvec2 ab[4096];
 shared float part[512];
 
 #define A coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA>
 #define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
 #define C coopmat<float, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
-#define H coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
 
 // Fills one shared buffer pair with 32 columns of 128 tokens and 128 rows. Tokens are stored
 // fragment-contiguous: [column half][token][16 values].
@@ -106,31 +104,45 @@ void main() {
         barrier();
         cur = next;
     }
-    uint first = p.out_first + z * p.out_batch + (token + am) * p.out_stride + row + bn;
-    coopMatStore(c0, y, first, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(c1, y, first + 8 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(c2, y, first + 16 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(c3, y, first + 24 * p.out_stride, p.out_stride, gl_CooperativeMatrixLayoutRowMajor);
-    uint tile = am * 32 + (bn >> 2);
-    coopMatStore(H(c0), ab, tile, 32, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(H(c1), ab, tile + 8 * 32, 32, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(H(c2), ab, tile + 16 * 32, 32, gl_CooperativeMatrixLayoutRowMajor);
-    coopMatStore(H(c3), ab, tile + 24 * 32, 32, gl_CooperativeMatrixLayoutRowMajor);
-    memoryBarrierShared();
-    barrier();
-    // Lane l reduces a quarter (32 keys) of token row l / 4.
     uint lane = sg * 16 + gl_SubgroupInvocationID;
-    uint key = row + (lane & 3) * 32;
-    vec4 top = vec4(-3.0e38);
-    for (uint e = 0; e < 8; e++) {
-        bvec4 live = lessThan(uvec4(key + e * 4) + uvec4(0, 1, 2, 3), uvec4(p.keys));
-        top = max(top, mix(vec4(-3.0e38), vec4(ab[(lane >> 2) * 32 + (lane & 3) * 8 + e]), live));
-    }
-    part[lane] = max(max(top.x, top.y), max(top.z, top.w));
-    memoryBarrierShared();
-    barrier();
-    if ((lane & 3) == 0) {
-        best[z * p.best_batch + (token + (lane >> 2)) * p.best_stride + gl_WorkGroupID.x] =
-            max(max(part[lane], part[lane + 1]), max(part[lane + 2], part[lane + 3]));
+    // Lane l handles 16 keys of row l / 8 of the 64 stored rows.
+    uint r = lane >> 3, e = lane & 7;
+    for (uint h = 0; h < 2; h++) {
+        uint at = ((am >> 5) * 16) * 64 + (bn >> 1);
+        if (h == 0) {
+            coopMatStore(c0, ab, at, 64, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatStore(c1, ab, at + 8 * 64, 64, gl_CooperativeMatrixLayoutRowMajor);
+        } else {
+            coopMatStore(c2, ab, at, 64, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatStore(c3, ab, at + 8 * 64, 64, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        memoryBarrierShared();
+        barrier();
+        vec4 v[4];
+        vec4 top = vec4(-3.0e38);
+        for (uint i = 0; i < 4; i++) {
+            uvec2 lo = ab[r * 64 + e * 8 + i * 2], hi = ab[r * 64 + e * 8 + i * 2 + 1];
+            v[i] = vec4(uintBitsToFloat(lo.x), uintBitsToFloat(lo.y), uintBitsToFloat(hi.x),
+                        uintBitsToFloat(hi.y));
+            bvec4 live = lessThan(uvec4(row + e * 16 + i * 4) + uvec4(0, 1, 2, 3), uvec4(p.keys));
+            top = max(top, mix(vec4(-3.0e38), v[i], live));
+        }
+        part[lane] = max(max(top.x, top.y), max(top.z, top.w));
+        memoryBarrierShared();
+        barrier();
+        float most = part[lane & ~7u];
+        for (uint i = 1; i < 8; i++) most = max(most, part[(lane & ~7u) + i]);
+        uint t = token + (r >> 4) * 32 + h * 16 + (r & 15);
+        if (e == 0) {
+            best[z * p.best_batch + t * p.best_stride + gl_WorkGroupID.x] = most;
+        }
+        uint to = (p.out_first + z * p.out_batch + t * p.out_stride + row + e * 16) >> 3;
+        for (uint i = 0; i < 2; i++) {
+            vec4 lo = v[i * 2] - most, hi = v[i * 2 + 1] - most;
+            y[to + i] = uvec4(packHalf2x16(lo.xy), packHalf2x16(lo.zw), packHalf2x16(hi.xy),
+                              packHalf2x16(hi.zw));
+        }
+        memoryBarrierShared();
+        barrier();
     }
 }
