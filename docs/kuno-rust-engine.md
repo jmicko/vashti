@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 7.95 s per step (155 ms per block) | correct, 2.3 times too slow; C++ still runs it |
+| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 107 ms per block | correct, 1.6 times too slow; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -212,7 +212,7 @@ seconds.
 | `rotate8` | ConvRot quantizer, bit-identical to the reference |
 | `gemm8` | INT8 products, 4096 weight rows per dispatch |
 | `qk8`, `value8` | Attention operands from the integer sums: unit RMS, weights, rotary; values transposed |
-| `gemm`, `rowmax`, `mixtop` | Scores, each row's largest score, true-softmax mixing with weight sums |
+| `scoremax`, `rowmax`, `mixtop` | Scores as f16 relative to each row's largest score per key tile, the row's largest score overall, true-softmax mixing with weight sums |
 | `merge8`, `resid8`, `gate8` | Head outputs to token rows, gated residuals, gated activation |
 
 Scores reach about 30 in most blocks and 300 in the last (large query and key norm weights),
@@ -232,20 +232,37 @@ Checks:
   Running the Euler loop on this DiT's own outputs from the same noise ends 24.6 dB from the
   C++ final latent; decoded, the two clips are 27.7 dB PSNR apart and show the same picture.
 
-Time per block at 8611 tokens (C++ engine: 66 ms):
+Time per block at 8611 tokens:
 
-| Part | Rust now | C++ engine |
-|---|---|---|
-| INT8 products | 40 ms | about 34 ms |
-| Scores, row maximum, mixing | 33 + 30 + 33 ms | 24.8 ms |
-| Operands, norms, quantizers, residuals, gate, merge | 15 ms | about 8 ms |
+| Part | First GPU form | Now | C++ engine |
+|---|---|---|---|
+| INT8 products | 40 ms | 41 ms | about 34 ms |
+| Scores, row maximum, mixing | 33 + 30 + 33 ms | 27 + 5 + 25 ms | 24.8 ms |
+| Operands, norms, quantizers, residuals, gate, merge | 93 ms, then 15 ms | 15 ms | about 8 ms |
+| Whole block | 234 ms | 107 ms | 66 ms |
 
-The attention path writes every score to video memory and reads it twice (17 GB per pass per
-block), which is what bounds it; it needs a kernel that keeps a query tile's scores inside
-the workgroup. Tried and dropped: having the scores kernel read back its own output to
-pre-reduce the maximum (lanes read values other lanes had not finished storing, and it was
-slower). bfloat16 weights would remove the row maximum for all but the last block; the driver
-supports them, the installed shader compiler (glslang 15.1) does not.
+What moved attention:
+
+- The first form wrote every score to video memory in f32 and read it twice (17 GB per pass
+  per block); a pass costs about 30 ms at the card's memory bandwidth whatever the kernel.
+- The row maximum now comes out of the scores kernel: after the product its staging memory is
+  free, the f32 accumulators are stored there 64 token rows at a time, and eight lanes per row
+  reduce them. `rowmax` scans 68 values per row instead of 8704.
+- The same lanes subtract that maximum and write half precision. Scores near a row's maximum,
+  the ones that carry weight, keep nearly full precision; the block's agreement with the
+  reference did not change. Converting the accumulators to f16 with the matrix store instead
+  kept the accuracy too but made the kernel 50% slower.
+- Mixing on the eight-accumulator plan (256 queries by 128 value rows) gained nothing while it
+  read f32 scores, because it was bound by reading them, and 8 ms once they were f16.
+- No gain: the eight-accumulator plan for the scores product (its loop is 8 steps; the cost
+  is in staging and the epilogue), and reading back stored scores to pre-reduce the maximum
+  (lanes read values other lanes had not finished storing).
+- bfloat16 weights would need no row maximum for all but the last block, but the value
+  operand would have to be bfloat16 too (8 bits of mantissa), and the installed shader
+  compiler (glslang 15.1) does not have the type.
+
+Even with scores never leaving the workgroup, the two products alone take about 43 ms at the
+rate these kernels reach; the C++ engine's whole attention is 25 ms.
 
 Not done: the worker hand-over. The C++ engine keeps its own DiT weights and a text encoder
 cache in video memory and does not see Rust's 19 GB, so sampling in Rust inside the worker
