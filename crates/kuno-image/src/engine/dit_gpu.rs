@@ -293,7 +293,7 @@ impl Kernels {
                 kernel: &self.rowmax,
                 buffers: vec![&w.best, &w.top],
                 constants: vec![tiles, best_stride, np, head * np],
-                groups: [1, np, group],
+                groups: [np / 64, 1, group],
             });
             calls.push(Call {
                 kernel: &self.mixtop,
