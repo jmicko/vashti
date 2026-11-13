@@ -7,7 +7,7 @@ use rayon::prelude::*;
 
 use super::{
     dit,
-    gpu::{Buffer, Gpu, Kernel, Step, bytes_of, floats, shaders},
+    gpu::{Buffer, Gpu, Kernel, Readback, Step, bytes_of, shaders},
 };
 
 /// One dispatch with its arguments owned, so a pass can be assembled as a list.
@@ -198,6 +198,8 @@ pub struct Work {
     top: Buffer,
     weights: Buffer,
     mixed: Buffer,
+    /// For reading the stream back.
+    readback: Readback,
 }
 impl Work {
     pub fn new(gpu: &Gpu, tokens: usize, rows: usize, blocks: usize) -> Result<Self, &'static str> {
@@ -223,6 +225,7 @@ impl Work {
             top: f32s(HEADS * padded)?,
             weights: f32s(HEADS * padded * 8)?,
             mixed: f32s(HEADS * padded * HEAD)?,
+            readback: gpu.readback((padded * DIM) as u64 * 4)?,
         })
     }
 }
@@ -348,6 +351,8 @@ pub struct GpuDit {
     model: dit::Dit,
     kernels: Kernels,
     layers: Vec<Layer>,
+    /// Each block's modulation projection, kept in RAM: it runs on the CPU every step.
+    modulation: Vec<(Vec<f32>, Vec<f32>)>,
     work: Mutex<Option<Work>>,
 }
 impl GpuDit {
@@ -367,11 +372,15 @@ impl GpuDit {
                 .map(|layer| Layer::load(gpu, &model, layer))
                 .collect()
         });
+        let modulation = (0..model.layers)
+            .map(|layer| model.modulation(layer))
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             gpu: gpu.clone(),
             model,
             kernels,
             layers: layers?,
+            modulation,
             work: Mutex::new(None),
         })
     }
@@ -384,7 +393,7 @@ impl GpuDit {
     fn blocks(&self, step: &dit::Step, prepared: dit::Prepared) -> Result<Vec<f32>, &'static str> {
         let gpu = &self.gpu;
         let dit::Prepared {
-            mut x,
+            x: mut start,
             layout,
             times,
             rotary,
@@ -409,12 +418,13 @@ impl GpuDit {
         let mut turns: Vec<f32> = rotary.iter().flatten().copied().collect();
         turns.resize(work.padded * dit::PAIRS * 2, 0.0);
         let mut parts = Vec::with_capacity(self.layers.len() * rows * 6 * DIM);
-        for layer in 0..self.layers.len() {
-            parts.extend(self.model.parts(layer, &times)?);
+        for (weight, bias) in &self.modulation {
+            parts.extend(dit::Dit::modulate(&times, weight, bias));
         }
         // Padded rows of the stream must be zero; every other buffer is rewritten in full.
-        x.resize(work.padded * DIM, 0.0);
-        gpu.upload(&work.stream, 0, bytes_of(&x))?;
+        start.resize(work.padded * DIM, 0.0);
+        gpu.upload(&work.stream, 0, bytes_of(&start))?;
+        drop(start);
         gpu.upload(&work.rows, 0, bytes_of(&token_rows))?;
         gpu.upload(&work.turns, 0, bytes_of(&turns))?;
         gpu.upload(&work.parts, 0, bytes_of(&parts))?;
@@ -423,14 +433,18 @@ impl GpuDit {
         for (slot, layer) in self.layers.iter().enumerate() {
             run(gpu, &self.kernels.block(layer, work, slot))?;
         }
-        let x = floats(&gpu.download(&work.stream, 0, tokens * DIM * 4)?);
+        let mut x = vec![0f32; tokens * DIM];
+        gpu.read_floats(&work.stream, 0, &work.readback, &mut x)?;
         self.model.finish(step, &x, &layout, &times)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{super::gpu::Select, *};
+    use super::{
+        super::gpu::{Select, floats},
+        *,
+    };
 
     fn noise(count: usize, seed: u64) -> Vec<f32> {
         let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;

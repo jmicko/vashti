@@ -939,17 +939,20 @@ impl Dit {
     /// One block's modulation rows `[timesteps][3 modalities][shift, scale, gate, shift,
     /// scale, gate][DIM]`.
     pub(super) fn parts(&self, layer: usize, times: &[f32]) -> Result<Vec<f32>, &'static str> {
-        let name = |part: &str| format!("blocks.{layer}.{part}");
-        Ok(linear(
-            times,
-            TIME_WIDTH,
-            &self
-                .file
-                .floats(&name("adaln_proj.linear.weight"), &[DIM * 18, TIME_WIDTH])?,
-            &self
-                .file
-                .floats(&name("adaln_proj.linear.bias"), &[DIM * 18])?,
+        let (weight, bias) = self.modulation(layer)?;
+        Ok(linear(times, TIME_WIDTH, &weight, &bias))
+    }
+    /// The weight `[18 * DIM][TIME_WIDTH]` and bias of one block's modulation projection.
+    pub(super) fn modulation(&self, layer: usize) -> Result<(Vec<f32>, Vec<f32>), &'static str> {
+        let name = |part: &str| format!("blocks.{layer}.adaln_proj.linear.{part}");
+        Ok((
+            self.file.floats(&name("weight"), &[DIM * 18, TIME_WIDTH])?,
+            self.file.floats(&name("bias"), &[DIM * 18])?,
         ))
+    }
+    /// `parts` from a block's `modulation`.
+    pub(super) fn modulate(times: &[f32], weight: &[f32], bias: &[f32]) -> Vec<f32> {
+        linear(times, TIME_WIDTH, weight, bias)
     }
     /// Applies block `layer` to the token stream `x`.
     pub(super) fn block(
