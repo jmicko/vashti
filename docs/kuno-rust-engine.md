@@ -328,6 +328,47 @@ the card in today's worker.
 Probe sources live outside the repository in
 `kuno-video-dev/igc-probe` (`jm8.cpp`, `ze/`).
 
+### Hand-written machine code (probe, 2026-11-14)
+
+A hand-written int8 product kernel, loaded as a native module through Level
+Zero from Rust, was timed on the DiT's largest layer shape (8192 x 5376 x
+14336, 4000 random outputs checked against the CPU, all exact):
+
+| Kernel | Time | Throughput |
+|---|---|---|
+| First version, loads and math serialized | 7.07 ms | 179 TOPS |
+| Next step's loads overlapped with the math | 5.98 ms | 211 TOPS |
+| Same, dispatched in blocks of 4096 tokens | 4.96 ms | 255 TOPS |
+| Math only (no loads in the loop) | 3.53 ms | 358 TOPS |
+
+The best Mesa kernel reaches 126-178 TOPS and the oneMKL probe about 299.
+Times include the launch and wait.
+
+How the kernel is built:
+
+- One hardware thread per tile of 32 tokens x 64 outputs, 256 registers:
+  16 accumulators of 8 registers, two operand sets of 48 registers.
+- `dpas.8x8 (16)` multiplies an 8 x 32 token fragment (4 registers, one
+  row per 8 dwords) by a 32 x 16 weight fragment (8 registers, one k-group
+  of 4 bytes per lane per register) into 8 rows x 16 dwords.
+- Operands are stored as streams in exactly that order, so one 256- or
+  512-byte transposed load fills a fragment; address offsets are immediates.
+- `dpas` runs out of order like a send: it sets a scoreboard token, later
+  readers and writers of its registers wait on that token. Leaving this out
+  gives wrong sums.
+- The kernel is bound by bytes loaded, not by the multiplier and not by the
+  number of load messages. Loads are served from the card's cache when the
+  token operand of a dispatch block fits (22 MB does, 44 MB does not).
+- Thread payload: group ids arrive in `r0.1`, `r0.6`, `r0.7`; the first 32
+  bytes of arguments arrive in `r1` when `.ze_info` declares inline data.
+
+The prototype assembles text with Mesa's `gentool` (built from
+`mesa-26.2.6` with `-Dtools=intel`) and wraps the code with a small script.
+Sources are outside the repository in `kuno-video-dev/igc-probe/hand`
+(`gen.py`, `mkzebin.py`) and `igc-probe/ze` (Rust runner `hand`). A Rust
+encoder for the dozen instruction forms used, the container writer, and
+memory shared between the Vulkan kernels and Level Zero are not built yet.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
