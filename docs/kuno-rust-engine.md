@@ -294,6 +294,40 @@ Checked with the feature on (dev worker, 2.3 s clips at 832x544):
   0.2 s embedding, 0.3 s for modulation vectors, uploads and output heads on the CPU. The
   first clip of a worker takes 80 s where the C++ sampler takes 63 s.
 
+### Reaching vendor-library speed without SYCL (probe, 2026-11-13)
+
+The C++ engine's speed on the two hot operations does not come from SYCL or
+from Intel's compiler. A synthetic int8 product (8192 x 5376 x 14336, exact
+against CPU spot checks) was run three ways:
+
+| Path | Throughput |
+|---|---|
+| Our cooperative-matrix kernel through Mesa (`gemm8`) | 126-178 TOPS |
+| Same kind of kernel through Intel's compiler, direct loads, packed weights | 36 TOPS (128 registers), 55 TOPS (256 registers, 4x4 tile) |
+| oneMKL int8 product (earlier vendor probe) | about 299 TOPS |
+
+Intel's compiler accepts `SPV_KHR_cooperative_matrix` in OpenCL-flavoured
+SPIR-V, but a kernel of ours compiled by it is slower than the Mesa kernels,
+and register spills are far more costly there (3-6 TOPS when a tile does not
+fit). oneMKL and oneDNN reach their speed with kernels emitted as machine
+code by their own generator, not with a compiler.
+
+A Rust program with no SYCL runtime in the process drove the card through
+Level Zero's C API (`libze_loader.so.1`, about 20 functions): context, queue,
+device memory, module from SPIR-V, kernel launch, read-back. The driver's
+native module is a relocatable ELF: raw kernel code in `.text.<kernel>` and a
+YAML `.ze_info` section naming register count, SIMD width and the argument
+payload layout. Reloading that file as a native module ran at the same speed.
+So Rust can hand the driver machine code it generated itself, which is the
+route to vendor-library speed with no C++ library in the engine: a small Xe2
+instruction encoder in Rust (encodings are in Mesa's `brw_eu` sources), a
+fixed-shape int8 product and attention kernel written against it, and Level
+Zero plumbing. Mesa (Vulkan) and Intel's runtime (Level Zero) already share
+the card in today's worker.
+
+Probe sources live outside the repository in
+`kuno-video-dev/igc-probe` (`jm8.cpp`, `ze/`).
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
