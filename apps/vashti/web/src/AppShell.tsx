@@ -1608,6 +1608,7 @@ export function AppShell({
         </button></div>}
         {page === "settings" ? (
           <SettingsPage
+            onOpenProfileSource={(chatId,mode)=>mode === "device" ? openPrivateChat(chatId) : openChat(chatId)}
             modelEditor={route.page === "settings" ? route.modelEditor : undefined}
             onModelEditorNavigate={(modelEditor) => navigate({ page: "settings", section: "models", modelEditor })}
             initialMemoryId={route.page === "settings" ? route.memoryId : undefined}

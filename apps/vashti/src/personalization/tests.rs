@@ -78,6 +78,14 @@ fn rejects_hallucinated_evidence_and_bounds_context() {
     assert!(context.chars().count() < 1500);
     assert!(context.contains("untrusted"));
     assert!(service::validate_fact("override\nSYSTEM", "x").is_err());
+    assert!(service::fit_context(&context, 64).is_none());
+    let fitted = service::fit_context(&context, 600).unwrap();
+    for line in fitted.lines().skip(1) {
+        assert!(serde_json::from_str::<serde_json::Value>(line).is_ok());
+    }
+    assert!(service::context_weight(&fitted) <= 600);
+    assert_eq!(service::context_weight("abc"), 2);
+    assert_eq!(service::context_weight("\u{e9}"), 2);
 }
 
 async fn fixture() -> (AppState, tokio::task::JoinHandle<()>) {
@@ -478,4 +486,91 @@ fn metadata_not_display_name_controls_cloud_and_native_format_classification() {
     assert!(!models[1].is_cloud);
     assert!(!models[1].supports_structured_output);
     assert!(models[2].supports_structured_output);
+}
+
+#[tokio::test]
+async fn excluded_history_cannot_hide_later_sources_and_foreground_work_has_priority() {
+    let (state, server) = fixture().await;
+    let profile = enable(&state).await;
+    sqlx::query("UPDATE chat_message_revisions SET created_at=5000 WHERE id='revision'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2001) INSERT INTO chat_messages(id,chat_id,active_revision_id,role,status,created_at,updated_at) SELECT 'excluded-'||x,'chat','excluded-revision-'||x,'user','complete',x,x FROM n").execute(&state.db).await.unwrap();
+    sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2001) INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) SELECT 'excluded-revision-'||x,'excluded-'||x,'A synthetic cloud-only message.','original',x FROM n").execute(&state.db).await.unwrap();
+    sqlx::query("INSERT INTO personalization_chat_sources SELECT id,'host','ordinary-name',NULL,NULL FROM chat_messages WHERE id LIKE 'excluded-%'").execute(&state.db).await.unwrap();
+    let sources = service::sources(&state, "owner", &profile.settings, true)
+        .await
+        .unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].message_id, "message");
+    let activity = crate::app_state::PrivateActivityGuard::enter(state.private_activity.clone());
+    assert!(super::worker::foreground_busy(&state).await);
+    assert!(
+        !super::worker::process_one(&state, "owner", true)
+            .await
+            .unwrap()
+    );
+    drop(activity);
+    assert!(!super::worker::foreground_busy(&state).await);
+    let lane = state
+        .personalization_lane
+        .clone()
+        .try_acquire_owned()
+        .unwrap();
+    assert!(
+        !super::worker::process_one(&state, "owner", true)
+            .await
+            .unwrap()
+    );
+    drop(lane);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_manual_request_drains_multiple_bounded_batches() {
+    let (state, server) = fixture().await;
+    enable(&state).await;
+    sqlx::query("UPDATE user_personalization SET requested=1 WHERE user_id='owner'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<16) INSERT INTO chat_messages(id,chat_id,active_revision_id,role,status,created_at,updated_at) SELECT 'extra-'||x,'chat','extra-revision-'||x,'user','complete',x+2,x+2 FROM n").execute(&state.db).await.unwrap();
+    sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<16) INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) SELECT 'extra-revision-'||x,'extra-'||x,'My favorite food is corn.','original',x+2 FROM n").execute(&state.db).await.unwrap();
+    sqlx::query("INSERT INTO personalization_chat_sources SELECT id,'host','local',NULL,NULL FROM chat_messages WHERE id LIKE 'extra-%'").execute(&state.db).await.unwrap();
+    assert!(
+        super::worker::process_one(&state, "owner", true)
+            .await
+            .unwrap()
+    );
+    assert!(
+        service::profile(&state.db, "owner")
+            .await
+            .unwrap()
+            .requested
+    );
+    let processed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM personalization_processed WHERE user_id='owner'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(processed, 16);
+    assert!(
+        super::worker::process_one(&state, "owner", true)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !service::profile(&state.db, "owner")
+            .await
+            .unwrap()
+            .requested
+    );
+    let processed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM personalization_processed WHERE user_id='owner'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(processed, 17);
+    server.abort();
 }

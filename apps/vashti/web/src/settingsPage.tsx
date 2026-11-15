@@ -61,6 +61,7 @@ export function SettingsPage({
   onModelEditorNavigate,
   onBackendsChanged,
   onToolsChanged,
+  onOpenProfileSource,
   onPersonasChanged,
   onPrivatePersonasChanged,
   onContextChanged,
@@ -85,6 +86,7 @@ export function SettingsPage({
   onModelEditorNavigate?: (editor?: CustomModelEditorLocation) => void;
   onBackendsChanged: () => Promise<void>;
   onToolsChanged: () => Promise<void>;
+  onOpenProfileSource?: (chatId:string,mode:"server" | "device")=>void;
   onPersonasChanged: () => Promise<void>;
   onPrivatePersonasChanged: () => Promise<void>;
   onContextChanged: () => Promise<void>;
@@ -207,6 +209,7 @@ export function SettingsPage({
           )}
           {selectedSection === "memories" && (
             <MemoriesSettingsPanel
+              onOpenProfileSource={onOpenProfileSource}
               initialMemoryId={initialMemoryId}
               modelGroups={modelGroups}
               personas={personas}

@@ -28,7 +28,8 @@ import type {
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 11;
+const DB_VERSION = 12;
+const PERSONALIZATION_STORE = "private_personalization";
 const ASSISTANT_DRAFT_STORE = "assistant_drafts";
 const IMAGE_STORE = "private_images";
 const CHAT_STORE = "private_chats";
@@ -397,6 +398,43 @@ export function privateImageGuard() {
     if (epoch !== storageEpoch || !currentUserId)
       throw new Error("Private storage user changed");
   };
+}
+
+export function privateProfileIdentity() {
+  if (!currentUserId) throw new Error("Sign in to use device storage");
+  return { user_id: currentUserId, instance_id: currentStorageNamespace };
+}
+
+export async function readPrivateProfile<T>(): Promise<T | null> {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  guard();
+  const tx = db.transaction(PERSONALIZATION_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | undefined>(tx.objectStore(PERSONALIZATION_STORE).get("profile"));
+  await transactionDone(tx);
+  const value = record ? await readPrivateRecord<{ value: T }>(record) : null;
+  guard();
+  return value?.value ?? null;
+}
+
+export async function writePrivateProfile<T extends { revision: number }>(value: T, expectedRevision: number) {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  // Encrypt before opening the transaction; IndexedDB transactions cannot await crypto.
+  const record = { ...await privateStoreRecord({ id: "profile", value }), revision: value.revision };
+  guard();
+  const tx = db.transaction(PERSONALIZATION_STORE, "readwrite");
+  const done = transactionDone(tx);
+  const current = await requestResult<(PrivateStoreRecord & { revision: number }) | undefined>(tx.objectStore(PERSONALIZATION_STORE).get("profile"));
+  if ((current?.revision ?? 0) !== expectedRevision) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new Error("Your device profile changed. Refresh and try again.");
+  }
+  tx.objectStore(PERSONALIZATION_STORE).put(record);
+  await done;
+  guard();
+  window.dispatchEvent(new Event("vashti:personalization-changed"));
 }
 
 export async function readAssistantDraft<T>(id: string): Promise<T | null> {
@@ -2235,6 +2273,9 @@ function privateDbName() {
 }
 
 function ensurePrivateStores(db: IDBDatabase) {
+  if (!db.objectStoreNames.contains(PERSONALIZATION_STORE)) {
+    db.createObjectStore(PERSONALIZATION_STORE, { keyPath: "id" });
+  }
   if (!db.objectStoreNames.contains(ASSISTANT_DRAFT_STORE)) {
     db.createObjectStore(ASSISTANT_DRAFT_STORE, { keyPath: "id" });
   }

@@ -71,6 +71,17 @@ export default function App() {
     void loadSession();
   }, [loadSession]);
 
+  const profileWorkerUser = state.status === "loaded" && state.session.is_authenticated ? state.session.user?.id : null;
+  useEffect(() => {
+    if (!profileWorkerUser) return;
+    let stop: (() => void) | undefined;
+    let disposed = false;
+    void import("./personalization/device").then(module => {
+      if (!disposed) stop = module.startDeviceProfileWorker();
+    });
+    return () => { disposed = true; stop?.(); };
+  },[profileWorkerUser]);
+
   function updateSessionUser(user: User) {
     setState((current) =>
       current.status === "loaded" && current.session.user

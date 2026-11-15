@@ -234,73 +234,78 @@ pub async fn sources(
     settings: &Settings,
     unprocessed: bool,
 ) -> Result<Vec<InputSource>, ApiError> {
-    let rows = sqlx::query("SELECT m.id,m.active_revision_id,m.chat_id,r.content_text,r.created_at,s.backend_id AS default_backend_id,s.model_name AS default_model_name,s.persona_id,s.persona_version_id FROM chat_messages m JOIN chats c ON c.id=m.chat_id JOIN chat_message_revisions r ON r.id=m.active_revision_id JOIN personalization_chat_sources s ON s.message_id=m.id WHERE c.user_id=? AND m.role='user' AND m.status='complete' AND m.is_deleted=0 AND (?=0 OR NOT EXISTS (SELECT 1 FROM personalization_processed p WHERE p.user_id=c.user_id AND p.revision_id=r.id)) ORDER BY r.created_at,r.id LIMIT 2000")
-        .bind(owner).bind(unprocessed).fetch_all(&state.db).await?;
     let models = catalog(state, owner).await?;
     let mut result = Vec::new();
     let mut chars = 0;
-    for row in rows {
-        let persona: Option<String> = row.get("persona_id");
-        let key = persona
-            .as_ref()
-            .map(|p| format!("persona:{p}"))
-            .unwrap_or_else(|| {
-                format!(
-                    "base:{}:{}",
-                    row.get::<String, _>("default_backend_id"),
-                    row.get::<String, _>("default_model_name")
-                )
-            });
-        let Some(mut model) = models.iter().find(|m| m.key == key).cloned() else {
-            continue;
-        };
-        let base_key = format!(
-            "base:{}:{}",
-            row.get::<String, _>("default_backend_id"),
-            row.get::<String, _>("default_model_name")
-        );
-        let Some(base) = models.iter().find(|m| m.key == base_key) else {
-            continue;
-        };
-        model.cloud = base.cloud;
-        if !settings.allows(&model) {
-            continue;
-        }
-        // Use the historical character mode as well as today's mode.
-        let version: Option<String> = row.get("persona_version_id");
-        if let Some(v) = version {
-            let character: bool = sqlx::query_scalar(
-                "SELECT model_type='character' FROM persona_versions WHERE id=?",
-            )
-            .bind(v)
-            .fetch_optional(&state.db)
-            .await?
-            .unwrap_or(true);
-            if character
-                && !settings
-                    .model_overrides
-                    .get(&key)
-                    .copied()
-                    .unwrap_or(settings.allow_characters)
-            {
-                continue;
-            }
-        }
-        let text: String = row.get("content_text");
-        let text: String = text.chars().take(6000).collect();
-        let count = text.chars().count();
-        if chars + count > MAX_INPUT_CHARS || result.len() == MAX_SOURCES {
+    let mut last_created = i64::MIN;
+    let mut last_id = String::new();
+    loop {
+        // Page through excluded history too; it must not hide later eligible chats.
+        let rows = sqlx::query("SELECT m.id,m.active_revision_id,m.chat_id,substr(r.content_text,1,6000) AS content_text,r.created_at,s.backend_id AS default_backend_id,s.model_name AS default_model_name,s.persona_id,s.persona_version_id,v.model_type FROM chat_messages m JOIN chats c ON c.id=m.chat_id JOIN chat_message_revisions r ON r.id=m.active_revision_id JOIN personalization_chat_sources s ON s.message_id=m.id LEFT JOIN persona_versions v ON v.id=s.persona_version_id WHERE c.user_id=? AND m.role='user' AND m.status='complete' AND m.is_deleted=0 AND r.content_text!='' AND (r.created_at>? OR (r.created_at=? AND r.id>?)) AND (?=0 OR NOT EXISTS (SELECT 1 FROM personalization_processed p WHERE p.user_id=c.user_id AND p.revision_id=r.id)) ORDER BY r.created_at,r.id LIMIT 200")
+        .bind(owner).bind(last_created).bind(last_created).bind(&last_id).bind(unprocessed).fetch_all(&state.db).await?;
+        if rows.is_empty() {
             break;
         }
-        chars += count;
-        result.push(InputSource {
-            message_id: row.get("id"),
-            revision_id: row.get("active_revision_id"),
-            chat_id: row.get("chat_id"),
-            model_key: key,
-            text,
-            created_at: row.get("created_at"),
-        });
+        for row in rows {
+            last_created = row.get("created_at");
+            last_id = row.get("active_revision_id");
+            let persona: Option<String> = row.get("persona_id");
+            let key = persona
+                .as_ref()
+                .map(|p| format!("persona:{p}"))
+                .unwrap_or_else(|| {
+                    format!(
+                        "base:{}:{}",
+                        row.get::<String, _>("default_backend_id"),
+                        row.get::<String, _>("default_model_name")
+                    )
+                });
+            let Some(mut model) = models.iter().find(|m| m.key == key).cloned() else {
+                continue;
+            };
+            let base_key = format!(
+                "base:{}:{}",
+                row.get::<String, _>("default_backend_id"),
+                row.get::<String, _>("default_model_name")
+            );
+            let Some(base) = models.iter().find(|m| m.key == base_key) else {
+                continue;
+            };
+            model.cloud = base.cloud;
+            if !settings.allows(&model) {
+                continue;
+            }
+            // Use the historical character mode as well as today's mode.
+            let version: Option<String> = row.get("persona_version_id");
+            if version.is_some() {
+                let character = row
+                    .get::<Option<String>, _>("model_type")
+                    .is_none_or(|v| v == "character");
+                if character
+                    && !settings
+                        .model_overrides
+                        .get(&key)
+                        .copied()
+                        .unwrap_or(settings.allow_characters)
+                {
+                    continue;
+                }
+            }
+            let text: String = row.get("content_text");
+            let count = text.chars().count();
+            if chars + count > MAX_INPUT_CHARS || result.len() == MAX_SOURCES {
+                return Ok(result);
+            }
+            chars += count;
+            result.push(InputSource {
+                message_id: row.get("id"),
+                revision_id: row.get("active_revision_id"),
+                chat_id: row.get("chat_id"),
+                model_key: key,
+                text,
+                created_at: row.get("created_at"),
+            });
+        }
     }
     Ok(result)
 }
@@ -601,7 +606,7 @@ pub async fn publish(
             .execute(&mut *tx)
             .await?;
     }
-    sqlx::query("UPDATE user_personalization SET last_processed_at=?,last_error=NULL,requested=0,failures=0 WHERE user_id=?").bind(unix_timestamp()).bind(owner).execute(&mut *tx).await?;
+    sqlx::query("UPDATE user_personalization SET last_processed_at=?,last_error=NULL,requested=?,failures=0 WHERE user_id=?").bind(unix_timestamp()).bind(before.requested).bind(owner).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -654,7 +659,7 @@ pub async fn chat_context(
     query: &str,
 ) -> Result<Option<String>, ApiError> {
     let profile = profile(&state.db, owner).await?;
-    if !profile.settings.enabled {
+    if !profile.settings.enabled || profile.facts.is_empty() {
         return Ok(None);
     }
     let models = catalog(state, owner).await?;
@@ -709,6 +714,25 @@ pub fn context_message(content: String) -> crate::ollama::models::OllamaChatMess
         tool_name: None,
         tool_calls: None,
     }
+}
+
+pub fn context_weight(text: &str) -> i64 {
+    let ascii = text.bytes().filter(u8::is_ascii).count();
+    (ascii.div_ceil(2) + text.len() - ascii) as i64
+}
+
+pub fn fit_context(content: &str, budget: i64) -> Option<String> {
+    let mut lines = Vec::new();
+    let mut used = 0;
+    for line in content.lines() {
+        let weight = context_weight(line) + 1;
+        if used + weight > budget {
+            break;
+        }
+        used += weight;
+        lines.push(line);
+    }
+    (lines.len() > 1).then(|| lines.join("\n"))
 }
 
 pub async fn fact_history(

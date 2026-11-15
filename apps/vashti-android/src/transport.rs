@@ -20,6 +20,8 @@ pub struct HttpRequest {
     method: String,
     path: String,
     #[serde(default)]
+    expected_instance_id: Option<String>,
+    #[serde(default)]
     headers: HashMap<String, String>,
     body_text: Option<String>,
     response_type: ResponseType,
@@ -85,14 +87,26 @@ pub async fn native_http_request(
     request: HttpRequest,
 ) -> Result<HttpResponse, String> {
     let connection = state.active_connection().await?;
+    if request
+        .expected_instance_id
+        .as_ref()
+        .is_some_and(|id| id != &connection.instance_id)
+    {
+        return Err("The selected server changed. Private data was not sent.".to_string());
+    }
     let method = parse_method(&request.method)?;
     let mut builder =
         request_builder(&state, &connection, method, &request.path, &request.headers).await?;
     if let Some(body) = request.body_text {
         builder = builder.body(body);
     }
+    let timeout = if request.path == "/api/personalization/device-extract" {
+        190
+    } else {
+        120
+    };
     let response = builder
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(timeout))
         .send()
         .await
         .map_err(request_error)?;

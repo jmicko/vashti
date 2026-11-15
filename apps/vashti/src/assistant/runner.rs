@@ -477,9 +477,9 @@ async fn work(state: &AppState, id: &str, cancel: &CancellationToken) -> Result<
         }
         compact_context(&mut cp);
         let schemas = available_for_run(state, &owner, &config, id).await?;
-        let context = context_weight(&service::encode(&cp.messages)?)
+        let mut context = context_weight(&service::encode(&cp.messages)?)
             + context_weight(&service::encode(&schemas)?);
-        let remaining = (config.max_output_tokens - cp.output_tokens)
+        let mut remaining = (config.max_output_tokens - cp.output_tokens)
             .min(4096)
             .min(cp.context_window - context - 256);
         if remaining < 256 {
@@ -509,6 +509,17 @@ async fn work(state: &AppState, id: &str, cancel: &CancellationToken) -> Result<
                 .unwrap_or(""),
         )
         .await
+            && let Some(context) = crate::personalization::service::fit_context(
+                &context,
+                (cp.context_window / 4)
+                    .min(
+                        cp.context_window
+                            - context_weight(&service::encode(&cp.messages)?)
+                            - context_weight(&service::encode(&schemas)?)
+                            - 512,
+                    )
+                    .max(0),
+            )
         {
             let position = request_messages
                 .iter()
@@ -518,6 +529,14 @@ async fn work(state: &AppState, id: &str, cancel: &CancellationToken) -> Result<
                 position,
                 crate::personalization::service::context_message(context),
             );
+        }
+        context = context_weight(&service::encode(&request_messages)?)
+            + context_weight(&service::encode(&schemas)?);
+        let with_profile = remaining.min(cp.context_window - context - 256);
+        if with_profile >= 256 {
+            remaining = with_profile;
+        } else {
+            request_messages = cp.messages.clone();
         }
         let request = OllamaChatRequest {
             model: config.model_name.clone(),

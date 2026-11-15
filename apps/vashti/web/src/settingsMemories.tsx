@@ -46,6 +46,7 @@ import type {
   MemoryVersion
 } from "./memories/types";
 import { SettingsPanel, SettingsSaveBanner, ToggleSwitch } from "./settingsControls";
+import { PersonalizationPanel } from "./personalization/PersonalizationPanel";
 import type { BackendModelGroup, Persona, SettingsGuard } from "./types";
 
 type MemoryStatus = "active" | "forgotten";
@@ -62,15 +63,19 @@ export function MemoriesSettingsPanel({
   initialMemoryId,
   personas,
   onToolsChanged,
+  onOpenProfileSource,
   onGuardChange
 }: {
   modelGroups: BackendModelGroup[];
   initialMemoryId?: string;
   personas: Persona[];
   onToolsChanged: () => Promise<void>;
+  onOpenProfileSource?: (chatId:string,mode:"server" | "device")=>void;
   onGuardChange: (guard: SettingsGuard | null) => void;
 }) {
   const [savedSettings, setSavedSettings] = useState<MemorySettings | null>(null);
+  const [profileGuard, setProfileGuard] = useState<SettingsGuard | null>(null);
+  const [memoryView, setMemoryView] = useState<"profile" | "saved">(initialMemoryId ? "saved" : "profile");
   const [settingsDraft, setSettingsDraft] = useState<MemorySettings | null>(null);
   const [memories, setMemories] = useState<MemorySummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -163,7 +168,7 @@ export function MemoriesSettingsPanel({
   }, [loadInitial]);
 
   useEffect(() => {
-    if (initialMemoryId) void openMemory(initialMemoryId);
+    if (initialMemoryId) { setMemoryView("saved"); void openMemory(initialMemoryId); }
     return () => { memoryRequestRef.current++; };
   }, [initialMemoryId]);
 
@@ -321,8 +326,11 @@ export function MemoriesSettingsPanel({
   ]);
 
   useEffect(() => {
-    onGuardChange({ isDirty, save: saveAll, discard: revertAll });
-  }, [isDirty, onGuardChange, revertAll, saveAll]);
+    onGuardChange({ isDirty: isDirty || !!profileGuard?.isDirty,
+      save: async () => { if (profileGuard?.isDirty && !await profileGuard.save()) return false; return isDirty ? saveAll() : true; },
+      discard: () => { profileGuard?.discard(); revertAll(); }
+    });
+  }, [isDirty, onGuardChange, profileGuard, revertAll, saveAll]);
 
   useEffect(() => () => onGuardChange(null), [onGuardChange]);
 
@@ -485,7 +493,7 @@ export function MemoriesSettingsPanel({
       width="standard"
       className="memories-settings-section"
       actions={
-        !isEditing ? (
+        !isEditing && memoryView === "saved" ? (
           <button
             type="button"
             className="secondary-button"
@@ -498,7 +506,18 @@ export function MemoriesSettingsPanel({
         ) : undefined
       }
     >
-      <form
+      <div className="memories-view-tabs" role="tablist" aria-label="Memory type" onKeyDown={event=>{
+        if (!["ArrowLeft","ArrowRight","Home","End"].includes(event.key) || isDirty || profileGuard?.isDirty || isSaving || isMutating) return;
+        event.preventDefault();
+        const next=event.key === "Home" ? "profile" : event.key === "End" ? "saved" : memoryView === "profile" ? "saved" : "profile";
+        setMemoryView(next);
+        event.currentTarget.querySelector<HTMLButtonElement>(next === "profile" ? "#automatic-profile-tab" : "#saved-memories-tab")?.focus();
+      }}>
+        <button type="button" role="tab" id="automatic-profile-tab" aria-controls="automatic-profile-view" aria-selected={memoryView === "profile"} tabIndex={memoryView === "profile" ? 0 : -1} className={memoryView === "profile" ? "active" : "secondary-button"} disabled={memoryView !== "profile" && (isDirty || !!profileGuard?.isDirty || isSaving || isMutating)} onClick={()=>setMemoryView("profile")}>Personal profile</button>
+        <button type="button" role="tab" id="saved-memories-tab" aria-controls="saved-memories-view" aria-selected={memoryView === "saved"} tabIndex={memoryView === "saved" ? 0 : -1} className={memoryView === "saved" ? "active" : "secondary-button"} disabled={memoryView !== "saved" && (isDirty || !!profileGuard?.isDirty || isSaving || isMutating)} onClick={()=>setMemoryView("saved")}>Saved memories</button>
+      </div>
+      {memoryView === "profile" ? <div role="tabpanel" id="automatic-profile-view" aria-labelledby="automatic-profile-tab"><PersonalizationPanel onGuardChange={setProfileGuard} onOpenSource={onOpenProfileSource}/></div> : <form
+        role="tabpanel" id="saved-memories-view" aria-labelledby="saved-memories-tab"
         className="settings-form settings-form-with-banner memories-settings-form"
         aria-busy={isSaving || isMutating}
         onSubmit={submit}
@@ -782,7 +801,7 @@ export function MemoriesSettingsPanel({
             )}
           </section>
         )}
-      </form>
+      </form>}
 
       {confirmAction && (
         <ConfirmDialog

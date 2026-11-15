@@ -38,7 +38,7 @@ type NativeMultipartPart =
 
 export async function requestJson<T = unknown>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit & { expectedServerInstanceId?: string | null } = {}
 ): Promise<T> {
   if (isNativeRuntime()) {
     const bodyText = requestBodyText(options.body);
@@ -50,6 +50,7 @@ export async function requestJson<T = unknown>(
       request: {
         method: options.method ?? "GET",
         path,
+        expected_instance_id: options.expectedServerInstanceId ?? null,
         headers,
         body_text: bodyText,
         response_type: "text"

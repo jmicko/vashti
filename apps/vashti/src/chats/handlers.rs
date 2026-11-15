@@ -645,28 +645,19 @@ async fn stream_generation(task: GenerationStreamTask) {
         .persona_name_snapshot
         .clone()
         .unwrap_or_else(|| prepared.model_name.clone());
-    let profile_context = crate::personalization::service::chat_context(
-        &image_state,
-        &user_id,
-        &assistant_model_key,
-        prepared
-            .assistant_message
-            .backend_id
-            .as_deref()
-            .unwrap_or_default(),
-        &prepared.model_name,
-        prepared.assistant_message.persona_version_id.as_deref(),
-        prepared
-            .prompt_messages
-            .iter()
-            .rev()
-            .find(|m| m.role == "user")
-            .map(|m| m.content.as_str())
-            .unwrap_or(""),
-    )
-    .await
-    .ok()
-    .flatten();
+    let profile_backend = prepared
+        .assistant_message
+        .backend_id
+        .clone()
+        .unwrap_or_default();
+    let profile_persona_version = prepared.assistant_message.persona_version_id.clone();
+    let profile_query = prepared
+        .prompt_messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
     let title_backend_base_url = prepared.backend_base_url.clone();
     let title_model_name = prepared.model_name.clone();
     let title_prompt_messages = prepared.prompt_messages.clone();
@@ -764,16 +755,6 @@ async fn stream_generation(task: GenerationStreamTask) {
         available_tools.clear();
     }
     let mut prompt_messages = prepared.prompt_messages;
-    if let Some(context) = profile_context {
-        let position = prompt_messages
-            .iter()
-            .position(|m| m.role != "system")
-            .unwrap_or(prompt_messages.len());
-        prompt_messages.insert(
-            position,
-            crate::personalization::service::context_message(context),
-        );
-    }
     ollama::client::filter_unsupported_images(
         &client,
         &prepared.backend_base_url,
@@ -805,9 +786,42 @@ async fn stream_generation(task: GenerationStreamTask) {
         let round_content_start = content_text.len();
         let round_thinking_start = thinking_text.len();
         let mut round_tool_calls = Vec::new();
+        let mut request_messages = prompt_messages.clone();
+        if let Ok(Some(context)) = crate::personalization::service::chat_context(
+            &image_state,
+            &user_id,
+            &assistant_model_key,
+            &profile_backend,
+            &prepared.model_name,
+            profile_persona_version.as_deref(),
+            &profile_query,
+        )
+        .await
+        {
+            let window = prepared
+                .inference_options
+                .as_ref()
+                .and_then(|o| o.num_ctx)
+                .unwrap_or(4096);
+            let used = request_messages
+                .iter()
+                .map(|m| crate::personalization::service::context_weight(&m.content) + 32)
+                .sum::<i64>();
+            let budget = (window / 4).min(window - used - 512).max(0);
+            if let Some(context) = crate::personalization::service::fit_context(&context, budget) {
+                let position = request_messages
+                    .iter()
+                    .position(|m| m.role != "system")
+                    .unwrap_or(request_messages.len());
+                request_messages.insert(
+                    position,
+                    crate::personalization::service::context_message(context),
+                );
+            }
+        }
         let request = OllamaChatRequest {
             model: prepared.model_name.clone(),
-            messages: prompt_messages.clone(),
+            messages: request_messages,
             stream: true,
             options: prepared.inference_options.clone(),
             think: prepared.think_mode.as_deref().and_then(think_from_mode),

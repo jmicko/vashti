@@ -43,7 +43,11 @@ pub async fn extract(
     }
     let base = service::authorize_processor(state, owner, backend, model, cloud).await?;
     let input = json!({"existing_topics":topics,"sources":sources.iter().enumerate().map(|(i,s)| json!({"source":i,"text":s.text,"timestamp":s.created_at})).collect::<Vec<_>>()});
-    let instructions = format!("{}\nResponse schema:\n{}", PROCESSOR_INSTRUCTIONS, schema());
+    let instructions = format!(
+        "{}\nFood preferences and communication preferences are useful profile facts. Return all qualifying facts explicitly stated in this batch, including corrections to topics that already exist. The existing_topics list is only a naming guide: reuse those keys, do not skip those facts.\nResponse schema:\n{}",
+        PROCESSOR_INSTRUCTIONS,
+        schema()
+    );
     let mut request = json!({"model":model,"stream":false,"think":false,"options":{"temperature":0.1,"num_predict":4096,"num_ctx":16384},"messages":[{"role":"system","content":instructions},{"role":"user","content":input.to_string()}]});
     let snapshot = state.model_cache.snapshot().await;
     if snapshot
@@ -193,6 +197,17 @@ pub async fn process_one(state: &AppState, owner: &str, manual: bool) -> Result<
         }
     };
     service::publish(state, owner, &before, &sources, candidates).await?;
+    if manual
+        && service::sources(state, owner, &before.settings, true)
+            .await?
+            .is_empty()
+    {
+        sqlx::query("UPDATE user_personalization SET requested=0 WHERE user_id=? AND revision=?")
+            .bind(owner)
+            .bind(before.revision + 1)
+            .execute(&state.db)
+            .await?;
+    }
     Ok(true)
 }
 
@@ -201,7 +216,7 @@ pub fn spawn(state: AppState) {
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             // One lane across accounts; oldest attempt first prevents a busy account starving others.
-            let rows = match sqlx::query("SELECT user_id,requested FROM user_personalization WHERE json_extract(settings_json,'$.enabled')=1 AND (last_attempt_at IS NULL OR last_attempt_at+120*(1 << MIN(failures,4))<?) ORDER BY COALESCE(last_attempt_at,0),user_id LIMIT 10")
+            let rows = match sqlx::query("SELECT user_id,requested FROM user_personalization WHERE json_extract(settings_json,'$.enabled')=1 AND ((requested=1 AND last_error IS NULL) OR last_attempt_at IS NULL OR last_attempt_at+120*(1 << MIN(failures,4))<?) ORDER BY COALESCE(last_attempt_at,0),user_id LIMIT 10")
                 .bind(unix_timestamp()).fetch_all(&state.db).await { Ok(r)=>r, Err(_)=>continue };
             for row in rows {
                 let owner: String = row.get("user_id");

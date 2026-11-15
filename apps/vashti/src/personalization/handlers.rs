@@ -65,6 +65,15 @@ async fn process(
     Json(input): Json<ExpectedRevision>,
 ) -> Result<Json<Profile>, ApiError> {
     let owner = owner(&state, &jar).await?;
+    let profile = service::profile(&state.db, &owner).await?;
+    if !profile.settings.enabled
+        || profile.settings.processor_backend_id.is_none()
+        || profile.settings.processor_model.is_none()
+    {
+        return Err(service::invalid(
+            "Enable personalization and choose a processing model first",
+        ));
+    }
     service::ensure(&state.db, &owner).await?;
     let mut tx = state.db.begin().await?;
     service::bump(&mut tx, &owner, input.expected_revision).await?;
@@ -143,6 +152,12 @@ async fn device_extract(
     Json(input): Json<DeviceExtract>,
 ) -> Result<Json<Value>, ApiError> {
     let owner = owner(&state, &jar).await?;
+    if input.expected_user_id != owner {
+        return Err(ApiError::conflict(
+            "private_identity_changed",
+            "The signed-in account changed. Private processing was not started.",
+        ));
+    }
     if worker::foreground_busy(&state).await {
         return Err(ApiError::conflict(
             "processor_busy",

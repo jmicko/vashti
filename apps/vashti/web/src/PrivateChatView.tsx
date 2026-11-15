@@ -1,4 +1,5 @@
 import { cancelDeviceImages } from "./images/deviceTools";
+import type { ProfilePromptPayload } from "./personalization/types";
 import { mergeInferenceSettings } from "./inferenceSettings";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Lock } from "lucide-react";
@@ -733,15 +734,34 @@ export function PrivateChatView({
       [assistantId]: streamSegmentsFromRevision(initialContent, initialThinking)
     }));
     thinkingContentCursorRef.current.set(assistantId, 0);
+    let profileActivity: { profileGenerationActive: (active: boolean) => void } | null = null;
 
     try {
-      const requestBody =
+      const personalization = await import("./personalization/device").catch(() => null);
+      if (personalization) {
+        profileActivity = personalization;
+        personalization.profileGenerationActive(true);
+      }
+      let requestBody =
         path === "/api/private/generate"
           ? {
               ...(body as Record<string, unknown>),
               client_tools: await selectedDeviceToolNames()
             }
           : body;
+      if (personalization && path === "/api/private/generate" && chatRef.current) {
+        const payload = requestBody as ProfilePromptPayload;
+        const exact = messagesRef.current.find((message) => message.id === assistantId);
+        const persona = privatePersonas.find((item) => item.id === exact?.persona_id);
+        const key = exact?.persona_id
+          ? `persona:${exact.persona_id}`
+          : `base:${payload.backend_id}:${payload.model_name}`;
+        requestBody = await personalization.applyProfileToPrompt(payload, {
+          key,
+          character: persona?.current_version.model_type === "character",
+          personaVersion: exact?.persona_version_id
+        }).catch(() => requestBody);
+      }
       await readGenerateEventStream({
         path,
         body: requestBody,
@@ -767,6 +787,7 @@ export function PrivateChatView({
       }));
       clearStreamSegments(assistantId);
     } finally {
+      profileActivity?.profileGenerationActive(false);
       if (generationRunRef.current === runId) {
         setIsGenerating(false);
         setActiveAssistantId(null);

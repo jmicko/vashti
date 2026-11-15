@@ -148,6 +148,7 @@ pub struct ExpectedRevision {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceExtract {
+    pub expected_user_id: String,
     pub backend_id: String,
     pub model_name: String,
     pub allow_cloud_processor: bool,
