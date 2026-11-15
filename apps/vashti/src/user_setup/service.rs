@@ -16,6 +16,7 @@ pub const MEMORIES_ALLOW_MODEL_CREATE: &str = "memories.allow_model_create";
 pub const MEMORIES_ALLOW_MODEL_EDIT: &str = "memories.allow_model_edit";
 pub const MEMORIES_ALLOW_MODEL_FORGET: &str = "memories.allow_model_forget";
 pub const CHAT_HISTORY_ALLOW_MODEL_SEARCH: &str = "chat_history.allow_model_search";
+pub const PERSONALIZATION_ENABLED: &str = "personalization.enabled";
 
 const SOURCE_SETUP: &str = "setup";
 pub const SOURCE_SETTINGS: &str = "settings";
@@ -30,6 +31,13 @@ struct ChoiceDefinition {
 }
 
 const CHOICES: &[ChoiceDefinition] = &[
+    ChoiceDefinition {
+        key: PERSONALIZATION_ENABLED,
+        group_id: "memories",
+        title: "Build a personal profile",
+        description: "Distill useful facts from eligible chats and supply them as context automatically. Choose a processing model in Memories before background processing starts. Cloud models and character chats are excluded unless you allow them.",
+        recommended_value: true,
+    },
     ChoiceDefinition {
         key: NOTES_ALLOW_MODEL_READ,
         group_id: "notes",
@@ -226,8 +234,22 @@ pub async fn apply_setup_choices(
         None
     };
 
+    let personalization_settings = if let Some(enabled) = values.get(PERSONALIZATION_ENABLED) {
+        let mut settings = crate::personalization::service::profile(pool, user_id)
+            .await?
+            .settings;
+        settings.enabled = *enabled;
+        Some(settings)
+    } else {
+        None
+    };
     let now = unix_timestamp();
     let mut tx = pool.begin().await?;
+
+    if let Some(settings) = personalization_settings {
+        sqlx::query("INSERT INTO user_personalization(user_id,settings_json) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET settings_json=excluded.settings_json,revision=revision+1")
+            .bind(user_id).bind(serde_json::to_string(&settings).unwrap()).execute(&mut *tx).await?;
+    }
 
     if let Some(settings) = note_settings {
         let allow_model_read = value_or(&values, NOTES_ALLOW_MODEL_READ, settings.allow_model_read);
@@ -501,8 +523,9 @@ mod tests {
         let status = get_setup_status(&pool, "new-user")
             .await
             .expect("load remaining setup");
-        assert_eq!(status.pending_count, 1);
-        assert_eq!(status.groups[0].id, "past_chats");
+        assert_eq!(status.pending_count, 2);
+        assert_eq!(status.groups[0].id, "memories");
+        assert_eq!(status.groups[1].id, "past_chats");
 
         crate::memories::service::update_memory_settings(
             &pool,
@@ -517,6 +540,17 @@ mod tests {
         )
         .await
         .expect("save current memory settings");
+        assert!(has_pending_choices(&pool, "new-user").await.unwrap());
+        apply_setup_choices(
+            &pool,
+            "new-user",
+            vec![SetupChoiceInput {
+                key: PERSONALIZATION_ENABLED.into(),
+                value: true,
+            }],
+        )
+        .await
+        .unwrap();
         assert!(!has_pending_choices(&pool, "new-user").await.unwrap());
     }
 

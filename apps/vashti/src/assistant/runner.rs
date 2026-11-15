@@ -492,9 +492,36 @@ async fn work(state: &AppState, id: &str, cancel: &CancellationToken) -> Result<
             )
             .await;
         }
+        // Rebuild transient profile context each round; never checkpoint it as authority.
+        let mut request_messages = cp.messages.clone();
+        if let Ok(Some(context)) = crate::personalization::service::chat_context(
+            state,
+            &owner,
+            &format!("base:{}:{}", config.backend_id, config.model_name),
+            &config.backend_id,
+            &config.model_name,
+            None,
+            request_messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.as_str())
+                .unwrap_or(""),
+        )
+        .await
+        {
+            let position = request_messages
+                .iter()
+                .position(|m| m.role != "system")
+                .unwrap_or(request_messages.len());
+            request_messages.insert(
+                position,
+                crate::personalization::service::context_message(context),
+            );
+        }
         let request = OllamaChatRequest {
             model: config.model_name.clone(),
-            messages: cp.messages.clone(),
+            messages: request_messages,
             stream: true,
             options: Some(OllamaChatOptions {
                 temperature: Some(0.3),

@@ -1,4 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
@@ -37,6 +43,8 @@ pub struct AppState {
     pub assistant_jobs: Arc<crate::assistant::runner::Jobs>,
     pub generation_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
     pub generation_progress: Arc<Mutex<HashMap<String, GenerationProgress>>>,
+    pub private_activity: Arc<AtomicUsize>,
+    pub personalization_lane: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -64,6 +72,21 @@ impl AppState {
             assistant_jobs: Arc::new(crate::assistant::runner::Jobs::default()),
             generation_cancellations: Arc::new(Mutex::new(HashMap::new())),
             generation_progress: Arc::new(Mutex::new(HashMap::new())),
+            private_activity: Arc::new(AtomicUsize::new(0)),
+            personalization_lane: Arc::new(tokio::sync::Semaphore::new(1)),
         }
+    }
+}
+
+pub struct PrivateActivityGuard(Arc<AtomicUsize>);
+impl PrivateActivityGuard {
+    pub fn enter(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self(counter)
+    }
+}
+impl Drop for PrivateActivityGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }

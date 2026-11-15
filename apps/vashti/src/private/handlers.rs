@@ -103,6 +103,7 @@ enum PrivateGenerateEvent {
 }
 
 struct PrivateGenerationTask {
+    _activity: crate::app_state::PrivateActivityGuard,
     client: reqwest::Client,
     backend_base_url: String,
     model_name: String,
@@ -206,6 +207,7 @@ pub async fn generate(
     let session_binding = request_session_binding(&state, &jar)?;
 
     Ok(start_private_stream(PrivateGenerationTask {
+        _activity: crate::app_state::PrivateActivityGuard::enter(state.private_activity.clone()),
         client: state.http_client,
         backend_base_url: backend.base_url,
         model_name,
@@ -328,6 +330,7 @@ async fn stream_private_generation(
     task: PrivateGenerationTask,
 ) {
     let PrivateGenerationTask {
+        _activity,
         client,
         backend_base_url,
         model_name,

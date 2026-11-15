@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 pub struct OllamaModel {
     pub name: String,
+    pub is_cloud: bool,
+    pub supports_structured_output: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub capabilities: Vec<String>,
@@ -171,6 +173,9 @@ struct TagModel {
     name: Option<String>,
     model: Option<String>,
     details: Option<ModelDetails>,
+    remote_host: Option<String>,
+    remote_model: Option<String>,
+    kuno_backend: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -306,6 +311,10 @@ impl TagsResponse {
                 let capabilities = fallback_capabilities(supports_images, supports_thinking);
 
                 Some(OllamaModel {
+                    supports_structured_output: model.kuno_backend.is_none(),
+                    is_cloud: model.remote_host.is_some_and(|v| !v.is_empty())
+                        || model.remote_model.is_some_and(|v| !v.is_empty())
+                        || name.to_ascii_lowercase().ends_with("cloud"),
                     name,
                     supports_images,
                     supports_thinking,

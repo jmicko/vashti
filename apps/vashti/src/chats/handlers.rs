@@ -645,6 +645,28 @@ async fn stream_generation(task: GenerationStreamTask) {
         .persona_name_snapshot
         .clone()
         .unwrap_or_else(|| prepared.model_name.clone());
+    let profile_context = crate::personalization::service::chat_context(
+        &image_state,
+        &user_id,
+        &assistant_model_key,
+        prepared
+            .assistant_message
+            .backend_id
+            .as_deref()
+            .unwrap_or_default(),
+        &prepared.model_name,
+        prepared.assistant_message.persona_version_id.as_deref(),
+        prepared
+            .prompt_messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.as_str())
+            .unwrap_or(""),
+    )
+    .await
+    .ok()
+    .flatten();
     let title_backend_base_url = prepared.backend_base_url.clone();
     let title_model_name = prepared.model_name.clone();
     let title_prompt_messages = prepared.prompt_messages.clone();
@@ -742,6 +764,16 @@ async fn stream_generation(task: GenerationStreamTask) {
         available_tools.clear();
     }
     let mut prompt_messages = prepared.prompt_messages;
+    if let Some(context) = profile_context {
+        let position = prompt_messages
+            .iter()
+            .position(|m| m.role != "system")
+            .unwrap_or(prompt_messages.len());
+        prompt_messages.insert(
+            position,
+            crate::personalization::service::context_message(context),
+        );
+    }
     ollama::client::filter_unsupported_images(
         &client,
         &prepared.backend_base_url,

@@ -18,6 +18,7 @@ mod notes;
 mod ollama;
 mod permissions;
 mod persona_avatars;
+mod personalization;
 mod personas;
 mod private;
 mod rate_limit;
@@ -115,6 +116,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     spawn_note_indexing(state.clone());
     spawn_memory_indexing(state.clone());
     spawn_conversation_indexing(state.clone());
+    personalization::worker::spawn(state.clone());
     spawn_update_checks(state.clone());
     assistant::runner::spawn(state.clone());
     let app = router(state.clone());
@@ -137,6 +139,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn router(state: AppState) -> Router {
     let api = Router::new()
         .nest("/assistant", assistant::handlers::router())
+        .nest("/personalization", personalization::handlers::router())
         .nest("/images", images::handlers::router())
         .nest("/videos", videos::handlers::router())
         .route("/version", get(version::get_version))
