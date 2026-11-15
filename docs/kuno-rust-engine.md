@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 85 ms per block with machine-code linear layers and attention | correct, 1.3 times too slow; C++ still runs it |
+| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.86 s per step (75 ms per block); warm clip 52.5 s | correct, 1.15 times slower per step, 1.10 times per clip; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -482,6 +482,63 @@ Work buffers and the kernel are built for an exact token count. One block at
 step's blocks and heads 4.45 s (C++ about 3.4 s). `block_matches_reference`
 gives 39 to 47 dB and the whole step passes against the C++ engine (video
 23.0 dB, audio 22.4 dB).
+
+### Fewer passes around the kernels (2026-11-15)
+
+With the two hot kernels as machine code, what was left of a step was memory traffic
+around them and work still on the CPU. At 8611 tokens:
+
+| | Before | Now | C++ engine |
+|---|---|---|---|
+| Attention per block | 39.8 ms | 32.5 ms | 24.8 ms |
+| Linear layers per block | 29.1 ms | 29.6 ms | 33.6 ms |
+| Small kernels per block | 17.4 ms | 12.6 ms | about 8 ms |
+| One block | 84.8 ms | 74.9 ms | 66 ms |
+| One step: inputs, blocks, heads | 4.94 s | 3.83 s | 3.35 s |
+| Text refiner, once per clip | 3.85 s (CPU) | 0.19 s | |
+
+- The small kernels are bound by video memory bandwidth (about 450 GB/s over 7.9 GB per
+  block), so the gain is in passes not made. The quantizer used to read a finished f32 row
+  twice (largest magnitude, then rounding). `normq8`, `mergeq8` and `gateq8` compute the
+  row, rotate it into the workgroup's shared memory and round from there, so the row is
+  never written out. Shared memory is 49152 bytes per workgroup: a 14336-wide row does not
+  fit, so `gateq8` keeps half there and passes half through a buffer.
+- Output heads (`final8`), input projections (`embed8`) and the blocks' modulation vectors
+  (`parts8`) run on the GPU. A step now uploads 3 MB and reads back 3 MB where it moved
+  450 MB; the CPU and transfer time of a step went from 0.66 s to about 0.03 s.
+- The text refiner (`dit_gpu/refiner.rs`) is two blocks of the DiT's shape with
+  half-precision weights on the text tokens: the half-precision product shader, the DiT's
+  attention kernel built for the text's token count (its operand writers `qk8s` and
+  `value8s` gained an f32 input mode), and four small shaders. 56.6 dB from the CPU
+  reference on a captured text of 469 tokens. Its weights add 1.5 GB of video memory. It
+  needs Level Zero; without it the CPU refiner runs.
+- `projections_and_heads_match_reference` holds the projections and heads to the CPU
+  reference (119 dB with no block between them, 54 dB with one);
+  `refiner_matches_reference` holds the refiner.
+
+Whole-network checks after these changes: a captured 8611-token step is 22.3 / 21.2 dB
+(video / audio) from the C++ engine; the eight steps of the small captured clip are 27 to 32
+dB from the C++ outputs, the Euler loop on this DiT's own outputs ends 25.7 dB from the C++
+final latent, and the decoded clips are 28.8 dB PSNR apart (27.7 before).
+
+In the dev worker (`rust-dit` build, 2.3 s clip at 832x544, 8 steps, same request):
+
+| | Rust DiT before | Rust DiT now | C++ sampler |
+|---|---|---|---|
+| One step | 6.2 s | 3.86 s | 3.35 s |
+| First clip of a worker | 80 s | 71.5 s | 60.9 s |
+| Later clips | | 52.5 s | 47.7 s |
+
+The worker used to read all 21 GB from the file for every clip, because the DiT has to
+leave video memory before the decoder and the next clip's text encoder load (7.5 s per
+clip). The weights now stay in host staging memory for the worker's life (`Host`, one model
+at a time, 21 GB of RAM); a clip copies them into video memory in 2.1 s (`GpuDit::place`)
+and frees that before decoding as before. The text features kept for a clip are dropped
+with it. In this build the C++ engine still reads its own copy of the DiT into RAM and
+never uses it.
+
+What is left of the gap to the C++ sampler on a later clip (4.8 s): 0.5 s per step, of
+which attention is 0.38 s, and about 1 s more before the first step.
 
 ## Running the comparisons
 
