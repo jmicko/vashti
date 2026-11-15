@@ -461,16 +461,27 @@ masking or marker channel is needed.
 | First kernel, one load in flight | 90 ms |
 | Transposed kernel, three load buffers | 39 ms |
 | Same without computing the weights | 36 ms |
+| Exponents in place, up to five loads in flight | 32 ms |
+| Same without computing the weights | 30 ms |
 
-The kernel is bound by operand loading (about 60 G cache lines per second
-against the 88 G the int8 kernel reaches); the weights cost 3 ms.
+The three-buffer kernel was bound by operand loading (about 60 G cache lines
+per second against the 88 G the int8 kernel reaches). The current one writes
+the exponents over the scores, checks for overflow before any weight is
+computed (the slow path lowers the exponents instead of starting over), and
+borrows idle registers as load buffers: the weights' registers while scores
+are computed, the scores' registers while values are mixed. Four loads are in
+flight during scoring, two during the weights, five during mixing. A step of
+16 keys now takes about 3.7 microseconds per thread, of which the 32 `dpas`
+alone are about 2.2 at the rate the half-float probe reached, so what is left
+is mostly arithmetic.
 
 In the DiT (`Kernels::block`), three shader variants write the kernel's
 layouts (`qk8s`, `value8s`) and gather its transposed output (`merge8s`).
 Work buffers and the kernel are built for an exact token count. One block at
-8611 tokens: 84.8 ms (attention 39.8, linear layers 29.1, the rest 16); a
-step's blocks and heads 4.7 s (C++ about 3.4 s). `block_matches_reference`
-gives 39 to 47 dB and the whole step still passes against the C++ engine.
+8611 tokens: 78.6 ms (attention 32.5, linear layers 29.4, the rest 17); a
+step's blocks and heads 4.45 s (C++ about 3.4 s). `block_matches_reference`
+gives 39 to 47 dB and the whole step passes against the C++ engine (video
+23.0 dB, audio 22.4 dB).
 
 ## Running the comparisons
 
