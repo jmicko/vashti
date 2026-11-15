@@ -10,6 +10,25 @@ No Kuno source, inference API, installed service, GPU or runtime changed. See
 [release process and local validation](../apps/vashti-hub/docs/release-process.md).
 This note does not authorize deployment, publishing or live artifact deletion.
 
+Deployment receipt (2026-11-14, separately approved by the user): Hub commit
+`4646da7d` was built and installed through the existing narrow deploy helper.
+The public HTTPS site serves the new consolidation UI and target-specific
+version endpoint; consolidation still requires an admin session. The installed
+binary matches the local package, the previous binary is retained for rollback,
+and the existing service/upload-limit configuration is unchanged. The public
+catalog's 18 releases, notes, target lists and artifact hashes are unchanged.
+No release was uploaded, consolidated or promoted during this deployment.
+
+Vashti-only beta.4 preparation (2026-11-14): server and Android versions are
+`0.13.0-beta.4`, Android versionCode `13004`. The two signed upload targets total
+approximately 61 MiB; Kuno and its optional runtime are excluded. The packaged
+Linux binary passed fresh-database migration, embedded-frontend integrity and
+restart/installation-identity checks. All 188 ordinary server tests and 106
+frontend tests passed; the four opt-in live inference/Podman tests were not run.
+The universal APK matches the existing release certificate and passed version,
+four-ABI, ZIP and 64-bit ELF alignment checks. Physical Android acceptance is
+still pending. No upload has occurred; a fresh one-time key is required.
+
 **Vashti video consumer checkpoint (2026-11-08):** `codex/personal-assistant`
 merged `main` and implements the existing additive video contract without
 changing Kuno. A discovery-gated Video sidebar workspace provides conversational
