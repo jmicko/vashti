@@ -29,6 +29,13 @@ The universal APK matches the existing release certificate and passed version,
 four-ABI, ZIP and 64-bit ELF alignment checks. Physical Android acceptance is
 still pending. No upload has occurred; a fresh one-time key is required.
 
+Publication receipt (2026-11-14): `v0.13.0-beta.4` is now staged on the live Hub
+with exactly the Linux server and Android APK. Public notes, artifact hashes,
+download headers and signed update manifests were verified. Prerelease Vashti
+and Android select beta.4; Kuno and the optional runtime still select beta.3.
+Stable remains v0.12.0. The previous 18 release records, notes and artifact hashes
+are unchanged; no old beta was consolidated or deleted, and nothing was promoted.
+
 **Vashti video consumer checkpoint (2026-11-08):** `codex/personal-assistant`
 merged `main` and implements the existing additive video contract without
 changing Kuno. A discovery-gated Video sidebar workspace provides conversational
