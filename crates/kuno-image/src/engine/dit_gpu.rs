@@ -107,7 +107,8 @@ pub struct Kernels {
     mixtop: Kernel,
     merge8: Kernel,
     resid8: Kernel,
-    gate8: Kernel,
+    /// The feed-forward activation and its quantization in one pass.
+    gateq8: Kernel,
     /// Writers and reader of the machine-code attention kernel's layouts.
     qk8s: Kernel,
     value8s: Kernel,
@@ -178,7 +179,7 @@ impl Kernels {
             mixtop: gpu.kernel(shaders::MIXTOP, 6, 13, Some(16))?,
             merge8: gpu.kernel(shaders::MERGE8, 3, 2, None)?,
             resid8: gpu.kernel(shaders::RESID8, 6, 4, None)?,
-            gate8: gpu.kernel(shaders::GATE8, 4, 2, None)?,
+            gateq8: gpu.kernel(shaders::GATEQ8, 5, 3, Some(16))?,
             qk8s: gpu.kernel(shaders::QK8S, 5, 5, Some(16))?,
             value8s: gpu.kernel(shaders::VALUE8S, 4, 3, None)?,
             mergeq8: gpu.kernel(shaders::MERGEQ8, 4, 3, Some(16))?,
@@ -338,6 +339,8 @@ pub struct Work {
     /// Every block's modulation vectors `[blocks][rows][6][DIM]`.
     pub parts: Buffer,
     rows_count: usize,
+    /// `[padded][INNER]` f32: the shader attention's merged rows, and the second half of the
+    /// feed-forward activation's rotated rows.
     wide: Buffer,
     bytes: Buffer,
     scales: Buffer,
@@ -454,7 +457,7 @@ impl Work {
             times: f32s(rows / 3 * dit::TIME_WIDTH)?,
             parts: f32s(blocks * rows * 6 * DIM)?,
             rows_count: rows,
-            wide: f32s(padded * HIDDEN)?,
+            wide: f32s(padded * INNER)?,
             bytes,
             scales: f32s(padded)?,
             sums,
@@ -500,16 +503,6 @@ impl Kernels {
             constants: vec![n, scale as u32, gate, parts_first],
             groups: [(DIM / 4 / 64) as u32, np, 1],
         };
-        let quantize = |width: usize| {
-            self.quantize(
-                &w.wide,
-                &w.bytes,
-                &w.scales,
-                w.padded,
-                width,
-                w.fast.is_some(),
-            )
-        };
 
         calls.push(norm(NORM1, 0, 1));
         calls.extend(self.product(w, &layer.qkv, QKV));
@@ -545,7 +538,7 @@ impl Kernels {
             });
         } else {
             self.attention(&mut calls, w, v);
-            calls.push(quantize(INNER));
+            calls.push(self.quantize(&w.wide, &w.bytes, &w.scales, w.padded, INNER, false));
         }
         calls.extend(self.product(w, &layer.out, OUT));
         calls.push(residual(SCALE_OUT, 2));
@@ -553,12 +546,11 @@ impl Kernels {
         calls.push(norm(NORM2, 3, 4));
         calls.extend(self.product(w, &layer.fc1, FC1));
         calls.push(Call::Shader {
-            kernel: &self.gate8,
-            buffers: vec![&w.sums, &w.scales, v, &w.wide],
-            constants: vec![n, SCALE_FC1 as u32],
-            groups: [(HIDDEN / 4 / 64) as u32, np, 1],
+            kernel: &self.gateq8,
+            buffers: vec![&w.sums, &w.scales, v, &w.wide, &w.bytes],
+            constants: vec![n, SCALE_FC1 as u32, stream],
+            groups: [np, 1, 1],
         });
-        calls.push(quantize(HIDDEN));
         calls.extend(self.product(w, &layer.fc2, FC2));
         calls.push(residual(SCALE_FC2, 5));
         calls
@@ -1132,7 +1124,7 @@ mod tests {
             (&kernels.mixtop, "mixing"),
             (&kernels.merge8, "merge"),
             (&kernels.resid8, "residual"),
-            (&kernels.gate8, "gate"),
+            (&kernels.gateq8, "gate and quantize"),
             (&kernels.qk8s, "queries and keys"),
             (&kernels.value8s, "values"),
             (&kernels.mergeq8, "merge and quantize"),
