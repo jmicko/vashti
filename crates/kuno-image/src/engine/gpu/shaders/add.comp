@@ -1,0 +1,13 @@
+// x[token] += y[token] on 5376-wide f32 rows for live tokens, one vec4 per invocation.
+// Dispatch: x = 5376 / 4 / 64, y = padded tokens.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Update { vec4 y[]; };
+layout(push_constant) uniform Constants { uint tokens; } p;
+const uint DIM4 = 1344;
+
+void main() {
+    uint at = gl_GlobalInvocationID.y * DIM4 + gl_GlobalInvocationID.x;
+    if (gl_GlobalInvocationID.y < p.tokens) x[at] += y[at];
+}

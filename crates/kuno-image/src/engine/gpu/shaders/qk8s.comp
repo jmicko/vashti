@@ -9,6 +9,8 @@
 // One subgroup of 16 lanes is one token and head; a lane owns 8 neighbouring channels, so
 // loads and stores are contiguous and the sum of squares is one subgroup reduction. Lanes
 // 0..5 pair with lanes 6..11; each also reads its partner's channels.
+// With `floats` set, `g` holds f32 values instead (the text refiner's projection): no
+// scales and no rotary turn.
 // Dispatch: x = heads / 4, y = padded tokens; `side` is 0 for queries, 1 for keys.
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types : require
@@ -32,6 +34,7 @@ layout(push_constant) uniform Constants {
     uint side;
     uint scale_first;
     uint weight_first;
+    uint floats;
 } p;
 const uint INNER4 = 1792;
 
@@ -40,7 +43,8 @@ void main() {
     uint token = gl_WorkGroupID.y;
     uint lane = gl_SubgroupInvocationID;
     bool live = token < p.tokens;
-    float row_scale = live ? as[token] : 0.0;
+    bool floats = p.floats != 0;
+    float row_scale = live ? (floats ? 1.0 : as[token]) : 0.0;
     uint from = token * (3 * INNER4) + p.side * INNER4 + head * 32;
     uint scales = (p.scale_first >> 2) + p.side * INNER4 + head * 32;
     uint weights = p.weight_first >> 2;
@@ -51,8 +55,10 @@ void main() {
     float squares = 0.0;
     for (uint j = 0; j < 2; j++) {
         uint c = lane * 2 + j, d = other * 2 + j;
-        mine[j] = vec4(g[from + c]) * row_scale * v[scales + c];
-        theirs[j] = vec4(g[from + d]) * row_scale * v[scales + d];
+        mine[j] = floats ? intBitsToFloat(g[from + c]) * row_scale
+            : vec4(g[from + c]) * row_scale * v[scales + c];
+        theirs[j] = floats ? intBitsToFloat(g[from + d]) * row_scale
+            : vec4(g[from + d]) * row_scale * v[scales + d];
         squares += dot(mine[j], mine[j]);
     }
     float norm = 1.0 / sqrt(subgroupAdd(squares) / 128.0 + 1e-5);
@@ -67,8 +73,9 @@ void main() {
         vec4 b = theirs[j] * (norm * v[weights + other * 2 + j]);
         // Cosine and sine of the pair's four turns: two vec4 per four pairs.
         uint turns = (low ? lane : other) * 2 + j;
-        vec4 t0 = live ? turn[(token * 12 + turns) * 2] : vec4(1.0, 0.0, 1.0, 0.0);
-        vec4 t1 = live ? turn[(token * 12 + turns) * 2 + 1] : vec4(1.0, 0.0, 1.0, 0.0);
+        bool turned = live && !floats;
+        vec4 t0 = turned ? turn[(token * 12 + turns) * 2] : vec4(1.0, 0.0, 1.0, 0.0);
+        vec4 t1 = turned ? turn[(token * 12 + turns) * 2 + 1] : vec4(1.0, 0.0, 1.0, 0.0);
         vec4 cosine = vec4(t0.x, t0.z, t1.x, t1.z), sine = vec4(t0.y, t0.w, t1.y, t1.w);
         vec4 result = low ? cosine * a - sine * b : (high ? sine * b + cosine * a : a);
         o[to + (j * 2) * pair] = packHalf2x16(result.xy);

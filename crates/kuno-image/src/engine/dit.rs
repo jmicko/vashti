@@ -746,6 +746,8 @@ pub(super) struct Inputs {
     /// `[tokens][PAIRS]` cosine and sine.
     pub rotary: Vec<[f32; 2]>,
 }
+/// A text refiner: text encoder features to the DiT's text rows.
+pub(super) type Refine<'a> = dyn Fn(&[f32]) -> Result<Vec<f32>, &'static str> + 'a;
 /// The state of one evaluation before the first block.
 pub(super) struct Prepared {
     /// `[tokens][DIM]`.
@@ -801,14 +803,14 @@ impl Dit {
     }
     /// `refine` with the last result kept: the text is the same for every step of a clip.
     /// The copy lives in RAM only, until the next clip's text or `forget`.
-    fn refined(&self, context: &[f32]) -> Result<Vec<f32>, &'static str> {
+    fn refined(&self, context: &[f32], refine: &Refine) -> Result<Vec<f32>, &'static str> {
         let mut kept = self.refined.lock().map_err(|_| "model_state_lost")?;
         if let Some((text, refined)) = kept.as_ref()
             && text == context
         {
             return Ok(refined.clone());
         }
-        let refined = self.refine(context)?;
+        let refined = refine(context)?;
         *kept = Some((context.to_vec(), refined.clone()));
         Ok(refined)
     }
@@ -821,12 +823,7 @@ impl Dit {
     /// Text encoder output to model width: projection and the unmodulated refiner blocks.
     pub fn refine(&self, context: &[f32]) -> Result<Vec<f32>, &'static str> {
         let f = &self.file;
-        let mut x = linear(
-            context,
-            TEXT_WIDTH,
-            &f.floats("condition_proj.weight", &[DIM, TEXT_WIDTH])?,
-            &f.floats("condition_proj.bias", &[DIM])?,
-        );
+        let mut x = self.condition(context)?;
         for layer in 0..self.refiners {
             let name = |part: &str| format!("token_refiner.blocks.{layer}.{part}");
             let h = rms_norm(&x, &f.floats(&name("norm1.weight"), &[DIM])?);
@@ -864,10 +861,29 @@ impl Dit {
             );
             x.iter_mut().zip(&update).for_each(|(x, u)| *x += u);
         }
-        Ok(rms_norm(
-            &x,
-            &f.floats("token_refiner.final_norm.weight", &[DIM])?,
+        self.refined_norm(&x)
+    }
+    /// The refiner's input: text encoder features projected to `[tokens][DIM]`.
+    pub(super) fn condition(&self, context: &[f32]) -> Result<Vec<f32>, &'static str> {
+        let f = &self.file;
+        Ok(linear(
+            context,
+            TEXT_WIDTH,
+            &f.floats("condition_proj.weight", &[DIM, TEXT_WIDTH])?,
+            &f.floats("condition_proj.bias", &[DIM])?,
         ))
+    }
+    /// The refiner's last step on its blocks' output.
+    pub(super) fn refined_norm(&self, x: &[f32]) -> Result<Vec<f32>, &'static str> {
+        Ok(rms_norm(
+            x,
+            &self
+                .file
+                .floats("token_refiner.final_norm.weight", &[DIM])?,
+        ))
+    }
+    pub(super) fn refiners(&self) -> usize {
+        self.refiners
     }
     /// Time features `[timesteps][8]`: the table read with linear interpolation.
     fn times(&self, timesteps: &[f32]) -> Result<Vec<f32>, &'static str> {
@@ -935,6 +951,10 @@ impl Dit {
     }
     /// Everything `prepare` needs short of the input projections.
     pub(super) fn inputs(&self, step: &Step) -> Result<Inputs, &'static str> {
+        self.inputs_with(step, &|context| self.refine(context))
+    }
+    /// `inputs` with the text refiner given: `refine` runs when the text is new.
+    pub(super) fn inputs_with(&self, step: &Step, refine: &Refine) -> Result<Inputs, &'static str> {
         let f = &self.file;
         let plane = step.width * step.height * step.frames;
         let (video_values, audio_values) = (
@@ -958,7 +978,7 @@ impl Dit {
         let mut rows = Vec::with_capacity(layout.order.len());
         for (_, _, source) in &layout.order {
             rows.push(match source {
-                Source::Text => Rows::Text(self.refined(step.context)?),
+                Source::Text => Rows::Text(self.refined(step.context, refine)?),
                 Source::Video(index) => Rows::Video(patchify(&step.videos[*index])),
                 Source::Audio(index) => Rows::Audio(audio_rows(
                     step.audios[*index].data,

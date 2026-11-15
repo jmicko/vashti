@@ -16,7 +16,8 @@ layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
 layout(set = 0, binding = 2) readonly buffer Vectors { vec4 v[]; };
 layout(set = 0, binding = 3) writeonly buffer Value { f16vec4 vt[]; };
 // `scale_first` is in values and a multiple of 4.
-layout(push_constant) uniform Constants { uint tokens; uint padded; uint scale_first; } p;
+// With `floats` set, `g` holds f32 values instead of sums, and no scales apply.
+layout(push_constant) uniform Constants { uint tokens; uint padded; uint scale_first; uint floats; } p;
 const uint INNER4 = 1792;
 
 // [channel][token in block]
@@ -30,9 +31,11 @@ void main() {
         uint index = lane + j * 256;
         uint t = index >> 5, c = index & 31;
         uint token = first + t;
-        float row_scale = token < p.tokens ? as[token] : 0.0;
-        vec4 value = vec4(g[token * (3 * INNER4) + 2 * INNER4 + head * 32 + c]) * row_scale
-            * v[(p.scale_first >> 2) + 2 * INNER4 + head * 32 + c];
+        bool floats = p.floats != 0;
+        float row_scale = token < p.tokens ? (floats ? 1.0 : as[token]) : 0.0;
+        uint at = token * (3 * INNER4) + 2 * INNER4 + head * 32 + c;
+        vec4 value = floats ? intBitsToFloat(g[at]) * row_scale
+            : vec4(g[at]) * row_scale * v[(p.scale_first >> 2) + 2 * INNER4 + head * 32 + c];
         for (uint e = 0; e < 4; e++) tile[(c * 4 + e) * 32 + t] = value[e];
     }
     memoryBarrierShared();

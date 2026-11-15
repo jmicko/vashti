@@ -125,6 +125,53 @@ impl Safetensors {
             .read_exact_at(to, self.data + entry.begin)
             .map_err(|_| "model_file_invalid")
     }
+    /// Reads a float tensor of any stored precision as little-endian half floats into `to`
+    /// (two bytes per value), checking its exact shape.
+    pub fn half_into(
+        &self,
+        name: &str,
+        shape: &[usize],
+        to: &mut [u8],
+    ) -> Result<(), &'static str> {
+        use rayon::prelude::*;
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        let count: usize = shape.iter().product();
+        if to.len() != count * 2 {
+            return Err("model_tensor_invalid");
+        }
+        match entry.kind {
+            Kind::F16 => self.f16_into(name, shape, to),
+            Kind::Bf16 => {
+                if entry.shape != shape || entry.end - entry.begin != count as u64 * 2 {
+                    return Err("model_tensor_invalid");
+                }
+                // Converted from a copy: `to` may be memory that is slow to read back.
+                let mut bytes = vec![0u8; count * 2];
+                self.file
+                    .read_exact_at(&mut bytes, self.data + entry.begin)
+                    .map_err(|_| "model_file_invalid")?;
+                to.par_chunks_mut(1 << 16)
+                    .zip(bytes.par_chunks(1 << 16))
+                    .for_each(|(to, from)| {
+                        for (to, from) in to.chunks_exact_mut(2).zip(from.chunks_exact(2)) {
+                            // BF16 is the upper half of the f32 bit pattern.
+                            let value = f32::from_bits(
+                                u32::from(u16::from_le_bytes([from[0], from[1]])) << 16,
+                            );
+                            to.copy_from_slice(&narrow(value).to_le_bytes());
+                        }
+                    });
+                Ok(())
+            }
+            _ => {
+                let values = self.floats(name, shape)?;
+                for (to, value) in to.chunks_exact_mut(2).zip(values) {
+                    to.copy_from_slice(&narrow(value).to_le_bytes());
+                }
+                Ok(())
+            }
+        }
+    }
     /// Reads one little-endian F16 tensor widened to f32 (exact), checking its exact shape.
     pub fn f16(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;

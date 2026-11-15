@@ -15,6 +15,8 @@ use super::{
     },
 };
 
+mod refiner;
+
 /// One unit of GPU work with its arguments owned, so a pass can be assembled as a list.
 pub enum Call<'a> {
     /// A compute shader dispatch.
@@ -180,8 +182,8 @@ impl Kernels {
             merge8: gpu.kernel(shaders::MERGE8, 3, 2, None)?,
             resid8: gpu.kernel(shaders::RESID8, 6, 4, None)?,
             gateq8: gpu.kernel(shaders::GATEQ8, 5, 3, Some(16))?,
-            qk8s: gpu.kernel(shaders::QK8S, 5, 5, Some(16))?,
-            value8s: gpu.kernel(shaders::VALUE8S, 4, 3, None)?,
+            qk8s: gpu.kernel(shaders::QK8S, 5, 6, Some(16))?,
+            value8s: gpu.kernel(shaders::VALUE8S, 4, 4, None)?,
             mergeq8: gpu.kernel(shaders::MERGEQ8, 4, 3, Some(16))?,
             embed8: gpu.kernel(shaders::EMBED8, 4, 1, None)?,
             parts8: gpu.kernel(shaders::PARTS8, 3, 1, None)?,
@@ -513,14 +515,14 @@ impl Kernels {
                 calls.push(Call::Shader {
                     kernel: &self.qk8s,
                     buffers: vec![&w.sums, &w.scales, v, &w.turns, to],
-                    constants: vec![n, np, side, SCALE_QKV as u32, weight as u32],
+                    constants: vec![n, np, side, SCALE_QKV as u32, weight as u32, 0],
                     groups: [(HEADS / 4) as u32, np, 1],
                 });
             }
             calls.push(Call::Shader {
                 kernel: &self.value8s,
                 buffers: vec![&w.sums, &w.scales, v, &w.key],
-                constants: vec![n, np, SCALE_QKV as u32],
+                constants: vec![n, np, SCALE_QKV as u32, 0],
                 groups: [HEADS as u32, np / 32, 1],
             });
             let (kernel, groups) = &shared.attend;
@@ -638,6 +640,8 @@ pub struct GpuDit {
     layers: Vec<Layer>,
     /// Every block's modulation projection: weight `[18 * DIM][TIME_WIDTH]`, then bias.
     modulation: Buffer,
+    /// The text refiner, when its attention can run as machine code; the CPU's otherwise.
+    refiner: Option<refiner::Refiner>,
     /// The input projections' weights and biases (`dit::Dit::embed_vectors`).
     embed: Buffer,
     /// The output heads' norm weight, weights and biases (`dit::Dit::head_vectors`).
@@ -655,12 +659,23 @@ impl GpuDit {
             .num_threads(4)
             .build()
             .map_err(|_| "gpu_failed")?;
-        let layers: Result<Vec<Layer>, &'static str> = pool.install(|| {
-            (0..model.layers)
-                .into_par_iter()
-                .map(|layer| Layer::load(gpu, &kernels, &model, layer))
-                .collect()
+        // The text refiner's weights load beside the blocks'.
+        let (layers, refiner) = std::thread::scope(|scope| {
+            let refiner = scope.spawn(|| {
+                kernels
+                    .fast()
+                    .then(|| refiner::Refiner::load(gpu, &model))
+                    .transpose()
+            });
+            let layers: Result<Vec<Layer>, &'static str> = pool.install(|| {
+                (0..model.layers)
+                    .into_par_iter()
+                    .map(|layer| Layer::load(gpu, &kernels, &model, layer))
+                    .collect()
+            });
+            (layers, refiner.join().unwrap_or(Err("gpu_failed")))
         });
+        let refiner = refiner?;
         let each = 18 * DIM * (dit::TIME_WIDTH + 1) * 4;
         let modulation = gpu.filled((model.layers * each) as u64, |to| {
             for (layer, to) in to.chunks_exact_mut(each).enumerate() {
@@ -683,6 +698,7 @@ impl GpuDit {
         })?;
         Ok(Self {
             gpu: gpu.clone(),
+            refiner,
             embed,
             head,
             model,
@@ -693,10 +709,17 @@ impl GpuDit {
         })
     }
     /// Evaluates the network once; returns the packed velocity with `step.packed`'s layout.
-    /// The text refiner still runs on the CPU.
     pub fn forward(&self, step: &dit::Step) -> Result<Vec<f32>, &'static str> {
-        let inputs = self.model.inputs(step)?;
+        let inputs = self.inputs(step)?;
         self.blocks(step, inputs)
+    }
+    /// The model's inputs; a new text is refined on the GPU when that is possible.
+    fn inputs(&self, step: &dit::Step) -> Result<dit::Inputs, &'static str> {
+        self.model
+            .inputs_with(step, &|context| match &self.refiner {
+                Some(refiner) => refiner.refine(&self.gpu, &self.kernels, &self.model, context),
+                None => self.model.refine(context),
+            })
     }
     fn blocks(&self, step: &dit::Step, inputs: dit::Inputs) -> Result<Vec<f32>, &'static str> {
         self.through(step, inputs, &self.layers)
@@ -1170,7 +1193,7 @@ mod tests {
         let mut got = Vec::new();
         for _ in 0..2 {
             let started = std::time::Instant::now();
-            let inputs = network.model.inputs(&step).unwrap();
+            let inputs = network.inputs(&step).unwrap();
             let ready = started.elapsed().as_secs_f64();
             got = network.blocks(&step, inputs).unwrap();
             println!(
@@ -1199,6 +1222,45 @@ mod tests {
         // 29 and 24 dB on a 317-token step, 24 and 18 dB on an 8611-token one whose single
         // blocks agree with the reference to 40 dB and better. These bounds catch structure.
         assert!(video > 20.0 && audio > 15.0);
+    }
+
+    /// The text refiner on the GPU against the CPU reference's on a captured step's text.
+    #[test]
+    #[ignore = "needs the Intel GPU with 25 GB free, Level Zero, the model and a captured step"]
+    fn refiner_matches_reference() {
+        let (Ok(model), Ok(golden)) = (std::env::var("KUNO_DIT"), std::env::var("KUNO_DIT_GOLDEN"))
+        else {
+            panic!("set KUNO_DIT and KUNO_DIT_GOLDEN (a captured step's path prefix)");
+        };
+        let captured = dit::tests::Captured::read(&golden);
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let model = dit::Dit::open(std::path::Path::new(&model)).unwrap();
+        let kernels = Kernels::new(&gpu).unwrap();
+        let started = std::time::Instant::now();
+        let refiner = refiner::Refiner::load(&gpu, &model).unwrap();
+        println!("loaded in {:.2} s", started.elapsed().as_secs_f64());
+        let context = captured.step().context;
+        let mut got = Vec::new();
+        for _ in 0..2 {
+            let started = std::time::Instant::now();
+            got = refiner.refine(&gpu, &kernels, &model, context).unwrap();
+            println!(
+                "{} tokens refined in {:.3} s",
+                got.len() / DIM,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        let started = std::time::Instant::now();
+        let want = model.refine(context).unwrap();
+        println!("on the CPU: {:.2} s", started.elapsed().as_secs_f64());
+        let (mut error, mut power) = (0f64, 0f64);
+        for (got, want) in got.iter().zip(&want) {
+            error += f64::from(got - want).powi(2);
+            power += f64::from(*want).powi(2);
+        }
+        let db = 10.0 * (power / error.max(1e-30)).log10();
+        println!("{db:.1} dB from the reference");
+        assert!(got.len() == want.len() && db > 40.0);
     }
 
     /// The input projections and output heads alone (no blocks) against the CPU reference's
