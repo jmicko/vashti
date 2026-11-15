@@ -182,8 +182,8 @@ struct VideoOutput {
     /// Where the Rust video decoder finds its GPU and model.
     pci: String,
     video_model: std::path::PathBuf,
-    /// The Rust DiT: loaded at the clip's first evaluation, dropped before decoding so its
-    /// weights do not hold GPU memory while other models run.
+    /// The Rust DiT: placed in video memory at the clip's first evaluation, dropped before
+    /// decoding so its weights do not hold GPU memory while other models run.
     dit_model: std::path::PathBuf,
     dit: Option<crate::engine::dit_gpu::GpuDit>,
     dit_failed: bool,
@@ -305,10 +305,21 @@ extern "C" fn decode_video_latent(
         }
     }
 }
+/// The Rust DiT's weights in host memory and the file they came from.
+static DIT_HOST: std::sync::Mutex<
+    Option<(
+        std::path::PathBuf,
+        std::sync::Arc<crate::engine::dit_gpu::Host>,
+    )>,
+> = std::sync::Mutex::new(None);
 /// Evaluates the diffusion transformer with the Rust GPU DiT. Returning false hands the
 /// step back to the C++ engine, for this and every later step of the clip.
 extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_void) -> bool {
-    use crate::engine::{dit, dit_gpu::GpuDit, gpu};
+    use crate::engine::{
+        dit,
+        dit_gpu::{GpuDit, Host},
+        gpu,
+    };
     // SAFETY: as receive_video_frame; the shim passes a live step whose pointers hold the
     // counts and shapes it states, and `result` has the packed latent's size.
     let (out, step) = unsafe { (&mut *(data as *mut VideoOutput), &*step) };
@@ -401,10 +412,25 @@ extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_
         }
         let started = std::time::Instant::now();
         if out.dit.is_none() {
-            let gpu = gpu::Gpu::open(gpu::Select::Pci(out.pci.clone()))?;
-            out.dit = Some(GpuDit::load(&gpu, &out.dit_model)?);
+            // The weights stay in host memory between clips (one model at a time); a clip
+            // only copies them into video memory.
+            let mut kept = DIT_HOST.lock().map_err(|_| "model_state_lost")?;
+            if kept.as_ref().is_none_or(|(path, _)| *path != out.dit_model) {
+                *kept = None;
+                let gpu = gpu::Gpu::open(gpu::Select::Pci(out.pci.clone()))?;
+                let host = std::sync::Arc::new(Host::read(&gpu, &out.dit_model)?);
+                *kept = Some((out.dit_model.clone(), host));
+                eprintln!(
+                    "kuno-image: rust dit: read {} ms",
+                    started.elapsed().as_millis()
+                );
+            }
+            let host = kept.as_ref().map(|(_, host)| host.clone());
+            drop(kept);
+            let started = std::time::Instant::now();
+            out.dit = Some(GpuDit::place(host.ok_or("gpu_failed")?)?);
             eprintln!(
-                "kuno-image: rust dit: load {} ms",
+                "kuno-image: rust dit: place {} ms",
                 started.elapsed().as_millis()
             );
         }

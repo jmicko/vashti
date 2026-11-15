@@ -55,6 +55,15 @@ pub struct Buffer {
     memory: vk::DeviceMemory,
     bytes: u64,
 }
+/// A buffer's contents in host memory (`Gpu::staged`): no video memory is held.
+pub struct Staged {
+    stage: Option<Buffer>,
+}
+impl Staged {
+    pub fn bytes(&self) -> u64 {
+        self.stage.as_ref().map_or(0, |stage| stage.bytes)
+    }
+}
 impl Drop for Buffer {
     fn drop(&mut self) {
         // SAFETY: the buffer is unused once its last user dropped; passes wait before return.
@@ -365,19 +374,19 @@ impl Gpu {
         shared: bool,
         fill: impl FnOnce(&mut [u8]) -> Result<(), &'static str>,
     ) -> Result<Buffer, &'static str> {
-        let buffer = self.allocate(
-            bytes,
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_SRC
-                | vk::BufferUsageFlags::TRANSFER_DST,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            shared,
-        )?;
+        self.place(&self.staged(bytes, fill)?, shared)
+    }
+    /// Contents written by `fill` into host memory that stays allocated, for `place`.
+    pub fn staged(
+        &self,
+        bytes: u64,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), &'static str>,
+    ) -> Result<Staged, &'static str> {
         if bytes == 0 {
-            return Ok(buffer);
+            return Ok(Staged { stage: None });
         }
         let stage = self.staging(bytes)?;
-        // SAFETY: the mapping covers `bytes` bytes and is unmapped before the copy.
+        // SAFETY: the mapping covers `bytes` bytes and is unmapped before any copy.
         unsafe {
             let device = &self.core.device;
             let at = check(
@@ -391,6 +400,23 @@ impl Gpu {
             device.unmap_memory(stage.memory);
             filled?;
         }
+        Ok(Staged { stage: Some(stage) })
+    }
+    /// A storage buffer on the device holding a copy of `staged` (`shared`: exportable to
+    /// another interface).
+    pub fn place(&self, staged: &Staged, shared: bool) -> Result<Buffer, &'static str> {
+        let bytes = staged.bytes();
+        let buffer = self.allocate(
+            bytes,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            shared,
+        )?;
+        let Some(stage) = &staged.stage else {
+            return Ok(buffer);
+        };
         let region = [vk::BufferCopy::default().size(bytes)];
         self.run(|device, commands| unsafe {
             // SAFETY: both buffers hold `bytes` bytes.

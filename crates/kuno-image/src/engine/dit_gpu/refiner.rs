@@ -5,10 +5,10 @@
 //! the final norm stay on the CPU: they are small and run once per clip.
 use super::{
     super::{
-        gpu::{Buffer, Gpu, Kernel, bytes_of, floats, shaders},
+        gpu::{Buffer, Gpu, Kernel, Staged, bytes_of, floats, shaders},
         xe2::{attend, zebin},
     },
-    Call, DIM, HEAD, HEADS, HIDDEN, INNER, Kernels, dit, run,
+    Call, DIM, HEAD, HEADS, HIDDEN, INNER, Kernels, dit, run, staged_floats,
 };
 
 // Offsets into a layer's vectors.
@@ -21,31 +21,32 @@ const TILE: usize = 128;
 /// Weight rows per dispatch of the product shader.
 const ROW_BLOCK: usize = 4096;
 
-/// One block's weights: half-float rows and the norm weights.
-struct Layer {
-    qkv: Buffer,
-    out: Buffer,
-    fc1: Buffer,
-    fc2: Buffer,
-    vectors: Buffer,
+/// One block's weights: half-float rows of the four matrices, then the norm weights.
+struct Layer<T> {
+    qkv: T,
+    out: T,
+    fc1: T,
+    fc2: T,
+    vectors: T,
 }
-pub struct Refiner {
-    layers: Vec<Layer>,
+/// The refiner's weights in host memory and its compiled kernels.
+pub struct Host {
+    layers: Vec<Layer<Staged>>,
     gemm16: Kernel,
     norm16: Kernel,
     merge16s: Kernel,
     gate16: Kernel,
     add: Kernel,
 }
-impl Refiner {
-    /// Reads the refiner's weights (1.5 GB as half floats) into video memory.
-    pub fn load(gpu: &Gpu, model: &dit::Dit) -> Result<Self, &'static str> {
+impl Host {
+    /// Reads the refiner's weights (1.5 GB as half floats) into host memory.
+    pub fn read(gpu: &Gpu, model: &dit::Dit) -> Result<Self, &'static str> {
         let f = &model.file;
         let layers = (0..model.refiners())
             .map(|layer| {
                 let name = |part: &str| format!("token_refiner.blocks.{layer}.{part}");
                 let matrix = |part: &str, rows: usize, columns: usize| {
-                    gpu.filled((rows * columns) as u64 * 2, |to| {
+                    gpu.staged((rows * columns) as u64 * 2, |to| {
                         f.half_into(&name(part), &[rows, columns], to)
                     })
                 };
@@ -59,10 +60,7 @@ impl Refiner {
                     out: matrix("attn.out_proj.weight", DIM, INNER)?,
                     fc1: matrix("mlp.fc1.weight", HIDDEN * 2, DIM)?,
                     fc2: matrix("mlp.fc2.weight", DIM, HIDDEN)?,
-                    vectors: gpu.filled(vectors.len() as u64 * 4, |to| {
-                        to.copy_from_slice(bytes_of(&vectors));
-                        Ok(())
-                    })?,
+                    vectors: staged_floats(gpu, &vectors)?,
                 })
             })
             .collect::<Result<_, &'static str>>()?;
@@ -75,6 +73,30 @@ impl Refiner {
             add: gpu.kernel(shaders::ADD, 2, 1, None)?,
         })
     }
+}
+/// The refiner's weights in video memory.
+pub struct Refiner {
+    layers: Vec<Layer<Buffer>>,
+}
+impl Refiner {
+    pub fn place(gpu: &Gpu, host: &Host) -> Result<Self, &'static str> {
+        let layers = host
+            .layers
+            .iter()
+            .map(|layer| {
+                Ok(Layer {
+                    qkv: gpu.place(&layer.qkv, false)?,
+                    out: gpu.place(&layer.out, false)?,
+                    fc1: gpu.place(&layer.fc1, false)?,
+                    fc2: gpu.place(&layer.fc2, false)?,
+                    vectors: gpu.place(&layer.vectors, false)?,
+                })
+            })
+            .collect::<Result<_, &'static str>>()?;
+        Ok(Self { layers })
+    }
+}
+impl Host {
     /// `wide[token][..rows] = half[token][..columns] . weight`.
     fn product<'a>(
         &'a self,
@@ -109,6 +131,7 @@ impl Refiner {
     /// DiT's text rows `[tokens][DIM]`. Buffers live for the call only.
     pub fn refine(
         &self,
+        placed: &Refiner,
         gpu: &Gpu,
         kernels: &Kernels,
         model: &dit::Dit,
@@ -161,7 +184,7 @@ impl Refiner {
 
         let product =
             |weight, rows, columns| self.product(&half, weight, &wide, padded, rows, columns);
-        for layer in &self.layers {
+        for layer in &placed.layers {
             let v = &layer.vectors;
             let norm = |weight: usize| Call::Shader {
                 kernel: &self.norm16,

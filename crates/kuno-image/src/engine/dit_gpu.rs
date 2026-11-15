@@ -7,7 +7,7 @@ use rayon::prelude::*;
 
 use super::{
     dit,
-    gpu::{Buffer, Gpu, Kernel, Readback, Step, bytes_of, shaders},
+    gpu::{Buffer, Gpu, Kernel, Readback, Staged, Step, bytes_of, shaders},
     xe2::{
         attend, int8,
         level_zero::{self, LevelZero},
@@ -260,6 +260,68 @@ pub struct Matrix {
     stream: Option<level_zero::Memory>,
 }
 
+/// One block's weights in host memory: the four matrices (in the machine-code product's
+/// stream layout when `streamed`), then the norm weights and the linear layers' row scales.
+pub struct LayerHost {
+    matrices: [Staged; 4],
+    vectors: Staged,
+    streamed: bool,
+}
+impl LayerHost {
+    pub fn read(
+        gpu: &Gpu,
+        kernels: &Kernels,
+        model: &dit::Dit,
+        layer: usize,
+    ) -> Result<Self, &'static str> {
+        let f = &model.file;
+        let name = |part: &str| format!("blocks.{layer}.{part}");
+        let streamed = kernels.fast();
+        let matrix = |part: &str, which: usize| -> Result<Staged, &'static str> {
+            let (rows, columns) = PRODUCTS[which];
+            let name = name(&format!("{part}.weight"));
+            if !streamed {
+                // Straight from the file into mapped staging memory.
+                return gpu.staged((rows * columns) as u64, |to| {
+                    f.i8_into(&name, &[rows, columns], to)
+                });
+            }
+            gpu.staged((rows * columns + int8::SLACK) as u64, |to| {
+                let mut plain = vec![0u8; rows * columns];
+                f.i8_into(&name, &[rows, columns], &mut plain)?;
+                int8::weight_stream(&plain, rows, columns, to);
+                Ok(())
+            })
+        };
+        let mut vectors = Vec::with_capacity(SCALE_FC2 + DIM);
+        vectors.extend(f.floats(&name("norm1.weight"), &[DIM])?);
+        vectors.extend(f.floats(&name("norm2.weight"), &[DIM])?);
+        vectors.extend(f.floats(&name("attn.q_norm.weight"), &[HEAD])?);
+        vectors.extend(f.floats(&name("attn.k_norm.weight"), &[HEAD])?);
+        vectors.extend(f.f32(&name("attn.qkv_proj.weight_scale"), &[INNER * 3, 1])?);
+        vectors.extend(f.f32(&name("attn.out_proj.weight_scale"), &[DIM, 1])?);
+        vectors.extend(f.f32(&name("mlp.fc1.weight_scale"), &[HIDDEN * 2, 1])?);
+        vectors.extend(f.f32(&name("mlp.fc2.weight_scale"), &[DIM, 1])?);
+        Ok(Self {
+            matrices: [
+                matrix("attn.qkv_proj", QKV)?,
+                matrix("attn.out_proj", OUT)?,
+                matrix("mlp.fc1", FC1)?,
+                matrix("mlp.fc2", FC2)?,
+            ],
+            vectors: staged_floats(gpu, &vectors)?,
+            streamed,
+        })
+    }
+}
+/// `values` in host memory.
+fn staged_floats(gpu: &Gpu, values: &[f32]) -> Result<Staged, &'static str> {
+    gpu.staged(values.len() as u64 * 4, |to| {
+        to.copy_from_slice(bytes_of(values));
+        Ok(())
+    })
+}
+
 /// One block's weights on the GPU.
 pub struct Layer {
     qkv: Matrix,
@@ -276,52 +338,31 @@ impl Layer {
         model: &dit::Dit,
         layer: usize,
     ) -> Result<Self, &'static str> {
-        let f = &model.file;
-        let name = |part: &str| format!("blocks.{layer}.{part}");
-        let matrix = |part: &str, which: usize| -> Result<Matrix, &'static str> {
-            let (rows, columns) = PRODUCTS[which];
-            let name = name(&format!("{part}.weight"));
-            let Some(fast) = &kernels.fast else {
-                // Straight from the file into mapped GPU staging memory.
-                let buffer = gpu.filled((rows * columns) as u64, |to| {
-                    f.i8_into(&name, &[rows, columns], to)
-                })?;
+        Self::place(gpu, kernels, &LayerHost::read(gpu, kernels, model, layer)?)
+    }
+    /// Copies a block's weights into video memory.
+    pub fn place(gpu: &Gpu, kernels: &Kernels, host: &LayerHost) -> Result<Self, &'static str> {
+        let matrix = |which: usize| -> Result<Matrix, &'static str> {
+            let staged = &host.matrices[which];
+            let Some(fast) = kernels.fast.as_ref().filter(|_| host.streamed) else {
                 return Ok(Matrix {
-                    buffer,
+                    buffer: gpu.place(staged, false)?,
                     stream: None,
                 });
             };
-            let bytes = (rows * columns + int8::SLACK) as u64;
-            let buffer = gpu.filled_shared(bytes, |to| {
-                let mut plain = vec![0u8; rows * columns];
-                f.i8_into(&name, &[rows, columns], &mut plain)?;
-                int8::weight_stream(&plain, rows, columns, to);
-                Ok(())
-            })?;
-            let stream = fast.import(&gpu.export(&buffer)?, bytes)?;
+            let buffer = gpu.place(staged, true)?;
+            let stream = fast.import(&gpu.export(&buffer)?, staged.bytes())?;
             Ok(Matrix {
                 buffer,
                 stream: Some(stream),
             })
         };
-        let mut vectors = Vec::with_capacity(SCALE_FC2 + DIM);
-        vectors.extend(f.floats(&name("norm1.weight"), &[DIM])?);
-        vectors.extend(f.floats(&name("norm2.weight"), &[DIM])?);
-        vectors.extend(f.floats(&name("attn.q_norm.weight"), &[HEAD])?);
-        vectors.extend(f.floats(&name("attn.k_norm.weight"), &[HEAD])?);
-        vectors.extend(f.f32(&name("attn.qkv_proj.weight_scale"), &[INNER * 3, 1])?);
-        vectors.extend(f.f32(&name("attn.out_proj.weight_scale"), &[DIM, 1])?);
-        vectors.extend(f.f32(&name("mlp.fc1.weight_scale"), &[HIDDEN * 2, 1])?);
-        vectors.extend(f.f32(&name("mlp.fc2.weight_scale"), &[DIM, 1])?);
         Ok(Self {
-            qkv: matrix("attn.qkv_proj", QKV)?,
-            out: matrix("attn.out_proj", OUT)?,
-            fc1: matrix("mlp.fc1", FC1)?,
-            fc2: matrix("mlp.fc2", FC2)?,
-            vectors: gpu.filled(vectors.len() as u64 * 4, |to| {
-                to.copy_from_slice(bytes_of(&vectors));
-                Ok(())
-            })?,
+            qkv: matrix(QKV)?,
+            out: matrix(OUT)?,
+            fc1: matrix(FC1)?,
+            fc2: matrix(FC2)?,
+            vectors: gpu.place(&host.vectors, false)?,
         })
     }
 }
@@ -632,29 +673,28 @@ impl Kernels {
     }
 }
 
-/// The whole DiT with its weights on the GPU.
-pub struct GpuDit {
+/// The whole DiT's weights in host memory, with the model's small tensors and the compiled
+/// kernels: everything that can outlive a clip without holding video memory.
+pub struct Host {
     gpu: Gpu,
     model: dit::Dit,
     kernels: Kernels,
-    layers: Vec<Layer>,
+    layers: Vec<LayerHost>,
     /// Every block's modulation projection: weight `[18 * DIM][TIME_WIDTH]`, then bias.
-    modulation: Buffer,
-    /// The text refiner, when its attention can run as machine code; the CPU's otherwise.
-    refiner: Option<refiner::Refiner>,
+    modulation: Staged,
     /// The input projections' weights and biases (`dit::Dit::embed_vectors`).
-    embed: Buffer,
+    embed: Staged,
     /// The output heads' norm weight, weights and biases (`dit::Dit::head_vectors`).
-    head: Buffer,
-    work: Mutex<Option<Work>>,
+    head: Staged,
+    /// The text refiner, when its attention can run as machine code; the CPU's otherwise.
+    refiner: Option<refiner::Host>,
 }
-impl GpuDit {
-    /// Reads all blocks (about 19 GB) into video memory.
-    pub fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+impl Host {
+    /// Reads all weights (about 21 GB) into host memory.
+    pub fn read(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
         let model = dit::Dit::open(path)?;
         let kernels = Kernels::new(gpu)?;
-        // A few layers at a time: reading is the slow part, and each matrix passes through
-        // host staging memory of its own size.
+        // A few layers at a time: reading is the slow part.
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(4)
             .build()
@@ -664,20 +704,19 @@ impl GpuDit {
             let refiner = scope.spawn(|| {
                 kernels
                     .fast()
-                    .then(|| refiner::Refiner::load(gpu, &model))
+                    .then(|| refiner::Host::read(gpu, &model))
                     .transpose()
             });
-            let layers: Result<Vec<Layer>, &'static str> = pool.install(|| {
+            let layers: Result<Vec<LayerHost>, &'static str> = pool.install(|| {
                 (0..model.layers)
                     .into_par_iter()
-                    .map(|layer| Layer::load(gpu, &kernels, &model, layer))
+                    .map(|layer| LayerHost::read(gpu, &kernels, &model, layer))
                     .collect()
             });
             (layers, refiner.join().unwrap_or(Err("gpu_failed")))
         });
-        let refiner = refiner?;
         let each = 18 * DIM * (dit::TIME_WIDTH + 1) * 4;
-        let modulation = gpu.filled((model.layers * each) as u64, |to| {
+        let modulation = gpu.staged((model.layers * each) as u64, |to| {
             for (layer, to) in to.chunks_exact_mut(each).enumerate() {
                 let (weight, bias) = model.modulation(layer)?;
                 let (weights, biases) = to.split_at_mut(weight.len() * 4);
@@ -686,26 +725,64 @@ impl GpuDit {
             }
             Ok(())
         })?;
-        let head = model.head_vectors()?;
-        let head = gpu.filled(head.len() as u64 * 4, |to| {
-            to.copy_from_slice(bytes_of(&head));
-            Ok(())
-        })?;
-        let embed = model.embed_vectors()?;
-        let embed = gpu.filled(embed.len() as u64 * 4, |to| {
-            to.copy_from_slice(bytes_of(&embed));
-            Ok(())
-        })?;
         Ok(Self {
             gpu: gpu.clone(),
-            refiner,
-            embed,
-            head,
-            model,
-            kernels,
+            refiner: refiner?,
+            embed: staged_floats(gpu, &model.embed_vectors()?)?,
+            head: staged_floats(gpu, &model.head_vectors()?)?,
             layers: layers?,
             modulation,
+            model,
+            kernels,
+        })
+    }
+    /// Drops the kept text features.
+    pub fn forget(&self) {
+        self.model.forget();
+    }
+}
+
+/// The whole DiT with its weights on the GPU.
+pub struct GpuDit {
+    host: std::sync::Arc<Host>,
+    layers: Vec<Layer>,
+    modulation: Buffer,
+    refiner: Option<refiner::Refiner>,
+    embed: Buffer,
+    head: Buffer,
+    work: Mutex<Option<Work>>,
+}
+impl Drop for GpuDit {
+    /// The text features kept for the clip go with it; the weights stay with the host.
+    fn drop(&mut self) {
+        self.host.forget();
+    }
+}
+impl GpuDit {
+    /// Reads the weights and copies them into video memory.
+    pub fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+        Self::place(std::sync::Arc::new(Host::read(gpu, path)?))
+    }
+    /// Copies the weights (about 21 GB) into video memory.
+    pub fn place(host: std::sync::Arc<Host>) -> Result<Self, &'static str> {
+        let gpu = &host.gpu;
+        let layers = host
+            .layers
+            .iter()
+            .map(|layer| Layer::place(gpu, &host.kernels, layer))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            layers,
+            modulation: gpu.place(&host.modulation, false)?,
+            refiner: host
+                .refiner
+                .as_ref()
+                .map(|refiner| refiner::Refiner::place(gpu, refiner))
+                .transpose()?,
+            embed: gpu.place(&host.embed, false)?,
+            head: gpu.place(&host.head, false)?,
             work: Mutex::new(None),
+            host,
         })
     }
     /// Evaluates the network once; returns the packed velocity with `step.packed`'s layout.
@@ -715,10 +792,17 @@ impl GpuDit {
     }
     /// The model's inputs; a new text is refined on the GPU when that is possible.
     fn inputs(&self, step: &dit::Step) -> Result<dit::Inputs, &'static str> {
-        self.model
-            .inputs_with(step, &|context| match &self.refiner {
-                Some(refiner) => refiner.refine(&self.gpu, &self.kernels, &self.model, context),
-                None => self.model.refine(context),
+        self.host
+            .model
+            .inputs_with(step, &|context| match (&self.host.refiner, &self.refiner) {
+                (Some(refiner), Some(placed)) => refiner.refine(
+                    placed,
+                    &self.host.gpu,
+                    &self.host.kernels,
+                    &self.host.model,
+                    context,
+                ),
+                _ => self.host.model.refine(context),
             })
     }
     fn blocks(&self, step: &dit::Step, inputs: dit::Inputs) -> Result<Vec<f32>, &'static str> {
@@ -731,7 +815,7 @@ impl GpuDit {
         inputs: dit::Inputs,
         layers: &[Layer],
     ) -> Result<Vec<f32>, &'static str> {
-        let gpu = &self.gpu;
+        let gpu = &self.host.gpu;
         let dit::Inputs {
             rows: sources,
             layout,
@@ -749,7 +833,7 @@ impl GpuDit {
             *cached = None;
             *cached = Some(Work::new(
                 gpu,
-                &self.kernels,
+                &self.host.kernels,
                 tokens,
                 rows,
                 self.layers.len(),
@@ -799,7 +883,7 @@ impl GpuDit {
             kinds[span.start..span.end].fill(span.row as u32 * 4 + kind);
         }
         gpu.upload(&work.kinds, 0, bytes_of(&kinds))?;
-        let final_parts = self.model.final_parts(&times)?;
+        let final_parts = self.host.model.final_parts(&times)?;
         gpu.upload(&work.final_parts, 0, bytes_of(&final_parts))?;
         let work = &*work;
         let timesteps = layout.timesteps.len() as u32;
@@ -807,13 +891,13 @@ impl GpuDit {
             gpu,
             &[
                 Call::Shader {
-                    kernel: &self.kernels.embed8,
+                    kernel: &self.host.kernels.embed8,
                     buffers: vec![&work.patches, &self.embed, &work.embeds, &work.stream],
                     constants: vec![tokens as u32],
                     groups: [(DIM / 4 / 64) as u32, work.padded as u32, 1],
                 },
                 Call::Shader {
-                    kernel: &self.kernels.parts8,
+                    kernel: &self.host.kernels.parts8,
                     buffers: vec![&work.times, &self.modulation, &work.parts],
                     constants: vec![timesteps],
                     groups: [
@@ -827,12 +911,12 @@ impl GpuDit {
         // At most one submission per block: the kernel driver ends jobs that run for several
         // seconds.
         for (slot, layer) in layers.iter().enumerate() {
-            run(gpu, &self.kernels.block(layer, work, slot))?;
+            run(gpu, &self.host.kernels.block(layer, work, slot))?;
         }
         run(
             gpu,
             &[Call::Shader {
-                kernel: &self.kernels.final8,
+                kernel: &self.host.kernels.final8,
                 buffers: vec![
                     &work.stream,
                     &self.head,
@@ -1237,13 +1321,16 @@ mod tests {
         let model = dit::Dit::open(std::path::Path::new(&model)).unwrap();
         let kernels = Kernels::new(&gpu).unwrap();
         let started = std::time::Instant::now();
-        let refiner = refiner::Refiner::load(&gpu, &model).unwrap();
+        let refiner = refiner::Host::read(&gpu, &model).unwrap();
+        let placed = refiner::Refiner::place(&gpu, &refiner).unwrap();
         println!("loaded in {:.2} s", started.elapsed().as_secs_f64());
         let context = captured.step().context;
         let mut got = Vec::new();
         for _ in 0..2 {
             let started = std::time::Instant::now();
-            got = refiner.refine(&gpu, &kernels, &model, context).unwrap();
+            got = refiner
+                .refine(&placed, &gpu, &kernels, &model, context)
+                .unwrap();
             println!(
                 "{} tokens refined in {:.3} s",
                 got.len() / DIM,
@@ -1277,10 +1364,11 @@ mod tests {
         let network = GpuDit::load(&gpu, std::path::Path::new(&model)).unwrap();
         let step = captured.step();
         for blocks in [0, 1] {
-            let mut prepared = network.model.prepare(&step).unwrap();
+            let mut prepared = network.host.model.prepare(&step).unwrap();
             if blocks == 1 {
-                let parts = network.model.parts(0, &prepared.times).unwrap();
+                let parts = network.host.model.parts(0, &prepared.times).unwrap();
                 network
+                    .host
                     .model
                     .block(
                         0,
@@ -1292,10 +1380,11 @@ mod tests {
                     .unwrap();
             }
             let want = network
+                .host
                 .model
                 .finish(&step, &prepared.x, &prepared.layout, &prepared.times)
                 .unwrap();
-            let inputs = network.model.inputs(&step).unwrap();
+            let inputs = network.host.model.inputs(&step).unwrap();
             let got = network
                 .through(&step, inputs, &network.layers[..blocks])
                 .unwrap();
