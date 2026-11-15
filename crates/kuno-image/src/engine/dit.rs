@@ -727,6 +727,25 @@ fn add_gated(x: &mut [f32], update: &[f32], spans: &[Span], parts: &[f32], gate:
     }
 }
 
+/// Rows the input projections turn into tokens.
+pub(super) enum Rows {
+    /// Refined text features, already `[tokens][DIM]`.
+    Text(Vec<f32>),
+    /// `[tokens][PATCH_VALUES]`.
+    Video(Vec<f32>),
+    /// `[tokens][AUDIO_CHANNELS]`.
+    Audio(Vec<f32>),
+}
+/// One evaluation's inputs before the input projections.
+pub(super) struct Inputs {
+    /// Each source's rows in token order.
+    pub rows: Vec<Rows>,
+    pub layout: Layout,
+    /// `[timesteps][TIME_WIDTH]`.
+    pub times: Vec<f32>,
+    /// `[tokens][PAIRS]` cosine and sine.
+    pub rotary: Vec<[f32; 2]>,
+}
 /// The state of one evaluation before the first block.
 pub(super) struct Prepared {
     /// `[tokens][DIM]`.
@@ -871,6 +890,52 @@ impl Dit {
     /// Token stream, layout, time features and rotary turns at the first block's input.
     pub(super) fn prepare(&self, step: &Step) -> Result<Prepared, &'static str> {
         let f = &self.file;
+        let Inputs {
+            rows,
+            layout,
+            times,
+            rotary,
+        } = self.inputs(step)?;
+        let tokens = layout.positions.len();
+        let mut x = Vec::with_capacity(tokens * DIM);
+        for rows in rows {
+            x.extend(match rows {
+                Rows::Text(text) => text,
+                Rows::Video(patches) => linear(
+                    &patches,
+                    PATCH_VALUES,
+                    &f.f32("video_patch_proj.weight", &[DIM, PATCH_VALUES])?,
+                    &f.f32("video_patch_proj.bias", &[DIM])?,
+                ),
+                Rows::Audio(sound) => linear(
+                    &sound,
+                    AUDIO_CHANNELS,
+                    &f.f32("audio_patch_proj.weight", &[DIM, AUDIO_CHANNELS])?,
+                    &f.f32("audio_patch_proj.bias", &[DIM])?,
+                ),
+            });
+        }
+        assert!(x.len() == tokens * DIM);
+        Ok(Prepared {
+            x,
+            layout,
+            times,
+            rotary,
+        })
+    }
+    /// The input projections' vectors in one run: video weight `[DIM][PATCH_VALUES]`, audio
+    /// weight `[DIM][AUDIO_CHANNELS]`, then both biases.
+    pub(super) fn embed_vectors(&self) -> Result<Vec<f32>, &'static str> {
+        let f = &self.file;
+        let mut out = f.f32("video_patch_proj.weight", &[DIM, PATCH_VALUES])?;
+        out.extend(f.f32("audio_patch_proj.weight", &[DIM, AUDIO_CHANNELS])?);
+        out.extend(f.f32("video_patch_proj.bias", &[DIM])?);
+        out.extend(f.f32("audio_patch_proj.bias", &[DIM])?);
+        Ok(out)
+    }
+    /// Everything `prepare` needs short of the input projections.
+    pub(super) fn inputs(&self, step: &Step) -> Result<Inputs, &'static str> {
+        let f = &self.file;
         let plane = step.width * step.height * step.frames;
         let (video_values, audio_values) = (
             plane * VIDEO_CHANNELS,
@@ -890,47 +955,29 @@ impl Dit {
         let restore = audio_sigma / sigma;
         let text = step.context.len() / TEXT_WIDTH;
         let layout = Layout::new(step, text, 1.0 - sigma, 1.0 - audio_sigma);
-        let tokens = layout.positions.len();
-
-        let patch = |video: &Video| -> Result<Vec<f32>, &'static str> {
-            Ok(linear(
-                &patchify(video),
-                PATCH_VALUES,
-                &f.f32("video_patch_proj.weight", &[DIM, PATCH_VALUES])?,
-                &f.f32("video_patch_proj.bias", &[DIM])?,
-            ))
-        };
-        let sound = |data: &[f32], length: usize, scale: f32| -> Result<Vec<f32>, &'static str> {
-            Ok(linear(
-                &audio_rows(data, length, scale),
-                AUDIO_CHANNELS,
-                &f.f32("audio_patch_proj.weight", &[DIM, AUDIO_CHANNELS])?,
-                &f.f32("audio_patch_proj.bias", &[DIM])?,
-            ))
-        };
-        let mut x = Vec::with_capacity(tokens * DIM);
+        let mut rows = Vec::with_capacity(layout.order.len());
         for (_, _, source) in &layout.order {
-            x.extend(match source {
-                Source::Text => self.refined(step.context)?,
-                Source::Video(index) => patch(&step.videos[*index])?,
-                Source::Audio(index) => {
-                    sound(step.audios[*index].data, step.audios[*index].length, 1.0)?
-                }
-                Source::TargetAudio => sound(carrier, step.audio_length, restore)?,
-                Source::TargetVideo => patch(&Video {
+            rows.push(match source {
+                Source::Text => Rows::Text(self.refined(step.context)?),
+                Source::Video(index) => Rows::Video(patchify(&step.videos[*index])),
+                Source::Audio(index) => Rows::Audio(audio_rows(
+                    step.audios[*index].data,
+                    step.audios[*index].length,
+                    1.0,
+                )),
+                Source::TargetAudio => Rows::Audio(audio_rows(carrier, step.audio_length, restore)),
+                Source::TargetVideo => Rows::Video(patchify(&Video {
                     data: &step.packed[..video_values],
                     width: step.width,
                     height: step.height,
                     frames: step.frames,
-                })?,
+                })),
             });
         }
-        assert!(x.len() == tokens * DIM);
-
         let times = self.times(&layout.timesteps)?;
         let rotary = rotary(&layout.positions, &f.f32("rope.inv_freq", &[FREQUENCIES])?);
-        Ok(Prepared {
-            x,
+        Ok(Inputs {
+            rows,
             layout,
             times,
             rotary,

@@ -112,7 +112,8 @@ pub struct Kernels {
     qk8s: Kernel,
     value8s: Kernel,
     mergeq8: Kernel,
-    /// The output heads.
+    /// The input projections and the output heads.
+    embed8: Kernel,
     final8: Kernel,
     /// Present when the integer products can run as our own machine code.
     fast: Option<LevelZero>,
@@ -180,6 +181,7 @@ impl Kernels {
             qk8s: gpu.kernel(shaders::QK8S, 5, 5, Some(16))?,
             value8s: gpu.kernel(shaders::VALUE8S, 4, 3, None)?,
             mergeq8: gpu.kernel(shaders::MERGEQ8, 4, 3, Some(16))?,
+            embed8: gpu.kernel(shaders::EMBED8, 4, 1, None)?,
             final8: gpu.kernel(shaders::FINAL8, 5, 1, Some(16))?,
         })
     }
@@ -345,6 +347,9 @@ pub struct Work {
     top: Buffer,
     weights: Buffer,
     mixed: Buffer,
+    /// The input projections' rows `[padded][PATCH_VALUES]` and each token's projection.
+    patches: Buffer,
+    embeds: Buffer,
     /// The output heads' modulation `[timesteps][2][DIM]`, each token's head, and their
     /// outputs `[padded][PATCH_VALUES]`.
     final_parts: Buffer,
@@ -456,6 +461,8 @@ impl Work {
             top: f32s(HEADS * padded)?,
             weights,
             mixed,
+            patches: f32s(padded * dit::PATCH_VALUES)?,
+            embeds: f32s(padded)?,
             final_parts: f32s(rows / 3 * 2 * DIM)?,
             kinds: f32s(padded)?,
             outputs: f32s(padded * dit::PATCH_VALUES)?,
@@ -634,6 +641,8 @@ pub struct GpuDit {
     layers: Vec<Layer>,
     /// Each block's modulation projection, kept in RAM: it runs on the CPU every step.
     modulation: Vec<(Vec<f32>, Vec<f32>)>,
+    /// The input projections' weights and biases (`dit::Dit::embed_vectors`).
+    embed: Buffer,
     /// The output heads' norm weight, weights and biases (`dit::Dit::head_vectors`).
     head: Buffer,
     work: Mutex<Option<Work>>,
@@ -663,8 +672,14 @@ impl GpuDit {
             to.copy_from_slice(bytes_of(&head));
             Ok(())
         })?;
+        let embed = model.embed_vectors()?;
+        let embed = gpu.filled(embed.len() as u64 * 4, |to| {
+            to.copy_from_slice(bytes_of(&embed));
+            Ok(())
+        })?;
         Ok(Self {
             gpu: gpu.clone(),
+            embed,
             head,
             model,
             kernels,
@@ -674,19 +689,28 @@ impl GpuDit {
         })
     }
     /// Evaluates the network once; returns the packed velocity with `step.packed`'s layout.
-    /// Embedding and the text refiner still run on the CPU.
+    /// The text refiner still runs on the CPU.
     pub fn forward(&self, step: &dit::Step) -> Result<Vec<f32>, &'static str> {
-        let prepared = self.model.prepare(step)?;
-        self.blocks(step, prepared)
+        let inputs = self.model.inputs(step)?;
+        self.blocks(step, inputs)
     }
-    fn blocks(&self, step: &dit::Step, prepared: dit::Prepared) -> Result<Vec<f32>, &'static str> {
+    fn blocks(&self, step: &dit::Step, inputs: dit::Inputs) -> Result<Vec<f32>, &'static str> {
+        self.through(step, inputs, &self.layers)
+    }
+    /// Input projections, `layers` (the first blocks) and the output heads.
+    fn through(
+        &self,
+        step: &dit::Step,
+        inputs: dit::Inputs,
+        layers: &[Layer],
+    ) -> Result<Vec<f32>, &'static str> {
         let gpu = &self.gpu;
-        let dit::Prepared {
-            x: mut start,
+        let dit::Inputs {
+            rows: sources,
             layout,
             times,
             rotary,
-        } = prepared;
+        } = inputs;
         let tokens = layout.positions.len();
         let rows = layout.timesteps.len() * 3;
         let mut cached = self.work.lock().map_err(|_| "gpu_failed")?;
@@ -716,10 +740,34 @@ impl GpuDit {
         for (weight, bias) in &self.modulation {
             parts.extend(dit::Dit::modulate(&times, weight, bias));
         }
-        // Padded rows of the stream must be zero; every other buffer is rewritten in full.
-        start.resize(work.padded * DIM, 0.0);
-        gpu.upload(&work.stream, 0, bytes_of(&start))?;
-        drop(start);
+        // The stream: text rows as they are; the projection kernel writes every other live
+        // row and zeros the padded ones.
+        let width = dit::PATCH_VALUES;
+        let mut patches = vec![0f32; work.padded * width];
+        let mut embeds = vec![0u32; work.padded];
+        for (&(first, end, _), source) in layout.order.iter().zip(&sources) {
+            match source {
+                dit::Rows::Text(text) => {
+                    gpu.upload(&work.stream, (first * DIM) as u64 * 4, bytes_of(text))?
+                }
+                dit::Rows::Video(values) => {
+                    patches[first * width..end * width].copy_from_slice(values);
+                    embeds[first..end].fill(1);
+                }
+                dit::Rows::Audio(values) => {
+                    for (to, from) in patches[first * width..end * width]
+                        .chunks_exact_mut(width)
+                        .zip(values.chunks_exact(dit::AUDIO_CHANNELS))
+                    {
+                        to[..dit::AUDIO_CHANNELS].copy_from_slice(from);
+                    }
+                    embeds[first..end].fill(2);
+                }
+            }
+        }
+        drop(sources);
+        gpu.upload(&work.patches, 0, bytes_of(&patches))?;
+        gpu.upload(&work.embeds, 0, bytes_of(&embeds))?;
         gpu.upload(&work.rows, 0, bytes_of(&token_rows))?;
         gpu.upload(&work.turns, 0, bytes_of(&turns))?;
         gpu.upload(&work.parts, 0, bytes_of(&parts))?;
@@ -732,9 +780,18 @@ impl GpuDit {
         let final_parts = self.model.final_parts(&times)?;
         gpu.upload(&work.final_parts, 0, bytes_of(&final_parts))?;
         let work = &*work;
+        run(
+            gpu,
+            &[Call::Shader {
+                kernel: &self.kernels.embed8,
+                buffers: vec![&work.patches, &self.embed, &work.embeds, &work.stream],
+                constants: vec![tokens as u32],
+                groups: [(DIM / 4 / 64) as u32, work.padded as u32, 1],
+            }],
+        )?;
         // At most one submission per block: the kernel driver ends jobs that run for several
         // seconds.
-        for (slot, layer) in self.layers.iter().enumerate() {
+        for (slot, layer) in layers.iter().enumerate() {
             run(gpu, &self.kernels.block(layer, work, slot))?;
         }
         run(
@@ -1101,11 +1158,11 @@ mod tests {
         let mut got = Vec::new();
         for _ in 0..2 {
             let started = std::time::Instant::now();
-            let prepared = network.model.prepare(&step).unwrap();
+            let inputs = network.model.inputs(&step).unwrap();
             let ready = started.elapsed().as_secs_f64();
-            got = network.blocks(&step, prepared).unwrap();
+            got = network.blocks(&step, inputs).unwrap();
             println!(
-                "embedding and refiner {ready:.2} s, blocks and heads {:.2} s",
+                "inputs and refiner {ready:.2} s, projections, blocks and heads {:.2} s",
                 started.elapsed().as_secs_f64() - ready
             );
         }
@@ -1130,6 +1187,53 @@ mod tests {
         // 29 and 24 dB on a 317-token step, 24 and 18 dB on an 8611-token one whose single
         // blocks agree with the reference to 40 dB and better. These bounds catch structure.
         assert!(video > 20.0 && audio > 15.0);
+    }
+
+    /// The input projections and output heads alone (no blocks) against the CPU reference's
+    /// on a captured step, then with the first block in between.
+    #[test]
+    #[ignore = "needs the Intel GPU with 25 GB free, the model and a captured step"]
+    fn projections_and_heads_match_reference() {
+        let (Ok(model), Ok(golden)) = (std::env::var("KUNO_DIT"), std::env::var("KUNO_DIT_GOLDEN"))
+        else {
+            panic!("set KUNO_DIT and KUNO_DIT_GOLDEN (a captured step's path prefix)");
+        };
+        let captured = dit::tests::Captured::read(&golden);
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let network = GpuDit::load(&gpu, std::path::Path::new(&model)).unwrap();
+        let step = captured.step();
+        for blocks in [0, 1] {
+            let mut prepared = network.model.prepare(&step).unwrap();
+            if blocks == 1 {
+                let parts = network.model.parts(0, &prepared.times).unwrap();
+                network
+                    .model
+                    .block(
+                        0,
+                        &mut prepared.x,
+                        &parts,
+                        &prepared.layout.spans,
+                        &prepared.rotary,
+                    )
+                    .unwrap();
+            }
+            let want = network
+                .model
+                .finish(&step, &prepared.x, &prepared.layout, &prepared.times)
+                .unwrap();
+            let inputs = network.model.inputs(&step).unwrap();
+            let got = network
+                .through(&step, inputs, &network.layers[..blocks])
+                .unwrap();
+            let (mut error, mut power) = (0f64, 0f64);
+            for (got, want) in got.iter().zip(&want) {
+                error += f64::from(got - want).powi(2);
+                power += f64::from(*want).powi(2);
+            }
+            let db = 10.0 * (power / error.max(1e-30)).log10();
+            println!("{blocks} blocks: {db:.1} dB from the reference");
+            assert!(got.len() == want.len() && db > if blocks == 0 { 90.0 } else { 35.0 });
+        }
     }
 
     /// Replays a captured clip's sampler steps: every step from the C++ engine's input, and
