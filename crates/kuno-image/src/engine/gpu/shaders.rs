@@ -20,6 +20,7 @@ pub const VALUE8S: &[u8] = include_bytes!("shaders/value8s.spv");
 pub const MERGEQ8: &[u8] = include_bytes!("shaders/mergeq8.spv");
 pub const RESID8: &[u8] = include_bytes!("shaders/resid8.spv");
 pub const EMBED8: &[u8] = include_bytes!("shaders/embed8.spv");
+pub const PARTS8: &[u8] = include_bytes!("shaders/parts8.spv");
 pub const FINAL8: &[u8] = include_bytes!("shaders/final8.spv");
 pub const GATE8: &[u8] = include_bytes!("shaders/gate8.spv");
 pub const ROTATE8: &[u8] = include_bytes!("shaders/rotate8.spv");

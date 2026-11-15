@@ -112,8 +112,9 @@ pub struct Kernels {
     qk8s: Kernel,
     value8s: Kernel,
     mergeq8: Kernel,
-    /// The input projections and the output heads.
+    /// The input projections, the blocks' modulation vectors and the output heads.
     embed8: Kernel,
+    parts8: Kernel,
     final8: Kernel,
     /// Present when the integer products can run as our own machine code.
     fast: Option<LevelZero>,
@@ -182,6 +183,7 @@ impl Kernels {
             value8s: gpu.kernel(shaders::VALUE8S, 4, 3, None)?,
             mergeq8: gpu.kernel(shaders::MERGEQ8, 4, 3, Some(16))?,
             embed8: gpu.kernel(shaders::EMBED8, 4, 1, None)?,
+            parts8: gpu.kernel(shaders::PARTS8, 3, 1, None)?,
             final8: gpu.kernel(shaders::FINAL8, 5, 1, Some(16))?,
         })
     }
@@ -331,6 +333,8 @@ pub struct Work {
     pub rows: Buffer,
     /// `[padded][48]` cosine and sine.
     pub turns: Buffer,
+    /// `[timesteps][TIME_WIDTH]`.
+    times: Buffer,
     /// Every block's modulation vectors `[blocks][rows][6][DIM]`.
     pub parts: Buffer,
     rows_count: usize,
@@ -447,6 +451,7 @@ impl Work {
             stream: f32s(padded * DIM)?,
             rows: f32s(padded)?,
             turns: f32s(padded * dit::PAIRS * 2)?,
+            times: f32s(rows / 3 * dit::TIME_WIDTH)?,
             parts: f32s(blocks * rows * 6 * DIM)?,
             rows_count: rows,
             wide: f32s(padded * HIDDEN)?,
@@ -639,8 +644,8 @@ pub struct GpuDit {
     model: dit::Dit,
     kernels: Kernels,
     layers: Vec<Layer>,
-    /// Each block's modulation projection, kept in RAM: it runs on the CPU every step.
-    modulation: Vec<(Vec<f32>, Vec<f32>)>,
+    /// Every block's modulation projection: weight `[18 * DIM][TIME_WIDTH]`, then bias.
+    modulation: Buffer,
     /// The input projections' weights and biases (`dit::Dit::embed_vectors`).
     embed: Buffer,
     /// The output heads' norm weight, weights and biases (`dit::Dit::head_vectors`).
@@ -664,9 +669,16 @@ impl GpuDit {
                 .map(|layer| Layer::load(gpu, &kernels, &model, layer))
                 .collect()
         });
-        let modulation = (0..model.layers)
-            .map(|layer| model.modulation(layer))
-            .collect::<Result<_, _>>()?;
+        let each = 18 * DIM * (dit::TIME_WIDTH + 1) * 4;
+        let modulation = gpu.filled((model.layers * each) as u64, |to| {
+            for (layer, to) in to.chunks_exact_mut(each).enumerate() {
+                let (weight, bias) = model.modulation(layer)?;
+                let (weights, biases) = to.split_at_mut(weight.len() * 4);
+                weights.copy_from_slice(bytes_of(&weight));
+                biases.copy_from_slice(bytes_of(&bias));
+            }
+            Ok(())
+        })?;
         let head = model.head_vectors()?;
         let head = gpu.filled(head.len() as u64 * 4, |to| {
             to.copy_from_slice(bytes_of(&head));
@@ -736,10 +748,6 @@ impl GpuDit {
         }
         let mut turns: Vec<f32> = rotary.iter().flatten().copied().collect();
         turns.resize(work.padded * dit::PAIRS * 2, 0.0);
-        let mut parts = Vec::with_capacity(self.layers.len() * rows * 6 * DIM);
-        for (weight, bias) in &self.modulation {
-            parts.extend(dit::Dit::modulate(&times, weight, bias));
-        }
         // The stream: text rows as they are; the projection kernel writes every other live
         // row and zeros the padded ones.
         let width = dit::PATCH_VALUES;
@@ -770,8 +778,7 @@ impl GpuDit {
         gpu.upload(&work.embeds, 0, bytes_of(&embeds))?;
         gpu.upload(&work.rows, 0, bytes_of(&token_rows))?;
         gpu.upload(&work.turns, 0, bytes_of(&turns))?;
-        gpu.upload(&work.parts, 0, bytes_of(&parts))?;
-        drop(parts);
+        gpu.upload(&work.times, 0, bytes_of(&times))?;
         let mut kinds = vec![0u32; work.padded];
         for (span, kind) in [(layout.video, 1), (layout.audio, 2)] {
             kinds[span.start..span.end].fill(span.row as u32 * 4 + kind);
@@ -780,14 +787,27 @@ impl GpuDit {
         let final_parts = self.model.final_parts(&times)?;
         gpu.upload(&work.final_parts, 0, bytes_of(&final_parts))?;
         let work = &*work;
+        let timesteps = layout.timesteps.len() as u32;
         run(
             gpu,
-            &[Call::Shader {
-                kernel: &self.kernels.embed8,
-                buffers: vec![&work.patches, &self.embed, &work.embeds, &work.stream],
-                constants: vec![tokens as u32],
-                groups: [(DIM / 4 / 64) as u32, work.padded as u32, 1],
-            }],
+            &[
+                Call::Shader {
+                    kernel: &self.kernels.embed8,
+                    buffers: vec![&work.patches, &self.embed, &work.embeds, &work.stream],
+                    constants: vec![tokens as u32],
+                    groups: [(DIM / 4 / 64) as u32, work.padded as u32, 1],
+                },
+                Call::Shader {
+                    kernel: &self.kernels.parts8,
+                    buffers: vec![&work.times, &self.modulation, &work.parts],
+                    constants: vec![timesteps],
+                    groups: [
+                        (18 * DIM / 4 / 64) as u32,
+                        timesteps,
+                        self.layers.len() as u32,
+                    ],
+                },
+            ],
         )?;
         // At most one submission per block: the kernel driver ends jobs that run for several
         // seconds.

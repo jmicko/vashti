@@ -997,10 +997,6 @@ impl Dit {
             self.file.floats(&name("bias"), &[DIM * 18])?,
         ))
     }
-    /// `parts` from a block's `modulation`.
-    pub(super) fn modulate(times: &[f32], weight: &[f32], bias: &[f32]) -> Vec<f32> {
-        linear(times, TIME_WIDTH, weight, bias)
-    }
     /// Applies block `layer` to the token stream `x`.
     pub(super) fn block(
         &self,

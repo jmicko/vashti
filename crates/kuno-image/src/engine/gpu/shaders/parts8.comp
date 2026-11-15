@@ -1,0 +1,29 @@
+// Every block's modulation vectors from the time features: a linear layer with eight
+// inputs, one vec4 of one timestep and block per invocation.
+//   times: [timesteps][8]
+//   w:     per block: weight [18 * 5376][8], then bias [18 * 5376]
+//   m:     [blocks][timesteps][18 * 5376]
+// Dispatch: x = 18 * 5376 / 4 / 64, y = timesteps, z = blocks.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Times { vec4 times[]; };
+layout(set = 0, binding = 1) readonly buffer Weights { vec4 w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { vec4 m[]; };
+layout(push_constant) uniform Constants { uint timesteps; } p;
+// vec4s of one block's outputs, and of its weights and bias together.
+const uint OUT4 = 24192;
+const uint BLOCK4 = OUT4 * 9;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    uint time = gl_GlobalInvocationID.y;
+    uint block = gl_GlobalInvocationID.z;
+    uint from = block * BLOCK4;
+    vec4 t0 = times[time * 2], t1 = times[time * 2 + 1];
+    vec4 result = w[from + OUT4 * 8 + c];
+    for (uint e = 0; e < 4; e++) {
+        uint row = from + (c * 4 + e) * 2;
+        result[e] += dot(w[row], t0) + dot(w[row + 1], t1);
+    }
+    m[(block * p.timesteps + time) * OUT4 + c] = result;
+}
