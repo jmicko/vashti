@@ -1,0 +1,63 @@
+// The DiT's output heads on the last block's token stream, one workgroup per token:
+//   t = x / sqrt(mean(x^2) + 1e-5) * weight;   h = t + t * scale[row] + shift[row]
+//   out[token][i] = h . head weight[i] + bias[i]
+// with 96 outputs for video tokens and 32 for audio tokens. The row is read once into
+// shared memory and normalized there; one invocation then computes one output.
+//   hv: norm weight [5376], video weight [96][5376], audio weight [32][5376], video bias
+//       [96], audio bias [32]
+//   fm: [timesteps][shift, scale][5376]
+//   kinds[token] = timestep * 4 + (1 video, 2 audio, 0 no output)
+//   o:  [token][96]
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Head { vec4 hv[]; };
+layout(set = 0, binding = 2) readonly buffer Parts { vec4 fm[]; };
+layout(set = 0, binding = 3) readonly buffer Kinds { uint kinds[]; };
+layout(set = 0, binding = 4) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint tokens; } p;
+const uint DIM4 = 1344;
+
+shared float mem[5376];
+shared float sums[16];
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint slot = sg * 16 + lane;
+    uint code = token < p.tokens ? kinds[token] : 0;
+    uint kind = code & 3, row = code >> 2;
+    vec4 squares = vec4(0.0);
+    for (uint c = slot; c < DIM4; c += 256) {
+        vec4 d = x[token * DIM4 + c];
+        squares += d * d;
+        for (uint e = 0; e < 4; e++) mem[c * 4 + e] = d[e];
+    }
+    float sum = subgroupAdd(squares.x + squares.y + squares.z + squares.w);
+    if (lane == 0) sums[sg] = sum;
+    memoryBarrierShared();
+    barrier();
+    sum = 0.0;
+    for (uint i = 0; i < 16; i++) sum += sums[i];
+    float norm = 1.0 / sqrt(sum / 5376.0 + 1e-5);
+    for (uint c = slot; c < DIM4; c += 256) {
+        vec4 t = vec4(mem[c * 4], mem[c * 4 + 1], mem[c * 4 + 2], mem[c * 4 + 3]);
+        t *= norm * hv[c];
+        t = t + t * fm[(row * 2 + 1) * DIM4 + c] + fm[row * 2 * DIM4 + c];
+        for (uint e = 0; e < 4; e++) mem[c * 4 + e] = t[e];
+    }
+    memoryBarrierShared();
+    barrier();
+    uint outputs = kind == 1 ? 96 : (kind == 2 ? 32 : 0);
+    if (slot >= outputs) return;
+    uint weight = DIM4 + ((kind == 1 ? 0 : 96) + slot) * DIM4;
+    uint bias = (DIM4 + 128 * DIM4) * 4 + (kind == 1 ? 0 : 96) + slot;
+    vec4 acc = vec4(0.0);
+    for (uint c = 0; c < DIM4; c++) {
+        acc += vec4(mem[c * 4], mem[c * 4 + 1], mem[c * 4 + 2], mem[c * 4 + 3]) * hv[weight + c];
+    }
+    o[token * 96 + slot] = acc.x + acc.y + acc.z + acc.w + hv[bias >> 2][bias & 3];
+}

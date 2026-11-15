@@ -997,6 +997,32 @@ impl Dit {
         }
         self.finish(step, &x, &layout, &times)
     }
+    /// The output heads' modulation `[timesteps][shift, scale][DIM]`.
+    pub(super) fn final_parts(&self, times: &[f32]) -> Result<Vec<f32>, &'static str> {
+        let f = &self.file;
+        Ok(linear(
+            times,
+            TIME_WIDTH,
+            &f.floats(
+                "final_layer.adaln_proj.linear.weight",
+                &[DIM * 2, TIME_WIDTH],
+            )?,
+            &f.floats("final_layer.adaln_proj.linear.bias", &[DIM * 2])?,
+        ))
+    }
+    /// The output heads' vectors in one run: norm weight, video weight `[PATCH_VALUES][DIM]`,
+    /// audio weight `[AUDIO_CHANNELS][DIM]`, then both biases.
+    pub(super) fn head_vectors(&self) -> Result<Vec<f32>, &'static str> {
+        let f = &self.file;
+        let mut out = f.floats("final_layer.norm.weight", &[DIM])?;
+        for (name, outputs) in [("video_out", PATCH_VALUES), ("audio_out", AUDIO_CHANNELS)] {
+            out.extend(f.f32(&format!("final_layer.{name}.weight"), &[outputs, DIM])?);
+        }
+        for (name, outputs) in [("video_out", PATCH_VALUES), ("audio_out", AUDIO_CHANNELS)] {
+            out.extend(f.f32(&format!("final_layer.{name}.bias"), &[outputs])?);
+        }
+        Ok(out)
+    }
     /// The output heads on the last block's token stream `x`: the packed velocity.
     pub(super) fn finish(
         &self,
@@ -1006,26 +1032,7 @@ impl Dit {
         times: &[f32],
     ) -> Result<Vec<f32>, &'static str> {
         let f = &self.file;
-        let plane = step.width * step.height * step.frames;
-        let (video_values, audio_values) = (
-            plane * VIDEO_CHANNELS,
-            step.audio_length * 2 * AUDIO_CHANNELS,
-        );
-        let sigma = (step.timestep / 1000.0).clamp(1e-6, 1.0);
-        let audio_sigma = shift_sigma(sigma, step.video_shift, step.audio_shift);
-        let audio_scale = step.video_shift / step.audio_shift;
-        let carrier = &step.packed[video_values..video_values + audio_values];
-        let restore = audio_sigma / sigma;
-        // `[timesteps][shift, scale][DIM]`.
-        let parts = linear(
-            times,
-            TIME_WIDTH,
-            &f.floats(
-                "final_layer.adaln_proj.linear.weight",
-                &[DIM * 2, TIME_WIDTH],
-            )?,
-            &f.floats("final_layer.adaln_proj.linear.bias", &[DIM * 2])?,
-        );
+        let parts = self.final_parts(times)?;
         let norm = f.floats("final_layer.norm.weight", &[DIM])?;
         let finish = |span: Span, name: &str, outputs: usize| -> Result<Vec<f32>, &'static str> {
             let mut h = rms_norm(&x[span.start * DIM..span.end * DIM], &norm);
@@ -1044,8 +1051,23 @@ impl Dit {
         };
         let video = finish(layout.video, "video_out", PATCH_VALUES)?;
         let audio = finish(layout.audio, "audio_out", AUDIO_CHANNELS)?;
+        Ok(Self::pack(step, &video, &audio))
+    }
+    /// The packed velocity from the heads' outputs: video `[tokens][PATCH_VALUES]`, audio
+    /// `[tokens][AUDIO_CHANNELS]`.
+    pub(super) fn pack(step: &Step, video: &[f32], audio: &[f32]) -> Vec<f32> {
+        let plane = step.width * step.height * step.frames;
+        let (video_values, audio_values) = (
+            plane * VIDEO_CHANNELS,
+            step.audio_length * 2 * AUDIO_CHANNELS,
+        );
+        let sigma = (step.timestep / 1000.0).clamp(1e-6, 1.0);
+        let audio_sigma = shift_sigma(sigma, step.video_shift, step.audio_shift);
+        let audio_scale = step.video_shift / step.audio_shift;
+        let carrier = &step.packed[video_values..video_values + audio_values];
+        let restore = audio_sigma / sigma;
         let mut out = vec![0f32; step.packed.len()];
-        unpatchify(&video, step.width, step.height, step.frames, -1.0, &mut out);
+        unpatchify(video, step.width, step.height, step.frames, -1.0, &mut out);
         // The audio velocity, converted to the carried latent on the video schedule.
         let (keep, gain) = (1.0 - audio_scale, 1.0 + (audio_scale - 1.0) * audio_sigma);
         for side in 0..2 {
@@ -1057,7 +1079,7 @@ impl Dit {
                 }
             }
         }
-        Ok(out)
+        out
     }
 }
 

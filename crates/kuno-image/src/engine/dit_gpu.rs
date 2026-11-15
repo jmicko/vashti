@@ -112,6 +112,8 @@ pub struct Kernels {
     qk8s: Kernel,
     value8s: Kernel,
     mergeq8: Kernel,
+    /// The output heads.
+    final8: Kernel,
     /// Present when the integer products can run as our own machine code.
     fast: Option<LevelZero>,
 }
@@ -178,6 +180,7 @@ impl Kernels {
             qk8s: gpu.kernel(shaders::QK8S, 5, 5, Some(16))?,
             value8s: gpu.kernel(shaders::VALUE8S, 4, 3, None)?,
             mergeq8: gpu.kernel(shaders::MERGEQ8, 4, 3, Some(16))?,
+            final8: gpu.kernel(shaders::FINAL8, 5, 1, Some(16))?,
         })
     }
     /// Whether the integer products run as machine code.
@@ -342,7 +345,12 @@ pub struct Work {
     top: Buffer,
     weights: Buffer,
     mixed: Buffer,
-    /// For reading the stream back.
+    /// The output heads' modulation `[timesteps][2][DIM]`, each token's head, and their
+    /// outputs `[padded][PATCH_VALUES]`.
+    final_parts: Buffer,
+    kinds: Buffer,
+    outputs: Buffer,
+    /// For reading the outputs back.
     readback: Readback,
     /// The machine-code products' view of `bytes` and `sums`, and their kernels.
     fast: Option<Shared>,
@@ -448,7 +456,10 @@ impl Work {
             top: f32s(HEADS * padded)?,
             weights,
             mixed,
-            readback: gpu.readback((padded * DIM) as u64 * 4)?,
+            final_parts: f32s(rows / 3 * 2 * DIM)?,
+            kinds: f32s(padded)?,
+            outputs: f32s(padded * dit::PATCH_VALUES)?,
+            readback: gpu.readback((padded * dit::PATCH_VALUES) as u64 * 4)?,
             fast,
         })
     }
@@ -623,6 +634,8 @@ pub struct GpuDit {
     layers: Vec<Layer>,
     /// Each block's modulation projection, kept in RAM: it runs on the CPU every step.
     modulation: Vec<(Vec<f32>, Vec<f32>)>,
+    /// The output heads' norm weight, weights and biases (`dit::Dit::head_vectors`).
+    head: Buffer,
     work: Mutex<Option<Work>>,
 }
 impl GpuDit {
@@ -645,8 +658,14 @@ impl GpuDit {
         let modulation = (0..model.layers)
             .map(|layer| model.modulation(layer))
             .collect::<Result<_, _>>()?;
+        let head = model.head_vectors()?;
+        let head = gpu.filled(head.len() as u64 * 4, |to| {
+            to.copy_from_slice(bytes_of(&head));
+            Ok(())
+        })?;
         Ok(Self {
             gpu: gpu.clone(),
+            head,
             model,
             kernels,
             layers: layers?,
@@ -655,7 +674,7 @@ impl GpuDit {
         })
     }
     /// Evaluates the network once; returns the packed velocity with `step.packed`'s layout.
-    /// Embedding, the text refiner and the output heads still run on the CPU.
+    /// Embedding and the text refiner still run on the CPU.
     pub fn forward(&self, step: &dit::Step) -> Result<Vec<f32>, &'static str> {
         let prepared = self.model.prepare(step)?;
         self.blocks(step, prepared)
@@ -704,15 +723,49 @@ impl GpuDit {
         gpu.upload(&work.rows, 0, bytes_of(&token_rows))?;
         gpu.upload(&work.turns, 0, bytes_of(&turns))?;
         gpu.upload(&work.parts, 0, bytes_of(&parts))?;
+        drop(parts);
+        let mut kinds = vec![0u32; work.padded];
+        for (span, kind) in [(layout.video, 1), (layout.audio, 2)] {
+            kinds[span.start..span.end].fill(span.row as u32 * 4 + kind);
+        }
+        gpu.upload(&work.kinds, 0, bytes_of(&kinds))?;
+        let final_parts = self.model.final_parts(&times)?;
+        gpu.upload(&work.final_parts, 0, bytes_of(&final_parts))?;
         let work = &*work;
         // At most one submission per block: the kernel driver ends jobs that run for several
         // seconds.
         for (slot, layer) in self.layers.iter().enumerate() {
             run(gpu, &self.kernels.block(layer, work, slot))?;
         }
-        let mut x = vec![0f32; tokens * DIM];
-        gpu.read_floats(&work.stream, 0, &work.readback, &mut x)?;
-        self.model.finish(step, &x, &layout, &times)
+        run(
+            gpu,
+            &[Call::Shader {
+                kernel: &self.kernels.final8,
+                buffers: vec![
+                    &work.stream,
+                    &self.head,
+                    &work.final_parts,
+                    &work.kinds,
+                    &work.outputs,
+                ],
+                constants: vec![tokens as u32],
+                groups: [work.padded as u32, 1, 1],
+            }],
+        )?;
+        let mut outputs = vec![0f32; tokens * dit::PATCH_VALUES];
+        gpu.read_floats(&work.outputs, 0, &work.readback, &mut outputs)?;
+        let head = |span: dit::Span, width: usize| -> Vec<f32> {
+            outputs[span.start * dit::PATCH_VALUES..span.end * dit::PATCH_VALUES]
+                .chunks_exact(dit::PATCH_VALUES)
+                .flat_map(|row| &row[..width])
+                .copied()
+                .collect()
+        };
+        Ok(dit::Dit::pack(
+            step,
+            &head(layout.video, dit::PATCH_VALUES),
+            &head(layout.audio, dit::AUDIO_CHANNELS),
+        ))
     }
 }
 
