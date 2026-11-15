@@ -1,0 +1,22 @@
+// Gathers the machine-code attention kernel's output (xe2/attend.rs),
+// o[head][tile of 16 tokens][channel][token] with one weight sum per token and head, into
+// f32 token rows h[token][head][128], divided by the sum. One vec4 per invocation; padded
+// tokens are written as zeros.
+// Dispatch: x = heads, y = padded tokens.
+#version 460
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) readonly buffer Mixed { float o[]; };
+layout(set = 0, binding = 1) readonly buffer Sums { float w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { vec4 h[]; };
+layout(push_constant) uniform Constants { uint tokens; uint padded; } p;
+
+void main() {
+    uint head = gl_WorkGroupID.x;
+    uint token = gl_WorkGroupID.y;
+    uint c = gl_LocalInvocationIndex;
+    uint tile = head * (p.padded >> 4) + (token >> 4);
+    uint lane = token & 15;
+    float scale = token < p.tokens ? 1.0 / w[tile * 16 + lane] : 0.0;
+    uint at = (tile * 128 + c * 4) * 16 + lane;
+    h[token * 1792 + head * 32 + c] = vec4(o[at], o[at + 16], o[at + 32], o[at + 48]) * scale;
+}

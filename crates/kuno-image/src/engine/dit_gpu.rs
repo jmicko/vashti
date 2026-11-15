@@ -9,7 +9,7 @@ use super::{
     dit,
     gpu::{Buffer, Gpu, Kernel, Readback, Step, bytes_of, shaders},
     xe2::{
-        int8,
+        attend, int8,
         level_zero::{self, LevelZero},
         zebin,
     },
@@ -24,11 +24,12 @@ pub enum Call<'a> {
         constants: Vec<u32>,
         groups: [u32; 3],
     },
-    /// An integer product by the machine-code kernel: tokens, weights, sums.
+    /// A machine-code kernel: an integer product (tokens, weights, sums) or attention
+    /// (queries, keys and values, mixed values, weight sums).
     Product {
         fast: &'a LevelZero,
         kernel: &'a level_zero::Kernel,
-        memory: [&'a level_zero::Memory; 3],
+        memory: Vec<&'a level_zero::Memory>,
         groups: [u32; 3],
     },
 }
@@ -106,6 +107,10 @@ pub struct Kernels {
     merge8: Kernel,
     resid8: Kernel,
     gate8: Kernel,
+    /// Writers and reader of the machine-code attention kernel's layouts.
+    qk8s: Kernel,
+    value8s: Kernel,
+    merge8s: Kernel,
     /// Present when the integer products can run as our own machine code.
     fast: Option<LevelZero>,
 }
@@ -169,6 +174,9 @@ impl Kernels {
             merge8: gpu.kernel(shaders::MERGE8, 3, 2, None)?,
             resid8: gpu.kernel(shaders::RESID8, 6, 4, None)?,
             gate8: gpu.kernel(shaders::GATE8, 4, 2, None)?,
+            qk8s: gpu.kernel(shaders::QK8S, 5, 5, Some(16))?,
+            value8s: gpu.kernel(shaders::VALUE8S, 4, 3, None)?,
+            merge8s: gpu.kernel(shaders::MERGE8S, 3, 2, None)?,
         })
     }
     /// Whether the integer products run as machine code.
@@ -208,7 +216,7 @@ impl Kernels {
             return vec![Call::Product {
                 fast,
                 kernel,
-                memory: [&shared.bytes, stream, &shared.sums],
+                memory: vec![&shared.bytes, stream, &shared.sums],
                 groups: *groups,
             }];
         }
@@ -343,8 +351,13 @@ struct Shared {
     sums: level_zero::Memory,
     /// Kernel and thread groups of each of `PRODUCTS` at this token count.
     products: [(level_zero::Kernel, [u32; 3]); 4],
+    /// Attention for this token count, and its view of `query`, `key` (keys and values),
+    /// `mixed` and `weights`.
+    attend: (level_zero::Kernel, [u32; 3]),
+    streams: [level_zero::Memory; 4],
 }
 impl Work {
+    /// Buffers (and, with machine code, kernels) for exactly `tokens` tokens.
     pub fn new(
         gpu: &Gpu,
         kernels: &Kernels,
@@ -356,20 +369,64 @@ impl Work {
         let f32s = |count: usize| gpu.buffer(count as u64 * 4);
         let bytes_size = (padded * HIDDEN + int8::SLACK) as u64;
         let sums_size = (padded * HIDDEN * 2) as u64 * 4;
-        let (bytes, sums, fast) = match &kernels.fast {
-            None => (gpu.buffer(bytes_size)?, gpu.buffer(sums_size)?, None),
+        let half_rows = (HEADS * padded * HEAD) as u64 * 2;
+        let plain = |bytes: u64| gpu.buffer(bytes);
+        let (bytes, sums, attention, fast) = match &kernels.fast {
+            None => (
+                gpu.buffer(bytes_size)?,
+                gpu.buffer(sums_size)?,
+                [
+                    plain(half_rows)?,
+                    plain(half_rows)?,
+                    plain(half_rows * 2)?,
+                    plain((HEADS * padded * 8) as u64 * 4)?,
+                ],
+                None,
+            ),
             Some(fast) => {
                 let (bytes, sums) = (gpu.shared(bytes_size)?, gpu.shared(sums_size)?);
                 let product =
                     |which: usize| fast_product(fast, padded, PRODUCTS[which].0, PRODUCTS[which].1);
+                // Queries, keys with values, mixed values, weight sums in the attention
+                // kernel's layouts.
+                let sizes = [
+                    half_rows,
+                    half_rows * 2 + attend::SLACK as u64,
+                    half_rows * 2,
+                    (HEADS * padded) as u64 * 4,
+                ];
+                let attention = [
+                    gpu.shared(sizes[0])?,
+                    gpu.shared(sizes[1])?,
+                    gpu.shared(sizes[2])?,
+                    gpu.shared(sizes[3])?,
+                ];
+                let import = |i: usize| fast.import(&gpu.export(&attention[i])?, sizes[i]);
+                let shape = attend::Shape::new(padded, tokens, HEADS, 1.0 / (HEAD as f32).sqrt())
+                    .ok_or("gpu_unsupported")?;
+                let native = zebin::write(&zebin::Kernel {
+                    name: "attend",
+                    code: &attend::kernel(&shape),
+                    grf: 256,
+                    pointers: 4,
+                });
                 let shared = Shared {
+                    attend: (fast.kernel(&native, "attend", 4)?, shape.groups(HEADS)),
+                    streams: [import(0)?, import(1)?, import(2)?, import(3)?],
                     bytes: fast.import(&gpu.export(&bytes)?, bytes_size)?,
                     sums: fast.import(&gpu.export(&sums)?, sums_size)?,
                     products: [product(QKV)?, product(OUT)?, product(FC1)?, product(FC2)?],
                 };
-                (bytes, sums, Some(shared))
+                (bytes, sums, attention, Some(shared))
             }
         };
+        // The score buffers are only used by the shader form of attention.
+        let scores = if fast.is_some() {
+            4
+        } else {
+            (GROUP * padded * padded) as u64 * 2
+        };
+        let [query, key, mixed, weights] = attention;
         Ok(Self {
             tokens,
             padded,
@@ -382,14 +439,14 @@ impl Work {
             bytes,
             scales: f32s(padded)?,
             sums,
-            query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
-            key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
+            query,
+            key,
             value: gpu.buffer((HEADS * HEAD * padded) as u64 * 2)?,
-            scores: gpu.buffer((GROUP * padded * padded) as u64 * 2)?,
+            scores: gpu.buffer(scores)?,
             best: f32s(GROUP * padded * (padded / TILE).next_multiple_of(4))?,
             top: f32s(HEADS * padded)?,
-            weights: f32s(HEADS * padded * 8)?,
-            mixed: f32s(HEADS * padded * HEAD)?,
+            weights,
+            mixed,
             readback: gpu.readback((padded * DIM) as u64 * 4)?,
             fast,
         })
@@ -431,6 +488,60 @@ impl Kernels {
         calls.push(modnorm(NORM1, 0, 1));
         calls.push(quantize(DIM));
         calls.extend(self.product(w, &layer.qkv, QKV));
+        if let (Some(fast), Some(shared)) = (&self.fast, &w.fast) {
+            // Attention as one machine-code kernel between shaders that write its
+            // operands and gather its output.
+            for (side, to, weight) in [(0, &w.query, QUERY_NORM), (1, &w.key, KEY_NORM)] {
+                calls.push(Call::Shader {
+                    kernel: &self.qk8s,
+                    buffers: vec![&w.sums, &w.scales, v, &w.turns, to],
+                    constants: vec![n, np, side, SCALE_QKV as u32, weight as u32],
+                    groups: [(HEADS / 4) as u32, np, 1],
+                });
+            }
+            calls.push(Call::Shader {
+                kernel: &self.value8s,
+                buffers: vec![&w.sums, &w.scales, v, &w.key],
+                constants: vec![n, np, SCALE_QKV as u32],
+                groups: [HEADS as u32, np / 32, 1],
+            });
+            let (kernel, groups) = &shared.attend;
+            calls.push(Call::Product {
+                fast,
+                kernel,
+                memory: shared.streams.iter().collect(),
+                groups: *groups,
+            });
+            calls.push(Call::Shader {
+                kernel: &self.merge8s,
+                buffers: vec![&w.mixed, &w.weights, &w.wide],
+                constants: vec![n, np],
+                groups: [HEADS as u32, np, 1],
+            });
+        } else {
+            self.attention(&mut calls, w, v);
+        }
+        calls.push(quantize(INNER));
+        calls.extend(self.product(w, &layer.out, OUT));
+        calls.push(residual(SCALE_OUT, 2));
+
+        calls.push(modnorm(NORM2, 3, 4));
+        calls.push(quantize(DIM));
+        calls.extend(self.product(w, &layer.fc1, FC1));
+        calls.push(Call::Shader {
+            kernel: &self.gate8,
+            buffers: vec![&w.sums, &w.scales, v, &w.wide],
+            constants: vec![n, SCALE_FC1 as u32],
+            groups: [(HIDDEN / 4 / 64) as u32, np, 1],
+        });
+        calls.push(quantize(HIDDEN));
+        calls.extend(self.product(w, &layer.fc2, FC2));
+        calls.push(residual(SCALE_FC2, 5));
+        calls
+    }
+    /// Attention as shaders: scores, row maxima and mixing, a group of heads at a time.
+    fn attention<'a>(&'a self, calls: &mut Vec<Call<'a>>, w: &'a Work, v: &'a Buffer) {
+        let (n, np) = (w.tokens as u32, w.padded as u32);
         for (side, to, weight) in [(0, &w.query, QUERY_NORM), (1, &w.key, KEY_NORM)] {
             calls.push(Call::Shader {
                 kernel: &self.qk8,
@@ -500,23 +611,6 @@ impl Kernels {
             constants: vec![n, np],
             groups: [HEADS as u32, np, 1],
         });
-        calls.push(quantize(INNER));
-        calls.extend(self.product(w, &layer.out, OUT));
-        calls.push(residual(SCALE_OUT, 2));
-
-        calls.push(modnorm(NORM2, 3, 4));
-        calls.push(quantize(DIM));
-        calls.extend(self.product(w, &layer.fc1, FC1));
-        calls.push(Call::Shader {
-            kernel: &self.gate8,
-            buffers: vec![&w.sums, &w.scales, v, &w.wide],
-            constants: vec![n, SCALE_FC1 as u32],
-            groups: [(HIDDEN / 4 / 64) as u32, np, 1],
-        });
-        calls.push(quantize(HIDDEN));
-        calls.extend(self.product(w, &layer.fc2, FC2));
-        calls.push(residual(SCALE_FC2, 5));
-        calls
     }
 }
 
@@ -578,7 +672,7 @@ impl GpuDit {
         let mut cached = self.work.lock().map_err(|_| "gpu_failed")?;
         if cached
             .as_ref()
-            .is_none_or(|w| w.padded != tokens.next_multiple_of(PAD) || w.rows_count != rows)
+            .is_none_or(|w| w.tokens != tokens || w.rows_count != rows)
         {
             // Drop the old set before allocating the new one.
             *cached = None;
@@ -785,7 +879,7 @@ mod tests {
                 let call = [Call::Product {
                     fast: &fast,
                     kernel: &kernel,
-                    memory: [&memory.0, &memory.1, &memory.2],
+                    memory: vec![&memory.0, &memory.1, &memory.2],
                     groups: shape.groups(rows),
                 }];
                 run(&gpu, &call).unwrap();
@@ -908,6 +1002,9 @@ mod tests {
             (&kernels.merge8, "merge"),
             (&kernels.resid8, "residual"),
             (&kernels.gate8, "gate"),
+            (&kernels.qk8s, "queries and keys"),
+            (&kernels.value8s, "values"),
+            (&kernels.merge8s, "merge"),
         ];
         let mut totals = std::collections::BTreeMap::new();
         for call in &calls {
@@ -917,7 +1014,8 @@ mod tests {
                 Call::Shader { kernel, .. } => {
                     names.iter().find(|n| std::ptr::eq(n.0, *kernel)).unwrap().1
                 }
-                Call::Product { .. } => "linear (machine code)",
+                Call::Product { memory, .. } if memory.len() == 3 => "linear (machine code)",
+                Call::Product { .. } => "attention (machine code)",
             };
             *totals.entry(name).or_insert(0.0) += started.elapsed().as_secs_f64();
         }

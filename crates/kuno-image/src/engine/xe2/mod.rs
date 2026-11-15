@@ -307,11 +307,10 @@ impl Asm {
         i.src0(Src::Reg(a), exec);
         self.push(i);
     }
-    /// `d = add + a * b` in single precision. `add` is one replicated element; `b` is one
-    /// when marked scalar.
+    /// `d = add + a * b` in single precision; operands marked scalar are replicated.
     pub fn mad(&mut self, exec: u32, d: Reg, add: Reg, a: Reg, b: Reg, swsb: Swsb) {
         assert!(d.ty == Ty::F && add.ty == Ty::F && a.ty == Ty::F && b.ty == Ty::F);
-        assert!(add.scalar && !d.step2);
+        assert!(!d.step2);
         let mut i = Inst::new(91, exec, swsb);
         i.set(39, 39, 1);
         for at in [36, 40, 88, 80] {
@@ -320,6 +319,7 @@ impl Asm {
         i.operand(50, d, true);
         i.operand(66, add, true);
         i.set(45, 45, add.neg as u64);
+        i.set(35, 35, (exec > 1 && !add.scalar) as u64);
         i.operand(98, a, true);
         i.set(87, 87, a.neg as u64);
         i.set(83, 83, (exec > 1 && !a.scalar) as u64);
@@ -581,6 +581,21 @@ mod tests {
                 w4
             )),
             hex("5b 0c 10 80 a0 02 04 0c 14 08 0a 02 04 0c 05 0a")
+        );
+        assert_eq!(
+            one(|k| k.mad(
+                16,
+                r(10, 0, F),
+                r(6, 0, F).minus(),
+                r(224, 0, F),
+                r(7, 0, F).s(),
+                w4
+            )),
+            hex("5b 0c 10 80 a8 22 04 0a 04 06 0a 02 04 e0 04 07")
+        );
+        assert_eq!(
+            one(|k| k.mov(16, r(240, 1, Uw).step2(), r(10, 0, Uw).step2(), w4)),
+            hex("61 0c 10 80 10 01 0e f0 04 0a 20 00 00 00 00 00")
         );
         assert_eq!(
             one(|k| k.sel(16, Cond::Ge, r(9, 0, F), r(9, 0, F), r(10, 0, F), w4)),

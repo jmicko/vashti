@@ -2,25 +2,29 @@
 //! single pass over the keys, with nothing stored in between.
 //!
 //! One hardware thread owns 16 queries of one head (128 channels) and walks the keys 16 at a
-//! time. Per step it
-//!   1. multiplies its queries with the 16 keys (half-float `dpas`, f32 scores in registers),
-//!   2. turns the scores into half-float weights `2^((score - ref) * c)`,
-//!   3. multiplies the weights with the 16 values into f32 accumulators, one of which sums
-//!      the weights themselves.
+//! time. Queries are the 16 lanes of every register, so everything per query is lane-wise.
+//! Per step it
+//!   1. multiplies the 16 keys with its queries (half-float `dpas`, f32 scores, one register
+//!      per key),
+//!   2. turns each key's scores into weights `2^((score - ref) * c)`, sums them, and packs
+//!      them as half floats,
+//!   3. multiplies the 16 values with the weights into f32 accumulators (one register per
+//!      channel).
 //!
-//! The caller divides the mixed values by the weight sum, so `ref` only has to keep weights
-//! in half-float range. Each query starts from its first key's score; when a later score
-//! exceeds `ref` by more than 2^11, a slow path raises `ref` and rescales the accumulators.
+//! The caller divides the mixed values by the weight sum, so `ref` (one per query) only has
+//! to keep weights in half-float range. It starts as the first key's score; when a later
+//! score exceeds it by more than 2^11, a slow path raises it and rescales what has been
+//! accumulated.
 //!
-//! Operands are streams laid out so that every load is one contiguous 256- or 512-byte run:
-//!   Q   `[head][query tile][channel chunk 0..8][query group 0..2][8 queries x 16 halves]`
-//!   KV  `[head][key chunk]` of `CHUNK_BYTES`: eight key fragments, then nine value fragments.
-//!       A key fragment (512 B) is `[channel pair 0..8][key 0..16][2 halves]`; a value
-//!       fragment is `[key pair 0..8][channel 0..16][2 halves]`. The ninth value fragment is
-//!       1.0 in channel 0 for live keys, so its accumulator is the weight sum.
-//!   OUT `[head][query][128]` f32, and SUM `[head][query][8]` f32 with the sum in slot 0.
-//! Keys past the live count inside the last live chunk must repeat a live key and have zero
-//! values (and zero in the ninth fragment); whole dead chunks are never read.
+//! Operands are streams, so every load is one contiguous 512-byte run:
+//!   Q   `[head][query tile][channel chunk 0..8][channel pair 0..8][query 0..16][2 halves]`
+//!   KV  `[head][key chunk]` of `CHUNK_BYTES`: keys `[channel chunk 0..8][key 0..16][16
+//!       halves]`, then values `[channel 0..128][key 0..16]` halves.
+//!   OUT `[head][query tile][channel 0..128][query 0..16]` f32 (transposed), and
+//!   SUM `[head][query tile][query 0..16]` f32.
+//!
+//! Keys past the live count are never used; the KV buffer needs `SLACK` bytes after its
+//! last chunk because loads run one chunk ahead.
 use super::{Ty::*, *};
 
 /// Queries per thread and keys per step.
@@ -28,14 +32,17 @@ pub const TILE: usize = 16;
 pub const CHANNELS: usize = 128;
 /// Bytes of one query tile in the Q stream and of one key chunk in the KV stream.
 pub const TILE_BYTES: usize = TILE * CHANNELS * 2;
-pub const CHUNK_BYTES: usize = 17 * 512;
-/// Offset of the value fragments inside a key chunk.
-pub const VALUES: usize = 8 * 512;
+pub const CHUNK_BYTES: usize = 2 * TILE * CHANNELS * 2;
+/// Offset of the values inside a key chunk.
+pub const VALUES: usize = TILE * CHANNELS * 2;
+/// Bytes of one query tile in OUT and in SUM.
+pub const OUT_BYTES: usize = TILE * CHANNELS * 4;
+pub const SUM_BYTES: usize = TILE * 4;
+pub const SLACK: usize = CHUNK_BYTES;
 
-const LOAD_32X64: u32 = 0x0248_F580;
 const LOAD_64X64: u32 = 0x0288_F780;
+const STORE_64X64: u32 = 0x0200_F784;
 const STORE_64X8: u32 = 0x0200_C784;
-const STORE_32X8: u32 = 0x0200_C584;
 /// Weights may grow to 2^LIMIT before `ref` is raised (half floats end at 2^16).
 const LIMIT: f32 = 11.0;
 
@@ -43,8 +50,8 @@ const LIMIT: f32 = 11.0;
 pub struct Shape {
     /// Padded tokens (a multiple of 16): queries per head, and the key chunks' stride.
     pub padded: u32,
-    /// Key chunks holding live keys.
-    pub chunks: u32,
+    /// Live keys.
+    pub tokens: u32,
     /// Scores are multiplied by this before the softmax.
     pub scale: f32,
 }
@@ -54,10 +61,10 @@ impl Shape {
         let fits = padded.is_multiple_of(TILE)
             && tokens > 0
             && tokens <= padded
-            && heads * padded * (CHUNK_BYTES / TILE).max(CHANNELS * 4) < 1 << 32;
-        fits.then(|| Shape {
+            && heads * (padded / TILE) * CHUNK_BYTES < 1 << 32;
+        fits.then_some(Shape {
             padded: padded as u32,
-            chunks: tokens.div_ceil(TILE) as u32,
+            tokens: tokens as u32,
             scale,
         })
     }
@@ -67,60 +74,68 @@ impl Shape {
     }
 }
 
-/// Byte offset in the Q stream of the 16 halves `channel / 16` of `query` (head-relative).
+/// Byte offsets inside one head's streams.
 pub fn query_at(query: usize, channel: usize) -> usize {
-    (((query / TILE) * 8 + channel / 16) * 2 + query % TILE / 8) * 256
-        + (query % 8) * 32
-        + (channel % 16) * 2
-}
-/// Byte offset in the KV stream of a key's channel (head-relative).
-pub fn key_at(key: usize, channel: usize) -> usize {
-    (key / TILE) * CHUNK_BYTES
+    (query / TILE) * TILE_BYTES
         + (channel / 16) * 512
         + (channel % 16 / 2) * 64
-        + (key % TILE) * 4
+        + (query % TILE) * 4
         + (channel % 2) * 2
 }
-/// Byte offset in the KV stream of a value's channel; channel 128 is the weight-sum marker.
+pub fn key_at(key: usize, channel: usize) -> usize {
+    (key / TILE) * CHUNK_BYTES + (channel / 16) * 512 + (key % TILE) * 32 + (channel % 16) * 2
+}
 pub fn value_at(key: usize, channel: usize) -> usize {
-    (key / TILE) * CHUNK_BYTES
-        + VALUES
-        + (channel / 16) * 512
-        + (key % TILE / 2) * 64
-        + (channel % 16) * 4
-        + (key % 2) * 2
+    (key / TILE) * CHUNK_BYTES + VALUES + channel * 32 + (key % TILE) * 2
+}
+pub fn out_at(query: usize, channel: usize) -> usize {
+    (query / TILE) * OUT_BYTES + channel * 64 + (query % TILE) * 4
 }
 
 // Register plan (256 registers).
-const HEADER: u32 = 15;
+const KV_AT: u32 = 3;
+const OUT_AT: u32 = 4;
+const SUM_AT: u32 = 5;
 const REF: u32 = 6;
 const CONST: u32 = 7;
 const INT: u32 = 8;
 const MAX: u32 = 9;
-const WIDE: u32 = 10;
-const T: [u32; 4] = [248, 249, 250, 251];
-const N: [u32; 4] = [252, 253, 254, 255];
-const PP: [u32; 4] = [11, 12, 13, 14];
-const KV: u32 = 248;
-fn q(g: u32, j: u32) -> u32 {
-    16 + (g * 8 + j) * 4
+const SUM: u32 = 10;
+const WIDE: u32 = 11;
+const ROUND: u32 = 12;
+const POWER: u32 = 13;
+const STEP: u32 = 14;
+const HEADER: u32 = 15;
+/// Queries, eight registers per channel chunk.
+fn q(j: u32) -> u32 {
+    16 + j * 8
 }
-fn out(g: u32, j: u32) -> u32 {
-    80 + (g * 9 + j) * 8
+/// Accumulators, eight channels (registers) per block.
+fn out(b: u32) -> u32 {
+    80 + b * 8
 }
-fn s(g: u32) -> u32 {
-    224 + g * 8
+/// Scores of keys `8h..8h + 8`.
+fn s(h: u32) -> u32 {
+    208 + h * 8
 }
-fn p(g: u32) -> u32 {
-    240 + g * 4
+/// Weights: register `g` holds keys `2g` (low halves) and `2g + 1` (high halves).
+const P: u32 = 224;
+/// Three load buffers; the last two double as scratch while weights are computed.
+fn buffer(i: u32) -> u32 {
+    232 + i * 8
 }
-// Scoreboard tokens.
-const LOAD: u16 = 0;
-fn score(g: u32) -> u16 {
-    1 + g as u16
+const T: [u32; 4] = [240, 241, 242, 243];
+const N: [u32; 4] = [244, 245, 246, 247];
+const PP: [u32; 4] = [248, 249, 250, 251];
+// Scoreboard tokens: one per load buffer, per score register group, per accumulator block.
+fn load(i: u32) -> u16 {
+    i as u16
 }
-fn mix(g: u32, j: u32) -> u16 {
-    3 + (g * 9 + j) as u16
+fn score(h: u32) -> u16 {
+    3 + h as u16
+}
+fn mix(b: u32) -> u16 {
+    5 + b as u16
 }
 const LAST_MIX: u16 = 20;
 // Lanes of CONST.
@@ -131,26 +146,275 @@ const A3: u32 = 3;
 const A4: u32 = 4;
 const ONE: u32 = 5;
 
-/// `2^f` for the fraction in `frac` (|f| <= 0.5) into `to`, both `exec` lanes wide:
-/// a fourth-degree Taylor polynomial, 3e-5 relative error.
-fn power(k: &mut Asm, exec: u32, to: Reg, frac: Reg, w: Swsb) {
+/// One step of `2^f` for the fraction `frac` (|f| <= 0.5) into `to`: a fourth-degree
+/// Taylor polynomial evaluated in four multiply-adds, 3e-5 relative error.
+fn power(k: &mut Asm, part: u32, to: Reg, frac: Reg, w: Swsb) {
     let c = |lane: u32| r(CONST, lane, F).s();
-    k.mad(exec, to, c(A3), frac, c(A4), w);
-    k.mad(exec, to, c(A2), to, frac, w);
-    k.mad(exec, to, c(A1), to, frac, w);
-    k.mad(exec, to, c(ONE), to, frac, w);
+    match part {
+        0 => k.mad(16, to, c(A3), frac, c(A4), w),
+        1 => k.mad(16, to, c(A2), to, frac, w),
+        2 => k.mad(16, to, c(A1), to, frac, w),
+        _ => k.mad(16, to, c(ONE), to, frac, w),
+    }
+}
+fn fetch(k: &mut Asm, to: u32, offset: u32) {
+    k.send(
+        SFID_UGM,
+        r(buffer(to), 0, Ud),
+        r(KV_AT, 0, Ud),
+        null(Ud),
+        0,
+        offset << 12,
+        LOAD_64X64,
+        false,
+        Swsb::after_set(1, load(to)),
+    );
+}
+
+/// Timing experiments only: bit 0 skips the weights, bit 1 the mixing products, bit 2 the
+/// score products.
+#[cfg(test)]
+static SKIP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+fn skip(bit: u32) -> bool {
+    #[cfg(test)]
+    return SKIP.load(std::sync::atomic::Ordering::Relaxed) >> bit & 1 == 1;
+    #[cfg(not(test))]
+    {
+        let _ = bit;
+        false
+    }
+}
+
+/// One key chunk with `live` live keys, starting with its keys already requested into the
+/// three buffers and ending with the next chunk's requested.
+fn step(k: &mut Asm, live: u32) {
+    let w = Swsb::after(1);
+    let (exp, init, slow, mixing) = (k.label(), k.label(), k.label(), k.label());
+    let row = |key: u32| r(s(key / 8) + key % 8, 0, F);
+
+    // Scores: eight channel chunks, each against both key groups.
+    k.sync(w);
+    for j in 0..8 {
+        k.sync(Swsb::dst(load(j % 3)));
+        for h in 0..2 {
+            let acc = if j == 0 {
+                null(F)
+            } else {
+                k.sync(Swsb::dst(score(h)));
+                r(s(h), 0, F)
+            };
+            k.dpas(
+                8,
+                8,
+                16,
+                r(s(h), 0, F),
+                acc,
+                r(q(j), 0, Hf),
+                r(buffer(j % 3) + 4 * h, 0, Hf),
+                Swsb::set(score(h)),
+            );
+        }
+        // Refill the buffer once both products have read it: a later key chunk, or the
+        // first values. Buffers 1 and 2 stay free for the weights' scratch.
+        let next = match j {
+            0..=4 => Some((j + 3) * 512),
+            6 => Some(VALUES as u32),
+            _ => None,
+        };
+        if let Some(offset) = next {
+            k.sync(Swsb::src(score(1)));
+            fetch(k, j % 3, offset);
+        }
+    }
+    k.sync(Swsb::dst(score(0)));
+    k.sync(Swsb::dst(score(1)));
+    k.cmp(Cond::Eq, r(INT, 0, D), imm(0), w);
+    k.jmpi(init, true, w);
+
+    // Weights. t = score * c - ref; 2^t = 2^round(t) * 2^fraction. Rows (keys) go in
+    // groups of up to four, one instruction kind at a time, so each instruction depends on
+    // the one a group's length back in its own pipe. Integer and float instructions run in
+    // separate pipes: the first instruction of a group that reads the other pipe's results
+    // waits for everything before it, which covers the rest of its group.
+    k.place(exp);
+    k.sync(Swsb::src(LAST_MIX));
+    k.sync(w);
+    for reg in P..P + 8 {
+        if live < 16 {
+            k.mov(16, r(reg, 0, D), imm(0), Swsb::NONE);
+        }
+    }
+    let keys: Vec<u32> = (0..if skip(0) { 0 } else { live }).collect();
+    for group in keys.chunks(4) {
+        let back = Swsb::after(group.len() as u16);
+        let first = |i: usize| if i == 0 { w } else { Swsb::NONE };
+        let each = |k: &mut Asm, f: &dyn Fn(&mut Asm, usize, u32)| {
+            for (i, key) in group.iter().enumerate() {
+                f(k, i, *key);
+            }
+        };
+        let (t, n, pp) = (
+            |i: usize| r(T[i], 0, F),
+            |i: usize| r(N[i], 0, F),
+            |i: usize| r(PP[i], 0, F),
+        );
+        each(k, &|k, i, key| {
+            k.mad(
+                16,
+                t(i),
+                r(REF, 0, F).minus(),
+                row(key),
+                r(CONST, C, F).s(),
+                first(i),
+            )
+        });
+        each(k, &|k, i, key| {
+            if key == 0 {
+                k.mov(16, r(MAX, 0, F), t(i), w);
+            } else {
+                k.sel(16, Cond::Ge, r(MAX, 0, F), r(MAX, 0, F), t(i), w);
+            }
+        });
+        each(k, &|k, i, _| {
+            k.sel(16, Cond::Ge, t(i), t(i), immf(-126.0), back)
+        });
+        each(k, &|k, i, _| k.rnde(16, n(i), t(i), back));
+        each(k, &|k, i, _| k.add(16, t(i), t(i), n(i).minus(), back));
+        for part in 0..4 {
+            each(k, &|k, i, _| power(k, part, pp(i), t(i), back));
+        }
+        each(k, &|k, i, _| k.mov(16, r(N[i], 0, D), n(i), back));
+        each(k, &|k, i, _| {
+            k.shl(16, r(N[i], 0, D), r(N[i], 0, D), immw(23), first(i))
+        });
+        each(k, &|k, i, _| {
+            k.add(16, r(PP[i], 0, D), r(PP[i], 0, D), r(N[i], 0, D), back)
+        });
+        // Even keys convert straight into the low halves; odd keys go through scratch,
+        // because a float destination must keep its lanes in place.
+        each(k, &|k, i, key| {
+            let to = if key % 2 == 0 {
+                r(P + key / 2, 0, Hf)
+            } else {
+                r(T[i], 0, Hf)
+            };
+            k.mov(16, to.step2(), pp(i), first(i));
+        });
+        each(k, &|k, i, key| {
+            if key == 0 {
+                k.mov(16, r(STEP, 0, F), pp(i), w);
+            } else {
+                k.add(16, r(STEP, 0, F), r(STEP, 0, F), pp(i), w);
+            }
+        });
+        each(k, &|k, i, key| {
+            if key % 2 == 1 {
+                k.mov(16, r(P + key / 2, 1, Uw).step2(), r(T[i], 0, Uw).step2(), w);
+            }
+        });
+        k.sync(w);
+    }
+    // Largest t of the step per query, floored at zero. Non-negative floats order like
+    // their bits, so the reduction across queries can run on integers.
+    k.sel(16, Cond::Ge, r(MAX, 0, F), r(MAX, 0, F), immf(0.0), w);
+    k.sel(8, Cond::Ge, r(WIDE, 0, D), r(MAX, 0, D), r(MAX, 8, D), w);
+    for half in [4, 2, 1] {
+        k.sel(
+            half,
+            Cond::Ge,
+            r(WIDE, 0, D),
+            r(WIDE, 0, D),
+            r(WIDE, half, D),
+            w,
+        );
+    }
+    k.cmp(Cond::Gt, r(WIDE, 0, D), imm(LIMIT.to_bits() as i32), w);
+    k.jmpi(slow, true, w);
+
+    // Mixing: eight pairs of channel blocks; the first pair was requested during scoring.
+    k.place(mixing);
+    k.add(16, r(SUM, 0, F), r(SUM, 0, F), r(STEP, 0, F), w);
+    k.sync(w);
+    fetch(k, 1, VALUES as u32 + 512);
+    fetch(k, 2, VALUES as u32 + 1024);
+    for m in 0..8 {
+        k.sync(Swsb::dst(load(m % 3)));
+        for e in 0..2 {
+            let b = 2 * m + e;
+            k.sync(Swsb::dst(mix(b)));
+            k.dpas(
+                8,
+                8,
+                16,
+                r(out(b), 0, F),
+                r(out(b), 0, F),
+                r(P, 0, Hf),
+                r(buffer(m % 3) + 4 * e, 0, Hf),
+                Swsb::set(mix(b)),
+            );
+        }
+        // Refill with later values, then with the next chunk's first keys.
+        k.sync(Swsb::src(mix(2 * m + 1)));
+        let offset = if m + 3 < 8 {
+            VALUES as u32 + (m + 3) * 512
+        } else {
+            // Key chunk j of the next step belongs in buffer j % 3.
+            CHUNK_BYTES as u32 + (m % 3) * 512
+        };
+        fetch(k, m % 3, offset);
+    }
+    for i in 0..3 {
+        k.sync(Swsb::src(load(i)));
+    }
+    k.add(
+        1,
+        r(KV_AT, 0, Q),
+        r(KV_AT, 0, Q),
+        imm(CHUNK_BYTES as i32),
+        w,
+    );
+    k.add(1, r(INT, 0, D), r(INT, 0, D), imm(1), w);
+    let done = k.label();
+    k.jmpi(done, false, w);
+
+    // First step: every query's reference is its score against the first key.
+    k.place(init);
+    k.mul(16, r(REF, 0, F), row(0), r(CONST, C, F).s(), w);
+    k.jmpi(exp, false, w);
+
+    // A weight left half-float range: raise every query's reference by its largest t of
+    // this step and scale what it has accumulated by 2^-(the raise).
+    k.place(slow);
+    for token in mix(0)..=LAST_MIX {
+        k.sync(Swsb::dst(token));
+    }
+    let (t, n, pp) = (r(WIDE, 0, F), r(ROUND, 0, F), r(POWER, 0, F));
+    k.add(16, r(REF, 0, F), r(REF, 0, F), r(MAX, 0, F), w);
+    k.sel(16, Cond::Ge, t, r(MAX, 0, F).minus(), immf(-126.0), w);
+    k.rnde(16, n, t, w);
+    k.add(16, t, t, n.minus(), w);
+    for part in 0..4 {
+        power(k, part, pp, t, w);
+    }
+    k.mov(16, r(ROUND, 0, D), n, w);
+    k.shl(16, r(ROUND, 0, D), r(ROUND, 0, D), immw(23), w);
+    k.add(16, r(POWER, 0, D), r(POWER, 0, D), r(ROUND, 0, D), w);
+    for reg in (out(0)..out(16)).chain([SUM]) {
+        k.mul(16, r(reg, 0, F), r(reg, 0, F), pp, w);
+    }
+    k.jmpi(exp, false, w);
+    k.place(done);
 }
 
 pub fn kernel(shape: &Shape) -> Vec<u8> {
     let Shape {
         padded,
-        chunks,
+        tokens,
         scale,
     } = *shape;
     let tiles = padded / TILE as u32;
-    let (w, w4) = (Swsb::after(1), Swsb::after(4));
+    let w = Swsb::after(1);
     let int = |lane: u32| r(INT, lane, D);
-    let row = |n: u32| s(n / 8) + n % 8;
     let mut k = Asm::new();
 
     // r0: thread header (query tile in dword 1, head in dword 6); r1: Q, KV, OUT, SUM.
@@ -167,332 +431,103 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     for (lane, value) in consts {
         k.mov(1, r(CONST, lane, F), immf(value), Swsb::NONE);
     }
-    // Byte offsets of this thread's streams: per head, plus per query tile.
-    let per_head = [
-        tiles * TILE_BYTES as u32,
-        tiles * CHUNK_BYTES as u32,
-        padded * CHANNELS as u32 * 4,
-        padded * 32,
-    ];
-    let per_tile = [
-        TILE_BYTES as u32,
-        0,
-        (TILE * CHANNELS * 4) as u32,
-        TILE as u32 * 32,
-    ];
-    for (i, (head, tile)) in per_head.into_iter().zip(per_tile).enumerate() {
+    // Addresses of this thread's streams: per head, plus per query tile.
+    let sizes = [TILE_BYTES, CHUNK_BYTES, OUT_BYTES, SUM_BYTES];
+    for (i, size) in sizes.into_iter().enumerate() {
         let i = i as u32;
-        k.mov(1, int(1), imm(head as i32), Swsb::NONE);
+        k.mov(1, int(1), imm((tiles * size as u32) as i32), Swsb::NONE);
         k.mul(1, int(2), int(1), r(0, 12, Uw), w);
-        if tile > 0 {
-            k.shl(1, int(3), r(0, 1, D), immw(tile.trailing_zeros() as i16), w);
+        if i != 1 {
+            k.shl(1, int(3), r(0, 1, D), immw(size.trailing_zeros() as i16), w);
             k.add(1, int(2), int(2), int(3), w);
         }
         k.mov(1, r(WIDE, 0, Uq), r(INT, 2, Ud), w);
         k.add(1, r(2 + i, 0, Q), r(1, i, Q), r(WIDE, 0, Q), w);
     }
-    for g in 0..2 {
-        for j in 0..8 {
-            k.send(
-                SFID_UGM,
-                r(q(g, j), 0, Ud),
-                r(2, 0, Ud),
-                null(Ud),
-                0,
-                ((j * 2 + g) * 256) << 12,
-                LOAD_32X64,
-                false,
-                Swsb::after_set(1, mix(g, j)),
-            );
-        }
-    }
-    // Touch the remaining mixing tokens, so later waits on them always have a predecessor.
-    for token in [mix(0, 8), mix(1, 8)] {
-        k.send(
-            SFID_UGM,
-            r(KV, 0, Ud),
-            r(3, 0, Ud),
-            null(Ud),
-            0,
-            0,
-            LOAD_64X64,
-            false,
-            Swsb::after_set(1, token),
-        );
-    }
-    for g in 0..2 {
-        for reg in out(g, 0)..out(g, 9) {
-            k.mov(16, r(reg, 0, D), imm(0), Swsb::NONE);
-        }
-    }
-    k.mov(1, int(0), imm(0), Swsb::NONE);
-    for token in mix(0, 0)..=LAST_MIX {
-        k.sync(Swsb::dst(token));
-    }
-
-    let (top, exp, init, slow) = (k.label(), k.label(), k.label(), k.label());
-    // Scores of 16 queries against the chunk's 16 keys, 16 channels per fragment.
-    k.place(top);
+    // The queries; the same tokens later belong to the accumulator blocks, so every block
+    // token has a predecessor to wait for (the second eight get a throwaway load).
     for j in 0..8 {
-        // The fragment buffer is free once its last reader has read it.
-        k.sync(Swsb::src(if j == 0 { LAST_MIX } else { score(1) }));
         k.send(
             SFID_UGM,
-            r(KV, 0, Ud),
-            r(3, 0, Ud),
+            r(q(j), 0, Ud),
+            r(2, 0, Ud),
             null(Ud),
             0,
             (j * 512) << 12,
             LOAD_64X64,
             false,
-            Swsb::after_set(1, LOAD),
-        );
-        k.sync(Swsb::dst(LOAD));
-        for g in 0..2 {
-            let acc = if j == 0 {
-                null(F)
-            } else {
-                k.sync(Swsb::dst(score(g)));
-                r(s(g), 0, F)
-            };
-            k.dpas(
-                8,
-                8,
-                16,
-                r(s(g), 0, F),
-                acc,
-                r(KV, 0, Hf),
-                r(q(g, j), 0, Hf),
-                Swsb::set(score(g)),
-            );
-        }
-    }
-    k.sync(Swsb::dst(score(0)));
-    k.sync(Swsb::dst(score(1)));
-    k.cmp(Cond::Eq, int(0), imm(0), w);
-    k.jmpi(init, true, w);
-
-    // Weights: t = score * c - ref, 2^t = 2^round(t) * 2^fraction, as half floats. Four
-    // rows at a time, so each instruction depends on the one four back. Distances count
-    // instructions of the producer's pipe (integer and float instructions run in separate
-    // pipes), so where a group reads what the other pipe's group wrote, row i's producer is
-    // 4 - i back.
-    let across = |i: usize| Swsb::after(4 - i as u16);
-    k.place(exp);
-    k.sync(w);
-    for quad in 0..4 {
-        let rows: Vec<u32> = (0..4).map(|i| quad * 4 + i).collect();
-        let each = |k: &mut Asm, f: &dyn Fn(&mut Asm, usize, u32)| {
-            for (i, n) in rows.iter().enumerate() {
-                f(k, i, *n);
-            }
-        };
-        let (t, n, pp) = (
-            |i: usize| r(T[i], 0, F),
-            |i: usize| r(N[i], 0, F),
-            |i: usize| r(PP[i], 0, F),
-        );
-        each(&mut k, &|k, i, n| {
-            k.mad(
-                16,
-                t(i),
-                r(REF, n, F).s().minus(),
-                r(row(n), 0, F),
-                r(CONST, C, F).s(),
-                across(i),
-            )
-        });
-        each(&mut k, &|k, i, n| {
-            if n == 0 {
-                k.mov(16, r(MAX, 0, F), t(i), w);
-            } else {
-                k.sel(16, Cond::Ge, r(MAX, 0, F), r(MAX, 0, F), t(i), w);
-            }
-        });
-        each(&mut k, &|k, i, _| {
-            k.sel(16, Cond::Ge, t(i), t(i), immf(-126.0), w4)
-        });
-        each(&mut k, &|k, i, _| k.rnde(16, n(i), t(i), w4));
-        each(&mut k, &|k, i, _| k.add(16, t(i), t(i), n(i).minus(), w4));
-        for step in 0..4 {
-            each(&mut k, &|k, i, _| {
-                let c = |lane: u32| r(CONST, lane, F).s();
-                match step {
-                    0 => k.mad(16, pp(i), c(A3), t(i), c(A4), w4),
-                    1 => k.mad(16, pp(i), c(A2), pp(i), t(i), w4),
-                    2 => k.mad(16, pp(i), c(A1), pp(i), t(i), w4),
-                    _ => k.mad(16, pp(i), c(ONE), pp(i), t(i), w4),
-                }
-            });
-        }
-        each(&mut k, &|k, i, _| k.mov(16, r(N[i], 0, D), n(i), w4));
-        each(&mut k, &|k, i, _| {
-            k.shl(16, r(N[i], 0, D), r(N[i], 0, D), immw(23), across(i))
-        });
-        each(&mut k, &|k, i, _| {
-            k.add(16, r(PP[i], 0, D), r(PP[i], 0, D), r(N[i], 0, D), w4)
-        });
-        each(&mut k, &|k, i, _| {
-            k.mov(16, r(T[i], 0, Hf).step2(), pp(i), across(i))
-        });
-        each(&mut k, &|k, i, n| {
-            k.mov(
-                16,
-                r(p(n / 8) + n % 8 / 2, (n % 2) * 16, Uw),
-                r(T[i], 0, Uw).step2(),
-                across(i),
-            )
-        });
-    }
-    // Largest t of the step: non-negative floats order like their bits, so the reduction
-    // across lanes can run on integers.
-    k.sel(16, Cond::Ge, r(MAX, 0, F), r(MAX, 0, F), immf(0.0), w);
-    for half in [8, 4, 2, 1] {
-        k.sel(
-            half,
-            Cond::Ge,
-            r(MAX, 0, D),
-            r(MAX, 0, D),
-            r(MAX, half, D),
-            w,
+            Swsb::after_set(1, mix(j)),
         );
     }
-    k.cmp(Cond::Gt, r(MAX, 0, D), imm(LIMIT.to_bits() as i32), w);
-    k.jmpi(slow, true, w);
-
-    // Mixing: nine value fragments against the weights.
-    k.sync(w);
-    for j in 0..9 {
-        if j > 0 {
-            k.sync(Swsb::src(mix(1, j - 1)));
-        }
+    for b in 8..16 {
         k.send(
             SFID_UGM,
-            r(KV, 0, Ud),
-            r(3, 0, Ud),
+            r(buffer(0), 0, Ud),
+            r(KV_AT, 0, Ud),
             null(Ud),
             0,
-            (VALUES as u32 + j * 512) << 12,
+            0,
             LOAD_64X64,
             false,
-            Swsb::after_set(1, LOAD),
+            Swsb::after_set(1, mix(b)),
         );
-        k.sync(Swsb::dst(LOAD));
-        for g in 0..2 {
-            k.sync(Swsb::dst(mix(g, j)));
-            k.dpas(
-                8,
-                8,
-                16,
-                r(out(g, j), 0, F),
-                r(out(g, j), 0, F),
-                r(KV, 0, Hf),
-                r(p(g), 0, Hf),
-                Swsb::set(mix(g, j)),
-            );
-        }
     }
-    k.add(1, r(3, 0, Q), r(3, 0, Q), imm(CHUNK_BYTES as i32), w);
-    k.add(1, int(0), int(0), imm(1), w);
-    k.cmp(Cond::Lt, int(0), imm(chunks as i32), w);
-    k.jmpi(top, true, w);
-
-    // Store: one address register per query (the score and weight registers are free now).
-    for token in mix(0, 0)..=LAST_MIX {
+    for reg in (out(0)..out(16)).chain([SUM]) {
+        k.mov(16, r(reg, 0, D), imm(0), Swsb::NONE);
+    }
+    k.mov(1, int(0), imm(0), Swsb::NONE);
+    for token in mix(0)..=LAST_MIX {
         k.sync(Swsb::dst(token));
     }
-    let (to_out, to_sum) = (|n: u32| 224 + n, |n: u32| 240 + n);
-    for (first, pointer, step) in [(224, 4, CHANNELS as i32 * 4), (240, 5, 32)] {
-        k.mov(1, r(first, 0, Q), r(pointer, 0, Q), w);
-        for n in 1..16 {
-            k.add(1, r(first + n, 0, Q), r(first + n - 1, 0, Q), imm(step), w);
-        }
+    for j in 0..3 {
+        fetch(&mut k, j, j * 512);
     }
-    let mut stores = 0u32;
-    let mut store = |k: &mut Asm, address: u32, data: u32, offset: u32, desc: u32| {
-        let id = (stores % 32) as u16;
-        if stores >= 32 {
-            k.sync(Swsb::dst(id));
-        }
+
+    let (full, rest) = (tokens / TILE as u32, tokens % TILE as u32);
+    if full > 0 {
+        let top = k.label();
+        k.place(top);
+        step(&mut k, TILE as u32);
+        k.cmp(Cond::Lt, int(0), imm(full as i32), w);
+        k.jmpi(top, true, w);
+    }
+    if rest > 0 {
+        step(&mut k, rest);
+    }
+
+    // Store. Accumulator registers are in memory order: channel, then query.
+    for token in 0..=LAST_MIX {
+        k.sync(Swsb::dst(token));
+    }
+    k.sync(w);
+    for b in 0..16 {
         k.send(
             SFID_UGM,
             null(Ud),
-            r(address, 0, Ud),
-            r(data, 0, Ud),
-            1,
-            offset << 12,
-            desc,
+            r(OUT_AT, 0, Ud),
+            r(out(b), 0, Ud),
+            8,
+            (b * 512) << 12,
+            STORE_64X64,
             false,
-            Swsb::after_set(1, id),
+            Swsb::after_set(1, b as u16),
         );
-        stores += 1;
-    };
-    for n in 0..16 {
-        for j in 0..8 {
-            store(&mut k, to_out(n), out(n / 8, j) + n % 8, j * 64, STORE_64X8);
-        }
-        store(&mut k, to_sum(n), out(n / 8, 8) + n % 8, 0, STORE_32X8);
     }
-    for id in 0..32 {
-        k.sync(Swsb::dst(id));
-    }
-    k.end(r(HEADER, 0, F));
-
-    // First step: every query's reference is its first key's score.
-    k.place(init);
-    for n in 0..16 {
-        k.mul(1, r(REF, n, F), r(row(n), 0, F), r(CONST, C, F), w);
-    }
-    k.jmpi(exp, false, w);
-
-    // A weight left half-float range: raise each query's reference to its largest score of
-    // this step (if higher) and scale what it has accumulated by 2^-(the raise).
-    k.place(slow);
-    for token in mix(0, 0)..=LAST_MIX {
+    k.send(
+        SFID_UGM,
+        null(Ud),
+        r(SUM_AT, 0, Ud),
+        r(SUM, 0, Ud),
+        1,
+        0,
+        STORE_64X8,
+        false,
+        Swsb::after_set(1, 16),
+    );
+    for token in 0..=16 {
         k.sync(Swsb::dst(token));
     }
-    let scalar = |lane: u32| r(MAX, lane, F);
-    for n in 0..16 {
-        k.mad(
-            16,
-            r(WIDE, 0, F),
-            r(REF, n, F).s().minus(),
-            r(row(n), 0, F),
-            r(CONST, C, F).s(),
-            w,
-        );
-        k.sel(16, Cond::Ge, r(WIDE, 0, F), r(WIDE, 0, F), immf(0.0), w);
-        for half in [8, 4, 2, 1] {
-            k.sel(
-                half,
-                Cond::Ge,
-                r(WIDE, 0, D),
-                r(WIDE, 0, D),
-                r(WIDE, half, D),
-                w,
-            );
-        }
-        k.add(1, r(REF, n, F), r(REF, n, F), r(WIDE, 0, F), w);
-        k.sel(
-            1,
-            Cond::Ge,
-            scalar(0),
-            r(WIDE, 0, F).minus(),
-            immf(-126.0),
-            w,
-        );
-        k.rnde(1, scalar(1), scalar(0), w);
-        k.add(1, scalar(0), scalar(0), scalar(1).minus(), w);
-        power(&mut k, 1, scalar(2), scalar(0), w);
-        k.mov(1, r(MAX, 1, D), scalar(1), w);
-        k.shl(1, r(MAX, 1, D), r(MAX, 1, D), immw(23), w);
-        k.add(1, r(MAX, 2, D), r(MAX, 2, D), r(MAX, 1, D), w);
-        for j in 0..9 {
-            let acc = r(out(n / 8, j) + n % 8, 0, F);
-            k.mul(16, acc, acc, scalar(2).s(), w);
-        }
-    }
-    k.jmpi(exp, false, w);
+    k.end(r(HEADER, 0, F));
     k.bytes()
 }
 
@@ -555,31 +590,23 @@ mod tests {
             let values = half(noise(heads * padded * CHANNELS, 3, 1.0));
             let tiles = padded / TILE;
             let mut q_stream = vec![0u16; heads * tiles * TILE_BYTES / 2];
-            let mut kv_stream = vec![0u16; heads * tiles * CHUNK_BYTES / 2];
-            let one = narrow(1.0);
+            let mut kv_stream = vec![0u16; (heads * tiles * CHUNK_BYTES + SLACK) / 2];
             for head in 0..heads {
                 let (q0, kv0) = (head * tiles * TILE_BYTES, head * tiles * CHUNK_BYTES);
                 for token in 0..padded {
                     let from = (head * padded + token) * CHANNELS;
-                    // Dead keys repeat the last live key and carry no value.
-                    let key_from = (head * padded + token.min(tokens - 1)) * CHANNELS;
-                    let live = token < tokens;
+                    // Dead keys and values are noise too: the kernel must not use them.
                     for channel in 0..CHANNELS {
                         q_stream[(q0 + query_at(token, channel)) / 2] =
                             narrow(queries[from + channel]);
                         kv_stream[(kv0 + key_at(token, channel)) / 2] =
-                            narrow(keys[key_from + channel]);
-                        if live {
-                            kv_stream[(kv0 + value_at(token, channel)) / 2] =
-                                narrow(values[from + channel]);
-                        }
-                    }
-                    if live {
-                        kv_stream[(kv0 + value_at(token, CHANNELS)) / 2] = one;
+                            narrow(keys[from + channel]);
+                        kv_stream[(kv0 + value_at(token, channel)) / 2] =
+                            narrow(values[from + channel]);
                     }
                 }
             }
-            let (out_size, sum_size) = (heads * padded * CHANNELS * 4, heads * padded * 32);
+            let (out_size, sum_size) = (heads * tiles * OUT_BYTES, heads * tiles * SUM_BYTES);
             let buffers = [
                 gpu.shared((q_stream.len() * 2) as u64).unwrap(),
                 gpu.shared((kv_stream.len() * 2) as u64).unwrap(),
@@ -629,11 +656,7 @@ mod tests {
                 let top = logits.iter().copied().fold(f64::MIN, f64::max);
                 let weights: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();
                 let total: f64 = weights.iter().sum();
-                let row = head * padded + query;
-                let sum: f64 = sums[row * 8..row * 8 + 8]
-                    .iter()
-                    .map(|v| f64::from(*v))
-                    .sum();
+                let sum = f64::from(sums[head * padded + query]);
                 for channel in 0..CHANNELS {
                     let want: f64 = (0..tokens)
                         .map(|key| {
@@ -642,25 +665,12 @@ mod tests {
                         })
                         .sum::<f64>()
                         / total;
-                    let got = f64::from(mixed[row * CHANNELS + channel]) / sum;
+                    let got =
+                        f64::from(mixed[(head * tiles * OUT_BYTES + out_at(query, channel)) / 4])
+                            / sum;
                     error += (got - want).powi(2);
                     power += want.powi(2);
                     worst = worst.max((got - want).abs());
-                }
-            }
-            let mut shown = 0;
-            for row in 0..heads * padded {
-                let sum: f32 = sums[row * 8..row * 8 + 8].iter().sum();
-                let bad = !sum.is_finite() || sum <= 0.0 || !mixed[row * CHANNELS].is_finite();
-                if bad && shown < 12 {
-                    shown += 1;
-                    println!(
-                        "  head {} query {}: sums {:?} mixed {:?}",
-                        row / padded,
-                        row % padded,
-                        &sums[row * 8..row * 8 + 2],
-                        &mixed[row * CHANNELS..row * CHANNELS + 3]
-                    );
                 }
             }
             let db = 10.0 * (power / error.max(1e-30)).log10();
@@ -669,6 +679,25 @@ mod tests {
                 code.len() / 16
             );
             assert!(db > 50.0);
+            if heads > 8 {
+                SKIP.store(1, std::sync::atomic::Ordering::Relaxed);
+                let code = kernel(&shape);
+                SKIP.store(0, std::sync::atomic::Ordering::Relaxed);
+                let native = zebin::write(&zebin::Kernel {
+                    name: "attend",
+                    code: &code,
+                    grf: 256,
+                    pointers: 4,
+                });
+                let bare = fast.kernel(&native, "attend", 4).unwrap();
+                let mut best = f64::MAX;
+                for _ in 0..4 {
+                    let started = std::time::Instant::now();
+                    fast.launch(&bare, &arguments, shape.groups(heads)).unwrap();
+                    best = best.min(started.elapsed().as_secs_f64() * 1e3);
+                }
+                println!("  without the weights: {best:.2} ms");
+            }
         }
     }
 }

@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 98 ms per block with the machine-code linear layers | correct, 1.5 times too slow (attention); C++ still runs it |
+| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 85 ms per block with machine-code linear layers and attention | correct, 1.3 times too slow; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -444,9 +444,33 @@ What it established:
   it latency-bound. The card's load throughput (about 88 G cache lines per
   second, from the int8 kernel) would allow about 25 ms.
 
-Next form: transpose the products (queries as lanes), which turns the weight
-sum and the running reference into single registers, frees 24 registers for
-three load buffers, and drops the ninth value fragment.
+### Attention in the engine (2026-11-15)
+
+The kernel was rebuilt with the products transposed: queries are the 16 lanes
+of every register, keys and channels are register rows. Per query, the
+reference and the weight sum are then one lane of one register, a key's
+weights convert to half floats in place, and 24 registers are left for three
+512-byte load buffers that are refilled as soon as their products have read
+them (the next chunk's first keys are requested during mixing). The last,
+partial key chunk gets its own copy of the step that skips dead keys, so no
+masking or marker channel is needed.
+
+| At 8611 tokens, 56 heads | Time |
+|---|---|
+| Shaders: scores, row maxima, mixing | 54 ms |
+| First kernel, one load in flight | 90 ms |
+| Transposed kernel, three load buffers | 39 ms |
+| Same without computing the weights | 36 ms |
+
+The kernel is bound by operand loading (about 60 G cache lines per second
+against the 88 G the int8 kernel reaches); the weights cost 3 ms.
+
+In the DiT (`Kernels::block`), three shader variants write the kernel's
+layouts (`qk8s`, `value8s`) and gather its transposed output (`merge8s`).
+Work buffers and the kernel are built for an exact token count. One block at
+8611 tokens: 84.8 ms (attention 39.8, linear layers 29.1, the rest 16); a
+step's blocks and heads 4.7 s (C++ about 3.4 s). `block_matches_reference`
+gives 39 to 47 dB and the whole step still passes against the C++ engine.
 
 ## Running the comparisons
 
