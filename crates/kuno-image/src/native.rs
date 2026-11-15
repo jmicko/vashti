@@ -108,9 +108,17 @@ fn preview_frame(
     frame.extend_from_slice(&png);
     Some(frame)
 }
+/// An RGB image passed to the shim, borrowed for the duration of one call.
+#[repr(C)]
+struct RgbImage {
+    width: u32,
+    height: u32,
+    data: *const u8,
+}
 unsafe extern "C" {
     fn kuno_minimax_session_generate(
         session: *mut c_void,
+        reference_model: i32,
         prompt: *const c_char,
         width: i32,
         height: i32,
@@ -119,6 +127,9 @@ unsafe extern "C" {
         steps: i32,
         seed: i64,
         first_frame: *const u8,
+        last_frame: *const u8,
+        references: *const RgbImage,
+        reference_count: i32,
         receive_frame: extern "C" fn(*const u8, usize, *mut c_void),
         receive_audio: extern "C" fn(*const f32, u64, u32, u32, *mut c_void),
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
@@ -328,15 +339,32 @@ impl Session {
 }
 
 impl Session {
-    /// MiniMax H3 image-to-video: returns a validated, metadata-free MP4. As with images,
-    /// request-derived native state is cleared before this returns; only weights remain.
+    /// MiniMax H3 video with audio: text only, first and/or last frame, or reference images.
+    /// Returns a validated, metadata-free MP4. As with images, request-derived native state
+    /// is cleared before this returns; only weights remain.
     pub fn generate_video(
         &mut self,
         recipe: &kuno_protocol::VideoRecipe,
         previews: bool,
     ) -> Result<Vec<u8>, &'static str> {
         use kuno_protocol::VideoPhase;
-        const STEPS: u32 = 8;
+        /// Decoded request pixels, cleared on every exit path.
+        #[derive(Default)]
+        struct Inputs {
+            first: Vec<u8>,
+            last: Vec<u8>,
+            references: Vec<(u32, u32, Vec<u8>)>,
+        }
+        impl Drop for Inputs {
+            fn drop(&mut self) {
+                crate::worker_protocol::clear_bytes(&mut self.first);
+                crate::worker_protocol::clear_bytes(&mut self.last);
+                for (_, _, rgb) in &mut self.references {
+                    crate::worker_protocol::clear_bytes(rgb);
+                }
+            }
+        }
+        let steps = recipe.steps();
         let _exclusive = ENGINE.lock().map_err(|_| "image_engine_unavailable")?;
         recipe.validate()?;
         let seed = recipe
@@ -345,16 +373,51 @@ impl Session {
             .map_err(|_| "native_image_seed_range_unsupported")?;
         let prompt =
             CString::new(recipe.prompt.as_str()).map_err(|_| "native_image_string_invalid")?;
-        let decoded = crate::references::decode(&[recipe.first_frame.as_str()])
-            .map_err(|_| "video_first_frame_invalid")?
-            .pop()
-            .ok_or("video_first_frame_invalid")?;
-        let mut first = crate::video::cover_rgb(decoded, recipe.width, recipe.height)?;
+        let keyframe =
+            |image: &Option<String>, code: &'static str| -> Result<Vec<u8>, &'static str> {
+                let Some(image) = image else {
+                    return Ok(Vec::new());
+                };
+                let decoded = crate::references::decode(&[image.as_str()])
+                    .map_err(|_| code)?
+                    .pop()
+                    .ok_or(code)?;
+                crate::video::cover_rgb(decoded, recipe.width, recipe.height, code)
+            };
+        let mut inputs = Inputs::default();
+        inputs.first = keyframe(&recipe.first_frame, "video_first_frame_invalid")?;
+        inputs.last = keyframe(&recipe.last_frame, "video_last_frame_invalid")?;
+        if !recipe.reference_images.is_empty() {
+            for pixels in crate::references::decode(&recipe.reference_images)
+                .map_err(|_| "video_reference_images_invalid")?
+            {
+                let (width, height) = (pixels.width, pixels.height);
+                inputs
+                    .references
+                    .push((width, height, crate::video::rgb(pixels)));
+            }
+        }
+        let references: Vec<RgbImage> = inputs
+            .references
+            .iter()
+            .map(|(width, height, rgb)| RgbImage {
+                width: *width,
+                height: *height,
+                data: rgb.as_ptr(),
+            })
+            .collect();
+        let optional = |rgb: &Vec<u8>| {
+            if rgb.is_empty() {
+                std::ptr::null()
+            } else {
+                rgb.as_ptr()
+            }
+        };
         crate::worker_protocol::write_progress(VideoPhase::Conditioning, 0, 0)?;
         let mut output = VideoOutput {
             frame_bytes: recipe.width as usize * recipe.height as usize * 3,
             frames: recipe.frames,
-            steps: STEPS,
+            steps,
             rgb: Vec::new(),
             audio: None,
             invalid: false,
@@ -366,14 +429,18 @@ impl Session {
         let code = unsafe {
             kuno_minimax_session_generate(
                 self.native.as_ptr(),
+                i32::from(recipe.uses_reference_model()),
                 prompt.as_ptr(),
                 recipe.width as i32,
                 recipe.height as i32,
                 recipe.frames as i32,
                 kuno_protocol::VIDEO_FPS as i32,
-                STEPS as i32,
+                steps as i32,
                 seed,
-                first.as_ptr(),
+                optional(&inputs.first),
+                optional(&inputs.last),
+                references.as_ptr(),
+                references.len() as i32,
                 receive_video_frame,
                 receive_video_audio,
                 Some(video_preview),
@@ -381,7 +448,8 @@ impl Session {
                 &mut output as *mut _ as *mut c_void,
             )
         };
-        crate::worker_protocol::clear_bytes(&mut first);
+        drop(references);
+        drop(inputs);
         match code {
             0 => (),
             2 => return Err("image_physical_gpu_not_found"),

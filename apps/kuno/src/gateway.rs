@@ -518,7 +518,7 @@ async fn video_recipe(
     serde_json::from_slice(&bytes).map_err(|_| (StatusCode::BAD_REQUEST, "video_request_invalid"))
 }
 
-/// MiniMax H3 image-to-video. Same admission, eviction, worker and cleanup as images.
+/// MiniMax H3 video. Same admission, eviction, worker and cleanup as images.
 async fn generate_video(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
     let Some(config) = gateway.config.image.clone().filter(|c| c.video_enabled()) else {
         return error(
@@ -537,26 +537,55 @@ async fn generate_video(State(gateway): State<Arc<Gateway>>, request: Request) -
     if let Err(code) = recipe.validate() {
         return error(StatusCode::BAD_REQUEST, code);
     }
-    // Reject an undecodable first frame before admission; decoded pixels are cleared.
-    let encoded = recipe.first_frame.clone();
+    // Reject undecodable images before admission; decoded pixels are cleared.
+    let mut images: Vec<(&'static str, Vec<String>)> = Vec::new();
+    if let Some(frame) = &recipe.first_frame {
+        images.push(("video_first_frame_invalid", vec![frame.clone()]));
+    }
+    if let Some(frame) = &recipe.last_frame {
+        images.push(("video_last_frame_invalid", vec![frame.clone()]));
+    }
+    if !recipe.reference_images.is_empty() {
+        images.push((
+            "video_reference_images_invalid",
+            recipe.reference_images.clone(),
+        ));
+    }
     let decoded = tokio::task::spawn_blocking(move || {
-        let mut encoded = kuno_image::worker_protocol::TransientBytes(encoded.into_bytes());
-        let result = std::str::from_utf8(&encoded.0)
-            .ok()
-            .and_then(|s| kuno_image::references::decode(&[s]).ok())
-            .map(|mut pixels| {
-                for p in &mut pixels {
-                    kuno_image::worker_protocol::clear_bytes(&mut p.rgba);
-                }
-            });
-        kuno_image::worker_protocol::clear_bytes(&mut encoded.0);
-        result.is_some()
+        let mut failed = None;
+        for (code, encoded) in images {
+            let mut encoded: Vec<_> = encoded
+                .into_iter()
+                .map(|s| kuno_image::worker_protocol::TransientBytes(s.into_bytes()))
+                .collect();
+            let strings: Option<Vec<&str>> = encoded
+                .iter()
+                .map(|e| std::str::from_utf8(&e.0).ok())
+                .collect();
+            let ok = strings
+                .and_then(|s| kuno_image::references::decode(&s).ok())
+                .map(|mut pixels| {
+                    for p in &mut pixels {
+                        kuno_image::worker_protocol::clear_bytes(&mut p.rgba);
+                    }
+                })
+                .is_some();
+            for e in &mut encoded {
+                kuno_image::worker_protocol::clear_bytes(&mut e.0);
+            }
+            if !ok && failed.is_none() {
+                failed = Some(code);
+            }
+        }
+        failed
     })
     .await;
-    if !matches!(decoded, Ok(true)) {
-        return error(StatusCode::BAD_REQUEST, "video_first_frame_invalid");
+    match decoded {
+        Ok(None) => (),
+        Ok(Some(code)) => return error(StatusCode::BAD_REQUEST, code),
+        Err(_) => return error(StatusCode::BAD_REQUEST, "video_request_invalid"),
     }
-    if let Err(code) = crate::image_access::require_video(config.clone()).await {
+    if let Err(code) = crate::image_access::require_video(config.clone(), &recipe.workflow).await {
         return error(StatusCode::SERVICE_UNAVAILABLE, code);
     }
     let meta = crate::image_stream::VideoMeta {
@@ -564,7 +593,7 @@ async fn generate_video(State(gateway): State<Arc<Gateway>>, request: Request) -
         height: recipe.height,
         frames: recipe.frames,
         audio: recipe.audio,
-        steps: crate::image_residency::VIDEO_STEPS,
+        steps: recipe.steps(),
     };
     let mut lease = match gateway.admission.acquire().await {
         Ok(lease) => lease,

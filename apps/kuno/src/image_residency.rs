@@ -269,7 +269,7 @@ impl ImageRuntime {
                     &mut worker.output,
                     &previews,
                     Some(progress),
-                    VIDEO_STEPS,
+                    v.steps(),
                     kuno_protocol::MAX_VIDEO_BYTES,
                     &mut terminal_error,
                     &mut cleanup_ack,
@@ -321,8 +321,6 @@ impl ImageRuntime {
     }
 }
 
-pub(crate) const VIDEO_STEPS: u32 = 8;
-
 /// Video shares the Qwen 2.1 standard-attention worker identity: one resident process
 /// serves both, and the native session swaps model contexts itself.
 fn video_identity_recipe() -> ImageRecipe {
@@ -333,7 +331,7 @@ fn video_identity_recipe() -> ImageRecipe {
         seed: "0".into(),
         width: 64,
         height: 64,
-        steps: VIDEO_STEPS,
+        steps: kuno_protocol::VIDEO_KEYFRAME_STEPS,
         cfg: 1.0,
         attention: ImageAttention::Standard,
         flow_shift: None,
@@ -572,6 +570,8 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
                     b"image_attention_unsupported" => "image_attention_unsupported",
                     b"image_request_cleanup_failed" => "image_request_cleanup_failed",
                     b"video_first_frame_invalid" => "video_first_frame_invalid",
+                    b"video_last_frame_invalid" => "video_last_frame_invalid",
+                    b"video_reference_images_invalid" => "video_reference_images_invalid",
                     b"video_encode_failed" => "video_encode_failed",
                     _ => "image_worker_failed",
                 });

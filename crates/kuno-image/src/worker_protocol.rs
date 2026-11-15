@@ -44,7 +44,15 @@ impl Drop for TransientVideoRecipe {
         clear_string(&mut self.0.workflow);
         clear_string(&mut self.0.prompt);
         clear_string(&mut self.0.seed);
-        clear_string(&mut self.0.first_frame);
+        if let Some(frame) = &mut self.0.first_frame {
+            clear_string(frame);
+        }
+        if let Some(frame) = &mut self.0.last_frame {
+            clear_string(frame);
+        }
+        for image in &mut self.0.reference_images {
+            clear_string(image);
+        }
     }
 }
 
@@ -358,7 +366,9 @@ mod tests {
             height: 544,
             frames: 56,
             audio: true,
-            first_frame: "AAAA".into(),
+            first_frame: Some("AAAA".into()),
+            last_frame: None,
+            reference_images: Vec::new(),
         }
     }
     #[test]

@@ -182,8 +182,13 @@ pub fn validate_mp4(bytes: &[u8], max_bytes: usize) -> Result<Mp4Summary> {
 }
 
 /// Scale an image to cover `width x height` (aspect preserved) and centre-crop it to RGB.
-/// Transparent pixels are composited over black.
-pub fn cover_rgb(pixels: crate::references::Pixels, width: u32, height: u32) -> Result<Vec<u8>> {
+/// Transparent pixels are composited over black. `code` names the input on failure.
+pub fn cover_rgb(
+    pixels: crate::references::Pixels,
+    width: u32,
+    height: u32,
+    code: &'static str,
+) -> Result<Vec<u8>> {
     use image::imageops::{FilterType, crop_imm, resize};
     let crate::references::Pixels {
         width: w,
@@ -195,10 +200,9 @@ pub fn cover_rgb(pixels: crate::references::Pixels, width: u32, height: u32) -> 
     let sh = ((f64::from(h) * scale).round() as u32).max(height);
     if sw > 8192 || sh > 8192 {
         crate::worker_protocol::clear_bytes(&mut rgba);
-        return Err("video_first_frame_invalid");
+        return Err(code);
     }
-    let source = image::RgbaImage::from_raw(w, h, std::mem::take(&mut rgba))
-        .ok_or("video_first_frame_invalid")?;
+    let source = image::RgbaImage::from_raw(w, h, std::mem::take(&mut rgba)).ok_or(code)?;
     let mut scaled = resize(&source, sw, sh, FilterType::Lanczos3);
     let mut source = source.into_raw();
     crate::worker_protocol::clear_bytes(&mut source);
@@ -216,6 +220,23 @@ pub fn cover_rgb(pixels: crate::references::Pixels, width: u32, height: u32) -> 
     crate::worker_protocol::clear_bytes(&mut cropped);
     scaled.iter_mut().for_each(|b| *b = 0);
     Ok(out)
+}
+
+/// RGB at the original size, transparent pixels composited over black. Reference images
+/// keep their size: the engine scales them for the vision encoder and the latent itself.
+pub fn rgb(pixels: crate::references::Pixels) -> Vec<u8> {
+    let mut rgba = pixels.rgba;
+    let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
+    for p in rgba.chunks_exact(4) {
+        let a = u16::from(p[3]);
+        out.extend(
+            p[..3]
+                .iter()
+                .map(|c| ((u16::from(*c) * a + 127) / 255) as u8),
+        );
+    }
+    crate::worker_protocol::clear_bytes(&mut rgba);
+    out
 }
 
 #[cfg(test)]
@@ -239,7 +260,7 @@ mod cover_tests {
             height: 100,
             rgba,
         };
-        let rgb = cover_rgb(pixels, 64, 64).unwrap();
+        let rgb = cover_rgb(pixels, 64, 64, "video_first_frame_invalid").unwrap();
         assert_eq!(rgb.len(), 64 * 64 * 3);
         assert_eq!(&rgb[..3], &[255, 0, 0]);
         assert_eq!(&rgb[rgb.len() - 3..], &[0, 0, 255]);

@@ -2,6 +2,7 @@
 use crate::image_runtime::ImageConfig;
 use kuno_protocol::{
     ImageCapabilities, ImageWorkflowCapability, MINIMAX_H3_COLLECTION, MINIMAX_H3_I2V_RECIPE,
+    MINIMAX_H3_REFERENCE_COLLECTION, MINIMAX_H3_REFERENCE_RECIPE, MINIMAX_H3_VIDEO_RECIPE,
     QWEN_RECIPE, QWEN21_EDIT_RECIPE, QWEN21_RECIPE, VideoCapabilities, VideoWorkflowCapability,
 };
 
@@ -95,7 +96,7 @@ fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> Discovery {
         privacy,
         |id| config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok()),
     );
-    // Video runs only on the managed SYCL runtime, and only on one with ABI 3.
+    // Video runs only on the managed SYCL runtime, and only on one with VIDEO_WORKER_ABI.
     let mut video_runtime = Some("image_engine_not_in_this_build");
     if let Some(config) = config.filter(|_| managed) {
         let runtime = config
@@ -144,32 +145,70 @@ fn describe_videos(
         videos.reason = Some("image_engine_not_in_this_build".into());
         return videos;
     }
-    let reason = if !models_ready(MINIMAX_H3_COLLECTION) {
-        Some("image_models_unavailable")
-    } else {
-        blocked
-    };
-    videos.state = if reason.is_some() {
-        "unavailable"
-    } else {
-        "ready"
+    // Each workflow is ready when its own collection is enabled and verified.
+    let workflows: [(&str, &str, &str, &str, u32, u32); 3] = [
+        (
+            MINIMAX_H3_I2V_RECIPE,
+            MINIMAX_H3_COLLECTION,
+            "required",
+            "unsupported",
+            0,
+            kuno_protocol::VIDEO_KEYFRAME_STEPS,
+        ),
+        (
+            MINIMAX_H3_VIDEO_RECIPE,
+            MINIMAX_H3_COLLECTION,
+            "optional",
+            "optional",
+            0,
+            kuno_protocol::VIDEO_KEYFRAME_STEPS,
+        ),
+        (
+            MINIMAX_H3_REFERENCE_RECIPE,
+            MINIMAX_H3_REFERENCE_COLLECTION,
+            "unsupported",
+            "unsupported",
+            kuno_protocol::VIDEO_MAX_REFERENCE_IMAGES as u32,
+            kuno_protocol::VIDEO_REFERENCE_STEPS,
+        ),
+    ];
+    for (id, collection, first_frame, last_frame, max_reference_images, steps) in workflows {
+        if !config.collections.iter().any(|c| c == collection) {
+            continue;
+        }
+        let reason = if !models_ready(collection) {
+            Some("image_models_unavailable")
+        } else {
+            blocked
+        };
+        videos.workflows.push(VideoWorkflowCapability {
+            id: id.into(),
+            state: if reason.is_some() {
+                "unavailable"
+            } else {
+                "ready"
+            }
+            .into(),
+            reason: reason.map(str::to_owned),
+            first_frame: first_frame.into(),
+            last_frame: last_frame.into(),
+            max_reference_images,
+            steps,
+            fps: kuno_protocol::VIDEO_FPS,
+            frames: kuno_protocol::VIDEO_FRAMES.to_vec(),
+            max_pixels: kuno_protocol::VIDEO_MAX_PIXELS,
+            dimension_multiple: kuno_protocol::VIDEO_DIMENSION_MULTIPLE,
+            min_dimension: kuno_protocol::VIDEO_MIN_DIMENSION,
+            max_dimension: kuno_protocol::VIDEO_MAX_DIMENSION,
+            audio: true,
+            output_mime_type: kuno_protocol::VIDEO_MIME_TYPE.into(),
+        });
     }
-    .into();
-    videos.reason = reason.map(str::to_owned);
-    videos.workflows.push(VideoWorkflowCapability {
-        id: MINIMAX_H3_I2V_RECIPE.into(),
-        state: videos.state.clone(),
-        reason: videos.reason.clone(),
-        first_frame: "required".into(),
-        fps: kuno_protocol::VIDEO_FPS,
-        frames: kuno_protocol::VIDEO_FRAMES.to_vec(),
-        max_pixels: kuno_protocol::VIDEO_MAX_PIXELS,
-        dimension_multiple: kuno_protocol::VIDEO_DIMENSION_MULTIPLE,
-        min_dimension: kuno_protocol::VIDEO_MIN_DIMENSION,
-        max_dimension: kuno_protocol::VIDEO_MAX_DIMENSION,
-        audio: true,
-        output_mime_type: kuno_protocol::VIDEO_MIME_TYPE.into(),
-    });
+    // The overall state is ready when any workflow is.
+    let ready = videos.workflows.iter().find(|w| w.state == "ready");
+    let first = ready.or(videos.workflows.first());
+    videos.state = first.map_or("unavailable", |w| w.state.as_str()).into();
+    videos.reason = first.and_then(|w| w.reason.clone());
     videos
 }
 
@@ -258,7 +297,7 @@ fn describe(
         return images;
     }
     for collection in &config.unwrap().collections {
-        if collection == MINIMAX_H3_COLLECTION {
+        if collection == MINIMAX_H3_COLLECTION || collection == MINIMAX_H3_REFERENCE_COLLECTION {
             continue;
         }
         let reason = if !models_ready(collection) {
@@ -338,12 +377,15 @@ pub(crate) async fn require_workflow(
 }
 
 /// Rechecked per video request, like `require_workflow`.
-pub(crate) async fn require_video(config: ImageConfig) -> Result<(), &'static str> {
+pub(crate) async fn require_video(config: ImageConfig, workflow: &str) -> Result<(), &'static str> {
     let videos = tokio::task::spawn_blocking(move || probe(Some(&config), false))
         .await
         .map_err(|_| "image_runtime_unavailable")?
         .videos;
-    match videos.workflows.first() {
+    if videos.reason.as_deref() == Some("image_engine_not_in_this_build") {
+        return Err("image_engine_not_in_this_build");
+    }
+    match videos.workflows.iter().find(|w| w.id == workflow) {
         Some(w) if w.state == "ready" => Ok(()),
         Some(w) => Err(match w.reason.as_deref() {
             Some("image_models_unavailable") => "image_models_unavailable",
@@ -489,6 +531,33 @@ mod tests {
         );
         let old_runtime = describe_videos(Some(&c), Some("image_runtime_unavailable"), |_| true);
         assert_eq!(old_runtime.state, "unavailable");
+        // Without the reference collection: image-to-video (unchanged) and video.
+        let ids: Vec<_> = ready.workflows.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, [MINIMAX_H3_I2V_RECIPE, MINIMAX_H3_VIDEO_RECIPE]);
+        let i2v = &ready.workflows[0];
+        assert_eq!(
+            (i2v.first_frame.as_str(), i2v.last_frame.as_str()),
+            ("required", "unsupported")
+        );
+        assert_eq!((i2v.max_reference_images, i2v.steps), (0, 8));
+        let video = &ready.workflows[1];
+        assert_eq!(
+            (video.first_frame.as_str(), video.last_frame.as_str()),
+            ("optional", "optional")
+        );
+        // The reference workflow follows its own collection.
+        c.collections.push(MINIMAX_H3_REFERENCE_COLLECTION.into());
+        let both = describe_videos(Some(&c), None, |id| id != MINIMAX_H3_REFERENCE_COLLECTION);
+        assert_eq!(both.state, "ready");
+        let reference = &both.workflows[2];
+        assert_eq!(reference.id, MINIMAX_H3_REFERENCE_RECIPE);
+        assert_eq!(reference.state, "unavailable");
+        assert_eq!((reference.max_reference_images, reference.steps), (4, 4));
+        assert_eq!(reference.first_frame, "unsupported");
+        c.collections.retain(|id| id != MINIMAX_H3_COLLECTION);
+        let only_reference = describe_videos(Some(&c), None, |_| true);
+        assert_eq!(only_reference.workflows.len(), 1);
+        assert_eq!(only_reference.state, "ready");
         // The video collection never appears as an image workflow.
         let images = describe(Some(&c), true, false, None, |_| true);
         assert_eq!(images.workflows.len(), 3);

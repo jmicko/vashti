@@ -13,7 +13,9 @@ use std::{
 pub const SYCL_RUNTIME: &str = "qwen21-sycl-2026.1-v1";
 pub const RUNTIME_ROOT: &str = "/usr/local/lib/kuno/runtimes";
 /// ABI 3 is the resident ABI 2 plus MiniMax video jobs and progress frames.
-pub const VIDEO_WORKER_ABI: u32 = 3;
+/// ABI 3 added video jobs and progress frames; ABI 4 adds text-only, last-frame and
+/// reference-image video. The gateway sends video only to ABI 4 workers.
+pub const VIDEO_WORKER_ABI: u32 = 4;
 const ENGINE_REVISION: &str = "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be";
 const GGML_REVISION: &str = "4bf5f6000653b7881d00963cd6ddb665ccd62a8d";
 const MAX_MANIFEST: u64 = 64 * 1024;
@@ -490,6 +492,8 @@ mod tests {
         m.worker_abi = 3;
         assert!(m.validate().is_ok());
         m.worker_abi = 4;
+        assert!(m.validate().is_ok());
+        m.worker_abi = 5;
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.ggml_max_name = 64;

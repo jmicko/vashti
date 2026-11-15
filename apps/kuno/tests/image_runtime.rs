@@ -56,6 +56,30 @@ fn image_engine_configuration_preserves_legacy_defaults_and_old_workflow() {
     assert!(image.uses_sycl(kuno_protocol::QWEN21_RECIPE));
     assert!(image.uses_sycl(kuno_protocol::QWEN21_EDIT_RECIPE));
 }
+#[test]
+fn every_known_collection_can_be_enabled_together_without_duplicates() {
+    let mut image = config(std::path::Path::new("/models"));
+    image.engine = kuno::image_engine::ImageEngine::ManagedSycl;
+    image.runtime = Some(kuno::image_engine::SYCL_RUNTIME.into());
+    image.collections = [
+        "qwen-image-2512-fp8",
+        "qwen-image-2.1-int8",
+        kuno_protocol::MINIMAX_H3_COLLECTION,
+        kuno_protocol::MINIMAX_H3_REFERENCE_COLLECTION,
+    ]
+    .map(String::from)
+    .to_vec();
+    image.validate().unwrap();
+    assert!(image.video_enabled());
+    let mut dup = image.collections.clone();
+    dup[3] = dup[0].clone();
+    image.collections = dup;
+    assert_eq!(image.validate(), Err("image_collections_invalid"));
+    image.collections.truncate(3);
+    image.validate().unwrap();
+    image.collections.push("unknown".into());
+    assert_eq!(image.validate(), Err("image_collections_invalid"));
+}
 #[tokio::test]
 async fn bounded_output_success_failure_and_deadline() {
     let d = tempfile::tempdir().unwrap();
