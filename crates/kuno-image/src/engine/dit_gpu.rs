@@ -99,7 +99,8 @@ pub struct Kernels {
     rotate8: Kernel,
     gemm8: Kernel,
     scoremax: Kernel,
-    modnorm: Kernel,
+    /// Block input norm and its quantization in one pass.
+    normq8: Kernel,
     qk8: Kernel,
     value8: Kernel,
     rowmax: Kernel,
@@ -110,7 +111,7 @@ pub struct Kernels {
     /// Writers and reader of the machine-code attention kernel's layouts.
     qk8s: Kernel,
     value8s: Kernel,
-    merge8s: Kernel,
+    mergeq8: Kernel,
     /// Present when the integer products can run as our own machine code.
     fast: Option<LevelZero>,
 }
@@ -166,7 +167,7 @@ impl Kernels {
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, Some(16))?,
             gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
             scoremax: gpu.kernel(shaders::SCOREMAX, 4, 11, Some(16))?,
-            modnorm: gpu.kernel(shaders::MODNORM, 5, 5, None)?,
+            normq8: gpu.kernel(shaders::NORMQ8, 6, 6, Some(16))?,
             qk8: gpu.kernel(shaders::QK8, 5, 5, Some(16))?,
             value8: gpu.kernel(shaders::VALUE8, 4, 3, None)?,
             rowmax: gpu.kernel(shaders::ROWMAX, 2, 4, None)?,
@@ -176,7 +177,7 @@ impl Kernels {
             gate8: gpu.kernel(shaders::GATE8, 4, 2, None)?,
             qk8s: gpu.kernel(shaders::QK8S, 5, 5, Some(16))?,
             value8s: gpu.kernel(shaders::VALUE8S, 4, 3, None)?,
-            merge8s: gpu.kernel(shaders::MERGE8S, 3, 2, None)?,
+            mergeq8: gpu.kernel(shaders::MERGEQ8, 4, 3, Some(16))?,
         })
     }
     /// Whether the integer products run as machine code.
@@ -462,10 +463,12 @@ impl Kernels {
         let w = work;
         let v = &layer.vectors;
         let mut calls = Vec::new();
-        let modnorm = |weight: usize, shift: u32, scale: u32| Call::Shader {
-            kernel: &self.modnorm,
-            buffers: vec![&w.stream, v, &w.parts, &w.rows, &w.wide],
-            constants: vec![n, weight as u32, shift, scale, parts_first],
+        let stream = u32::from(w.fast.is_some());
+        // Normalized, modulated rows of the stream, quantized.
+        let norm = |weight: usize, shift: u32, scale: u32| Call::Shader {
+            kernel: &self.normq8,
+            buffers: vec![&w.stream, v, &w.parts, &w.rows, &w.bytes, &w.scales],
+            constants: vec![n, weight as u32, shift, scale, parts_first, stream],
             groups: [np, 1, 1],
         };
         let residual = |scale: usize, gate: u32| Call::Shader {
@@ -485,12 +488,11 @@ impl Kernels {
             )
         };
 
-        calls.push(modnorm(NORM1, 0, 1));
-        calls.push(quantize(DIM));
+        calls.push(norm(NORM1, 0, 1));
         calls.extend(self.product(w, &layer.qkv, QKV));
         if let (Some(fast), Some(shared)) = (&self.fast, &w.fast) {
             // Attention as one machine-code kernel between shaders that write its
-            // operands and gather its output.
+            // operands and gather and quantize its output.
             for (side, to, weight) in [(0, &w.query, QUERY_NORM), (1, &w.key, KEY_NORM)] {
                 calls.push(Call::Shader {
                     kernel: &self.qk8s,
@@ -513,20 +515,19 @@ impl Kernels {
                 groups: *groups,
             });
             calls.push(Call::Shader {
-                kernel: &self.merge8s,
-                buffers: vec![&w.mixed, &w.weights, &w.wide],
-                constants: vec![n, np],
-                groups: [HEADS as u32, np, 1],
+                kernel: &self.mergeq8,
+                buffers: vec![&w.mixed, &w.weights, &w.bytes, &w.scales],
+                constants: vec![n, np, stream],
+                groups: [np, 1, 1],
             });
         } else {
             self.attention(&mut calls, w, v);
+            calls.push(quantize(INNER));
         }
-        calls.push(quantize(INNER));
         calls.extend(self.product(w, &layer.out, OUT));
         calls.push(residual(SCALE_OUT, 2));
 
-        calls.push(modnorm(NORM2, 3, 4));
-        calls.push(quantize(DIM));
+        calls.push(norm(NORM2, 3, 4));
         calls.extend(self.product(w, &layer.fc1, FC1));
         calls.push(Call::Shader {
             kernel: &self.gate8,
@@ -994,7 +995,7 @@ mod tests {
             (&kernels.rotate8, "quantize"),
             (&kernels.gemm8, "linear"),
             (&kernels.scoremax, "scores"),
-            (&kernels.modnorm, "norm"),
+            (&kernels.normq8, "norm and quantize"),
             (&kernels.qk8, "queries and keys"),
             (&kernels.value8, "values"),
             (&kernels.rowmax, "row maximum"),
@@ -1004,7 +1005,7 @@ mod tests {
             (&kernels.gate8, "gate"),
             (&kernels.qk8s, "queries and keys"),
             (&kernels.value8s, "values"),
-            (&kernels.merge8s, "merge"),
+            (&kernels.mergeq8, "merge and quantize"),
         ];
         let mut totals = std::collections::BTreeMap::new();
         for call in &calls {

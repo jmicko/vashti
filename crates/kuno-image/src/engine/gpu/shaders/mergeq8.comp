@@ -1,0 +1,121 @@
+// Gathers the machine-code attention kernel's output (xe2/attend.rs) into token rows
+// and quantizes them with the ConvRot quantizer (rotate8.comp) in one pass;
+// the f32 rows are never written out. One workgroup per token:
+//   o[head][tile of 16 tokens][channel][token], one weight sum per token and head
+//   row[head][128] = o / sum, 7168 wide, rotated in shared memory and rounded from there.
+// Padded tokens quantize to zeros. With `stream` set, bytes are written in the machine-code
+// product's layout (xe2/int8.rs).
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Mixed { float o[]; };
+layout(set = 0, binding = 1) readonly buffer Sums { float w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { uvec4 q[]; };
+layout(set = 0, binding = 3) writeonly buffer Scales { float s[]; };
+layout(push_constant) uniform Constants { uint tokens; uint padded; uint stream; } p;
+const uint GROUPS = 28;
+const uint ROUNDS = 2;
+
+shared float mem[7168];
+shared float maxima[16];
+
+uint token;
+
+// vec4 `i` of the row: head i / 32, channels 4 * (i % 32) onwards.
+vec4 source(uint i) {
+    uint tile = (i >> 5) * (p.padded >> 4) + (token >> 4);
+    uint lane = token & 15;
+    float scale = token < p.tokens ? 1.0 / w[tile * 16 + lane] : 0.0;
+    uint at = (tile * 128 + (i & 31) * 4) * 16 + lane;
+    return vec4(o[at], o[at + 16], o[at + 32], o[at + 48]) * scale;
+}
+
+float v[16];
+
+void quad(uint a, uint b, uint c, uint d) {
+    precise float va = v[a], vb = v[b], vc = v[c], vd = v[d];
+    precise float ra = va + vb + vc - vd;
+    precise float rb = va + vb - vc + vd;
+    precise float rc = va - vb + vc + vd;
+    precise float rd = -va + vb + vc + vd;
+    v[a] = ra;
+    v[b] = rb;
+    v[c] = rc;
+    v[d] = rd;
+}
+void stages() {
+    for (uint m = 0; m < 4; m++) quad(4 * m, 4 * m + 1, 4 * m + 2, 4 * m + 3);
+    for (uint m = 0; m < 4; m++) quad(m, m + 4, m + 8, m + 12);
+}
+
+// Rotates the row into `mem` in natural order and returns the row's largest magnitude.
+// The first stages' results pass through the group's own slots of `mem` to be transposed.
+float rotate_row() {
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    float top = 0.0;
+    for (uint r = 0; r < ROUNDS; r++) {
+        uint g = r * 16 + sg;
+        bool used = g < GROUPS;
+        if (used) {
+            for (uint j = 0; j < 4; j++) {
+                vec4 part = source(g * 64 + lane * 4 + j);
+                for (uint e = 0; e < 4; e++) v[j * 4 + e] = part[e] * 0.0625;
+            }
+            stages();
+            for (uint j = 0; j < 16; j++) mem[g * 256 + lane * 16 + j] = v[j];
+        }
+        memoryBarrierShared();
+        barrier();
+        if (used) {
+            for (uint j = 0; j < 16; j++) v[j] = mem[g * 256 + j * 16 + lane];
+        }
+        memoryBarrierShared();
+        barrier();
+        if (used) {
+            stages();
+            for (uint j = 0; j < 16; j++) {
+                top = max(top, abs(v[j]));
+                mem[g * 256 + j * 16 + lane] = v[j];
+            }
+        }
+    }
+    top = subgroupMax(top);
+    if (lane == 0) maxima[sg] = top;
+    memoryBarrierShared();
+    barrier();
+    for (uint i = 0; i < 16; i++) top = max(top, maxima[i]);
+    return top;
+}
+
+// Rounds the rotated row to INT8 with one scale and writes 16 bytes per lane and group.
+void round_row(uint row, float top, uint stream) {
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    // The GPU's single-precision divide is not correctly rounded; a last-bit difference in
+    // the scale would move bytes at rounding ties. Dividing in double precision and rounding
+    // once gives the reference's values.
+    float scale = float(double(top) / 127.0lf);
+    float inverse = float(1.0lf / double(scale));
+    if (gl_LocalInvocationIndex == 0) s[row] = scale;
+    for (uint r = 0; r < ROUNDS; r++) {
+        uint g = r * 16 + sg;
+        if (g >= GROUPS) continue;
+        uvec4 word = uvec4(0);
+        for (uint b = 0; b < 16; b++) {
+            precise float scaled = mem[g * 256 + lane * 16 + b] * inverse;
+            int value = scale == 0.0 ? 0 : int(clamp(roundEven(scaled), -127.0, 127.0));
+            word[b >> 2] |= (uint(value) & 255u) << ((b & 3) * 8);
+        }
+        uint w16 = g * 16 + lane;
+        uint at = stream == 0 ? row * (GROUPS * 16) + w16
+            : (((row >> 5) * (GROUPS * 8) + (w16 >> 1)) * 32 + (row & 31)) * 2 + (w16 & 1);
+        q[at] = word;
+    }
+}
+
+void main() {
+    token = gl_WorkGroupID.x;
+    float top = rotate_row();
+    round_row(token, top, p.stream);
+}
