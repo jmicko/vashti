@@ -537,6 +537,10 @@ and frees that before decoding as before. The text features kept for a clip are 
 with it. In this build the C++ engine still reads its own copy of the DiT into RAM and
 never uses it.
 
+All seven modes produce clips in this build and a Qwen image after a video still works;
+the same request gives the same bytes across worker builds and across clips. Contact sheets
+of the text-only and two-reference clips show the expected scenes.
+
 What is left of the gap to the C++ sampler on a later clip (4.8 s): 0.5 s per step, of
 which attention is 0.38 s, and about 1 s more before the first step.
 
