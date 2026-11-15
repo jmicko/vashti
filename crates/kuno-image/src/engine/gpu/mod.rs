@@ -3,7 +3,11 @@
 //! source (see `shaders::tests`).
 pub mod shaders;
 
-use std::{ffi::CStr, sync::Arc};
+use std::{
+    ffi::CStr,
+    os::fd::{FromRawFd, OwnedFd},
+    sync::Arc,
+};
 
 use ash::vk;
 
@@ -22,6 +26,8 @@ struct Core {
     pool: vk::CommandPool,
     descriptors: vk::DescriptorPool,
     memory: vk::PhysicalDeviceMemoryProperties,
+    /// Present when the device can hand buffers to another interface as dma-bufs.
+    sharing: Option<ash::khr::external_memory_fd::Device>,
     name: String,
     /// Command and descriptor pools and the queue are used by one thread at a time.
     turn: std::sync::Mutex<()>,
@@ -150,7 +156,21 @@ impl Gpu {
             let queues = [vk::DeviceQueueCreateInfo::default()
                 .queue_family_index(family)
                 .queue_priorities(&[1.0])];
-            let extensions = [c"VK_KHR_cooperative_matrix".as_ptr()];
+            let available = instance
+                .enumerate_device_extension_properties(physical)
+                .unwrap_or_default();
+            let has = |name: &CStr| {
+                available
+                    .iter()
+                    .any(|e| e.extension_name_as_c_str().is_ok_and(|n| n == name))
+            };
+            let sharing =
+                has(c"VK_KHR_external_memory_fd") && has(c"VK_EXT_external_memory_dma_buf");
+            let mut extensions = vec![c"VK_KHR_cooperative_matrix".as_ptr()];
+            if sharing {
+                extensions.push(c"VK_KHR_external_memory_fd".as_ptr());
+                extensions.push(c"VK_EXT_external_memory_dma_buf".as_ptr());
+            }
             let mut v11 = vk::PhysicalDeviceVulkan11Features::default()
                 .storage_buffer16_bit_access(true)
                 .uniform_and_storage_buffer16_bit_access(true);
@@ -205,6 +225,8 @@ impl Gpu {
                 )
                 .map_err(|_| "gpu_unavailable")?;
             let memory = instance.get_physical_device_memory_properties(physical);
+            let sharing =
+                sharing.then(|| ash::khr::external_memory_fd::Device::new(&instance, &device));
             Ok(Self {
                 core: Arc::new(Core {
                     _entry: entry,
@@ -214,6 +236,7 @@ impl Gpu {
                     pool,
                     descriptors,
                     memory,
+                    sharing,
                     name,
                     turn: std::sync::Mutex::new(()),
                 }),
@@ -225,19 +248,24 @@ impl Gpu {
         bytes: u64,
         usage: vk::BufferUsageFlags,
         wanted: vk::MemoryPropertyFlags,
+        shared: bool,
     ) -> Result<Buffer, &'static str> {
         let core = &self.core;
+        if shared && core.sharing.is_none() {
+            return Err("gpu_unsupported");
+        }
+        let kind = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
+        let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(kind);
+        let mut export = vk::ExportMemoryAllocateInfo::default().handle_types(kind);
         // SAFETY: the buffer and its memory are owned by the returned `Buffer`.
         unsafe {
-            let buffer = check(
-                core.device.create_buffer(
-                    &vk::BufferCreateInfo::default()
-                        .size(bytes.max(4))
-                        .usage(usage),
-                    None,
-                ),
-                "gpu_memory",
-            )?;
+            let mut info = vk::BufferCreateInfo::default()
+                .size(bytes.max(4))
+                .usage(usage);
+            if shared {
+                info = info.push_next(&mut external);
+            }
+            let buffer = check(core.device.create_buffer(&info, None), "gpu_memory")?;
             let need = core.device.get_buffer_memory_requirements(buffer);
             let index = (0..core.memory.memory_type_count).find(|i| {
                 need.memory_type_bits & (1 << i) != 0
@@ -246,14 +274,13 @@ impl Gpu {
                         .contains(wanted)
             });
             let memory = index.and_then(|index| {
-                core.device
-                    .allocate_memory(
-                        &vk::MemoryAllocateInfo::default()
-                            .allocation_size(need.size)
-                            .memory_type_index(index),
-                        None,
-                    )
-                    .ok()
+                let mut info = vk::MemoryAllocateInfo::default()
+                    .allocation_size(need.size)
+                    .memory_type_index(index);
+                if shared {
+                    info = info.push_next(&mut export);
+                }
+                core.device.allocate_memory(&info, None).ok()
             });
             let Some(memory) = memory else {
                 core.device.destroy_buffer(buffer, None);
@@ -272,14 +299,42 @@ impl Gpu {
             Ok(out)
         }
     }
+    /// Whether buffers can be shared with another interface (`shared`, `export`).
+    pub fn shares(&self) -> bool {
+        self.core.sharing.is_some()
+    }
+    /// A dma-buf descriptor for a buffer made by `shared` or `filled_shared`.
+    pub fn export(&self, buffer: &Buffer) -> Result<OwnedFd, &'static str> {
+        let sharing = self.core.sharing.as_ref().ok_or("gpu_unsupported")?;
+        // SAFETY: the memory is alive, and the returned descriptor is ours to own.
+        unsafe {
+            let fd = check(
+                sharing.get_memory_fd(
+                    &vk::MemoryGetFdInfoKHR::default()
+                        .memory(buffer.memory)
+                        .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT),
+                ),
+                "gpu_memory",
+            )?;
+            Ok(OwnedFd::from_raw_fd(fd))
+        }
+    }
     /// A zero-filled storage buffer in device memory.
     pub fn buffer(&self, bytes: u64) -> Result<Buffer, &'static str> {
+        self.zeroed(bytes, false)
+    }
+    /// `buffer`, exportable to another interface.
+    pub fn shared(&self, bytes: u64) -> Result<Buffer, &'static str> {
+        self.zeroed(bytes, true)
+    }
+    fn zeroed(&self, bytes: u64, shared: bool) -> Result<Buffer, &'static str> {
         let buffer = self.allocate(
             bytes,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_SRC
                 | vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            shared,
         )?;
         self.run(|device, commands| unsafe {
             // SAFETY: the fill covers the whole buffer just created.
@@ -294,12 +349,29 @@ impl Gpu {
         bytes: u64,
         fill: impl FnOnce(&mut [u8]) -> Result<(), &'static str>,
     ) -> Result<Buffer, &'static str> {
+        self.filled_as(bytes, false, fill)
+    }
+    /// `filled`, exportable to another interface.
+    pub fn filled_shared(
+        &self,
+        bytes: u64,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), &'static str>,
+    ) -> Result<Buffer, &'static str> {
+        self.filled_as(bytes, true, fill)
+    }
+    fn filled_as(
+        &self,
+        bytes: u64,
+        shared: bool,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), &'static str>,
+    ) -> Result<Buffer, &'static str> {
         let buffer = self.allocate(
             bytes,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_SRC
                 | vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            shared,
         )?;
         if bytes == 0 {
             return Ok(buffer);
@@ -377,6 +449,7 @@ impl Gpu {
             bytes,
             vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            false,
         )
     }
     /// Records commands with `record`, submits them and waits for completion.

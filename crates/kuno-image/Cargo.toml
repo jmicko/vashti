@@ -14,6 +14,7 @@ base64 = "0.22"
 # Pure-Rust model engine (replacing stable-diffusion.cpp one model at a time).
 gemm = "0.19"
 ash = "0.38"
+libloading = "0.8"
 rayon = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
 # Pure-Rust video output, only in the private worker build.

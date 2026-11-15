@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 107 ms per block | correct, 1.6 times too slow; C++ still runs it |
+| DiT sampling (INT8, 8 or 4 steps) | about 3.4 s per step (66 ms per block) | whole network on the GPU, follows the C++ sampler; 98 ms per block with the machine-code linear layers | correct, 1.5 times too slow (attention); C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -365,9 +365,59 @@ How the kernel is built:
 The prototype assembles text with Mesa's `gentool` (built from
 `mesa-26.2.6` with `-Dtools=intel`) and wraps the code with a small script.
 Sources are outside the repository in `kuno-video-dev/igc-probe/hand`
-(`gen.py`, `mkzebin.py`) and `igc-probe/ze` (Rust runner `hand`). A Rust
-encoder for the dozen instruction forms used, the container writer, and
-memory shared between the Vulkan kernels and Level Zero are not built yet.
+(`gen.py`, `mkzebin.py`) and `igc-probe/ze` (Rust runner `hand`).
+
+### Machine-code linear layers in the engine (2026-11-14)
+
+The prototype is now Rust in the engine (`engine/xe2`), with no outside
+assembler or SYCL involved:
+
+- `xe2/mod.rs` encodes the instruction forms used (mov, add, mul, cmp,
+  jmpi, sync, send, dpas) with their dependency annotations. Its tests hold
+  Mesa's assembler output for the same instructions; the whole kernel was
+  byte-identical to the assembled prototype on five shapes before the
+  prototype was retired.
+- `xe2/zebin.rs` writes the native module container. The compatibility
+  note is Battlemage's, copied from a driver-compiled module; another card
+  rejects the module and the engine falls back to the shader.
+- `xe2/level_zero.rs` binds the dozen Level Zero calls needed, opening
+  `libze_loader.so.1` at run time.
+- `xe2/int8.rs` is the kernel and its operand layouts.
+
+The DiT's Vulkan kernels and the Level Zero kernel work on the same memory:
+Vulkan allocates the buffer with dma-buf export and Level Zero imports the
+descriptor. The memory must be `DEVICE_LOCAL`; a host-visible type that is
+not device-local is system RAM behind PCIe and ran the product 240 times
+slower. Each block is now four Vulkan submissions with a Level Zero launch
+between them, each waited for.
+
+What changed against the prototype:
+
+- Sums are stored row-major (`[token][row]`), one 64-byte store per
+  accumulator row, so the shaders that consume them are unchanged. This
+  costs about 6% against storing whole accumulators.
+- The quantizer shader writes token bytes directly in the kernel's stream
+  layout; weights are rearranged once at load (load time is unchanged at
+  about 9 s).
+- Threads dispatched past the last token tile exit at once, so the token
+  block size need not divide the token count.
+- The token block is 100 tiles (3200 tokens) for every layer. Measured at
+  8704 tokens, in TOPS:
+
+| Layer (inputs x outputs) | 8 tiles | 32 | 64 | 100 | 134 | 272 |
+|---|---|---|---|---|---|---|
+| qkv (5376 x 21504) | 186 | 212 | 225 | 235 | 226 | 114 |
+| out (7168 x 5376) | 208 | 218 | 237 | 241 | 235 | 164 |
+| fc1 (5376 x 28672) | 186 | 209 | 222 | 232 | 222 | 110 |
+| fc2 (14336 x 5376) | 203 | 208 | 221 | 226 | 225 | 193 |
+
+Result at 8611 tokens: the four linear layers of a block take 30.5 ms
+(41 ms with the shader; the C++ engine spends 33.6 ms), a block 98 ms
+(105), a step's blocks and heads 5.4 s (6.0). The integer sums equal the
+shader's on every output (`machine_code_product_matches_shader`), and the
+block and whole-step comparisons pass unchanged. What remains against the
+C++ engine's 66 ms per block is attention (52 ms against 25) and the small
+kernels around it (19 ms against about 8).
 
 ## Running the comparisons
 

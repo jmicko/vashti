@@ -6,6 +6,8 @@
 // cover the long strides. Stage order and expressions are the reference's (dit.rs), so bytes
 // and scales are bit-identical to it.
 // Pass one finds the row's largest magnitude, pass two rotates again and rounds.
+// With `stream` set, bytes are written in the layout the machine-code product reads
+// (xe2/int8.rs): tiles of 32 rows, and within a tile 32 values of every row per step.
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
@@ -15,7 +17,7 @@ layout(set = 0, binding = 0) readonly buffer In { vec4 x[]; };
 layout(set = 0, binding = 1) writeonly buffer Out { uvec4 q[]; };
 layout(set = 0, binding = 2) writeonly buffer Scales { float s[]; };
 // `width` is a multiple of 256; `rounds` is ceil(width / 256 / 16).
-layout(push_constant) uniform Constants { uint width; uint rounds; } p;
+layout(push_constant) uniform Constants { uint width; uint rounds; uint stream; } p;
 
 shared float tile[4096];
 shared uint bytes[4096];
@@ -91,6 +93,9 @@ void main() {
         for (uint b = 0; b < 16; b++) {
             word[b >> 2] |= bytes[sg * 256 + lane * 16 + b] << ((b & 3) * 8);
         }
-        if (g < groups) q[row * (p.width >> 4) + g * 16 + lane] = word;
+        uint w16 = g * 16 + lane;
+        uint at = p.stream == 0 ? row * (p.width >> 4) + w16
+            : (((row >> 5) * (p.width >> 5) + (w16 >> 1)) * 32 + (row & 31)) * 2 + (w16 & 1);
+        if (g < groups) q[at] = word;
     }
 }

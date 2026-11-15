@@ -8,27 +8,66 @@ use rayon::prelude::*;
 use super::{
     dit,
     gpu::{Buffer, Gpu, Kernel, Readback, Step, bytes_of, shaders},
+    xe2::{
+        int8,
+        level_zero::{self, LevelZero},
+        zebin,
+    },
 };
 
-/// One dispatch with its arguments owned, so a pass can be assembled as a list.
-pub struct Call<'a> {
-    kernel: &'a Kernel,
-    buffers: Vec<&'a Buffer>,
-    constants: Vec<u32>,
-    groups: [u32; 3],
+/// One unit of GPU work with its arguments owned, so a pass can be assembled as a list.
+pub enum Call<'a> {
+    /// A compute shader dispatch.
+    Shader {
+        kernel: &'a Kernel,
+        buffers: Vec<&'a Buffer>,
+        constants: Vec<u32>,
+        groups: [u32; 3],
+    },
+    /// An integer product by the machine-code kernel: tokens, weights, sums.
+    Product {
+        fast: &'a LevelZero,
+        kernel: &'a level_zero::Kernel,
+        memory: [&'a level_zero::Memory; 3],
+        groups: [u32; 3],
+    },
 }
-/// Runs the calls in order in one submission and waits for it.
+/// Runs the calls in order and waits for them. Consecutive shader dispatches share one
+/// submission; a machine-code product runs between submissions.
 pub fn run(gpu: &Gpu, calls: &[Call]) -> Result<(), &'static str> {
-    let steps: Vec<Step> = calls
-        .iter()
-        .map(|call| Step {
-            kernel: call.kernel,
-            buffers: &call.buffers,
-            constants: &call.constants,
-            groups: call.groups,
-        })
-        .collect();
-    gpu.pass(&steps)
+    let mut steps: Vec<Step> = Vec::new();
+    for call in calls {
+        match call {
+            Call::Shader {
+                kernel,
+                buffers,
+                constants,
+                groups,
+            } => steps.push(Step {
+                kernel,
+                buffers,
+                constants,
+                groups: *groups,
+            }),
+            Call::Product {
+                fast,
+                kernel,
+                memory,
+                groups,
+            } => {
+                if !steps.is_empty() {
+                    gpu.pass(&steps)?;
+                    steps.clear();
+                }
+                fast.launch(kernel, memory, *groups)?;
+            }
+        }
+    }
+    if steps.is_empty() {
+        Ok(())
+    } else {
+        gpu.pass(&steps)
+    }
 }
 
 const DIM: usize = dit::DIM;
@@ -67,11 +106,59 @@ pub struct Kernels {
     merge8: Kernel,
     resid8: Kernel,
     gate8: Kernel,
+    /// Present when the integer products can run as our own machine code.
+    fast: Option<LevelZero>,
+}
+/// The four integer products of a block: weight rows and columns.
+const PRODUCTS: [(usize, usize); 4] = [
+    (INNER * 3, DIM),
+    (DIM, INNER),
+    (HIDDEN * 2, DIM),
+    (DIM, HIDDEN),
+];
+const QKV: usize = 0;
+const OUT: usize = 1;
+const FC1: usize = 2;
+const FC2: usize = 3;
+/// Builds the machine-code product for `tokens` padded tokens, with its thread groups.
+fn fast_product(
+    fast: &LevelZero,
+    tokens: usize,
+    rows: usize,
+    columns: usize,
+) -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
+    let shape = int8::Shape::linear(tokens, rows, columns).ok_or("gpu_unsupported")?;
+    Ok((fast_kernel(fast, &shape)?, shape.groups(rows)))
+}
+fn fast_kernel(fast: &LevelZero, shape: &int8::Shape) -> Result<level_zero::Kernel, &'static str> {
+    let code = int8::kernel(shape);
+    let native = zebin::write(&zebin::Kernel {
+        name: "product",
+        code: &code,
+        grf: 256,
+        pointers: 3,
+    });
+    fast.kernel(&native, "product", 3)
 }
 impl Kernels {
+    /// Uses the machine-code integer product when this machine can run it (an Intel Xe2
+    /// card with Level Zero installed), the shader otherwise.
     pub fn new(gpu: &Gpu) -> Result<Self, &'static str> {
+        let fast = gpu
+            .shares()
+            .then(|| LevelZero::open().ok())
+            .flatten()
+            .filter(|fast| fast_product(fast, PAD, PRODUCTS[OUT].0, PRODUCTS[OUT].1).is_ok());
+        Self::with(gpu, fast)
+    }
+    /// Shader kernels only.
+    pub fn shaders_only(gpu: &Gpu) -> Result<Self, &'static str> {
+        Self::with(gpu, None)
+    }
+    fn with(gpu: &Gpu, fast: Option<LevelZero>) -> Result<Self, &'static str> {
         Ok(Self {
-            rotate8: gpu.kernel(shaders::ROTATE8, 3, 2, Some(16))?,
+            fast,
+            rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, Some(16))?,
             gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
             scoremax: gpu.kernel(shaders::SCOREMAX, 4, 11, Some(16))?,
             modnorm: gpu.kernel(shaders::MODNORM, 5, 5, None)?,
@@ -84,8 +171,13 @@ impl Kernels {
             gate8: gpu.kernel(shaders::GATE8, 4, 2, None)?,
         })
     }
+    /// Whether the integer products run as machine code.
+    pub fn fast(&self) -> bool {
+        self.fast.is_some()
+    }
     /// Quantizes `rows` f32 rows of `width` values in `input` to INT8 rows in `bytes` and one
-    /// scale per row in `scales`.
+    /// scale per row in `scales`. `stream` selects the machine-code product's byte layout
+    /// (`int8::token_word`) instead of plain rows.
     pub fn quantize<'a>(
         &'a self,
         input: &'a Buffer,
@@ -93,61 +185,104 @@ impl Kernels {
         scales: &'a Buffer,
         rows: usize,
         width: usize,
+        stream: bool,
     ) -> Call<'a> {
-        Call {
+        Call::Shader {
             kernel: &self.rotate8,
             buffers: vec![input, bytes, scales],
-            constants: vec![width as u32, (width / 256).div_ceil(16) as u32],
+            constants: vec![
+                width as u32,
+                (width / 256).div_ceil(16) as u32,
+                u32::from(stream),
+            ],
             groups: [rows as u32, 1, 1],
         }
     }
-    /// `sums[token][row] = bytes[token][..columns] . weight[row][..columns]` for `rows` weight
-    /// rows, a block of rows per dispatch.
-    fn product<'a>(
-        &'a self,
-        bytes: &'a Buffer,
-        weight: &'a Buffer,
-        sums: &'a Buffer,
-        padded: usize,
-        rows: usize,
-        columns: usize,
-    ) -> impl Iterator<Item = Call<'a>> {
-        (0..rows).step_by(ROW_BLOCK).map(move |first| Call {
-            kernel: &self.gemm8,
-            buffers: vec![bytes, weight, sums],
-            constants: vec![
-                columns as u32,
-                0,
-                (first * columns) as u32,
-                first as u32,
-                rows as u32,
-            ],
-            groups: [
-                (ROW_BLOCK.min(rows - first) / 256) as u32,
-                (padded / TILE) as u32,
-                1,
-            ],
-        })
+    /// `sums[token][row] = bytes[token][..columns] . weight[row][..columns]` for the weight
+    /// rows of product `which`: one machine-code launch, or the shader a block of rows per
+    /// dispatch.
+    fn product<'a>(&'a self, work: &'a Work, weight: &'a Matrix, which: usize) -> Vec<Call<'a>> {
+        let (rows, columns) = PRODUCTS[which];
+        if let (Some(fast), Some(shared), Some(stream)) = (&self.fast, &work.fast, &weight.stream) {
+            let (kernel, groups) = &shared.products[which];
+            return vec![Call::Product {
+                fast,
+                kernel,
+                memory: [&shared.bytes, stream, &shared.sums],
+                groups: *groups,
+            }];
+        }
+        (0..rows)
+            .step_by(ROW_BLOCK)
+            .map(move |first| Call::Shader {
+                kernel: &self.gemm8,
+                buffers: vec![&work.bytes, &weight.buffer, &work.sums],
+                constants: vec![
+                    columns as u32,
+                    0,
+                    (first * columns) as u32,
+                    first as u32,
+                    rows as u32,
+                ],
+                groups: [
+                    (ROW_BLOCK.min(rows - first) / 256) as u32,
+                    (work.padded / TILE) as u32,
+                    1,
+                ],
+            })
+            .collect()
     }
+}
+
+/// An INT8 weight matrix on the GPU: plain rows for the shader, or the machine-code
+/// product's stream layout together with its Level Zero mapping.
+pub struct Matrix {
+    buffer: Buffer,
+    stream: Option<level_zero::Memory>,
 }
 
 /// One block's weights on the GPU.
 pub struct Layer {
-    qkv: Buffer,
-    out: Buffer,
-    fc1: Buffer,
-    fc2: Buffer,
+    qkv: Matrix,
+    out: Matrix,
+    fc1: Matrix,
+    fc2: Matrix,
     /// Norm weights and the linear layers' row scales, at the offsets above.
     vectors: Buffer,
 }
 impl Layer {
-    pub fn load(gpu: &Gpu, model: &dit::Dit, layer: usize) -> Result<Self, &'static str> {
+    pub fn load(
+        gpu: &Gpu,
+        kernels: &Kernels,
+        model: &dit::Dit,
+        layer: usize,
+    ) -> Result<Self, &'static str> {
         let f = &model.file;
         let name = |part: &str| format!("blocks.{layer}.{part}");
-        // Matrices go from the file straight into mapped GPU staging memory.
-        let matrix = |part: &str, rows: usize, columns: usize| {
-            gpu.filled((rows * columns) as u64, |to| {
-                f.i8_into(&name(&format!("{part}.weight")), &[rows, columns], to)
+        let matrix = |part: &str, which: usize| -> Result<Matrix, &'static str> {
+            let (rows, columns) = PRODUCTS[which];
+            let name = name(&format!("{part}.weight"));
+            let Some(fast) = &kernels.fast else {
+                // Straight from the file into mapped GPU staging memory.
+                let buffer = gpu.filled((rows * columns) as u64, |to| {
+                    f.i8_into(&name, &[rows, columns], to)
+                })?;
+                return Ok(Matrix {
+                    buffer,
+                    stream: None,
+                });
+            };
+            let bytes = (rows * columns + int8::SLACK) as u64;
+            let buffer = gpu.filled_shared(bytes, |to| {
+                let mut plain = vec![0u8; rows * columns];
+                f.i8_into(&name, &[rows, columns], &mut plain)?;
+                int8::weight_stream(&plain, rows, columns, to);
+                Ok(())
+            })?;
+            let stream = fast.import(&gpu.export(&buffer)?, bytes)?;
+            Ok(Matrix {
+                buffer,
+                stream: Some(stream),
             })
         };
         let mut vectors = Vec::with_capacity(SCALE_FC2 + DIM);
@@ -160,10 +295,10 @@ impl Layer {
         vectors.extend(f.f32(&name("mlp.fc1.weight_scale"), &[HIDDEN * 2, 1])?);
         vectors.extend(f.f32(&name("mlp.fc2.weight_scale"), &[DIM, 1])?);
         Ok(Self {
-            qkv: matrix("attn.qkv_proj", INNER * 3, DIM)?,
-            out: matrix("attn.out_proj", DIM, INNER)?,
-            fc1: matrix("mlp.fc1", HIDDEN * 2, DIM)?,
-            fc2: matrix("mlp.fc2", DIM, HIDDEN)?,
+            qkv: matrix("attn.qkv_proj", QKV)?,
+            out: matrix("attn.out_proj", OUT)?,
+            fc1: matrix("mlp.fc1", FC1)?,
+            fc2: matrix("mlp.fc2", FC2)?,
             vectors: gpu.filled(vectors.len() as u64 * 4, |to| {
                 to.copy_from_slice(bytes_of(&vectors));
                 Ok(())
@@ -200,11 +335,41 @@ pub struct Work {
     mixed: Buffer,
     /// For reading the stream back.
     readback: Readback,
+    /// The machine-code products' view of `bytes` and `sums`, and their kernels.
+    fast: Option<Shared>,
+}
+struct Shared {
+    bytes: level_zero::Memory,
+    sums: level_zero::Memory,
+    /// Kernel and thread groups of each of `PRODUCTS` at this token count.
+    products: [(level_zero::Kernel, [u32; 3]); 4],
 }
 impl Work {
-    pub fn new(gpu: &Gpu, tokens: usize, rows: usize, blocks: usize) -> Result<Self, &'static str> {
+    pub fn new(
+        gpu: &Gpu,
+        kernels: &Kernels,
+        tokens: usize,
+        rows: usize,
+        blocks: usize,
+    ) -> Result<Self, &'static str> {
         let padded = tokens.next_multiple_of(PAD);
         let f32s = |count: usize| gpu.buffer(count as u64 * 4);
+        let bytes_size = (padded * HIDDEN + int8::SLACK) as u64;
+        let sums_size = (padded * HIDDEN * 2) as u64 * 4;
+        let (bytes, sums, fast) = match &kernels.fast {
+            None => (gpu.buffer(bytes_size)?, gpu.buffer(sums_size)?, None),
+            Some(fast) => {
+                let (bytes, sums) = (gpu.shared(bytes_size)?, gpu.shared(sums_size)?);
+                let product =
+                    |which: usize| fast_product(fast, padded, PRODUCTS[which].0, PRODUCTS[which].1);
+                let shared = Shared {
+                    bytes: fast.import(&gpu.export(&bytes)?, bytes_size)?,
+                    sums: fast.import(&gpu.export(&sums)?, sums_size)?,
+                    products: [product(QKV)?, product(OUT)?, product(FC1)?, product(FC2)?],
+                };
+                (bytes, sums, Some(shared))
+            }
+        };
         Ok(Self {
             tokens,
             padded,
@@ -214,9 +379,9 @@ impl Work {
             parts: f32s(blocks * rows * 6 * DIM)?,
             rows_count: rows,
             wide: f32s(padded * HIDDEN)?,
-            bytes: gpu.buffer((padded * HIDDEN) as u64)?,
+            bytes,
             scales: f32s(padded)?,
-            sums: f32s(padded * HIDDEN * 2)?,
+            sums,
             query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
             key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
             value: gpu.buffer((HEADS * HEAD * padded) as u64 * 2)?,
@@ -226,6 +391,7 @@ impl Work {
             weights: f32s(HEADS * padded * 8)?,
             mixed: f32s(HEADS * padded * HEAD)?,
             readback: gpu.readback((padded * DIM) as u64 * 4)?,
+            fast,
         })
     }
 }
@@ -239,32 +405,41 @@ impl Kernels {
         let w = work;
         let v = &layer.vectors;
         let mut calls = Vec::new();
-        let modnorm = |weight: usize, shift: u32, scale: u32| Call {
+        let modnorm = |weight: usize, shift: u32, scale: u32| Call::Shader {
             kernel: &self.modnorm,
             buffers: vec![&w.stream, v, &w.parts, &w.rows, &w.wide],
             constants: vec![n, weight as u32, shift, scale, parts_first],
             groups: [np, 1, 1],
         };
-        let residual = |scale: usize, gate: u32| Call {
+        let residual = |scale: usize, gate: u32| Call::Shader {
             kernel: &self.resid8,
             buffers: vec![&w.stream, &w.sums, &w.scales, v, &w.parts, &w.rows],
             constants: vec![n, scale as u32, gate, parts_first],
             groups: [(DIM / 4 / 64) as u32, np, 1],
         };
-        let quantize = |width: usize| self.quantize(&w.wide, &w.bytes, &w.scales, w.padded, width);
+        let quantize = |width: usize| {
+            self.quantize(
+                &w.wide,
+                &w.bytes,
+                &w.scales,
+                w.padded,
+                width,
+                w.fast.is_some(),
+            )
+        };
 
         calls.push(modnorm(NORM1, 0, 1));
         calls.push(quantize(DIM));
-        calls.extend(self.product(&w.bytes, &layer.qkv, &w.sums, w.padded, INNER * 3, DIM));
+        calls.extend(self.product(w, &layer.qkv, QKV));
         for (side, to, weight) in [(0, &w.query, QUERY_NORM), (1, &w.key, KEY_NORM)] {
-            calls.push(Call {
+            calls.push(Call::Shader {
                 kernel: &self.qk8,
                 buffers: vec![&w.sums, &w.scales, v, &w.turns, to],
                 constants: vec![n, np, side, SCALE_QKV as u32, weight as u32],
                 groups: [(HEADS / 4) as u32, np, 1],
             });
         }
-        calls.push(Call {
+        calls.push(Call::Shader {
             kernel: &self.value8,
             buffers: vec![&w.sums, &w.scales, v, &w.value],
             constants: vec![n, np, SCALE_QKV as u32],
@@ -274,7 +449,7 @@ impl Kernels {
         let (head_width, group) = (HEAD as u32, GROUP as u32);
         let best_stride = tiles.next_multiple_of(4);
         for head in (0..HEADS as u32).step_by(GROUP) {
-            calls.push(Call {
+            calls.push(Call::Shader {
                 kernel: &self.scoremax,
                 buffers: vec![&w.query, &w.key, &w.scores, &w.best],
                 constants: vec![
@@ -292,13 +467,13 @@ impl Kernels {
                 ],
                 groups: [tiles, tiles, group],
             });
-            calls.push(Call {
+            calls.push(Call::Shader {
                 kernel: &self.rowmax,
                 buffers: vec![&w.best, &w.top],
                 constants: vec![tiles, best_stride, np, head * np],
                 groups: [np / 64, 1, group],
             });
-            calls.push(Call {
+            calls.push(Call::Shader {
                 kernel: &self.mixtop,
                 buffers: vec![&w.scores, &w.value, &w.mixed, &w.top, &w.weights, &w.best],
                 constants: vec![
@@ -319,27 +494,27 @@ impl Kernels {
                 groups: [1, np / PAD as u32, group],
             });
         }
-        calls.push(Call {
+        calls.push(Call::Shader {
             kernel: &self.merge8,
             buffers: vec![&w.mixed, &w.weights, &w.wide],
             constants: vec![n, np],
             groups: [HEADS as u32, np, 1],
         });
         calls.push(quantize(INNER));
-        calls.extend(self.product(&w.bytes, &layer.out, &w.sums, w.padded, DIM, INNER));
+        calls.extend(self.product(w, &layer.out, OUT));
         calls.push(residual(SCALE_OUT, 2));
 
         calls.push(modnorm(NORM2, 3, 4));
         calls.push(quantize(DIM));
-        calls.extend(self.product(&w.bytes, &layer.fc1, &w.sums, w.padded, HIDDEN * 2, DIM));
-        calls.push(Call {
+        calls.extend(self.product(w, &layer.fc1, FC1));
+        calls.push(Call::Shader {
             kernel: &self.gate8,
             buffers: vec![&w.sums, &w.scales, v, &w.wide],
             constants: vec![n, SCALE_FC1 as u32],
             groups: [(HIDDEN / 4 / 64) as u32, np, 1],
         });
         calls.push(quantize(HIDDEN));
-        calls.extend(self.product(&w.bytes, &layer.fc2, &w.sums, w.padded, DIM, HIDDEN));
+        calls.extend(self.product(w, &layer.fc2, FC2));
         calls.push(residual(SCALE_FC2, 5));
         calls
     }
@@ -369,7 +544,7 @@ impl GpuDit {
         let layers: Result<Vec<Layer>, &'static str> = pool.install(|| {
             (0..model.layers)
                 .into_par_iter()
-                .map(|layer| Layer::load(gpu, &model, layer))
+                .map(|layer| Layer::load(gpu, &kernels, &model, layer))
                 .collect()
         });
         let modulation = (0..model.layers)
@@ -407,7 +582,13 @@ impl GpuDit {
         {
             // Drop the old set before allocating the new one.
             *cached = None;
-            *cached = Some(Work::new(gpu, tokens, rows, self.layers.len())?);
+            *cached = Some(Work::new(
+                gpu,
+                &self.kernels,
+                tokens,
+                rows,
+                self.layers.len(),
+            )?);
         }
         let work = cached.as_mut().ok_or("gpu_failed")?;
         work.tokens = tokens;
@@ -429,7 +610,8 @@ impl GpuDit {
         gpu.upload(&work.turns, 0, bytes_of(&turns))?;
         gpu.upload(&work.parts, 0, bytes_of(&parts))?;
         let work = &*work;
-        // One submission per block: the kernel driver ends jobs that run for several seconds.
+        // At most one submission per block: the kernel driver ends jobs that run for several
+        // seconds.
         for (slot, layer) in self.layers.iter().enumerate() {
             run(gpu, &self.kernels.block(layer, work, slot))?;
         }
@@ -462,7 +644,7 @@ mod tests {
     #[ignore = "needs the Intel GPU"]
     fn quantizer_matches_reference_bit_for_bit() {
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
-        let kernels = Kernels::new(&gpu).unwrap();
+        let kernels = Kernels::shaders_only(&gpu).unwrap();
         for width in [5376usize, 7168, 14336] {
             let rows = 37;
             let mut x = noise(rows * width, width as u64);
@@ -481,7 +663,7 @@ mod tests {
             gpu.upload(&input, 0, bytes_of(&x)).unwrap();
             run(
                 &gpu,
-                &[kernels.quantize(&input, &bytes, &scales, rows, width)],
+                &[kernels.quantize(&input, &bytes, &scales, rows, width, false)],
             )
             .unwrap();
             let got = gpu.download(&bytes, 0, rows * width).unwrap();
@@ -493,12 +675,35 @@ mod tests {
                 .filter(|(a, b)| **a as i8 != **b)
                 .count();
             assert_eq!(differ, 0, "width {width}");
+            // The stream layout holds the same bytes, 16 at a time, at other positions.
+            let streamed = gpu
+                .buffer((rows.next_multiple_of(32) * width) as u64)
+                .unwrap();
+            run(
+                &gpu,
+                &[kernels.quantize(&input, &streamed, &scales, rows, width, true)],
+            )
+            .unwrap();
+            let stream = gpu
+                .download(&streamed, 0, rows.next_multiple_of(32) * width)
+                .unwrap();
+            for row in 0..rows {
+                for word in 0..width / 16 {
+                    let at = int8::token_word(row, word, width) * 16;
+                    let from = row * width + word * 16;
+                    assert_eq!(
+                        stream[at..at + 16],
+                        got[from..from + 16],
+                        "row {row} word {word}"
+                    );
+                }
+            }
 
             let rows = 8704;
             let input = gpu.buffer((rows * width) as u64 * 4).unwrap();
             let bytes = gpu.buffer((rows * width) as u64).unwrap();
             let scales = gpu.buffer(rows as u64 * 4).unwrap();
-            let call = [kernels.quantize(&input, &bytes, &scales, rows, width)];
+            let call = [kernels.quantize(&input, &bytes, &scales, rows, width, false)];
             run(&gpu, &call).unwrap();
             let started = std::time::Instant::now();
             for _ in 0..4 {
@@ -508,6 +713,100 @@ mod tests {
                 "{rows} rows of {width}: {:.2} ms",
                 started.elapsed().as_secs_f64() * 250.0
             );
+        }
+    }
+
+    /// The machine-code product against the shader on the same operands: integer sums, so
+    /// every one must be equal. Also run in small dispatch blocks with a partial last block.
+    #[test]
+    #[ignore = "needs the Intel GPU with Level Zero"]
+    fn machine_code_product_matches_shader() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let fast = LevelZero::open().unwrap();
+        let kernels = Kernels::shaders_only(&gpu).unwrap();
+        for (tokens, rows, columns) in [(768usize, 1024usize, DIM), (8704, 4096, HIDDEN)] {
+            let mut state = 77u32;
+            let mut random = |count: usize| -> Vec<u8> {
+                (0..count)
+                    .map(|_| {
+                        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        (state >> 24) as u8
+                    })
+                    .collect()
+            };
+            let (bytes, weight) = (random(tokens * columns), random(rows * columns));
+            let sums_size = (tokens * rows * 4) as u64;
+            let (plain_bytes, plain_weight, plain_sums) = (
+                gpu.buffer(bytes.len() as u64).unwrap(),
+                gpu.buffer(weight.len() as u64).unwrap(),
+                gpu.buffer(sums_size).unwrap(),
+            );
+            gpu.upload(&plain_bytes, 0, &bytes).unwrap();
+            gpu.upload(&plain_weight, 0, &weight).unwrap();
+            let shader = [Call::Shader {
+                kernel: &kernels.gemm8,
+                buffers: vec![&plain_bytes, &plain_weight, &plain_sums],
+                constants: vec![columns as u32, 0, 0, 0, rows as u32],
+                groups: [(rows / 256) as u32, (tokens / TILE) as u32, 1],
+            }];
+            run(&gpu, &shader).unwrap();
+            let started = std::time::Instant::now();
+            run(&gpu, &shader).unwrap();
+            let shader_ms = started.elapsed().as_secs_f64() * 1e3;
+            let want = gpu.download(&plain_sums, 0, sums_size as usize).unwrap();
+
+            let mut streamed = vec![0u8; bytes.len() + int8::SLACK];
+            for token in 0..tokens {
+                for word in 0..columns / 16 {
+                    let at = int8::token_word(token, word, columns) * 16;
+                    let from = token * columns + word * 16;
+                    streamed[at..at + 16].copy_from_slice(&bytes[from..from + 16]);
+                }
+            }
+            let mut weights = vec![0u8; weight.len() + int8::SLACK];
+            int8::weight_stream(&weight, rows, columns, &mut weights);
+            let (stream_bytes, stream_weight, sums) = (
+                gpu.shared(streamed.len() as u64).unwrap(),
+                gpu.shared(weights.len() as u64).unwrap(),
+                gpu.shared(sums_size).unwrap(),
+            );
+            gpu.upload(&stream_bytes, 0, &streamed).unwrap();
+            gpu.upload(&stream_weight, 0, &weights).unwrap();
+            let import = |buffer: &Buffer| {
+                fast.import(&gpu.export(buffer).unwrap(), buffer.bytes())
+                    .unwrap()
+            };
+            let memory = (import(&stream_bytes), import(&stream_weight), import(&sums));
+            let whole = int8::Shape::linear(tokens, rows, columns).unwrap();
+            for shape in [whole, int8::Shape { xc: 5, ..whole }] {
+                gpu.upload(&sums, 0, &vec![0u8; sums_size as usize])
+                    .unwrap();
+                let kernel = fast_kernel(&fast, &shape).unwrap();
+                let call = [Call::Product {
+                    fast: &fast,
+                    kernel: &kernel,
+                    memory: [&memory.0, &memory.1, &memory.2],
+                    groups: shape.groups(rows),
+                }];
+                run(&gpu, &call).unwrap();
+                let started = std::time::Instant::now();
+                run(&gpu, &call).unwrap();
+                let ms = started.elapsed().as_secs_f64() * 1e3;
+                let got = gpu.download(&sums, 0, sums_size as usize).unwrap();
+                let differ = got
+                    .chunks_exact(4)
+                    .zip(want.chunks_exact(4))
+                    .filter(|(a, b)| a != b)
+                    .count();
+                let tops = 2.0 * (tokens * rows * columns) as f64 / 1e9;
+                println!(
+                    "{tokens} x {rows} x {columns}, blocks of {} tiles: {ms:.2} ms ({:.0} TOPS), shader {shader_ms:.2} ms ({:.0} TOPS)",
+                    shape.xc,
+                    tops / ms,
+                    tops / shader_ms
+                );
+                assert_eq!(differ, 0);
+            }
         }
     }
 
@@ -526,7 +825,7 @@ mod tests {
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
         let kernels = Kernels::new(&gpu).unwrap();
         let rows = prepared.layout.timesteps.len() * 3;
-        let work = Work::new(&gpu, tokens, rows, 1).unwrap();
+        let work = Work::new(&gpu, &kernels, tokens, rows, 1).unwrap();
         let mut token_rows = vec![0u32; work.padded];
         for span in &prepared.layout.spans {
             token_rows[span.start..span.end].fill(span.row as u32);
@@ -536,7 +835,7 @@ mod tests {
         gpu.upload(&work.rows, 0, bytes_of(&token_rows)).unwrap();
         gpu.upload(&work.turns, 0, bytes_of(&turns)).unwrap();
         for index in [0usize, 20, 49] {
-            let layer = Layer::load(&gpu, &model, index).unwrap();
+            let layer = Layer::load(&gpu, &kernels, &model, index).unwrap();
             let parts = model.parts(index, &prepared.times).unwrap();
             let mut want = prepared.x.clone();
             model
@@ -580,7 +879,7 @@ mod tests {
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
         let kernels = Kernels::new(&gpu).unwrap();
         let (tokens, rows) = (8611, 12);
-        let work = Work::new(&gpu, tokens, rows, 1).unwrap();
+        let work = Work::new(&gpu, &kernels, tokens, rows, 1).unwrap();
         let mut start = noise(tokens * DIM, 5);
         start.resize(work.padded * DIM, 0.0);
         gpu.upload(&work.stream, 0, bytes_of(&start)).unwrap();
@@ -594,7 +893,7 @@ mod tests {
         gpu.upload(&work.turns, 0, bytes_of(&turns)).unwrap();
         gpu.upload(&work.parts, 0, bytes_of(&noise(rows * 6 * DIM, 6)))
             .unwrap();
-        let layer = Layer::load(&gpu, &model, 10).unwrap();
+        let layer = Layer::load(&gpu, &kernels, &model, 10).unwrap();
         let calls = kernels.block(&layer, &work, 0);
         run(&gpu, &calls).unwrap();
         let names = [
@@ -614,11 +913,12 @@ mod tests {
         for call in &calls {
             let started = std::time::Instant::now();
             run(&gpu, std::slice::from_ref(call)).unwrap();
-            let name = names
-                .iter()
-                .find(|n| std::ptr::eq(n.0, call.kernel))
-                .unwrap()
-                .1;
+            let name = match call {
+                Call::Shader { kernel, .. } => {
+                    names.iter().find(|n| std::ptr::eq(n.0, *kernel)).unwrap().1
+                }
+                Call::Product { .. } => "linear (machine code)",
+            };
             *totals.entry(name).or_insert(0.0) += started.elapsed().as_secs_f64();
         }
         for (name, seconds) in &totals {

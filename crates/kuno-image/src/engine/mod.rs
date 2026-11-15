@@ -9,3 +9,4 @@ pub mod safetensors;
 pub mod video_gpu;
 pub mod video_tiles;
 pub mod video_vae;
+pub mod xe2;
