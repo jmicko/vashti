@@ -419,6 +419,35 @@ block and whole-step comparisons pass unchanged. What remains against the
 C++ engine's 66 ms per block is attention (52 ms against 25) and the small
 kernels around it (19 ms against about 8).
 
+### Attention as machine code (first kernel, 2026-11-15)
+
+`xe2/attend.rs` is a fused attention kernel: one thread owns 16 queries of a
+head and walks the keys 16 at a time, computing scores (half-float `dpas`,
+exact at half the int8 rate: 120 TFLOPS in the product probe), turning them
+into half-float weights and mixing the values, with nothing stored in
+between. It is checked against a CPU softmax on random operands (73 to 83 dB)
+and is **not wired into the DiT yet**: at clip size it takes 90 ms against
+the shaders' 54 ms.
+
+What it established:
+
+- Dependency distances count instructions of the producer's pipe. Integer
+  and float instructions run in separate in-order pipes, so where a group of
+  instructions reads what the other pipe's group wrote, "four back" is wrong
+  for all but the first; the symptom was wrong weights in three rows of four.
+- Float sources must sit at their lane position, so a reduction across lanes
+  is done on integers (non-negative floats order like their bits), and a
+  16-lane conversion to packed half floats takes two instructions.
+- A thread's loads are served about 0.65 microseconds after they are issued.
+  The kernel issues one 512-byte load at a time (its registers are spent on
+  16 queries x 128 channels of f32 accumulators), so 17 loads per step make
+  it latency-bound. The card's load throughput (about 88 G cache lines per
+  second, from the int8 kernel) would allow about 25 ms.
+
+Next form: transpose the products (queries as lanes), which turns the weight
+sum and the running reference into single registers, frees 24 registers for
+three load buffers, and drops the ninth value fragment.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):

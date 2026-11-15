@@ -6,6 +6,7 @@
 //! This file is the encoder for the instruction forms those kernels use. Every instruction is
 //! 128 bits, uncompacted, with masking disabled. Field positions follow Mesa's Xe2 tables, and
 //! the tests hold encodings produced by Mesa's assembler.
+pub mod attend;
 pub mod int8;
 pub mod level_zero;
 pub mod zebin;
@@ -48,6 +49,39 @@ pub struct Reg {
     pub off: u8,
     pub ty: Ty,
     pub grf: bool,
+    /// As a source: negated.
+    pub neg: bool,
+    /// As a source of a wider instruction: one element, replicated to every lane.
+    pub scalar: bool,
+    /// Every second element (a destination written, or a source read, at stride two).
+    pub step2: bool,
+}
+impl Reg {
+    pub fn minus(self) -> Reg {
+        Reg { neg: true, ..self }
+    }
+    pub fn s(self) -> Reg {
+        Reg {
+            scalar: true,
+            ..self
+        }
+    }
+    pub fn step2(self) -> Reg {
+        Reg {
+            step2: true,
+            ..self
+        }
+    }
+    /// Region field of a two-source instruction: `<0;1,0>`, `<2;1,0>` or `<1;1,0>`.
+    fn vstride(self, exec: u32) -> u64 {
+        if self.scalar || exec == 1 {
+            0
+        } else if self.step2 {
+            2
+        } else {
+            1
+        }
+    }
 }
 
 /// General register `r<nr>.<sub>` with `sub` counted in elements of `ty`.
@@ -58,6 +92,9 @@ pub fn r(nr: u32, sub: u32, ty: Ty) -> Reg {
         off: (sub * ty.bytes()) as u8,
         ty,
         grf: true,
+        neg: false,
+        scalar: false,
+        step2: false,
     }
 }
 pub fn null(ty: Ty) -> Reg {
@@ -66,6 +103,9 @@ pub fn null(ty: Ty) -> Reg {
         off: 0,
         ty,
         grf: false,
+        neg: false,
+        scalar: false,
+        step2: false,
     }
 }
 
@@ -78,6 +118,14 @@ impl From<Reg> for Src {
     fn from(v: Reg) -> Src {
         Src::Reg(v)
     }
+}
+/// A single-precision immediate.
+pub fn immf(v: f32) -> Src {
+    Src::Imm(v.to_bits() as i32, Ty::F)
+}
+/// A 16-bit immediate (shift counts).
+pub fn immw(v: i16) -> Src {
+    Src::Imm(i32::from(v), Ty::W)
 }
 pub fn imm(v: i32) -> Src {
     Src::Imm(v, Ty::D)
@@ -165,7 +213,7 @@ impl Inst {
     }
     fn dst(&mut self, d: Reg) {
         self.set(39, 36, d.ty as u64);
-        self.set(49, 48, 1);
+        self.set(49, 48, if d.step2 { 2 } else { 1 });
         self.operand(50, d, true);
         self.set(33, 33, d.off as u64 & 1);
     }
@@ -181,9 +229,8 @@ impl Inst {
                 self.set(43, 40, reg.ty as u64);
                 self.operand(66, reg, true);
                 self.set(87, 87, reg.off as u64 & 1);
-                if exec > 1 {
-                    self.set(86, 84, 1);
-                }
+                self.set(45, 45, reg.neg as u64);
+                self.set(86, 84, reg.vstride(exec));
             }
         }
     }
@@ -198,9 +245,8 @@ impl Inst {
                 assert!(reg.off & 1 == 0);
                 self.set(91, 88, reg.ty as u64);
                 self.operand(98, reg, true);
-                if exec > 1 {
-                    self.set(118, 116, 1);
-                }
+                self.set(121, 121, reg.neg as u64);
+                self.set(118, 116, reg.vstride(exec));
             }
         }
     }
@@ -234,6 +280,52 @@ impl Asm {
     }
     pub fn mul(&mut self, exec: u32, d: Reg, a: impl Into<Src>, b: impl Into<Src>, swsb: Swsb) {
         let i = self.two(65, exec, d, a.into(), b.into(), swsb);
+        self.push(i);
+    }
+    /// Lane-wise maximum (`Cond::Ge`) or minimum (`Cond::Lt`).
+    pub fn sel(
+        &mut self,
+        exec: u32,
+        cond: Cond,
+        d: Reg,
+        a: impl Into<Src>,
+        b: impl Into<Src>,
+        swsb: Swsb,
+    ) {
+        let mut i = self.two(98, exec, d, a.into(), b.into(), swsb);
+        i.set(95, 92, cond as u64);
+        self.push(i);
+    }
+    pub fn shl(&mut self, exec: u32, d: Reg, a: impl Into<Src>, b: impl Into<Src>, swsb: Swsb) {
+        let i = self.two(105, exec, d, a.into(), b.into(), swsb);
+        self.push(i);
+    }
+    /// Round to the nearest integer, ties to even.
+    pub fn rnde(&mut self, exec: u32, d: Reg, a: Reg, swsb: Swsb) {
+        let mut i = Inst::new(70, exec, swsb);
+        i.dst(d);
+        i.src0(Src::Reg(a), exec);
+        self.push(i);
+    }
+    /// `d = add + a * b` in single precision. `add` is one replicated element; `b` is one
+    /// when marked scalar.
+    pub fn mad(&mut self, exec: u32, d: Reg, add: Reg, a: Reg, b: Reg, swsb: Swsb) {
+        assert!(d.ty == Ty::F && add.ty == Ty::F && a.ty == Ty::F && b.ty == Ty::F);
+        assert!(add.scalar && !d.step2);
+        let mut i = Inst::new(91, exec, swsb);
+        i.set(39, 39, 1);
+        for at in [36, 40, 88, 80] {
+            i.set(at + 2, at, Ty::F.short());
+        }
+        i.operand(50, d, true);
+        i.operand(66, add, true);
+        i.set(45, 45, add.neg as u64);
+        i.operand(98, a, true);
+        i.set(87, 87, a.neg as u64);
+        i.set(83, 83, (exec > 1 && !a.scalar) as u64);
+        i.operand(114, b, true);
+        i.set(85, 85, b.neg as u64);
+        i.set(113, 112, (exec > 1 && !b.scalar) as u64);
         self.push(i);
     }
     /// Compare into flag f0.0.
@@ -461,6 +553,107 @@ mod tests {
                 Swsb::set(16)
             )),
             hex("59 d0 10 80 60 3e 07 70 04 70 04 04 04 20 04 10")
+        );
+    }
+
+    /// The forms the attention kernel adds, again against Mesa's assembler.
+    #[test]
+    fn float_encodings_match_the_reference_assembler() {
+        let (w, w4) = (Swsb::after(1), Swsb::after(4));
+        assert_eq!(
+            one(|k| k.mad(
+                16,
+                r(10, 0, F),
+                r(6, 3, F).s().minus(),
+                r(224, 0, F),
+                r(8, 0, F).s(),
+                w4
+            )),
+            hex("5b 0c 10 80 a0 22 04 0a 34 06 0a 02 04 e0 04 08")
+        );
+        assert_eq!(
+            one(|k| k.mad(
+                16,
+                r(12, 0, F),
+                r(8, 1, F).s(),
+                r(12, 0, F),
+                r(10, 0, F),
+                w4
+            )),
+            hex("5b 0c 10 80 a0 02 04 0c 14 08 0a 02 04 0c 05 0a")
+        );
+        assert_eq!(
+            one(|k| k.sel(16, Cond::Ge, r(9, 0, F), r(9, 0, F), r(10, 0, F), w4)),
+            hex("62 0c 10 80 a0 0a 05 09 04 09 10 4a 04 0a 10 00")
+        );
+        assert_eq!(
+            one(|k| k.sel(16, Cond::Ge, r(10, 0, F), r(10, 0, F), immf(-126.0), w4)),
+            hex("62 0c 10 80 a0 8a 05 0a 04 0a 10 4a 00 00 fc c2")
+        );
+        assert_eq!(
+            one(|k| k.sel(8, Cond::Ge, r(9, 0, D), r(9, 0, D), r(9, 8, D), w)),
+            hex("62 09 0c 80 60 06 05 09 04 09 10 46 84 09 10 00")
+        );
+        assert_eq!(
+            one(|k| k.sel(1, Cond::Ge, r(9, 0, D), r(9, 0, D), r(9, 1, D), w)),
+            hex("62 09 00 80 60 06 05 09 04 09 00 46 14 09 00 00")
+        );
+        assert_eq!(
+            one(|k| k.rnde(16, r(11, 0, F), r(10, 0, F), w4)),
+            hex("46 0c 10 80 a0 0a 05 0b 04 0a 10 00 00 00 00 00")
+        );
+        assert_eq!(
+            one(|k| k.add(16, r(10, 0, F), r(10, 0, F), r(11, 0, F).minus(), w4)),
+            hex("40 0c 10 80 a0 0a 05 0a 04 0a 10 0a 04 0b 10 02")
+        );
+        assert_eq!(
+            one(|k| k.mov(16, r(11, 0, D), r(11, 0, F), w4)),
+            hex("61 0c 10 80 60 0a 05 0b 04 0b 10 00 00 00 00 00")
+        );
+        assert_eq!(
+            one(|k| k.shl(16, r(11, 0, D), r(11, 0, D), immw(23), w4)),
+            hex("69 0c 10 80 60 86 05 0b 04 0b 10 05 17 00 00 00")
+        );
+        assert_eq!(
+            one(|k| k.mov(16, r(10, 0, Hf).step2(), r(12, 0, F), w4)),
+            hex("61 0c 10 80 90 0a 06 0a 04 0c 10 00 00 00 00 00")
+        );
+        assert_eq!(
+            one(|k| k.mov(16, r(240, 16, Uw), r(10, 0, Uw).step2(), w4)),
+            hex("61 0c 10 80 10 01 85 f0 04 0a 20 00 00 00 00 00")
+        );
+        assert_eq!(
+            one(|k| k.cmp(Cond::Gt, r(9, 0, D), imm(0x4130_0000), w)),
+            hex("70 09 00 80 60 86 01 00 04 09 00 36 00 00 30 41")
+        );
+        assert_eq!(
+            one(|k| k.mul(16, r(80, 0, F), r(80, 0, F), r(7, 2, F).s(), w)),
+            hex("41 09 10 80 a0 0a 05 50 04 50 10 0a 24 07 00 00")
+        );
+        assert_eq!(
+            one(|k| k.add(1, r(7, 0, F), r(6, 3, F), r(6, 5, F).minus(), w)),
+            hex("40 09 00 80 a0 0a 05 07 34 06 00 0a 54 06 00 02")
+        );
+        assert_eq!(
+            one(|k| k.mov(1, r(8, 0, F), immf(f32::from_bits(0x3e38_aa3b)), Swsb::NONE)),
+            hex("61 00 00 80 a0 4a 05 08 00 00 00 00 3b aa 38 3e")
+        );
+        assert_eq!(
+            one(|k| k.dpas(
+                8,
+                8,
+                16,
+                r(224, 0, F),
+                null(F),
+                r(248, 0, Hf),
+                r(16, 0, Hf),
+                Swsb::set(3)
+            )),
+            hex("59 c3 10 80 a0 3a 07 e0 00 00 01 01 04 f8 04 10")
+        );
+        assert_eq!(
+            one(|k| k.sync(Swsb::after(7))),
+            hex("01 0f 00 80 00 02 00 00 00 00 10 00 00 00 00 00")
         );
     }
 
