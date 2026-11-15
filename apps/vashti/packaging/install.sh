@@ -239,12 +239,12 @@ fi
 
 archive="vashti-${os}-${arch}.tar.gz"
 if [ "$version" = "latest" ]; then
-    base_url="${release_base_url%/}/latest"
-    version="$(curl -fsL "$base_url/VERSION" | tr -d '[:space:]')"
+    version="$(curl -fsL "${release_base_url%/}/latest/${os}-${arch}/VERSION" | tr -d '[:space:]')"
     if [ -z "$version" ]; then
         echo "could not resolve latest Vashti release version" >&2
         exit 1
     fi
+    base_url="${release_base_url%/}/$version"
 else
     base_url="${release_base_url%/}/$version"
 fi

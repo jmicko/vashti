@@ -23,6 +23,9 @@
     if (target === "kuno-linux-x86_64") {
       return { title: "Kuno inference host", detail: "Linux x86_64 · image engine included", linuxServer: false };
     }
+    if (target === "kuno-sycl-linux-x86_64") {
+      return { title: "Kuno Intel runtime", detail: "Linux x86_64 · optional GPU runtime", linuxServer: false };
+    }
     if (target === "android-universal") {
       return { title: "Android app", detail: "Universal APK", linuxServer: false };
     }
@@ -211,5 +214,5 @@
     return a.pre.length - b.pre.length;
   }
 
-  window.VashtiReleaseUI = { createReleaseDelivery, compareVersions };
+  window.VashtiReleaseUI = { createReleaseDelivery, compareVersions, artifactPresentation };
 })();

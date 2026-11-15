@@ -34,7 +34,7 @@ function fixture(t) {
         encoding: 'utf8',
         env: { ...process.env, VERSION: 'v0.13.0-beta.2', ARTIFACT: '', NOTES: '',
           RELEASE_NOTES_FILE: '', VASHTI_RELEASE_SIGNING_KEY: key, CHECK_ONLY: '1',
-          REQUIRE_COMPLETE_RELEASE: '1', REQUIRE_KUNO_SYCL_RUNTIME: '0', ...extra },
+          RELEASE_SCOPE: 'auto', REQUIRE_COMPLETE_RELEASE: '1', REQUIRE_KUNO_SYCL_RUNTIME: '0', ...extra },
       });
     },
   };
@@ -72,4 +72,34 @@ test('required missing runtime fails before consuming an upload key', t => {
   const result = f.run({ REQUIRE_KUNO_SYCL_RUNTIME: '1' });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /missing required release target: kuno-sycl-linux-x86_64/);
+});
+
+test('Vashti-only publishing excludes unchanged Kuno and runtime artifacts', t => {
+  const f = fixture(t);
+  f.add('vashti-0.13.0-beta.2.apk');
+  f.add('kuno-sycl-linux-x86_64.tar.gz');
+  const result = f.run({ RELEASE_SCOPE: 'vashti' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /2 artifacts.*No upload attempted/);
+  assert.match(result.stdout, /targets: linux-x86_64 android-universal/);
+  assert.doesNotMatch(result.stdout, /targets:.*kuno/);
+});
+
+test('Vashti-only complete releases still require the matching APK', t => {
+  const result = fixture(t).run({ RELEASE_SCOPE: 'vashti' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing required release target: android-universal/);
+});
+
+test('Kuno-only publishing does not require or upload Vashti builds', t => {
+  const result = fixture(t).run({ RELEASE_SCOPE: 'kuno' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /1 artifacts.*No upload attempted/);
+  assert.match(result.stdout, /targets: kuno-linux-x86_64/);
+});
+
+test('unknown release scopes fail before signing or upload', t => {
+  const result = fixture(t).run({ RELEASE_SCOPE: 'vasthi' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /RELEASE_SCOPE must be/);
 });

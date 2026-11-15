@@ -1,5 +1,15 @@
 # Kuno and Vashti Coordination
 
+**Hub partial-release coordination (2026-11-14):** Vashti-only publishing is
+explicitly scoped and does not build, rename, or bump Kuno. Hub update resolution
+is per channel/target. Standalone beta consolidation preserves notes and keeps
+any release that still carries the newest Kuno/runtime or other platform build.
+The Hub-served Kuno install script adapts only its default latest-version URL to
+`/releases/latest/kuno-linux-x86_64/VERSION`; explicit `KUNO_VERSION` is unchanged.
+No Kuno source, inference API, installed service, GPU or runtime changed. See
+[release process and local validation](../apps/vashti-hub/docs/release-process.md).
+This note does not authorize deployment, publishing or live artifact deletion.
+
 **Vashti video consumer checkpoint (2026-11-08):** `codex/personal-assistant`
 merged `main` and implements the existing additive video contract without
 changing Kuno. A discovery-gated Video sidebar workspace provides conversational

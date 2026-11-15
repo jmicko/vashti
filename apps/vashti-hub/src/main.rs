@@ -41,6 +41,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 use vashti_update_manifest::{SCHEMA_VERSION, SignedArtifact, verify_release_signature};
 
+mod release_rollup;
+
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
 const GETTING_STARTED_HTML: &str = include_str!("../static/getting-started.html");
@@ -349,6 +351,7 @@ struct PromoteReleaseResponse {
     release: ReleaseResponse,
     latest_version: Option<String>,
     incorporated_versions: Vec<String>,
+    cleanup_failed_versions: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -421,6 +424,13 @@ struct ResetPasswordRequest {
 struct PromoteReleaseRequest {
     #[serde(default)]
     rollup_previous_prereleases: bool,
+    rollup_versions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RollupReleaseRequest {
+    versions: Vec<String>,
 }
 
 struct ParsedUpload {
@@ -541,10 +551,18 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/releases/{version}", delete(delete_release))
         .route("/api/releases/{version}/promote", post(promote_release))
+        .route(
+            "/api/releases/{version}/rollup",
+            get(rollup_preview).post(rollup_release),
+        )
         .route("/api/releases/latest", get(latest_release))
         .route("/api/updates/{channel}/{target}", get(update_manifest))
         .route("/api/stats", get(stats))
         .route("/releases/latest/VERSION", get(latest_version_file))
+        .route(
+            "/releases/latest/{target}/VERSION",
+            get(latest_target_version_file),
+        )
         .route("/releases/latest/SHA256SUMS", get(latest_checksums))
         .route("/releases/latest/{filename}", get(download_latest))
         .route("/releases/{version}/VERSION", get(version_file))
@@ -752,7 +770,7 @@ async fn kuno_install_script(
                 "attachment; filename=\"install-kuno.sh\"",
             ),
         ],
-        KUNO_INSTALL_SH,
+        KUNO_INSTALL_SH.replace("/latest/VERSION", "/latest/kuno-linux-x86_64/VERSION"),
     ))
 }
 
@@ -961,7 +979,14 @@ async fn update_manifest(
     require_claimed(&state.db).await?;
     let channel = validate_update_channel(&channel)?;
     let target = validate_target(&target)?;
-    let version = update_version_for_channel(&state.db, channel).await?;
+    let version = newest_artifact_version(&state.db, channel, &target, true)
+        .await?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "update_not_found",
+                "No signed update is available for this target",
+            )
+        })?;
     let row = sqlx::query(
         r#"
         SELECT r.release_status,
@@ -1027,93 +1052,95 @@ async fn promote_release(
     require_admin_session(&state, &jar).await?;
     let version = normalize_version_label(&version)?.0;
     let request = request.map(|Json(request)| request).unwrap_or_default();
-    let target = sqlx::query(
-        r#"
-        SELECT release_status, notes, version_major, version_minor, version_patch
-        FROM releases
-        WHERE version = ?
-        "#,
-    )
-    .bind(&version)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::not_found("release_not_found", "Release not found"))?;
-    let release_status: String = target.try_get("release_status")?;
-    if release_status != "prerelease" {
-        return Err(AppError::conflict(
-            "release_already_promoted",
-            "Only a prerelease can be promoted",
-        ));
-    }
-
-    require_stable_version(&version)?;
-    let target_version = release_version(&version)?;
-    if newest_version(&state.db, "stable")
-        .await?
-        .map(|latest| release_version(&latest))
-        .transpose()?
-        .is_some_and(|latest| target_version <= latest)
-    {
-        return Err(AppError::conflict(
-            "release_not_newer",
-            "A promoted release must be newer than the current stable release",
-        ));
-    }
-    let target_notes: Option<String> = target.try_get("notes")?;
-    let incorporated = if request.rollup_previous_prereleases {
-        previous_prereleases_for_rollup(&state.db, &version).await?
+    let mut transaction = state.db.begin_with("BEGIN IMMEDIATE").await?;
+    let mut plan = release_rollup::preview(&mut transaction, &version).await?;
+    plan.require_promotion()?;
+    if request.rollup_previous_prereleases {
+        if let Some(versions) = request.rollup_versions {
+            release_rollup::require_confirmed(&plan, &versions)?;
+        }
     } else {
-        Vec::new()
-    };
-    let incorporated_versions = incorporated
-        .iter()
-        .map(|release| release.version.clone())
-        .collect::<Vec<_>>();
-    let merged_notes = merge_release_notes(&version, target_notes.as_deref(), &incorporated);
-
-    let mut transaction = state.db.begin().await?;
-    sqlx::query("UPDATE releases SET release_status = 'released', notes = ? WHERE version = ?")
-        .bind(&merged_notes)
+        plan.preserve_previous();
+    }
+    release_rollup::apply(&mut transaction, &plan, true).await?;
+    sqlx::query("UPDATE release_settings SET latest_version = ?, updated_at = ? WHERE id = 1")
         .bind(&version)
+        .bind(unix_timestamp())
         .execute(&mut *transaction)
         .await?;
-
-    for incorporated_version in &incorporated_versions {
-        sqlx::query("DELETE FROM download_events WHERE release_version = ?")
-            .bind(incorporated_version)
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::query("DELETE FROM release_artifacts WHERE release_version = ?")
-            .bind(incorporated_version)
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::query("DELETE FROM releases WHERE version = ? AND release_status = 'prerelease'")
-            .bind(incorporated_version)
-            .execute(&mut *transaction)
-            .await?;
-    }
-
     transaction.commit().await?;
-    update_latest_version(&state.db).await?;
-
-    for incorporated_version in &incorporated_versions {
-        let artifact_dir = state.config.artifact_dir.join(incorporated_version);
-        if let Err(error) = fs::remove_dir_all(&artifact_dir).await
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(
-                ?error,
-                version = incorporated_version,
-                "failed to remove incorporated prerelease artifacts"
-            );
-        }
-    }
+    let cleanup_failed_versions =
+        cleanup_incorporated_artifacts(&state, &plan.incorporated_versions).await;
 
     Ok(Json(PromoteReleaseResponse {
         release: load_release(&state.db, &version).await?,
         latest_version: latest_version_optional(&state.db).await?,
-        incorporated_versions,
+        incorporated_versions: plan.incorporated_versions,
+        cleanup_failed_versions,
     }))
+}
+
+async fn rollup_preview(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    AxumPath(version): AxumPath<String>,
+) -> Result<Json<release_rollup::RollupPlan>, AppError> {
+    require_same_origin(&headers)?;
+    require_admin_session(&state, &jar).await?;
+    let version = normalize_version_label(&version)?.0;
+    let mut connection = state.db.acquire().await?;
+    Ok(Json(
+        release_rollup::preview(&mut connection, &version).await?,
+    ))
+}
+
+async fn rollup_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    AxumPath(version): AxumPath<String>,
+    Json(request): Json<RollupReleaseRequest>,
+) -> Result<Json<PromoteReleaseResponse>, AppError> {
+    require_same_origin(&headers)?;
+    require_admin_session(&state, &jar).await?;
+    let version = normalize_version_label(&version)?.0;
+    let mut transaction = state.db.begin_with("BEGIN IMMEDIATE").await?;
+    let plan = release_rollup::preview(&mut transaction, &version).await?;
+    release_rollup::require_confirmed(&plan, &request.versions)?;
+    if plan.incorporated_versions.is_empty() {
+        return Err(AppError::conflict(
+            "nothing_to_rollup",
+            "No superseded prereleases can be removed",
+        ));
+    }
+    release_rollup::apply(&mut transaction, &plan, false).await?;
+    transaction.commit().await?;
+    let cleanup_failed_versions =
+        cleanup_incorporated_artifacts(&state, &plan.incorporated_versions).await;
+    Ok(Json(PromoteReleaseResponse {
+        release: load_release(&state.db, &version).await?,
+        latest_version: latest_version_optional(&state.db).await?,
+        incorporated_versions: plan.incorporated_versions,
+        cleanup_failed_versions,
+    }))
+}
+
+async fn cleanup_incorporated_artifacts(state: &AppState, versions: &[String]) -> Vec<String> {
+    let mut failed = Vec::new();
+    for version in versions {
+        if let Err(error) = fs::remove_dir_all(state.config.artifact_dir.join(version)).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                ?error,
+                version,
+                "failed to remove incorporated prerelease artifacts"
+            );
+            failed.push(version.clone());
+        }
+    }
+    failed
 }
 
 async fn delete_release(
@@ -1279,6 +1306,23 @@ async fn latest_version_file(State(state): State<AppState>) -> Result<Response, 
     Ok(text_file("VERSION", latest_version(&state.db).await?))
 }
 
+async fn latest_target_version_file(
+    State(state): State<AppState>,
+    AxumPath(target): AxumPath<String>,
+) -> Result<Response, AppError> {
+    require_claimed(&state.db).await?;
+    let target = validate_target(&target)?;
+    let version = newest_artifact_version(&state.db, "stable", &target, false)
+        .await?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "artifact_not_found",
+                "No stable build is available for this target",
+            )
+        })?;
+    Ok(text_file("VERSION", version))
+}
+
 async fn version_file(
     State(state): State<AppState>,
     AxumPath(version): AxumPath<String>,
@@ -1309,7 +1353,7 @@ async fn download_latest(
     AxumPath(filename): AxumPath<String>,
 ) -> Result<Response, AppError> {
     require_claimed(&state.db).await?;
-    let version = latest_version(&state.db).await?;
+    let (version, filename) = latest_artifact_location(&state.db, &filename).await?;
     download_artifact(&state, &method, &headers, &version, &filename, "latest").await
 }
 
@@ -1634,6 +1678,60 @@ async fn newest_version(db: &SqlitePool, channel: &str) -> Result<Option<String>
         .map(|(_, label)| label))
 }
 
+async fn newest_artifact_version(
+    db: &SqlitePool,
+    channel: &str,
+    target: &str,
+    signed_only: bool,
+) -> Result<Option<String>, AppError> {
+    let labels = sqlx::query_scalar::<_, String>(
+        "SELECT r.version FROM releases r JOIN release_artifacts a ON a.release_version = r.version
+         WHERE (r.release_status = 'released' OR (? = 'prerelease' AND r.release_status = 'prerelease'))
+           AND a.target = ? AND (? = 0 OR a.update_signature IS NOT NULL)",
+    ).bind(channel).bind(target).bind(signed_only).fetch_all(db).await?;
+    let mut versions = Vec::new();
+    for label in labels {
+        let version = release_version(&label)?;
+        if channel == "prerelease" || version.pre.is_empty() {
+            versions.push((version, label));
+        }
+    }
+    Ok(versions
+        .into_iter()
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, label)| label))
+}
+
+async fn latest_artifact_location(
+    db: &SqlitePool,
+    filename: &str,
+) -> Result<(String, String), AppError> {
+    let rows = sqlx::query(
+        "SELECT r.version, a.filename FROM releases r JOIN release_artifacts a ON a.release_version = r.version
+         WHERE r.release_status = 'released' AND
+           (a.filename = ? OR (? = 'vashti-android.apk' AND a.target = 'android-universal'))",
+    ).bind(filename).bind(filename).fetch_all(db).await?;
+    let mut versions = Vec::new();
+    for row in rows {
+        let label: String = row.try_get("version")?;
+        let version = release_version(&label)?;
+        if version.pre.is_empty() {
+            versions.push((version, label, row.try_get::<String, _>("filename")?));
+        }
+    }
+    versions
+        .into_iter()
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, version, filename)| (version, filename))
+        .ok_or_else(|| {
+            AppError::not_found(
+                "artifact_not_found",
+                "No stable build is available for this download",
+            )
+        })
+}
+
+#[cfg(test)]
 async fn update_version_for_channel(db: &SqlitePool, channel: &str) -> Result<String, AppError> {
     newest_version(db, channel).await?.ok_or_else(|| {
         AppError::not_found(
@@ -1647,39 +1745,6 @@ async fn update_version_for_channel(db: &SqlitePool, channel: &str) -> Result<St
 struct PrereleaseRollup {
     version: String,
     notes: Option<String>,
-}
-
-async fn previous_prereleases_for_rollup(
-    db: &SqlitePool,
-    target_version: &str,
-) -> Result<Vec<PrereleaseRollup>, AppError> {
-    let latest = newest_version(db, "stable")
-        .await?
-        .map(|v| release_version(&v))
-        .transpose()?;
-    let target = release_version(target_version)?;
-    let rows = sqlx::query(
-        "SELECT version, notes FROM releases WHERE release_status = 'prerelease' AND version != ?",
-    )
-    .bind(target_version)
-    .fetch_all(db)
-    .await?;
-    let mut releases = Vec::new();
-    for row in rows {
-        let version: String = row.try_get("version")?;
-        let parsed = release_version(&version)?;
-        if parsed < target && latest.as_ref().is_none_or(|latest| &parsed > latest) {
-            releases.push((
-                parsed,
-                PrereleaseRollup {
-                    version,
-                    notes: row.try_get("notes")?,
-                },
-            ));
-        }
-    }
-    releases.sort_by(|a, b| b.0.cmp(&a.0));
-    Ok(releases.into_iter().map(|(_, release)| release).collect())
 }
 
 fn merge_release_notes(
@@ -2634,6 +2699,513 @@ mod tests {
         .expect("test release should insert");
     }
 
+    async fn insert_test_artifact(
+        db: &SqlitePool,
+        version: &str,
+        target: &str,
+        bytes: i64,
+    ) -> String {
+        let filename = match target {
+            "linux-x86_64" => "vashti-linux-x86_64.tar.gz".to_owned(),
+            "android-universal" => format!("vashti-{}.apk", version.trim_start_matches('v')),
+            _ => format!("{target}.tar.gz"),
+        };
+        sqlx::query("INSERT INTO release_artifacts (id,release_version,target,filename,content_type,size_bytes,sha256,storage_path,update_signature,created_at) VALUES (?,?,?,?,?,?,?,?,?,1)")
+            .bind(Uuid::new_v4().to_string()).bind(version).bind(target).bind(&filename)
+            .bind("application/octet-stream").bind(bytes).bind("0".repeat(64)).bind("/unused-test-artifact")
+            .bind("synthetic-test-signature").execute(db).await.unwrap();
+        filename
+    }
+
+    async fn rollup_test_state() -> (tempfile::TempDir, AppState, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let db = release_test_db().await;
+        create_admin(&db, "synthetic-test-password").await.unwrap();
+        let session = create_admin_session(&db).await.unwrap();
+        let config = Config {
+            data_dir: directory.path().to_owned(),
+            artifact_dir: directory.path().join("artifacts"),
+            database_path: directory.path().join("hub.db"),
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            max_upload_bytes: 1024 * 1024,
+            trust_proxy_headers: false,
+            secure_session_cookies: false,
+        };
+        fs::create_dir(&config.artifact_dir).await.unwrap();
+        (
+            directory,
+            AppState {
+                config,
+                db,
+                rate_limiter: Arc::new(RateLimiter::new()),
+                upload_keys: Arc::new(UploadKeyStore::new()),
+            },
+            session,
+        )
+    }
+
+    async fn seed_rollup_releases(state: &AppState) {
+        for (version, status, targets) in [
+            (
+                "v0.12.0",
+                "released",
+                vec!["linux-x86_64", "kuno-linux-x86_64"],
+            ),
+            (
+                "v0.13.0-beta.1",
+                "prerelease",
+                vec!["linux-x86_64", "android-universal", "kuno-linux-x86_64"],
+            ),
+            (
+                "v0.13.0-beta.2",
+                "prerelease",
+                vec![
+                    "linux-x86_64",
+                    "android-universal",
+                    "kuno-linux-x86_64",
+                    "kuno-sycl-linux-x86_64",
+                ],
+            ),
+            (
+                "v0.13.0-beta.3",
+                "prerelease",
+                vec![
+                    "linux-x86_64",
+                    "android-universal",
+                    "kuno-linux-x86_64",
+                    "kuno-sycl-linux-x86_64",
+                ],
+            ),
+            (
+                "v0.13.0-beta.4",
+                "prerelease",
+                vec!["linux-x86_64", "android-universal"],
+            ),
+        ] {
+            insert_test_release(&state.db, version, status).await;
+            sqlx::query("UPDATE releases SET notes = ? WHERE version = ?")
+                .bind(format!("# {version}\n\nChange from {version}."))
+                .bind(version)
+                .execute(&state.db)
+                .await
+                .unwrap();
+            let directory = state.config.artifact_dir.join(version);
+            fs::create_dir(&directory).await.unwrap();
+            for target in targets {
+                let filename = insert_test_artifact(&state.db, version, target, 4).await;
+                let path = directory.join(&filename);
+                fs::write(&path, b"test").await.unwrap();
+                sqlx::query("UPDATE release_artifacts SET storage_path = ? WHERE release_version = ? AND target = ?")
+                    .bind(path.to_string_lossy().to_string()).bind(version).bind(target).execute(&state.db).await.unwrap();
+            }
+        }
+        update_latest_version(&state.db).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn beta_rollup_preserves_stable_and_current_component_builds() {
+        let (_directory, state, session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        let plan =
+            release_rollup::preview(&mut state.db.acquire().await.unwrap(), "v0.13.0-beta.4")
+                .await
+                .unwrap();
+        assert_eq!(
+            plan.incorporated_versions,
+            ["v0.13.0-beta.2", "v0.13.0-beta.1"]
+        );
+        assert_eq!(plan.reclaimable_bytes, 28);
+        assert_eq!(plan.retained_releases.len(), 1);
+        assert_eq!(plan.retained_releases[0].version, "v0.13.0-beta.3");
+        assert_eq!(
+            plan.retained_releases[0].targets,
+            ["kuno-linux-x86_64", "kuno-sycl-linux-x86_64"]
+        );
+        let jar = CookieJar::new().add(Cookie::new(ADMIN_SESSION_COOKIE, session));
+        let Json(result) = rollup_release(
+            State(state.clone()),
+            HeaderMap::new(),
+            jar,
+            AxumPath("v0.13.0-beta.4".into()),
+            Json(RollupReleaseRequest {
+                versions: plan.incorporated_versions.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.latest_version.as_deref(), Some("v0.12.0"));
+        assert_eq!(result.release.release_status, "prerelease");
+        assert_eq!(result.incorporated_versions, plan.incorporated_versions);
+        assert!(result.cleanup_failed_versions.is_empty());
+        let notes = result.release.notes.unwrap();
+        assert!(notes.contains("Change from v0.13.0-beta.2."));
+        assert!(notes.contains("Change from v0.13.0-beta.1."));
+        assert!(!notes.contains("Change from v0.13.0-beta.3."));
+        for version in ["v0.13.0-beta.1", "v0.13.0-beta.2"] {
+            assert!(!state.config.artifact_dir.join(version).exists());
+            assert!(load_release(&state.db, version).await.is_err());
+        }
+        assert!(
+            state
+                .config
+                .artifact_dir
+                .join("v0.13.0-beta.3/kuno-linux-x86_64.tar.gz")
+                .exists()
+        );
+        assert_eq!(
+            newest_artifact_version(&state.db, "prerelease", "kuno-linux-x86_64", true)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("v0.13.0-beta.3")
+        );
+    }
+
+    #[tokio::test]
+    async fn rollup_confirmation_cannot_delete_unseen_or_newly_needed_builds() {
+        let (_directory, state, session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        let plan =
+            release_rollup::preview(&mut state.db.acquire().await.unwrap(), "v0.13.0-beta.4")
+                .await
+                .unwrap();
+        insert_test_artifact(&state.db, "v0.13.0-beta.4", "kuno-linux-x86_64", 4).await;
+        insert_test_artifact(&state.db, "v0.13.0-beta.4", "kuno-sycl-linux-x86_64", 4).await;
+        let error = rollup_release(
+            State(state.clone()),
+            HeaderMap::new(),
+            CookieJar::new().add(Cookie::new(ADMIN_SESSION_COOKIE, session)),
+            AxumPath("v0.13.0-beta.4".into()),
+            Json(RollupReleaseRequest {
+                versions: plan.incorporated_versions,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "rollup_changed");
+        assert_eq!(load_releases(&state.db).await.unwrap().len(), 5);
+        assert!(state.config.artifact_dir.join("v0.13.0-beta.1").exists());
+    }
+
+    #[tokio::test]
+    async fn component_channels_do_not_follow_unrelated_release_versions() {
+        let db = release_test_db().await;
+        for (version, status, targets) in [
+            (
+                "v0.12.0",
+                "released",
+                vec!["linux-x86_64", "kuno-linux-x86_64", "android-universal"],
+            ),
+            (
+                "v0.12.1",
+                "released",
+                vec!["linux-x86_64", "android-universal"],
+            ),
+            ("v0.13.0-beta.2", "prerelease", vec!["kuno-linux-x86_64"]),
+            (
+                "v0.13.0-beta.10",
+                "prerelease",
+                vec!["linux-x86_64", "android-universal"],
+            ),
+        ] {
+            insert_test_release(&db, version, status).await;
+            for target in targets {
+                insert_test_artifact(&db, version, target, 4).await;
+            }
+        }
+        for (channel, target, expected) in [
+            ("stable", "kuno-linux-x86_64", "v0.12.0"),
+            ("stable", "linux-x86_64", "v0.12.1"),
+            ("prerelease", "kuno-linux-x86_64", "v0.13.0-beta.2"),
+            ("prerelease", "android-universal", "v0.13.0-beta.10"),
+        ] {
+            assert_eq!(
+                newest_artifact_version(&db, channel, target, true)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            latest_artifact_location(&db, "kuno-linux-x86_64.tar.gz")
+                .await
+                .unwrap()
+                .0,
+            "v0.12.0"
+        );
+        assert_eq!(
+            latest_artifact_location(&db, "vashti-android.apk")
+                .await
+                .unwrap(),
+            ("v0.12.1".into(), "vashti-0.12.1.apk".into())
+        );
+        assert!(
+            newest_artifact_version(&db, "stable", "windows-x86_64", true)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("UPDATE release_artifacts SET update_signature = NULL WHERE release_version = 'v0.13.0-beta.2'").execute(&db).await.unwrap();
+        assert_eq!(
+            newest_artifact_version(&db, "prerelease", "kuno-linux-x86_64", true)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("v0.12.0")
+        );
+    }
+
+    #[tokio::test]
+    async fn rollup_keeps_latest_signed_updates_even_with_newer_unsigned_legacy_builds() {
+        let db = release_test_db().await;
+        for version in ["v0.13.0-beta.1", "v0.13.0-beta.2", "v0.13.0-beta.3"] {
+            insert_test_release(&db, version, "prerelease").await;
+        }
+        for version in ["v0.13.0-beta.1", "v0.13.0-beta.2"] {
+            insert_test_artifact(&db, version, "kuno-linux-x86_64", 4).await;
+        }
+        insert_test_artifact(&db, "v0.13.0-beta.3", "linux-x86_64", 4).await;
+        sqlx::query("UPDATE release_artifacts SET update_signature = NULL WHERE release_version = 'v0.13.0-beta.2'")
+            .execute(&db).await.unwrap();
+        let plan = release_rollup::preview(&mut db.acquire().await.unwrap(), "v0.13.0-beta.3")
+            .await
+            .unwrap();
+        assert!(plan.incorporated_versions.is_empty());
+        assert_eq!(plan.retained_releases.len(), 2);
+    }
+
+    #[test]
+    fn hub_kuno_installer_uses_component_specific_default_without_changing_explicit_versions() {
+        assert_eq!(KUNO_INSTALL_SH.matches("/latest/VERSION").count(), 1);
+        let served =
+            KUNO_INSTALL_SH.replace("/latest/VERSION", "/latest/kuno-linux-x86_64/VERSION");
+        assert!(served.contains("/latest/kuno-linux-x86_64/VERSION"));
+        assert!(served.contains("version=\"${KUNO_VERSION:-latest}\""));
+        assert!(INSTALL_SH.contains("/latest/${os}-${arch}/VERSION"));
+    }
+
+    #[tokio::test]
+    async fn repeated_beta_rollups_keep_each_change_once() {
+        let (_directory, state, session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        for version in ["v0.13.0-beta.2", "v0.13.0-beta.4"] {
+            let plan = release_rollup::preview(&mut state.db.acquire().await.unwrap(), version)
+                .await
+                .unwrap();
+            let _ = rollup_release(
+                State(state.clone()),
+                HeaderMap::new(),
+                CookieJar::new().add(Cookie::new(ADMIN_SESSION_COOKIE, session.clone())),
+                AxumPath(version.into()),
+                Json(RollupReleaseRequest {
+                    versions: plan.incorporated_versions,
+                }),
+            )
+            .await
+            .unwrap();
+        }
+        let notes = load_release(&state.db, "v0.13.0-beta.4")
+            .await
+            .unwrap()
+            .notes
+            .unwrap();
+        for version in ["v0.13.0-beta.1", "v0.13.0-beta.2", "v0.13.0-beta.4"] {
+            assert_eq!(notes.matches(&format!("Change from {version}.")).count(), 1);
+        }
+        assert_eq!(latest_version(&state.db).await.unwrap(), "v0.12.0");
+        assert!(
+            release_rollup::preview(&mut state.db.acquire().await.unwrap(), "v0.12.0")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn promotion_uses_the_same_safe_cleanup_plan_and_beta_labels_stay_staged() {
+        let (_directory, state, session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        let jar = CookieJar::new().add(Cookie::new(ADMIN_SESSION_COOKIE, session));
+        let error = promote_release(
+            State(state.clone()),
+            HeaderMap::new(),
+            jar.clone(),
+            AxumPath("v0.13.0-beta.4".into()),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "prerelease_version");
+        insert_test_release(&state.db, "v0.13.0", "prerelease").await;
+        insert_test_artifact(&state.db, "v0.13.0", "linux-x86_64", 4).await;
+        insert_test_artifact(&state.db, "v0.13.0", "android-universal", 4).await;
+        let plan = release_rollup::preview(&mut state.db.acquire().await.unwrap(), "v0.13.0")
+            .await
+            .unwrap();
+        let Json(result) = promote_release(
+            State(state.clone()),
+            HeaderMap::new(),
+            jar,
+            AxumPath("v0.13.0".into()),
+            Some(Json(PromoteReleaseRequest {
+                rollup_previous_prereleases: true,
+                rollup_versions: Some(plan.incorporated_versions),
+            })),
+        )
+        .await
+        .unwrap();
+        assert!(result.release.is_latest);
+        assert_eq!(result.release.release_status, "released");
+        assert_eq!(latest_version(&state.db).await.unwrap(), "v0.13.0");
+        assert!(load_release(&state.db, "v0.13.0-beta.3").await.is_ok());
+        assert!(load_release(&state.db, "v0.13.0-beta.4").await.is_err());
+        assert_eq!(
+            newest_artifact_version(&state.db, "stable", "kuno-linux-x86_64", true)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("v0.12.0")
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_rollup_rolls_back_notes_and_records_before_touching_files() {
+        let (_directory, state, session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        let before = load_release(&state.db, "v0.13.0-beta.4")
+            .await
+            .unwrap()
+            .notes;
+        let plan =
+            release_rollup::preview(&mut state.db.acquire().await.unwrap(), "v0.13.0-beta.4")
+                .await
+                .unwrap();
+        sqlx::query("CREATE TRIGGER fail_rollup BEFORE DELETE ON releases WHEN OLD.version = 'v0.13.0-beta.1' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
+            .execute(&state.db).await.unwrap();
+        assert!(
+            rollup_release(
+                State(state.clone()),
+                HeaderMap::new(),
+                CookieJar::new().add(Cookie::new(ADMIN_SESSION_COOKIE, session)),
+                AxumPath("v0.13.0-beta.4".into()),
+                Json(RollupReleaseRequest {
+                    versions: plan.incorporated_versions
+                })
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(load_releases(&state.db).await.unwrap().len(), 5);
+        assert_eq!(
+            load_release(&state.db, "v0.13.0-beta.4")
+                .await
+                .unwrap()
+                .notes,
+            before
+        );
+        for version in ["v0.13.0-beta.1", "v0.13.0-beta.2"] {
+            assert!(state.config.artifact_dir.join(version).exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn rollup_http_requires_admin_same_origin_and_exact_confirmation() {
+        use axum::{body::to_bytes, http::Request};
+        use tower::ServiceExt;
+        let (_directory, state, session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        let path = "/api/releases/v0.13.0-beta.4/rollup";
+        for (method, cookie, origin, expected) in [
+            ("GET", false, "http://hub.test", StatusCode::UNAUTHORIZED),
+            ("POST", false, "http://hub.test", StatusCode::UNAUTHORIZED),
+            ("POST", true, "http://other.test", StatusCode::FORBIDDEN),
+            ("POST", true, "http://hub.test", StatusCode::CONFLICT),
+            ("GET", true, "http://hub.test", StatusCode::OK),
+        ] {
+            let mut request = Request::builder()
+                .method(method)
+                .uri(path)
+                .header(header::HOST, "hub.test")
+                .header(header::ORIGIN, origin)
+                .header(header::CONTENT_TYPE, "application/json");
+            if cookie {
+                request =
+                    request.header(header::COOKIE, format!("{ADMIN_SESSION_COOKIE}={session}"));
+            }
+            let response = router(state.clone())
+                .oneshot(request.body(Body::from(r#"{"versions":[]}"#)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if method == "GET" && cookie {
+                let body: serde_json::Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap())
+                        .unwrap();
+                assert_eq!(body["retained_releases"][0]["version"], "v0.13.0-beta.3");
+                assert_eq!(body["incorporated_versions"].as_array().unwrap().len(), 2);
+            }
+        }
+        assert_eq!(load_releases(&state.db).await.unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn latest_component_http_downloads_and_versions_keep_independent_paths() {
+        use axum::{body::to_bytes, http::Request};
+        use tower::ServiceExt;
+        let (_directory, state, _session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        insert_test_release(&state.db, "v0.12.1", "released").await;
+        insert_test_artifact(&state.db, "v0.12.1", "linux-x86_64", 4).await;
+        update_latest_version(&state.db).await.unwrap();
+        for (path, expected) in [
+            ("/releases/latest/VERSION", "v0.12.1"),
+            ("/releases/latest/kuno-linux-x86_64/VERSION", "v0.12.0"),
+            ("/releases/latest/linux-x86_64/VERSION", "v0.12.1"),
+            ("/releases/latest/kuno-linux-x86_64.tar.gz", "test"),
+        ] {
+            let response = router(state.clone())
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                to_bytes(response.into_body(), 8192).await.unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_failures_are_reported_instead_of_claiming_disk_space_was_freed() {
+        let (_directory, state, _session) = rollup_test_state().await;
+        let version = "v0.13.0-beta.1".to_owned();
+        fs::write(state.config.artifact_dir.join(&version), b"not a directory")
+            .await
+            .unwrap();
+        assert_eq!(
+            cleanup_incorporated_artifacts(&state, std::slice::from_ref(&version)).await,
+            [version]
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "manual browser fixture; serves synthetic releases until interrupted"]
+    async fn manual_hub_browser_fixture() {
+        let (_directory, state, _session) = rollup_test_state().await;
+        seed_rollup_releases(&state).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:17884")
+            .await
+            .unwrap();
+        println!("Isolated Hub browser fixture: http://127.0.0.1:17884/admin");
+        axum::serve(
+            listener,
+            router(state).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
+    }
+
     fn artifact(filename: &str, bytes: &[u8]) -> UploadedArtifact {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), bytes).unwrap();
@@ -2790,16 +3362,10 @@ mod tests {
             "v0.9.3"
         );
 
-        let candidates = previous_prereleases_for_rollup(&db, "v0.9.2")
+        let candidates = release_rollup::preview(&mut db.acquire().await.unwrap(), "v0.9.2")
             .await
             .expect("rollup candidates should load");
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|release| release.version.as_str())
-                .collect::<Vec<_>>(),
-            vec!["v0.9.1"]
-        );
+        assert_eq!(candidates.incorporated_versions, vec!["v0.9.1"]);
     }
     #[test]
     fn prerelease_labels_are_canonical_and_cannot_be_promoted() {
@@ -2834,16 +3400,6 @@ mod tests {
             "v0.13.0-beta.10"
         );
         let expected = ["v0.13.0-beta.10", "v0.13.0-beta.2", "v0.13.0-beta.1"];
-        let candidates = previous_prereleases_for_rollup(&db, "v0.13.0")
-            .await
-            .unwrap();
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|r| r.version.as_str())
-                .collect::<Vec<_>>(),
-            expected
-        );
         let releases = load_releases(&db).await.unwrap();
         assert_eq!(
             releases[..3]
@@ -2853,6 +3409,10 @@ mod tests {
             expected
         );
         insert_test_release(&db, "v0.13.0", "prerelease").await;
+        let candidates = release_rollup::preview(&mut db.acquire().await.unwrap(), "v0.13.0")
+            .await
+            .unwrap();
+        assert_eq!(candidates.incorporated_versions, expected);
         assert_eq!(
             update_version_for_channel(&db, "prerelease").await.unwrap(),
             "v0.13.0"

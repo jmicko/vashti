@@ -147,20 +147,19 @@
         <section class="admin-tool">
           <h2>Release History</h2>
           <p class="muted">
-            Uploads remain staged until promoted or deleted. Versions with a beta or other prerelease suffix cannot become stable; upload the final version without the suffix first. Promote a tested prerelease to make it
-            the latest stable install.
+            Roll earlier prereleases into a newer candidate to preserve their notes and remove superseded builds without changing stable. Versions with a beta suffix cannot become stable; upload the final version without the suffix first.
           </p>
           <div id="release-list" class="release-list">
             <p class="muted">Loading releases...</p>
           </div>
         </section>
 
-        <dialog id="promotion-dialog" class="promotion-dialog">
+        <dialog id="promotion-dialog" class="promotion-dialog" aria-labelledby="promotion-title">
           <form id="promotion-form">
             <div>
-              <p class="eyebrow">Promote Release</p>
-              <h2 id="promotion-title">Promote prerelease</h2>
-              <p class="muted">
+              <p class="eyebrow" id="promotion-heading">Promote Release</p>
+              <h2 id="promotion-title" tabindex="-1">Promote prerelease</h2>
+              <p class="muted" id="promotion-summary">
                 This makes the selected version the latest stable release.
               </p>
             </div>
@@ -172,6 +171,7 @@
               </span>
             </label>
             <p id="promotion-preserve-note" class="muted"></p>
+            <p id="promotion-error" class="status-line danger" role="alert"></p>
             <div class="button-row promotion-dialog-actions">
               <button id="promotion-cancel" type="button">Cancel</button>
               <button type="submit">Promote to latest</button>
@@ -207,8 +207,11 @@
       const promotionRollup = document.querySelector("#promotion-rollup");
       const promotionRollupDetail = document.querySelector("#promotion-rollup-detail");
       const promotionPreserveNote = document.querySelector("#promotion-preserve-note");
+      const promotionError = document.querySelector("#promotion-error");
       let loadedReleases = [];
       let promotionVersion = null;
+      let promotionPlan = null;
+      let releaseAction = "promote";
 
       function showPanel(panel) {
         for (const element of [setupPanel, loginPanel, adminPanel]) {
@@ -365,6 +368,14 @@
             promoteButton.textContent = "Promote to latest";
             actions.append(promoteButton);
           }
+          if (release.is_prerelease && rollupCandidatesFor(release.version).length > 0) {
+            const rollupButton = document.createElement("button");
+            rollupButton.type = "button";
+            rollupButton.className = "secondary-button";
+            rollupButton.dataset.rollupVersion = release.version;
+            rollupButton.textContent = "Roll in earlier prereleases";
+            actions.append(rollupButton);
+          }
           const deleteButton = document.createElement("button");
           deleteButton.type = "button";
           deleteButton.className = "danger-button";
@@ -404,19 +415,41 @@
           .sort((left, right) => compareVersions(right.version, left.version));
       }
 
-      function openPromotionDialog(version) {
-        const candidates = rollupCandidatesFor(version);
+      async function openPromotionDialog(version, action = "promote") {
+        const plan = await requestJson(`/api/releases/${encodeURIComponent(version)}/rollup`);
+        const candidates = plan.incorporated_versions;
         promotionVersion = version;
-        promotionTitle.textContent = `Promote ${version}`;
+        promotionPlan = plan;
+        releaseAction = action;
+        const rollupOnly = action === "rollup";
+        document.querySelector("#promotion-heading").textContent = rollupOnly ? "Consolidate Prereleases" : "Promote Release";
+        promotionTitle.textContent = rollupOnly ? `Roll into ${version}` : `Promote ${version}`;
+        document.querySelector("#promotion-summary").textContent = rollupOnly
+          ? "This candidate stays a prerelease. The stable release is unchanged."
+          : "This makes the selected version the latest stable release.";
         promotionRollup.checked = candidates.length > 0;
+        promotionRollup.disabled = rollupOnly;
+        promotionRollup.hidden = rollupOnly;
         promotionRollupOption.classList.toggle("hidden", candidates.length === 0);
         promotionRollupDetail.textContent = candidates.length === 0
           ? ""
-          : `Merge notes from ${candidates.map((release) => release.version).join(", ")}, then delete those releases and their artifacts.`;
-        promotionPreserveNote.textContent = candidates.length === 0
+          : `Merge notes from ${candidates.join(", ")}, then permanently delete those releases and their artifacts. Estimated space recovered: ${formatBytes(plan.reclaimable_bytes)}.`;
+        const retained = (plan.retained_releases || []).map(release =>
+          `${release.version} (${release.targets.map(target => VashtiReleaseUI.artifactPresentation({ target, filename: target }).title).join(", ")})`
+        );
+        const preserveNote = candidates.length === 0
           ? "No earlier staged releases are eligible for cleanup."
+          : rollupOnly ? "The selected candidate's files are not changed. This cannot be undone."
           : "Leave this unchecked to preserve every earlier prerelease unchanged.";
+        promotionPreserveNote.textContent = preserveNote + (retained.length
+          ? ` Kept because they contain the newest builds of these components: ${retained.join("; ")}.` : "");
+        const submitButton = promotionForm.querySelector('[type="submit"]');
+        submitButton.textContent = rollupOnly ? "Roll in prereleases" : "Promote to latest";
+        submitButton.disabled = rollupOnly && candidates.length === 0;
+        promotionError.textContent = "";
         promotionDialog.showModal();
+        promotionTitle.focus({ preventScroll: true });
+        promotionDialog.scrollTop = 0;
       }
 
       async function requestJson(url, options = {}) {
@@ -569,11 +602,18 @@
       });
 
       releaseList.addEventListener("click", async (event) => {
-        const promoteButton = event.target.closest("[data-promote-version]");
-        if (promoteButton) {
-          const version = promoteButton.dataset.promoteVersion;
+        const actionButton = event.target.closest("[data-promote-version], [data-rollup-version]");
+        if (actionButton) {
+          const version = actionButton.dataset.promoteVersion || actionButton.dataset.rollupVersion;
           if (!version) return;
-          openPromotionDialog(version);
+          actionButton.disabled = true;
+          try {
+            await openPromotionDialog(version, actionButton.dataset.rollupVersion ? "rollup" : "promote");
+          } catch (error) {
+            setMessage(error.message, true);
+          } finally {
+            actionButton.disabled = false;
+          }
           return;
         }
 
@@ -614,36 +654,46 @@
       });
 
       promotionDialog.addEventListener("click", (event) => {
-        if (event.target === promotionDialog) promotionDialog.close();
+        if (event.target === promotionDialog && !document.querySelector("#promotion-cancel").disabled) promotionDialog.close();
+      });
+      promotionDialog.addEventListener("cancel", (event) => {
+        if (document.querySelector("#promotion-cancel").disabled) event.preventDefault();
       });
 
       promotionForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        if (!promotionVersion) return;
+        if (!promotionVersion || !promotionPlan) return;
         const submitButton = promotionForm.querySelector('[type="submit"]');
+        if (submitButton.disabled) return;
         try {
           submitButton.disabled = true;
+          document.querySelector("#promotion-cancel").disabled = true;
           const body = await requestJson(
-            `/api/releases/${encodeURIComponent(promotionVersion)}/promote`,
+            `/api/releases/${encodeURIComponent(promotionVersion)}/${releaseAction}`,
             {
               method: "POST",
-              body: JSON.stringify({
-                rollup_previous_prereleases: promotionRollup.checked
+              body: JSON.stringify(releaseAction === "rollup" ? { versions: promotionPlan.incorporated_versions } : {
+                rollup_previous_prereleases: promotionRollup.checked,
+                rollup_versions: promotionPlan.incorporated_versions
               })
             }
           );
           const incorporated = body.incorporated_versions || [];
-          setMessage(
-            incorporated.length === 0
+          let message = releaseAction === "rollup"
+            ? `${promotionVersion} is still a prerelease; incorporated ${incorporated.join(", ")}. Stable is unchanged.`
+            : incorporated.length === 0
               ? `${promotionVersion} promoted to latest.`
-              : `${promotionVersion} promoted; incorporated ${incorporated.join(", ")}.`
-          );
+              : `${promotionVersion} promoted; incorporated ${incorporated.join(", ")}.`;
+          const failures = body.cleanup_failed_versions || [];
+          if (failures.length) message += ` Notes were preserved, but artifact files could not be removed for ${failures.join(", ")}. Check server storage permissions.`;
+          setMessage(message, failures.length > 0);
           promotionDialog.close();
           await loadReleases();
         } catch (error) {
-          setMessage(error.message, true);
+          promotionError.textContent = error.message;
         } finally {
           submitButton.disabled = false;
+          document.querySelector("#promotion-cancel").disabled = false;
         }
       });
 

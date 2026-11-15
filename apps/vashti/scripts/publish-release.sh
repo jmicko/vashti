@@ -10,6 +10,11 @@ signing_key="${VASHTI_RELEASE_SIGNING_KEY:-$repo_root/.private/keys/vashti-relea
 public_key_file="$repo_root/crates/vashti-update-manifest/release-public-key.txt"
 notes="${NOTES:-}"
 notes_file="${RELEASE_NOTES_FILE:-}"
+scope="${RELEASE_SCOPE:-auto}"
+case "$scope" in
+    auto|all|vashti|kuno) ;;
+    *) echo 'RELEASE_SCOPE must be auto, all, vashti, or kuno' >&2; exit 1 ;;
+esac
 declare -a targets=()
 declare -a artifacts=()
 declare -a signatures=()
@@ -43,9 +48,24 @@ else
     fi
 fi
 
+if [[ "$scope" == vashti || "$scope" == kuno ]]; then
+    selected_targets=()
+    selected_artifacts=()
+    for index in "${!targets[@]}"; do
+        if { [[ "$scope" == kuno && "${targets[$index]}" == kuno-* ]] ||
+             [[ "$scope" == vashti && "${targets[$index]}" != kuno-* ]]; }; then
+            selected_targets+=("${targets[$index]}")
+            selected_artifacts+=("${artifacts[$index]}")
+        fi
+    done
+    targets=("${selected_targets[@]}")
+    artifacts=("${selected_artifacts[@]}")
+fi
+
 required_targets=()
 if [[ "${REQUIRE_COMPLETE_RELEASE:-0}" == 1 ]]; then
-    required_targets+=(linux-x86_64 android-universal kuno-linux-x86_64)
+    if [[ "$scope" != kuno ]]; then required_targets+=(linux-x86_64 android-universal); fi
+    if [[ "$scope" != vashti ]]; then required_targets+=(kuno-linux-x86_64); fi
 fi
 if [[ "${REQUIRE_KUNO_SYCL_RUNTIME:-0}" == 1 ]]; then
     required_targets+=(kuno-sycl-linux-x86_64)
@@ -138,6 +158,7 @@ for index in "${!artifacts[@]}"; do
 done
 
 if [[ "${CHECK_ONLY:-0}" == 1 ]]; then
+    printf 'Release scope: %s; targets: %s\n' "$scope" "${targets[*]}"
     printf 'Validated signatures for %s (%s artifacts). No upload attempted.\n' "$version" "${#artifacts[@]}"
     exit 0
 fi
