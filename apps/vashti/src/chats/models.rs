@@ -27,7 +27,7 @@ pub struct ChatToolPreferences {
     pub tools: HashMap<String, bool>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct ChatInferenceSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
@@ -55,6 +55,26 @@ pub struct ChatInferenceSettings {
     pub num_thread: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
+}
+
+impl ChatInferenceSettings {
+    pub fn with_defaults(&self, defaults: &Self) -> Self {
+        Self {
+            temperature: self.temperature.or(defaults.temperature),
+            top_k: self.top_k.or(defaults.top_k),
+            top_p: self.top_p.or(defaults.top_p),
+            min_p: self.min_p.or(defaults.min_p),
+            repeat_penalty: self.repeat_penalty.or(defaults.repeat_penalty),
+            repeat_last_n: self.repeat_last_n.or(defaults.repeat_last_n),
+            presence_penalty: self.presence_penalty.or(defaults.presence_penalty),
+            frequency_penalty: self.frequency_penalty.or(defaults.frequency_penalty),
+            num_ctx: self.num_ctx.or(defaults.num_ctx),
+            num_predict: self.num_predict.or(defaults.num_predict),
+            num_gpu: self.num_gpu.or(defaults.num_gpu),
+            num_thread: self.num_thread.or(defaults.num_thread),
+            seed: self.seed.or(defaults.seed),
+        }
+    }
 }
 
 impl Default for ChatToolPreferences {

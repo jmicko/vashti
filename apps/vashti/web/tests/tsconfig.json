@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": { "target": "ES2023", "lib": ["ES2023", "DOM", "DOM.Iterable"] },
-  "include": ["../src", "./images.tsx", "./assistant.tsx", "./videos.tsx"]
+  "include": ["../src", "./images.tsx", "./assistant.tsx", "./videos.tsx", "./custom-models.tsx"]
 }

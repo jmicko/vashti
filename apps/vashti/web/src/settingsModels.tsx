@@ -53,7 +53,8 @@ import type {
   ModelBackgroundMode,
   UserModelInfo,
   UserBackendModelGroup,
-  UserModelsResponse
+  UserModelsResponse,
+  CustomModelEditorLocation
 } from "./types";
 
 type UserModelPreferencePatch = {
@@ -178,10 +179,12 @@ function preferenceActionForPatch(patch: UserModelPreferencePatch): UserModelPre
 }
 
 export function UserModelsPanel({
+  onOpenModelEditor,
   onModelsChanged,
   onPersonasChanged,
   onPrivatePersonasChanged
 }: {
+  onOpenModelEditor?: (editor?: CustomModelEditorLocation) => void;
   onModelsChanged: () => Promise<void>;
   onPersonasChanged: () => Promise<void>;
   onPrivatePersonasChanged: () => Promise<void>;
@@ -777,6 +780,7 @@ export function UserModelsPanel({
           </section>
         )}
         <CustomModelsSection
+          onOpenEditor={onOpenModelEditor}
           onPersonasChanged={onPersonasChanged}
           onPrivatePersonasChanged={onPrivatePersonasChanged}
         />

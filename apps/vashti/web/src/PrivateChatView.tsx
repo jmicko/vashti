@@ -1,4 +1,5 @@
 import { cancelDeviceImages } from "./images/deviceTools";
+import { mergeInferenceSettings } from "./inferenceSettings";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Lock } from "lucide-react";
 import { isImageAttachment, preparePrivateAttachment } from "./attachments";
@@ -929,7 +930,7 @@ export function PrivateChatView({
       backend_id: selected.backendId,
       model_name: selected.modelName,
       think_mode: thinkModeToPayload(thinkMode),
-      inference_settings: promptInferenceSettings,
+      inference_settings: mergeInferenceSettings(selectedPrivatePersona?.current_version.inference_settings, promptInferenceSettings),
       messages: generationMessages,
       attachments: []
     });
@@ -1488,7 +1489,7 @@ export function PrivateChatView({
         backend_id: selected.backendId,
         model_name: selected.modelName,
         think_mode: thinkModeToPayload(thinkingMode),
-        inference_settings: inferenceSettings,
+        inference_settings: mergeInferenceSettings(selectedPrivatePersona?.current_version.inference_settings, inferenceSettings),
         messages: generationMessages,
         attachments: []
       });
@@ -1634,7 +1635,7 @@ export function PrivateChatView({
         backend_id: backendId,
         model_name: modelName,
         think_mode: thinkModeToPayload(thinkingMode),
-        inference_settings: inferenceSettings,
+        inference_settings: mergeInferenceSettings(selectedPrivatePersona?.current_version.inference_settings, inferenceSettings),
         messages: generationMessages,
         attachments: []
       });
@@ -1759,7 +1760,7 @@ export function PrivateChatView({
           backend_id: backendId,
           model_name: modelName,
           think_mode: "off",
-          inference_settings: inferenceSettings,
+          inference_settings: mergeInferenceSettings(exactPersona?.current_version.inference_settings, inferenceSettings),
           messages: generationMessages
         },
         "/api/private/generate",

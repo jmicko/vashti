@@ -49,8 +49,11 @@ Check at 390x844 and desktop sizes:
   must use that edited output.
 - Tap reference thumbnails to inspect them, then close the viewer. Neither the
   reference order nor the unsent prompt should change.
-- Open image inference settings beside the attachment button. Settings must appear separately
-  from the composer; closing them preserves the prompt/reference summary.
+- Open the composer chevron. Image inference settings expand inline; scroll to
+  the lower controls while the collapse arrow and Send/Stop remain reachable.
+  Collapse/reopen and Escape preserve the prompt, references, and settings.
+  Enter in a numeric/seed field must not send; the Send button still works
+  while settings are open. The separate reference viewer/picker is unchanged.
 - At 390px width, reference sheets, model menus, and Gallery View must have no
   horizontal overflow. Check 844x390 and desktop without resetting photo zoom
   merely because controls appear/disappear.
@@ -79,11 +82,14 @@ separate from every signed-in user's data.
 
 Check 390x844, 844x390, 320px-wide and desktop layouts:
 
-- Apps > Video opens the model picker and compact first-frame/prompt composer.
+- Video opens the model picker and compact first-frame/prompt composer.
   Attach `apps/vashti/src/images/fixtures/64.png` and inspect its enlarged view.
-- Open lower Video inference settings. Choose aspect ratios (including Original
+- Open the composer chevron for inline Video inference settings. Choose aspect ratios (including Original
   image), clip length, audio and exact seeds above JavaScript's safe integer
   range. Save defaults/reset without losing the prompt/source.
+- Scroll the inline controls, then collapse/reopen or press Escape. The chevron
+  and Send/Stop stay outside the settings scroller. Enter in the seed field
+  must not send, even with a first frame attached and Send enabled.
 - Send with and without prompt text. Inspect progress, completed playback,
   download, another ordinary turn and numbered regenerate versions. Prompt and
   source remain in the composer; recipe inspection follows the selected version.
@@ -94,6 +100,32 @@ Check 390x844, 844x390, 320px-wide and desktop layouts:
   preservation after navigating away and back.
 - Settings restores horizontal section navigation on mobile and the normal
   sidebar on desktop, with visible selected-section feedback and 44px targets.
+- Fixture video discovery: Ready exposes Video, Offline retains known
+  availability, and Old server (404) hides it; switching back to Ready restores
+  availability without entering Images or reloading the page.
 
 Pure offline tests: `node --test src/videos/videos.test.mjs`.
 Browser playback does not establish physical Android playback or native export.
+
+In the signed-in app, Video is a separate sidebar entry, not an Image app.
+Check discovery from Chat, its independent selected state/history/New Flow,
+mobile drawer dismissal, and `/app/images/video` legacy links (including device
+mode). Short landscape windows must scroll the sidebar rather than clip history.
+Route regression tests: `node --test src/routing.test.mjs`.
+
+## Custom Models
+
+Open `/tests/custom-models.html` for a synthetic device-only editor. Every API
+request is intercepted and its encrypted vault is separate from real accounts.
+Check 320px, 390px, landscape and desktop layouts, especially long base-model names.
+
+- Create a model with Temperature 1.3. Back offers Cancel, Discard and Save; Save
+  returns to the list. Reopening must retain 1.3 without creating another version.
+- Change Temperature and save; its version increments. Reset clears the explicit
+  value and shows the reported base-model placeholder. Discard must restore the
+  saved value when reopened. Blank fields must stay blank after saving.
+- Opening an editor must replace the model list, never show other models below it.
+
+Offline inheritance, draft and encrypted version tests:
+`node --test src/customModels.test.mjs`. Server-side tests cover immutable version
+history, copying, and all four generation preparations without running inference.

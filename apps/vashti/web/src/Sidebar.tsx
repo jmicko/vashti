@@ -8,6 +8,7 @@ import {
 import {
   Copy,
   Bot,
+  Film,
   Lock,
   MessageSquarePlus,
   MessageSquare,
@@ -55,6 +56,7 @@ export function Sidebar({
   onNewChat,
   onOpenNotes,
   onOpenImages,
+  onOpenVideos,
   onOpenAssistant,
   onOpenChat,
   onOpenPrivateChat,
@@ -86,6 +88,7 @@ export function Sidebar({
   onNewChat: () => void;
   onOpenNotes: () => void;
   onOpenImages: () => void;
+  onOpenVideos?: () => void;
   onOpenAssistant?: () => void;
   onOpenChat: (chatId?: string) => void;
   onOpenPrivateChat: (chatId: string) => void;
@@ -193,11 +196,21 @@ export function Sidebar({
             }}
           >
             <MessageSquarePlus />
-            <span>{isImagesActive ? "New Flow" : "New Chat"}</span>
+            <span>{isImagesActive || isVideosActive ? "New Flow" : "New Chat"}</span>
           </button>
-          {(isImagesActive || isNotesActive || isAssistantActive) && <button type="button" className="sidebar-section-button" onClick={() => onOpenChat()}><MessageSquare /><span>Chat</span></button>}
+          {(isImagesActive || isVideosActive || isNotesActive || isAssistantActive) && <button type="button" className="sidebar-section-button" onClick={() => onOpenChat()}><MessageSquare /><span>Chat</span></button>}
           {onOpenAssistant && <button type="button" className={isAssistantActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isAssistantActive ? "page" : undefined} onClick={onOpenAssistant}><Bot /><span>Assistant</span>{assistantAttention > 0 && <small className="assistant-attention-count">{assistantAttention}</small>}</button>}
           <button type="button" className={isImagesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isImagesActive ? "page" : undefined} onClick={() => { setOpenMenuChatId(null); onOpenImages(); }}><Images /><span>Images</span></button>
+          {onOpenVideos && (
+            <button
+              type="button"
+              className={isVideosActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"}
+              aria-current={isVideosActive ? "page" : undefined}
+              onClick={() => { setOpenMenuChatId(null); onOpenVideos(); }}
+            >
+              <Film /><span>Video</span>
+            </button>
+          )}
           <button
             type="button"
             className={isNotesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"}

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
@@ -454,6 +454,57 @@ pub async fn list_models(
     let snapshot = state.model_cache.snapshot().await;
 
     Ok(Json(models_response(&state, &user.id, snapshot).await?))
+}
+
+#[derive(Deserialize)]
+pub struct ModelDefaultsQuery {
+    backend_id: String,
+    model_name: String,
+}
+
+pub async fn model_inference_defaults(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(query): Query<ModelDefaultsQuery>,
+) -> Result<Json<crate::chats::models::ChatInferenceSettings>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(format!("model-defaults:{}", user.id), 60, 60)
+        .await?;
+    if query.model_name.is_empty() || query.model_name.len() > 512 || query.backend_id.len() > 128 {
+        return Err(ApiError::bad_request(
+            "invalid_model",
+            "Select an available base model",
+        ));
+    }
+    service::ensure_model_enabled_for_user(
+        &state.db,
+        &user.id,
+        &query.backend_id,
+        &query.model_name,
+    )
+    .await?;
+    let backend = service::get_enabled_backend(&state.db, &query.backend_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::not_found("backend_not_found", "Inference host is not available")
+        })?;
+    let profile = crate::ollama::client::model_profile(
+        &state.http_client,
+        &backend.base_url,
+        &query.model_name,
+    )
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "model_defaults_unavailable",
+            "Could not read this model's defaults",
+        )
+    })?;
+    Ok(Json(profile.inference_defaults()))
 }
 
 pub async fn list_admin_models(

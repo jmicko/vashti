@@ -209,6 +209,10 @@ fn router(state: AppState) -> Router {
         )
         .route("/models", get(backends::handlers::list_models))
         .route(
+            "/models/inference-defaults",
+            get(backends::handlers::model_inference_defaults),
+        )
+        .route(
             "/user-models",
             get(backends::handlers::list_user_models)
                 .patch(backends::handlers::update_user_model_preference),

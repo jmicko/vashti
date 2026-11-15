@@ -2,6 +2,15 @@ import type { ChatInferenceSettings } from "./types";
 
 export const defaultInferenceSettings: ChatInferenceSettings = {};
 
+export function mergeInferenceSettings(defaults: ChatInferenceSettings | null | undefined, overrides: ChatInferenceSettings | null | undefined): ChatInferenceSettings {
+  const result = normalizeInferenceSettings(defaults);
+  const changes = normalizeInferenceSettings(overrides);
+  for (const key of Object.keys(changes) as (keyof ChatInferenceSettings)[]) {
+    if (changes[key] !== undefined) result[key] = changes[key];
+  }
+  return result;
+}
+
 export function normalizeInferenceSettings(
   settings: Partial<ChatInferenceSettings> | null | undefined
 ): ChatInferenceSettings {

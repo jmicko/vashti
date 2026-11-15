@@ -195,6 +195,30 @@ pub struct ShowModelResponse {
 }
 
 impl ShowModelResponse {
+    pub fn inference_defaults(&self) -> crate::chats::models::ChatInferenceSettings {
+        let mut values = serde_json::Map::new();
+        for line in self.parameters.lines() {
+            let Some((key, value)) = line.trim().split_once(char::is_whitespace) else {
+                continue;
+            };
+            let value = value.trim();
+            let number = match key {
+                "temperature" | "top_p" | "min_p" | "repeat_penalty" | "presence_penalty"
+                | "frequency_penalty" => value
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(serde_json::Number::from_f64),
+                "top_k" | "repeat_last_n" | "num_ctx" | "num_predict" | "num_gpu"
+                | "num_thread" | "seed" => value.parse::<i64>().ok().map(serde_json::Number::from),
+                _ => None,
+            };
+            if let Some(number) = number {
+                values.insert(key.to_owned(), number.into());
+            }
+        }
+        serde_json::from_value(serde_json::Value::Object(values)).unwrap_or_default()
+    }
+
     pub fn context_window(&self) -> i64 {
         let configured = self
             .parameters
@@ -218,6 +242,33 @@ impl ShowModelResponse {
             .unwrap_or(8192)
             .min(maximum.unwrap_or(i64::MAX))
             .clamp(512, 32768)
+    }
+}
+
+#[cfg(test)]
+mod inference_default_tests {
+    use super::ShowModelResponse;
+
+    #[test]
+    fn packaged_defaults_do_not_invent_runtime_defaults() {
+        let profile: ShowModelResponse = serde_json::from_value(serde_json::json!({
+            "parameters":"temperature 1.1\ntop_p 0.85\ntop_k 40\nseed -1\nnum_predict -1\nstop \"<end>\"\nnum_thread nope\nmin_p NaN",
+            "model_info":{"llama.context_length":131072}
+        })).unwrap();
+        let defaults = profile.inference_defaults();
+        assert_eq!(defaults.temperature, Some(1.1));
+        assert_eq!(defaults.top_p, Some(0.85));
+        assert_eq!(defaults.top_k, Some(40));
+        assert_eq!(defaults.num_predict, Some(-1));
+        assert_eq!(defaults.seed, Some(-1));
+        assert_eq!(defaults.num_thread, None);
+        assert_eq!(defaults.min_p, None);
+        assert_eq!(defaults.num_ctx, None);
+        let empty: ShowModelResponse = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(
+            serde_json::to_value(empty.inference_defaults()).unwrap(),
+            serde_json::json!({})
+        );
     }
 }
 

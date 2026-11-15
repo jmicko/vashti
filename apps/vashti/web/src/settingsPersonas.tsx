@@ -2,10 +2,13 @@ import {
   FormEvent,
   useCallback,
   useEffect,
+  useRef,
   useState
 } from "react";
 import {
   Copy,
+  ArrowLeft,
+  RotateCcw,
   Lock,
   Pencil,
   Plus,
@@ -22,7 +25,7 @@ import {
   uploadHostedAvatar as uploadHostedPersonaAvatar
 } from "./avatarAssets";
 import { ConfirmDialog, RetroLoader } from "./common";
-import { takeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
+import { storeCustomModelDraft, takeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
 import { ModelAvatar } from "./ModelAvatar";
 import { ModelBackgroundButton } from "./ModelBackground";
 import {
@@ -30,6 +33,12 @@ import {
   type ModelBackgroundEdit
 } from "./ModelBackgroundEditorDialog";
 import { modelParts, modelValue } from "./modelSelection";
+import {
+  InferenceSettingsFields,
+  inferenceSettingsToInputs,
+  inferenceInputsToSettings,
+  useModelInferenceDefaults
+} from "./InferenceSettingsFields";
 import { PersonaAvatarField } from "./PersonaAvatarField";
 import {
   createPrivatePersona,
@@ -52,13 +61,21 @@ import type {
   PersonaMutationResponse,
   PersonasResponse,
   ModelBackgroundMode,
-  CustomModelType
+  CustomModelType,
+  CustomModelEditorLocation,
+  SettingsGuard
 } from "./types";
 
 export function CustomModelsSection({
+  editor,
+  onOpenEditor,
+  onGuardChange,
   onPersonasChanged,
   onPrivatePersonasChanged
 }: {
+  editor?: CustomModelEditorLocation;
+  onOpenEditor?: (editor?: CustomModelEditorLocation) => void;
+  onGuardChange?: (guard: SettingsGuard | null) => void;
   onPersonasChanged: () => Promise<void>;
   onPrivatePersonasChanged: () => Promise<void>;
 }) {
@@ -79,6 +96,12 @@ export function CustomModelsSection({
   const [storageMode, setStorageMode] = useState("local");
   const [selectedBaseModel, setSelectedBaseModel] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
+  const [inferenceInputs, setInferenceInputs] = useState(() => inferenceSettingsToInputs({}));
+  const inheritedDefaults = useModelInferenceDefaults(selectedBaseModel, isEditorOpen);
+  const formRef = useRef<HTMLFormElement>(null);
+  const baseline = useRef<string | null>(null);
+  const initializedEditor = useRef<string | null>(null);
+  const [editorMissing, setEditorMissing] = useState(false);
   const [avatarAssetId, setAvatarAssetId] = useState<string | null>(null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [isReadingAvatar, setIsReadingAvatar] = useState(false);
@@ -172,7 +195,9 @@ export function CustomModelsSection({
     setIsBackgroundEditorOpen(false);
   }
 
-  function resetDraft() {
+  function resetDraft(navigateBack = true) {
+    baseline.current = null;
+    onGuardChange?.(null);
     setIsEditorOpen(false);
     setEditingPersona(null);
     setEditingPrivatePersona(null);
@@ -180,6 +205,7 @@ export function CustomModelsSection({
     setModelType("general");
     setStorageMode("local");
     setSystemPrompt("");
+    setInferenceInputs(inferenceSettingsToInputs({}));
     setAvatarAssetId(null);
     setAvatarFile(null);
     setAvatarCropX(50);
@@ -189,9 +215,11 @@ export function CustomModelsSection({
     setSelectedBaseModel(firstModelValue(modelGroups));
     setError(null);
     setStatus(null);
+    if (editor && navigateBack) onOpenEditor?.();
   }
 
   function startCreatingPersona(draft?: CustomModelDraft) {
+    baseline.current = null;
     setEditingPersona(null);
     setEditingPrivatePersona(null);
     setDisplayName(draft?.displayName ?? "");
@@ -203,6 +231,7 @@ export function CustomModelsSection({
         : firstModelValue(modelGroups)
     );
     setSystemPrompt(draft?.systemPrompt ?? "");
+    setInferenceInputs(inferenceSettingsToInputs(draft?.inferenceSettings ?? {}));
     setAvatarAssetId(null);
     setAvatarFile(null);
     setAvatarCropX(50);
@@ -219,13 +248,34 @@ export function CustomModelsSection({
       return;
     }
 
+    if (editor) {
+      const key = `${editor.storageMode ?? "server"}:${editor.personaId ?? "new"}`;
+      if (initializedEditor.current === key) return;
+      initializedEditor.current = key;
+      setEditorMissing(false);
+      if (!editor.personaId) {
+        startCreatingPersona(takeCustomModelDraft() ?? undefined);
+      } else if (editor.storageMode === "device") {
+        const persona = privatePersonas.find(value => value.id === editor.personaId);
+        if (persona) startEditingPrivatePersona(persona); else setEditorMissing(true);
+      } else {
+        const persona = personas.find(value => value.id === editor.personaId && value.is_owner);
+        if (persona) startEditingPersona(persona); else setEditorMissing(true);
+      }
+      return;
+    }
     const draft = takeCustomModelDraft();
     if (draft) {
-      startCreatingPersona(draft);
+      if (onOpenEditor) {
+        // Preserve the handoff until the dedicated editor mounts.
+        storeCustomModelDraft(draft);
+        onOpenEditor({});
+      } else startCreatingPersona(draft);
     }
-  }, [hasLoaded, modelGroups]);
+  }, [hasLoaded, modelGroups, editor, personas, privatePersonas]);
 
   function startEditingPersona(persona: Persona) {
+    baseline.current = null;
     const version = persona.current_version;
     setIsEditorOpen(true);
     setEditingPersona(persona);
@@ -235,6 +285,7 @@ export function CustomModelsSection({
     setStorageMode(persona.visibility);
     setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
     setSystemPrompt(version.system_prompt);
+    setInferenceInputs(inferenceSettingsToInputs(version.inference_settings ?? {}));
     setAvatarAssetId(version.avatar_asset_id ?? null);
     setAvatarFile(null);
     setAvatarCropX(version.avatar_crop_x ?? 50);
@@ -246,6 +297,7 @@ export function CustomModelsSection({
   }
 
   function startEditingPrivatePersona(persona: PrivatePersona) {
+    baseline.current = null;
     const version = persona.current_version;
     setIsEditorOpen(true);
     setEditingPrivatePersona(persona);
@@ -255,6 +307,7 @@ export function CustomModelsSection({
     setStorageMode("local");
     setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
     setSystemPrompt(version.system_prompt);
+    setInferenceInputs(inferenceSettingsToInputs(version.inference_settings ?? {}));
     setAvatarAssetId(version.avatar_asset_id ?? null);
     setAvatarFile(null);
     setAvatarCropX(version.avatar_crop_x ?? 50);
@@ -265,12 +318,13 @@ export function CustomModelsSection({
     setStatus(null);
   }
 
-  async function savePersona(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function savePersona(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    if (isSaving || !formRef.current?.reportValidity()) return false;
     const selected = modelParts(selectedBaseModel);
     if (!selected) {
       setError("Select a base model for this persona");
-      return;
+      return false;
     }
 
     setIsSaving(true);
@@ -333,6 +387,7 @@ export function CustomModelsSection({
           baseBackendName: backendName,
           baseModelName: selected.modelName,
           systemPrompt,
+          inferenceSettings: inferenceInputsToSettings(inferenceInputs),
           avatarAssetId: nextAvatarAssetId,
           avatarCropX,
           avatarCropY,
@@ -356,10 +411,10 @@ export function CustomModelsSection({
           await createPrivatePersona(body);
           setStatus("Device custom model created.");
         }
-        resetDraft();
         await loadPersonas();
         await onPrivatePersonasChanged();
-        return;
+        resetDraft(Boolean(event));
+        return true;
       }
 
       const body = {
@@ -393,6 +448,7 @@ export function CustomModelsSection({
         base_backend_id: selected.backendId,
         base_model_name: selected.modelName,
         system_prompt: systemPrompt,
+        inference_settings: inferenceInputsToSettings(inferenceInputs),
         tool_policy_json: null
       };
       if (editingPersona) {
@@ -408,9 +464,10 @@ export function CustomModelsSection({
         });
         setStatus("Custom model created.");
       }
-      resetDraft();
       await loadPersonas();
       await onPersonasChanged();
+      resetDraft(Boolean(event));
+      return true;
     } catch (saveError) {
       if (uploadedAssetId) {
         if (storageMode === "local") {
@@ -427,6 +484,7 @@ export function CustomModelsSection({
         }
       }
       setError(saveError instanceof Error ? saveError.message : "Failed to save custom model");
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -537,6 +595,7 @@ export function CustomModelsSection({
         baseBackendName: backendNameFor(modelGroups, version.base_backend_id),
         baseModelName: version.base_model_name,
         systemPrompt: version.system_prompt,
+        inferenceSettings: version.inference_settings,
         avatarAssetId,
         avatarCropX: version.avatar_crop_x,
         avatarCropY: version.avatar_crop_y,
@@ -617,6 +676,28 @@ export function CustomModelsSection({
     }
   }
 
+  const draftSnapshot = JSON.stringify({ displayName, modelType, storageMode, selectedBaseModel, systemPrompt,
+    inferenceInputs, avatarAssetId, avatarCropX, avatarCropY, avatarCropSize, backgroundAssetId,
+    backgroundDim, backgroundMessageDim, backgroundLandscape, backgroundPortrait });
+  const isDirty = isEditorOpen && baseline.current !== null &&
+    (draftSnapshot !== baseline.current || Boolean(avatarFile) || Boolean(backgroundFile));
+  useEffect(() => {
+    if (isEditorOpen && baseline.current === null) baseline.current = draftSnapshot;
+  }, [isEditorOpen, draftSnapshot]);
+  useEffect(() => {
+    onGuardChange?.(isEditorOpen ? { isDirty, save: () => savePersona(), discard: () => { baseline.current = draftSnapshot; } } : null);
+  }, [isEditorOpen, isDirty, draftSnapshot, avatarFile, backgroundFile, isSaving, isReadingAvatar, onGuardChange]);
+  useEffect(() => () => onGuardChange?.(null), [onGuardChange]);
+  useEffect(() => {
+    if (!isDirty) return;
+    const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", prevent);
+    return () => window.removeEventListener("beforeunload", prevent);
+  }, [isDirty]);
+  function closeEditor() {
+    if (editor && onOpenEditor) onOpenEditor(); else resetDraft();
+  }
+
   const canSave =
     !isReadingAvatar &&
     displayName.trim() !== "" &&
@@ -627,18 +708,22 @@ export function CustomModelsSection({
   const editorTitle =
     editingPersona || editingPrivatePersona ? "Edit Custom Model" : "Create Custom Model";
 
+  if (editor && (editorMissing || !isEditorOpen)) return <section className="custom-model-editor-loading">
+    <button type="button" className="secondary-button" onClick={closeEditor}><ArrowLeft />Back to models</button>
+    {editorMissing ? <p role="alert">Custom model is unavailable or not owned by your account.</p> : <p role="status">Loading custom model...</p>}
+    {error && <p className="error">{error}</p>}
+  </section>;
+
   return (
-    <section className="model-access-group custom-models-section">
+    <section className={editor ? "custom-model-editor" : "model-access-group custom-models-section"}>
       <div className="model-access-header">
         <div>
-          <h2>Custom Models</h2>
-          <p>
-            {isEditorOpen
-              ? editorTitle
-              : `${privatePersonas.length + personas.length} custom model${
+          <h2>{isEditorOpen ? editorTitle : "Custom Models"}</h2>
+          {!isEditorOpen && <p>
+            {`${privatePersonas.length + personas.length} custom model${
                   privatePersonas.length + personas.length === 1 ? "" : "s"
                 }`}
-          </p>
+          </p>}
         </div>
         <div className="model-access-actions">
           {isEditorOpen ? (
@@ -646,10 +731,10 @@ export function CustomModelsSection({
               type="button"
               className="secondary-button refresh-button"
               disabled={isSaving || isReadingAvatar}
-              onClick={resetDraft}
+              onClick={closeEditor}
             >
-              <X />
-              <span>Cancel</span>
+              <ArrowLeft />
+              <span>Back to models</span>
             </button>
           ) : (
             <>
@@ -662,7 +747,7 @@ export function CustomModelsSection({
                 {isRefreshing ? <RetroLoader /> : <RefreshCw />}
                 <span>{isRefreshing ? "Loading" : "Refresh"}</span>
               </button>
-              <button type="button" onClick={() => startCreatingPersona()}>
+              <button type="button" onClick={() => onOpenEditor ? onOpenEditor({}) : startCreatingPersona()}>
                 <Plus />
                 <span>New</span>
               </button>
@@ -675,8 +760,7 @@ export function CustomModelsSection({
       {status && <p className="status-message">{status}</p>}
 
       {isEditorOpen ? (
-        <form className="settings-form persona-form persona-editor-form" onSubmit={savePersona}>
-          <h3>{editorTitle}</h3>
+        <form ref={formRef} className="settings-form persona-form persona-editor-form" onSubmit={savePersona}>
           <label>
             <span>Name</span>
             <input
@@ -790,12 +874,22 @@ export function CustomModelsSection({
               placeholder="Describe how this custom model should behave."
             />
           </label>
+          <details className="custom-model-inference" open>
+            <summary>Inference</summary>
+            <div className="model-settings-inference-grid">
+              <InferenceSettingsFields inputs={inferenceInputs} defaults={inheritedDefaults} disabled={isSaving}
+                onChange={(key, value) => setInferenceInputs(current => ({ ...current, [key]: value }))} />
+            </div>
+            <button type="button" className="secondary-button" disabled={isSaving} onClick={() => setInferenceInputs(inferenceSettingsToInputs({}))}>
+              <RotateCcw />Reset to base model
+            </button>
+          </details>
           <div className="persona-form-actions">
             <button
               type="button"
               className="secondary-button"
               disabled={isSaving || isReadingAvatar}
-              onClick={resetDraft}
+              onClick={closeEditor}
             >
               <X />
               <span>Cancel</span>
@@ -832,7 +926,7 @@ export function CustomModelsSection({
                 persona={persona}
                 isBusy={busyPersonaId === persona.id}
                 onDelete={() => setDeletePrivateTarget(persona)}
-                onEdit={() => startEditingPrivatePersona(persona)}
+                onEdit={() => onOpenEditor ? onOpenEditor({ personaId: persona.id, storageMode: "device" }) : startEditingPrivatePersona(persona)}
                 onFavorite={() => void togglePrivatePersonaFavorite(persona)}
               />
             ))}
@@ -846,7 +940,7 @@ export function CustomModelsSection({
                 onCopy={() => void copyPersona(persona)}
                 onCopyToDevice={() => void copyPersonaToDevice(persona)}
                 onDelete={() => setDeleteTarget(persona)}
-                onEdit={() => startEditingPersona(persona)}
+                onEdit={() => onOpenEditor ? onOpenEditor({ personaId: persona.id }) : startEditingPersona(persona)}
                 onFavorite={() => void togglePersonaFavorite(persona)}
               />
             ))}

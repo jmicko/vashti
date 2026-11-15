@@ -1,3 +1,4 @@
+use crate::chats::models::ChatInferenceSettings;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -40,6 +41,7 @@ pub struct PersonaVersionResponse {
     pub base_backend_id: String,
     pub base_model_name: String,
     pub system_prompt: String,
+    pub inference_settings: ChatInferenceSettings,
     pub tool_policy_json: Option<String>,
     pub created_by_user_id: Option<String>,
     pub created_at: i64,

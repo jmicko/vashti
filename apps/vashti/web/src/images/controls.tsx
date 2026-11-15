@@ -1,5 +1,16 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
+
+export function InferenceSettingsToggle({ expanded, controls, onToggle }: {
+  expanded: boolean; controls: string; onToggle: () => void;
+}) {
+  const label = `${expanded ? "Collapse" : "Expand"} inference settings`;
+  return <button type="button" className="image-composer-expand"
+    title={label} aria-label={label} aria-expanded={expanded} aria-controls={controls}
+    data-image-composer-control onClick={onToggle}>
+    {expanded ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+  </button>;
+}
 
 export function ImagePanel({ title, onClose, children, className = "" }: { title: string; onClose: () => void; children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null);

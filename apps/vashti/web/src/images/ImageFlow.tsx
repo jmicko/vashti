@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
@@ -31,7 +31,7 @@ import { DownloadImageButton } from "./DownloadImageButton";
 import { ImageComparison } from "./ImageComparison";
 import { ActionMenu } from "../ActionMenu";
 import { comparisonReference } from "./comparison";
-import { ImagePanel } from "./controls";
+import { ImagePanel, InferenceSettingsToggle } from "./controls";
 import { GenerationControls } from "./GenerationControls";
 import {
   continuationLeaf,
@@ -108,6 +108,7 @@ export function ImageFlow({
       onNavigate("flow", flow.session.id);
   }, [flow.session?.id, sessionId, busy, flow.loaded]);
   const [expanded, setExpanded] = useState(false);
+  const settingsId = useId();
   const [composerOpen, setComposerOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [referencesOpen, setReferencesOpen] = useState(false);
@@ -958,7 +959,7 @@ export function ImageFlow({
             </div>
           )}
           {draft && (
-            <div className="image-composer-dock">
+            <div className={`image-composer-dock${expanded ? " image-composer-dock-expanded" : ""}`}>
               {notice && (
                 <div className="image-connection-notice" role="status">
                   <span>{notice}</span>
@@ -1001,7 +1002,15 @@ export function ImageFlow({
               )}
               <form
                 ref={composer}
-                className={`image-chat-composer${!composerOpen ? " image-chat-composer-compact" : ""}`}
+                className={`image-chat-composer${!composerOpen && !expanded ? " image-chat-composer-compact" : ""}`}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && expanded && !referencesOpen && !galleryOpen && !viewer) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleSettings();
+                    event.currentTarget.querySelector<HTMLButtonElement>(".image-composer-expand")?.focus({ preventScroll: true });
+                  }
+                }}
                 onBlurCapture={(event) => {
                   if (
                     !expanded &&
@@ -1017,7 +1026,6 @@ export function ImageFlow({
                   event.preventDefault();
                   if (
                     ready &&
-                    !expanded &&
                     !referencesOpen &&
                     !busy &&
                     !active &&
@@ -1026,6 +1034,7 @@ export function ImageFlow({
                     void send();
                 }}
               >
+                <InferenceSettingsToggle expanded={expanded} controls={settingsId} onToggle={toggleSettings} />
                 <div className="image-composer-body">
                   {referencesOpen && draft.input_ids.length > 0 && (
                     <ImagePanel
@@ -1214,10 +1223,14 @@ export function ImageFlow({
                     )}
                   </div>
                   {expanded && (
-                    <ImagePanel
-                      title="Image settings"
-                      className="image-settings-panel"
-                      onClose={() => setExpanded(false)}
+                    <section
+                      id={settingsId}
+                      aria-label="Image inference settings"
+                      className="image-inline-settings"
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement)
+                          event.preventDefault();
+                      }}
                     >
                       <div className="image-expanded-controls">
                         {editing && (
@@ -1399,12 +1412,11 @@ export function ImageFlow({
                           )}
                         </div>
                       </div>
-                    </ImagePanel>
+                    </section>
                   )}
                 </div>
                 <footer>
                   <div className="images-actions">
-                    <button type="button" className="icon-button primary-action" aria-label="Image inference settings" title="Image inference settings" aria-expanded={expanded} data-image-composer-control onClick={toggleSettings}><Settings2 /></button>
                     <button
                       type="button"
                       className="icon-button primary-action"

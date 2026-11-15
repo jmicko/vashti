@@ -49,11 +49,16 @@ export function routeFromLocation(): AppRoute {
     return { page: "assistant", view: section === "new" || section === "defaults" || section === "tasks" || section === "conversations" || section === "compose" ? section : undefined };
   }
 
+  if (path === "/app/videos" || path.startsWith("/app/videos/") || path === "/app/images/video" || path === "/app/images/video/") {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    return { page: "videos", sessionId: params.get("session") ?? undefined, storageMode: params.get("mode") === "device" ? "device" : "server" };
+  }
+
   if (path === "/app/images" || path.startsWith("/app/images/")) {
     const view = path.split("/")[3];
     const params = new URLSearchParams(window.location.hash.slice(1));
     const sessionId = params.get("session") ?? undefined;
-    return { page: "images", view: view === "generate" || view === "edit" || view === "gallery" || view === "flow" || view === "video" ? view : "home", sessionId, storageMode: params.get("mode") === "device" ? "device" : "server" };
+    return { page: "images", view: view === "generate" || view === "edit" || view === "gallery" || view === "flow" ? view : "home", sessionId, storageMode: params.get("mode") === "device" ? "device" : "server" };
   }
 
   if (path.startsWith("/app/settings")) {
@@ -62,6 +67,20 @@ export function routeFromLocation(): AppRoute {
       return { page: "settings", section: "models" };
     }
     const selectedSection = isSettingsSection(section) ? section : "profile";
+    if (selectedSection === "models" && path.split("/")[4] === "custom" && path.split("/")[5]) {
+      const id = path.split("/")[5];
+      const mode = new URLSearchParams(window.location.hash.slice(1)).get("mode");
+      let personaId: string | undefined;
+      try {
+        personaId = id === "new" ? undefined : decodeURIComponent(id);
+      } catch {
+        return { page: "settings", section: "models" };
+      }
+      return { page: "settings", section: "models", modelEditor: {
+        ...(personaId ? { personaId } : {}),
+        ...(mode === "device" ? { storageMode: "device" } : {})
+      } };
+    }
     if (selectedSection === "memories") {
       const memoryId = new URLSearchParams(window.location.hash.slice(1)).get("memory")?.trim();
       return { page: "settings", section: "memories", ...(memoryId ? { memoryId } : {}) };
@@ -111,13 +130,19 @@ export function pathForRoute(route: AppRoute) {
     if (route.runId) return `/app/assistant/runs/${encodeURIComponent(route.runId)}`;
     return `/app/assistant${route.view ? `/${route.view}` : ""}`;
   }
-  if (route.page === "images") {
+  if (route.page === "images" || route.page === "videos") {
     const params = new URLSearchParams();
     if (route.storageMode === "device") params.set("mode", "device");
     if (route.sessionId) params.set("session", route.sessionId);
-    return `/app/images${!route.view || route.view === "home" ? "" : `/${route.view}`}${params.size ? `#${params}` : ""}`;
+    const path = route.page === "videos"
+      ? "/app/videos"
+      : `/app/images${!route.view || route.view === "home" ? "" : `/${route.view}`}`;
+    return `${path}${params.size ? `#${params}` : ""}`;
   }
   if (route.page === "settings") {
+    if (route.section === "models" && route.modelEditor) {
+      return `/app/settings/models/custom/${route.modelEditor.personaId ? encodeURIComponent(route.modelEditor.personaId) : "new"}${route.modelEditor.storageMode === "device" ? "#mode=device" : ""}`;
+    }
     if (route.section === "memories" && route.memoryId) {
       return `/app/settings/memories#${new URLSearchParams({ memory: route.memoryId })}`;
     }

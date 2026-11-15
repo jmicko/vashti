@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     app_state::AppState,
     auth,
+    chats::models::ChatInferenceSettings,
     error::ApiError,
     personas::{
         models::{PersonaResponse, PersonaVersionResponse},
@@ -53,6 +54,7 @@ pub struct CreatePersonaRequest {
     pub base_backend_id: String,
     pub base_model_name: String,
     pub system_prompt: String,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_policy_json: Option<String>,
 }
 
@@ -70,6 +72,7 @@ pub struct UpdatePersonaRequest {
     pub base_backend_id: Option<String>,
     pub base_model_name: Option<String>,
     pub system_prompt: Option<String>,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_policy_json: Option<String>,
 }
 

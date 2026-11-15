@@ -7,15 +7,21 @@ configuration, installation, GPU use, or service restart is part of this work.
 
 ## Workflow
 
-- Images keeps its apps screen. Video appears only when a configured backend
+- Video has its own sidebar workspace at `/app/videos`, with its own history
+  and New Flow action. Images keeps its separate apps screen. The Video entry
+  appears only when a configured backend
   advertises ready, compatible image-to-video generation. Old Ollama/Kuno hosts
-  continue to work without a Video tile.
+  continue to work without a Video entry. Discovery runs from the app shell,
+  without requiring a visit to Images, and refreshes on focus and periodically
+  while visible. Existing `/app/images/video` links still open the video flow.
 - The video model picker groups workflows by host. MiniMax H3 currently requires
   one first frame; the composer accepts common browser image formats, converting
   unsupported formats to lossless PNG. The original accepted frame is retained.
 - The composer preserves the prompt and source after sending. Blank prompts use
-  the fixed gentle-motion prompt. Settings are accessible beside attachment/send
-  controls, with aspect ratio (including original-image detection), advertised
+  the fixed gentle-motion prompt. A chevron expands inference settings inline
+  in the lower composer, matching Images. The controls scroll while the chevron
+  and Send/Stop remain reachable; Escape collapses without losing changes.
+  Settings include aspect ratio (including original-image detection), advertised
   clip lengths, audio inclusion, and exact decimal seeds.
 - First-frame upload chooses the nearest supported aspect ratio, always within
   the advertised size grid and pixel budget. Kuno performs cover/center-crop.
@@ -102,3 +108,18 @@ its own regression test.
 Physical Android playback/export and release acceptance remain pending. No
 release, deployment, Kuno installation/configuration or service changes are
 authorized by this receipt.
+
+Sidebar follow-up (2026-11-08): all 101 frontend tests, web/native frontend
+builds and fixture typechecking passed. Browser checks covered discovery from
+Chat, independent Video/Image selection and history, New Flow, legacy links,
+320px/390px portrait and short landscape navigation. The isolated fixture also
+checked old-server hiding, transient-offline retention and discovery recovery.
+No new live inference or physical Android test was performed for this change.
+
+Inline-settings restoration (2026-11-08, user requested): Images and Video
+again use a composer chevron with bounded inline scrolling rather than an
+inference-settings dialog. Browser checks covered collapse/reopen persistence,
+Escape focus restoration, exact seeds, Enter preventing accidental submission,
+and simulated Send/Stop with controls expanded. Web/native frontend builds,
+all 101 frontend tests and fixture typechecking passed. No Kuno request or
+physical Android verification was part of this UI follow-up.

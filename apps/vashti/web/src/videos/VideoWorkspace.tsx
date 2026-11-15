@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -26,10 +25,9 @@ import { PhotoViewer } from "../PhotoViewer";
 import { saveFile } from "../saveFile";
 import { ApiRequestError, requestJson } from "../api";
 import { usesMobileInputBehavior } from "../viewport";
-import { ImagePanel } from "../images/controls";
+import { InferenceSettingsToggle } from "../images/controls";
 import { aspectRatios, closestAspect } from "../images/aspectRatio";
 import { mediaModelGroups } from "../images/flow";
-import type { ImageView } from "../images/types";
 import {
   videoRepository,
   notifyVideos,
@@ -47,6 +45,7 @@ import {
   type VideoSession,
   type VideoStatus,
 } from "./types";
+import "../images/images.css";
 import "./videos.css";
 
 type Repo = ReturnType<typeof videoRepository>;
@@ -69,7 +68,7 @@ export function VideoWorkspace({
   sessionId?: string;
   newFlowKey: number;
   headerTarget: HTMLElement | null;
-  onNavigate: (view: ImageView, id?: string, mode?: VideoStorage) => void;
+  onNavigate: (id?: string, mode?: VideoStorage) => void;
 }) {
   return (
     <VideoFlow
@@ -90,7 +89,7 @@ function VideoFlow({
   storageMode: VideoStorage;
   sessionId?: string;
   headerTarget: HTMLElement | null;
-  onNavigate: (view: ImageView, id?: string, mode?: VideoStorage) => void;
+  onNavigate: (id?: string, mode?: VideoStorage) => void;
 }) {
   const repo = useMemo(() => videoRepository(storageMode), [storageMode]);
   const [draft, setDraft] = useState<VideoDraft>({ ...videoDefaults });
@@ -106,6 +105,7 @@ function VideoFlow({
     [busy, setBusy] = useState(false),
     [settings, setSettings] = useState(false),
     [focused, setFocused] = useState(false);
+  const settingsId = useId();
   const [error, setError] = useState<string | null>(null),
     [notice, setNotice] = useState<string | null>(null);
   const [progress, setProgress] = useState<VideoStatus | null>(null);
@@ -380,6 +380,7 @@ function VideoFlow({
         [retry?.group_id ?? response.id]: response.id,
       }));
       setFocused(false);
+      setSettings(false);
       input.current?.blur();
       following.current = true;
       if (!sessionId) {
@@ -389,7 +390,7 @@ function VideoFlow({
           deletePrivateImage(`video:composer:${repo.mode}:new`),
         );
         repo.guard();
-        onNavigate("video", current.id, storageMode);
+        onNavigate(current.id, storageMode);
       }
     } catch (e) {
       if (alive.current) setError(message(e));
@@ -444,13 +445,6 @@ function VideoFlow({
       <ActionMenu label="Video options">
         <button
           type="button"
-          onClick={() => onNavigate("home", undefined, storageMode)}
-        >
-          <ArrowLeft />
-          Image apps
-        </button>
-        <button
-          type="button"
           onClick={() =>
             void requestJson<VideoHost[]>("/api/videos/hosts")
               .then(setHosts)
@@ -465,7 +459,7 @@ function VideoFlow({
   );
   const groupIds = [...new Set(runs.map((r) => r.group_id))];
   return (
-    <div className="video-workspace image-flow">
+    <div className={`video-workspace image-flow${settings ? " video-settings-open" : ""}`}>
       {headerTarget ? createPortal(header, headerTarget) : header}
       {error && (
         <div className="images-error video-error" role="alert">
@@ -646,61 +640,230 @@ function VideoFlow({
           })}
         </div>
       </div>
-      <div className="image-composer-dock video-composer-dock">
+      <div className={`image-composer-dock video-composer-dock${settings ? " image-composer-dock-expanded" : ""}`}>
         <form
-          className={`image-chat-composer${!focused ? " image-chat-composer-compact" : ""}`}
+          className={`image-chat-composer${!focused && !settings ? " image-chat-composer-compact" : ""}`}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && settings && !viewFrame) {
+              event.preventDefault();
+              event.stopPropagation();
+              setSettings(false);
+              setFocused(false);
+              event.currentTarget.querySelector<HTMLButtonElement>(".image-composer-expand")?.focus({ preventScroll: true });
+            }
+          }}
           onSubmit={(e) => {
             e.preventDefault();
             void send();
           }}
         >
-          <div className="video-prompt-row">
-            {draft.first_frame_id && (
-              <button
-                type="button"
-                className="video-input-preview"
-                aria-label="View first frame"
-                onClick={() => setViewFrame(draft.first_frame_id)}
-              >
-                <VideoFrame repo={repo} id={draft.first_frame_id} />
-              </button>
+          <InferenceSettingsToggle expanded={settings} controls={settingsId} onToggle={() => {
+            setSettings((value) => !value);
+            setFocused(false);
+            input.current?.blur();
+          }} />
+          <div className="image-composer-body">
+            <div className="video-prompt-row">
+              {draft.first_frame_id && (
+                <button
+                  type="button"
+                  className="video-input-preview"
+                  aria-label="View first frame"
+                  onClick={() => setViewFrame(draft.first_frame_id)}
+                >
+                  <VideoFrame repo={repo} id={draft.first_frame_id} />
+                </button>
+              )}
+              <textarea
+                ref={input}
+                aria-label="Video prompt"
+                placeholder="Describe the motion..."
+                rows={focused ? 3 : 1}
+                value={draft.prompt}
+                disabled={!ready || busy}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                onChange={(e) => change({ prompt: e.target.value })}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !e.altKey &&
+                    !e.nativeEvent.isComposing &&
+                    (e.ctrlKey || e.metaKey || !usesMobileInputBehavior())
+                  ) {
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }}
+              />
+            </div>
+            {settings && (
+              <section id={settingsId} aria-label="Video inference settings" className="image-inline-settings"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement)
+                    event.preventDefault();
+                }}>
+                <div className="video-settings">
+                  <label>
+                    Aspect ratio
+                    <select
+                      aria-label="Video aspect ratio"
+                      value={closestAspect(draft.width, draft.height)}
+                      disabled={!workflow}
+                      onChange={(e) => {
+                        if (!workflow) return;
+                        if (e.target.value === "original") {
+                          if (!draft.first_frame_id) return;
+                          void repo
+                            .frameBlob(draft.first_frame_id, false)
+                            .then(createImageBitmap)
+                            .then((bitmap) => {
+                              try {
+                                repo.guard();
+                                if (alive.current)
+                                  change(
+                                    videoSize(bitmap.width / bitmap.height, workflow),
+                                  );
+                              } finally {
+                                bitmap.close();
+                              }
+                            })
+                            .catch((e) => setError(message(e)));
+                          return;
+                        }
+                        const [w, h] = e.target.value.split(":").map(Number);
+                        change(videoSize(w / h, workflow));
+                      }}
+                    >
+                      <option value="original" disabled={!draft.first_frame_id}>
+                        Original image
+                      </option>
+                      <option value="Custom" disabled>
+                        {draft.width} × {draft.height}
+                      </option>
+                      {aspectRatios.map((r) => (
+                        <option key={r}>{r}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Clip length
+                    <select
+                      aria-label="Video clip length"
+                      value={draft.frames}
+                      disabled={!workflow}
+                      onChange={(e) => change({ frames: Number(e.target.value) })}
+                    >
+                      {(workflow?.frames ?? [22, 39, 56, 73, 90, 107, 124]).map(
+                        (n) => (
+                          <option key={n} value={n}>
+                            {(n / 24).toFixed(2)} s
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={draft.audio}
+                      disabled={!workflow?.audio}
+                      onChange={(e) => change({ audio: e.target.checked })}
+                    />
+                    Audio
+                  </label>
+                  <label>
+                    Seed
+                    <input
+                      aria-label="Video seed"
+                      inputMode="numeric"
+                      pattern="[0-9]+"
+                      maxLength={19}
+                      value={draft.seed}
+                      onChange={(e) => {
+                        if (/^\d*$/.test(e.target.value))
+                          change({ seed: e.target.value });
+                      }}
+                      onBlur={() => {
+                        try {
+                          if (
+                            !draft.seed ||
+                            BigInt(draft.seed) > 9223372036854775807n
+                          )
+                            change({ seed: "0" });
+                        } catch {
+                          change({ seed: "0" });
+                        }
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Next seed
+                    <select
+                      aria-label="Video seed mode"
+                      value={draft.seed_mode}
+                      onChange={(e) =>
+                        change({
+                          seed_mode: e.target.value as VideoDraft["seed_mode"],
+                        })
+                      }
+                    >
+                      <option value="increment">Increment</option>
+                      <option value="random">Random</option>
+                      <option value="fixed">Fixed</option>
+                    </select>
+                  </label>
+                  <div className="images-actions">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void repo
+                          .defaults(draft)
+                          .then((value) => {
+                            setDefaults(value);
+                            setNotice(
+                              storageMode === "device"
+                                ? "Device defaults saved"
+                                : "Account defaults saved",
+                            );
+                          })
+                          .catch((e) => setError(message(e)))
+                      }
+                    >
+                      <Save size={17} />
+                      Save defaults
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        change({
+                          ...defaults,
+                          prompt: draft.prompt,
+                          first_frame_id: draft.first_frame_id,
+                        })
+                      }
+                    >
+                      <RotateCcw size={17} />
+                      Reset settings
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onNavigate(undefined, storageMode);
+                    }}
+                  >
+                    <Film size={17} />
+                    New video flow
+                  </button>
+                  {notice && <p role="status">{notice}</p>}
+                </div>
+              </section>
             )}
-            <textarea
-              ref={input}
-              aria-label="Video prompt"
-              placeholder="Describe the motion..."
-              rows={focused ? 3 : 1}
-              value={draft.prompt}
-              disabled={!ready || busy}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setFocused(false)}
-              onChange={(e) => change({ prompt: e.target.value })}
-              onKeyDown={(e) => {
-                if (
-                  e.key === "Enter" &&
-                  !e.shiftKey &&
-                  !e.altKey &&
-                  !e.nativeEvent.isComposing &&
-                  (e.ctrlKey || e.metaKey || !usesMobileInputBehavior())
-                ) {
-                  e.preventDefault();
-                  e.currentTarget.form?.requestSubmit();
-                }
-              }}
-            />
           </div>
           <footer>
             <div className="images-actions">
-              <button
-                type="button"
-                className="icon-button primary-action"
-                title="Video inference settings"
-                aria-label="Video inference settings"
-                aria-expanded={settings}
-                onClick={() => setSettings(true)}
-              >
-                <Settings2 />
-              </button>
               <button
                 type="button"
                 className="icon-button primary-action"
@@ -767,165 +930,6 @@ function VideoFlow({
           <p className="video-caption">No ready video model is available.</p>
         )}
       </div>
-      {settings && (
-        <ImagePanel title="Video settings" onClose={() => setSettings(false)}>
-          <div className="video-settings">
-            <label>
-              Aspect ratio
-              <select
-                aria-label="Video aspect ratio"
-                value={closestAspect(draft.width, draft.height)}
-                disabled={!workflow}
-                onChange={(e) => {
-                  if (!workflow) return;
-                  if (e.target.value === "original") {
-                    if (!draft.first_frame_id) return;
-                    void repo
-                      .frameBlob(draft.first_frame_id, false)
-                      .then(createImageBitmap)
-                      .then((bitmap) => {
-                        try {
-                          repo.guard();
-                          if (alive.current)
-                            change(
-                              videoSize(bitmap.width / bitmap.height, workflow),
-                            );
-                        } finally {
-                          bitmap.close();
-                        }
-                      })
-                      .catch((e) => setError(message(e)));
-                    return;
-                  }
-                  const [w, h] = e.target.value.split(":").map(Number);
-                  change(videoSize(w / h, workflow));
-                }}
-              >
-                <option value="original" disabled={!draft.first_frame_id}>
-                  Original image
-                </option>
-                <option value="Custom" disabled>
-                  {draft.width} × {draft.height}
-                </option>
-                {aspectRatios.map((r) => (
-                  <option key={r}>{r}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Clip length
-              <select
-                aria-label="Video clip length"
-                value={draft.frames}
-                disabled={!workflow}
-                onChange={(e) => change({ frames: Number(e.target.value) })}
-              >
-                {(workflow?.frames ?? [22, 39, 56, 73, 90, 107, 124]).map(
-                  (n) => (
-                    <option key={n} value={n}>
-                      {(n / 24).toFixed(2)} s
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={draft.audio}
-                disabled={!workflow?.audio}
-                onChange={(e) => change({ audio: e.target.checked })}
-              />
-              Audio
-            </label>
-            <label>
-              Seed
-              <input
-                aria-label="Video seed"
-                inputMode="numeric"
-                pattern="[0-9]+"
-                maxLength={19}
-                value={draft.seed}
-                onChange={(e) => {
-                  if (/^\d*$/.test(e.target.value))
-                    change({ seed: e.target.value });
-                }}
-                onBlur={() => {
-                  try {
-                    if (
-                      !draft.seed ||
-                      BigInt(draft.seed) > 9223372036854775807n
-                    )
-                      change({ seed: "0" });
-                  } catch {
-                    change({ seed: "0" });
-                  }
-                }}
-              />
-            </label>
-            <label>
-              Next seed
-              <select
-                aria-label="Video seed mode"
-                value={draft.seed_mode}
-                onChange={(e) =>
-                  change({
-                    seed_mode: e.target.value as VideoDraft["seed_mode"],
-                  })
-                }
-              >
-                <option value="increment">Increment</option>
-                <option value="random">Random</option>
-                <option value="fixed">Fixed</option>
-              </select>
-            </label>
-            <div className="images-actions">
-              <button
-                type="button"
-                onClick={() =>
-                  void repo
-                    .defaults(draft)
-                    .then((value) => {
-                      setDefaults(value);
-                      setNotice(
-                        storageMode === "device"
-                          ? "Device defaults saved"
-                          : "Account defaults saved",
-                      );
-                    })
-                    .catch((e) => setError(message(e)))
-                }
-              >
-                <Save size={17} />
-                Save defaults
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  change({
-                    ...defaults,
-                    prompt: draft.prompt,
-                    first_frame_id: draft.first_frame_id,
-                  })
-                }
-              >
-                <RotateCcw size={17} />
-                Reset settings
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                onNavigate("video", undefined, storageMode);
-              }}
-            >
-              <Film size={17} />
-              New video flow
-            </button>
-            {notice && <p role="status">{notice}</p>}
-          </div>
-        </ImagePanel>
-      )}
       {viewFrame && (
         <PhotoViewer
           id={viewFrame}

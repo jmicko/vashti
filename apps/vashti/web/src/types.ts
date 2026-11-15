@@ -240,6 +240,7 @@ export type PersonaVersion = {
   base_backend_id: string;
   base_model_name: string;
   system_prompt: string;
+  inference_settings?: ChatInferenceSettings;
   tool_policy_json: string | null;
   created_by_user_id: string | null;
   created_at: number;
@@ -709,7 +710,7 @@ export type FormState = {
   error: string | null;
 };
 
-export type Page = "chat" | "private-chat" | "notes" | "images" | "settings";
+export type Page = "chat" | "private-chat" | "notes" | "images" | "videos" | "settings";
 export type SettingsSection =
   | "profile"
   | "appearance"
@@ -723,13 +724,15 @@ export type SettingsSection =
   | "app"
   | "backends";
 export type NewChatMode = "standard" | "private";
+export type CustomModelEditorLocation = { personaId?: string; storageMode?: "server" | "device" };
 export type AppRoute =
   | { page: "assistant"; view?: "new" | "defaults" | "tasks" | "conversations" | "compose"; conversationId?: string; taskId?: string; runId?: string }
   | { page: "images"; view?: import("./images/types").ImageView; sessionId?: string; storageMode?: "server" | "device" }
+  | { page: "videos"; sessionId?: string; storageMode?: "server" | "device" }
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }
   | { page: "notes"; storageMode?: "server" | "device"; noteId?: string }
-  | { page: "settings"; section: SettingsSection; storageMode?: "server" | "device"; memoryId?: string };
+  | { page: "settings"; section: SettingsSection; storageMode?: "server" | "device"; memoryId?: string; modelEditor?: CustomModelEditorLocation };
 export type SettingsGuard = {
   isDirty: boolean;
   save: () => Promise<boolean>;

@@ -1,7 +1,8 @@
 // Isolated UI fixture: every API request is intercepted, never sent to Kuno.
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ImagesWorkspace } from "../src/images/ImagesWorkspace";
+import { VideoWorkspace } from "../src/videos/VideoWorkspace";
+import { useVideoAvailability } from "../src/videos/useVideoAvailability";
 import { VideoFlowHistory } from "../src/videos/VideoFlowHistory";
 import { SettingsPage } from "../src/settingsPage";
 import { PwaProvider } from "../src/pwa";
@@ -13,8 +14,7 @@ import {
   type VideoDraft,
   type VideoPage,
 } from "../src/videos/types";
-import type { ImageView } from "../src/images/types";
-import type { SettingsSection, User } from "../src/types";
+import type { BackendModelGroup, SettingsSection, User } from "../src/types";
 import clipUrl from "../../src/videos/fixtures/clip.mp4?url";
 import frameUrl from "../../src/images/fixtures/64.png?url";
 import "../src/styles.css";
@@ -63,6 +63,8 @@ let preferences = {
 };
 let offline = false,
   writes = 0;
+let discovery: "ready" | "unsupported" | "offline" = "ready";
+const modelGroups: BackendModelGroup[] = [];
 const json = (value: unknown) =>
   new Response(JSON.stringify(value), {
     headers: { "Content-Type": "application/json" },
@@ -72,7 +74,11 @@ window.fetch = async (input, options = {}) => {
     path = url.pathname,
     method = options.method ?? "GET";
   const body = typeof options.body === "string" ? JSON.parse(options.body) : {};
-  if (path === "/api/videos/hosts") return json(videos);
+  if (path === "/api/videos/hosts") {
+    if (discovery === "offline") throw new TypeError("Fixture connection failure");
+    if (discovery === "unsupported") return new Response(null, { status: 404 });
+    return json(videos);
+  }
   if (path === "/api/images/hosts" || path === "/api/images/runs/active")
     return json([]);
   if (path === "/api/images/preferences") return json({});
@@ -189,8 +195,8 @@ setPrivateStorageUser(
   "video-fixture",
 );
 function Fixture() {
-  const [view, setView] = useState<ImageView>("home"),
-    [id, setId] = useState<string>(),
+  const videoAvailable = useVideoAvailability("video-fixture", modelGroups);
+  const [id, setId] = useState<string>(),
     [mode, setMode] = useState<"server" | "device">("server"),
     [key, setKey] = useState(0),
     [header, setHeader] = useState<HTMLElement | null>(null),
@@ -209,10 +215,9 @@ function Fixture() {
           <button
             onClick={() => {
               setScreen("images");
-              setView("home");
             }}
           >
-            Apps
+            Video
           </button>
           <button
             onClick={() => {
@@ -227,12 +232,20 @@ function Fixture() {
               setKey((v) => v + 1);
               setMode((v) => (v === "server" ? "device" : "server"));
               setScreen("images");
-              setView("video");
             }}
           >
             Switch storage
           </button>
           <button onClick={() => setScreen("settings")}>Settings</button>
+          <select aria-label="Fixture video discovery" defaultValue="ready" onChange={(e) => {
+            discovery = e.target.value as typeof discovery;
+            window.dispatchEvent(new Event("focus"));
+          }}>
+            <option value="ready">Ready</option>
+            <option value="unsupported">Old server</option>
+            <option value="offline">Offline</option>
+          </select>
+          <output aria-label="Video availability">{videoAvailable ? "Available" : "Unavailable"}</output>
           <button
             onClick={() => {
               offline = !offline;
@@ -278,7 +291,6 @@ function Fixture() {
               currentId={id}
               onOpen={(value) => {
                 setId(value);
-                setView("video");
                 setScreen("images");
               }}
               onRemoved={() => {
@@ -287,18 +299,13 @@ function Fixture() {
             />
           </aside>
         ) : (
-          <ImagesWorkspace
-            view={view}
+          <VideoWorkspace
             storageMode={mode}
             sessionId={id}
             newFlowKey={key}
             headerTarget={header}
-            isAdmin
-            modelGroups={[]}
-            onOpenBackends={() => {}}
-            onNavigate={(next, value, nextMode) => {
+            onNavigate={(value, nextMode) => {
               setId(value);
-              setView(next);
               setKey((v) => v + 1);
               if (nextMode) setMode(nextMode);
             }}

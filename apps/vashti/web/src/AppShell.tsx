@@ -68,6 +68,7 @@ import { usePwa } from "./pwa";
 import { useNativeUpdates } from "./nativeUpdates";
 import { useModelBackgroundWarmup } from "./useModelBackgroundWarmup";
 import { useTopbarPullToRefresh } from "./useTopbarPullToRefresh";
+import { useVideoAvailability } from "./videos/useVideoAvailability";
 import {
   createPrivateChat,
   deleteCachedHostedChat,
@@ -131,6 +132,7 @@ const PrivateChatView = lazy(() =>
   import("./PrivateChatView").then((module) => ({ default: module.PrivateChatView }))
 );
 const ImagesWorkspace = lazy(() => import("./images/ImagesWorkspace").then(module => ({ default: module.ImagesWorkspace })));
+const VideoWorkspace = lazy(() => import("./videos/VideoWorkspace").then(module => ({ default: module.VideoWorkspace })));
 const AssistantWorkspace = lazy(() => import("./assistant/AssistantWorkspace").then(module => ({ default: module.AssistantWorkspace })));
 const NotesWorkspace = lazy(() =>
   import("./notes/NotesWorkspace").then((module) => ({ default: module.NotesWorkspace }))
@@ -175,6 +177,7 @@ export function AppShell({
   const [pendingNavigation, setPendingNavigation] = useState<AppRoute | null>(null);
   const [isSavingPendingNavigation, setIsSavingPendingNavigation] = useState(false);
   const [modelGroups, setModelGroups] = useState<BackendModelGroup[]>([]);
+  const videoAvailable = useVideoAvailability(user.id, modelGroups);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [privatePersonas, setPrivatePersonas] = useState<PrivatePersona[]>([]);
   const [personaVersions, setPersonaVersions] = useState<Record<string, PersonaVersion>>({});
@@ -272,6 +275,7 @@ export function AppShell({
   const isSettingsPage = page === "settings";
   const isNotesPage = page === "notes";
   const isImagesPage = page === "images";
+  const isVideosPage = page === "videos";
   const isAssistantPage = page === "assistant";
   const isAssistantConversation = route.page === "assistant" && !route.taskId && !route.runId && (!route.view || route.view === "compose");
   const settingsSection = route.page === "settings" ? route.section : "profile";
@@ -1134,7 +1138,7 @@ export function AppShell({
 
   function createCustomModelFromSettings(draft: CustomModelDraft) {
     storeCustomModelDraft(draft);
-    openSettings("models");
+    navigate({ page: "settings", section: "models", modelEditor: {} });
   }
 
   async function createPrivateChatFromPrompt(
@@ -1325,18 +1329,24 @@ export function AppShell({
             currentPrivateChatId={currentPrivateChatId}
             isNotesActive={isNotesPage}
             isImagesActive={isImagesPage}
-            isVideosActive={route.page === "images" && route.view === "video"}
+            isVideosActive={isVideosPage}
             isAssistantActive={isAssistantPage}
             assistantAttention={assistantAttention}
             onOpenAssistant={() => navigate({ page: "assistant" })}
-            currentImageFlowId={route.page === "images" ? route.sessionId : undefined}
-            imageStorageMode={route.page === "images" ? route.storageMode ?? "server" : "server"}
+            currentImageFlowId={route.page === "images" || route.page === "videos" ? route.sessionId : undefined}
+            imageStorageMode={route.page === "images" || route.page === "videos" ? route.storageMode ?? "server" : "server"}
             onOpenImageFlow={(id) => {
-              navigate({ page: "images", view: route.page === "images" && route.view === "video" ? "video" : "flow", sessionId: id, storageMode: route.page === "images" ? route.storageMode : "server" });
+              if (route.page === "videos") {
+                navigate({ page: "videos", sessionId: id, storageMode: route.storageMode });
+              } else {
+                navigate({ page: "images", view: "flow", sessionId: id, storageMode: route.page === "images" ? route.storageMode : "server" });
+              }
               setIsSidebarOpen(false);
             }}
             onRemoveImageFlow={(id) => {
-              if (route.page === "images" && route.sessionId === id) {
+              if (route.page === "videos" && route.sessionId === id) {
+                navigate({ page: "videos", storageMode: route.storageMode });
+              } else if (route.page === "images" && route.sessionId === id) {
                 navigate({ page: "images", view: "home", storageMode: route.storageMode });
               }
             }}
@@ -1353,9 +1363,13 @@ export function AppShell({
               if (isAssistantPage) {
                 navigate({ page: "assistant", view: "compose" });
                 setIsSidebarOpen(false);
+              } else if (route.page === "videos") {
+                setNewImageFlowKey(value => value + 1);
+                navigate({ page: "videos", storageMode: route.storageMode });
+                setIsSidebarOpen(false);
               } else if (isImagesPage) {
                 setNewImageFlowKey(value => value + 1);
-                navigate({ page: "images", view: route.page === "images" && route.view === "video" ? "video" : "flow", storageMode: route.page === "images" ? route.storageMode : "server" });
+                navigate({ page: "images", view: "flow", storageMode: route.page === "images" ? route.storageMode : "server" });
                 setIsSidebarOpen(false);
               } else {
                 openChat();
@@ -1366,6 +1380,10 @@ export function AppShell({
               navigate({ page: "images", view: "home" });
               setIsSidebarOpen(false);
             }}
+            onOpenVideos={videoAvailable || isVideosPage ? () => {
+              navigate({ page: "videos" });
+              setIsSidebarOpen(false);
+            } : undefined}
             onOpenChat={openChat}
             onOpenPrivateChat={openPrivateChat}
             onRenameChat={renameChat}
@@ -1409,7 +1427,7 @@ export function AppShell({
                 <SettingsIcon />
                 <span>Settings</span>
               </div>
-            ) : isNotesPage || isImagesPage || isAssistantPage ? (
+            ) : isNotesPage || isImagesPage || isVideosPage || isAssistantPage ? (
               <>
                 {!(isNotesPage && isNotesEditorOpen) && (
                   <button
@@ -1425,7 +1443,7 @@ export function AppShell({
                     <Menu />
                   </button>
                 )}
-                {isImagesPage && route.page === "images" && route.view !== "home" && route.view !== "gallery" ? (
+                {isVideosPage || (route.page === "images" && route.view !== "home" && route.view !== "gallery") ? (
                   <div className="image-flow-header-slot" ref={setImageHeaderTarget} />
                 ) : isAssistantConversation ? (
                   <div className="assistant-header-slot" ref={setAssistantHeaderTarget} />
@@ -1590,6 +1608,8 @@ export function AppShell({
         </button></div>}
         {page === "settings" ? (
           <SettingsPage
+            modelEditor={route.page === "settings" ? route.modelEditor : undefined}
+            onModelEditorNavigate={(modelEditor) => navigate({ page: "settings", section: "models", modelEditor })}
             initialMemoryId={route.page === "settings" ? route.memoryId : undefined}
             currentUser={user}
             activeSection={settingsSection}
@@ -1618,6 +1638,19 @@ export function AppShell({
         ) : route.page === "assistant" ? (
           <Suspense fallback={<p role="status">Loading assistant...</p>}>
             <AssistantWorkspace key={user.id} headerTarget={assistantHeaderTarget} route={route} groups={modelGroups} onNavigate={navigate} onGuardChange={updateSettingsGuard} onManageModels={() => openSettings(isAdmin ? "backends" : "models")} onOpenNote={id => openReferencedNote("server", id)} />
+          </Suspense>
+        ) : route.page === "videos" ? (
+          <Suspense fallback={<p role="status">Loading video...</p>}>
+            <VideoWorkspace
+              storageMode={route.storageMode ?? "server"}
+              sessionId={route.sessionId}
+              newFlowKey={newImageFlowKey}
+              headerTarget={imageHeaderTarget}
+              onNavigate={(sessionId, storageMode) => {
+                if (!sessionId) setNewImageFlowKey(value => value + 1);
+                navigate({ page: "videos", sessionId, storageMode: storageMode ?? route.storageMode });
+              }}
+            />
           </Suspense>
         ) : route.page === "images" ? (
           <Suspense fallback={<p role="status">Loading images...</p>}>

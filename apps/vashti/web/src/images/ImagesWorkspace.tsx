@@ -11,7 +11,6 @@ import {
   X,
   LockKeyhole,
   Server,
-  Film,
 } from "lucide-react";
 import type { BackendModelGroup } from "../types";
 import { ImageAssetProvider } from "./ImageAsset";
@@ -30,8 +29,6 @@ import type {
   ServiceSettings,
 } from "./types";
 import "./images.css";
-import { VideoWorkspace } from "../videos/VideoWorkspace";
-import type { VideoHost } from "../videos/types";
 
 type Props = {
   storageMode: ImageStorage;
@@ -69,7 +66,6 @@ function Workspace({
   const [pendingPreferences, setPendingPreferences] =
     useState<Preferences | null>(null);
   const [hosts, setHosts] = useState<ImageHost[]>([]);
-  const [videoHosts, setVideoHosts] = useState<VideoHost[]>([]);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
   const [preferencesOpen, setPreferencesOpen] = useState(false);
@@ -136,13 +132,7 @@ function Workspace({
   const refreshHosts = useCallback(async () => {
     setChecking(true);
     try {
-      const [images, videos] = await Promise.allSettled([
-        requestJson<ImageHost[]>("/api/images/hosts"),
-        requestJson<VideoHost[]>("/api/videos/hosts"),
-      ]);
-      setVideoHosts(videos.status === "fulfilled" ? videos.value : []);
-      if (images.status === "rejected") throw images.reason;
-      setHosts(images.value);
+      setHosts(await requestJson<ImageHost[]>("/api/images/hosts"));
       setError("");
     } catch (error) {
       setError(imageError(error));
@@ -284,9 +274,7 @@ function Workspace({
           <button type="button" aria-pressed={storageMode === "device"} onClick={() => onNavigate("home", undefined, "device")}><LockKeyhole size={18} />This device</button>
         </div>
       )}
-      {view === "video" ? (
-        <VideoWorkspace storageMode={storageMode} sessionId={sessionId} newFlowKey={newFlowKey} headerTarget={headerTarget} onNavigate={onNavigate} />
-      ) : view === "home" ? (
+      {view === "home" ? (
         <div className="images-apps" aria-label="Image apps">
           <button
             type="button"
@@ -308,7 +296,6 @@ function Workspace({
             <Images />
             <span>Gallery</span>
           </button>
-          {videoHosts.length > 0 && <button type="button" onClick={() => onNavigate("video")}><Film /><span>Video</span></button>}
         </div>
       ) : view === "gallery" && preferences ? (
         <ImageGallery key={`${imagePath}:${sessionId ?? "all"}`} sessionId={sessionId} preferences={preferences} onNavigate={onNavigate} />

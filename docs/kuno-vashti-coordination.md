@@ -2,10 +2,10 @@
 
 **Vashti video consumer checkpoint (2026-11-08):** `codex/personal-assistant`
 merged `main` and implements the existing additive video contract without
-changing Kuno. Images gains a discovery-gated Video app with conversational
+changing Kuno. A discovery-gated Video sidebar workspace provides conversational
 first-frame generation, lower composer settings, retry versions, saved/private
 flows and video history. Mobile Settings returns to a horizontal section row;
-image inference controls return to the lower composer. Read
+image/video inference controls expand inline from the lower composer chevron. Read
 [the Vashti video workflow and validation boundaries](vashti-video.md).
 Offline checks passed, followed by user-authorized installed-Kuno acceptance:
 a synthetic first frame produced a 672x672, 22-frame AV1/FLAC clip through Vashti;

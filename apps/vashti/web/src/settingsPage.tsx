@@ -16,6 +16,7 @@ import { RetroLoader } from "./common";
 import type { PrivatePersona } from "./privateChatStore";
 import type {
   SettingsGuard,
+  CustomModelEditorLocation,
   BackendModelGroup,
   Persona,
   SettingsSection,
@@ -32,6 +33,7 @@ const BackendsPanel = lazy(() =>
 const UserModelsPanel = lazy(() =>
   import("./settingsModels").then((module) => ({ default: module.UserModelsPanel }))
 );
+const CustomModelsSection = lazy(() => import("./settingsPersonas").then(module => ({ default: module.CustomModelsSection })));
 const ProfileSettings = lazy(() =>
   import("./settingsProfile").then((module) => ({ default: module.ProfileSettings }))
 );
@@ -55,6 +57,8 @@ export function SettingsPage({
   currentUser,
   activeSection,
   initialMemoryId,
+  modelEditor,
+  onModelEditorNavigate,
   onBackendsChanged,
   onToolsChanged,
   onPersonasChanged,
@@ -77,6 +81,8 @@ export function SettingsPage({
   currentUser: User;
   activeSection: SettingsSection;
   initialMemoryId?: string;
+  modelEditor?: CustomModelEditorLocation;
+  onModelEditorNavigate?: (editor?: CustomModelEditorLocation) => void;
   onBackendsChanged: () => Promise<void>;
   onToolsChanged: () => Promise<void>;
   onPersonasChanged: () => Promise<void>;
@@ -144,6 +150,8 @@ export function SettingsPage({
               onClick={() => {
                 if (selectedSection !== section.id) {
                   onSelectSection(section.id);
+                } else if (section.id === "models" && modelEditor) {
+                  onModelEditorNavigate?.();
                 }
               }}
             >
@@ -170,8 +178,14 @@ export function SettingsPage({
           {selectedSection === "backends" && isAdmin && (
             <BackendsPanel onBackendsChanged={onBackendsChanged} />
           )}
-          {selectedSection === "models" && (
+          {selectedSection === "models" && modelEditor ? (
+            <div className="settings-section custom-model-editor-view">
+              <CustomModelsSection editor={modelEditor} onOpenEditor={onModelEditorNavigate} onGuardChange={onSettingsGuardChange}
+                onPersonasChanged={onPersonasChanged} onPrivatePersonasChanged={onPrivatePersonasChanged} />
+            </div>
+          ) : selectedSection === "models" && (
             <UserModelsPanel
+              onOpenModelEditor={onModelEditorNavigate}
               onModelsChanged={onBackendsChanged}
               onPersonasChanged={onPersonasChanged}
               onPrivatePersonasChanged={onPrivatePersonasChanged}

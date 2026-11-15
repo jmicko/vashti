@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import { requestJson } from "./api";
 import { normalizeToolPreferences } from "./toolPreferences";
+import { inferenceSettingsEqual, normalizeInferenceSettings } from "./inferenceSettings";
 import type {
   Note,
   NoteAiAccess,
@@ -250,6 +251,7 @@ export type PrivatePersonaVersion = {
   base_backend_name: string;
   base_model_name: string;
   system_prompt: string;
+  inference_settings?: ChatInferenceSettings;
   tool_policy_json: string | null;
   source_persona_id?: string | null;
   source_persona_version_id?: string | null;
@@ -272,6 +274,7 @@ export type SavePrivatePersonaParams = {
   baseBackendName: string;
   baseModelName: string;
   systemPrompt: string;
+  inferenceSettings?: ChatInferenceSettings;
   avatarAssetId?: string | null;
   avatarCropX?: number;
   avatarCropY?: number;
@@ -947,6 +950,7 @@ export async function updatePrivatePersona(
     params.baseBackendName !== currentVersion.base_backend_name ||
     params.baseModelName !== currentVersion.base_model_name ||
     params.systemPrompt.trim() !== currentVersion.system_prompt ||
+    !inferenceSettingsEqual(params.inferenceSettings ?? currentVersion.inference_settings, currentVersion.inference_settings) ||
     (params.toolPolicyJson ?? null) !== currentVersion.tool_policy_json ||
     (params.sourcePersonaId ?? null) !== (currentVersion.source_persona_id ?? null) ||
     (params.sourcePersonaVersionId ?? null) !==
@@ -1000,7 +1004,7 @@ export async function updatePrivatePersona(
     versions.reduce((max, version) => Math.max(max, version.version_number), 0) + 1;
   const versionId = privateId("private-persona-version");
   const version = privatePersonaVersionFromParams({
-    params: { ...params, modelType: nextModelType },
+    params: { ...params, modelType: nextModelType, inferenceSettings: params.inferenceSettings ?? currentVersion.inference_settings },
     personaId,
     versionId,
     versionNumber: nextVersionNumber,
@@ -1169,22 +1173,22 @@ export async function deleteUnusedPrivatePersonaAvatar(assetId: string): Promise
 
 export async function getPrivatePersona(personaId: string): Promise<PrivatePersona | null> {
   const db = await openPrivateDb();
-  const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readonly");
+  const tx = db.transaction(PERSONA_STORE, "readonly");
   const personaRecord = await requestResult<
     PrivateStoreRecord | Omit<PrivatePersona, "current_version"> | undefined
   >(
     tx.objectStore(PERSONA_STORE).get(personaId)
   );
-  if (!personaRecord) {
-    await transactionDone(tx);
-    return null;
-  }
+  await transactionDone(tx);
+  if (!personaRecord) return null;
   const persona = await readPrivateRecord<Omit<PrivatePersona, "current_version">>(personaRecord);
 
+  // Decryption can finish after IndexedDB closes a transaction; start the next read afterwards.
+  const versionTx = db.transaction(PERSONA_VERSION_STORE, "readonly");
   const versionRecord = await requestResult<PrivateStoreRecord | PrivatePersonaVersion | undefined>(
-    tx.objectStore(PERSONA_VERSION_STORE).get(persona.current_version_id)
+    versionTx.objectStore(PERSONA_VERSION_STORE).get(persona.current_version_id)
   );
-  await transactionDone(tx);
+  await transactionDone(versionTx);
   const version = versionRecord
     ? normalizePrivatePersonaVersion(await readPrivateRecord<PrivatePersonaVersion>(versionRecord))
     : null;
@@ -2692,6 +2696,7 @@ function privatePersonaVersionFromParams({
     base_backend_name: params.baseBackendName,
     base_model_name: params.baseModelName,
     system_prompt: params.systemPrompt.trim(),
+    inference_settings: normalizeInferenceSettings(params.inferenceSettings),
     tool_policy_json: params.toolPolicyJson ?? null,
     source_persona_id: params.sourcePersonaId ?? null,
     source_persona_version_id: params.sourcePersonaVersionId ?? null,
@@ -2706,7 +2711,8 @@ function normalizeCustomModelType(value: unknown): CustomModelType {
 function normalizePrivatePersonaVersion(version: PrivatePersonaVersion): PrivatePersonaVersion {
   return {
     ...version,
-    model_type: normalizeCustomModelType(version.model_type)
+    model_type: normalizeCustomModelType(version.model_type),
+    inference_settings: normalizeInferenceSettings(version.inference_settings)
   };
 }
 

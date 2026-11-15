@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::{
     auth::service::unix_timestamp,
     backends::service as backends_service,
+    chats::{models::ChatInferenceSettings, service::normalized_inference_settings},
     error::ApiError,
     persona_avatars,
     personas::{
@@ -33,6 +34,7 @@ pub struct ResolvedPersonaVersion {
     pub base_backend_id: String,
     pub base_model_name: String,
     pub system_prompt: String,
+    pub inference_settings: ChatInferenceSettings,
 }
 
 pub async fn list_personas(
@@ -71,6 +73,7 @@ pub async fn list_personas(
                v.base_backend_id,
                v.base_model_name,
                v.system_prompt,
+               v.inference_settings_json,
                v.tool_policy_json,
                v.created_by_user_id,
                v.created_at AS version_created_at,
@@ -123,6 +126,9 @@ pub async fn create_persona(
     )
     .await?;
     let system_prompt = validate_system_prompt(&payload.system_prompt)?;
+    let inference_settings =
+        normalized_inference_settings(payload.inference_settings.unwrap_or_default());
+    let inference_settings_json = serialize_inference_settings(&inference_settings)?;
     let tool_policy_json = validate_tool_policy(payload.tool_policy_json)?;
     let avatar_asset_id = normalize_optional(payload.avatar_asset_id);
     persona_avatars::service::ensure_asset_assignable(pool, user_id, avatar_asset_id.as_deref())
@@ -178,6 +184,7 @@ pub async fn create_persona(
             base_backend_id: &base_backend_id,
             base_model_name: &base_model_name,
             system_prompt: &system_prompt,
+            inference_settings_json: &inference_settings_json,
             tool_policy_json: tool_policy_json.as_deref(),
             created_by_user_id: Some(user_id),
             now,
@@ -325,6 +332,11 @@ pub async fn update_persona(
         Some(tool_policy) => validate_tool_policy(Some(tool_policy))?,
         None => current_version.tool_policy_json.clone(),
     };
+    let inference_settings = payload
+        .inference_settings
+        .map(normalized_inference_settings)
+        .unwrap_or_else(|| current_version.inference_settings.clone());
+    let inference_settings_json = serialize_inference_settings(&inference_settings)?;
 
     if current.visibility == "public" && next_visibility == "private" {
         let other_members = count_other_members(pool, persona_id, user_id).await?;
@@ -343,6 +355,7 @@ pub async fn update_persona(
         || base_backend_id != current_version.base_backend_id
         || base_model_name != current_version.base_model_name
         || system_prompt != current_version.system_prompt
+        || inference_settings != current_version.inference_settings
         || tool_policy_json != current_version.tool_policy_json;
     let now = unix_timestamp();
     let mut tx = pool.begin().await?;
@@ -366,6 +379,7 @@ pub async fn update_persona(
                 base_backend_id: &base_backend_id,
                 base_model_name: &base_model_name,
                 system_prompt: &system_prompt,
+                inference_settings_json: &inference_settings_json,
                 tool_policy_json: tool_policy_json.as_deref(),
                 created_by_user_id: Some(user_id),
                 now,
@@ -507,6 +521,7 @@ pub async fn copy_persona(
             base_backend_id: source.base_backend_id,
             base_model_name: source.base_model_name,
             system_prompt: source.system_prompt,
+            inference_settings: Some(source.inference_settings),
             tool_policy_json: source.tool_policy_json,
         },
     )
@@ -613,6 +628,7 @@ pub async fn list_versions(
                base_backend_id,
                base_model_name,
                system_prompt,
+               inference_settings_json,
                tool_policy_json,
                created_by_user_id,
                created_at
@@ -655,7 +671,8 @@ pub async fn resolve_persona_version_for_use(
                v.display_name,
                v.base_backend_id,
                v.base_model_name,
-               v.system_prompt
+               v.system_prompt,
+               v.inference_settings_json
         FROM persona_versions v
         JOIN personas p ON p.id = v.persona_id
         LEFT JOIN persona_members pm ON pm.persona_id = p.id AND pm.user_id = ?
@@ -709,6 +726,7 @@ pub async fn resolve_persona_version_for_use(
         base_backend_id: row.try_get("base_backend_id")?,
         base_model_name: row.try_get("base_model_name")?,
         system_prompt: row.try_get("system_prompt")?,
+        inference_settings: row_inference_settings(&row)?,
     })
 }
 
@@ -733,6 +751,7 @@ struct InsertPersonaVersion<'a> {
     base_backend_id: &'a str,
     base_model_name: &'a str,
     system_prompt: &'a str,
+    inference_settings_json: &'a str,
     tool_policy_json: Option<&'a str>,
     created_by_user_id: Option<&'a str>,
     now: i64,
@@ -783,11 +802,12 @@ async fn insert_persona_version(
             base_backend_id,
             base_model_name,
             system_prompt,
+            inference_settings_json,
             tool_policy_json,
             created_by_user_id,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(params.version_id)
@@ -813,6 +833,7 @@ async fn insert_persona_version(
     .bind(params.base_backend_id)
     .bind(params.base_model_name)
     .bind(params.system_prompt)
+    .bind(params.inference_settings_json)
     .bind(params.tool_policy_json)
     .bind(params.created_by_user_id)
     .bind(params.now)
@@ -924,6 +945,7 @@ async fn get_visible_persona(
                v.base_backend_id,
                v.base_model_name,
                v.system_prompt,
+               v.inference_settings_json,
                v.tool_policy_json,
                v.created_by_user_id,
                v.created_at AS version_created_at,
@@ -1064,6 +1086,7 @@ async fn get_version(
                base_backend_id,
                base_model_name,
                system_prompt,
+               inference_settings_json,
                tool_policy_json,
                created_by_user_id,
                created_at
@@ -1360,6 +1383,20 @@ fn validate_background(
     })
 }
 
+fn serialize_inference_settings(settings: &ChatInferenceSettings) -> Result<String, ApiError> {
+    serde_json::to_string(settings)
+        .map_err(|_| ApiError::internal("Could not save custom model inference settings"))
+}
+
+fn row_inference_settings(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<ChatInferenceSettings, sqlx::Error> {
+    let json: String = row.try_get("inference_settings_json")?;
+    serde_json::from_str(&json)
+        .map(normalized_inference_settings)
+        .map_err(|error| sqlx::Error::Decode(Box::new(error)))
+}
+
 fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx::Error> {
     Ok(PersonaResponse {
         id: row.try_get("id")?,
@@ -1391,6 +1428,7 @@ fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx:
             base_backend_id: row.try_get("base_backend_id")?,
             base_model_name: row.try_get("base_model_name")?,
             system_prompt: row.try_get("system_prompt")?,
+            inference_settings: row_inference_settings(&row)?,
             tool_policy_json: row.try_get("tool_policy_json")?,
             created_by_user_id: row.try_get("created_by_user_id")?,
             created_at: row.try_get("version_created_at")?,
@@ -1428,6 +1466,7 @@ fn row_to_version(row: sqlx::sqlite::SqliteRow) -> Result<PersonaVersionResponse
         base_backend_id: row.try_get("base_backend_id")?,
         base_model_name: row.try_get("base_model_name")?,
         system_prompt: row.try_get("system_prompt")?,
+        inference_settings: row_inference_settings(&row)?,
         tool_policy_json: row.try_get("tool_policy_json")?,
         created_by_user_id: row.try_get("created_by_user_id")?,
         created_at: row.try_get("created_at")?,
@@ -1476,6 +1515,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inference_defaults_are_versioned_preserved_and_copied() {
+        let pool = test_pool().await;
+        let owner = register_user(
+            &pool,
+            "inference-owner".into(),
+            None,
+            "test-password".into(),
+        )
+        .await
+        .unwrap()
+        .user;
+        let backend = create_test_backend(&pool).await;
+        let first = create_persona(
+            &pool,
+            &owner.id,
+            serde_json::from_value(serde_json::json!({
+                "visibility":"private", "display_name":"Creative", "base_backend_id":backend,
+                "base_model_name":"model", "system_prompt":"Write creatively.",
+                "inference_settings":{"temperature":1.3,"top_p":0.85,"seed":0}
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let initial_id = first.current_version.id.clone();
+        assert_eq!(
+            first.current_version.inference_settings.temperature,
+            Some(1.3)
+        );
+        let second = update_persona(
+            &pool,
+            &owner.id,
+            &first.id,
+            serde_json::from_value(serde_json::json!({
+                "inference_settings":{"temperature":1.6,"top_p":0.85,"seed":0}
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.current_version.version_number, 2);
+        let unchanged = update_persona(
+            &pool,
+            &owner.id,
+            &first.id,
+            serde_json::from_value(serde_json::json!({
+                "inference_settings":{"temperature":1.6,"top_p":0.85,"seed":0}
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(unchanged.current_version.id, second.current_version.id);
+        let renamed = update_persona(
+            &pool,
+            &owner.id,
+            &first.id,
+            serde_json::from_value(serde_json::json!({"display_name":"Creative writer"})).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            renamed.current_version.inference_settings.temperature,
+            Some(1.6)
+        );
+        let pinned = resolve_persona_version_for_use(&pool, &owner.id, &initial_id)
+            .await
+            .unwrap();
+        assert_eq!(pinned.inference_settings.temperature, Some(1.3));
+        let copied = copy_persona(
+            &pool,
+            Path::new("/unused-avatar-fixture"),
+            &owner.id,
+            &first.id,
+            CopyPersonaRequest {
+                persona_version_id: initial_id.clone(),
+                visibility: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            copied.current_version.inference_settings,
+            first.current_version.inference_settings
+        );
+        let cleared = update_persona(
+            &pool,
+            &owner.id,
+            &first.id,
+            serde_json::from_value(serde_json::json!({"inference_settings":{}})).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cleared.current_version.inference_settings,
+            ChatInferenceSettings::default()
+        );
+        let versions = list_versions(&pool, &owner.id, &first.id).await.unwrap();
+        assert_eq!(versions.len(), 4);
+        assert_eq!(
+            versions
+                .iter()
+                .find(|v| v.id == initial_id)
+                .unwrap()
+                .inference_settings
+                .temperature,
+            Some(1.3)
+        );
+        assert_eq!(list_personas(&pool, &owner.id).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
     async fn persona_favorites_are_scoped_to_each_user() {
         let pool = test_pool().await;
         let owner = register_user(
@@ -1517,6 +1668,7 @@ mod tests {
                 base_backend_id: backend_id,
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Be helpful.".to_string(),
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1574,6 +1726,7 @@ mod tests {
                 base_backend_id: backend_id.clone(),
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Answer carefully.".to_string(),
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1601,6 +1754,7 @@ mod tests {
                 base_backend_id: Some(backend_id),
                 base_model_name: Some("gemma4:e2b".to_string()),
                 system_prompt: Some("Answer carefully and cite uncertainty.".to_string()),
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1670,6 +1824,7 @@ mod tests {
                 base_backend_id: backend_id,
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Be helpful.".to_string(),
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1780,6 +1935,7 @@ mod tests {
                 base_backend_id: backend_id.clone(),
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Be helpful.".to_string(),
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1803,6 +1959,7 @@ mod tests {
                 base_backend_id: None,
                 base_model_name: None,
                 system_prompt: None,
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1831,6 +1988,7 @@ mod tests {
                 base_backend_id: None,
                 base_model_name: None,
                 system_prompt: None,
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1873,6 +2031,7 @@ mod tests {
                 base_backend_id: None,
                 base_model_name: None,
                 system_prompt: None,
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )
@@ -1917,6 +2076,7 @@ mod tests {
                 base_backend_id: None,
                 base_model_name: None,
                 system_prompt: None,
+                inference_settings: None,
                 tool_policy_json: None,
             },
         )

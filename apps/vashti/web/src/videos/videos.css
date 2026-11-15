@@ -35,6 +35,9 @@
   font-size: 1.3rem;
   margin: 0;
 }
+.video-settings-open .video-empty {
+  min-height: 0;
+}
 .video-turn {
   margin-bottom: 28px;
 }
@@ -160,10 +163,6 @@
   min-height: 44px;
   color: var(--muted);
 }
-.video-composer-dock {
-  flex: 0 0 auto;
-  max-height: none;
-}
 .video-prompt-row {
   display: flex;
   gap: 10px;
@@ -191,6 +190,14 @@
 }
 .video-settings .checkbox-row {
   min-height: 44px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: .6rem;
+}
+.video-settings .checkbox-row input {
+  width: auto;
+  accent-color: var(--accent);
 }
 .video-caption {
   color: var(--muted);

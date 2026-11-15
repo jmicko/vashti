@@ -794,6 +794,11 @@ textarea {
   padding: 16px 20px 20px;
 }
 
+@media (max-height: 560px) {
+  .sidebar { display: block; overflow-y: auto; }
+  .sidebar .chat-history { overflow: visible; }
+}
+
 .sidebar-new-chat {
   width: 100%;
   justify-content: flex-start;
@@ -5033,6 +5038,35 @@ textarea {
 
 .settings-section-wide {
   --settings-card-width: 70rem;
+}
+
+.custom-model-editor-view {
+  width: 100%;
+  max-width: 52rem;
+  margin-inline: auto;
+}
+
+.custom-model-editor .persona-editor-form {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.custom-model-inference {
+  min-width: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.custom-model-inference summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding-block: 0.75rem;
+}
+
+.custom-model-inference .model-settings-inference-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
 }
 
 .settings-section > .section-header,

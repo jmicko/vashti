@@ -885,7 +885,7 @@ pub async fn prepare_generation(
         backend_base_url: backend.base_url,
         model_name,
         think_mode,
-        inference_options: inference_settings_to_options(&inference_settings),
+        inference_options: persona_inference_options(&inference_settings, persona.as_ref()),
         prompt_messages,
         user_message: Some(user_message),
         assistant_message,
@@ -1063,7 +1063,7 @@ pub async fn prepare_regeneration(
         backend_base_url: backend.base_url,
         model_name,
         think_mode,
-        inference_options: inference_settings_to_options(&inference_settings),
+        inference_options: persona_inference_options(&inference_settings, persona.as_ref()),
         prompt_messages,
         user_message: None,
         assistant_message,
@@ -1246,7 +1246,7 @@ pub async fn prepare_continuation(
         backend_base_url: backend.base_url,
         model_name,
         think_mode,
-        inference_options: inference_settings_to_options(&inference_settings),
+        inference_options: persona_inference_options(&inference_settings, persona.as_ref()),
         prompt_messages,
         user_message: None,
         assistant_message,
@@ -1481,7 +1481,7 @@ pub async fn prepare_branch_generation(
         backend_base_url: backend.base_url,
         model_name,
         think_mode,
-        inference_options: inference_settings_to_options(&inference_settings),
+        inference_options: persona_inference_options(&inference_settings, persona.as_ref()),
         prompt_messages,
         user_message: Some(user_message),
         assistant_message,
@@ -2710,7 +2710,9 @@ fn row_to_tool_preferences(
     Ok(preferences)
 }
 
-fn normalized_inference_settings(settings: ChatInferenceSettings) -> ChatInferenceSettings {
+pub(crate) fn normalized_inference_settings(
+    settings: ChatInferenceSettings,
+) -> ChatInferenceSettings {
     ChatInferenceSettings {
         temperature: settings
             .temperature
@@ -2733,6 +2735,18 @@ fn normalized_inference_settings(settings: ChatInferenceSettings) -> ChatInferen
         num_gpu: settings.num_gpu.map(|value| value.clamp(0, 10_000)),
         num_thread: settings.num_thread.map(|value| value.clamp(1, 1_024)),
         seed: settings.seed,
+    }
+}
+
+fn persona_inference_options(
+    settings: &ChatInferenceSettings,
+    persona: Option<&ResolvedPersonaVersion>,
+) -> Option<OllamaChatOptions> {
+    match persona {
+        Some(persona) => {
+            inference_settings_to_options(&settings.with_defaults(&persona.inference_settings))
+        }
+        None => inference_settings_to_options(settings),
     }
 }
 
@@ -2983,13 +2997,15 @@ mod tests {
     };
 
     use super::{
-        active_tail_message_id, ancestor_prompt_messages, edit_message, prepare_continuation,
+        active_tail_message_id, ancestor_prompt_messages, edit_message, get_chat,
+        prepare_branch_generation, prepare_continuation, prepare_generation, prepare_regeneration,
         recover_interrupted_generations, resolve_branch_explicit_note_context,
         select_active_revision,
     };
     use crate::chats::handlers::{
         ContinueMessageRequest, EditMessageRequest, SetActiveRevisionRequest,
     };
+    use crate::chats::models::ChatInferenceSettings;
     use crate::startup;
 
     async fn test_pool() -> SqlitePool {
@@ -3071,6 +3087,47 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed custom model and replacement backend");
+    }
+
+    #[tokio::test]
+    async fn custom_inference_defaults_apply_to_every_generation_path() {
+        for kind in 0..4 {
+            for override_temperature in [None, Some(0.0)] {
+                let pool = test_pool().await;
+                seed_custom_model(&pool).await;
+                sqlx::query("UPDATE persona_versions SET inference_settings_json = '{\"temperature\":1.3,\"top_p\":0.85,\"seed\":0}' WHERE id = 'persona-v1'; UPDATE chats SET persona_id = 'persona', persona_version_id = 'persona-v1' WHERE id = 'chat'; UPDATE chat_messages SET backend_id = 'backend', model_name = 'original-model', persona_id = 'persona', persona_version_id = 'persona-v1' WHERE id = 'child-r1'").execute(&pool).await.unwrap();
+                let overrides =
+                    serde_json::json!({"temperature":override_temperature,"num_predict":48});
+                let payload = serde_json::json!({"persona_version_id":"persona-v1", "inference_settings":overrides});
+                let prepared = match kind {
+                    0 => prepare_generation(&pool, Path::new("/tmp"), "user", "chat", serde_json::from_value(serde_json::json!({
+                        "persona_version_id":"persona-v1", "inference_settings":overrides,
+                        "user_message":{"content_text":"Hello"}
+                    })).unwrap()).await,
+                    1 => prepare_regeneration(&pool, Path::new("/tmp"), "user", "chat", "child-r1", serde_json::from_value(payload).unwrap()).await,
+                    2 => prepare_continuation(&pool, Path::new("/tmp"), "user", "chat", "child-r1", serde_json::from_value(payload).unwrap()).await,
+                    _ => prepare_branch_generation(&pool, Path::new("/tmp"), "user", "chat", "parent", serde_json::from_value(serde_json::json!({
+                        "persona_version_id":"persona-v1", "inference_settings":overrides,"content_text":"Edited prompt"
+                    })).unwrap()).await,
+                }.unwrap();
+                let options = prepared.inference_options.unwrap();
+                assert_eq!(
+                    options.temperature,
+                    Some(override_temperature.unwrap_or(1.3)),
+                    "path {kind}"
+                );
+                assert_eq!(options.top_p, Some(0.85));
+                assert_eq!(options.seed, Some(0));
+                assert_eq!(options.num_predict, Some(48));
+                assert_eq!(
+                    get_chat(&pool, "user", "chat")
+                        .await
+                        .unwrap()
+                        .inference_settings,
+                    ChatInferenceSettings::default()
+                );
+            }
+        }
     }
 
     #[tokio::test]
