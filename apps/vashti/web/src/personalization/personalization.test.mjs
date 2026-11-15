@@ -4,7 +4,11 @@ import { build } from "esbuild";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
 import { fileURLToPath } from "node:url";
 
-Object.assign(globalThis, { indexedDB, IDBKeyRange, window: new EventTarget() });
+Object.assign(globalThis, {
+  indexedDB,
+  IDBKeyRange,
+  window: new EventTarget()
+});
 let requests = [],
   hold = null;
 const catalog = [
@@ -71,7 +75,10 @@ const bundle = await build({
     {
       name: "mock-profile-api",
       setup(b) {
-        b.onResolve({ filter: /^\.\.?\/api$/ }, () => ({ path: "mock-api", namespace: "test" }));
+        b.onResolve({ filter: /^\.\.?\/api$/ }, () => ({
+          path: "mock-api",
+          namespace: "test"
+        }));
         b.onLoad({ filter: /.*/, namespace: "test" }, () => ({
           contents: "export const requestJson=(...args)=>globalThis.__profileApi(...args);"
         }));
@@ -85,7 +92,10 @@ const app = await import(
 const user = (id) =>
   app.setPrivateStorageUser(
     id,
-    { user_id: id, key_material: Buffer.alloc(32, id.charCodeAt(0)).toString("base64") },
+    {
+      user_id: id,
+      key_material: Buffer.alloc(32, id.charCodeAt(0)).toString("base64")
+    },
     "profile-server"
   );
 async function seededUser(id) {
@@ -126,7 +136,11 @@ test("group rules, overrides, and context bounds mirror the server", () => {
   );
   assert(
     !app.allowsProfile(
-      { ...settings, enabled: false, model_overrides: { [catalog[1].key]: true } },
+      {
+        ...settings,
+        enabled: false,
+        model_overrides: { [catalog[1].key]: true }
+      },
       catalog[1]
     )
   );
@@ -212,7 +226,7 @@ test("device processing stays encrypted, isolates accounts, respects edits and f
   const forgotten = await app.forget(fixed.revision, fixed.facts[0].id);
   assert.equal(forgotten.facts.length, 0);
   assert.equal((await app.history(fixed.facts[0].id)).length, 0);
-  assert(forgotten.suppressed.includes("food.favorite"));
+  assert(forgotten.suppressed.includes(app.topicToken("food.favorite")));
   assert(
     requests.every((r) =>
       ["/api/personalization/models", "/api/personalization/device-extract"].includes(r.path)
@@ -271,5 +285,100 @@ test("a signed-out attempt cannot leave the processing lane permanently busy", a
   await assert.rejects(app.processNow(), /Sign in/);
   await seededUser("signed-back-in");
   assert.equal((await app.processNow()).facts.length, 1);
+  app.resetPrivateStorageUser();
+});
+
+test("corroboration keeps newer sources without another content version", async () => {
+  const { chat, message } = await seededUser("confirming");
+  const first = await app.processNow();
+  const second = app.createPrivateMessage({
+    chatId: chat.id,
+    parentMessageId: null,
+    role: "user",
+    contentText: message.active_revision.content_text,
+    backendId: "host",
+    modelName: "local",
+    createdAt: message.created_at + 20
+  });
+  await app.savePrivateMessage(second);
+  const confirmed = await app.processNow();
+  assert.equal(confirmed.facts[0].version, first.facts[0].version);
+  assert.equal((await app.history(first.facts[0].id)).length, 1);
+  await app.savePrivateMessage({ ...message, is_deleted: true });
+  assert(
+    (await app.deviceContext("base:host:local", "host", "local", false, "food")).includes("corn")
+  );
+  app.resetPrivateStorageUser();
+});
+
+test("legacy device suppression markers upgrade without retaining topic text", async () => {
+  user("legacy-markers");
+  const profile = await app.getProfile();
+  await app.writePrivateProfile(
+    {
+      ...profile,
+      revision: 1,
+      suppressed: ["private_topic_with_personal_value"]
+    },
+    0
+  );
+  const [first, second] = await Promise.all([app.getProfile(), app.getProfile()]);
+  assert.deepEqual(first.suppressed, [app.topicToken("private_topic_with_personal_value")]);
+  assert.deepEqual(second.suppressed, first.suppressed);
+  assert(!JSON.stringify(first).includes("personal_value"));
+  app.resetPrivateStorageUser();
+});
+
+test("device edits cannot inherit an earlier revision's allowed model", async () => {
+  const { message } = await seededUser("revision-provenance");
+  const original = structuredClone(message.active_revision);
+  const edit = {
+    ...original,
+    id: "cloud-edit",
+    source: "edit",
+    profile_source: {
+      backend_id: "host",
+      model_name: "renamed",
+      persona_id: null,
+      persona_version_id: null
+    }
+  };
+  await app.savePrivateMessage({
+    ...message,
+    active_revision_id: edit.id,
+    active_revision: edit,
+    revisions: [original, edit]
+  });
+  assert.equal((await app.processNow()).facts.length, 0);
+  // Missing historical provenance also fails closed, rather than using chat defaults.
+  const legacy = { ...edit, id: "legacy-edit" };
+  delete legacy.profile_source;
+  await app.savePrivateMessage({
+    ...message,
+    active_revision_id: legacy.id,
+    active_revision: legacy,
+    revisions: [original, legacy]
+  });
+  assert.equal((await app.processNow()).facts.length, 0);
+  await app.savePrivateMessage(message);
+  assert.equal((await app.processNow()).facts.length, 1);
+  app.resetPrivateStorageUser();
+});
+
+test("retry clears an old device error when every source is already processed", async () => {
+  await seededUser("empty-retry");
+  const profile = await app.processNow();
+  await app.writePrivateProfile(
+    {
+      ...profile,
+      revision: profile.revision + 1,
+      last_error: "processing_failed"
+    },
+    profile.revision
+  );
+  const retried = await app.processNow();
+  assert.equal(retried.last_error, null);
+  assert.equal(retried.requested, false);
+  assert.equal(retried.facts.length, 1);
   app.resetPrivateStorageUser();
 });

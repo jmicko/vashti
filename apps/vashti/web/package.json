@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@noble/ciphers": "^2.2.0",
+    "@noble/hashes": "^2.4.0",
     "@tauri-apps/api": "^2.11.1",
     "@use-gesture/react": "10.3.1",
     "@vitejs/plugin-react": "^4.3.4",

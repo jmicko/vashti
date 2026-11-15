@@ -16,6 +16,7 @@ import {
   factSources,
   fitProfileContext,
   profileContext,
+  topicToken,
   validateFact
 } from "./core";
 import type {
@@ -28,14 +29,29 @@ import type {
 } from "./types";
 
 export async function getProfile(): Promise<DeviceProfile> {
-  return (
-    (await readPrivateProfile<DeviceProfile>()) ?? {
-      ...defaultProfile(),
-      processed: [],
-      suppressed: [],
-      history: {}
+  const guard = privateImageGuard();
+  const profile = (await readPrivateProfile<DeviceProfile>()) ?? {
+    ...defaultProfile(),
+    processed: [],
+    suppressed: [],
+    history: {}
+  };
+  guard();
+  if (profile.suppressed.some((topic) => !topic.startsWith("sha256:"))) {
+    try {
+      return await save(
+        { ...profile, suppressed: profile.suppressed.map(topicToken) },
+        profile.revision
+      );
+    } catch (error) {
+      guard();
+      const current = await readPrivateProfile<DeviceProfile>();
+      guard();
+      if (current && current.revision !== profile.revision) return getProfile();
+      throw error;
     }
-  );
+  }
+  return profile;
 }
 
 async function save(profile: DeviceProfile, expected: number) {
@@ -126,7 +142,7 @@ export async function editFact(
     created_at: old?.created_at ?? now,
     updated_at: now
   };
-  if (old) profile.suppressed = [...new Set([...profile.suppressed, old.topic])];
+  if (old) profile.suppressed = [...new Set([...profile.suppressed, topicToken(old.topic)])];
   profile.facts = [...profile.facts.filter((f) => f.id !== id), fact];
   profile.history[fact.id] = [
     {
@@ -148,7 +164,9 @@ export async function forget(expected: number, id: string | null) {
   if (profile.revision !== expected)
     throw new Error("Your device profile changed. Refresh and try again.");
   const removed = profile.facts.filter((f) => !id || f.id === id);
-  profile.suppressed = [...new Set([...profile.suppressed, ...removed.map((f) => f.topic)])];
+  profile.suppressed = [
+    ...new Set([...profile.suppressed, ...removed.map((f) => topicToken(f.topic))])
+  ];
   const processed = new Set(profile.processed);
   for (const fact of removed) {
     for (const source of factSources(fact)) processed.add(source.revision_id);
@@ -194,21 +212,40 @@ async function eligibleSources(
       const response = messages
         .filter((m) => m.parent_message_id === message.id && m.role === "assistant")
         .sort((a, b) => a.created_at - b.created_at)[0];
-      const personaId = response ? response.persona_id : chat.persona_id;
-      const backend = response?.backend_id ?? chat.default_backend_id;
-      const name = response?.model_name ?? chat.default_model_name;
+      const snapshot = revision.profile_source;
+      // Old edits have no trustworthy model snapshot. Never inherit an earlier revision's model.
+      if (!snapshot && revision.source !== "original") continue;
+      if (!snapshot && !response) continue;
+      const personaId = snapshot
+        ? snapshot.persona_id
+        : response
+          ? response.persona_id
+          : chat.persona_id;
+      const backend = snapshot?.backend_id ?? response?.backend_id ?? chat.default_backend_id;
+      const name = snapshot?.model_name ?? response?.model_name ?? chat.default_model_name;
       const key = personaId ? `persona:${personaId}` : `base:${backend}:${name}`;
       const model = catalog.find((m) => m.key === key);
       const base = catalog.find((m) => m.key === `base:${backend}:${name}`);
       if (!model || !base) continue;
-      const versionId = response ? response.persona_version_id : chat.persona_version_id;
+      const versionId = snapshot
+        ? snapshot.persona_version_id
+        : response
+          ? response.persona_version_id
+          : chat.persona_version_id;
       const version =
         personaId && versionId
           ? (await listPrivatePersonaVersions(personaId)).find((v) => v.id === versionId)
           : null;
       const character =
         model.character || (!!personaId && (!version || version.model_type === "character"));
-      if (!allowsProfile(profile.settings, { ...model, cloud: base.cloud, character })) continue;
+      if (
+        !allowsProfile(profile.settings, {
+          ...model,
+          cloud: base.cloud,
+          character
+        })
+      )
+        continue;
       result.push({
         message_id: message.id,
         revision_id: revision.id,
@@ -247,7 +284,11 @@ export async function deviceContext(
   if (
     !base ||
     !selected ||
-    !allowsProfile(profile.settings, { ...selected, cloud: base.cloud, character })
+    !allowsProfile(profile.settings, {
+      ...selected,
+      cloud: base.cloud,
+      character
+    })
   )
     return null;
   const sources = await eligibleSources(profile, catalog, false);
@@ -271,7 +312,11 @@ export async function deviceContext(
 
 export async function applyProfileToPrompt<T extends import("./types").ProfilePromptPayload>(
   payload: T,
-  recipient: { key: string; character: boolean; personaVersion?: string | null }
+  recipient: {
+    key: string;
+    character: boolean;
+    personaVersion?: string | null;
+  }
 ): Promise<T> {
   const guard = privateImageGuard();
   const profile = await deviceContext(
@@ -335,13 +380,17 @@ export async function processNow() {
     guard();
     if (!sources.length) {
       lastEmptyScan = Date.now();
-      return before.requested
-        ? await save({ ...before, requested: false }, before.revision)
+      return before.requested || before.last_error
+        ? await save({ ...before, requested: false, last_error: null }, before.revision)
         : before;
     }
     const now = Math.floor(Date.now() / 1000);
     const result = await requestJson<{
-      facts: Array<{ topic: string; content: string; sources: ProfileSource[] }>;
+      facts: Array<{
+        topic: string;
+        content: string;
+        sources: ProfileSource[];
+      }>;
     }>("/api/personalization/device-extract", {
       method: "POST",
       expectedServerInstanceId: identity.instance_id,
@@ -372,11 +421,31 @@ export async function processNow() {
         )
       )
         throw new Error("A source changed during processing.");
-      if (before.suppressed.includes(fact.topic)) continue;
+      if (before.suppressed.includes(topicToken(fact.topic))) continue;
       const old = before.facts.find((f) => f.topic === fact.topic);
+      if (old && !old.locked && old.content === fact.content) {
+        const seen = new Set<string>();
+        const sources = [...fact.sources, ...factSources(old)]
+          .sort((a, b) => b.created_at - a.created_at)
+          .filter((source) => {
+            if (seen.has(source.revision_id)) return false;
+            seen.add(source.revision_id);
+            return true;
+          })
+          .slice(0, 3);
+        before.facts = before.facts.map((current) =>
+          current.id === old.id
+            ? {
+                ...current,
+                sources_json: JSON.stringify(sources),
+                updated_at: now
+              }
+            : current
+        );
+        continue;
+      }
       if (
         old?.locked ||
-        old?.content === fact.content ||
         (old &&
           factSources(old).some(
             (s) => s.created_at > Math.max(...fact.sources.map((v) => v.created_at))
@@ -406,7 +475,7 @@ export async function processNow() {
         ...(before.history[next.id] ?? [])
       ].slice(0, 20);
     }
-    // Prune IDs for deleted/superseded messages; keep a content-free processed ledger.
+    // Retain only revision IDs in the processed ledger, never source text.
     before.processed = [...new Set([...before.processed, ...sources.map((s) => s.revision_id)])];
     before.last_attempt_at = now;
     before.last_processed_at = now;
@@ -436,12 +505,25 @@ export async function processNow() {
         current.revision
       );
     }
+    const code =
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      [
+        "processor_invalid_evidence",
+        "processor_invalid_schema",
+        "processor_invalid_json",
+        "processor_incomplete",
+        "processor_unavailable"
+      ].includes(error.code)
+        ? error.code
+        : "processing_failed";
     if (before && current.revision === before.revision)
       await save(
         {
           ...current,
           last_attempt_at: Math.floor(Date.now() / 1000),
-          last_error: "processing_failed"
+          last_error: code
         },
         current.revision
       );

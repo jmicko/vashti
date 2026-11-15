@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type {
   PersonalProfile,
   ProfileFact,
@@ -5,6 +7,12 @@ import type {
   ProfileSettings,
   ProfileSource
 } from "./types";
+
+export function topicToken(topic: string): string {
+  return topic.startsWith("sha256:")
+    ? topic
+    : `sha256:${bytesToHex(sha256(new TextEncoder().encode(topic)))}`;
+}
 
 export function defaultProfile(): PersonalProfile {
   return {

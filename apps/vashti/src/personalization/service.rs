@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
@@ -10,6 +11,37 @@ use crate::{app_state::AppState, auth::service::unix_timestamp, backends, error:
 pub const MAX_FACTS: usize = 200;
 pub const MAX_SOURCES: usize = 16;
 pub const MAX_INPUT_CHARS: usize = 24_000;
+
+pub fn topic_token(topic: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(topic.as_bytes()))
+}
+
+pub async fn migrate_suppression_tokens(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let legacy = sqlx::query(
+        "SELECT user_id,topic FROM personalization_suppressed WHERE topic NOT LIKE 'sha256:%'",
+    )
+    .fetch_all(pool)
+    .await?;
+    if legacy.is_empty() {
+        return Ok(());
+    }
+    let mut tx = pool.begin().await?;
+    for row in legacy {
+        let owner: String = row.get("user_id");
+        let topic: String = row.get("topic");
+        sqlx::query("INSERT OR IGNORE INTO personalization_suppressed VALUES (?,?)")
+            .bind(&owner)
+            .bind(topic_token(&topic))
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM personalization_suppressed WHERE user_id=? AND topic=?")
+            .bind(&owner)
+            .bind(&topic)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
+}
 
 pub fn invalid(message: &str) -> ApiError {
     ApiError::bad_request("invalid_personalization", message)
@@ -241,7 +273,7 @@ pub async fn sources(
     let mut last_id = String::new();
     loop {
         // Page through excluded history too; it must not hide later eligible chats.
-        let rows = sqlx::query("SELECT m.id,m.active_revision_id,m.chat_id,substr(r.content_text,1,6000) AS content_text,r.created_at,s.backend_id AS default_backend_id,s.model_name AS default_model_name,s.persona_id,s.persona_version_id,v.model_type FROM chat_messages m JOIN chats c ON c.id=m.chat_id JOIN chat_message_revisions r ON r.id=m.active_revision_id JOIN personalization_chat_sources s ON s.message_id=m.id LEFT JOIN persona_versions v ON v.id=s.persona_version_id WHERE c.user_id=? AND m.role='user' AND m.status='complete' AND m.is_deleted=0 AND r.content_text!='' AND (r.created_at>? OR (r.created_at=? AND r.id>?)) AND (?=0 OR NOT EXISTS (SELECT 1 FROM personalization_processed p WHERE p.user_id=c.user_id AND p.revision_id=r.id)) ORDER BY r.created_at,r.id LIMIT 200")
+        let rows = sqlx::query("SELECT m.id,m.active_revision_id,m.chat_id,substr(r.content_text,1,6000) AS content_text,r.created_at,s.backend_id AS default_backend_id,s.model_name AS default_model_name,s.persona_id,s.persona_version_id,v.model_type FROM chat_messages m JOIN chats c ON c.id=m.chat_id JOIN chat_message_revisions r ON r.id=m.active_revision_id JOIN personalization_chat_sources s ON s.message_id=m.id AND s.revision_id=r.id LEFT JOIN persona_versions v ON v.id=s.persona_version_id WHERE c.user_id=? AND m.role='user' AND m.status='complete' AND m.is_deleted=0 AND r.content_text!='' AND (r.created_at>? OR (r.created_at=? AND r.id>?)) AND (?=0 OR NOT EXISTS (SELECT 1 FROM personalization_processed p WHERE p.user_id=c.user_id AND p.revision_id=r.id)) ORDER BY r.created_at,r.id LIMIT 200")
         .bind(owner).bind(last_created).bind(last_created).bind(&last_id).bind(unprocessed).fetch_all(&state.db).await?;
         if rows.is_empty() {
             break;
@@ -387,7 +419,7 @@ pub async fn edit_fact(
     if let Some(old) = &current {
         sqlx::query("INSERT OR IGNORE INTO personalization_suppressed VALUES (?,?)")
             .bind(owner)
-            .bind(&old.topic)
+            .bind(topic_token(&old.topic))
             .execute(&mut *tx)
             .await?;
     }
@@ -460,8 +492,21 @@ pub async fn forget(
     ensure(pool, owner).await?;
     let mut tx = pool.begin().await?;
     bump(&mut tx, owner, expected).await?;
-    sqlx::query("INSERT OR IGNORE INTO personalization_suppressed(user_id,topic) SELECT user_id,topic FROM personalization_facts WHERE user_id=? AND (? IS NULL OR id=?)")
-        .bind(owner).bind(id).bind(id).execute(&mut *tx).await?;
+    let topics = sqlx::query_scalar::<_, String>(
+        "SELECT topic FROM personalization_facts WHERE user_id=? AND (? IS NULL OR id=?)",
+    )
+    .bind(owner)
+    .bind(id)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for topic in topics {
+        sqlx::query("INSERT OR IGNORE INTO personalization_suppressed VALUES (?,?)")
+            .bind(owner)
+            .bind(topic_token(&topic))
+            .execute(&mut *tx)
+            .await?;
+    }
     // Suppress every revision cited by a forgotten fact, not its text.
     sqlx::query("INSERT OR IGNORE INTO personalization_processed(user_id,revision_id) SELECT ?,r.id FROM chat_message_revisions r JOIN chat_messages m ON m.id=r.message_id JOIN chats c ON c.id=m.chat_id WHERE c.user_id=? AND (? IS NULL OR r.id IN (SELECT json_extract(j.value,'$.revision_id') FROM personalization_facts f,json_each(f.sources_json) j WHERE f.user_id=? AND f.id=?))")
         .bind(owner).bind(owner).bind(id).bind(owner).bind(id).execute(&mut *tx).await?;
@@ -493,7 +538,7 @@ async fn source_valid_connection(
     source: &Source,
     models: &[Model],
 ) -> Result<bool, ApiError> {
-    let row = sqlx::query("SELECT s.backend_id,s.model_name,s.persona_id,v.model_type FROM chat_messages m JOIN chats c ON c.id=m.chat_id JOIN chat_message_revisions r ON r.id=m.active_revision_id JOIN personalization_chat_sources s ON s.message_id=m.id LEFT JOIN persona_versions v ON v.id=s.persona_version_id WHERE c.user_id=? AND c.id=? AND m.id=? AND r.id=? AND m.is_deleted=0 AND m.role='user' AND m.status='complete' AND instr(r.content_text,?)>0")
+    let row = sqlx::query("SELECT s.backend_id,s.model_name,s.persona_id,s.persona_version_id,v.model_type FROM chat_messages m JOIN chats c ON c.id=m.chat_id JOIN chat_message_revisions r ON r.id=m.active_revision_id JOIN personalization_chat_sources s ON s.message_id=m.id AND s.revision_id=r.id LEFT JOIN persona_versions v ON v.id=s.persona_version_id WHERE c.user_id=? AND c.id=? AND m.id=? AND r.id=? AND m.is_deleted=0 AND m.role='user' AND m.status='complete' AND instr(r.content_text,?)>0")
         .bind(owner).bind(&source.chat_id).bind(&source.message_id).bind(&source.revision_id).bind(&source.quote).fetch_optional(connection).await?;
     let Some(row) = row else {
         return Ok(false);
@@ -515,9 +560,10 @@ async fn source_valid_connection(
         return Ok(false);
     }
     model.cloud = base.cloud;
-    model.character |= row
-        .get::<Option<String>, _>("model_type")
-        .is_some_and(|v| v == "character");
+    model.character |= row.get::<Option<String>, _>("persona_version_id").is_some()
+        && row
+            .get::<Option<String>, _>("model_type")
+            .is_none_or(|v| v == "character");
     Ok(settings.allows(&model))
 }
 
@@ -558,14 +604,26 @@ pub async fn publish(
             "SELECT EXISTS(SELECT 1 FROM personalization_suppressed WHERE user_id=? AND topic=?)",
         )
         .bind(owner)
-        .bind(&candidate.topic)
+        .bind(topic_token(&candidate.topic))
         .fetch_one(&mut *tx)
         .await?;
         if suppressed {
             continue;
         }
         let current = before.facts.iter().find(|f| f.topic == candidate.topic);
-        if current.is_some_and(|f| f.locked || f.content == candidate.content) {
+        if current.is_some_and(|f| f.locked) {
+            continue;
+        }
+        if let Some(old) = current.filter(|f| f.content == candidate.content) {
+            let mut combined = evidence;
+            combined
+                .extend(serde_json::from_str::<Vec<Source>>(&old.sources_json).unwrap_or_default());
+            combined.sort_by_key(|s| std::cmp::Reverse(s.created_at));
+            let mut seen = HashSet::new();
+            combined.retain(|source| seen.insert(source.revision_id.clone()));
+            combined.truncate(3);
+            sqlx::query("UPDATE personalization_facts SET sources_json=?,updated_at=? WHERE id=? AND user_id=?")
+                .bind(serde_json::to_string(&combined).unwrap()).bind(unix_timestamp()).bind(&old.id).bind(owner).execute(&mut *tx).await?;
             continue;
         }
         let source_time = evidence.iter().map(|s| s.created_at).max().unwrap_or(0);

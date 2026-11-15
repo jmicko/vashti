@@ -88,6 +88,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let db = db::connect(&config).await?;
     startup::secure_data_files(&config).await?;
     startup::migrations::run(&db).await?;
+    personalization::service::migrate_suppression_tokens(&db).await?;
     images::service::recover(&db).await?;
     videos::service::recover(&db, &config.data_dir).await?;
     assistant::service::recover(&db).await?;

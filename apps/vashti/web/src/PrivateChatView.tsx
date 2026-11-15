@@ -873,6 +873,12 @@ export function PrivateChatView({
       role: "user",
       contentText: prompt,
       noteAttachments: noteSnapshots,
+      profileSource: {
+        backend_id: selected.backendId,
+        model_name: selected.modelName,
+        persona_id: selectedPrivatePersona?.id ?? null,
+        persona_version_id: selectedPrivatePersona?.current_version.id ?? null
+      },
       createdAt: now
     });
     userMessage.attachments = privateAttachmentsForMessage(userMessage, attachments);
@@ -1363,11 +1369,30 @@ export function PrivateChatView({
     setBusyMessageId(message.id);
     try {
       const now = unixTimestamp();
+      const persona = privatePersonaWithVersionForValue(
+        privatePersonas,
+        privatePersonaVersions,
+        selectedModel
+      );
+      const selected = persona
+        ? modelParts(baseModelOverride ?? "") ?? {
+            backendId: persona.current_version.base_backend_id,
+            modelName: persona.current_version.base_model_name
+          }
+        : modelParts(selectedModel);
       const revision: PrivateChatMessageRevision = {
         id: privateId("private-revision"),
         content_text: contentText,
         thinking_text: message.active_revision?.thinking_text ?? "",
         source: "edit",
+        ...(selected
+          ? { profile_source: {
+              backend_id: selected.backendId,
+              model_name: selected.modelName,
+              persona_id: persona?.id ?? null,
+              persona_version_id: persona?.current_version.id ?? null
+            } }
+          : {}),
         created_at: now
       };
       updateMessage(message.id, (current) => {
@@ -1436,6 +1461,12 @@ export function PrivateChatView({
         role: "user",
         contentText,
         noteAttachments: noteSnapshots,
+        profileSource: {
+          backend_id: selected.backendId,
+          model_name: selected.modelName,
+          persona_id: selectedPrivatePersona?.id ?? null,
+          persona_version_id: selectedPrivatePersona?.current_version.id ?? null
+        },
         createdAt: now
       });
       userMessage.attachments = privateAttachmentsForMessage(userMessage, attachments);

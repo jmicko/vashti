@@ -489,6 +489,62 @@ fn metadata_not_display_name_controls_cloud_and_native_format_classification() {
 }
 
 #[tokio::test]
+async fn edited_revisions_keep_their_own_model_classification() {
+    let (state, server) = fixture().await;
+    let profile = enable(&state).await;
+    sqlx::query("UPDATE chats SET default_model_name='ordinary-name' WHERE id='chat'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) VALUES('cloud-edit','message','My favorite food is corn.','edit',3)")
+        .execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE chat_messages SET active_revision_id='cloud-edit' WHERE id='message'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    // Switching the conversation back must not grant access to the excluded edit.
+    sqlx::query("UPDATE chats SET default_model_name='local' WHERE id='chat'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        service::sources(&state, "owner", &profile.settings, true)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("INSERT INTO chat_messages(id,chat_id,parent_message_id,role,status,backend_id,model_name,created_at,updated_at) VALUES('later-answer','chat','message','assistant','complete','host','local',4,4)")
+        .execute(&state.db).await.unwrap();
+    assert!(
+        service::sources(&state, "owner", &profile.settings, true)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("UPDATE chat_messages SET active_revision_id='revision' WHERE id='message'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let original = service::sources(&state, "owner", &profile.settings, true)
+        .await
+        .unwrap();
+    assert_eq!(original.len(), 1);
+    assert_eq!(original[0].model_key, "base:host:local");
+    sqlx::query("INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) VALUES('local-edit','message','My favorite food is carrots.','edit',5)")
+        .execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE chat_messages SET active_revision_id='local-edit' WHERE id='message'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let edited = service::sources(&state, "owner", &profile.settings, true)
+        .await
+        .unwrap();
+    assert_eq!(edited.len(), 1);
+    assert_eq!(edited[0].revision_id, "local-edit");
+    server.abort();
+}
+
+#[tokio::test]
 async fn excluded_history_cannot_hide_later_sources_and_foreground_work_has_priority() {
     let (state, server) = fixture().await;
     let profile = enable(&state).await;
@@ -498,7 +554,7 @@ async fn excluded_history_cannot_hide_later_sources_and_foreground_work_has_prio
         .unwrap();
     sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2001) INSERT INTO chat_messages(id,chat_id,active_revision_id,role,status,created_at,updated_at) SELECT 'excluded-'||x,'chat','excluded-revision-'||x,'user','complete',x,x FROM n").execute(&state.db).await.unwrap();
     sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2001) INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) SELECT 'excluded-revision-'||x,'excluded-'||x,'A synthetic cloud-only message.','original',x FROM n").execute(&state.db).await.unwrap();
-    sqlx::query("INSERT INTO personalization_chat_sources SELECT id,'host','ordinary-name',NULL,NULL FROM chat_messages WHERE id LIKE 'excluded-%'").execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE personalization_chat_sources SET model_name='ordinary-name' WHERE message_id LIKE 'excluded-%'").execute(&state.db).await.unwrap();
     let sources = service::sources(&state, "owner", &profile.settings, true)
         .await
         .unwrap();
@@ -537,7 +593,6 @@ async fn a_manual_request_drains_multiple_bounded_batches() {
         .unwrap();
     sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<16) INSERT INTO chat_messages(id,chat_id,active_revision_id,role,status,created_at,updated_at) SELECT 'extra-'||x,'chat','extra-revision-'||x,'user','complete',x+2,x+2 FROM n").execute(&state.db).await.unwrap();
     sqlx::query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<16) INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) SELECT 'extra-revision-'||x,'extra-'||x,'My favorite food is corn.','original',x+2 FROM n").execute(&state.db).await.unwrap();
-    sqlx::query("INSERT INTO personalization_chat_sources SELECT id,'host','local',NULL,NULL FROM chat_messages WHERE id LIKE 'extra-%'").execute(&state.db).await.unwrap();
     assert!(
         super::worker::process_one(&state, "owner", true)
             .await
@@ -572,5 +627,73 @@ async fn a_manual_request_drains_multiple_bounded_batches() {
             .await
             .unwrap();
     assert_eq!(processed, 17);
+    server.abort();
+}
+
+#[tokio::test]
+async fn repeated_facts_keep_fresh_sources_without_spamming_history() {
+    let (state, server) = fixture().await;
+    enable(&state).await;
+    super::worker::process_one(&state, "owner", true)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO chat_messages(id,chat_id,active_revision_id,role,status,created_at,updated_at) VALUES('confirmation','chat','confirmed-revision','user','complete',3,3)").execute(&state.db).await.unwrap();
+    sqlx::query("INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) VALUES('confirmed-revision','confirmation','My favorite food is corn.','original',3)").execute(&state.db).await.unwrap();
+    super::worker::process_one(&state, "owner", true)
+        .await
+        .unwrap();
+    let profile = service::profile(&state.db, "owner").await.unwrap();
+    assert_eq!(profile.facts[0].version, 1);
+    assert_eq!(
+        service::fact_history(&state.db, "owner", &profile.facts[0].id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    sqlx::query("UPDATE chat_messages SET is_deleted=1 WHERE id='message'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        service::chat_context(
+            &state,
+            "owner",
+            "base:host:local",
+            "host",
+            "local",
+            None,
+            "food"
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .contains("corn")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn forgetting_tokens_do_not_retain_personal_values_and_legacy_tokens_upgrade() {
+    let (state, server) = fixture().await;
+    sqlx::query("INSERT INTO personalization_suppressed VALUES('owner','private_topic_with_personal_value')").execute(&state.db).await.unwrap();
+    service::migrate_suppression_tokens(&state.db)
+        .await
+        .unwrap();
+    service::migrate_suppression_tokens(&state.db)
+        .await
+        .unwrap();
+    let values = sqlx::query_scalar::<_, String>(
+        "SELECT topic FROM personalization_suppressed WHERE user_id='owner'",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        values,
+        vec![service::topic_token("private_topic_with_personal_value")]
+    );
+    assert!(!values[0].contains("personal_value"));
+    assert_eq!(values[0].len(), 71);
     server.abort();
 }

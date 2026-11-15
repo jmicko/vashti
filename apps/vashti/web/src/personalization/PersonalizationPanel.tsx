@@ -4,6 +4,7 @@ import {
   Check,
   Clock3,
   HardDrive,
+  LoaderCircle,
   Pencil,
   Play,
   Plus,
@@ -49,6 +50,7 @@ export function PersonalizationPanel({
   const [draft, setDraft] = useState<ProfileSettings | null>(null);
   const [models, setModels] = useState<ProfileModel[]>([]);
   const [busy, setBusy] = useState(false);
+  const [processingNow, setProcessingNow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<{
@@ -56,10 +58,14 @@ export function PersonalizationPanel({
     topic: string;
     content: string;
   } | null>(null);
-  const [history, setHistory] = useState<{ fact: ProfileFact; versions: ProfileVersion[] } | null>(
-    null
-  );
-  const [confirm, setConfirm] = useState<{ id: string | null; title: string } | null>(null);
+  const [history, setHistory] = useState<{
+    fact: ProfileFact;
+    versions: ProfileVersion[];
+  } | null>(null);
+  const [confirm, setConfirm] = useState<{
+    id: string | null;
+    title: string;
+  } | null>(null);
   const [search, setSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
   const request = useRef(0);
@@ -79,10 +85,17 @@ export function PersonalizationPanel({
     const id = ++request.current;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const [value, catalog] = await Promise.all([
         getProfile(mode),
-        mode === "device" ? deviceModels() : profileModels()
+        mode === "device"
+          ? deviceModels().catch(() => {
+              if (id === request.current)
+                setNotice("Model list unavailable. Saved device facts are still accessible.");
+              return [];
+            })
+          : profileModels()
       ]);
       if (id !== request.current) return;
       adopt(value);
@@ -93,6 +106,22 @@ export function PersonalizationPanel({
       if (id === request.current) setBusy(false);
     }
   }, [adopt, mode]);
+
+  function selectMode(next: ProfileMode) {
+    if (next === mode) return;
+    request.current++;
+    setProfile(null);
+    setDraft(null);
+    setModels([]);
+    setEditing(null);
+    setHistory(null);
+    setConfirm(null);
+    setError(null);
+    setNotice(null);
+    setSearch("");
+    setBusy(true);
+    setMode(next);
+  }
 
   useEffect(() => {
     void load();
@@ -175,6 +204,7 @@ export function PersonalizationPanel({
   async function process() {
     if (!profile) return;
     setBusy(true);
+    setProcessingNow(true);
     setError(null);
     try {
       const value = await processProfile(mode, profile);
@@ -188,6 +218,7 @@ export function PersonalizationPanel({
       setError(message(e));
     } finally {
       setBusy(false);
+      setProcessingNow(false);
     }
   }
 
@@ -242,7 +273,11 @@ export function PersonalizationPanel({
             Personal Profile
           </h2>
           <small>
-            {profile?.facts.length ?? 0} facts · {profile?.settings.enabled ? "On" : "Off"}
+            {profile
+              ? `${profile.facts.length} facts · ${profile.settings.enabled ? "On" : "Off"}`
+              : busy
+                ? "Loading profile..."
+                : "Profile unavailable"}
           </small>
         </div>
         <button
@@ -262,7 +297,7 @@ export function PersonalizationPanel({
           className={mode === "server" ? "active" : "secondary-button"}
           aria-pressed={mode === "server"}
           disabled={busy || dirty}
-          onClick={() => setMode("server")}
+          onClick={() => selectMode("server")}
         >
           <Server aria-hidden="true" />
           Server
@@ -272,7 +307,7 @@ export function PersonalizationPanel({
           className={mode === "device" ? "active" : "secondary-button"}
           aria-pressed={mode === "device"}
           disabled={busy || dirty}
-          onClick={() => setMode("device")}
+          onClick={() => selectMode("device")}
         >
           <HardDrive aria-hidden="true" />
           This device
@@ -482,15 +517,25 @@ export function PersonalizationPanel({
                 disabled={
                   busy ||
                   dirty ||
-                  profile.requested ||
+                  (profile.requested && !profile.last_error) ||
                   !draft.enabled ||
                   !processor ||
                   (processor.cloud && !draft.allow_cloud_processor)
                 }
                 onClick={() => void process()}
               >
-                <Play aria-hidden="true" />
-                {profile.requested ? "Queued" : "Process now"}
+                {processingNow ? (
+                  <LoaderCircle aria-hidden="true" className="spin" />
+                ) : (
+                  <Play aria-hidden="true" />
+                )}
+                {processingNow
+                  ? "Processing..."
+                  : profile.last_error
+                    ? "Retry processing"
+                    : profile.requested
+                      ? "Queued"
+                      : "Process now"}
               </button>
             </div>
           </div>
@@ -498,8 +543,8 @@ export function PersonalizationPanel({
             {profile.last_processed_at
               ? `Last processed ${new Date(profile.last_processed_at * 1000).toLocaleString()}`
               : "Not processed yet"}
-            {profile.requested ? " · Queued" : ""}
-            {profile.last_error ? " · Processing needs attention; check the model and retry." : ""}
+            {profile.requested && !profile.last_error ? " · Queued" : ""}
+            {profile.last_error ? ` · ${processingError(profile.last_error)}` : ""}
           </small>
           {editing && (
             <div className="profile-fact-editor">
@@ -569,7 +614,11 @@ export function PersonalizationPanel({
                       aria-label={`Edit ${fact.topic}`}
                       disabled={busy || dirty}
                       onClick={() =>
-                        setEditing({ id: fact.id, topic: fact.topic, content: fact.content })
+                        setEditing({
+                          id: fact.id,
+                          topic: fact.topic,
+                          content: fact.content
+                        })
                       }
                     >
                       <Pencil aria-hidden="true" />
@@ -697,4 +746,14 @@ export function PersonalizationPanel({
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : "Could not update the profile.";
+}
+
+function processingError(code: string) {
+  if (code === "processor_invalid_evidence")
+    return "The last batch was rejected: source quotes did not match. Retry or choose a stronger processor.";
+  if (code === "processor_invalid_schema" || code === "processor_invalid_json")
+    return "The processor returned an invalid fact format. Retry or choose another model.";
+  if (code === "processor_incomplete")
+    return "The processor did not finish its last batch. Retry or choose another model.";
+  return "Processing needs attention; check the model and retry.";
 }

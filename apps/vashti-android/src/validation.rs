@@ -96,6 +96,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn private_requests_cannot_switch_to_a_different_server() {
+        assert!(check_server_instance(Some("original"), "other").is_err());
+        assert!(check_server_instance(Some("original"), "original").is_ok());
+        assert!(check_server_instance(None, "other").is_ok());
+    }
+
+    #[test]
     fn only_mp4_result_routes_receive_the_larger_download_bound() {
         let path = "/api/videos/runs/269ef6f3-f83d-4cc2-863b-d1d89f6a1a4d/result";
         assert_eq!(response_limit(path, Some("video/mp4")), 64 * 1024 * 1024);
@@ -165,4 +172,11 @@ mod tests {
         assert!(normalize_base_url("https://user:pass@example.com", false).is_err());
         assert!(normalize_base_url("https://example.com/vashti", false).is_err());
     }
+}
+
+pub fn check_server_instance(expected: Option<&str>, actual: &str) -> Result<(), String> {
+    if expected.is_some_and(|id| id != actual) {
+        return Err("The selected server changed. Private data was not sent.".to_string());
+    }
+    Ok(())
 }

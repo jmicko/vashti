@@ -1,5 +1,26 @@
 # Kuno and Vashti Coordination
 
+**Vashti personalization consumer checkpoint (2026-11-15):**
+`codex/automatic-personalization` adds an idle, source-backed user profile and
+bounded chat/Assistant context, with independent server and encrypted-device
+profiles. Local ordinary models are allowed after consent; cloud/character
+sources and recipients are excluded unless enabled. Processing models are
+chosen separately, with explicit cloud consent. No Kuno source, API, service,
+configuration or installation changed. Existing `kuno_backend` model metadata
+selects prompt-only JSON for native routes that reject Ollama `format`; both
+routes use the same strict schema/evidence validation.
+
+Installed Kuno Qwen, Gemma and LFM passed synthetic extraction and fresh-chat
+recall. The adversarial LFM batch was rejected for invalid evidence; Qwen/Gemma
+passed it. Server/device user isolation and browser-private recall were checked;
+the latter left no matching server records. Automated validation: 200 ordinary
+server, 114 frontend and 10 native-host tests passed, plus production frontend
+builds, strict server lint and ARM64 Android transport cross-check. Four existing
+opt-in Assistant/Podman tests were not run; no physical Android/engine-erasure
+qualification is claimed. See [design, bounds and acceptance](automatic-personalization.md).
+Synthetic dev data is retained. This checkpoint does not authorize publication,
+deployment or sending private content to an unqualified engine.
+
 **Hub partial-release coordination (2026-11-14):** Vashti-only publishing is
 explicitly scoped and does not build, rename, or bump Kuno. Hub update resolution
 is per channel/target. Standalone beta consolidation preserves notes and keeps

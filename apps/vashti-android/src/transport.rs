@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     connections::{Connection, NativeState},
-    validation::{api_url, response_limit},
+    validation::{api_url, check_server_instance, response_limit},
 };
 
 #[derive(Debug, Deserialize)]
@@ -87,13 +87,10 @@ pub async fn native_http_request(
     request: HttpRequest,
 ) -> Result<HttpResponse, String> {
     let connection = state.active_connection().await?;
-    if request
-        .expected_instance_id
-        .as_ref()
-        .is_some_and(|id| id != &connection.instance_id)
-    {
-        return Err("The selected server changed. Private data was not sent.".to_string());
-    }
+    check_server_instance(
+        request.expected_instance_id.as_deref(),
+        &connection.instance_id,
+    )?;
     let method = parse_method(&request.method)?;
     let mut builder =
         request_builder(&state, &connection, method, &request.path, &request.headers).await?;

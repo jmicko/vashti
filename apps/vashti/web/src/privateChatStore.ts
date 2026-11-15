@@ -142,12 +142,20 @@ export type PrivateChatDetail = {
   last_message_at: number;
 };
 
+export type PrivateMessageProfileSource = {
+  backend_id: string;
+  model_name: string;
+  persona_id: string | null;
+  persona_version_id: string | null;
+};
+
 export type PrivateChatMessageRevision = {
   id: string;
   content_text: string;
   thinking_text: string;
   source: string;
   created_at: number;
+  profile_source?: PrivateMessageProfileSource;
 };
 
 export type PrivateChatAttachment = {
@@ -225,6 +233,7 @@ export type CreatePrivateMessageParams = {
   contextBlocks?: ContextBlockSelection[];
   noteAttachments?: PrivateNoteContextSelection[];
   createdAt?: number;
+  profileSource?: PrivateMessageProfileSource;
 };
 
 export type PrivatePersonaVersion = {
@@ -546,6 +555,7 @@ export function createPrivateMessage({
   thinkMode = null,
   contextBlocks = [],
   noteAttachments = [],
+  profileSource,
   createdAt = unixTimestamp()
 }: CreatePrivateMessageParams): PrivateChatMessage {
   const revision = {
@@ -553,6 +563,16 @@ export function createPrivateMessage({
     content_text: contentText,
     thinking_text: thinkingText,
     source: "original",
+    ...(profileSource
+      ? { profile_source: profileSource }
+      : role === "user" && backendId && modelName
+        ? { profile_source: {
+            backend_id: backendId,
+            model_name: modelName,
+            persona_id: personaId,
+            persona_version_id: personaVersionId
+          } }
+        : {}),
     created_at: createdAt
   };
 
