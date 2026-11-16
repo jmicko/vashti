@@ -286,11 +286,19 @@ impl LayerHost {
                     f.i8_into(&name, &[rows, columns], to)
                 });
             }
+            // A tile of rows at a time, so the file's bytes pass through the cache once.
+            let tile = int8::OUTPUTS * columns;
             gpu.staged((rows * columns + int8::SLACK) as u64, |to| {
-                let mut plain = vec![0u8; rows * columns];
-                f.i8_into(&name, &[rows, columns], &mut plain)?;
-                int8::weight_stream(&plain, rows, columns, to);
-                Ok(())
+                let (stream, slack) = to.split_at_mut(rows * columns);
+                slack.fill(0);
+                stream.par_chunks_mut(tile).enumerate().try_for_each_init(
+                    || vec![0u8; tile],
+                    |plain, (n, to)| {
+                        f.i8_part_into(&name, &[rows, columns], n * tile, plain)?;
+                        int8::weight_stream(plain, int8::OUTPUTS, columns, to);
+                        Ok(())
+                    },
+                )
             })
         };
         let mut vectors = Vec::with_capacity(SCALE_FC2 + DIM);
@@ -673,6 +681,8 @@ impl Kernels {
     }
 }
 
+/// Threads reading weights into host memory.
+const READERS: usize = 4;
 /// The whole DiT's weights in host memory, with the model's small tensors and the compiled
 /// kernels: everything that can outlive a clip without holding video memory.
 pub struct Host {
@@ -692,11 +702,14 @@ pub struct Host {
 impl Host {
     /// Reads all weights (about 21 GB) into host memory.
     pub fn read(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+        Self::read_with(gpu, path, READERS)
+    }
+    fn read_with(gpu: &Gpu, path: &Path, readers: usize) -> Result<Self, &'static str> {
         let model = dit::Dit::open(path)?;
         let kernels = Kernels::new(gpu)?;
         // A few layers at a time: reading is the slow part.
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(4)
+            .num_threads(readers)
             .build()
             .map_err(|_| "gpu_failed")?;
         // The text refiner's weights load beside the blocks'.
@@ -1261,6 +1274,19 @@ mod tests {
     }
 
     /// The whole network on the GPU against a step captured from the C++ engine.
+    /// Time to read the weights into host memory, by reader threads.
+    #[test]
+    #[ignore = "needs KUNO_DIT and the B70"]
+    fn reads_weights() {
+        let model = std::env::var("KUNO_DIT").unwrap();
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        for readers in [4, 8] {
+            let started = std::time::Instant::now();
+            let host = Host::read_with(&gpu, std::path::Path::new(&model), readers).unwrap();
+            println!("readers {readers}: {} ms", started.elapsed().as_millis());
+            drop(host);
+        }
+    }
     #[test]
     #[ignore = "needs the Intel GPU with 25 GB free, the model and a captured step"]
     fn step_matches_cpp_engine() {

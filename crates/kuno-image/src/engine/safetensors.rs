@@ -206,6 +206,27 @@ impl Safetensors {
             .read_exact_at(to, self.data + entry.begin)
             .map_err(|_| "model_file_invalid")
     }
+    /// Reads `to.len()` bytes of one INT8 tensor from byte `at`, checking its exact shape.
+    pub fn i8_part_into(
+        &self,
+        name: &str,
+        shape: &[usize],
+        at: usize,
+        to: &mut [u8],
+    ) -> Result<(), &'static str> {
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        let count: usize = shape.iter().product();
+        if entry.kind != Kind::I8
+            || entry.shape != shape
+            || entry.end - entry.begin != count as u64
+            || at.checked_add(to.len()).is_none_or(|end| end > count)
+        {
+            return Err("model_tensor_invalid");
+        }
+        self.file
+            .read_exact_at(to, self.data + entry.begin + at as u64)
+            .map_err(|_| "model_file_invalid")
+    }
     /// Reads one INT8 tensor's bytes, checking its exact shape.
     pub fn i8(&self, name: &str, shape: &[usize]) -> Result<Vec<i8>, &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
