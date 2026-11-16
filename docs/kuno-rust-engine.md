@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.86 s per step (75 ms per block); warm clip 52.5 s | correct, 1.15 times slower per step, 1.10 times per clip; C++ still runs it |
+| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.86 s per step (75 ms per block); warm clip 51.3 s, first clip 56.1 s (C++ 60.9 s) | correct, 1.15 times slower per step, 1.08 times per warm clip, faster on the first; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -534,15 +534,37 @@ leave video memory before the decoder and the next clip's text encoder load (7.5
 clip). The weights now stay in host staging memory for the worker's life (`Host`, one model
 at a time, 21 GB of RAM); a clip copies them into video memory in 2.1 s (`GpuDit::place`)
 and frees that before decoding as before. The text features kept for a clip are dropped
-with it. In this build the C++ engine still reads its own copy of the DiT into RAM and
-never uses it.
+with it. The C++ engine prepares weights lazily, so in this build it never reads its own
+copy of the DiT (the worker's file-backed memory stays at the text encoder's 27 GB).
 
 All seven modes produce clips in this build and a Qwen image after a video still works;
 the same request gives the same bytes across worker builds and across clips. Contact sheets
 of the text-only and two-reference clips show the expected scenes.
 
-What is left of the gap to the C++ sampler on a later clip (4.8 s): 0.5 s per step, of
-which attention is 0.38 s, and about 1 s more before the first step.
+### Weights read in the background (2026-11-15)
+
+| Same clip, dev worker | Before | Now | C++ sampler |
+|---|---|---|---|
+| Read of the DiT's weights (page-cached file) | 7.7 s after conditioning | 4.4 s alone, 5.5 s beside the text encoder | |
+| Video decoder weights per clip | 1.5 s from the file | 0.53 s from host memory | 1.5 s (same Rust decoder, older build) |
+| First clip of a worker | 65.0 s (71.5 s on a cold page cache) | 56.1 s | 60.9 s |
+| Later clips | 52.8 s | 51.3 to 51.5 s | 47.7 s |
+
+- The read starts with the request, on its own thread, and the first step waits for it
+  (`dit_host` in `native.rs`). The text encoder's load slows by about 2 s beside it, still a
+  clear net gain.
+- Each matrix used to be read whole into a temporary and then rearranged into the kernel's
+  stream layout by one thread per layer. Tiles of 64 rows are now read and rearranged in
+  parallel, so the bytes cross memory once (`LayerHost::read`, timed by `reads_weights`).
+  More than four reader threads gain nothing.
+- The video decoder keeps its weights and compiled kernels in host memory the same way
+  (`video_gpu::Host`, 5 GB of RAM) and they are read on the same background thread. Decoder
+  checks are unchanged: 69.7 dB from the C++ frames, 83.7 dB from the CPU reference.
+- Output is unchanged: the same requests give the same MP4 bytes as before.
+
+What is left of the gap to the C++ sampler on a later clip (3.6 s): 0.5 s per step, of
+which attention is 0.38 s. A C++-sampler build of the same tree would also gain the
+decoder's second.
 
 ## Running the comparisons
 
