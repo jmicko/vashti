@@ -97,6 +97,13 @@ pub fn r(nr: u32, sub: u32, ty: Ty) -> Reg {
         step2: false,
     }
 }
+/// The floating-point control register `cr0.0`.
+pub fn control() -> Reg {
+    Reg {
+        nr: 0x80,
+        ..null(Ty::Ud)
+    }
+}
 pub fn null(ty: Ty) -> Reg {
     Reg {
         nr: 0,
@@ -299,6 +306,23 @@ impl Asm {
     pub fn shl(&mut self, exec: u32, d: Reg, a: impl Into<Src>, b: impl Into<Src>, swsb: Swsb) {
         let i = self.two(105, exec, d, a.into(), b.into(), swsb);
         self.push(i);
+    }
+    pub fn or(&mut self, exec: u32, d: Reg, a: impl Into<Src>, b: impl Into<Src>, swsb: Swsb) {
+        let i = self.two(102, exec, d, a.into(), b.into(), swsb);
+        self.push(i);
+    }
+    /// Keeps subnormal half and single floats instead of reading them as zero. The control
+    /// register needs the pipeline drained before and after it is written.
+    pub fn keep_subnormals(&mut self) {
+        let wait = Swsb::after(1);
+        self.or(
+            1,
+            control(),
+            control(),
+            Src::Imm(1 << 10 | 1 << 7, Ty::Ud),
+            wait,
+        );
+        self.sync(wait);
     }
     /// Round to the nearest integer, ties to even.
     pub fn rnde(&mut self, exec: u32, d: Reg, a: Reg, swsb: Swsb) {

@@ -1,6 +1,8 @@
 // Normalizes each 2048-wide token row of the f32 stream and writes it as f16.
 // mode 0: x / sqrt(mean(x^2) + 1e-5) * weight.  mode 1: layer norm with weight and bias.
-// Rows from `tokens` up to the padded count are written as zeros.
+// Rows from `tokens` up to the padded count are written as zeros. With `stream` set, the
+// halves are written in the machine-code product's layout (xe2/int8.rs): per tile of 32
+// tokens, per step of 16 columns, the 32 tokens' 32 bytes each.
 // One workgroup per token; lanes read neighbouring vec4s so loads are contiguous.
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types : require
@@ -13,7 +15,7 @@ layout(set = 0, binding = 0) readonly buffer Stream { vec4 x[]; };
 layout(set = 0, binding = 1) readonly buffer Vectors { vec4 v[]; };
 layout(set = 0, binding = 2) writeonly buffer Half { f16vec4 h[]; };
 // Offsets are in values and multiples of 4.
-layout(push_constant) uniform Constants { uint tokens; uint weight_first; uint bias_first; uint mode; } p;
+layout(push_constant) uniform Constants { uint tokens; uint weight_first; uint bias_first; uint mode; uint stream; } p;
 const uint DIM4 = 512;
 
 shared float part[64];
@@ -49,6 +51,9 @@ void main() {
         uint c = lane + j * 64;
         vec4 value = (x[base + c] - mean) * scale * v[(p.weight_first >> 2) + c];
         if (p.mode == 1) value += v[(p.bias_first >> 2) + c];
-        h[base + c] = f16vec4(live ? value : vec4(0.0));
+        uint token = gl_WorkGroupID.x;
+        uint at = p.stream == 0 ? base + c
+            : (((token >> 5) * (DIM4 / 4) + (c >> 2)) * 32 + (token & 31)) * 4 + (c & 3);
+        h[at] = f16vec4(live ? value : vec4(0.0));
     }
 }

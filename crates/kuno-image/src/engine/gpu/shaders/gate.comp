@@ -1,6 +1,7 @@
 // Gated activation between the feed-forward projections, written as f16:
 //   h[token][i] = silu(g[token][i] + b[i]) * (g[token][8192 + i] + b[8192 + i])
-// One vec4 per invocation. Padded tokens are written as zeros.
+// One vec4 per invocation. Padded tokens are written as zeros. With `stream` set, the
+// halves are written in the machine-code product's layout (see norm.comp).
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 #extension GL_EXT_shader_16bit_storage : require
@@ -12,7 +13,7 @@ layout(set = 0, binding = 0) readonly buffer Gates { vec4 g[]; };
 layout(set = 0, binding = 1) readonly buffer Vectors { vec4 v[]; };
 layout(set = 0, binding = 2) writeonly buffer Half { f16vec4 h[]; };
 // Offsets are in values and multiples of 4.
-layout(push_constant) uniform Constants { uint tokens; uint bias_first; } p;
+layout(push_constant) uniform Constants { uint tokens; uint bias_first; uint stream; } p;
 const uint INNER4 = 2048;
 
 void main() {
@@ -22,5 +23,7 @@ void main() {
     vec4 gate = g[token * 2 * INNER4 + c] + v[bias];
     vec4 value = g[token * 2 * INNER4 + INNER4 + c] + v[bias + INNER4];
     vec4 result = gate / (1.0 + exp(-gate)) * value;
-    h[token * INNER4 + c] = f16vec4(token < p.tokens ? result : vec4(0.0));
+    uint at = p.stream == 0 ? token * INNER4 + c
+        : (((token >> 5) * (INNER4 / 4) + (c >> 2)) * 32 + (token & 31)) * 4 + (c & 3);
+    h[at] = f16vec4(token < p.tokens ? result : vec4(0.0));
 }

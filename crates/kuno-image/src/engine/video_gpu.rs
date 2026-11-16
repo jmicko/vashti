@@ -1,16 +1,22 @@
 //! MiniMax H3 video decoder on the GPU. Same model as `video_vae` (the CPU reference), run
 //! with the Vulkan kernels in `gpu`: half-precision operands, f32 accumulation, and the
-//! residual stream kept in f32.
+//! residual stream kept in f32. On an Intel Xe2 card with Level Zero the linear layers run
+//! as the engine's own machine code (`xe2::int8`, half-float form) instead of a shader.
 use std::path::Path;
 
 use rayon::prelude::*;
 
 use super::{
-    gpu::{Buffer, Gpu, Kernel, Readback, Staged, Step, bytes_of, shaders},
+    dit_gpu::{Call, fast_kernel, run},
+    gpu::{Buffer, Gpu, Kernel, Readback, Staged, bytes_of, shaders},
     safetensors::Safetensors,
     video_vae::{
         DIM, EXTRA, HEAD, HEADS, INNER, LATENT_CHANNELS, LAYERS, PAIRS, PIXELS, REGISTERS, linear,
         rotary, unpatchify,
+    },
+    xe2::{
+        int8,
+        level_zero::{self, LevelZero},
     },
 };
 
@@ -29,14 +35,36 @@ const TILE: usize = 128;
 /// Attention heads processed per dispatch.
 const GROUP: usize = 8;
 
+/// The linear layers: weight rows and columns.
+const PRODUCTS: [(usize, usize); 5] = [
+    (DIM * 3, DIM),
+    (DIM, DIM),
+    (INNER * 2, DIM),
+    (DIM, INNER),
+    (PIXELS, DIM),
+];
+const QKV: usize = 0;
+const OUT: usize = 1;
+const W1: usize = 2;
+const W2: usize = 3;
+const PROJECT: usize = 4;
+
+/// A half-float weight matrix on the GPU: plain rows for the shader, or the machine-code
+/// product's stream layout together with its Level Zero mapping.
+struct Matrix {
+    buffer: Buffer,
+    stream: Option<level_zero::Memory>,
+}
 struct Layer {
-    qkv: Buffer,
-    out: Buffer,
-    w1: Buffer,
-    w2: Buffer,
+    qkv: Matrix,
+    out: Matrix,
+    w1: Matrix,
+    w2: Matrix,
     vectors: Buffer,
 }
 struct Kernels {
+    /// Present when the linear layers can run as our own machine code.
+    fast: Option<LevelZero>,
     gemm: Kernel,
     gemm16: Kernel,
     mix: Kernel,
@@ -48,6 +76,8 @@ struct Kernels {
 }
 /// Scratch buffers for one padded token count, kept between tiles.
 struct Work {
+    /// The product kernels for this token count and the operand buffers as they see them.
+    fast: Option<Fast>,
     padded: usize,
     stream: Buffer,
     turns: Buffer,
@@ -59,6 +89,20 @@ struct Work {
     scores: Buffer,
     mixed: Buffer,
     readback: Readback,
+}
+struct Fast {
+    half: level_zero::Memory,
+    wide: level_zero::Memory,
+    products: [(level_zero::Kernel, [u32; 3]); 5],
+}
+fn product(
+    fast: &LevelZero,
+    tokens: usize,
+    which: usize,
+) -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
+    let (rows, columns) = PRODUCTS[which];
+    let shape = int8::Shape::half(tokens, rows, columns).ok_or("gpu_unsupported")?;
+    Ok((fast_kernel(fast, &shape)?, shape.groups(rows)))
 }
 /// One layer's weights in host memory.
 struct LayerHost {
@@ -88,10 +132,25 @@ impl Host {
         let file = Safetensors::open(path)?;
         file.metadata("minimax_h3_video_vae")
             .ok_or("model_file_invalid")?;
-        // Matrices go from the file straight into mapped staging memory.
-        let matrix = |name: &str, rows: usize, columns: usize| {
-            gpu.staged((rows * columns) as u64 * 2, |to| {
-                file.f16_into(name, &[rows, columns], to)
+        let fast = gpu
+            .shares()
+            .then(|| LevelZero::open().ok())
+            .flatten()
+            .filter(|fast| product(fast, TILE, OUT).is_ok());
+        let streamed = fast.is_some();
+        let matrix = |name: &str, which: usize| {
+            let (rows, columns) = PRODUCTS[which];
+            if !streamed {
+                // Straight from the file into mapped staging memory.
+                return gpu.staged((rows * columns) as u64 * 2, |to| {
+                    file.f16_into(name, &[rows, columns], to)
+                });
+            }
+            let mut plain = vec![0u8; rows * columns * 2];
+            file.f16_into(name, &[rows, columns], &mut plain)?;
+            gpu.staged((plain.len() + int8::SLACK) as u64, |to| {
+                int8::weight_stream(&plain, rows, columns * 2, to);
+                Ok(())
             })
         };
         let vectors = |values: &[f32]| {
@@ -119,10 +178,10 @@ impl Host {
                     small.extend(file.f16(&name(part), &[len])?);
                 }
                 Ok(LayerHost {
-                    qkv: matrix(&name("attn.to_qkv.weight"), DIM * 3, DIM)?,
-                    out: matrix(&name("attn.to_out.weight"), DIM, DIM)?,
-                    w1: matrix(&name("ff.w1.weight"), INNER * 2, DIM)?,
-                    w2: matrix(&name("ff.w2.weight"), DIM, INNER)?,
+                    qkv: matrix(&name("attn.to_qkv.weight"), QKV)?,
+                    out: matrix(&name("attn.to_out.weight"), OUT)?,
+                    w1: matrix(&name("ff.w1.weight"), W1)?,
+                    w2: matrix(&name("ff.w2.weight"), W2)?,
                     vectors: vectors(&small)?,
                 })
             })
@@ -136,15 +195,16 @@ impl Host {
                 gemm: gpu.kernel(shaders::GEMM, 3, 8, Some(16))?,
                 gemm16: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
                 mix: gpu.kernel(shaders::MIX, 3, 9, Some(16))?,
-                norm: kernel(shaders::NORM, 3, 4)?,
+                norm: kernel(shaders::NORM, 3, 5)?,
                 heads: kernel(shaders::HEADS, 6, 3)?,
-                merge: kernel(shaders::MERGE, 2, 2)?,
+                merge: kernel(shaders::MERGE, 2, 3)?,
                 residual: kernel(shaders::RESIDUAL, 3, 3)?,
-                gate: kernel(shaders::GATE, 3, 2)?,
+                gate: kernel(shaders::GATE, 3, 3)?,
+                fast,
             },
             layers,
             tail: vectors(&tail)?,
-            project: matrix("decoder.proj_out.weight", PIXELS, DIM)?,
+            project: matrix("decoder.proj_out.weight", PROJECT)?,
             post_quant: (
                 file.f16("post_quant_conv.weight", &[24, 24, 1, 1, 1])?,
                 file.f16("post_quant_conv.bias", &[24])?,
@@ -164,7 +224,7 @@ pub struct GpuVideoDecoder {
     host: std::sync::Arc<Host>,
     layers: Vec<Layer>,
     tail: Buffer,
-    project: Buffer,
+    project: Matrix,
 }
 impl GpuVideoDecoder {
     pub fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
@@ -173,15 +233,29 @@ impl GpuVideoDecoder {
     /// Copies the weights into video memory.
     pub fn place(host: std::sync::Arc<Host>) -> Result<Self, &'static str> {
         let gpu = &host.gpu;
+        let matrix = |staged: &Staged| -> Result<Matrix, &'static str> {
+            let Some(fast) = &host.kernels.fast else {
+                return Ok(Matrix {
+                    buffer: gpu.place(staged, false)?,
+                    stream: None,
+                });
+            };
+            let buffer = gpu.place(staged, true)?;
+            let stream = fast.import(&gpu.export(&buffer)?, staged.bytes())?;
+            Ok(Matrix {
+                buffer,
+                stream: Some(stream),
+            })
+        };
         let layers: Result<Vec<Layer>, &'static str> = host
             .layers
             .iter()
             .map(|layer| {
                 Ok(Layer {
-                    qkv: gpu.place(&layer.qkv, false)?,
-                    out: gpu.place(&layer.out, false)?,
-                    w1: gpu.place(&layer.w1, false)?,
-                    w2: gpu.place(&layer.w2, false)?,
+                    qkv: matrix(&layer.qkv)?,
+                    out: matrix(&layer.out)?,
+                    w1: matrix(&layer.w1)?,
+                    w2: matrix(&layer.w2)?,
                     vectors: gpu.place(&layer.vectors, false)?,
                 })
             })
@@ -189,7 +263,7 @@ impl GpuVideoDecoder {
         Ok(Self {
             layers: layers?,
             tail: gpu.place(&host.tail, false)?,
-            project: gpu.place(&host.project, false)?,
+            project: matrix(&host.project)?,
             work: std::sync::Mutex::new(None),
             host,
         })
@@ -247,12 +321,33 @@ impl GpuVideoDecoder {
         if cached.as_ref().is_none_or(|work| work.padded != padded) {
             // Drop the old set before allocating the new one.
             *cached = None;
+            let half_bytes = (padded * INNER * 2 + int8::SLACK) as u64;
+            let wide_bytes = (padded * INNER * 2) as u64 * 4;
+            let (half, wide) = match &k.fast {
+                Some(_) => (gpu.shared(half_bytes)?, gpu.shared(wide_bytes)?),
+                None => (gpu.buffer(half_bytes)?, gpu.buffer(wide_bytes)?),
+            };
+            let fast = match &k.fast {
+                Some(fast) => Some(Fast {
+                    half: fast.import(&gpu.export(&half)?, half_bytes)?,
+                    wide: fast.import(&gpu.export(&wide)?, wide_bytes)?,
+                    products: [
+                        product(fast, padded, QKV)?,
+                        product(fast, padded, OUT)?,
+                        product(fast, padded, W1)?,
+                        product(fast, padded, W2)?,
+                        product(fast, padded, PROJECT)?,
+                    ],
+                }),
+                None => None,
+            };
             *cached = Some(Work {
+                fast,
                 padded,
                 stream: gpu.buffer((padded * DIM) as u64 * 4)?,
                 turns: gpu.buffer((padded * PAIRS) as u64 * 8)?,
-                half: gpu.buffer((padded * INNER) as u64 * 2)?,
-                wide: gpu.buffer((padded * INNER * 2) as u64 * 4)?,
+                half,
+                wide,
                 query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
                 key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
                 // Rows 65..128 of each head are never written and stay zero.
@@ -263,6 +358,7 @@ impl GpuVideoDecoder {
             });
         }
         let Some(Work {
+            fast,
             stream,
             turns,
             half,
@@ -283,18 +379,37 @@ impl GpuVideoDecoder {
         gpu.upload(stream, 0, bytes_of(&start))?;
         gpu.upload(turns, 0, bytes_of(&rotary(width, height, frames)))?;
         let token_tiles = np / TILE as u32;
-        type Call<'a> = (&'a Kernel, Vec<&'a Buffer>, Vec<u32>, [u32; 3]);
-        // output[token][row] = input[token][..columns] . weight[row][..columns]
-        // A few thousand weight rows per dispatch: the weight block then stays cached while
-        // every token tile passes over it, instead of being re-read from video memory.
+        let stream_layout = u32::from(fast.is_some());
+        let shader = |kernel, buffers, constants, groups| Call::Shader {
+            kernel,
+            buffers,
+            constants,
+            groups,
+        };
+        // wide[token][row] = half[token][..columns] . weight[row][..columns]: one
+        // machine-code launch, or the shader a few thousand weight rows per dispatch (the
+        // weight block then stays cached while every token tile passes over it).
         let block = 4096;
-        let gemm = |input, weight, output, rows: usize, columns: usize| -> Vec<Call<'_>> {
+        fn tied<'a, F: Fn(&'a Matrix, usize) -> Vec<Call<'a>>>(f: F) -> F {
+            f
+        }
+        let gemm = tied(|weight, which| {
+            let (rows, columns) = PRODUCTS[which];
+            if let (Some(machine), Some(shared), Some(weights)) = (&k.fast, fast, &weight.stream) {
+                let (kernel, groups) = &shared.products[which];
+                return vec![Call::Product {
+                    fast: machine,
+                    kernel,
+                    memory: vec![&shared.half, weights, &shared.wide],
+                    groups: *groups,
+                }];
+            }
             (0..rows)
                 .step_by(block)
                 .map(|first| {
-                    (
+                    shader(
                         &k.gemm16,
-                        vec![input, weight, output],
+                        vec![half, &weight.buffer, wide],
                         vec![
                             columns as u32,
                             0,
@@ -306,18 +421,18 @@ impl GpuVideoDecoder {
                     )
                 })
                 .collect()
-        };
+        });
         let mut steps: Vec<Call<'_>> = Vec::new();
         for layer in &self.layers {
             let v = &layer.vectors;
-            steps.push((
+            steps.push(shader(
                 &k.norm,
                 vec![stream, v, half],
-                vec![n, NORM1 as u32, 0, 0],
+                vec![n, NORM1 as u32, 0, 0, stream_layout],
                 [np, 1, 1],
             ));
-            steps.extend(gemm(half, &layer.qkv, wide, DIM * 3, DIM));
-            steps.push((
+            steps.extend(gemm(&layer.qkv, QKV));
+            steps.push(shader(
                 &k.heads,
                 vec![wide, v, turns, query, key, value],
                 vec![n, np, QKV_BIAS as u32],
@@ -326,7 +441,7 @@ impl GpuVideoDecoder {
             // A few heads at a time keeps the scores small (118 MB instead of 472 MB for all
             // heads) at the same speed. The weights exist only inside `mix`.
             for head in (0..HEADS as u32).step_by(GROUP) {
-                steps.push((
+                steps.push(shader(
                     &k.gemm,
                     vec![query, key, scores],
                     vec![
@@ -341,7 +456,7 @@ impl GpuVideoDecoder {
                     ],
                     [token_tiles, token_tiles, GROUP as u32],
                 ));
-                steps.push((
+                steps.push(shader(
                     &k.mix,
                     vec![scores, value, mixed],
                     vec![
@@ -358,53 +473,49 @@ impl GpuVideoDecoder {
                     [1, token_tiles, GROUP as u32],
                 ));
             }
-            steps.push((&k.merge, vec![mixed, half], vec![n, np], [1, np, 1]));
-            steps.extend(gemm(half, &layer.out, wide, DIM, DIM));
-            steps.push((
+            steps.push(shader(
+                &k.merge,
+                vec![mixed, half],
+                vec![n, np, stream_layout],
+                [1, np, 1],
+            ));
+            steps.extend(gemm(&layer.out, OUT));
+            steps.push(shader(
                 &k.residual,
                 vec![stream, wide, v],
                 vec![n, OUT_BIAS as u32, SCALE1 as u32],
                 [(DIM / 4 / 64) as u32, np, 1],
             ));
-            steps.push((
+            steps.push(shader(
                 &k.norm,
                 vec![stream, v, half],
-                vec![n, NORM2 as u32, 0, 0],
+                vec![n, NORM2 as u32, 0, 0, stream_layout],
                 [np, 1, 1],
             ));
-            steps.extend(gemm(half, &layer.w1, wide, INNER * 2, DIM));
-            steps.push((
+            steps.extend(gemm(&layer.w1, W1));
+            steps.push(shader(
                 &k.gate,
                 vec![wide, v, half],
-                vec![n, W1_BIAS as u32],
+                vec![n, W1_BIAS as u32, stream_layout],
                 [(INNER / 4 / 64) as u32, np, 1],
             ));
-            steps.extend(gemm(half, &layer.w2, wide, DIM, INNER));
-            steps.push((
+            steps.extend(gemm(&layer.w2, W2));
+            steps.push(shader(
                 &k.residual,
                 vec![stream, wide, v],
                 vec![n, W2_BIAS as u32, SCALE2 as u32],
                 [(DIM / 4 / 64) as u32, np, 1],
             ));
         }
-        steps.push((
+        steps.push(shader(
             &k.norm,
             vec![stream, &self.tail, half],
-            vec![n, 0, DIM as u32, 1],
+            vec![n, 0, DIM as u32, 1, stream_layout],
             [np, 1, 1],
         ));
-        steps.extend(gemm(half, &self.project, wide, PIXELS, DIM));
-        let steps: Vec<Step> = steps
-            .iter()
-            .map(|(kernel, buffers, constants, groups)| Step {
-                kernel,
-                buffers,
-                constants,
-                groups: *groups,
-            })
-            .collect();
+        steps.extend(gemm(&self.project, PROJECT));
         if std::env::var_os("KUNO_GPU_PROFILE").is_some() {
-            // Development aid: one submission per dispatch, summed per kernel.
+            // Development aid: one submission per call, summed per kernel.
             let names = [
                 (&k.gemm, "gemm"),
                 (&k.gemm16, "gemm16"),
@@ -417,21 +528,30 @@ impl GpuVideoDecoder {
             ];
             let mut totals = std::collections::BTreeMap::new();
             for step in &steps {
+                let label = match step {
+                    Call::Shader {
+                        kernel,
+                        constants,
+                        groups,
+                        ..
+                    } => {
+                        let name = names
+                            .iter()
+                            .find(|n| std::ptr::eq(n.0, *kernel))
+                            .map_or("?", |n| n.1);
+                        format!("{name} x{groups:?} c{}", constants[0])
+                    }
+                    Call::Product { groups, .. } => format!("machine code x{groups:?}"),
+                };
                 let started = std::time::Instant::now();
-                gpu.pass(std::slice::from_ref(step))?;
-                let name = names
-                    .iter()
-                    .find(|n| std::ptr::eq(n.0, step.kernel))
-                    .unwrap()
-                    .1;
-                let label = format!("{name} x{:?} c{}", step.groups, step.constants[0]);
+                run(gpu, std::slice::from_ref(step))?;
                 *totals.entry(label).or_insert(0.0) += started.elapsed().as_secs_f64();
             }
             for (label, seconds) in totals {
                 eprintln!("{:8.1} ms  {label}", seconds * 1e3);
             }
         } else {
-            gpu.pass(&steps)?;
+            run(gpu, &steps)?;
         }
         let mut patches = vec![0f32; positions * PIXELS];
         gpu.read_floats(wide, 0, readback, &mut patches)?;
@@ -462,6 +582,127 @@ mod tests {
             error += (f64::from(*w) - f64::from(*g)).powi(2);
         }
         10.0 * (signal / error.max(f64::MIN_POSITIVE)).log10()
+    }
+    /// The machine-code half-float product against the shader on the same random operands,
+    /// at the decoder's two largest shapes; the second round makes every weight subnormal.
+    #[test]
+    #[ignore = "needs the Intel GPU with Level Zero"]
+    fn machine_code_product_matches_shader() {
+        use super::super::gpu::Step;
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let fast = LevelZero::open().unwrap();
+        let gemm16 = gpu.kernel(shaders::GEMM16, 3, 5, Some(16)).unwrap();
+        let tokens = 1920;
+        for (rows, columns, tiny) in [
+            (INNER * 2, DIM, false),
+            (DIM, INNER, false),
+            (DIM * 3, DIM, true),
+        ] {
+            let mut state = 77u32;
+            // Half floats between 2^-5 and 2, either sign; subnormals when `tiny`.
+            let mut random = |count: usize, tiny: bool| -> Vec<u8> {
+                (0..count)
+                    .flat_map(|_| {
+                        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        let bits = (state >> 16) as u16;
+                        let exponent = if tiny { 0 } else { 10 + (bits >> 10 & 31) % 6 };
+                        (bits & 0x83ff | exponent << 10).to_le_bytes()
+                    })
+                    .collect()
+            };
+            let (input, weight) = (
+                random(tokens * columns, false),
+                random(rows * columns, tiny),
+            );
+            let sums_size = (tokens * rows * 4) as u64;
+            let (plain_input, plain_weight, plain_sums) = (
+                gpu.buffer(input.len() as u64).unwrap(),
+                gpu.buffer(weight.len() as u64).unwrap(),
+                gpu.buffer(sums_size).unwrap(),
+            );
+            gpu.upload(&plain_input, 0, &input).unwrap();
+            gpu.upload(&plain_weight, 0, &weight).unwrap();
+            let steps: Vec<(Vec<u32>, [u32; 3])> = (0..rows)
+                .step_by(4096)
+                .map(|first| {
+                    (
+                        vec![
+                            columns as u32,
+                            0,
+                            (first * columns) as u32,
+                            first as u32,
+                            rows as u32,
+                        ],
+                        [
+                            (4096.min(rows - first) / 256) as u32,
+                            (tokens / TILE) as u32,
+                            1,
+                        ],
+                    )
+                })
+                .collect();
+            let buffers = vec![&plain_input, &plain_weight, &plain_sums];
+            let steps: Vec<Step> = steps
+                .iter()
+                .map(|(constants, groups)| Step {
+                    kernel: &gemm16,
+                    buffers: &buffers,
+                    constants,
+                    groups: *groups,
+                })
+                .collect();
+            let mut shader_ms = f64::MAX;
+            for _ in 0..8 {
+                let started = std::time::Instant::now();
+                gpu.pass(&steps).unwrap();
+                shader_ms = shader_ms.min(started.elapsed().as_secs_f64() * 1e3);
+            }
+            let want = floats(&gpu.download(&plain_sums, 0, sums_size as usize).unwrap());
+
+            let bytes = columns * 2;
+            let mut streamed = vec![0u8; input.len() + int8::SLACK];
+            for token in 0..tokens {
+                for word in 0..bytes / 16 {
+                    let at = int8::token_word(token, word, bytes) * 16;
+                    let from = token * bytes + word * 16;
+                    streamed[at..at + 16].copy_from_slice(&input[from..from + 16]);
+                }
+            }
+            let mut weights = vec![0u8; weight.len() + int8::SLACK];
+            int8::weight_stream(&weight, rows, bytes, &mut weights);
+            let (stream_input, stream_weight, sums) = (
+                gpu.shared(streamed.len() as u64).unwrap(),
+                gpu.shared(weights.len() as u64).unwrap(),
+                gpu.shared(sums_size).unwrap(),
+            );
+            gpu.upload(&stream_input, 0, &streamed).unwrap();
+            gpu.upload(&stream_weight, 0, &weights).unwrap();
+            let import = |buffer: &Buffer| {
+                fast.import(&gpu.export(buffer).unwrap(), buffer.bytes())
+                    .unwrap()
+            };
+            let memory = [import(&stream_input), import(&stream_weight), import(&sums)];
+            let memory: Vec<_> = memory.iter().collect();
+            let shape = int8::Shape::half(tokens, rows, columns).unwrap();
+            let kernel = fast_kernel(&fast, &shape).unwrap();
+            let mut ms = f64::MAX;
+            for _ in 0..8 {
+                let started = std::time::Instant::now();
+                fast.launch(&kernel, &memory, shape.groups(rows)).unwrap();
+                ms = ms.min(started.elapsed().as_secs_f64() * 1e3);
+            }
+            let got = floats(&gpu.download(&sums, 0, sums_size as usize).unwrap());
+            let db = decibels(&want, &got);
+            let largest = want.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let flops = 2.0 * (tokens * rows * columns) as f64 / 1e9;
+            println!(
+                "{tokens} x {rows} x {columns}{}: {ms:.2} ms ({:.0} TFLOPS), shader {shader_ms:.2} ms ({:.0} TFLOPS), {db:.1} dB apart, largest sum {largest:e}",
+                if tiny { " subnormal weights" } else { "" },
+                flops / ms,
+                flops / shader_ms
+            );
+            assert!(db > 100.0 && largest > 0.0);
+        }
     }
     /// Needs the Intel GPU, the model and a captured tile (see `video_vae` tests), plus
     /// `tile-rust-cpu.f32` in the golden directory: the CPU reference's pixels for that tile,

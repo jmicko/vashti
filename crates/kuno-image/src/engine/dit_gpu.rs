@@ -143,7 +143,10 @@ fn fast_product(
     let shape = int8::Shape::linear(tokens, rows, columns).ok_or("gpu_unsupported")?;
     Ok((fast_kernel(fast, &shape)?, shape.groups(rows)))
 }
-fn fast_kernel(fast: &LevelZero, shape: &int8::Shape) -> Result<level_zero::Kernel, &'static str> {
+pub(super) fn fast_kernel(
+    fast: &LevelZero,
+    shape: &int8::Shape,
+) -> Result<level_zero::Kernel, &'static str> {
     let code = int8::kernel(shape);
     let native = zebin::write(&zebin::Kernel {
         name: "product",

@@ -1,4 +1,7 @@
-//! Int8 matrix product kernel for Xe2, written instruction by instruction.
+//! Matrix product kernel for Xe2, written instruction by instruction: int8 operands with
+//! exact int32 sums, or half-float operands with f32 sums (`Shape::half`). The two differ
+//! only in the multiply's operand types; a half-float step is 16 inputs in the same 32
+//! bytes, so everything below counts operands in bytes.
 //!
 //! One hardware thread computes one tile: `8·MA` tokens × `16·NB` outputs, accumulated over
 //! `ks` steps of 32 inputs. Operands are pre-arranged streams so that every load is one
@@ -44,6 +47,8 @@ pub struct Shape {
     pub c_row: u32,
     /// Token tiles per dispatch block (group count x); group z selects the block.
     pub xc: u32,
+    /// Half-float operands and f32 sums instead of int8 and int32.
+    pub half: bool,
 }
 
 impl Shape {
@@ -67,6 +72,15 @@ impl Shape {
             tx: (tokens / TOKENS) as u32,
             xc: BLOCK_TILES,
             c_row: (rows * 4) as u32,
+            half: false,
+        })
+    }
+    /// The same product for half-float operands: `columns` halves per token and weight row
+    /// (`weight_stream` and `token_word` then take `2 * columns` bytes), f32 sums.
+    pub fn half(tokens: usize, rows: usize, columns: usize) -> Option<Shape> {
+        Some(Shape {
+            half: true,
+            ..Self::linear(tokens, rows, columns * 2)?
         })
     }
     /// Thread groups to launch for `rows` weight rows.
@@ -116,7 +130,9 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
         tx,
         xc,
         c_row,
+        half,
     } = *s;
+    let (sum, operand) = if half { (F, Hf) } else { (D, B) };
     let (a_step, b_step) = ((ma * 256) as i32, (nb * 512) as i32);
     let set = 4 * ma + 8 * nb;
     let (nl, nacc) = (ma + nb, ma * nb);
@@ -136,6 +152,9 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
 
     // r0: thread header (group ids in dwords 1, 6, 7); r1: the three stream pointers.
     k.mov(16, r(240, 0, F), r(0, 0, F), Swsb::NONE);
+    if half {
+        k.keep_subnormals();
+    }
     k.mov(1, r(6, 0, D), imm(a_step * ks as i32), Swsb::NONE);
     k.mov(1, r(6, 1, D), imm(b_step * ks as i32), Swsb::NONE);
     k.mov(1, r(6, 2, D), imm((8 * ma * c_row) as i32), Swsb::NONE);
@@ -226,10 +245,10 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
                 8,
                 8,
                 16,
-                r(c(n), 0, D),
-                r(c(n), 0, D),
-                r(b(q, n % nb), 0, B),
-                r(a(q, n / nb), 0, B),
+                r(c(n), 0, sum),
+                r(c(n), 0, sum),
+                r(b(q, n % nb), 0, operand),
+                r(a(q, n / nb), 0, operand),
                 Swsb::set(dtok(n)),
             );
         }
