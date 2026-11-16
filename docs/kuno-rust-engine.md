@@ -28,7 +28,7 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.86 s per step (75 ms per block); warm clip 51.3 s, first clip 56.1 s (C++ 60.9 s) | correct, 1.15 times slower per step, 1.08 times per warm clip, faster on the first; C++ still runs it |
+| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step and 1% per warm clip; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -610,8 +610,15 @@ wrapping) and removed: results stayed exact but every pattern was slower than th
 step (227 to 242 TOPS in step, about 200 staggered). That kernel was already tuned by its
 dispatch block size and is near its arithmetic rate.
 
-The attention kernel is still 5 ms above its arithmetic (17.2 ms with loads only against
-12.7 ms with the loads removed).
+Other start patterns (chunk `k*i mod chunks` for k from 2 to 537) were all slower than
+`k = 1`; the reverse order gave 25.5 ms. The attention kernel is still 5 ms above its
+arithmetic (17.2 ms with loads only against 12.7 ms with the loads removed).
+
+In the dev worker (same 2.3 s clip): steps 3.40 to 3.43 s (C++ 3.35 s), later clips 48.0
+to 48.2 s (51.3 s before; C++ sampler 47.7 s in a build that still read the decoder's
+weights per clip). All seven modes produce clips and a Qwen image afterwards works (20.9
+s); contact sheets of the text-only and two-reference clips show the expected scenes. The
+clips' bytes differ from earlier builds because the order of the softmax sum changed.
 
 ## Running the comparisons
 
