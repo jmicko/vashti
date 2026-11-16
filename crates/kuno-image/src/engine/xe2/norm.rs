@@ -190,7 +190,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         }
         k.mul(1, r(SCALE, 0, F), r(ACC, 0, F), immf(1.0 / ROW as f32), w);
         k.add(1, r(SCALE, 0, F), r(SCALE, 0, F), immf(1e-5), w);
-        k.math(1, Math::Rsq, r(SCALE, 0, F), r(SCALE, 0, F), None, w);
+        k.math(1, Math::Rsq, r(SCALE, 0, F), r(SCALE, 0, F), w);
 
         // Weight chunk c uses buffer c % 4; three are in flight.
         let request = |k: &mut Asm, c: u32| {
@@ -271,7 +271,6 @@ mod tests {
                 gpu::{Buffer, Gpu, Select, Step, bytes_of, floats, shaders},
                 safetensors::widen,
             },
-            int8,
             level_zero::LevelZero,
             load,
         },
@@ -385,7 +384,6 @@ mod tests {
         println!(
             "update and norm of {padded} rows: {ms:.3} ms, shaders {shader_ms:.3} ms; stream {stream_db:.1} dB, halves {half_db:.1} dB apart"
         );
-        let _ = int8::SLACK;
         assert!(stream_db > 120.0 && half_db > 80.0);
     }
 }

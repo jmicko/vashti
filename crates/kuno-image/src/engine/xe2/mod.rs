@@ -197,14 +197,16 @@ pub fn load(
     fast.kernel(&native, "kernel", pointers as usize)
 }
 
+/// Math functions of one source. They run in a pipe of their own: an instruction that reads
+/// a result from another pipe waits with `Swsb::after(1)`. (Xe2 has no division.)
 #[derive(Clone, Copy)]
 pub enum Math {
+    /// Reciprocal.
     Inv = 1,
     /// Two to the power of the source.
     Exp = 3,
-    Sqrt = 4,
+    /// Reciprocal square root.
     Rsq = 5,
-    Fdiv = 9,
 }
 
 pub const SFID_GATEWAY: u64 = 3;
@@ -351,10 +353,8 @@ impl Asm {
         );
         self.sync(wait);
     }
-    /// A math function of one source, or of two (`Fdiv`: `a / b`).
-    pub fn math(&mut self, exec: u32, function: Math, d: Reg, a: Reg, b: Option<Reg>, swsb: Swsb) {
-        let b = b.unwrap_or(null(a.ty));
-        let mut i = self.two(56, exec, d, a.into(), b.into(), swsb);
+    pub fn math(&mut self, exec: u32, function: Math, d: Reg, a: Reg, swsb: Swsb) {
+        let mut i = self.two(56, exec, d, a.into(), null(a.ty).into(), swsb);
         i.set(95, 92, function as u64);
         self.push(i);
     }
@@ -611,6 +611,35 @@ mod tests {
                 Swsb::set(16)
             )),
             hex("59 d0 10 80 60 3e 07 70 04 70 04 04 04 20 04 10")
+        );
+    }
+
+    /// The forms the decoder's small kernels add. Mesa's assembler has no syntax for these
+    /// that it accepts back, so the bytes were checked with its disassembler instead:
+    /// `math.rsq (1) r5:f r6<0>:f null {A@1}`, `math.exp (16)`, `math.inv (16)`,
+    /// `or (1) cr0 cr0<0> 0x00000480 {A@1}` and `mov (8) r9 r10.8 {A@1}`.
+    #[test]
+    fn math_and_control_encodings_disassemble_as_written() {
+        let w = Swsb::after(1);
+        assert_eq!(
+            one(|k| k.math(1, Math::Rsq, r(5, 0, F), r(6, 0, F), w)),
+            hex("38 09 00 80 a0 0a 05 05 04 06 00 5a 00 00 00 00")
+        );
+        assert_eq!(
+            one(|k| k.math(16, Math::Exp, r(5, 0, F), r(6, 0, F), w)),
+            hex("38 09 10 80 a0 0a 05 05 04 06 10 3a 00 00 10 00")
+        );
+        assert_eq!(
+            one(|k| k.math(16, Math::Inv, r(5, 0, F), r(6, 0, F), w)),
+            hex("38 09 10 80 a0 0a 05 05 04 06 10 1a 00 00 10 00")
+        );
+        assert_eq!(
+            one(|k| k.or(1, control(), control(), Src::Imm(0x480, Ud), w)),
+            hex("66 09 00 80 20 82 01 80 00 80 00 02 80 04 00 00")
+        );
+        assert_eq!(
+            one(|k| k.mov(8, r(9, 0, Ud), r(10, 8, Ud), w)),
+            hex("61 09 0c 80 20 02 05 09 84 0a 10 00 00 00 00 00")
         );
     }
 

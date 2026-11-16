@@ -118,13 +118,13 @@ pub fn kernel(bias_first: u32) -> Vec<u8> {
             // Math functions run in a pipe of their own, so each of these groups waits for
             // the one before it as a whole.
             for i in 0..4 {
-                k.math(16, Math::Exp, t(i), t(i), None, first(i));
+                k.math(16, Math::Exp, t(i), t(i), first(i));
             }
             for i in 0..4 {
                 k.add(16, t(i), t(i), immf(1.0), first(i));
             }
             for i in 0..4 {
-                k.math(16, Math::Inv, t(i), t(i), None, first(i));
+                k.math(16, Math::Inv, t(i), t(i), first(i));
             }
             for i in 0..4 {
                 k.mul(16, t(i), t(i), gate(i), first(i));
