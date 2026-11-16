@@ -145,6 +145,9 @@ fn mix(b: u32) -> u16 {
     5 + b as u16
 }
 const LAST_MIX: u16 = 20;
+// Lanes of INT: 0 counts steps, 1..3 are scratch.
+const CHUNK: u32 = 4;
+const START: u32 = 5;
 // Lanes of CONST.
 const C: u32 = 0;
 const A1: u32 = 1;
@@ -165,6 +168,9 @@ fn power(k: &mut Asm, part: u32, to: Reg, frac: Reg, w: Swsb) {
     }
 }
 fn fetch(k: &mut Asm, to: u32, offset: u32) {
+    if skip(1) {
+        return;
+    }
     let (register, token) = slot(to);
     k.send(
         SFID_UGM,
@@ -179,7 +185,8 @@ fn fetch(k: &mut Asm, to: u32, offset: u32) {
     );
 }
 
-/// Timing experiments only: bit 0 skips the weights.
+/// Timing experiments only: bit 0 skips the weights, 1 the key and value loads, 2 the
+/// score products, 3 the mixing products.
 #[cfg(test)]
 static SKIP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 fn skip(bit: u32) -> bool {
@@ -215,6 +222,9 @@ fn step(k: &mut Asm, live: u32) {
                 k.sync(Swsb::dst(score(h)));
                 r(s(h), 0, F)
             };
+            if skip(2) {
+                continue;
+            }
             k.dpas(
                 8,
                 8,
@@ -288,7 +298,9 @@ fn step(k: &mut Asm, live: u32) {
         );
     }
     k.cmp(Cond::Gt, r(WIDE, 0, D), imm(LIMIT.to_bits() as i32), w);
-    k.jmpi(slow, true, w);
+    if !skip(2) {
+        k.jmpi(slow, true, w);
+    }
 
     // Weights: 2^t = 2^round(t) * 2^fraction, packed as half floats.
     k.place(weights);
@@ -368,6 +380,9 @@ fn step(k: &mut Asm, live: u32) {
         for e in 0..2 {
             let b = 2 * m + e;
             k.sync(Swsb::dst(mix(b)));
+            if skip(3) {
+                continue;
+            }
             k.dpas(
                 8,
                 8,
@@ -478,6 +493,28 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         k.mov(1, r(WIDE, 0, Uq), r(INT, 2, Ud), w);
         k.add(1, r(2 + i, 0, Q), r(1, i, Q), r(WIDE, 0, Q), w);
     }
+    // Tile `i` starts at key chunk `i` and wraps around: threads start together, and a thread
+    // that reads what another read a step ago finds it cached, where threads in step all
+    // wait for the same memory. Tiles past the last full chunk start at the first.
+    let (full, rest) = (tokens / TILE as u32, tokens % TILE as u32);
+    k.mov(1, int(START), imm(0), Swsb::NONE);
+    if full > 0 {
+        let first = k.label();
+        k.cmp(Cond::Ge, r(0, 1, D), imm(full as i32), w);
+        k.jmpi(first, true, w);
+        k.mov(1, int(START), r(0, 1, D), w);
+        k.shl(
+            1,
+            int(2),
+            r(0, 1, D),
+            immw(CHUNK_BYTES.trailing_zeros() as i16),
+            w,
+        );
+        k.mov(1, r(WIDE, 0, Uq), r(INT, 2, Ud), w);
+        k.add(1, r(KV_AT, 0, Q), r(KV_AT, 0, Q), r(WIDE, 0, Q), w);
+        k.place(first);
+    }
+    k.mov(1, int(CHUNK), int(START), w);
     // The queries; the same tokens later belong to the accumulator blocks, so every block
     // token has a predecessor to wait for (the second eight get a throwaway load).
     for j in 0..8 {
@@ -517,16 +554,39 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         fetch(&mut k, j, j * 512);
     }
 
-    let (full, rest) = (tokens / TILE as u32, tokens % TILE as u32);
+    // Chunks from the start to the last, then from the first up to the start.
     if full > 0 {
         let top = k.label();
         k.place(top);
         step(&mut k, TILE as u32);
-        k.cmp(Cond::Lt, int(0), imm(full as i32), w);
+        k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
+        k.cmp(Cond::Lt, int(CHUNK), imm(full as i32), w);
         k.jmpi(top, true, w);
     }
     if rest > 0 {
         step(&mut k, rest);
+    }
+    if full > 0 {
+        let (top, end) = (k.label(), k.label());
+        k.cmp(Cond::Eq, int(START), imm(0), w);
+        k.jmpi(end, true, w);
+        // Back to the first chunk; the loads requested past the last one are replaced.
+        let walked = (full + u32::from(rest > 0)) * CHUNK_BYTES as u32;
+        k.add(1, r(KV_AT, 0, Q), r(KV_AT, 0, Q), imm(-(walked as i32)), w);
+        k.mov(1, int(CHUNK), imm(0), w);
+        for j in 0..3 {
+            k.sync(Swsb::dst(slot(j).1));
+        }
+        k.sync(w);
+        for j in 0..3 {
+            fetch(&mut k, j, j * 512);
+        }
+        k.place(top);
+        step(&mut k, TILE as u32);
+        k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
+        k.cmp(Cond::Lt, int(CHUNK), int(START), w);
+        k.jmpi(top, true, w);
+        k.place(end);
     }
 
     // Store. Accumulator registers are in memory order: channel, then query.
@@ -714,23 +774,27 @@ mod tests {
             );
             assert!(db > 50.0);
             if heads > 8 {
-                SKIP.store(1, std::sync::atomic::Ordering::Relaxed);
-                let code = kernel(&shape);
-                SKIP.store(0, std::sync::atomic::Ordering::Relaxed);
-                let native = zebin::write(&zebin::Kernel {
-                    name: "attend",
-                    code: &code,
-                    grf: 256,
-                    pointers: 4,
-                });
-                let bare = fast.kernel(&native, "attend", 4).unwrap();
-                let mut best = f64::MAX;
-                for _ in 0..4 {
-                    let started = std::time::Instant::now();
-                    fast.launch(&bare, &arguments, shape.groups(heads)).unwrap();
-                    best = best.min(started.elapsed().as_secs_f64() * 1e3);
+                // Timing only: without the weights (1), the loads (2), the score products
+                // (4), the mixing products (8).
+                for mask in [1u32, 3, 13, 15] {
+                    SKIP.store(mask, std::sync::atomic::Ordering::Relaxed);
+                    let code = kernel(&shape);
+                    SKIP.store(0, std::sync::atomic::Ordering::Relaxed);
+                    let native = zebin::write(&zebin::Kernel {
+                        name: "attend",
+                        code: &code,
+                        grf: 256,
+                        pointers: 4,
+                    });
+                    let bare = fast.kernel(&native, "attend", 4).unwrap();
+                    let mut best = f64::MAX;
+                    for _ in 0..4 {
+                        let started = std::time::Instant::now();
+                        fast.launch(&bare, &arguments, shape.groups(heads)).unwrap();
+                        best = best.min(started.elapsed().as_secs_f64() * 1e3);
+                    }
+                    println!("  skipping {mask:04b}: {best:.2} ms");
                 }
-                println!("  without the weights: {best:.2} ms");
             }
         }
     }
