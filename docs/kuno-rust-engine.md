@@ -566,6 +566,53 @@ What is left of the gap to the C++ sampler on a later clip (3.6 s): 0.5 s per st
 which attention is 0.38 s. A C++-sampler build of the same tree would also gain the
 decoder's second.
 
+### Attention was waiting for memory, not arithmetic (2026-11-16)
+
+The earlier reading of the attention kernel ("what is left is mostly arithmetic") was
+wrong. Timing switches in `attention_matches_cpu` (they drop the weights, the key and value
+loads, or either product) gave, at 8611 tokens and 56 heads:
+
+| Kernel variant | Time |
+|---|---|
+| Whole kernel | 31.7 ms |
+| Loads only, no arithmetic | 28.3 ms |
+| Arithmetic only, loads removed | 14.1 ms |
+| Loads only, every step from the same chunk | 7.2 ms |
+| Loads only, every head reading the first head's stream | 11.8 ms |
+| One head launched alone (544 threads, half the thread slots) | 1.08 ms per head |
+| Two heads launched together (all slots) | 1.03 ms per head |
+
+So the loads were cheap when the data was already cached and expensive otherwise, and
+filling the second half of the thread slots bought nothing: the card was saturated with
+cache misses. All 544 threads of a head start together and walked the keys in step, so
+each chunk was demanded by every thread at the same moment, before any of them had
+brought it in.
+
+Now tile `i` starts at key chunk `i` and wraps around (the softmax sum does not care about
+order; the partial last chunk keeps its own copy of the step, and the three loads issued
+past the last chunk are reissued after the wrap). A thread then mostly reads what another
+thread read a step earlier.
+
+| At 8611 tokens | Before | Now | C++ engine |
+|---|---|---|---|
+| Attention kernel alone, 56 heads | 31.7 ms | 19.9 ms | |
+| Attention per block | 32.5 ms | 21.0 ms | 24.8 ms |
+| One block | 74.9 ms | 66.0 ms | 66 ms |
+| One step: inputs, blocks, heads | 3.83 s | 3.40 s | 3.35 s |
+
+Checks: 73.4 dB from the CPU softmax (unchanged); blocks 39.2 to 47.3 dB; a captured step
+21.3 / 22.5 dB (video / audio) from the C++ engine; refiner 60.0 dB; the eight-step loop
+ends 25.1 dB from the C++ final latent and the decoded clips are 27.8 dB apart. The order
+of the softmax sum changed, so these moved by up to a decibel either way.
+
+The same stagger was tried on the int8 linear kernel (start step `(a*x + b*y) mod ks/2`,
+wrapping) and removed: results stayed exact but every pattern was slower than threads in
+step (227 to 242 TOPS in step, about 200 staggered). That kernel was already tuned by its
+dispatch block size and is near its arithmetic rate.
+
+The attention kernel is still 5 ms above its arithmetic (17.2 ms with loads only against
+12.7 ms with the loads removed).
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
