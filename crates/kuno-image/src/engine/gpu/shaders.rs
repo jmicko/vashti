@@ -30,6 +30,8 @@ pub const GATEQ8: &[u8] = include_bytes!("shaders/gateq8.spv");
 pub const ROTATE8: &[u8] = include_bytes!("shaders/rotate8.spv");
 pub const RESIDUAL: &[u8] = include_bytes!("shaders/residual.spv");
 pub const GATE: &[u8] = include_bytes!("shaders/gate.spv");
+pub const HEADS64S: &[u8] = include_bytes!("shaders/heads64s.spv");
+pub const MERGE64S: &[u8] = include_bytes!("shaders/merge64s.spv");
 
 #[cfg(test)]
 mod tests {

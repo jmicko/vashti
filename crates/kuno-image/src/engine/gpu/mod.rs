@@ -73,13 +73,14 @@ impl Drop for Buffer {
         }
     }
 }
-/// Host-visible memory kept mapped for reading results back.
+/// Host-visible memory kept mapped for reading results back and sending inputs.
 pub struct Readback {
     stage: Buffer,
     at: *mut u8,
 }
 // SAFETY: the pointer is the buffer's own mapping, valid until the buffer is dropped, and
-// only read through `Gpu::read_floats`, which holds the device turn while copying into it.
+// only used through `Gpu::read_floats`, `floats_with` and `write_floats`, which hold the
+// device turn while the device copies into or out of it.
 unsafe impl Send for Readback {}
 unsafe impl Sync for Readback {}
 impl Buffer {
@@ -469,6 +470,60 @@ impl Gpu {
             std::ptr::copy_nonoverlapping(through.at, to.as_mut_ptr().cast::<u8>(), bytes as usize);
         }
         Ok(())
+    }
+    /// Copies `count` floats at byte `offset` of `from` into `through` and hands them to
+    /// `read` in place.
+    pub fn floats_with<T>(
+        &self,
+        from: &Buffer,
+        offset: u64,
+        through: &Readback,
+        count: usize,
+        read: impl FnOnce(&[f32]) -> T,
+    ) -> Result<T, &'static str> {
+        let bytes = count as u64 * 4;
+        if offset + bytes > from.bytes || bytes > through.stage.bytes {
+            return Err("gpu_range");
+        }
+        let _turn = self.core.turn.lock().map_err(|_| "gpu_failed")?;
+        if bytes > 0 {
+            let region = [vk::BufferCopy::default().src_offset(offset).size(bytes)];
+            self.run_locked(|device, commands| unsafe {
+                // SAFETY: the range was checked against both buffers above.
+                device.cmd_copy_buffer(commands, from.buffer, through.stage.buffer, &region);
+            })?;
+        }
+        // SAFETY: the mapping is page-aligned and holds at least `count` floats; the turn
+        // keeps the device from writing it while `read` runs.
+        Ok(read(unsafe {
+            std::slice::from_raw_parts(through.at.cast::<f32>(), count)
+        }))
+    }
+    /// Writes `data` at byte `offset` of `to` through the reusable staging area `through`.
+    pub fn write_floats(
+        &self,
+        to: &Buffer,
+        offset: u64,
+        through: &Readback,
+        data: &[f32],
+    ) -> Result<(), &'static str> {
+        let bytes = std::mem::size_of_val(data) as u64;
+        if offset + bytes > to.bytes || bytes > through.stage.bytes {
+            return Err("gpu_range");
+        }
+        if bytes == 0 {
+            return Ok(());
+        }
+        let _turn = self.core.turn.lock().map_err(|_| "gpu_failed")?;
+        // SAFETY: the mapping holds at least `bytes` bytes and the turn is held.
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), through.at, bytes as usize);
+        }
+        let region = [vk::BufferCopy::default().dst_offset(offset).size(bytes)];
+        self.run_locked(|device, commands| unsafe {
+            // SAFETY: the range was checked against both buffers above.
+            device.cmd_copy_buffer(commands, through.stage.buffer, to.buffer, &region);
+        })
     }
     fn staging(&self, bytes: u64) -> Result<Buffer, &'static str> {
         self.allocate(

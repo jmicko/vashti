@@ -1,10 +1,11 @@
 //! MiniMax H3 video decoder on the GPU. Same model as `video_vae` (the CPU reference), run
 //! with the Vulkan kernels in `gpu`: half-precision operands, f32 accumulation, and the
-//! residual stream kept in f32. On an Intel Xe2 card with Level Zero everything but
-//! attention runs as the engine's own machine code instead: the linear layers (`xe2::int8`,
-//! half-float form), the residual updates with the norms (`xe2::norm`) and the gated
-//! activation (`xe2::gate`). A machine-code launch costs about 15 microseconds against 200
-//! for a Vulkan submission, so a layer then needs one submission, for its attention.
+//! residual stream kept in f32. On an Intel Xe2 card with Level Zero the heavy kernels run
+//! as the engine's own machine code instead: the linear layers (`xe2::int8`, half-float
+//! form), attention (`xe2::attend`, its 128-channel heads half empty), the residual updates
+//! with the norms (`xe2::norm`) and the gated activation (`xe2::gate`). Two shaders per
+//! layer remain, on either side of attention. A machine-code launch costs about 15
+//! microseconds against 200 for a Vulkan submission.
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -15,10 +16,10 @@ use super::{
     safetensors::Safetensors,
     video_vae::{
         DIM, EXTRA, HEAD, HEADS, INNER, LATENT_CHANNELS, LAYERS, PAIRS, PIXELS, REGISTERS, linear,
-        rotary, unpatchify,
+        rotary, unpatchify_biased,
     },
     xe2::{
-        self, gate, int8,
+        self, attend, gate, int8,
         level_zero::{self, LevelZero},
         norm,
     },
@@ -83,22 +84,33 @@ struct Kernels {
     merge: Kernel,
     residual: Kernel,
     gate: Kernel,
+    /// Writers and reader of the machine-code attention kernel's layouts.
+    heads64s: Kernel,
+    merge64s: Kernel,
 }
-/// Scratch buffers for one token count, kept between tiles.
+/// Scratch buffers for one tile shape, kept between tiles.
 struct Work {
+    /// Latent width, height and frames.
+    shape: (usize, usize, usize),
     /// The machine-code kernels for this token count and the buffers as they see them.
     fast: Option<Fast>,
-    tokens: usize,
     stream: Buffer,
+    /// Rotary turns of the shape's positions.
     turns: Buffer,
     half: Buffer,
     wide: Buffer,
+    /// Attention operands of the shader path.
+    scratch: Option<Scratch>,
+    /// Host-side landing areas for the stream going in and the pixels coming out.
+    staging: Readback,
+    readback: Readback,
+}
+struct Scratch {
     query: Buffer,
     key: Buffer,
     value: Buffer,
     scores: Buffer,
     mixed: Buffer,
-    readback: Readback,
 }
 struct Fast {
     stream: level_zero::Memory,
@@ -114,6 +126,10 @@ struct Fast {
     next: level_zero::Kernel,
     leave: level_zero::Kernel,
     gate: level_zero::Kernel,
+    /// Attention: queries, keys and values, mixed values and weight sums.
+    attend: (level_zero::Kernel, [u32; 3]),
+    streams: [level_zero::Memory; 4],
+    attention: [Buffer; 4],
 }
 /// A residual-and-norm kernel over every token row.
 fn rows<'a>(
@@ -249,6 +265,8 @@ impl Host {
                 merge: kernel(shaders::MERGE, 2, 3)?,
                 residual: kernel(shaders::RESIDUAL, 3, 3)?,
                 gate: kernel(shaders::GATE, 3, 3)?,
+                heads64s: kernel(shaders::HEADS64S, 5, 3)?,
+                merge64s: kernel(shaders::MERGE64S, 3, 2)?,
                 fast,
             },
             layers,
@@ -372,7 +390,8 @@ impl GpuVideoDecoder {
         let k = &self.host.kernels;
         let (n, np) = (tokens as u32, padded as u32);
         let mut cached = self.work.lock().map_err(|_| "gpu_failed")?;
-        if cached.as_ref().is_none_or(|work| work.tokens != tokens) {
+        let shape = (width, height, frames);
+        if cached.as_ref().is_none_or(|work| work.shape != shape) {
             // Drop the old set before allocating the new one.
             *cached = None;
             let stream_bytes = (padded * DIM) as u64 * 4;
@@ -400,7 +419,34 @@ impl GpuVideoDecoder {
                         };
                         xe2::load(fast, &norm::kernel(&shape), 4)
                     };
+                    let tiles = HEADS * padded / attend::TILE;
+                    let sizes = [
+                        tiles * attend::TILE_BYTES,
+                        tiles * attend::CHUNK_BYTES + attend::SLACK,
+                        tiles * attend::OUT_BYTES,
+                        tiles * attend::SUM_BYTES,
+                    ]
+                    .map(|bytes| bytes as u64);
+                    let attention = [
+                        gpu.shared(sizes[0])?,
+                        gpu.shared(sizes[1])?,
+                        gpu.shared(sizes[2])?,
+                        gpu.shared(sizes[3])?,
+                    ];
+                    let import = |i: usize| fast.import(&gpu.export(&attention[i])?, sizes[i]);
+                    // Queries and keys have unit RMS, so scores over eight stay within eight.
+                    let shape = attend::Shape {
+                        bounded: true,
+                        ..attend::Shape::new(padded, tokens, HEADS, (HEAD as f32).sqrt().recip())
+                            .ok_or("gpu_unsupported")?
+                    };
                     Some(Fast {
+                        attend: (
+                            xe2::load(fast, &attend::kernel(&shape), 4)?,
+                            shape.groups(HEADS),
+                        ),
+                        streams: [import(0)?, import(1)?, import(2)?, import(3)?],
+                        attention,
                         stream: fast.import(&gpu.export(&stream)?, stream_bytes)?,
                         half: fast.import(&gpu.export(&half)?, half_bytes)?,
                         wide: fast.import(&gpu.export(&wide)?, wide_bytes)?,
@@ -420,19 +466,28 @@ impl GpuVideoDecoder {
                 }
                 None => None,
             };
+            let scratch = match &fast {
+                Some(_) => None,
+                None => Some(Scratch {
+                    query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
+                    key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
+                    // Rows 65..128 of each head are never written and stay zero.
+                    value: gpu.buffer((HEADS * TILE * padded) as u64 * 2)?,
+                    scores: gpu.buffer((GROUP * padded * padded) as u64 * 4)?,
+                    mixed: gpu.buffer((HEADS * padded * TILE) as u64 * 4)?,
+                }),
+            };
+            let turns = gpu.buffer((padded * PAIRS) as u64 * 8)?;
+            gpu.upload(&turns, 0, bytes_of(&rotary(width, height, frames)))?;
             *cached = Some(Work {
                 fast,
-                tokens,
+                shape,
                 stream,
-                turns: gpu.buffer((padded * PAIRS) as u64 * 8)?,
+                turns,
                 half,
                 wide,
-                query: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
-                key: gpu.buffer((HEADS * padded * HEAD) as u64 * 2)?,
-                // Rows 65..128 of each head are never written and stay zero.
-                value: gpu.buffer((HEADS * TILE * padded) as u64 * 2)?,
-                scores: gpu.buffer((GROUP * padded * padded) as u64 * 4)?,
-                mixed: gpu.buffer((HEADS * padded * TILE) as u64 * 4)?,
+                scratch,
+                staging: gpu.readback(stream_bytes)?,
                 readback: gpu.readback((padded * PIXELS) as u64 * 4)?,
             });
         }
@@ -442,21 +497,18 @@ impl GpuVideoDecoder {
             turns,
             half,
             wide,
-            query,
-            key,
-            value,
-            scores,
-            mixed,
+            scratch,
+            staging,
             readback,
             ..
         }) = cached.as_ref()
         else {
             return Err("gpu_failed");
         };
-        // Padded rows of the stream must be zero; every other buffer is rewritten in full.
-        start.resize(padded * DIM, 0.0);
-        gpu.upload(stream, 0, bytes_of(&start))?;
-        gpu.upload(turns, 0, bytes_of(&rotary(width, height, frames)))?;
+        // The last live token starts as zeros. Padded rows of the stream are zero from the
+        // start and no kernel writes them; every other buffer is rewritten in full.
+        start.resize(tokens * DIM, 0.0);
+        gpu.write_floats(stream, 0, staging, &start)?;
         let token_tiles = np / TILE as u32;
         let stream_layout = u32::from(fast.is_some());
         let shader = |kernel, buffers, constants, groups| Call::Shader {
@@ -522,53 +574,88 @@ impl GpuVideoDecoder {
                 )),
             }
             steps.extend(gemm(&layer.qkv, QKV));
-            steps.push(shader(
-                &k.heads,
-                vec![wide, v, turns, query, key, value],
-                vec![n, np, QKV_BIAS as u32],
-                [1, np, 1],
-            ));
-            // A few heads at a time keeps the scores small (118 MB instead of 472 MB for all
-            // heads) at the same speed. The weights exist only inside `mix`.
-            for head in (0..HEADS as u32).step_by(GROUP) {
-                steps.push(shader(
-                    &k.gemm,
-                    vec![query, key, scores],
-                    vec![
-                        HEAD as u32,
-                        head * np * HEAD as u32,
-                        np * HEAD as u32,
-                        head * np * HEAD as u32,
-                        np * HEAD as u32,
-                        0,
-                        np * np,
-                        np,
-                    ],
-                    [token_tiles, token_tiles, GROUP as u32],
-                ));
-                steps.push(shader(
-                    &k.mix,
-                    vec![scores, value, mixed],
-                    vec![
-                        np,
-                        0,
-                        np * np,
-                        head * TILE as u32 * np,
-                        TILE as u32 * np,
-                        head * np * TILE as u32,
-                        np * TILE as u32,
-                        TILE as u32,
-                        n,
-                    ],
-                    [1, token_tiles, GROUP as u32],
-                ));
+            match (machine, scratch) {
+                (Some((machine, shared, _)), _) => {
+                    let [query, key, mixed, sums] = &shared.attention;
+                    steps.push(shader(
+                        &k.heads64s,
+                        vec![wide, v, turns, query, key],
+                        vec![n, np, QKV_BIAS as u32],
+                        [1, np, 1],
+                    ));
+                    steps.push(Call::Product {
+                        fast: machine,
+                        kernel: &shared.attend.0,
+                        memory: shared.streams.iter().collect(),
+                        groups: shared.attend.1,
+                    });
+                    steps.push(shader(
+                        &k.merge64s,
+                        vec![mixed, sums, half],
+                        vec![n, np],
+                        [HEADS as u32, np, 1],
+                    ));
+                }
+                (
+                    None,
+                    Some(Scratch {
+                        query,
+                        key,
+                        value,
+                        scores,
+                        mixed,
+                    }),
+                ) => {
+                    steps.push(shader(
+                        &k.heads,
+                        vec![wide, v, turns, query, key, value],
+                        vec![n, np, QKV_BIAS as u32],
+                        [1, np, 1],
+                    ));
+                    // A few heads at a time keeps the scores small (118 MB instead of 472 MB for all
+                    // heads) at the same speed. The weights exist only inside `mix`.
+                    for head in (0..HEADS as u32).step_by(GROUP) {
+                        steps.push(shader(
+                            &k.gemm,
+                            vec![query, key, scores],
+                            vec![
+                                HEAD as u32,
+                                head * np * HEAD as u32,
+                                np * HEAD as u32,
+                                head * np * HEAD as u32,
+                                np * HEAD as u32,
+                                0,
+                                np * np,
+                                np,
+                            ],
+                            [token_tiles, token_tiles, GROUP as u32],
+                        ));
+                        steps.push(shader(
+                            &k.mix,
+                            vec![scores, value, mixed],
+                            vec![
+                                np,
+                                0,
+                                np * np,
+                                head * TILE as u32 * np,
+                                TILE as u32 * np,
+                                head * np * TILE as u32,
+                                np * TILE as u32,
+                                TILE as u32,
+                                n,
+                            ],
+                            [1, token_tiles, GROUP as u32],
+                        ));
+                    }
+                    steps.push(shader(
+                        &k.merge,
+                        vec![mixed, half],
+                        vec![n, np, stream_layout],
+                        [1, np, 1],
+                    ));
+                }
+                (None, None) => return Err("gpu_failed"),
             }
-            steps.push(shader(
-                &k.merge,
-                vec![mixed, half],
-                vec![n, np, stream_layout],
-                [1, np, 1],
-            ));
             steps.extend(gemm(&layer.out, OUT));
             let Some((machine, shared, vectors)) = machine else {
                 steps.push(shader(
@@ -631,6 +718,8 @@ impl GpuVideoDecoder {
                 (&k.heads, "heads"),
                 (&k.mix, "mix"),
                 (&k.merge, "merge"),
+                (&k.heads64s, "heads64s"),
+                (&k.merge64s, "merge64s"),
                 (&k.residual, "residual"),
                 (&k.gate, "gate"),
             ];
@@ -661,14 +750,16 @@ impl GpuVideoDecoder {
         } else {
             run(gpu, &steps)?;
         }
-        let mut patches = vec![0f32; positions * PIXELS];
-        gpu.read_floats(wide, 0, readback, &mut patches)?;
-        patches.par_chunks_exact_mut(PIXELS).for_each(|row| {
-            for (value, bias) in row.iter_mut().zip(&self.host.project_bias) {
-                *value += bias;
-            }
-        });
-        Ok(unpatchify(&patches, width, height, frames))
+        let pixels = positions * PIXELS;
+        gpu.floats_with(wide, 0, readback, pixels, |patches| {
+            unpatchify_biased(
+                patches,
+                Some(&self.host.project_bias),
+                width,
+                height,
+                frames,
+            )
+        })
     }
 }
 

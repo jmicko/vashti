@@ -333,6 +333,16 @@ fn attention(qkv: &[f32], rotary: &[[f32; 2]]) -> Vec<f32> {
 /// `patches` is `[positions][3][4][16][16]`; scatters blocks into frames and applies the
 /// pixel mean and deviation.
 pub(super) fn unpatchify(patches: &[f32], width: usize, height: usize, frames: usize) -> Vec<f32> {
+    unpatchify_biased(patches, None, width, height, frames)
+}
+/// `unpatchify` of `patches` plus a bias per patch value.
+pub(super) fn unpatchify_biased(
+    patches: &[f32],
+    bias: Option<&[f32]>,
+    width: usize,
+    height: usize,
+    frames: usize,
+) -> Vec<f32> {
     let (out_w, out_h, out_t) = (width * PATCH, height * PATCH, frames * PATCH_FRAMES);
     let mut out = vec![0f32; 3 * out_t * out_h * out_w];
     out.par_chunks_exact_mut(out_w)
@@ -343,8 +353,17 @@ pub(super) fn unpatchify(patches: &[f32], width: usize, height: usize, frames: u
             let inside = ((channel * PATCH_FRAMES + t % PATCH_FRAMES) * PATCH + h % PATCH) * PATCH;
             for (w, out) in out.chunks_exact_mut(PATCH).enumerate() {
                 let from = &patches[(first + w) * PIXELS + inside..][..PATCH];
-                for (out, value) in out.iter_mut().zip(from) {
-                    *out = (value * STD[channel] + MEAN[channel]).clamp(0.0, 1.0);
+                match bias {
+                    Some(bias) => {
+                        for ((out, value), bias) in out.iter_mut().zip(from).zip(&bias[inside..]) {
+                            *out = ((value + bias) * STD[channel] + MEAN[channel]).clamp(0.0, 1.0);
+                        }
+                    }
+                    None => {
+                        for (out, value) in out.iter_mut().zip(from) {
+                            *out = (value * STD[channel] + MEAN[channel]).clamp(0.0, 1.0);
+                        }
+                    }
                 }
             }
         });

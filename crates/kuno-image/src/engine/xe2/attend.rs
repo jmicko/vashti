@@ -57,6 +57,10 @@ pub struct Shape {
     pub tokens: u32,
     /// Scores are multiplied by this before the softmax.
     pub scale: f32,
+    /// Scaled scores are known to stay within about eight of zero (unit-length queries and
+    /// keys), so `ref` starts at zero instead of at the first key's score. Weights then
+    /// keep full half-float precision whichever key comes first.
+    pub bounded: bool,
 }
 impl Shape {
     /// None when the offsets leave 32 bits.
@@ -69,6 +73,7 @@ impl Shape {
             padded: padded as u32,
             tokens: tokens as u32,
             scale,
+            bounded: false,
         })
     }
     /// Thread groups: query tiles, heads.
@@ -201,7 +206,7 @@ fn skip(bit: u32) -> bool {
 
 /// One key chunk with `live` live keys, starting with its first three key loads requested
 /// and ending with the next chunk's requested.
-fn step(k: &mut Asm, live: u32) {
+fn step(k: &mut Asm, live: u32, bounded: bool) {
     let w = Swsb::after(1);
     let (exp, init, slow, weights) = (k.label(), k.label(), k.label(), k.label());
     let row = |key: u32| s(key / 8) + key % 8;
@@ -416,9 +421,13 @@ fn step(k: &mut Asm, live: u32) {
     let done = k.label();
     k.jmpi(done, false, w);
 
-    // First step: every query's reference is its score against the first key.
+    // First step: every query's reference is its score against the first key, or zero.
     k.place(init);
-    k.mul(16, r(REF, 0, F), r(row(0), 0, F), r(CONST, C, F).s(), w);
+    if bounded {
+        k.mov(16, r(REF, 0, F), immf(0.0), w);
+    } else {
+        k.mul(16, r(REF, 0, F), r(row(0), 0, F), r(CONST, C, F).s(), w);
+    }
     k.jmpi(exp, false, w);
 
     // A weight would leave half-float range: raise every query's reference by its largest
@@ -460,6 +469,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         padded,
         tokens,
         scale,
+        bounded,
     } = *shape;
     let tiles = padded / TILE as u32;
     let w = Swsb::after(1);
@@ -558,13 +568,13 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     if full > 0 {
         let top = k.label();
         k.place(top);
-        step(&mut k, TILE as u32);
+        step(&mut k, TILE as u32, bounded);
         k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
         k.cmp(Cond::Lt, int(CHUNK), imm(full as i32), w);
         k.jmpi(top, true, w);
     }
     if rest > 0 {
-        step(&mut k, rest);
+        step(&mut k, rest, bounded);
     }
     if full > 0 {
         let (top, end) = (k.label(), k.label());
@@ -582,7 +592,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
             fetch(&mut k, j, j * 512);
         }
         k.place(top);
-        step(&mut k, TILE as u32);
+        step(&mut k, TILE as u32, bounded);
         k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
         k.cmp(Cond::Lt, int(CHUNK), int(START), w);
         k.jmpi(top, true, w);
