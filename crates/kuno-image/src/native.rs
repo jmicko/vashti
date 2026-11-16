@@ -259,7 +259,7 @@ extern "C" fn decode_video_latent(
     pixel_frames: i64,
     data: *mut c_void,
 ) -> bool {
-    use crate::engine::{gpu, video_gpu::GpuVideoDecoder, video_tiles, video_vae::LATENT_CHANNELS};
+    use crate::engine::{video_gpu::GpuVideoDecoder, video_tiles, video_vae::LATENT_CHANNELS};
     // SAFETY: as receive_video_frame; the latent holds 24 * frames * height * width values
     // and `pixels` 3 * pixel_frames * height * 16 * width * 16.
     let out = unsafe { &mut *(data as *mut VideoOutput) };
@@ -281,8 +281,8 @@ extern "C" fn decode_video_latent(
         unsafe { std::slice::from_raw_parts(latent, LATENT_CHANNELS * frames * width * height) };
     let started = std::time::Instant::now();
     let mut loaded = started;
-    let decoded = gpu::Gpu::open(gpu::Select::Pci(out.pci.clone()))
-        .and_then(|gpu| GpuVideoDecoder::load(&gpu, &out.video_model))
+    let decoded = video_host(&out.pci, &out.video_model)
+        .and_then(GpuVideoDecoder::place)
         .and_then(|decoder| {
             loaded = std::time::Instant::now();
             decoder.decode(latent, width, height, frames)
@@ -304,6 +304,32 @@ extern "C" fn decode_video_latent(
             false
         }
     }
+}
+/// The Rust video decoder's weights in host memory and the file they came from.
+static VIDEO_HOST: std::sync::Mutex<
+    Option<(
+        std::path::PathBuf,
+        std::sync::Arc<crate::engine::video_gpu::Host>,
+    )>,
+> = std::sync::Mutex::new(None);
+/// The video decoder's weights for `model`, read into host memory unless they are there
+/// already. They stay between clips; a clip only copies them into video memory.
+fn video_host(
+    pci: &str,
+    model: &std::path::Path,
+) -> Result<std::sync::Arc<crate::engine::video_gpu::Host>, &'static str> {
+    use crate::engine::{gpu, video_gpu::Host};
+    let mut kept = VIDEO_HOST.lock().map_err(|_| "model_state_lost")?;
+    if let Some((path, host)) = kept.as_ref()
+        && path == model
+    {
+        return Ok(host.clone());
+    }
+    *kept = None;
+    let gpu = gpu::Gpu::open(gpu::Select::Pci(pci.to_owned()))?;
+    let host = std::sync::Arc::new(Host::read(&gpu, model)?);
+    *kept = Some((model.to_owned(), host.clone()));
+    Ok(host)
 }
 /// The Rust DiT's weights in host memory and the file they came from.
 static DIT_HOST: std::sync::Mutex<
@@ -743,11 +769,21 @@ impl Session {
         output
             .rgb
             .reserve_exact(output.frame_bytes * recipe.frames as usize);
-        // The DiT's weights are read while the text encoder runs; the first step waits for them.
-        let reading = cfg!(feature = "rust-dit").then(|| {
-            let (pci, model) = (output.pci.clone(), output.dit_model.clone());
-            std::thread::spawn(move || drop(dit_host(&pci, &model)))
-        });
+        // Weights are read into host memory while the text encoder runs; the first step and
+        // the decode wait for theirs.
+        let reading = {
+            let (pci, dit, video) = (
+                output.pci.clone(),
+                output.dit_model.clone(),
+                output.video_model.clone(),
+            );
+            std::thread::spawn(move || {
+                if cfg!(feature = "rust-dit") {
+                    drop(dit_host(&pci, &dit));
+                }
+                drop(video_host(&pci, &video));
+            })
+        };
         let code = unsafe {
             kuno_minimax_session_generate(
                 self.native.as_ptr(),
@@ -775,9 +811,7 @@ impl Session {
         drop(references);
         drop(inputs);
         output.dit = None;
-        if let Some(reading) = reading {
-            let _ = reading.join();
-        }
+        let _ = reading.join();
         // Always join, so no request-derived work outlives the call.
         let audio = output.audio.take().map(|decode| decode.join());
         match code {

@@ -6,7 +6,7 @@ use std::path::Path;
 use rayon::prelude::*;
 
 use super::{
-    gpu::{Buffer, Gpu, Kernel, Readback, Step, bytes_of, shaders},
+    gpu::{Buffer, Gpu, Kernel, Readback, Staged, Step, bytes_of, shaders},
     safetensors::Safetensors,
     video_vae::{
         DIM, EXTRA, HEAD, HEADS, INNER, LATENT_CHANNELS, LAYERS, PAIRS, PIXELS, REGISTERS, linear,
@@ -60,39 +60,48 @@ struct Work {
     mixed: Buffer,
     readback: Readback,
 }
-pub struct GpuVideoDecoder {
-    work: std::sync::Mutex<Option<Work>>,
+/// One layer's weights in host memory.
+struct LayerHost {
+    qkv: Staged,
+    out: Staged,
+    w1: Staged,
+    w2: Staged,
+    vectors: Staged,
+}
+/// The decoder's weights in host memory (about 5 GB) with its compiled kernels: everything
+/// that can outlive a clip without holding video memory.
+pub struct Host {
     gpu: Gpu,
     kernels: Kernels,
-    layers: Vec<Layer>,
+    layers: Vec<LayerHost>,
     /// Final norm weight and bias.
-    tail: Buffer,
-    project: Buffer,
+    tail: Staged,
+    project: Staged,
     /// CPU-side ends of the model: latent to stream, and the last bias.
     post_quant: (Vec<f32>, Vec<f32>),
     embed: (Vec<f32>, Vec<f32>),
     registers: Vec<f32>,
     project_bias: Vec<f32>,
 }
-impl GpuVideoDecoder {
-    pub fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+impl Host {
+    pub fn read(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
         let file = Safetensors::open(path)?;
         file.metadata("minimax_h3_video_vae")
             .ok_or("model_file_invalid")?;
-        // Matrices go from the file straight into mapped GPU staging memory.
+        // Matrices go from the file straight into mapped staging memory.
         let matrix = |name: &str, rows: usize, columns: usize| {
-            gpu.filled((rows * columns) as u64 * 2, |to| {
+            gpu.staged((rows * columns) as u64 * 2, |to| {
                 file.f16_into(name, &[rows, columns], to)
             })
         };
         let vectors = |values: &[f32]| {
-            gpu.filled(values.len() as u64 * 4, |to| {
+            gpu.staged(values.len() as u64 * 4, |to| {
                 to.copy_from_slice(bytes_of(values));
                 Ok(())
             })
         };
         // Layers load in parallel: reading is the slow part and the file is in page cache.
-        let layers: Result<Vec<Layer>, &'static str> = (0..LAYERS)
+        let layers: Result<Vec<LayerHost>, &'static str> = (0..LAYERS)
             .into_par_iter()
             .map(|layer| {
                 let name = |part: &str| format!("decoder.transformer_blocks.{layer}.{part}");
@@ -109,7 +118,7 @@ impl GpuVideoDecoder {
                 ] {
                     small.extend(file.f16(&name(part), &[len])?);
                 }
-                Ok(Layer {
+                Ok(LayerHost {
                     qkv: matrix(&name("attn.to_qkv.weight"), DIM * 3, DIM)?,
                     out: matrix(&name("attn.to_out.weight"), DIM, DIM)?,
                     w1: matrix(&name("ff.w1.weight"), INNER * 2, DIM)?,
@@ -147,7 +156,42 @@ impl GpuVideoDecoder {
             registers: file.f16("decoder.register_tokens", &[1, REGISTERS, DIM])?,
             project_bias: file.f16("decoder.proj_out.bias", &[PIXELS])?,
             gpu: gpu.clone(),
+        })
+    }
+}
+pub struct GpuVideoDecoder {
+    work: std::sync::Mutex<Option<Work>>,
+    host: std::sync::Arc<Host>,
+    layers: Vec<Layer>,
+    tail: Buffer,
+    project: Buffer,
+}
+impl GpuVideoDecoder {
+    pub fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+        Self::place(std::sync::Arc::new(Host::read(gpu, path)?))
+    }
+    /// Copies the weights into video memory.
+    pub fn place(host: std::sync::Arc<Host>) -> Result<Self, &'static str> {
+        let gpu = &host.gpu;
+        let layers: Result<Vec<Layer>, &'static str> = host
+            .layers
+            .iter()
+            .map(|layer| {
+                Ok(Layer {
+                    qkv: gpu.place(&layer.qkv, false)?,
+                    out: gpu.place(&layer.out, false)?,
+                    w1: gpu.place(&layer.w1, false)?,
+                    w2: gpu.place(&layer.w2, false)?,
+                    vectors: gpu.place(&layer.vectors, false)?,
+                })
+            })
+            .collect();
+        Ok(Self {
+            layers: layers?,
+            tail: gpu.place(&host.tail, false)?,
+            project: gpu.place(&host.project, false)?,
             work: std::sync::Mutex::new(None),
+            host,
         })
     }
     /// Decodes a whole clip; see `video_tiles::decode_clip` for the layouts.
@@ -185,14 +229,19 @@ impl GpuVideoDecoder {
         let start = linear(
             &start,
             LATENT_CHANNELS,
-            &self.post_quant.0,
-            &self.post_quant.1,
+            &self.host.post_quant.0,
+            &self.host.post_quant.1,
         );
-        let mut start = linear(&start, LATENT_CHANNELS, &self.embed.0, &self.embed.1);
-        start.extend(&self.registers);
+        let mut start = linear(
+            &start,
+            LATENT_CHANNELS,
+            &self.host.embed.0,
+            &self.host.embed.1,
+        );
+        start.extend(&self.host.registers);
 
-        let gpu = &self.gpu;
-        let k = &self.kernels;
+        let gpu = &self.host.gpu;
+        let k = &self.host.kernels;
         let (n, np) = (tokens as u32, padded as u32);
         let mut cached = self.work.lock().map_err(|_| "gpu_failed")?;
         if cached.as_ref().is_none_or(|work| work.padded != padded) {
@@ -387,7 +436,7 @@ impl GpuVideoDecoder {
         let mut patches = vec![0f32; positions * PIXELS];
         gpu.read_floats(wide, 0, readback, &mut patches)?;
         patches.par_chunks_exact_mut(PIXELS).for_each(|row| {
-            for (value, bias) in row.iter_mut().zip(&self.project_bias) {
+            for (value, bias) in row.iter_mut().zip(&self.host.project_bias) {
                 *value += bias;
             }
         });
