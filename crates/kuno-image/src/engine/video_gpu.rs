@@ -1,7 +1,10 @@
 //! MiniMax H3 video decoder on the GPU. Same model as `video_vae` (the CPU reference), run
 //! with the Vulkan kernels in `gpu`: half-precision operands, f32 accumulation, and the
-//! residual stream kept in f32. On an Intel Xe2 card with Level Zero the linear layers run
-//! as the engine's own machine code (`xe2::int8`, half-float form) instead of a shader.
+//! residual stream kept in f32. On an Intel Xe2 card with Level Zero everything but
+//! attention runs as the engine's own machine code instead: the linear layers (`xe2::int8`,
+//! half-float form), the residual updates with the norms (`xe2::norm`) and the gated
+//! activation (`xe2::gate`). A machine-code launch costs about 15 microseconds against 200
+//! for a Vulkan submission, so a layer then needs one submission, for its attention.
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -15,8 +18,9 @@ use super::{
         rotary, unpatchify,
     },
     xe2::{
-        int8,
+        self, gate, int8,
         level_zero::{self, LevelZero},
+        norm,
     },
 };
 
@@ -30,6 +34,12 @@ const W1_BIAS: usize = NORM2 + DIM;
 const W2_BIAS: usize = W1_BIAS + INNER * 2;
 const SCALE2: usize = W2_BIAS + DIM;
 const VECTORS: usize = SCALE2 + DIM;
+/// For the machine-code kernels: scale times bias of both residual updates, and the next
+/// layer's first norm weight.
+const SHIFT1: usize = VECTORS;
+const SHIFT2: usize = SHIFT1 + DIM;
+const NEXT: usize = SHIFT2 + DIM;
+const ALL: usize = NEXT + DIM;
 /// The matrix kernel works on 128-token tiles.
 const TILE: usize = 128;
 /// Attention heads processed per dispatch.
@@ -60,7 +70,7 @@ struct Layer {
     out: Matrix,
     w1: Matrix,
     w2: Matrix,
-    vectors: Buffer,
+    vectors: Matrix,
 }
 struct Kernels {
     /// Present when the linear layers can run as our own machine code.
@@ -74,11 +84,11 @@ struct Kernels {
     residual: Kernel,
     gate: Kernel,
 }
-/// Scratch buffers for one padded token count, kept between tiles.
+/// Scratch buffers for one token count, kept between tiles.
 struct Work {
-    /// The product kernels for this token count and the operand buffers as they see them.
+    /// The machine-code kernels for this token count and the buffers as they see them.
     fast: Option<Fast>,
-    padded: usize,
+    tokens: usize,
     stream: Buffer,
     turns: Buffer,
     half: Buffer,
@@ -91,9 +101,34 @@ struct Work {
     readback: Readback,
 }
 struct Fast {
+    stream: level_zero::Memory,
     half: level_zero::Memory,
     wide: level_zero::Memory,
     products: [(level_zero::Kernel, [u32; 3]); 5],
+    /// The first layer's input norm.
+    enter: level_zero::Kernel,
+    /// The residual update after attention with the feed-forward's input norm.
+    middle: level_zero::Kernel,
+    /// The update after the feed-forward with the next layer's input norm, and without a
+    /// norm for the last layer.
+    next: level_zero::Kernel,
+    leave: level_zero::Kernel,
+    gate: level_zero::Kernel,
+}
+/// A residual-and-norm kernel over every token row.
+fn rows<'a>(
+    machine: &'a LevelZero,
+    shared: &'a Fast,
+    kernel: &'a level_zero::Kernel,
+    vectors: &'a level_zero::Memory,
+    padded: usize,
+) -> Call<'a> {
+    Call::Product {
+        fast: machine,
+        kernel,
+        memory: vec![&shared.stream, &shared.wide, vectors, &shared.half],
+        groups: norm::Shape::groups(padded),
+    }
 }
 fn product(
     fast: &LevelZero,
@@ -129,11 +164,14 @@ pub struct Host {
 }
 impl Host {
     pub fn read(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+        Self::read_with(gpu, path, true)
+    }
+    /// `machine`: use machine-code kernels when this card can run them.
+    fn read_with(gpu: &Gpu, path: &Path, machine: bool) -> Result<Self, &'static str> {
         let file = Safetensors::open(path)?;
         file.metadata("minimax_h3_video_vae")
             .ok_or("model_file_invalid")?;
-        let fast = gpu
-            .shares()
+        let fast = (machine && gpu.shares())
             .then(|| LevelZero::open().ok())
             .flatten()
             .filter(|fast| product(fast, TILE, OUT).is_ok());
@@ -164,7 +202,7 @@ impl Host {
             .into_par_iter()
             .map(|layer| {
                 let name = |part: &str| format!("decoder.transformer_blocks.{layer}.{part}");
-                let mut small = Vec::with_capacity(VECTORS);
+                let mut small = Vec::with_capacity(ALL);
                 for (part, len) in [
                     ("norm1.weight", DIM),
                     ("attn.to_qkv.bias", DIM * 3),
@@ -177,6 +215,17 @@ impl Host {
                 ] {
                     small.extend(file.f16(&name(part), &[len])?);
                 }
+                for (scale, bias) in [(SCALE1, OUT_BIAS), (SCALE2, W2_BIAS)] {
+                    let shift: Vec<f32> = (0..DIM)
+                        .map(|i| small[scale + i] * small[bias + i])
+                        .collect();
+                    small.extend(shift);
+                }
+                if layer + 1 < LAYERS {
+                    let next = format!("decoder.transformer_blocks.{}.norm1.weight", layer + 1);
+                    small.extend(file.f16(&next, &[DIM])?);
+                }
+                small.resize(ALL, 0.0);
                 Ok(LayerHost {
                     qkv: matrix(&name("attn.to_qkv.weight"), QKV)?,
                     out: matrix(&name("attn.to_out.weight"), OUT)?,
@@ -230,6 +279,11 @@ impl GpuVideoDecoder {
     pub fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
         Self::place(std::sync::Arc::new(Host::read(gpu, path)?))
     }
+    /// `load` with every kernel a shader, as on a card without the machine-code path.
+    #[cfg(test)]
+    fn load_shaders(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+        Self::place(std::sync::Arc::new(Host::read_with(gpu, path, false)?))
+    }
     /// Copies the weights into video memory.
     pub fn place(host: std::sync::Arc<Host>) -> Result<Self, &'static str> {
         let gpu = &host.gpu;
@@ -256,7 +310,7 @@ impl GpuVideoDecoder {
                     out: matrix(&layer.out)?,
                     w1: matrix(&layer.w1)?,
                     w2: matrix(&layer.w2)?,
-                    vectors: gpu.place(&layer.vectors, false)?,
+                    vectors: matrix(&layer.vectors)?,
                 })
             })
             .collect();
@@ -318,33 +372,58 @@ impl GpuVideoDecoder {
         let k = &self.host.kernels;
         let (n, np) = (tokens as u32, padded as u32);
         let mut cached = self.work.lock().map_err(|_| "gpu_failed")?;
-        if cached.as_ref().is_none_or(|work| work.padded != padded) {
+        if cached.as_ref().is_none_or(|work| work.tokens != tokens) {
             // Drop the old set before allocating the new one.
             *cached = None;
+            let stream_bytes = (padded * DIM) as u64 * 4;
             let half_bytes = (padded * INNER * 2 + int8::SLACK) as u64;
-            let wide_bytes = (padded * INNER * 2) as u64 * 4;
-            let (half, wide) = match &k.fast {
-                Some(_) => (gpu.shared(half_bytes)?, gpu.shared(wide_bytes)?),
-                None => (gpu.buffer(half_bytes)?, gpu.buffer(wide_bytes)?),
+            let wide_bytes = ((padded * INNER * 2) * 4 + gate::SLACK) as u64;
+            let (stream, half, wide) = match &k.fast {
+                Some(_) => (
+                    gpu.shared(stream_bytes)?,
+                    gpu.shared(half_bytes)?,
+                    gpu.shared(wide_bytes)?,
+                ),
+                None => (
+                    gpu.buffer(stream_bytes)?,
+                    gpu.buffer(half_bytes)?,
+                    gpu.buffer(wide_bytes)?,
+                ),
             };
             let fast = match &k.fast {
-                Some(fast) => Some(Fast {
-                    half: fast.import(&gpu.export(&half)?, half_bytes)?,
-                    wide: fast.import(&gpu.export(&wide)?, wide_bytes)?,
-                    products: [
-                        product(fast, padded, QKV)?,
-                        product(fast, padded, OUT)?,
-                        product(fast, padded, W1)?,
-                        product(fast, padded, W2)?,
-                        product(fast, padded, PROJECT)?,
-                    ],
-                }),
+                Some(fast) => {
+                    let glue = |update: Option<(usize, usize)>, weight: Option<usize>| {
+                        let shape = norm::Shape {
+                            tokens: n,
+                            update: update.map(|(scale, shift)| (scale as u32, shift as u32)),
+                            norm: weight.map(|weight| weight as u32),
+                        };
+                        xe2::load(fast, &norm::kernel(&shape), 4)
+                    };
+                    Some(Fast {
+                        stream: fast.import(&gpu.export(&stream)?, stream_bytes)?,
+                        half: fast.import(&gpu.export(&half)?, half_bytes)?,
+                        wide: fast.import(&gpu.export(&wide)?, wide_bytes)?,
+                        products: [
+                            product(fast, padded, QKV)?,
+                            product(fast, padded, OUT)?,
+                            product(fast, padded, W1)?,
+                            product(fast, padded, W2)?,
+                            product(fast, padded, PROJECT)?,
+                        ],
+                        enter: glue(None, Some(NORM1))?,
+                        middle: glue(Some((SCALE1, SHIFT1)), Some(NORM2))?,
+                        next: glue(Some((SCALE2, SHIFT2)), Some(NEXT))?,
+                        leave: glue(Some((SCALE2, SHIFT2)), None)?,
+                        gate: xe2::load(fast, &gate::kernel(W1_BIAS as u32), 3)?,
+                    })
+                }
                 None => None,
             };
             *cached = Some(Work {
                 fast,
-                padded,
-                stream: gpu.buffer((padded * DIM) as u64 * 4)?,
+                tokens,
+                stream,
                 turns: gpu.buffer((padded * PAIRS) as u64 * 8)?,
                 half,
                 wide,
@@ -423,14 +502,25 @@ impl GpuVideoDecoder {
                 .collect()
         });
         let mut steps: Vec<Call<'_>> = Vec::new();
-        for layer in &self.layers {
-            let v = &layer.vectors;
-            steps.push(shader(
-                &k.norm,
-                vec![stream, v, half],
-                vec![n, NORM1 as u32, 0, 0, stream_layout],
-                [np, 1, 1],
-            ));
+        for (index, layer) in self.layers.iter().enumerate() {
+            let v = &layer.vectors.buffer;
+            // With machine code, the previous layer's last kernel has written this input.
+            let machine = match (&k.fast, fast, &layer.vectors.stream) {
+                (Some(machine), Some(shared), Some(vectors)) => Some((machine, shared, vectors)),
+                _ => None,
+            };
+            match machine {
+                Some((machine, shared, vectors)) if index == 0 => {
+                    steps.push(rows(machine, shared, &shared.enter, vectors, padded));
+                }
+                Some(_) => {}
+                None => steps.push(shader(
+                    &k.norm,
+                    vec![stream, v, half],
+                    vec![n, NORM1 as u32, 0, 0, stream_layout],
+                    [np, 1, 1],
+                )),
+            }
             steps.extend(gemm(&layer.qkv, QKV));
             steps.push(shader(
                 &k.heads,
@@ -480,32 +570,50 @@ impl GpuVideoDecoder {
                 [1, np, 1],
             ));
             steps.extend(gemm(&layer.out, OUT));
-            steps.push(shader(
-                &k.residual,
-                vec![stream, wide, v],
-                vec![n, OUT_BIAS as u32, SCALE1 as u32],
-                [(DIM / 4 / 64) as u32, np, 1],
-            ));
-            steps.push(shader(
-                &k.norm,
-                vec![stream, v, half],
-                vec![n, NORM2 as u32, 0, 0, stream_layout],
-                [np, 1, 1],
-            ));
+            let Some((machine, shared, vectors)) = machine else {
+                steps.push(shader(
+                    &k.residual,
+                    vec![stream, wide, v],
+                    vec![n, OUT_BIAS as u32, SCALE1 as u32],
+                    [(DIM / 4 / 64) as u32, np, 1],
+                ));
+                steps.push(shader(
+                    &k.norm,
+                    vec![stream, v, half],
+                    vec![n, NORM2 as u32, 0, 0, stream_layout],
+                    [np, 1, 1],
+                ));
+                steps.extend(gemm(&layer.w1, W1));
+                steps.push(shader(
+                    &k.gate,
+                    vec![wide, v, half],
+                    vec![n, W1_BIAS as u32, stream_layout],
+                    [(INNER / 4 / 64) as u32, np, 1],
+                ));
+                steps.extend(gemm(&layer.w2, W2));
+                steps.push(shader(
+                    &k.residual,
+                    vec![stream, wide, v],
+                    vec![n, W2_BIAS as u32, SCALE2 as u32],
+                    [(DIM / 4 / 64) as u32, np, 1],
+                ));
+                continue;
+            };
+            steps.push(rows(machine, shared, &shared.middle, vectors, padded));
             steps.extend(gemm(&layer.w1, W1));
-            steps.push(shader(
-                &k.gate,
-                vec![wide, v, half],
-                vec![n, W1_BIAS as u32, stream_layout],
-                [(INNER / 4 / 64) as u32, np, 1],
-            ));
+            steps.push(Call::Product {
+                fast: machine,
+                kernel: &shared.gate,
+                memory: vec![&shared.wide, vectors, &shared.half],
+                groups: gate::groups(padded),
+            });
             steps.extend(gemm(&layer.w2, W2));
-            steps.push(shader(
-                &k.residual,
-                vec![stream, wide, v],
-                vec![n, W2_BIAS as u32, SCALE2 as u32],
-                [(DIM / 4 / 64) as u32, np, 1],
-            ));
+            let after = if index + 1 < self.layers.len() {
+                &shared.next
+            } else {
+                &shared.leave
+            };
+            steps.push(rows(machine, shared, after, vectors, padded));
         }
         steps.push(shader(
             &k.norm,
@@ -729,21 +837,34 @@ mod tests {
         }
         let (cpu, cpp) = (read(&reference), read(&golden.join("tile-pixels.f32")));
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
-        let started = std::time::Instant::now();
-        let decoder = GpuVideoDecoder::load(&gpu, Path::new(&model)).unwrap();
-        let load = started.elapsed().as_secs_f64();
-        let mut seconds = Vec::new();
-        let mut pixels = Vec::new();
-        for _ in 0..4 {
+        let cpp_db = decibels(&cpu, &cpp);
+        for shaders in [false, true] {
             let started = std::time::Instant::now();
-            pixels = decoder.decode_tile(&latent, width, height, frames).unwrap();
-            seconds.push(started.elapsed().as_secs_f64());
+            let decoder = if shaders {
+                GpuVideoDecoder::load_shaders(&gpu, Path::new(&model))
+            } else {
+                GpuVideoDecoder::load(&gpu, Path::new(&model))
+            }
+            .unwrap();
+            let load = started.elapsed().as_secs_f64();
+            let mut seconds = Vec::new();
+            let mut pixels = Vec::new();
+            for _ in 0..4 {
+                let started = std::time::Instant::now();
+                pixels = decoder.decode_tile(&latent, width, height, frames).unwrap();
+                seconds.push(started.elapsed().as_secs_f64());
+            }
+            let gpu_db = decibels(&cpu, &pixels);
+            println!(
+                "{}: load {load:.1} s; tile {seconds:.3?} s; gpu vs reference {gpu_db:.1} dB, c++ vs reference {cpp_db:.1} dB",
+                if shaders {
+                    "shaders only"
+                } else {
+                    "machine code"
+                }
+            );
+            assert!(gpu_db >= cpp_db);
         }
-        let (gpu_db, cpp_db) = (decibels(&cpu, &pixels), decibels(&cpu, &cpp));
-        println!(
-            "load {load:.1} s; tile {seconds:.3?} s; gpu vs reference {gpu_db:.1} dB, c++ vs reference {cpp_db:.1} dB"
-        );
-        assert!(gpu_db >= cpp_db);
     }
     /// Needs the Intel GPU, the model and a whole decode captured from the C++ engine:
     /// `KUNO_VIDEO_CLIP=<dir>` with `clip-latent.f32`, `clip-pixels.f32` and

@@ -7,8 +7,10 @@
 //! 128 bits, uncompacted, with masking disabled. Field positions follow Mesa's Xe2 tables, and
 //! the tests hold encodings produced by Mesa's assembler.
 pub mod attend;
+pub mod gate;
 pub mod int8;
 pub mod level_zero;
+pub mod norm;
 pub mod zebin;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -180,6 +182,31 @@ pub enum Cond {
     Le = 6,
 }
 
+/// Loads `code` as a kernel taking `pointers` memory arguments.
+pub fn load(
+    fast: &level_zero::LevelZero,
+    code: &[u8],
+    pointers: u32,
+) -> Result<level_zero::Kernel, &'static str> {
+    let native = zebin::write(&zebin::Kernel {
+        name: "kernel",
+        code,
+        grf: 256,
+        pointers,
+    });
+    fast.kernel(&native, "kernel", pointers as usize)
+}
+
+#[derive(Clone, Copy)]
+pub enum Math {
+    Inv = 1,
+    /// Two to the power of the source.
+    Exp = 3,
+    Sqrt = 4,
+    Rsq = 5,
+    Fdiv = 9,
+}
+
 pub const SFID_GATEWAY: u64 = 3;
 pub const SFID_UGM: u64 = 15;
 
@@ -323,6 +350,13 @@ impl Asm {
             wait,
         );
         self.sync(wait);
+    }
+    /// A math function of one source, or of two (`Fdiv`: `a / b`).
+    pub fn math(&mut self, exec: u32, function: Math, d: Reg, a: Reg, b: Option<Reg>, swsb: Swsb) {
+        let b = b.unwrap_or(null(a.ty));
+        let mut i = self.two(56, exec, d, a.into(), b.into(), swsb);
+        i.set(95, 92, function as u64);
+        self.push(i);
     }
     /// Round to the nearest integer, ties to even.
     pub fn rnde(&mut self, exec: u32, d: Reg, a: Reg, swsb: Swsb) {
