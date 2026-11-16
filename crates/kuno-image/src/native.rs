@@ -312,14 +312,35 @@ static DIT_HOST: std::sync::Mutex<
         std::sync::Arc<crate::engine::dit_gpu::Host>,
     )>,
 > = std::sync::Mutex::new(None);
+/// The Rust DiT's weights for `model`, read into host memory unless they are there already.
+/// They stay between clips (one model at a time); a clip only copies them into video memory.
+/// Concurrent callers wait for the one read.
+fn dit_host(
+    pci: &str,
+    model: &std::path::Path,
+) -> Result<std::sync::Arc<crate::engine::dit_gpu::Host>, &'static str> {
+    use crate::engine::{dit_gpu::Host, gpu};
+    let mut kept = DIT_HOST.lock().map_err(|_| "model_state_lost")?;
+    if let Some((path, host)) = kept.as_ref()
+        && path == model
+    {
+        return Ok(host.clone());
+    }
+    *kept = None;
+    let started = std::time::Instant::now();
+    let gpu = gpu::Gpu::open(gpu::Select::Pci(pci.to_owned()))?;
+    let host = std::sync::Arc::new(Host::read(&gpu, model)?);
+    *kept = Some((model.to_owned(), host.clone()));
+    eprintln!(
+        "kuno-image: rust dit: read {} ms",
+        started.elapsed().as_millis()
+    );
+    Ok(host)
+}
 /// Evaluates the diffusion transformer with the Rust GPU DiT. Returning false hands the
 /// step back to the C++ engine, for this and every later step of the clip.
 extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_void) -> bool {
-    use crate::engine::{
-        dit,
-        dit_gpu::{GpuDit, Host},
-        gpu,
-    };
+    use crate::engine::{dit, dit_gpu::GpuDit};
     // SAFETY: as receive_video_frame; the shim passes a live step whose pointers hold the
     // counts and shapes it states, and `result` has the packed latent's size.
     let (out, step) = unsafe { (&mut *(data as *mut VideoOutput), &*step) };
@@ -410,25 +431,10 @@ extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_
                 audio: index(triple[2], audios.len())?,
             });
         }
-        let started = std::time::Instant::now();
         if out.dit.is_none() {
-            // The weights stay in host memory between clips (one model at a time); a clip
-            // only copies them into video memory.
-            let mut kept = DIT_HOST.lock().map_err(|_| "model_state_lost")?;
-            if kept.as_ref().is_none_or(|(path, _)| *path != out.dit_model) {
-                *kept = None;
-                let gpu = gpu::Gpu::open(gpu::Select::Pci(out.pci.clone()))?;
-                let host = std::sync::Arc::new(Host::read(&gpu, &out.dit_model)?);
-                *kept = Some((out.dit_model.clone(), host));
-                eprintln!(
-                    "kuno-image: rust dit: read {} ms",
-                    started.elapsed().as_millis()
-                );
-            }
-            let host = kept.as_ref().map(|(_, host)| host.clone());
-            drop(kept);
+            let host = dit_host(&out.pci, &out.dit_model)?;
             let started = std::time::Instant::now();
-            out.dit = Some(GpuDit::place(host.ok_or("gpu_failed")?)?);
+            out.dit = Some(GpuDit::place(host)?);
             eprintln!(
                 "kuno-image: rust dit: place {} ms",
                 started.elapsed().as_millis()
@@ -737,6 +743,11 @@ impl Session {
         output
             .rgb
             .reserve_exact(output.frame_bytes * recipe.frames as usize);
+        // The DiT's weights are read while the text encoder runs; the first step waits for them.
+        let reading = cfg!(feature = "rust-dit").then(|| {
+            let (pci, model) = (output.pci.clone(), output.dit_model.clone());
+            std::thread::spawn(move || drop(dit_host(&pci, &model)))
+        });
         let code = unsafe {
             kuno_minimax_session_generate(
                 self.native.as_ptr(),
@@ -764,6 +775,9 @@ impl Session {
         drop(references);
         drop(inputs);
         output.dit = None;
+        if let Some(reading) = reading {
+            let _ = reading.join();
+        }
         // Always join, so no request-derived work outlives the call.
         let audio = output.audio.take().map(|decode| decode.join());
         match code {
