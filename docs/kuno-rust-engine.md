@@ -27,8 +27,8 @@ paths from the environment.
 | Stage (MiniMax H3) | C++ today | Rust | State |
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
-| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU | 0.27 s per tile on the GPU (Vulkan), closer to exact | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step and 1% per warm clip; C++ still runs it |
+| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU, 70.9 dB from the CPU reference | 0.19 s per tile as machine code (79.1 dB); 0.26 s as Vulkan shaders (83.7 dB) on other cards | Rust, in the worker (dev build) |
+| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step; with the machine-code decoder a warm clip is 44.8 to 45.1 s; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -619,6 +619,91 @@ to 48.2 s (51.3 s before; C++ sampler 47.7 s in a build that still read the deco
 weights per clip). All seven modes produce clips and a Qwen image afterwards works (20.9
 s); contact sheets of the text-only and two-reference clips show the expected scenes. The
 clips' bytes differ from earlier builds because the order of the softmax sum changed.
+
+### The video decoder as machine code (2026-11-16)
+
+The decoder's tile was 0.26 s of Vulkan shaders: linear layers 151 ms at 57 TFLOPS,
+attention about 120 ms, the small steps about 25 ms. Its linear layers are half-float
+products, which the card's matrix instruction runs at half the int8 rate (120 TFLOPS in the
+probe), so the same move as for the DiT applied.
+
+**The half-float product is the int8 kernel.** A half-float step is 16 inputs in the same 32
+bytes, so `xe2/int8.rs` only changes the multiply's operand types (`Shape::half`). Sums are
+bit-identical to the `gemm16` shader's. Subnormal weights read as zero until the kernel
+sets the float control register (`cr0` bits 7 and 10, then a `sync`), which the shaders get
+from `DenormPreserve`.
+
+| Product (1920 tokens) | Shader | Machine code |
+|---|---|---|
+| 16384 x 2048 | 42 to 78 TFLOPS | 83 to 108 |
+| 2048 x 8192 | 40 to 55 | 58 to 94 |
+| 6144 x 2048 | 47 to 67 | 85 to 117 |
+
+One dispatch block for all 60 token tiles is fastest here; smaller blocks (8 to 40 tiles)
+were 2 to 40% slower.
+
+**A Vulkan submission costs more than the small kernels.** With only the products as machine
+code the tile stayed at 0.263 s: linear time fell from 151 to 88 ms, and the shaders between
+the products, now 290 separate submissions per tile, lost as much. Measured alone, one
+submission and wait is 0.14 to 0.24 ms and one machine-code launch 0.015 ms; polling the
+fence instead of sleeping on it changed nothing, so the time is in the driver's submission
+path. Everything between two products therefore had to become machine code as well.
+
+- `xe2/norm.rs`: one thread per token row, the row's 2048 values held in registers. It
+  applies the residual update (`x += scale * update + shift`, the shift being scale times
+  bias, precomputed), stores the row, sums its squares, and writes the normalized row as
+  half floats straight into the next product's token layout. One kernel replaces the
+  residual and norm shaders on both sides of a product: 0.10 ms against 0.28 ms, 147 dB
+  (stream) and 103 dB (halves) from the shaders.
+- `xe2/gate.rs`: the feed-forward's gated activation, one thread per token walking 8192
+  outputs with two alternating sets of load buffers. `silu` uses the hardware's
+  power-of-two and reciprocal, which makes it bit-identical to the shader: 0.37 ms against
+  0.49 ms.
+- Encoder additions: `math` (reciprocal, reciprocal square root, power of two; Xe2 has no
+  division), `or`, the control register. Math instructions run in a pipe of their own, so
+  a group that reads the other pipe's results waits on it as a whole (`A@1` on its first
+  instruction); counting back within the group reads garbage.
+
+**Attention reuses the DiT's kernel.** The decoder's heads are 64 channels and the kernel's
+are 128, so `heads64s` writes queries, keys and values into the lower half and leaves the
+rest zero, and `merge64s` reads the lower half back into token rows. The kernel takes its
+reference score from the first key it meets, which for the decoder cost accuracy (69.7 dB
+from the CPU reference, below the C++ engine's 70.9): weights far below the first key's
+lost their precision as half floats. The decoder's scores are bounded (unit-length queries
+and keys, so a scaled score stays within eight), so `Shape::bounded` starts the reference
+at zero: 79.1 dB. The shader path is 83.7 dB; the rest of the gap is probably the kernel's
+polynomial for the fraction of the exponent (3e-5).
+
+**Host side.** Each tile allocated and filled about 60 MB around the GPU work (30 ms). It
+now reuses mapped staging memory for the stream and the pixels, uploads the rotary table
+once per tile shape, and adds the output bias while unpatchifying.
+
+| One 16x16x7 tile | Shaders | Machine code |
+|---|---|---|
+| Linear layers | 151 ms | 89 ms (104 TFLOPS) |
+| Attention | about 120 ms | 62 ms: operands 26 (shader), kernel 27, merge 9 (shader) |
+| Residual, norm, gate | about 25 ms | 21 ms |
+| Whole tile | 0.256 s, 83.7 dB from the CPU reference | 0.188 s, 79.1 dB |
+| 832x544, 73 frames (48 tiles) | 13.1 s | 9.46 s, 69.3 dB from the C++ frames |
+
+The shader path remains for cards without Level Zero and is tested beside the machine-code
+path (`gpu_tile_matches_cpu_reference_and_reports_speed` runs both). With machine code the
+weights are stored in the product's stream layout, which takes about a second longer to
+read (2.3 s against 1.4 s, once per worker).
+
+In the dev worker (2.3 s clip, 36 tiles, Rust DiT build): decode 10.2 s to 7.1 s; later
+clips 48.1 s to 44.8 to 45.1 s (C++ sampler with the shader decoder 47.7 s); the first clip
+of a worker 50.2 s. All seven modes produce clips and an image job afterwards works (21.9
+s); the text-only and two-reference contact sheets show the expected scenes. Clip bytes
+differ from earlier builds (attention weights and the residual's rounding changed); the
+same request still gives the same bytes. The DiT's own checks are unchanged to the last
+digit, since its kernels only gained options it does not use.
+
+What is left in a tile, largest first: the products are near the instruction's rate; the
+two attention shaders and their 72 submissions (about 50 ms) would go the way of norm and
+gate, using gather loads to turn token rows into the kernel's per-channel layout; a
+64-channel form of the attention kernel would halve its 27 ms; the hardware's power of two
+in place of the polynomial would close the accuracy gap to the shader path.
 
 ## Running the comparisons
 
