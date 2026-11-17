@@ -27,8 +27,8 @@ paths from the environment.
 | Stage (MiniMax H3) | C++ today | Rust | State |
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
-| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU, 70.9 dB from the CPU reference | 0.19 s per tile as machine code (79.1 dB); 0.26 s as Vulkan shaders (83.7 dB) on other cards | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step; with the machine-code decoder a warm clip is 44.8 to 45.1 s; C++ still runs it |
+| Video decoder (36-layer transformer) | 0.59 s per tile on the GPU, 70.9 dB from the CPU reference | 0.135 s per tile as machine code (79.1 dB); 0.26 s as Vulkan shaders (83.7 dB) on other cards | Rust, in the worker (dev build) |
+| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step; with the machine-code decoder a warm clip is 42.9 to 43.1 s; C++ still runs it |
 | Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
@@ -699,11 +699,55 @@ differ from earlier builds (attention weights and the residual's rounding change
 same request still gives the same bytes. The DiT's own checks are unchanged to the last
 digit, since its kernels only gained options it does not use.
 
-What is left in a tile, largest first: the products are near the instruction's rate; the
-two attention shaders and their 72 submissions (about 50 ms) would go the way of norm and
-gate, using gather loads to turn token rows into the kernel's per-channel layout; a
-64-channel form of the attention kernel would halve its 27 ms; the hardware's power of two
-in place of the polynomial would close the accuracy gap to the shader path.
+### The rest of the decoder as machine code (2026-11-17)
+
+Three more steps took the tile from 0.188 s to 0.135 s:
+
+- **Attention operands and merge.** `xe2/heads.rs` splits the query/key/value projection
+  for the attention kernel: one thread per 16 tokens of a head, one token per lane, so
+  gather loads (one address per lane, four channels each) turn token rows into registers
+  that each hold one channel of 16 tokens, which is the kernel's query and value layout.
+  Bias, unit RMS and the rotary turn happen in registers; the rotary table sits behind the
+  key/value stream. Keys need each token's channels side by side, so they leave through
+  scatter stores. `xe2/merge.rs` divides the kernel's output by the weight sums and
+  scatters it into the next product's token layout. Both are 103 to 111 dB from a CPU
+  reference. Scattering one channel (16 bits) per lane per store was slow (merge 0.28 ms);
+  packing four channels into a 64-bit lane first cut the stores to a quarter (merge 0.055
+  ms, split 0.45 to 0.23 ms). A tile is now one Vulkan submission, for the final norm.
+- **A 64-channel attention.** `attend::Shape::narrow` skips the empty upper half of the
+  kernel's 128-channel heads in scores, mixing, loads and stores.
+- **The gate inside the product.** `int8::Shape::gated` ends the first feed-forward
+  product in the activation instead of storing its sums: weight rows (and bias) are
+  stored so that each thread's 64 rows are 32 gates and the 32 values they multiply, and
+  the thread's 32 tokens are one tile of the next product's layout, so the result leaves as
+  whole kilobytes. Bit-identical to the product shader followed by the gate shader, 0.97
+  ms against 2 to 2.8 ms, and the 126 MB of sums per layer are never written.
+
+Encoder additions: per-lane sends (`send16`), `shr`, `and`, stride-four destinations and
+`lane_addresses`. A 64-bit instruction's source must sit where its lane is, so the 32-bit
+lane offsets are built in every second dword before widening; built packed, they produced
+garbage addresses (the reference disassembler flags the form).
+
+| One 16x16x7 tile | 2026-11-16 | Now |
+|---|---|---|
+| Linear layers | 89 ms | 86 ms, gate included (110 to 125 TFLOPS for QKV and the gated product) |
+| Attention with split and merge | 62 ms (two shaders, 72 submissions) | 26 ms |
+| Residual and norm | 21 ms with the gate | 8 ms |
+| Whole tile | 0.188 s | 0.135 s, 79.1 dB from the CPU reference |
+| 832x544, 73 frames (48 tiles) | 9.46 s | 6.90 s, 69.3 dB from the C++ frames |
+
+Reordering the gated product's weight rows adds about half a second to reading the
+decoder's weights (2.9 s, once per worker, on the background thread).
+
+In the dev worker (2.3 s clip, 36 tiles, Rust DiT build): decode 7.1 s to 5.24 s; later
+clips 44.8 to 45.1 s to 42.9 to 43.1 s; the first clip of a worker 49.9 s (its weight read
+varies with the page cache). All seven modes produce clips, same-seed requests repeat their
+bytes, and an image job afterwards works (21.1 s); the text-only and two-reference contact
+sheets show the expected scenes.
+
+What is left: the products are near the instruction's rate. The hardware's power of two in
+place of the attention kernel's polynomial may close the accuracy gap to the shader path
+(79.1 against 83.7 dB).
 
 ## Running the comparisons
 
