@@ -7,8 +7,8 @@
 //! Per side (query, key, value) the thread adds the bias; queries and keys are then
 //! brought to unit RMS over their 64 channels and turned by the rotary table (pair `i` is
 //! channels `i` and `i + 24`; the last 16 channels are not rotated). Everything is written
-//! as half floats: queries and values as whole registers, keys with one scatter store per
-//! channel, because the kernel wants each key's channels side by side.
+//! as half floats: queries and values as whole registers, keys through scatter stores of
+//! four channels per token, because the kernel wants each key's channels side by side.
 //!
 //! The attention kernel's heads are 128 channels wide; channels 64 and up are never
 //! written and stay zero.
@@ -28,7 +28,7 @@ const HEAD_BYTES: u32 = 3 * CHANNELS * 4;
 pub const ROTARY_BYTES: usize = 2 * PAIRS as usize * 64;
 
 const GATHER_32X4: u32 = 0x0440_3580; // four dwords at each lane's address
-const SCATTER_16: u32 = 0x0400_0B84; // the low half of each lane to its address
+const SCATTER_64: u32 = 0x0400_0784; // each 64-bit lane to its address
 const LOAD_64X64: u32 = 0x0288_F780;
 const LOAD_32X64: u32 = 0x0248_F580;
 const STORE_64X64: u32 = 0x0200_F784;
@@ -172,8 +172,8 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     fetch(&mut k, BIAS + 8, BIAS_AT, 512, LOAD_32X64, TABLES + 7);
 
     for side in 0..3 {
-        // The key scatters of the side before read the registers the gathers refill.
-        for token in SCATTER..SCATTER + 8 {
+        // The stores of the side before read the registers the next side reuses.
+        for token in STORE..SCATTER + 4 {
             k.sync(Swsb::dst(token));
         }
         for g in 0..CHANNELS / 4 {
@@ -267,19 +267,23 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
             k.mov(16, r(x(c), 0, Hf).step2(), r(x(c), 0, F), first(c));
         }
         if side == 1 {
-            for c in 0..CHANNELS {
-                let token = SCATTER + c as u16 % 8;
-                if c >= 8 {
-                    k.sync(Swsb::dst(token));
+            // Four channels of each key side by side, as one 64-bit lane.
+            for group in 0..CHANNELS / 4 {
+                let (packed, token) = (OUT + 2 * (group % 4), SCATTER + group as u16 % 4);
+                k.sync(Swsb::dst(token));
+                for i in 0..4 {
+                    let half = r(x(group * 4 + i), 0, Uw).step2();
+                    k.mov(16, r(packed, i, Uw).step4(), half, first(i));
                 }
+                let c = group * 4;
                 k.send16(
                     SFID_UGM,
                     null(Ud),
                     r(KEYS, 0, Ud),
-                    r(x(c), 0, Ud),
-                    1,
+                    r(packed, 0, Ud),
+                    2,
                     ((c / 16) * 512 + (c % 16) * 2) << 12,
-                    SCATTER_16,
+                    SCATTER_64,
                     Swsb::after_set(1, token),
                 );
             }
@@ -319,7 +323,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
             );
         }
     }
-    for token in STORE..SCATTER + 8 {
+    for token in STORE..SCATTER + 4 {
         k.sync(Swsb::dst(token));
     }
     k.end(r(HEADER, 0, F));

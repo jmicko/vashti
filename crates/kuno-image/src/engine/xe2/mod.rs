@@ -59,6 +59,8 @@ pub struct Reg {
     pub scalar: bool,
     /// Every second element (a destination written, or a source read, at stride two).
     pub step2: bool,
+    /// As a destination: every fourth element.
+    pub step4: bool,
 }
 impl Reg {
     pub fn minus(self) -> Reg {
@@ -73,6 +75,12 @@ impl Reg {
     pub fn step2(self) -> Reg {
         Reg {
             step2: true,
+            ..self
+        }
+    }
+    pub fn step4(self) -> Reg {
+        Reg {
+            step4: true,
             ..self
         }
     }
@@ -99,6 +107,7 @@ pub fn r(nr: u32, sub: u32, ty: Ty) -> Reg {
         neg: false,
         scalar: false,
         step2: false,
+        step4: false,
     }
 }
 /// The floating-point control register `cr0.0`.
@@ -117,6 +126,7 @@ pub fn null(ty: Ty) -> Reg {
         neg: false,
         scalar: false,
         step2: false,
+        step4: false,
     }
 }
 
@@ -251,7 +261,15 @@ impl Inst {
     }
     fn dst(&mut self, d: Reg) {
         self.set(39, 36, d.ty as u64);
-        self.set(49, 48, if d.step2 { 2 } else { 1 });
+        self.set(
+            49,
+            48,
+            match (d.step2, d.step4) {
+                (_, true) => 3,
+                (true, _) => 2,
+                _ => 1,
+            },
+        );
         self.operand(50, d, true);
         self.set(33, 33, d.off as u64 & 1);
     }

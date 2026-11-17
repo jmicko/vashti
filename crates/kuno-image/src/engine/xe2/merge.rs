@@ -4,7 +4,8 @@
 //!
 //! One hardware thread owns 16 tokens of one head, one token per lane, so every register is
 //! one channel of the 16 tokens. The product wants each token's channels side by side, so
-//! each channel goes out through one scatter store (one address per lane).
+//! four channels at a time are packed into 64-bit lanes and go out through one scatter
+//! store (one address per lane).
 //!
 //! Arguments: the mixed values and the weight sums as the attention kernel writes them,
 //! and the half-float output for rows of `heads x 64` channels. Only the lower 64 channels
@@ -14,7 +15,7 @@ use super::{Ty::*, attend, *};
 const CHANNELS: u32 = 64;
 const LOAD_64X64: u32 = 0x0288_F780;
 const LOAD_32X16: u32 = 0x0210_D580;
-const SCATTER_16: u32 = 0x0400_0B84; // the low half of each lane to its address
+const SCATTER_64: u32 = 0x0400_0784; // each 64-bit lane to its address
 
 /// Thread groups for `padded` tokens (a multiple of 32): token tiles, heads.
 pub fn groups(padded: usize, heads: usize) -> [u32; 3] {
@@ -35,6 +36,7 @@ fn x(c: u32) -> u32 {
 }
 const SUM_TOKEN: u16 = 8;
 const SCATTER: u16 = 9;
+const PACKED: u32 = 80;
 
 /// `padded` tokens and `heads` heads of 64 channels: the output's rows are `heads * 64`
 /// halves, which must be 4096 bytes (the product's 128 steps).
@@ -104,7 +106,6 @@ pub fn kernel(padded: u32, heads: u32) -> Vec<u8> {
         k.sync(Swsb::dst(token));
     }
     k.math(16, Math::Inv, r(SUM, 0, F), r(SUM, 0, F), w);
-    let mut stores = 0u16;
     for group in 0..CHANNELS / 4 {
         let row = |i: u32| r(x(group * 4 + i), 0, F);
         for i in 0..4 {
@@ -119,25 +120,26 @@ pub fn kernel(padded: u32, heads: u32) -> Vec<u8> {
                 Swsb::after(4),
             );
         }
+        // Four channels of each token side by side, as one 64-bit lane.
+        let (packed, token) = (PACKED + 2 * (group % 4), SCATTER + group as u16 % 4);
+        k.sync(Swsb::dst(token));
         for i in 0..4 {
-            let (c, token) = (group * 4 + i, SCATTER + stores % 16);
-            if stores >= 16 {
-                k.sync(Swsb::dst(token));
-            }
-            k.send16(
-                SFID_UGM,
-                null(Ud),
-                r(ROWS, 0, Ud),
-                r(x(c), 0, Ud),
-                1,
-                ((c / 16) * 1024 + (c % 16) * 2) << 12,
-                SCATTER_16,
-                Swsb::after_set(1, token),
-            );
-            stores += 1;
+            let half = r(x(group * 4 + i), 0, Uw).step2();
+            k.mov(16, r(packed, i, Uw).step4(), half, first(i));
         }
+        let c = group * 4;
+        k.send16(
+            SFID_UGM,
+            null(Ud),
+            r(ROWS, 0, Ud),
+            r(packed, 0, Ud),
+            2,
+            ((c / 16) * 1024 + (c % 16) * 2) << 12,
+            SCATTER_64,
+            Swsb::after_set(1, token),
+        );
     }
-    for token in SCATTER..SCATTER + 16 {
+    for token in SCATTER..SCATTER + 4 {
         k.sync(Swsb::dst(token));
     }
     k.end(r(HEADER, 0, F));
