@@ -8,8 +8,10 @@
 //! the tests hold encodings produced by Mesa's assembler.
 pub mod attend;
 pub mod gate;
+pub mod heads;
 pub mod int8;
 pub mod level_zero;
+pub mod merge;
 pub mod norm;
 pub mod zebin;
 
@@ -336,6 +338,14 @@ impl Asm {
         let i = self.two(105, exec, d, a.into(), b.into(), swsb);
         self.push(i);
     }
+    pub fn shr(&mut self, exec: u32, d: Reg, a: impl Into<Src>, b: impl Into<Src>, swsb: Swsb) {
+        let i = self.two(104, exec, d, a.into(), b.into(), swsb);
+        self.push(i);
+    }
+    pub fn and(&mut self, exec: u32, d: Reg, a: impl Into<Src>, b: impl Into<Src>, swsb: Swsb) {
+        let i = self.two(101, exec, d, a.into(), b.into(), swsb);
+        self.push(i);
+    }
     pub fn or(&mut self, exec: u32, d: Reg, a: impl Into<Src>, b: impl Into<Src>, swsb: Swsb) {
         let i = self.two(102, exec, d, a.into(), b.into(), swsb);
         self.push(i);
@@ -357,6 +367,26 @@ impl Asm {
         let mut i = self.two(56, exec, d, a.into(), null(a.ty).into(), swsb);
         i.set(95, 92, function as u64);
         self.push(i);
+    }
+    /// Sixteen addresses `base + lane * stride` for `send16`, in registers `to` and `to + 1`
+    /// (`scratch` and `scratch + 1` are overwritten). A 64-bit lane must be fed from its own
+    /// position, so the lane offsets are built as 32-bit integers in every second dword,
+    /// where widening finds them.
+    pub fn lane_addresses(&mut self, to: u32, base: Reg, stride: i32, scratch: u32) {
+        let w = Swsb::after(1);
+        let lane = |i: u32| r(scratch, 2 * i, Ty::D).step2();
+        self.mov(1, lane(0), imm(0), Swsb::NONE);
+        for count in [1, 2, 4] {
+            self.add(count, lane(count), lane(0), imm(count as i32 * stride), w);
+        }
+        let upper = r(scratch + 1, 0, Ty::D).step2();
+        self.add(8, upper, lane(0), imm(8 * stride), w);
+        for half in 0..2 {
+            let wide = r(to + half, 0, Ty::Q);
+            let offsets = r(scratch + half, 0, Ty::Ud).step2();
+            self.mov(8, r(to + half, 0, Ty::Uq), offsets, w);
+            self.add(8, wide, wide, base.s(), w);
+        }
     }
     /// Round to the nearest integer, ties to even.
     pub fn rnde(&mut self, exec: u32, d: Reg, a: Reg, swsb: Swsb) {
@@ -435,12 +465,48 @@ impl Asm {
         eot: bool,
         swsb: Swsb,
     ) {
+        self.message(
+            1, sfid, dst, payload, extra, extra_len, ex_desc, desc, eot, swsb,
+        );
+    }
+    /// `send` with one address per lane: `payload` is two registers of sixteen 64-bit
+    /// addresses, and each lane loads or stores at its own.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send16(
+        &mut self,
+        sfid: u64,
+        dst: Reg,
+        payload: Reg,
+        extra: Reg,
+        extra_len: u64,
+        ex_desc: u32,
+        desc: u32,
+        swsb: Swsb,
+    ) {
+        self.message(
+            16, sfid, dst, payload, extra, extra_len, ex_desc, desc, false, swsb,
+        );
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn message(
+        &mut self,
+        exec: u32,
+        sfid: u64,
+        dst: Reg,
+        payload: Reg,
+        extra: Reg,
+        extra_len: u64,
+        ex_desc: u32,
+        desc: u32,
+        eot: bool,
+        swsb: Swsb,
+    ) {
         let (d, x) = (desc as u64, ex_desc as u64);
         assert!(
             x & 0x7ff == 0,
             "low descriptor bits carry the extra payload length"
         );
-        let mut i = Inst::new(49, 1, swsb);
+        let mut i = Inst::new(49, exec, swsb);
         i.set(34, 34, eot as u64);
         i.set(95, 92, sfid);
         i.operand(50, dst, false);

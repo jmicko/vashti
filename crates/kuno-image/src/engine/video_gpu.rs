@@ -2,10 +2,11 @@
 //! with the Vulkan kernels in `gpu`: half-precision operands, f32 accumulation, and the
 //! residual stream kept in f32. On an Intel Xe2 card with Level Zero the heavy kernels run
 //! as the engine's own machine code instead: the linear layers (`xe2::int8`, half-float
-//! form), attention (`xe2::attend`, its 128-channel heads half empty), the residual updates
-//! with the norms (`xe2::norm`) and the gated activation (`xe2::gate`). Two shaders per
-//! layer remain, on either side of attention. A machine-code launch costs about 15
-//! microseconds against 200 for a Vulkan submission.
+//! form), attention (`xe2::attend`, its 128-channel heads half empty) with its operand
+//! split and merge (`xe2::heads`, `xe2::merge`), the residual updates with the norms
+//! (`xe2::norm`) and the gated activation (`xe2::gate`). A tile is then one Vulkan
+//! submission, for the final norm: a machine-code launch costs about 15 microseconds
+//! against 200 for a submission.
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -19,9 +20,9 @@ use super::{
         rotary, unpatchify_biased,
     },
     xe2::{
-        self, attend, gate, int8,
+        self, attend, gate, heads, int8,
         level_zero::{self, LevelZero},
-        norm,
+        merge, norm,
     },
 };
 
@@ -84,9 +85,6 @@ struct Kernels {
     merge: Kernel,
     residual: Kernel,
     gate: Kernel,
-    /// Writers and reader of the machine-code attention kernel's layouts.
-    heads64s: Kernel,
-    merge64s: Kernel,
 }
 /// Scratch buffers for one tile shape, kept between tiles.
 struct Work {
@@ -126,10 +124,13 @@ struct Fast {
     next: level_zero::Kernel,
     leave: level_zero::Kernel,
     gate: level_zero::Kernel,
-    /// Attention: queries, keys and values, mixed values and weight sums.
+    /// Attention: queries, keys and values (with the rotary table behind them), mixed
+    /// values and weight sums; the kernels that write the first two and read the last two.
+    split: (level_zero::Kernel, [u32; 3]),
+    merge: level_zero::Kernel,
     attend: (level_zero::Kernel, [u32; 3]),
     streams: [level_zero::Memory; 4],
-    attention: [Buffer; 4],
+    _attention: [Buffer; 4],
 }
 /// A residual-and-norm kernel over every token row.
 fn rows<'a>(
@@ -265,8 +266,6 @@ impl Host {
                 merge: kernel(shaders::MERGE, 2, 3)?,
                 residual: kernel(shaders::RESIDUAL, 3, 3)?,
                 gate: kernel(shaders::GATE, 3, 3)?,
-                heads64s: kernel(shaders::HEADS64S, 5, 3)?,
-                merge64s: kernel(shaders::MERGE64S, 3, 2)?,
                 fast,
             },
             layers,
@@ -420,9 +419,11 @@ impl GpuVideoDecoder {
                         xe2::load(fast, &norm::kernel(&shape), 4)
                     };
                     let tiles = HEADS * padded / attend::TILE;
+                    let table = heads::rotary_table(&rotary(width, height, frames), padded);
+                    let table_first = tiles * attend::CHUNK_BYTES + attend::SLACK;
                     let sizes = [
                         tiles * attend::TILE_BYTES,
-                        tiles * attend::CHUNK_BYTES + attend::SLACK,
+                        table_first + table.len() * 4,
                         tiles * attend::OUT_BYTES,
                         tiles * attend::SUM_BYTES,
                     ]
@@ -433,7 +434,13 @@ impl GpuVideoDecoder {
                         gpu.shared(sizes[2])?,
                         gpu.shared(sizes[3])?,
                     ];
+                    gpu.upload(&attention[1], table_first as u64, bytes_of(&table))?;
                     let import = |i: usize| fast.import(&gpu.export(&attention[i])?, sizes[i]);
+                    let split = heads::Shape {
+                        padded: np,
+                        bias_first: QKV_BIAS as u32,
+                        rotary_first: u32::try_from(table_first).map_err(|_| "gpu_unsupported")?,
+                    };
                     // Queries and keys have unit RMS, so scores over eight stay within eight.
                     let shape = attend::Shape {
                         bounded: true,
@@ -441,12 +448,17 @@ impl GpuVideoDecoder {
                             .ok_or("gpu_unsupported")?
                     };
                     Some(Fast {
+                        split: (
+                            xe2::load(fast, &heads::kernel(&split), 4)?,
+                            split.groups(HEADS),
+                        ),
+                        merge: xe2::load(fast, &merge::kernel(np, HEADS as u32), 3)?,
                         attend: (
                             xe2::load(fast, &attend::kernel(&shape), 4)?,
                             shape.groups(HEADS),
                         ),
                         streams: [import(0)?, import(1)?, import(2)?, import(3)?],
-                        attention,
+                        _attention: attention,
                         stream: fast.import(&gpu.export(&stream)?, stream_bytes)?,
                         half: fast.import(&gpu.export(&half)?, half_bytes)?,
                         wide: fast.import(&gpu.export(&wide)?, wide_bytes)?,
@@ -575,26 +587,26 @@ impl GpuVideoDecoder {
             }
             steps.extend(gemm(&layer.qkv, QKV));
             match (machine, scratch) {
-                (Some((machine, shared, _)), _) => {
-                    let [query, key, mixed, sums] = &shared.attention;
-                    steps.push(shader(
-                        &k.heads64s,
-                        vec![wide, v, turns, query, key],
-                        vec![n, np, QKV_BIAS as u32],
-                        [1, np, 1],
-                    ));
+                (Some((machine, shared, vectors)), _) => {
+                    let [query, key, mixed, sums] = &shared.streams;
+                    steps.push(Call::Product {
+                        fast: machine,
+                        kernel: &shared.split.0,
+                        memory: vec![&shared.wide, vectors, query, key],
+                        groups: shared.split.1,
+                    });
                     steps.push(Call::Product {
                         fast: machine,
                         kernel: &shared.attend.0,
                         memory: shared.streams.iter().collect(),
                         groups: shared.attend.1,
                     });
-                    steps.push(shader(
-                        &k.merge64s,
-                        vec![mixed, sums, half],
-                        vec![n, np],
-                        [HEADS as u32, np, 1],
-                    ));
+                    steps.push(Call::Product {
+                        fast: machine,
+                        kernel: &shared.merge,
+                        memory: vec![mixed, sums, &shared.half],
+                        groups: merge::groups(padded, HEADS),
+                    });
                 }
                 (
                     None,
@@ -718,8 +730,6 @@ impl GpuVideoDecoder {
                 (&k.heads, "heads"),
                 (&k.mix, "mix"),
                 (&k.merge, "merge"),
-                (&k.heads64s, "heads64s"),
-                (&k.merge64s, "merge64s"),
                 (&k.residual, "residual"),
                 (&k.gate, "gate"),
             ];
