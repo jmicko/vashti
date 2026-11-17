@@ -3,8 +3,9 @@
 //! residual stream kept in f32. On an Intel Xe2 card with Level Zero the heavy kernels run
 //! as the engine's own machine code instead: the linear layers (`xe2::int8`, half-float
 //! form), attention (`xe2::attend`, using half of its 128-channel heads) with its operand
-//! split and merge (`xe2::heads`, `xe2::merge`), the residual updates with the norms
-//! (`xe2::norm`) and the gated activation (`xe2::gate`). A tile is then one Vulkan
+//! split and merge (`xe2::heads`, `xe2::merge`), and the residual updates with the norms
+//! (`xe2::norm`); the gated activation runs inside the first feed-forward product
+//! (`int8::Shape::gated`), whose sums are never stored. A tile is then one Vulkan
 //! submission, for the final norm: a machine-code launch costs about 15 microseconds
 //! against 200 for a submission.
 use std::path::Path;
@@ -20,7 +21,7 @@ use super::{
         rotary, unpatchify_biased,
     },
     xe2::{
-        self, attend, gate, heads, int8,
+        self, attend, heads, int8,
         level_zero::{self, LevelZero},
         merge, norm,
     },
@@ -114,6 +115,10 @@ struct Fast {
     stream: level_zero::Memory,
     half: level_zero::Memory,
     wide: level_zero::Memory,
+    /// The feed-forward's activation, between its two products.
+    inner: level_zero::Memory,
+    _inner: Buffer,
+    /// The products; the first feed-forward one with its activation (four arguments).
     products: [(level_zero::Kernel, [u32; 3]); 5],
     /// The first layer's input norm.
     enter: level_zero::Kernel,
@@ -123,7 +128,6 @@ struct Fast {
     /// norm for the last layer.
     next: level_zero::Kernel,
     leave: level_zero::Kernel,
-    gate: level_zero::Kernel,
     /// Attention: queries, keys and values (with the rotary table behind them), mixed
     /// values and weight sums; the kernels that write the first two and read the last two.
     split: (level_zero::Kernel, [u32; 3]),
@@ -203,6 +207,14 @@ impl Host {
             }
             let mut plain = vec![0u8; rows * columns * 2];
             file.f16_into(name, &[rows, columns], &mut plain)?;
+            if which == W1 {
+                // Each 64 rows: 32 gates and the 32 values they multiply.
+                let row = columns * 2;
+                let original = plain.clone();
+                for (index, to) in plain.chunks_exact_mut(row).enumerate() {
+                    to.copy_from_slice(&original[int8::gated_row(index) * row..][..row]);
+                }
+            }
             gpu.staged((plain.len() + int8::SLACK) as u64, |to| {
                 int8::weight_stream(&plain, rows, columns * 2, to);
                 Ok(())
@@ -243,6 +255,13 @@ impl Host {
                     small.extend(file.f16(&next, &[DIM])?);
                 }
                 small.resize(ALL, 0.0);
+                if streamed {
+                    // In the order of the gated product's weight rows.
+                    let bias = small[W1_BIAS..W2_BIAS].to_vec();
+                    for (index, to) in small[W1_BIAS..W2_BIAS].iter_mut().enumerate() {
+                        *to = bias[int8::gated_row(index)];
+                    }
+                }
                 Ok(LayerHost {
                     qkv: matrix(&name("attn.to_qkv.weight"), QKV)?,
                     out: matrix(&name("attn.to_out.weight"), OUT)?,
@@ -395,7 +414,7 @@ impl GpuVideoDecoder {
             *cached = None;
             let stream_bytes = (padded * DIM) as u64 * 4;
             let half_bytes = (padded * INNER * 2 + int8::SLACK) as u64;
-            let wide_bytes = ((padded * INNER * 2) * 4 + gate::SLACK) as u64;
+            let wide_bytes = (padded * INNER * 2) as u64 * 4;
             let (stream, half, wide) = match &k.fast {
                 Some(_) => (
                     gpu.shared(stream_bytes)?,
@@ -410,6 +429,10 @@ impl GpuVideoDecoder {
             };
             let fast = match &k.fast {
                 Some(fast) => {
+                    let inner_bytes = (padded * INNER * 2 + int8::SLACK) as u64;
+                    let inner = gpu.shared(inner_bytes)?;
+                    let gated =
+                        int8::Shape::gated(padded, W1_BIAS as u32).ok_or("gpu_unsupported")?;
                     let glue = |update: Option<(usize, usize)>, weight: Option<usize>| {
                         let shape = norm::Shape {
                             tokens: n,
@@ -463,10 +486,15 @@ impl GpuVideoDecoder {
                         stream: fast.import(&gpu.export(&stream)?, stream_bytes)?,
                         half: fast.import(&gpu.export(&half)?, half_bytes)?,
                         wide: fast.import(&gpu.export(&wide)?, wide_bytes)?,
+                        inner: fast.import(&gpu.export(&inner)?, inner_bytes)?,
+                        _inner: inner,
                         products: [
                             product(fast, padded, QKV)?,
                             product(fast, padded, OUT)?,
-                            product(fast, padded, W1)?,
+                            (
+                                xe2::load(fast, &int8::kernel(&gated), 4)?,
+                                gated.groups(INNER * 2),
+                            ),
                             product(fast, padded, W2)?,
                             product(fast, padded, PROJECT)?,
                         ],
@@ -474,7 +502,6 @@ impl GpuVideoDecoder {
                         middle: glue(Some((SCALE1, SHIFT1)), Some(NORM2))?,
                         next: glue(Some((SCALE2, SHIFT2)), Some(NEXT))?,
                         leave: glue(Some((SCALE2, SHIFT2)), None)?,
-                        gate: xe2::load(fast, &gate::kernel(W1_BIAS as u32), 3)?,
                     })
                 }
                 None => None,
@@ -700,14 +727,21 @@ impl GpuVideoDecoder {
                 continue;
             };
             steps.push(rows(machine, shared, &shared.middle, vectors, padded));
-            steps.extend(gemm(&layer.w1, W1));
-            steps.push(Call::Product {
-                fast: machine,
-                kernel: &shared.gate,
-                memory: vec![&shared.wide, vectors, &shared.half],
-                groups: gate::groups(padded),
-            });
-            steps.extend(gemm(&layer.w2, W2));
+            let (Some(w1), Some(w2)) = (&layer.w1.stream, &layer.w2.stream) else {
+                return Err("gpu_failed");
+            };
+            for (which, memory) in [
+                (W1, vec![&shared.half, w1, &shared.inner, vectors]),
+                (W2, vec![&shared.inner, w2, &shared.wide]),
+            ] {
+                let (kernel, groups) = &shared.products[which];
+                steps.push(Call::Product {
+                    fast: machine,
+                    kernel,
+                    memory,
+                    groups: *groups,
+                });
+            }
             let after = if index + 1 < self.layers.len() {
                 &shared.next
             } else {
@@ -913,6 +947,140 @@ mod tests {
             );
             assert!(db > 100.0 && largest > 0.0);
         }
+    }
+    /// The first feed-forward product with its activation folded in, against the product
+    /// shader followed by the gate shader on the same random operands.
+    #[test]
+    #[ignore = "needs the Intel GPU with Level Zero"]
+    fn gated_product_matches_shaders() {
+        use super::super::{gpu::Step, safetensors::widen, xe2};
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let fast = LevelZero::open().unwrap();
+        let gemm16 = gpu.kernel(shaders::GEMM16, 3, 5, Some(16)).unwrap();
+        let gate = gpu.kernel(shaders::GATE, 3, 3, None).unwrap();
+        let (tokens, rows, columns) = (1920usize, 2 * int8::GATED, DIM);
+        let mut state = 21u32;
+        let mut random = |count: usize, exponents: u16| -> Vec<u16> {
+            (0..count)
+                .map(|_| {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let bits = (state >> 16) as u16;
+                    bits & 0x83ff | (11 + (bits >> 10 & 31) % exponents) << 10
+                })
+                .collect()
+        };
+        let (input, weight) = (random(tokens * columns, 4), random(rows * columns, 3));
+        let bias: Vec<f32> = random(rows, 4).into_iter().map(widen).collect();
+        let mut vectors = vec![0f32; 64];
+        vectors.extend(&bias);
+
+        let filled = |bytes: &[u8]| {
+            let buffer = gpu.shared(bytes.len() as u64 + int8::SLACK as u64).unwrap();
+            gpu.upload(&buffer, 0, bytes).unwrap();
+            buffer
+        };
+        let (plain_input, plain_weight, v) = (
+            filled(bytes_of(&input)),
+            filled(bytes_of(&weight)),
+            filled(bytes_of(&vectors)),
+        );
+        let sums = gpu.buffer((tokens * rows * 4) as u64).unwrap();
+        let half_bytes = tokens * int8::GATED * 2;
+        let plain_out = gpu.buffer(half_bytes as u64).unwrap();
+        let first = vec![&plain_input, &plain_weight, &sums];
+        let second = vec![&sums, &v, &plain_out];
+        let constants: Vec<Vec<u32>> = (0..rows)
+            .step_by(4096)
+            .map(|first| {
+                vec![
+                    columns as u32,
+                    0,
+                    (first * columns) as u32,
+                    first as u32,
+                    rows as u32,
+                ]
+            })
+            .collect();
+        let mut steps: Vec<Step> = constants
+            .iter()
+            .map(|constants| Step {
+                kernel: &gemm16,
+                buffers: &first,
+                constants,
+                groups: [16, (tokens / TILE) as u32, 1],
+            })
+            .collect();
+        let gate_constants = [tokens as u32, 64, 1];
+        steps.push(Step {
+            kernel: &gate,
+            buffers: &second,
+            constants: &gate_constants,
+            groups: [(int8::GATED / 4 / 64) as u32, tokens as u32, 1],
+        });
+        let mut shader_ms = f64::MAX;
+        for _ in 0..8 {
+            let started = std::time::Instant::now();
+            gpu.pass(&steps).unwrap();
+            shader_ms = shader_ms.min(started.elapsed().as_secs_f64() * 1e3);
+        }
+
+        let bytes = columns * 2;
+        let mut streamed = vec![0u16; input.len()];
+        for token in 0..tokens {
+            for word in 0..bytes / 16 {
+                let at = int8::token_word(token, word, bytes) * 8;
+                streamed[at..at + 8].copy_from_slice(&input[token * columns + word * 8..][..8]);
+            }
+        }
+        let mut ordered = vec![0u16; weight.len()];
+        let mut ordered_vectors = vec![0f32; 64];
+        for (index, row) in ordered.chunks_exact_mut(columns).enumerate() {
+            let from = int8::gated_row(index);
+            row.copy_from_slice(&weight[from * columns..][..columns]);
+            ordered_vectors.push(bias[from]);
+        }
+        let mut weights = vec![0u8; ordered.len() * 2 + int8::SLACK];
+        int8::weight_stream(bytes_of(&ordered), rows, bytes, &mut weights);
+        let (stream_input, stream_weight, stream_v, out) = (
+            filled(bytes_of(&streamed)),
+            filled(&weights),
+            filled(bytes_of(&ordered_vectors)),
+            gpu.shared(half_bytes as u64).unwrap(),
+        );
+        let import = |buffer: &Buffer| {
+            fast.import(&gpu.export(buffer).unwrap(), buffer.bytes())
+                .unwrap()
+        };
+        let memory = [
+            import(&stream_input),
+            import(&stream_weight),
+            import(&out),
+            import(&stream_v),
+        ];
+        let memory: Vec<_> = memory.iter().collect();
+        let shape = int8::Shape::gated(tokens, 64).unwrap();
+        let kernel = xe2::load(&fast, &int8::kernel(&shape), 4).unwrap();
+        let mut ms = f64::MAX;
+        for _ in 0..8 {
+            let started = std::time::Instant::now();
+            fast.launch(&kernel, &memory, shape.groups(rows)).unwrap();
+            ms = ms.min(started.elapsed().as_secs_f64() * 1e3);
+        }
+        let read = |buffer: &Buffer| -> Vec<f32> {
+            gpu.download(buffer, 0, half_bytes)
+                .unwrap()
+                .chunks_exact(2)
+                .map(|b| widen(u16::from_le_bytes([b[0], b[1]])))
+                .collect()
+        };
+        let (want, got) = (read(&plain_out), read(&out));
+        let same = want.iter().zip(&got).filter(|(a, b)| a == b).count();
+        let db = decibels(&want, &got);
+        println!(
+            "gated {tokens} x {rows} x {columns}: {ms:.2} ms, shaders {shader_ms:.2} ms; {db:.1} dB apart, {same} of {} identical",
+            want.len()
+        );
+        assert!(db > 80.0);
     }
     /// Needs the Intel GPU, the model and a captured tile (see `video_vae` tests), plus
     /// `tile-rust-cpu.f32` in the golden directory: the CPU reference's pixels for that tile,

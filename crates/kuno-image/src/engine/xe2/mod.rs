@@ -7,7 +7,6 @@
 //! 128 bits, uncompacted, with masking disabled. Field positions follow Mesa's Xe2 tables, and
 //! the tests hold encodings produced by Mesa's assembler.
 pub mod attend;
-pub mod gate;
 pub mod heads;
 pub mod int8;
 pub mod level_zero;
