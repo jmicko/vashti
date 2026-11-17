@@ -2,7 +2,7 @@
 //! with the Vulkan kernels in `gpu`: half-precision operands, f32 accumulation, and the
 //! residual stream kept in f32. On an Intel Xe2 card with Level Zero the heavy kernels run
 //! as the engine's own machine code instead: the linear layers (`xe2::int8`, half-float
-//! form), attention (`xe2::attend`, its 128-channel heads half empty) with its operand
+//! form), attention (`xe2::attend`, using half of its 128-channel heads) with its operand
 //! split and merge (`xe2::heads`, `xe2::merge`), the residual updates with the norms
 //! (`xe2::norm`) and the gated activation (`xe2::gate`). A tile is then one Vulkan
 //! submission, for the final norm: a machine-code launch costs about 15 microseconds
@@ -444,6 +444,7 @@ impl GpuVideoDecoder {
                     // Queries and keys have unit RMS, so scores over eight stay within eight.
                     let shape = attend::Shape {
                         bounded: true,
+                        narrow: true,
                         ..attend::Shape::new(padded, tokens, HEADS, (HEAD as f32).sqrt().recip())
                             .ok_or("gpu_unsupported")?
                     };

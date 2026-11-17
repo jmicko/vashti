@@ -61,6 +61,9 @@ pub struct Shape {
     /// keys), so `ref` starts at zero instead of at the first key's score. Weights then
     /// keep full half-float precision whichever key comes first.
     pub bounded: bool,
+    /// Only channels 0..64 of every head are in use (the rest of the streams is zero and
+    /// stays unread; the upper half of the output is not written).
+    pub narrow: bool,
 }
 impl Shape {
     /// None when the offsets leave 32 bits.
@@ -74,6 +77,7 @@ impl Shape {
             tokens: tokens as u32,
             scale,
             bounded: false,
+            narrow: false,
         })
     }
     /// Thread groups: query tiles, heads.
@@ -206,7 +210,9 @@ fn skip(bit: u32) -> bool {
 
 /// One key chunk with `live` live keys, starting with its first three key loads requested
 /// and ending with the next chunk's requested.
-fn step(k: &mut Asm, live: u32, bounded: bool) {
+fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
+    // Channel chunks of 16 scored, and block pairs of 16 channels mixed.
+    let chunks = if narrow { 4 } else { 8 };
     let w = Swsb::after(1);
     let (exp, init, slow, weights) = (k.label(), k.label(), k.label(), k.label());
     let row = |key: u32| s(key / 8) + key % 8;
@@ -215,9 +221,9 @@ fn step(k: &mut Asm, live: u32, bounded: bool) {
     // Scores: eight channel chunks, each against both key groups. The weights' registers
     // are a load buffer once the previous step's mixing has read them.
     k.sync(w);
-    k.sync(Swsb::src(LAST_MIX));
+    k.sync(Swsb::src(mix(2 * chunks - 1)));
     fetch(k, 3, 3 * 512);
-    for j in 0..8 {
+    for j in 0..chunks {
         let (buffer, token) = slot(j % 4);
         k.sync(Swsb::dst(token));
         for h in 0..2 {
@@ -244,9 +250,10 @@ fn step(k: &mut Asm, live: u32, bounded: bool) {
         // Refill the buffer once both products have read it: a later key chunk, or the
         // first values. The third buffer and the weights' registers are needed next.
         k.sync(Swsb::src(score(1)));
-        match j {
-            0..=3 => fetch(k, j, (j + 4) * 512),
-            4 | 5 => fetch(k, j - 4, VALUES as u32 + (j - 4) * 512),
+        match (narrow, j) {
+            (false, 0..=3) => fetch(k, j, (j + 4) * 512),
+            (false, 4 | 5) => fetch(k, j - 4, VALUES as u32 + (j - 4) * 512),
+            (true, 0 | 1) => fetch(k, j, VALUES as u32 + j * 512),
             _ => {}
         }
     }
@@ -376,10 +383,10 @@ fn step(k: &mut Asm, live: u32, bounded: bool) {
     // the scratch buffer and the scores' registers take the next three.
     k.add(16, r(SUM, 0, F), r(SUM, 0, F), r(STEP, 0, F), w);
     k.sync(w);
-    for m in 2..5 {
+    for m in 2..chunks.min(5) {
         fetch(k, [2, 4, 5][m as usize - 2], VALUES as u32 + m * 512);
     }
-    for m in 0..8 {
+    for m in 0..chunks {
         let (buffer, token) = slot([0, 1, 2, 4, 5, 0, 1, 2][m as usize]);
         k.sync(Swsb::dst(token));
         for e in 0..2 {
@@ -401,9 +408,10 @@ fn step(k: &mut Asm, live: u32, bounded: bool) {
         }
         // Refill with the last values, then with the next chunk's first keys.
         k.sync(Swsb::src(mix(2 * m + 1)));
-        match m {
-            0..=2 => fetch(k, m, VALUES as u32 + (m + 5) * 512),
-            5..=7 => fetch(k, m - 5, CHUNK_BYTES as u32 + (m - 5) * 512),
+        match (narrow, m) {
+            (false, 0..=2) => fetch(k, m, VALUES as u32 + (m + 5) * 512),
+            (false, 5..=7) => fetch(k, m - 5, CHUNK_BYTES as u32 + (m - 5) * 512),
+            (true, 1..=3) => fetch(k, m - 1, CHUNK_BYTES as u32 + (m - 1) * 512),
             _ => {}
         }
     }
@@ -470,6 +478,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         tokens,
         scale,
         bounded,
+        narrow,
     } = *shape;
     let tiles = padded / TILE as u32;
     let w = Swsb::after(1);
@@ -568,13 +577,13 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     if full > 0 {
         let top = k.label();
         k.place(top);
-        step(&mut k, TILE as u32, bounded);
+        step(&mut k, TILE as u32, bounded, narrow);
         k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
         k.cmp(Cond::Lt, int(CHUNK), imm(full as i32), w);
         k.jmpi(top, true, w);
     }
     if rest > 0 {
-        step(&mut k, rest, bounded);
+        step(&mut k, rest, bounded, narrow);
     }
     if full > 0 {
         let (top, end) = (k.label(), k.label());
@@ -592,7 +601,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
             fetch(&mut k, j, j * 512);
         }
         k.place(top);
-        step(&mut k, TILE as u32, bounded);
+        step(&mut k, TILE as u32, bounded, narrow);
         k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
         k.cmp(Cond::Lt, int(CHUNK), int(START), w);
         k.jmpi(top, true, w);
@@ -604,7 +613,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         k.sync(Swsb::dst(token));
     }
     k.sync(w);
-    for b in 0..16 {
+    for b in 0..if narrow { 8 } else { 16 } {
         k.send(
             SFID_UGM,
             null(Ud),
