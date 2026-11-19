@@ -1,0 +1,36 @@
+// Text encoder RMS norm of each token row with a weight (eps 1e-6), one workgroup per token:
+//   out[t][c] = x[t][c] / sqrt(mean(x[t]^2) + eps) * w[c]
+// Rows from `tokens` up to the dispatch are zeros. `width` is a multiple of 4.
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { vec4 w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { vec4 o[]; };
+// `weight_first` is in values and a multiple of 4.
+layout(push_constant) uniform Constants { uint tokens; uint width; uint weight_first; } p;
+
+shared float sums[16];
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint width4 = p.width >> 2;
+    uint first = token * width4;
+    bool live = token < p.tokens;
+    float squares = 0.0;
+    for (uint c = gl_LocalInvocationIndex; c < width4; c += 256) {
+        vec4 d = live ? x[first + c] : vec4(0.0);
+        squares += dot(d, d);
+    }
+    squares = subgroupAdd(squares);
+    if (gl_SubgroupInvocationID == 0) sums[gl_SubgroupID] = squares;
+    barrier();
+    float total = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) total += sums[i];
+    float scale = live ? 1.0 / sqrt(total / float(p.width) + 1e-6) : 0.0;
+    for (uint c = gl_LocalInvocationIndex; c < width4; c += 256) {
+        o[first + c] = live ? x[first + c] * scale * w[(p.weight_first >> 2) + c] : vec4(0.0);
+    }
+}

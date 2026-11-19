@@ -28,6 +28,12 @@ pub const ADD: &[u8] = include_bytes!("shaders/add.spv");
 pub const FINAL8: &[u8] = include_bytes!("shaders/final8.spv");
 pub const GATEQ8: &[u8] = include_bytes!("shaders/gateq8.spv");
 pub const ROTATE8: &[u8] = include_bytes!("shaders/rotate8.spv");
+pub const TNORM: &[u8] = include_bytes!("shaders/tnorm.spv");
+pub const TQKV: &[u8] = include_bytes!("shaders/tqkv.spv");
+pub const TATTEND: &[u8] = include_bytes!("shaders/tattend.spv");
+pub const TRESID: &[u8] = include_bytes!("shaders/tresid.spv");
+pub const TGATE: &[u8] = include_bytes!("shaders/tgate.spv");
+pub const TADD: &[u8] = include_bytes!("shaders/tadd.spv");
 pub const RESIDUAL: &[u8] = include_bytes!("shaders/residual.spv");
 pub const GATE: &[u8] = include_bytes!("shaders/gate.spv");
 

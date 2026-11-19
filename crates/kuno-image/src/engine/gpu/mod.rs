@@ -309,6 +309,27 @@ impl Gpu {
             Ok(out)
         }
     }
+    /// Copies `bytes` bytes from byte `from_offset` of `from` to byte `offset` of `to`.
+    pub fn copy(
+        &self,
+        from: &Buffer,
+        from_offset: u64,
+        bytes: u64,
+        to: &Buffer,
+        offset: u64,
+    ) -> Result<(), &'static str> {
+        if from_offset + bytes > from.bytes || offset + bytes > to.bytes {
+            return Err("gpu_range");
+        }
+        let region = [vk::BufferCopy::default()
+            .src_offset(from_offset)
+            .dst_offset(offset)
+            .size(bytes)];
+        self.run(|device, commands| unsafe {
+            // SAFETY: the ranges were checked against both buffers above.
+            device.cmd_copy_buffer(commands, from.buffer, to.buffer, &region);
+        })
+    }
     /// Whether buffers can be shared with another interface (`shared`, `export`).
     pub fn shares(&self) -> bool {
         self.core.sharing.is_some()
@@ -524,6 +545,13 @@ impl Gpu {
             // SAFETY: the range was checked against both buffers above.
             device.cmd_copy_buffer(commands, through.stage.buffer, to.buffer, &region);
         })
+    }
+    /// Copies host contents made by `staged` to byte `offset` of `to`.
+    pub fn copy_staged(&self, from: &Staged, to: &Buffer, offset: u64) -> Result<(), &'static str> {
+        let Some(stage) = &from.stage else {
+            return Ok(());
+        };
+        self.copy(stage, 0, stage.bytes, to, offset)
     }
     fn staging(&self, bytes: u64) -> Result<Buffer, &'static str> {
         self.allocate(
@@ -888,6 +916,27 @@ mod tests {
     }
     fn halves(values: &[f32]) -> Vec<u16> {
         values.iter().map(|v| narrow(*v)).collect()
+    }
+    /// Host-to-device copy rate of `place` by copy size.
+    #[test]
+    #[ignore = "needs the Intel GPU"]
+    fn upload_rate() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        for mb in [64u64, 512, 2048] {
+            let staged = gpu
+                .staged(mb << 20, |to| {
+                    to.fill(1);
+                    Ok(())
+                })
+                .unwrap();
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                let placed = gpu.place(&staged, false).unwrap();
+                let seconds = started.elapsed().as_secs_f64();
+                println!("{mb} MB: {:.2} GB/s", (mb << 20) as f64 / seconds / 1e9);
+                drop(placed);
+            }
+        }
     }
     /// Needs the Intel GPU: `cargo test --release -p kuno-image gpu -- --include-ignored`.
     #[test]

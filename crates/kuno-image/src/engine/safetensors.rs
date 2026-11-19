@@ -85,6 +85,33 @@ impl Safetensors {
     pub fn metadata(&self, key: &str) -> Option<&str> {
         self.metadata.get(key).map(String::as_str)
     }
+    /// Reads rows `first..first + count` of a BF16 matrix `[rows][width]` as f32 (exact).
+    pub fn bf16_rows(
+        &self,
+        name: &str,
+        shape: [usize; 2],
+        first: usize,
+        count: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        let [rows, width] = shape;
+        if entry.kind != Kind::Bf16
+            || entry.shape != shape
+            || entry.end - entry.begin != (rows * width * 2) as u64
+            || first.checked_add(count).is_none_or(|end| end > rows)
+        {
+            return Err("model_tensor_invalid");
+        }
+        let mut bytes = vec![0u8; count * width * 2];
+        self.file
+            .read_exact_at(&mut bytes, self.data + entry.begin + (first * width * 2) as u64)
+            .map_err(|_| "model_file_invalid")?;
+        // BF16 is the upper half of the f32 bit pattern.
+        Ok(bytes
+            .chunks_exact(2)
+            .map(|b| f32::from_bits(u32::from(u16::from_le_bytes([b[0], b[1]])) << 16))
+            .collect())
+    }
     /// Reads one little-endian F32 tensor, checking its exact shape.
     pub fn f32(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
         let entry = self.entries.get(name).ok_or("model_tensor_missing")?;

@@ -6,6 +6,8 @@ pub mod dit;
 pub mod dit_gpu;
 pub mod gpu;
 pub mod safetensors;
+pub mod text_encoder;
+pub mod text_gpu;
 pub mod video_gpu;
 pub mod video_tiles;
 pub mod video_vae;

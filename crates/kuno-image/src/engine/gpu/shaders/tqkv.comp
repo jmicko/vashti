@@ -1,0 +1,60 @@
+// Text encoder queries, keys and values from the INT8 query/key/value product:
+//   g[token][64 query heads, 8 key heads, 8 value heads][128] (int32 sums)
+//   value = sum * activation scale[token] * weight scale[column]
+// Queries and keys then get unit RMS over the head (eps 1e-6) times a weight and the rotary
+// turn on channel pairs (i, i + 64). Out: f32 [head][padded][128] per kind.
+// One workgroup of 128 invocations (one per channel) per token and head; dispatch
+// x = 80 heads, y = padded tokens. Tokens from `tokens` on are zeros.
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Sums { int g[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
+layout(set = 0, binding = 2) readonly buffer Weights { float ws[]; };
+layout(set = 0, binding = 3) readonly buffer Vectors { float v[]; };
+layout(set = 0, binding = 4) readonly buffer Rotary { vec2 turn[]; };
+layout(set = 0, binding = 5) writeonly buffer Queries { float q[]; };
+layout(set = 0, binding = 6) writeonly buffer Keys { float k[]; };
+layout(set = 0, binding = 7) writeonly buffer Values { float vo[]; };
+// Offsets in values: this layer's weight scales in `ws`, query and key norm weights in `v`.
+layout(push_constant) uniform Constants {
+    uint tokens;
+    uint padded;
+    uint scale_first;
+    uint query_norm;
+    uint key_norm;
+} p;
+
+shared float values[128];
+shared float sums[8];
+
+void main() {
+    uint head = gl_WorkGroupID.x;
+    uint token = gl_WorkGroupID.y;
+    uint c = gl_LocalInvocationIndex;
+    bool live = token < p.tokens;
+    uint column = head * 128 + c;
+    float value = live ? float(g[token * 10240 + column]) * as[token] * ws[p.scale_first + column] : 0.0;
+    if (head >= 72) {
+        vo[((head - 72) * p.padded + token) * 128 + c] = value;
+        return;
+    }
+    float squares = subgroupAdd(value * value);
+    if (gl_SubgroupInvocationID == 0) sums[gl_SubgroupID] = squares;
+    barrier();
+    float total = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) total += sums[i];
+    bool query = head < 64;
+    float weight = v[(query ? p.query_norm : p.key_norm) + c];
+    value *= live ? weight / sqrt(total / 128.0 + 1e-6) : 0.0;
+    values[c] = value;
+    barrier();
+    uint pair = c & 63;
+    vec2 t = live ? turn[token * 64 + pair] : vec2(1.0, 0.0);
+    float x0 = values[pair], x1 = values[pair + 64];
+    float result = c < 64 ? x0 * t.x - x1 * t.y : x0 * t.y + x1 * t.x;
+    if (query) q[(head * p.padded + token) * 128 + c] = result;
+    else k[((head - 64) * p.padded + token) * 128 + c] = result;
+}

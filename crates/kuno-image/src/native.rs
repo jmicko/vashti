@@ -136,6 +136,7 @@ unsafe extern "C" {
             extern "C" fn(*const f32, i64, i64, i64, *mut f32, i64, *mut c_void) -> bool,
         >,
         evaluate_dit: Option<extern "C" fn(*const DitStep, *mut f32, *mut c_void) -> bool>,
+        encode_text: Option<extern "C" fn(*const TextInput, *mut f32, *mut c_void) -> bool>,
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
         phase: extern "C" fn(i32, i32, i32, *mut c_void),
         userdata: *mut c_void,
@@ -170,6 +171,19 @@ struct DitStep {
     audio_shift: f32,
 }
 
+/// `sd_kuno_text_t`: a prompt for the text encoder's language model.
+#[repr(C)]
+struct TextInput {
+    ids: *const i32,
+    count: i64,
+    width: i64,
+    image_count: i64,
+    image_grids: *const i32,
+    images: *const *const f32,
+    deepstack_layers: i64,
+    deepstack: *const *const f32,
+}
+
 /// Request-owned video output, filled synchronously by the shim callbacks.
 struct VideoOutput {
     frame_bytes: usize,
@@ -182,11 +196,13 @@ struct VideoOutput {
     /// Where the Rust video decoder finds its GPU and model.
     pci: String,
     video_model: std::path::PathBuf,
-    /// The Rust DiT: placed in video memory at the clip's first evaluation, dropped before
-    /// decoding so its weights do not hold GPU memory while other models run.
+    /// The Rust DiT: taken from `RESIDENT_DIT` or placed in video memory at the clip's first
+    /// evaluation, and kept there for the next clip when sampling ends.
     dit_model: std::path::PathBuf,
     dit: Option<crate::engine::dit_gpu::GpuDit>,
     dit_failed: bool,
+    /// The text encoder's model file.
+    text_model: std::path::PathBuf,
     invalid: bool,
     previews: bool,
 }
@@ -271,8 +287,9 @@ extern "C" fn decode_video_latent(
     {
         return false;
     }
-    // Sampling is over: free the DiT's memory before the decoder loads.
-    out.dit = None;
+    // Sampling is over. The DiT stays in video memory for the next clip unless the decoder
+    // does not fit beside it.
+    keep_dit(out.dit.take());
     let (width, height, frames) = (width as usize, height as usize, frames as usize);
     if video_tiles::output_frames(frames) as i64 != pixel_frames {
         return false;
@@ -281,8 +298,15 @@ extern "C" fn decode_video_latent(
         unsafe { std::slice::from_raw_parts(latent, LATENT_CHANNELS * frames * width * height) };
     let started = std::time::Instant::now();
     let mut loaded = started;
-    let decoded = video_host(&out.pci, &out.video_model)
-        .and_then(GpuVideoDecoder::place)
+    let host = video_host(&out.pci, &out.video_model);
+    let decoded = host
+        .clone()
+        .and_then(|host| {
+            GpuVideoDecoder::place(host.clone()).or_else(|_| {
+                evict_dit();
+                GpuVideoDecoder::place(host)
+            })
+        })
         .and_then(|decoder| {
             loaded = std::time::Instant::now();
             decoder.decode(latent, width, height, frames)
@@ -331,6 +355,32 @@ fn video_host(
     *kept = Some((model.to_owned(), host.clone()));
     Ok(host)
 }
+/// The Rust DiT kept in video memory after a clip, for the next clip of the same model.
+/// It holds no request-derived state (`GpuDit::finish_clip`).
+static RESIDENT_DIT: std::sync::Mutex<Option<crate::engine::dit_gpu::GpuDit>> =
+    std::sync::Mutex::new(None);
+/// Keeps `dit` for the next clip.
+fn keep_dit(dit: Option<crate::engine::dit_gpu::GpuDit>) {
+    let Some(dit) = dit else { return };
+    dit.finish_clip();
+    if let Ok(mut kept) = RESIDENT_DIT.lock() {
+        *kept = Some(dit);
+    }
+}
+/// Frees the kept DiT's video memory.
+pub(crate) fn evict_dit() {
+    let kept = RESIDENT_DIT.lock().ok().and_then(|mut kept| kept.take());
+    drop(kept);
+}
+/// The kept DiT if it was placed from `model`'s host; any other kept DiT is freed.
+fn resident_dit(model: &std::path::Path) -> Option<crate::engine::dit_gpu::GpuDit> {
+    let dit = RESIDENT_DIT.lock().ok()?.take()?;
+    let same = DIT_HOST.lock().ok().is_some_and(|host| {
+        host.as_ref()
+            .is_some_and(|(path, host)| path == model && std::sync::Arc::ptr_eq(host, dit.host()))
+    });
+    same.then_some(dit)
+}
 /// The Rust DiT's weights in host memory and the file they came from.
 static DIT_HOST: std::sync::Mutex<
     Option<(
@@ -362,6 +412,114 @@ fn dit_host(
         started.elapsed().as_millis()
     );
     Ok(host)
+}
+/// The Rust text encoder and the file it reads.
+static TEXT_ENCODER: std::sync::Mutex<
+    Option<(
+        std::path::PathBuf,
+        std::sync::Arc<crate::engine::text_gpu::GpuTextEncoder>,
+    )>,
+> = std::sync::Mutex::new(None);
+fn text_encoder(
+    pci: &str,
+    model: &std::path::Path,
+) -> Result<std::sync::Arc<crate::engine::text_gpu::GpuTextEncoder>, &'static str> {
+    use crate::engine::{gpu, text_encoder::TextEncoder, text_gpu::GpuTextEncoder};
+    let mut kept = TEXT_ENCODER.lock().map_err(|_| "model_state_lost")?;
+    if let Some((path, encoder)) = kept.as_ref()
+        && path == model
+    {
+        return Ok(encoder.clone());
+    }
+    *kept = None;
+    let gpu = gpu::Gpu::open(gpu::Select::Pci(pci.to_owned()))?;
+    let encoder = std::sync::Arc::new(GpuTextEncoder::new(&gpu, TextEncoder::open(model)?)?);
+    *kept = Some((model.to_owned(), encoder.clone()));
+    Ok(encoder)
+}
+/// Runs the text encoder's language model with the Rust GPU encoder. Returning false hands
+/// the prompt back to the C++ engine.
+extern "C" fn encode_text(text: *const TextInput, hidden: *mut f32, data: *mut c_void) -> bool {
+    use crate::engine::text_encoder::{Image, Prompt, WIDTH};
+    // SAFETY: as receive_video_frame; the shim passes a live prompt whose pointers hold the
+    // counts it states, and `hidden` has `count * width` values.
+    let (out, text) = unsafe { (&mut *(data as *mut VideoOutput), &*text) };
+    let encoded = (|| -> Result<Vec<f32>, &'static str> {
+        let invalid = "text_invalid";
+        if text.ids.is_null()
+            || hidden.is_null()
+            || text.width != WIDTH as i64
+            || !(1..=1 << 16).contains(&text.count)
+            || !(0..=64).contains(&text.image_count)
+            || !(0..=8).contains(&text.deepstack_layers)
+        {
+            return Err(invalid);
+        }
+        let images = text.image_count as usize;
+        if images > 0 && (text.image_grids.is_null() || text.images.is_null()) {
+            return Err(invalid);
+        }
+        if images > 0 && text.deepstack_layers > 0 && text.deepstack.is_null() {
+            return Err(invalid);
+        }
+        // SAFETY: lengths as stated by the shim and checked above.
+        let ids = unsafe { std::slice::from_raw_parts(text.ids, text.count as usize) };
+        let grids = if images == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(text.image_grids, images * 4) }
+        };
+        let mut list = Vec::with_capacity(images);
+        for (i, grid) in grids.chunks_exact(4).enumerate() {
+            let size = usize::try_from(grid[1]).map_err(|_| invalid)?;
+            if size == 0 || size > ids.len() || grid[0] < 0 || grid[2] < 0 || grid[3] < 0 {
+                return Err(invalid);
+            }
+            let rows = |at: *const f32| -> Result<&[f32], &'static str> {
+                if at.is_null() {
+                    return Err(invalid);
+                }
+                // SAFETY: each image's rows hold `size * width` values.
+                Ok(unsafe { std::slice::from_raw_parts(at, size * WIDTH) })
+            };
+            let embeds = rows(unsafe { *text.images.add(i) })?;
+            let deepstack = (0..text.deepstack_layers as usize)
+                .map(|layer| rows(unsafe { *text.deepstack.add(layer * images + i) }))
+                .collect::<Result<Vec<_>, _>>()?;
+            list.push(Image {
+                index: grid[0] as usize,
+                size,
+                grid_h: grid[2] as usize,
+                grid_w: grid[3] as usize,
+                embeds,
+                deepstack,
+            });
+        }
+        let prompt = Prompt { ids, images: list };
+        prompt.check()?;
+        let started = std::time::Instant::now();
+        let encoder = text_encoder(&out.pci, &out.text_model)?;
+        let loaded = started.elapsed();
+        let hidden = encoder.forward(&prompt)?;
+        eprintln!(
+            "kuno-image: rust text: setup {} ms, encode {} ms",
+            loaded.as_millis(),
+            (started.elapsed() - loaded).as_millis()
+        );
+        Ok(hidden)
+    })();
+    match encoded {
+        Ok(mut values) => {
+            // SAFETY: `hidden` holds `count * width` values, the length `forward` returns.
+            unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), hidden, values.len()) };
+            values.iter_mut().for_each(|v| *v = 0.0);
+            true
+        }
+        Err(code) => {
+            eprintln!("kuno-image: rust text unavailable ({code}); engine encodes");
+            false
+        }
+    }
 }
 /// Evaluates the diffusion transformer with the Rust GPU DiT. Returning false hands the
 /// step back to the C++ engine, for this and every later step of the clip.
@@ -456,6 +614,9 @@ extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_
                 video: index(triple[1], videos.len())?,
                 audio: index(triple[2], audios.len())?,
             });
+        }
+        if out.dit.is_none() {
+            out.dit = resident_dit(&out.dit_model);
         }
         if out.dit.is_none() {
             let host = dit_host(&out.pci, &out.dit_model)?;
@@ -580,6 +741,8 @@ impl Session {
         previews: bool,
     ) -> Result<Vec<u8>, &'static str> {
         let _exclusive = ENGINE.lock().map_err(|_| "image_engine_unavailable")?;
+        // Other models need the video memory a kept DiT holds.
+        evict_dit();
         recipe.validate_execution()?;
         let seed = recipe
             .seed
@@ -763,25 +926,42 @@ impl Session {
             }),
             dit: None,
             dit_failed: false,
+            text_model: self
+                .directory
+                .join("qwen3vl_32b_minimax_h3_int8_convrot.safetensors"),
             invalid: false,
             previews,
         };
         output
             .rgb
             .reserve_exact(output.frame_bytes * recipe.frames as usize);
-        // Weights are read into host memory while the text encoder runs; the first step and
-        // the decode wait for theirs.
+        // A kept DiT of another model is freed before the engine needs video memory.
+        if let Some(kept) = resident_dit(&output.dit_model)
+            && let Ok(mut slot) = RESIDENT_DIT.lock()
+        {
+            *slot = Some(kept);
+        }
+        // Weights are read into host memory in the background: the text encoder's (which
+        // conditioning waits for) beside the DiT's (the first step waits) and the decoder's.
         let reading = {
-            let (pci, dit, video) = (
+            let (pci, text, dit, video) = (
                 output.pci.clone(),
+                output.text_model.clone(),
                 output.dit_model.clone(),
                 output.video_model.clone(),
             );
             std::thread::spawn(move || {
+                let texts = cfg!(feature = "rust-dit").then(|| {
+                    let pci = pci.clone();
+                    std::thread::spawn(move || drop(text_encoder(&pci, &text)))
+                });
                 if cfg!(feature = "rust-dit") {
                     drop(dit_host(&pci, &dit));
                 }
                 drop(video_host(&pci, &video));
+                if let Some(texts) = texts {
+                    let _ = texts.join();
+                }
             })
         };
         let code = unsafe {
@@ -803,6 +983,7 @@ impl Session {
                 receive_audio_latent,
                 Some(decode_video_latent),
                 cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
+                cfg!(feature = "rust-dit").then_some(encode_text as _),
                 Some(video_preview),
                 video_phase,
                 &mut output as *mut _ as *mut c_void,

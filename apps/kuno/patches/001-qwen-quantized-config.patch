@@ -1,8 +1,8 @@
 diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
-index a2bfdb6..dddab33 100644
+index a2bfdb6..1539f52 100644
 --- a/include/stable-diffusion.h
 +++ b/include/stable-diffusion.h
-@@ -503,6 +503,52 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
+@@ -503,6 +503,69 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
  
  SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
  SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
@@ -52,11 +52,28 @@ index a2bfdb6..dddab33 100644
 +} sd_kuno_dit_step_t;
 +typedef bool (*sd_kuno_dit_cb_t)(const sd_kuno_dit_step_t* step, float* out, void* data);
 +SD_API void sd_kuno_set_dit(sd_ctx_t* sd_ctx, sd_kuno_dit_cb_t evaluator, void* data);
++// Kuno can run the MiniMax H3 text encoder's language model in Rust. With an encoder set, a
++// prompt's token ids are offered to it with the vision tower's outputs: per image, its first
++// token, token count and patch grid (index, size, grid_h, grid_w), its embeddings
++// ([size][width]) and one deep-stack addition per early layer ([layer * images + image]).
++// `hidden` receives the hidden states after the last layer ([count][width]). When the encoder
++// returns false the engine runs the model itself.
++typedef struct {
++    const int32_t* ids;
++    int64_t count, width;
++    int64_t image_count;
++    const int32_t* image_grids;
++    const float* const* images;
++    int64_t deepstack_layers;
++    const float* const* deepstack;
++} sd_kuno_text_t;
++typedef bool (*sd_kuno_text_cb_t)(const sd_kuno_text_t* text, float* hidden, void* data);
++SD_API void sd_kuno_set_text_encoder(sd_ctx_t* sd_ctx, sd_kuno_text_cb_t encoder, void* data);
  SD_API void free_sd_audio(sd_audio_t* audio);
  
  SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
 diff --git a/src/conditioning/conditioner.hpp b/src/conditioning/conditioner.hpp
-index 6b750f9..8001238 100644
+index 6b750f9..a3f6254 100644
 --- a/src/conditioning/conditioner.hpp
 +++ b/src/conditioning/conditioner.hpp
 @@ -156,6 +156,7 @@ public:
@@ -80,6 +97,96 @@ index 6b750f9..8001238 100644
      void runner_end() override {
          if (llm) {
              llm->runner_end();
+@@ -2170,6 +2177,61 @@ struct LLMEmbedder : public Conditioner {
+         return {tokens, weights, mask};
+     }
+ 
++    // Offers a MiniMax H3 prompt to Kuno's text encoder; empty when it is not used.
++    sd::Tensor<float> kuno_text(const std::vector<int>& tokens,
++                                const std::vector<float>& mask,
++                                const std::vector<std::pair<int, sd::Tensor<float>>>& image_embeds,
++                                const std::set<int>& out_layers,
++                                const LLM::DeepStackImageEmbeds& deepstack_image_embeds,
++                                const std::vector<LLM::ImageGrid>& image_grids) {
++        if (!sd_version_is_minimax_h3(version) || kuno_minimax_h3_text == nullptr ||
++            out_layers != std::set<int>{50} || llm->config.num_layers != 50 ||
++            !std::all_of(mask.begin(), mask.end(), [](float v) { return v == 1.0f; }) ||
++            image_embeds.size() != image_grids.size()) {
++            return {};
++        }
++        const int64_t width = llm->config.hidden_size;
++        std::vector<int32_t> grids;
++        std::vector<const float*> images;
++        std::vector<const float*> deepstack;
++        for (size_t i = 0; i < image_embeds.size(); ++i) {
++            const auto& embed = image_embeds[i].second;
++            const auto& grid  = image_grids[i];
++            if (grid.index != image_embeds[i].first || embed.dim() < 2 || embed.shape()[0] != width ||
++                embed.numel() != width * grid.size || grid.index < 0 ||
++                grid.index + grid.size > static_cast<int>(tokens.size())) {
++                return {};
++            }
++            grids.insert(grids.end(), {grid.index, grid.size, grid.grid_h, grid.grid_w});
++            images.push_back(embed.data());
++        }
++        for (const auto& layer : deepstack_image_embeds) {
++            if (layer.size() != image_embeds.size()) {
++                return {};
++            }
++            for (size_t i = 0; i < layer.size(); ++i) {
++                if (layer[i].first != image_embeds[i].first || layer[i].second.numel() != image_embeds[i].second.numel()) {
++                    return {};
++                }
++                deepstack.push_back(layer[i].second.data());
++            }
++        }
++        std::vector<int32_t> ids(tokens.begin(), tokens.end());
++        sd_kuno_text_t text = {ids.data(),
++                               static_cast<int64_t>(ids.size()),
++                               width,
++                               static_cast<int64_t>(images.size()),
++                               grids.data(),
++                               images.data(),
++                               static_cast<int64_t>(deepstack_image_embeds.size()),
++                               deepstack.data()};
++        sd::Tensor<float> hidden({width, static_cast<int64_t>(ids.size())});
++        if (!kuno_minimax_h3_text(&text, hidden.data(), kuno_minimax_h3_text_data)) {
++            return {};
++        }
++        return hidden;
++    }
++
+     sd::Tensor<float> encode_prompt(int n_threads,
+                                     const std::string prompt,
+                                     const std::pair<int, int>& prompt_attn_range,
+@@ -2210,15 +2272,18 @@ struct LLMEmbedder : public Conditioner {
+             }
+         }
+ 
+-        auto hidden_states = llm->compute(n_threads,
+-                                          input_ids,
+-                                          attention_mask,
+-                                          image_embeds,
+-                                          out_layers,
+-                                          false,
+-                                          false,
+-                                          deepstack_image_embeds,
+-                                          image_grids);
++        sd::Tensor<float> hidden_states = kuno_text(tokens, mask, image_embeds, out_layers, deepstack_image_embeds, image_grids);
++        if (hidden_states.empty()) {
++            hidden_states = llm->compute(n_threads,
++                                         input_ids,
++                                         attention_mask,
++                                         image_embeds,
++                                         out_layers,
++                                         false,
++                                         false,
++                                         deepstack_image_embeds,
++                                         image_grids);
++        }
+         if (hidden_states.empty()) {
+             LOG_ERROR("LLM prompt encoding failed");
+             return {};
 diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
 index 7432416..c149352 100644
 --- a/src/core/ggml_extend.cpp
@@ -801,7 +908,7 @@ index ed7c5ac..d59996e 100644
                  return build_graph(*params.x,
                                     *params.timesteps,
 diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
-index c82b9d7..907e481 100644
+index c82b9d7..1d5f3cb 100644
 --- a/src/model/diffusion/model.hpp
 +++ b/src/model/diffusion/model.hpp
 @@ -6,6 +6,7 @@
@@ -812,7 +919,7 @@ index c82b9d7..907e481 100644
  #include "core/tensor_ggml.hpp"
  #include "model/common/rope_circular.hpp"
  #include "model_manager.h"
-@@ -111,6 +112,11 @@ struct MiniMaxH3ReferenceBlock {
+@@ -111,6 +112,14 @@ struct MiniMaxH3ReferenceBlock {
      int32_t audio_index         = -1;
  };
  
@@ -820,11 +927,14 @@ index c82b9d7..907e481 100644
 +// context owns the process, so the hook is process-wide.
 +inline sd_kuno_dit_cb_t kuno_minimax_h3_dit = nullptr;
 +inline void* kuno_minimax_h3_dit_data       = nullptr;
++// Kuno: optional external MiniMax H3 text encoder (see sd_kuno_set_text_encoder).
++inline sd_kuno_text_cb_t kuno_minimax_h3_text = nullptr;
++inline void* kuno_minimax_h3_text_data        = nullptr;
 +
  struct MiniMaxH3DiffusionExtra {
      const sd::Tensor<int32_t>* text_token_tags                    = nullptr;
      const sd::Tensor<int32_t>* keyframe_indices                   = nullptr;
-@@ -196,6 +202,10 @@ public:
+@@ -196,6 +205,10 @@ public:
          : GGMLRunner(backend, weight_manager),
            prefix(prefix) {}
  
@@ -1670,10 +1780,10 @@ index 2fcff4c..4eeb979 100644
                              (int)audio_latent.shape()[0],
                              (int)audio_latent.shape()[1],
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
-index b13c055..ba9c9d1 100644
+index b13c055..3c881fc 100644
 --- a/src/stable-diffusion.cpp
 +++ b/src/stable-diffusion.cpp
-@@ -662,6 +662,35 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
+@@ -662,6 +662,42 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
      free(sd_ctx);
  }
  
@@ -1703,6 +1813,13 @@ index b13c055..ba9c9d1 100644
 +    if (sd_ctx && sd_ctx->sd) {
 +        kuno_minimax_h3_dit      = evaluator;
 +        kuno_minimax_h3_dit_data = data;
++    }
++}
++
++SD_API void sd_kuno_set_text_encoder(sd_ctx_t* sd_ctx, sd_kuno_text_cb_t encoder, void* data) {
++    if (sd_ctx && sd_ctx->sd) {
++        kuno_minimax_h3_text      = encoder;
++        kuno_minimax_h3_text_data = data;
 +    }
 +}
 +

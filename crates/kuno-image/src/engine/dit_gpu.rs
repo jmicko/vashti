@@ -775,6 +775,18 @@ impl Drop for GpuDit {
     }
 }
 impl GpuDit {
+    /// The host the weights came from.
+    pub fn host(&self) -> &std::sync::Arc<Host> {
+        &self.host
+    }
+    /// Ends a clip without dropping the weights: the kept text features and the clip's
+    /// buffers go, so nothing request-derived stays.
+    pub fn finish_clip(&self) {
+        self.host.forget();
+        if let Ok(mut work) = self.work.lock() {
+            *work = None;
+        }
+    }
     /// Reads the weights and copies them into video memory.
     pub fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
         Self::place(std::sync::Arc::new(Host::read(gpu, path)?))

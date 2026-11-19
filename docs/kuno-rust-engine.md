@@ -28,8 +28,8 @@ paths from the environment.
 |---|---|---|---|
 | Audio decoder (BigVGAN, 32 kHz stereo) | 0.90 s on the GPU, 51 dB from exact | 0.47 s on 16 CPU cores, 129 dB from exact | Rust, in the worker |
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU, 70.9 dB from the CPU reference | 0.135 s per tile as machine code (79.1 dB); 0.26 s as Vulkan shaders (83.7 dB) on other cards | Rust, in the worker (dev build) |
-| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step; with the machine-code decoder a warm clip is 42.9 to 43.1 s; C++ still runs it |
-| Qwen3-VL text encoder (INT8) | conditioning phase | not started | |
+| DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step; kept in video memory between clips; with the machine-code decoder and the Rust text encoder a warm clip is 40.2 to 40.3 s |
+| Qwen3-VL text encoder (INT8, 50 layers) | 3.55 s per clip, of which 3.3 s copying 25.5 GB to the GPU | language model on the GPU with weights streamed from host memory: 2.55 s; the vision tower stays C++ | Rust, in the worker (dev build); text tokens 37 dB from the C++ engine |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
 
@@ -749,6 +749,92 @@ What is left: the products are near the instruction's rate. The hardware's power
 place of the attention kernel's polynomial may close the accuracy gap to the shader path
 (79.1 against 83.7 dB).
 
+## Text encoder
+
+MiniMax H3 conditions on the hidden states after the 50th (last kept) layer of Qwen3-VL
+32B's language model, without its final norm: width 5120, 64 query and 8 key/value heads
+of 128, a gated feed-forward of 25600, INT8 ConvRot weights like the DiT's (24.4 GB). A
+prompt with a first frame is about 470 tokens: 442 come from the vision tower's view of the
+image, which also adds "deep-stack" rows to those tokens after the first three layers.
+Rotary positions are interleaved over time, height and width (ggml's IMROPE): text tokens
+have one position on all three axes, image tokens their row and column.
+
+### Where the C++ engine spends its time (2026-11-18)
+
+Sampling the worker's GPU counters every 50 ms (`drm-total-vram0` and engine cycles in
+`/proc/<pid>/fdinfo`) during a warm clip showed conditioning as 1.8 s of VAE encoding of
+the first frame, then 3.3 s of copy-engine traffic while video memory grew by 25.5 GB (the
+text encoder's weights, 7.7 GB/s), then about 0.25 s of compute. The DiT is copied in after
+the text encoder leaves (2.07 s), because the two do not fit together.
+
+The B70 sits behind a PCIe 3.0 x16 root port (`00:03.1`, 8 GT/s): copies to the card top
+out at 10.5 to 11.2 GB/s. So the text encoder costs at least 2.2 s per clip however it is
+computed, and holding it in video memory would push out the DiT.
+
+### The GPU form
+
+`text_gpu.rs` keeps every layer's matrices in host staging memory (read once per worker, on
+its own thread) and per prompt copies each layer into one 488 MB device window and runs
+it: about 44 ms of copying and 6 ms of compute per layer. The kernels are the DiT's
+quantizer and integer product shaders (`rotate8`, `gemm8`, any width) and six small
+shaders: the norm, query/key/value preparation (dequantize, per-head RMS, rotary), causal
+grouped attention with an online softmax, the residual, the gate and the deep-stack rows.
+The device holds the window, the prompt's activations (about 0.25 GB at 470 tokens) and
+every layer's scales and norm weights (16 MB). `text_encoder.rs` is the CPU reference.
+
+The engine patch adds `sd_kuno_set_text_encoder`: a MiniMax H3 prompt's token ids, each
+image's embeddings, patch grid and deep-stack rows are offered to Rust before the engine
+runs its language model; since its text layers are then never evaluated, their weights
+are never copied to the card.
+
+Tried and dropped:
+
+- Reading each layer from the model file per prompt into two landing areas while the
+  previous layer runs. Alone, a read takes 49 ms and a copy 44 ms, but together a layer
+  took 69 ms: the page-cache read and the bus copy share the host's memory bandwidth
+  (dual-channel DDR4). More reader threads did not help (4 and 8 the same).
+- Importing the model file's mapped pages as Vulkan host memory, so the card reads the
+  page cache in place: the driver rejects a read-only file mapping.
+- The CPU for short prompts: an AVX2 INT8 product reached 1.6 TOPS on 16 cores, so a
+  470-token prompt would take about 14 s.
+
+### Accuracy
+
+Text tokens are 37 to 38 dB from the C++ engine's output (the first token, which carries
+most of the energy, 66 dB), as close as the GPU form is to the CPU reference (37 dB; 46 dB
+overall on a made-up prompt). Image tokens are not reproducible by any implementation:
+the GPU form is 9.5 dB from the engine and 9.6 dB from the CPU reference, and the CPU
+reference is 4.4 dB from the engine. Their final states amplify rounding differences
+across the 50 INT8 layers. Variants that would reveal a semantic error all moved further
+from the engine: sequential positions for image tokens 1.3 dB, non-interleaved axes
+-3.1 dB, no deep-stack rows -4.5 dB, half-precision attention operands 4.4 dB.
+
+What matters is the clip: with the same seed, the clip made with the Rust text encoder is
+29.7 dB PSNR from the one made with the engine's (the Rust and C++ samplers on the same
+request are 28 to 34 dB apart), and contact sheets show the same scene and motion frame
+for frame.
+
+### In the worker
+
+| 2.3 s clip, dev worker | Before | Now |
+|---|---|---|
+| Text encoder | 3.55 s (C++) | 2.51 to 2.57 s |
+| DiT copied to the card | 2.07 s every clip | first clip only |
+| Later clips | 42.9 to 43.1 s | 40.2 to 40.3 s (C++ sampler 47.7 s) |
+| First clip of a worker | 49.9 s | 56.4 s |
+
+- With the text encoder streamed, the DiT (22.5 GB with the refiner) stays in video memory
+  between clips of the same model (`RESIDENT_DIT` in `native.rs`). The decoder still fits
+  beside it; if it does not, the DiT is freed and the decoder placed again. Ending a clip
+  drops the DiT's kept text features and its work buffers, so nothing request-derived stays.
+  An image job, or a clip with the other DiT, frees it first.
+- The first clip is slower: the text encoder's 24.4 GB read and the DiT's 21 GB read share
+  the host's memory bandwidth (the DiT's read went from about 10 s to 16.5 s), and
+  conditioning waits for the text encoder's.
+- The worker holds about 50 GB of host staging memory (DiT 21, text encoder 24.4, decoder 5)
+  where it held 26 GB plus 27 GB of the text encoder's file pages (evictable).
+- Same-seed clips repeat their bytes; the DiT kept between clips does not change them.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
@@ -783,6 +869,13 @@ KUNO_DIT=<model> KUNO_DIT_GOLDEN=<dir>/step0 \
 cargo test --release -p kuno-image engine::dit_gpu -- --include-ignored --nocapture --test-threads 1
 KUNO_DIT=<model> KUNO_DIT_STEPS=<dir with step0.. of one clip> KUNO_VIDEO_VAE=<decoder> \
 cargo test --release -p kuno-image sampling_follows -- --include-ignored --nocapture
+```
+
+Text encoder (the reference test reads 24 GB and takes about two minutes on the CPU):
+
+```
+KUNO_TEXT_ENCODER=<models>/qwen3vl_32b_minimax_h3_int8_convrot.safetensors \
+cargo test --release -p kuno-image text_ -- --include-ignored --nocapture --test-threads 1
 ```
 
 Audio decoder:
