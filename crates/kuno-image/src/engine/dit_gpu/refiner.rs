@@ -29,18 +29,22 @@ struct Layer<T> {
     fc2: T,
     vectors: T,
 }
-/// The refiner's weights in host memory and its compiled kernels.
+/// The refiner's compiled kernels.
 pub struct Host {
-    layers: Vec<Layer<Staged>>,
     gemm16: Kernel,
     norm16: Kernel,
     merge16s: Kernel,
     gate16: Kernel,
     add: Kernel,
 }
+/// The refiner's weights in host memory, only needed to place them.
+pub struct Weights {
+    layers: Vec<Layer<Staged>>,
+}
 impl Host {
-    /// Reads the refiner's weights (1.5 GB as half floats) into host memory.
-    pub fn read(gpu: &Gpu, model: &dit::Dit) -> Result<Self, &'static str> {
+    /// Compiles the kernels and reads the refiner's weights (1.5 GB as half floats) into
+    /// host memory.
+    pub fn read(gpu: &Gpu, model: &dit::Dit) -> Result<(Self, Weights), &'static str> {
         let f = &model.file;
         let layers = (0..model.refiners())
             .map(|layer| {
@@ -64,14 +68,14 @@ impl Host {
                 })
             })
             .collect::<Result<_, &'static str>>()?;
-        Ok(Self {
-            layers,
+        let host = Self {
             gemm16: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
             norm16: gpu.kernel(shaders::NORM16, 3, 2, None)?,
             merge16s: gpu.kernel(shaders::MERGE16S, 3, 2, None)?,
             gate16: gpu.kernel(shaders::GATE16, 2, 1, None)?,
             add: gpu.kernel(shaders::ADD, 2, 1, None)?,
-        })
+        };
+        Ok((host, Weights { layers }))
     }
 }
 /// The refiner's weights in video memory.
@@ -79,8 +83,8 @@ pub struct Refiner {
     layers: Vec<Layer<Buffer>>,
 }
 impl Refiner {
-    pub fn place(gpu: &Gpu, host: &Host) -> Result<Self, &'static str> {
-        let layers = host
+    pub fn place(gpu: &Gpu, weights: &Weights) -> Result<Self, &'static str> {
+        let layers = weights
             .layers
             .iter()
             .map(|layer| {

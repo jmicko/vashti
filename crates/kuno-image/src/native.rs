@@ -289,7 +289,7 @@ extern "C" fn decode_video_latent(
     }
     // Sampling is over. The DiT stays in video memory for the next clip unless the decoder
     // does not fit beside it.
-    keep_dit(out.dit.take());
+    keep_dit(&out.dit_model, out.dit.take());
     let (width, height, frames) = (width as usize, height as usize, frames as usize);
     if video_tiles::output_frames(frames) as i64 != pixel_frames {
         return false;
@@ -355,31 +355,36 @@ fn video_host(
     *kept = Some((model.to_owned(), host.clone()));
     Ok(host)
 }
-/// The Rust DiT kept in video memory after a clip, for the next clip of the same model.
-/// It holds no request-derived state (`GpuDit::finish_clip`).
-static RESIDENT_DIT: std::sync::Mutex<Option<crate::engine::dit_gpu::GpuDit>> =
-    std::sync::Mutex::new(None);
-/// Keeps `dit` for the next clip.
-fn keep_dit(dit: Option<crate::engine::dit_gpu::GpuDit>) {
+/// The Rust DiT kept in video memory after a clip, for the next clip of the same model,
+/// and the file it came from. It holds no request-derived state (`GpuDit::finish_clip`).
+/// Its host memory copy is released once it is placed, so a DiT that has to be placed again
+/// (after an image job or the other model) is read from the file again.
+static RESIDENT_DIT: std::sync::Mutex<
+    Option<(std::path::PathBuf, crate::engine::dit_gpu::GpuDit)>,
+> = std::sync::Mutex::new(None);
+/// Keeps `dit`, placed from `model`, for the next clip.
+fn keep_dit(model: &std::path::Path, dit: Option<crate::engine::dit_gpu::GpuDit>) {
     let Some(dit) = dit else { return };
     dit.finish_clip();
     if let Ok(mut kept) = RESIDENT_DIT.lock() {
-        *kept = Some(dit);
+        *kept = Some((model.to_owned(), dit));
     }
+}
+/// Whether the kept DiT came from `model`.
+fn dit_resident(model: &std::path::Path) -> bool {
+    RESIDENT_DIT
+        .lock()
+        .is_ok_and(|kept| kept.as_ref().is_some_and(|(path, _)| path == model))
 }
 /// Frees the kept DiT's video memory.
 pub(crate) fn evict_dit() {
     let kept = RESIDENT_DIT.lock().ok().and_then(|mut kept| kept.take());
     drop(kept);
 }
-/// The kept DiT if it was placed from `model`'s host; any other kept DiT is freed.
+/// The kept DiT if it was placed from `model`; any other kept DiT is freed.
 fn resident_dit(model: &std::path::Path) -> Option<crate::engine::dit_gpu::GpuDit> {
-    let dit = RESIDENT_DIT.lock().ok()?.take()?;
-    let same = DIT_HOST.lock().ok().is_some_and(|host| {
-        host.as_ref()
-            .is_some_and(|(path, host)| path == model && std::sync::Arc::ptr_eq(host, dit.host()))
-    });
-    same.then_some(dit)
+    let (path, dit) = RESIDENT_DIT.lock().ok()?.take()?;
+    (path == model).then_some(dit)
 }
 /// The Rust DiT's weights in host memory and the file they came from.
 static DIT_HOST: std::sync::Mutex<
@@ -389,8 +394,8 @@ static DIT_HOST: std::sync::Mutex<
     )>,
 > = std::sync::Mutex::new(None);
 /// The Rust DiT's weights for `model`, read into host memory unless they are there already.
-/// They stay between clips (one model at a time); a clip only copies them into video memory.
-/// Concurrent callers wait for the one read.
+/// They stay only until the DiT is placed (`release_dit_host`). Concurrent callers wait for
+/// the one read.
 fn dit_host(
     pci: &str,
     model: &std::path::Path,
@@ -399,6 +404,7 @@ fn dit_host(
     let mut kept = DIT_HOST.lock().map_err(|_| "model_state_lost")?;
     if let Some((path, host)) = kept.as_ref()
         && path == model
+        && host.has_weights()
     {
         return Ok(host.clone());
     }
@@ -412,6 +418,13 @@ fn dit_host(
         started.elapsed().as_millis()
     );
     Ok(host)
+}
+/// Frees the DiT weights' host memory once they are in video memory.
+fn release_dit_host() {
+    let kept = DIT_HOST.lock().ok().and_then(|mut kept| kept.take());
+    if let Some((_, host)) = kept {
+        host.release();
+    }
 }
 /// The Rust text encoder and the file it reads.
 static TEXT_ENCODER: std::sync::Mutex<
@@ -622,6 +635,7 @@ extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_
             let host = dit_host(&out.pci, &out.dit_model)?;
             let started = std::time::Instant::now();
             out.dit = Some(GpuDit::place(host)?);
+            release_dit_host();
             eprintln!(
                 "kuno-image: rust dit: place {} ms",
                 started.elapsed().as_millis()
@@ -936,11 +950,11 @@ impl Session {
             .rgb
             .reserve_exact(output.frame_bytes * recipe.frames as usize);
         // A kept DiT of another model is freed before the engine needs video memory.
-        if let Some(kept) = resident_dit(&output.dit_model)
-            && let Ok(mut slot) = RESIDENT_DIT.lock()
-        {
-            *slot = Some(kept);
+        if let Some(kept) = resident_dit(&output.dit_model) {
+            keep_dit(&output.dit_model, Some(kept));
         }
+        // A kept DiT needs no read.
+        let read_dit = cfg!(feature = "rust-dit") && !dit_resident(&output.dit_model);
         // Weights are read into host memory in the background: the text encoder's (which
         // conditioning waits for) beside the DiT's (the first step waits) and the decoder's.
         let reading = {
@@ -955,7 +969,7 @@ impl Session {
                     let pci = pci.clone();
                     std::thread::spawn(move || drop(text_encoder(&pci, &text)))
                 });
-                if cfg!(feature = "rust-dit") {
+                if read_dit {
                     drop(dit_host(&pci, &dit));
                 }
                 drop(video_host(&pci, &video));

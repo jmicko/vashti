@@ -831,8 +831,13 @@ for frame.
 - The first clip is slower: the text encoder's 24.4 GB read and the DiT's 21 GB read share
   the host's memory bandwidth (the DiT's read went from about 10 s to 16.5 s), and
   conditioning waits for the text encoder's.
-- The worker holds about 50 GB of host staging memory (DiT 21, text encoder 24.4, decoder 5)
-  where it held 26 GB plus 27 GB of the text encoder's file pages (evictable).
+- The DiT's host copy goes once the DiT is in video memory (`Host::release`, 2026-11-19), to
+  leave RAM for language models: the worker holds about 29 GiB between clips (text encoder
+  24.4 GB, decoder 5 GB; system MemAvailable 103 GiB stopped, 74 GiB idle) where it held about
+  50 GB. Later clips of the same model need no read. A clip after an image job or the other
+  model reads the DiT from the file again: 54.1 s against 40.3 s (16 s read, partly hidden
+  behind conditioning). Before this, the worker held 26 GB plus 27 GB of the text encoder's
+  file pages (evictable) under the C++ encoder.
 - Same-seed clips repeat their bytes; the DiT kept between clips does not change them.
 
 ## Running the comparisons

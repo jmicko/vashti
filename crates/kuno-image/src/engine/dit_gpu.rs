@@ -692,6 +692,13 @@ pub struct Host {
     gpu: Gpu,
     model: dit::Dit,
     kernels: Kernels,
+    /// The weights to copy into video memory; `release` frees them once they are there.
+    weights: Mutex<Option<Weights>>,
+    /// The text refiner, when its attention can run as machine code; the CPU's otherwise.
+    refiner: Option<refiner::Host>,
+}
+/// The DiT's weights in host memory (about 21 GB), only needed to place them.
+struct Weights {
     layers: Vec<LayerHost>,
     /// Every block's modulation projection: weight `[18 * DIM][TIME_WIDTH]`, then bias.
     modulation: Staged,
@@ -699,8 +706,8 @@ pub struct Host {
     embed: Staged,
     /// The output heads' norm weight, weights and biases (`dit::Dit::head_vectors`).
     head: Staged,
-    /// The text refiner, when its attention can run as machine code; the CPU's otherwise.
-    refiner: Option<refiner::Host>,
+    /// The refiner's weights (`refiner::Host`).
+    refiner: Option<refiner::Weights>,
 }
 impl Host {
     /// Reads all weights (about 21 GB) into host memory.
@@ -741,13 +748,18 @@ impl Host {
             }
             Ok(())
         })?;
-        Ok(Self {
-            gpu: gpu.clone(),
-            refiner: refiner?,
+        let (refiner, refiner_weights) = refiner?.unzip();
+        let weights = Weights {
             embed: staged_floats(gpu, &model.embed_vectors()?)?,
             head: staged_floats(gpu, &model.head_vectors()?)?,
             layers: layers?,
             modulation,
+            refiner: refiner_weights,
+        };
+        Ok(Self {
+            gpu: gpu.clone(),
+            refiner,
+            weights: Mutex::new(Some(weights)),
             model,
             kernels,
         })
@@ -755,6 +767,16 @@ impl Host {
     /// Drops the kept text features.
     pub fn forget(&self) {
         self.model.forget();
+    }
+    /// Whether the weights are still in host memory, so the DiT can be placed from here.
+    pub fn has_weights(&self) -> bool {
+        self.weights.lock().is_ok_and(|weights| weights.is_some())
+    }
+    /// Frees the weights' host memory. A DiT placed from this host keeps running; placing
+    /// another needs a fresh read.
+    pub fn release(&self) {
+        let weights = self.weights.lock().ok().and_then(|mut weights| weights.take());
+        drop(weights);
     }
 }
 
@@ -775,10 +797,6 @@ impl Drop for GpuDit {
     }
 }
 impl GpuDit {
-    /// The host the weights came from.
-    pub fn host(&self) -> &std::sync::Arc<Host> {
-        &self.host
-    }
     /// Ends a clip without dropping the weights: the kept text features and the clip's
     /// buffers go, so nothing request-derived stays.
     pub fn finish_clip(&self) {
@@ -792,26 +810,31 @@ impl GpuDit {
         Self::place(std::sync::Arc::new(Host::read(gpu, path)?))
     }
     /// Copies the weights (about 21 GB) into video memory.
+    /// Fails with `model_state_lost` when the host's weights were released.
     pub fn place(host: std::sync::Arc<Host>) -> Result<Self, &'static str> {
         let gpu = &host.gpu;
-        let layers = host
+        let held = host.weights.lock().map_err(|_| "model_state_lost")?;
+        let weights = held.as_ref().ok_or("model_state_lost")?;
+        let layers = weights
             .layers
             .iter()
             .map(|layer| Layer::place(gpu, &host.kernels, layer))
             .collect::<Result<_, _>>()?;
-        Ok(Self {
+        let placed = Self {
             layers,
-            modulation: gpu.place(&host.modulation, false)?,
-            refiner: host
+            modulation: gpu.place(&weights.modulation, false)?,
+            refiner: weights
                 .refiner
                 .as_ref()
                 .map(|refiner| refiner::Refiner::place(gpu, refiner))
                 .transpose()?,
-            embed: gpu.place(&host.embed, false)?,
-            head: gpu.place(&host.head, false)?,
+            embed: gpu.place(&weights.embed, false)?,
+            head: gpu.place(&weights.head, false)?,
             work: Mutex::new(None),
-            host,
-        })
+            host: host.clone(),
+        };
+        drop(held);
+        Ok(placed)
     }
     /// Evaluates the network once; returns the packed velocity with `step.packed`'s layout.
     pub fn forward(&self, step: &dit::Step) -> Result<Vec<f32>, &'static str> {
@@ -1362,8 +1385,9 @@ mod tests {
         let model = dit::Dit::open(std::path::Path::new(&model)).unwrap();
         let kernels = Kernels::new(&gpu).unwrap();
         let started = std::time::Instant::now();
-        let refiner = refiner::Host::read(&gpu, &model).unwrap();
-        let placed = refiner::Refiner::place(&gpu, &refiner).unwrap();
+        let (refiner, weights) = refiner::Host::read(&gpu, &model).unwrap();
+        let placed = refiner::Refiner::place(&gpu, &weights).unwrap();
+        drop(weights);
         println!("loaded in {:.2} s", started.elapsed().as_secs_f64());
         let context = captured.step().context;
         let mut got = Vec::new();
