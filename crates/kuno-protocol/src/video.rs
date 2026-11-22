@@ -16,10 +16,20 @@ pub const VIDEO_MAX_REFERENCE_IMAGES: usize = 4;
 pub const VIDEO_KEYFRAME_STEPS: u32 = 8;
 pub const VIDEO_REFERENCE_STEPS: u32 = 4;
 pub const VIDEO_FPS: u32 = 24;
-/// MiniMax H3 needs 17k + 5 frames. These are the counts tested on the B70.
+/// MiniMax H3 generates 5 + 17k frames (its video latent compresses time by that rule).
+pub const VIDEO_FRAME_BASE: u32 = 5;
+pub const VIDEO_FRAME_STEP: u32 = 17;
+/// Width and height must be multiples of this (16 pixels per latent, two latents per token).
+pub const VIDEO_DIMENSION_MULTIPLE: u32 = 32;
+/// Kuno sets no duration or size limit of its own: a request that does not fit the GPU's
+/// or the host's memory fails with a clear error. These bounds only keep sizes far from
+/// arithmetic overflow.
+pub const VIDEO_MAX_FRAMES_BOUND: u32 = 100_001;
+pub const VIDEO_MAX_DIMENSION_BOUND: u32 = 8192;
+/// Counts and sizes tested on the Intel Arc Pro B70, advertised as defaults for clients
+/// that do not set their own limits. Not enforced.
 pub const VIDEO_FRAMES: [u32; 7] = [22, 39, 56, 73, 90, 107, 124];
 pub const VIDEO_MAX_PIXELS: u32 = 832 * 544;
-pub const VIDEO_DIMENSION_MULTIPLE: u32 = 32;
 pub const VIDEO_MIN_DIMENSION: u32 = 256;
 pub const VIDEO_MAX_DIMENSION: u32 = 1280;
 pub const VIDEO_MIME_TYPE: &str = "video/mp4";
@@ -86,17 +96,18 @@ impl VideoRecipe {
         {
             return Err("image_seed_invalid");
         }
+        // Only the model's own rules; memory decides what fits.
         let dimension = |d: u32| {
-            (VIDEO_MIN_DIMENSION..=VIDEO_MAX_DIMENSION).contains(&d)
+            (VIDEO_DIMENSION_MULTIPLE..=VIDEO_MAX_DIMENSION_BOUND).contains(&d)
                 && d.is_multiple_of(VIDEO_DIMENSION_MULTIPLE)
         };
-        if !dimension(self.width)
-            || !dimension(self.height)
-            || u64::from(self.width) * u64::from(self.height) > u64::from(VIDEO_MAX_PIXELS)
-        {
+        if !dimension(self.width) || !dimension(self.height) {
             return Err("video_dimensions_unsupported");
         }
-        if !VIDEO_FRAMES.contains(&self.frames) {
+        if self.frames < VIDEO_FRAME_BASE
+            || self.frames > VIDEO_MAX_FRAMES_BOUND
+            || !(self.frames - VIDEO_FRAME_BASE).is_multiple_of(VIDEO_FRAME_STEP)
+        {
             return Err("video_frames_unsupported");
         }
         first.check(&self.first_frame, "video_first_frame_invalid")?;
@@ -208,9 +219,9 @@ mod tests {
                 "image_seed_invalid",
             ),
             (|r| r.width = 840, "video_dimensions_unsupported"),
-            (|r| r.width = 1280, "video_dimensions_unsupported"),
+            (|r| r.width = 8224, "video_dimensions_unsupported"),
             (|r| r.frames = 57, "video_frames_unsupported"),
-            (|r| r.frames = 141, "video_frames_unsupported"),
+            (|r| r.frames = 4, "video_frames_unsupported"),
             (|r| r.first_frame = None, "video_first_frame_invalid"),
             (
                 |r| r.first_frame = Some(String::new()),
@@ -225,6 +236,12 @@ mod tests {
         let mut square = recipe();
         (square.width, square.height) = (672, 672);
         square.validate().unwrap();
+        // No size or duration limit of Kuno's own: memory decides.
+        let mut large = recipe();
+        (large.width, large.height, large.frames) = (1280, 704, 243);
+        large.validate().unwrap();
+        large.frames = 5;
+        large.validate().unwrap();
     }
     #[test]
     fn audio_defaults_on_and_unknown_fields_are_rejected() {

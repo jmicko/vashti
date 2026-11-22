@@ -566,6 +566,7 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
                     b"image_cancelled" => "image_cancelled",
                     b"image_model_load_failed" => "image_model_load_failed",
                     b"image_gpu_memory_unavailable" => "image_gpu_memory_unavailable",
+                    b"image_host_memory_unavailable" => "image_host_memory_unavailable",
                     b"image_generation_failed" => "image_generation_failed",
                     b"image_attention_unsupported" => "image_attention_unsupported",
                     b"image_request_cleanup_failed" => "image_request_cleanup_failed",

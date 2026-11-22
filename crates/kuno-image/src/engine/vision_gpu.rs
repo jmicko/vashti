@@ -26,8 +26,11 @@ const QK: usize = 80;
 const VT: usize = 128;
 /// The rotary turn's pairs per head.
 const PAIRS: usize = HEAD / 2;
-/// The most patches the attention scratch is sized for (scores are `[patches]^2`).
-pub const MAX_PATCHES: usize = 8192;
+/// Queries per attention block: the score scratch is `[block][patches]`.
+const QUERY_BLOCK: usize = 4096;
+/// The most patches an image may have (Qwen3-VL's processor allows 12.8 million pixels,
+/// about 50 000 patches).
+pub const MAX_PATCHES: usize = 65536;
 
 fn padded(n: usize, to: usize) -> usize {
     n.div_ceil(to) * to
@@ -208,7 +211,7 @@ impl GpuVision {
             norm: gpu.kernel(shaders::VNORM, 3, 4, None)?,
             bias: gpu.kernel(shaders::VBIAS, 4, 6, None)?,
             heads: gpu.kernel(shaders::VHEADS, 6, 4, None)?,
-            soft: gpu.kernel(shaders::VSOFT, 2, 2, None)?,
+            soft: gpu.kernel(shaders::VSOFT, 2, 3, None)?,
             gather: gpu.kernel(shaders::VGATHER, 2, 2, None)?,
             gemm: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
             weights,
@@ -268,8 +271,9 @@ impl GpuVision {
         let q = half(HEADS * tp * QK)?;
         let k = half(HEADS * tp * QK)?;
         let vt = half(HEADS * VT * tp)?;
-        let scores = float(tp * tp)?;
-        let weights = half(tp * tp)?;
+        let block = QUERY_BLOCK.min(tp);
+        let scores = float(block * tp)?;
+        let weights = half(block * tp)?;
         let o = float(HEADS * VT * tp)?;
         let rotary = float(turns.len().max(1))?;
         let outs = [float(m * OUT)?, float(m * OUT)?, float(m * OUT)?, float(m * OUT)?];
@@ -303,36 +307,39 @@ impl GpuVision {
                 groups: [tp as u32, HEADS as u32, 1],
             });
             for head in 0..HEADS {
-                c.push(Call::Shader {
-                    kernel: &self.gemm,
-                    buffers: vec![&q, &k, &scores],
-                    constants: vec![
-                        QK as u32,
-                        (head * tp * QK) as u32,
-                        (head * tp * QK) as u32,
-                        0,
-                        tp as u32,
-                    ],
-                    groups: [(tp / 256) as u32, (tp / 128) as u32, 1],
-                });
-                c.push(Call::Shader {
-                    kernel: &self.soft,
-                    buffers: vec![&scores, &weights],
-                    constants: vec![n as u32, tp as u32],
-                    groups: [tp as u32, 1, 1],
-                });
-                c.push(Call::Shader {
-                    kernel: &self.gemm,
-                    buffers: vec![&vt, &weights, &o],
-                    constants: vec![
-                        tp as u32,
-                        (head * VT * tp) as u32,
-                        0,
-                        (head * VT * tp) as u32,
-                        tp as u32,
-                    ],
-                    groups: [(tp / 256) as u32, (VT / 128) as u32, 1],
-                });
+                for first in (0..tp).step_by(block) {
+                    let rows = block.min(tp - first);
+                    c.push(Call::Shader {
+                        kernel: &self.gemm,
+                        buffers: vec![&q, &k, &scores],
+                        constants: vec![
+                            QK as u32,
+                            ((head * tp + first) * QK) as u32,
+                            (head * tp * QK) as u32,
+                            0,
+                            tp as u32,
+                        ],
+                        groups: [(tp / 256) as u32, (rows / 128) as u32, 1],
+                    });
+                    c.push(Call::Shader {
+                        kernel: &self.soft,
+                        buffers: vec![&scores, &weights],
+                        constants: vec![n as u32, tp as u32, first as u32],
+                        groups: [rows as u32, 1, 1],
+                    });
+                    c.push(Call::Shader {
+                        kernel: &self.gemm,
+                        buffers: vec![&vt, &weights, &o],
+                        constants: vec![
+                            tp as u32,
+                            (head * VT * tp) as u32,
+                            0,
+                            (head * VT * tp + first) as u32,
+                            tp as u32,
+                        ],
+                        groups: [(rows / 256) as u32, (VT / 128) as u32, 1],
+                    });
+                }
             }
             c.push(Call::Shader {
                 kernel: &self.gather,
@@ -476,6 +483,7 @@ const _: () = assert!(
         && PATCH_VALUES.is_multiple_of(16)
         && PAIRS == 36
         && MAX_PATCHES.is_multiple_of(PATCHES)
+        && QUERY_BLOCK.is_multiple_of(PATCHES)
 );
 
 #[cfg(test)]
@@ -497,7 +505,8 @@ mod tests {
         let started = std::time::Instant::now();
         let placed = GpuVision::new(&gpu, &vision).unwrap();
         println!("placed in {:.2} s", started.elapsed().as_secs_f64());
-        for (w, h, seed) in [(64, 64, 1), (128, 96, 2)] {
+        // The last image has 4352 patches: two attention blocks.
+        for (w, h, seed) in [(64, 64, 1), (128, 96, 2), (1088, 1024, 4)] {
             let pixels = image(w, h, seed);
             let exact = vision.encode_exact(&pixels, w, h).unwrap();
             let got = placed.encode(&pixels, w, h).unwrap();

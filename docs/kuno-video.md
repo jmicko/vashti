@@ -56,6 +56,9 @@ unknown fields; older Kuno simply has no `videos` key (treat as unsupported).
       "steps": 8,
       "fps": 24,
       "frames": [22, 39, 56, 73, 90, 107, 124],
+      "frame_base": 5,
+      "frame_step": 17,
+      "limits": "memory",
       "max_pixels": 452608,
       "dimension_multiple": 32,
       "min_dimension": 256,
@@ -92,9 +95,14 @@ Each workflow appears only when its collection is in `image.collections`, with i
 `state`/`reason` use the same values and codes as `images` (`disabled`, `unsupported`,
 `unavailable`, `partial`, `ready`; `image_generation_not_configured`,
 `image_models_unavailable`, `image_privacy_unavailable`, `image_runtime_unavailable`,
-...). `frames` lists the accepted frame counts (MiniMax needs 17k+5 frames). The limits
-are what has been tested on the B70; they may grow additively. `max_pixels` bounds
-`width * height` (832x544 = 452608).
+...). Kuno sets no duration or size limit of its own (`limits: "memory"`, since
+2026-11-22): any `frame_base + k * frame_step` frames (MiniMax H3 needs 5 + 17k) and any
+sides that are multiples of `dimension_multiple` are accepted, and a clip that does not fit
+the GPU's or the host's memory fails with a memory error (below). `frames`, `max_pixels`
+(832x544 = 452608), `min_dimension` and `max_dimension` are the sizes tested on the B70,
+offered as defaults; clients set their own product limits. Older Kuno omits `frame_base`,
+`frame_step` and `limits` (read as `"advertised"`): there, the advertised values were
+enforced.
 
 ## Request
 
@@ -116,14 +124,20 @@ are what has been tested on the B70; they may grow additively. `max_pixels` boun
 - `seed`: decimal string, 0..9223372036854775807 (as images).
 - `prompt`: 1..32768 bytes, no NUL. There is no negative prompt: the 8-step turbo recipe
   runs at CFG 1, where a negative prompt has no effect.
-- `width`/`height`: multiples of 32 in 256..1280, `width * height <= max_pixels`.
-- `frames`: one of the advertised counts; duration is `frames / 24` seconds.
+- `width`/`height`: multiples of 32 (so 1280x720 is not valid; 1280x704 and 1280x736 are).
+- `frames`: 5 + 17k (5, 22, 39, ..., 226, 243, ...); duration is `frames / 24` seconds.
+  Measured on the B70 with a warm model: 832x544 at 56 frames 38 s, at 243 frames (10.1 s)
+  284 s; 1280x704 at 124 frames 298 s; 832x544 at 481 frames (20 s) does not fit and fails
+  with `image_gpu_memory_unavailable` after about 15 s.
 - `audio` (default `true`): include the generated audio track. The model always samples
   audio jointly with video; `false` omits the track and skips the audio decode.
 - `first_frame`: required for `minimax-h3-image-to-video/v1`, optional for
   `minimax-h3-video/v1`, rejected for the reference workflow. At most 16 MiB of base64,
-  decoded at most 4096x4096. Kuno scales it to cover `width x height` and centre-crops
-  (aspect preserved). Clients should pick dimensions close to the image's aspect ratio.
+  decoded at most 4096x4096. A frame of exactly `width x height` is used as is. Any other
+  size or shape is scaled with its aspect kept to about the clip's area (sides multiples of
+  16) and never cropped or padded: the model composes it into the clip (a portrait photo in
+  a landscape clip becomes a full landscape scene). Clients that want a crop or letterbox
+  apply it before sending; black bars in a frame stay in the video.
 - `last_frame`: optional for `minimax-h3-video/v1` only; same format and scaling. The
   clip ends on it. With neither frame the video is generated from the prompt alone.
 - `reference_images`: 1 to 4 for `minimax-h3-reference-video/v1` only, same format. They
@@ -142,6 +156,11 @@ codes `unsupported_video_workflow`, `video_prompt_invalid`, `image_seed_invalid`
 `video_dimensions_unsupported`, `video_frames_unsupported`, `video_first_frame_invalid`,
 `video_last_frame_invalid`, `video_reference_images_invalid` (an image that is missing
 when required, present when not accepted, too large, or undecodable).
+
+A clip too long or too large for this machine ends with a streamed error event:
+`image_gpu_memory_unavailable` (video memory) or `image_host_memory_unavailable` (host
+memory, checked before any GPU work). Either arrives within seconds; Kuno replaces the
+worker after any failed request, so the next request runs normally.
 
 ## Streamed response
 

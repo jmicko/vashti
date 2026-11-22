@@ -1012,6 +1012,9 @@ impl Session {
         struct Inputs {
             first: Vec<u8>,
             last: Vec<u8>,
+            /// The start and end frames' sizes (see `video::keyframe_rgb`).
+            first_size: (u32, u32),
+            last_size: (u32, u32),
             references: Vec<(u32, u32, Vec<u8>)>,
         }
         impl Drop for Inputs {
@@ -1032,20 +1035,26 @@ impl Session {
             .map_err(|_| "native_image_seed_range_unsupported")?;
         let prompt =
             CString::new(recipe.prompt.as_str()).map_err(|_| "native_image_string_invalid")?;
-        let keyframe =
-            |image: &Option<String>, code: &'static str| -> Result<Vec<u8>, &'static str> {
-                let Some(image) = image else {
-                    return Ok(Vec::new());
-                };
-                let decoded = crate::references::decode(&[image.as_str()])
-                    .map_err(|_| code)?
-                    .pop()
-                    .ok_or(code)?;
-                crate::video::cover_rgb(decoded, recipe.width, recipe.height, code)
+        let keyframe = |image: &Option<String>,
+                        code: &'static str|
+         -> Result<(Vec<u8>, (u32, u32)), &'static str> {
+            let Some(image) = image else {
+                return Ok((Vec::new(), (0, 0)));
             };
+            let decoded = crate::references::decode(&[image.as_str()])
+                .map_err(|_| code)?
+                .pop()
+                .ok_or(code)?;
+            let (rgb, w, h) = crate::video::keyframe_rgb(decoded, recipe.width, recipe.height, code)?;
+            // The engine path takes frames at the clip's size only.
+            if !cfg!(feature = "rust-dit") && (w, h) != (recipe.width, recipe.height) {
+                return Err(code);
+            }
+            Ok((rgb, (w, h)))
+        };
         let mut inputs = Inputs::default();
-        inputs.first = keyframe(&recipe.first_frame, "video_first_frame_invalid")?;
-        inputs.last = keyframe(&recipe.last_frame, "video_last_frame_invalid")?;
+        (inputs.first, inputs.first_size) = keyframe(&recipe.first_frame, "video_first_frame_invalid")?;
+        (inputs.last, inputs.last_size) = keyframe(&recipe.last_frame, "video_last_frame_invalid")?;
         if !recipe.reference_images.is_empty() {
             for pixels in crate::references::decode(&recipe.reference_images)
                 .map_err(|_| "video_reference_images_invalid")?
@@ -1107,9 +1116,12 @@ impl Session {
             invalid: false,
             previews,
         };
+        // The clip's frames are the largest host buffer; a clip that does not fit fails
+        // here rather than aborting the worker.
         output
             .rgb
-            .reserve_exact(output.frame_bytes * recipe.frames as usize);
+            .try_reserve_exact(output.frame_bytes * recipe.frames as usize)
+            .map_err(|_| "image_host_memory_unavailable")?;
         // A kept DiT of another model is freed before the engine needs video memory.
         if let Some(kept) = resident_dit(&output.dit_model) {
             keep_dit(&output.dit_model, Some(kept));
@@ -1154,8 +1166,8 @@ impl Session {
                 frames: recipe.frames as usize,
                 steps: steps as usize,
                 seed,
-                first: &inputs.first,
-                last: &inputs.last,
+                first: (&inputs.first, inputs.first_size),
+                last: (&inputs.last, inputs.last_size),
                 references: &inputs.references,
             };
             match pipeline::generate(self.native.as_ptr(), &request, &mut output) {
@@ -1163,7 +1175,14 @@ impl Session {
                 Err(pipeline::Failure::Cancelled) => 7,
                 Err(pipeline::Failure::Failed(code)) => {
                     eprintln!("kuno-image: video failed ({code})");
-                    4
+                    match code {
+                        "gpu_memory" | "image_gpu_memory_unavailable" => 6,
+                        "image_host_memory_unavailable" => 12,
+                        // A failed submission may have reset the device: the gateway
+                        // replaces the worker.
+                        "gpu_failed" | "gpu_lost" => 8,
+                        _ => 4,
+                    }
                 }
             }
         } else { unsafe {
@@ -1209,6 +1228,7 @@ impl Session {
             8 => return Err("image_vulkan_device_lost"),
             9 => return Err("image_gpu_int8_unsupported"),
             11 => return Err("image_request_cleanup_failed"),
+            12 => return Err("image_host_memory_unavailable"),
             _ => return Err("image_native_runtime_failed"),
         }
         if output.invalid

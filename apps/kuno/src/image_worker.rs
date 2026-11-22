@@ -100,6 +100,7 @@ fn fail(output: &mut impl Write, code: &'static str) -> Result<(), &'static str>
         | "image_physical_gpu_not_found"
         | "image_model_load_failed"
         | "image_gpu_memory_unavailable"
+        | "image_host_memory_unavailable"
         | "image_cancelled"
         | "image_vulkan_device_lost"
         | "image_gpu_int8_unsupported"

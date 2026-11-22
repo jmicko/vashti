@@ -1,5 +1,48 @@
 # Kuno and Vashti Coordination
 
+**Kuno video contract change (2026-11-22): no duration or size caps, no cropping; memory
+decides. NOT installed; Vashti handoff below. Requested by the user:** "Kuno should just do
+the best it can with what it's given in the API"; limits and framing (crop, letterbox,
+black bars) are Vashti's choice, and failures must be graceful (no manual restarts).
+Branch `claude/rust-engine` (needs the Rust video pipeline, `0aa4f01b` and later).
+
+- **Accepted requests.** `frames` is any `5 + 17k` (5, 22, 39, ... 226, 243, ...);
+  `width` and `height` any multiple of 32 (so 1280x720 is not valid: use 1280x704 or
+  1280x736). The bounds left (frames <= 100001, sides <= 8192) only keep arithmetic safe.
+  New request shapes, so the current Vashti keeps working unchanged.
+- **Start and end frames are no longer cropped.** A frame of the clip's exact size is used
+  as is. A frame of any other size or shape is scaled with its aspect kept to about the
+  clip's area (sides multiples of 16) and the model composes it into the clip: a 4:3 or
+  portrait photo in a 16:9 clip becomes a full 16:9 scene without cropping or bars (tested).
+  Vashti should crop, letterbox or pad before sending when it wants that framing; note that
+  black bars sent in a frame stay in the video (the model treats them as content).
+  Reference images are unchanged (the model's own resize to at most the clip's area).
+- **Discovery.** `frames`, `max_pixels`, `min_dimension` and `max_dimension` stay, now as
+  the tested defaults (unchanged values) for clients without their own limits. New fields:
+  `frame_base` (5), `frame_step` (17) and `limits` (`"memory"`; older Kuno omits it, read
+  as `"advertised"`, meaning the old fields were enforced). Vashti should validate against
+  `frame_base`/`frame_step` and `dimension_multiple`, and apply its own product limits.
+- **Failures.** A clip that does not fit returns `image_gpu_memory_unavailable` (GPU) or
+  the new `image_host_memory_unavailable` (host RAM, checked before any GPU work), within
+  seconds; the gateway replaces the worker after any failed request, and the next request
+  succeeds. A failed GPU submission reports `image_vulkan_device_lost` as before.
+- **Measured on the B70 (dev worker, image-to-video, warm DiT):**
+
+  | Clip | Result |
+  |---|---|
+  | 832x544, 56 frames (2.3 s) | 38 s warm |
+  | 832x544, 243 frames (10.1 s) | 284 s (about 30 s per step) |
+  | 1280x704, 124 frames (5.2 s) | 298 s |
+  | 832x544, 481 frames (20 s) | `image_gpu_memory_unavailable` after 15 s; next clip OK |
+
+  Sampling time grows faster than length (attention), so a 10 s clip costs about 7 times a
+  2.3 s one. Suggested Vashti defaults: up to about 10 s at 832x544 or 5 s at 1280x704.
+- **Required Vashti changes:** validate frames as `frame_base + k * frame_step` and sizes
+  as multiples of `dimension_multiple` when `limits == "memory"`; move any cropping or
+  letterboxing of start/end frames into Vashti (or send the photo as is and let the model
+  compose it); show the two memory errors as "too long or too large for this server"; set
+  Vashti's own duration and size limits.
+
 **Kuno Rust engine, second model (2026-11-10): MiniMax H3 video decode in Rust on the GPU.
 Backend only, no contract change; NOT installed (the user asked to hold installs unless a
 rewrite brings a large speed gain; this one takes a warm 2.3 s clip from 59 s to 50 s).**

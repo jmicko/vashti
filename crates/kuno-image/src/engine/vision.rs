@@ -48,7 +48,7 @@ pub fn supported(width: usize, height: usize) -> bool {
         && height.is_multiple_of(FACTOR)
         && width >= FACTOR
         && height >= FACTOR
-        && (width / PATCH) * (height / PATCH) <= 16384
+        && (width / PATCH) * (height / PATCH) <= 65536
 }
 
 /// The patch grid (rows, columns) of an image.

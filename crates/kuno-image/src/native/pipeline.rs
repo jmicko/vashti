@@ -72,9 +72,10 @@ pub(super) struct Request<'a> {
     pub frames: usize,
     pub steps: usize,
     pub seed: i64,
-    /// Start and end frames at the clip's size, when given.
-    pub first: &'a [u8],
-    pub last: &'a [u8],
+    /// Start and end frames with their sizes (empty when not given): any shape, each side
+    /// a multiple of 16.
+    pub first: (&'a [u8], (u32, u32)),
+    pub last: (&'a [u8], (u32, u32)),
     /// Reference pictures at their own sizes.
     pub references: &'a [(u32, u32, Vec<u8>)],
 }
@@ -131,6 +132,14 @@ impl Picture {
         }
         Self { width, height, values }
     }
+}
+
+/// The host's available memory in bytes, when the worker may read it.
+fn available_memory() -> Option<usize> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = info.lines().find(|l| l.starts_with("MemAvailable:"))?;
+    let kib: usize = line.split_whitespace().nth(1)?.parse().ok()?;
+    kib.checked_mul(1024)
 }
 
 fn cancelled() -> bool {
@@ -233,6 +242,15 @@ pub(super) fn generate(
         return Err(Failure::Failed("video_input_invalid"));
     }
     let (w, h, t) = (width / 16, height / 16, latent_frames(frames));
+    // Kuno sets no size or duration limit; a clip whose decoded frames do not fit in host
+    // memory is refused now, before any GPU work (the decoder's float frames and ours,
+    // with room to spare).
+    let decoded_bytes = 3 * video_tiles::output_frames(t) * width * height * 4;
+    if let Some(available) = available_memory()
+        && 2 * decoded_bytes + (1 << 30) > available
+    {
+        return Err(Failure::Failed("image_host_memory_unavailable"));
+    }
     let audio_length = ((frames as f64 * 40.0 / f64::from(kuno_protocol::VIDEO_FPS)).round() as usize).max(1);
 
     // Conditioning images: start and end frames, or reference pictures.
@@ -241,12 +259,18 @@ pub(super) fn generate(
     let mut keyframes = Vec::new();
     let mut references = Vec::new();
     if request.references.is_empty() {
-        for (rgb, index) in [(request.first, 0), (request.last, frames as i32 - 1)] {
+        for ((rgb, (fw, fh)), index) in [(request.first, 0), (request.last, frames as i32 - 1)] {
             if rgb.is_empty() {
                 continue;
             }
-            let picture = Picture::from_rgb(rgb, width, height)?;
-            latents.push((condition_latent(out, &picture, request.seed)?, w, h));
+            let (fw, fh) = (fw as usize, fh as usize);
+            if fw % 16 != 0 || fh % 16 != 0 {
+                return Err(Failure::Failed("video_input_invalid"));
+            }
+            // A frame of another shape enters on its own grid; the model composes it into
+            // the clip.
+            let picture = Picture::from_rgb(rgb, fw, fh)?;
+            latents.push((condition_latent(out, &picture, request.seed)?, fw / 16, fh / 16));
             keyframes.push(index);
             pictures.push(picture);
         }
@@ -419,7 +443,11 @@ pub(super) fn generate(
     x.iter_mut().for_each(|v| *v = 0.0);
     let pixel_frames = video_tiles::output_frames(t);
     let (pw, ph) = (w * 16, h * 16);
-    let mut pixels = vec![0f32; 3 * pixel_frames * pw * ph];
+    let mut pixels = Vec::new();
+    pixels
+        .try_reserve_exact(3 * pixel_frames * pw * ph)
+        .map_err(|_| Failure::Failed("image_host_memory_unavailable"))?;
+    pixels.resize(3 * pixel_frames * pw * ph, 0f32);
     if !decode_video_latent(
         latent.as_ptr(),
         w as i64,
