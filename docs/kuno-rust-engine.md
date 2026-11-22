@@ -30,6 +30,8 @@ paths from the environment.
 | Video decoder (36-layer transformer) | 0.59 s per tile on the GPU, 70.9 dB from the CPU reference | 0.135 s per tile as machine code (79.1 dB); 0.26 s as Vulkan shaders (83.7 dB) on other cards | Rust, in the worker (dev build) |
 | DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step; kept in video memory between clips; with the machine-code decoder and the Rust text encoder a warm clip is 40.2 to 40.3 s |
 | Qwen3-VL text encoder (INT8, 50 layers) | 3.55 s per clip, of which 3.3 s copying 25.5 GB to the GPU | language model on the GPU with weights streamed from host memory: 2.55 s; the vision tower stays C++ | Rust, in the worker (dev build); text tokens 37 dB from the C++ engine |
+| Video encoder, single frames (start, end, reference images) | about 1.8 s per frame, in 256-pixel tiles | whole frame on the GPU: 106 to 128 ms for 832x544; 76 to 78 dB from exact | Rust, in the worker (dev build); 64.6 dB from the C++ engine's whole-frame encode; multi-frame (video reference) encodes stay C++ |
+| Vision tower, tokenizer, audio encoder | C++ | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
 
@@ -840,6 +842,35 @@ for frame.
   file pages (evictable) under the C++ encoder.
 - Same-seed clips repeat their bytes; the DiT kept between clips does not change them.
 
+## Video encoder (2026-11-21)
+
+Start, end and reference frames are encoded by the VAE's encoder: a stack of causal 3D
+convolutions with group norms (128 to 1024 channels, 16x spatial downsampling). For one frame
+the causal padding puts two zero frames first, so every 3x3x3 kernel reduces to its last time
+slice, a 3x3 convolution. `video_encoder.rs` holds the layout and the exact form (f64);
+`encoder_gpu.rs` runs it on the GPU: activations channel-major f32, each convolution unfolded
+into half-float rows (`ecol`, with the group norm and SiLU of a block fused in) and multiplied
+in `gemm16` with output channels in the token slot, so the product lands channel-major;
+`estats`/`estatsend` compute the group statistics (two passes per slice, Chan's merge) and
+`ebias` adds bias and residual. A frame is one submission.
+
+The C++ engine encodes in 256-pixel tiles, and each tile normalizes with its own statistics,
+which is not the model: on a real 832x544 start frame its tiled result is 6.8 dB from its own
+whole-frame encode. The Rust encoder is 64.6 dB from the C++ whole-frame encode and 76 to
+78 dB from the exact form on synthetic frames, so it is the faithful one. The clips barely
+notice: the first frame of an image-to-video clip is 27.43 dB from the input image with the
+Rust encoder against 27.67 dB with the C++ one (within noise; the decoder and AV1 bound it),
+and the clips show the same scene and motion (24.6 dB apart on average).
+
+| 2.3 s image-to-video clip, dev worker | Before | Now |
+|---|---|---|
+| Frame encode | about 1.8 s (C++) | 106 to 128 ms; 1 to 2 s once per worker to place 0.4 GB of weights |
+| Warm clip | 40.2 to 40.3 s | 38.6 s |
+
+The encoder's weights stay in video memory (0.4 GB) once a frame has needed them; text-only
+clips never place them. Multi-frame encodes (video references) and sizes not a multiple of 16
+fall back to the C++ engine.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
@@ -881,6 +912,13 @@ Text encoder (the reference test reads 24 GB and takes about two minutes on the 
 ```
 KUNO_TEXT_ENCODER=<models>/qwen3vl_32b_minimax_h3_int8_convrot.safetensors \
 cargo test --release -p kuno-image text_ -- --include-ignored --nocapture --test-threads 1
+```
+
+Video encoder (exact form on two small synthetic frames, then the GPU's time on 832x544):
+
+```
+KUNO_VIDEO_VAE=<models>/minimax_h3_video_vae_fp16.safetensors \
+cargo test --release -p kuno-image gpu_encoder -- --include-ignored --nocapture
 ```
 
 Audio decoder:

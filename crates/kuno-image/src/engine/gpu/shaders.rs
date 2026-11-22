@@ -36,6 +36,10 @@ pub const TGATE: &[u8] = include_bytes!("shaders/tgate.spv");
 pub const TADD: &[u8] = include_bytes!("shaders/tadd.spv");
 pub const RESIDUAL: &[u8] = include_bytes!("shaders/residual.spv");
 pub const GATE: &[u8] = include_bytes!("shaders/gate.spv");
+pub const ECOL: &[u8] = include_bytes!("shaders/ecol.spv");
+pub const ESTATS: &[u8] = include_bytes!("shaders/estats.spv");
+pub const ESTATSEND: &[u8] = include_bytes!("shaders/estatsend.spv");
+pub const EBIAS: &[u8] = include_bytes!("shaders/ebias.spv");
 
 #[cfg(test)]
 mod tests {

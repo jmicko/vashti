@@ -1,8 +1,8 @@
 diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
-index a2bfdb6..1539f52 100644
+index a2bfdb6..efe7186 100644
 --- a/include/stable-diffusion.h
 +++ b/include/stable-diffusion.h
-@@ -503,6 +503,69 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
+@@ -503,6 +503,76 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
  
  SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
  SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
@@ -69,6 +69,13 @@ index a2bfdb6..1539f52 100644
 +} sd_kuno_text_t;
 +typedef bool (*sd_kuno_text_cb_t)(const sd_kuno_text_t* text, float* hidden, void* data);
 +SD_API void sd_kuno_set_text_encoder(sd_ctx_t* sd_ctx, sd_kuno_text_cb_t encoder, void* data);
++// Kuno can encode single frames for the MiniMax H3 video VAE in Rust. `pixels` is one frame
++// ([3][height][width], values in 0..1); `latent` receives the encoder's latent means
++// ([24][height / 16][width / 16]), before the diffusion model's normalization. When the
++// encoder returns false the engine encodes the frame itself.
++typedef bool (*sd_kuno_frame_cb_t)(const float* pixels, int64_t width, int64_t height, float* latent,
++                                   void* data);
++SD_API void sd_kuno_set_frame_encoder(sd_ctx_t* sd_ctx, sd_kuno_frame_cb_t encoder, void* data);
  SD_API void free_sd_audio(sd_audio_t* audio);
  
  SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
@@ -908,7 +915,7 @@ index ed7c5ac..d59996e 100644
                  return build_graph(*params.x,
                                     *params.timesteps,
 diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
-index c82b9d7..1d5f3cb 100644
+index c82b9d7..01add95 100644
 --- a/src/model/diffusion/model.hpp
 +++ b/src/model/diffusion/model.hpp
 @@ -6,6 +6,7 @@
@@ -919,7 +926,7 @@ index c82b9d7..1d5f3cb 100644
  #include "core/tensor_ggml.hpp"
  #include "model/common/rope_circular.hpp"
  #include "model_manager.h"
-@@ -111,6 +112,14 @@ struct MiniMaxH3ReferenceBlock {
+@@ -111,6 +112,17 @@ struct MiniMaxH3ReferenceBlock {
      int32_t audio_index         = -1;
  };
  
@@ -930,11 +937,14 @@ index c82b9d7..1d5f3cb 100644
 +// Kuno: optional external MiniMax H3 text encoder (see sd_kuno_set_text_encoder).
 +inline sd_kuno_text_cb_t kuno_minimax_h3_text = nullptr;
 +inline void* kuno_minimax_h3_text_data        = nullptr;
++// Kuno: optional external single-frame video encoder (see sd_kuno_set_frame_encoder).
++inline sd_kuno_frame_cb_t kuno_minimax_h3_frame = nullptr;
++inline void* kuno_minimax_h3_frame_data         = nullptr;
 +
  struct MiniMaxH3DiffusionExtra {
      const sd::Tensor<int32_t>* text_token_tags                    = nullptr;
      const sd::Tensor<int32_t>* keyframe_indices                   = nullptr;
-@@ -196,6 +205,10 @@ public:
+@@ -196,6 +208,10 @@ public:
          : GGMLRunner(backend, weight_manager),
            prefix(prefix) {}
  
@@ -1211,10 +1221,34 @@ index da59cfa..b98f6c4 100644
                                                   ggml_tensor* image,
                                                   const LLMVisionConfig& vision_params) {
 diff --git a/src/model/vae/minimax_h3_vae.hpp b/src/model/vae/minimax_h3_vae.hpp
-index 7775664..3200042 100644
+index 7775664..209f1dc 100644
 --- a/src/model/vae/minimax_h3_vae.hpp
 +++ b/src/model/vae/minimax_h3_vae.hpp
-@@ -625,6 +625,7 @@ namespace MiniMaxH3VAE {
+@@ -12,6 +12,7 @@
+ 
+ #include "model/common/rope.hpp"
+ #include "model/diffusion/dit.hpp"
++#include "model/diffusion/model.hpp"
+ #include "model/vae/vae.hpp"
+ 
+ namespace MiniMaxH3VAE {
+@@ -607,6 +608,15 @@ namespace MiniMaxH3VAE {
+             auto input  = ensure_video_shape(x);
+             auto tiling = h3_tiling(tiling_params);
+             if (input.shape()[2] == 1) {
++                if (kuno_minimax_h3_frame != nullptr && input.dim() == 5 && input.shape()[3] == 3 &&
++                    input.shape()[4] == 1) {
++                    // Kuno encodes the whole frame; the tiled path below keeps per-tile norm statistics.
++                    const int64_t w = input.shape()[0], h = input.shape()[1];
++                    sd::Tensor<float> latent({w / 16, h / 16, 1, 24, 1});
++                    if (kuno_minimax_h3_frame(input.data(), w, h, latent.data(), kuno_minimax_h3_frame_data)) {
++                        return latent;
++                    }
++                }
+                 auto encoded = VAE::encode(n_threads, input, tiling, circular_x, circular_y);
+                 if (!encoded.empty() && encoded.shape()[2] > 1) {
+                     encoded = sd::ops::slice(encoded,
+@@ -625,6 +635,7 @@ namespace MiniMaxH3VAE {
                  input = repeat_last_frame(input, pad);
              }
              auto plan   = make_vae_temporal_tile_plan(input.shape()[2], {17, 0});
@@ -1222,7 +1256,7 @@ index 7775664..3200042 100644
              auto result = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& chunk, const VAETemporalTile& tile) {
                  SD_UNUSED(tile);
                  return VAE::encode(n_threads, chunk, tiling, circular_x, circular_y);
-@@ -688,6 +689,7 @@ namespace MiniMaxH3VAE {
+@@ -688,6 +699,7 @@ namespace MiniMaxH3VAE {
                  input.shape()[2],
                  {static_cast<int>(tokens_per_chunk + token_overlap), static_cast<int>(token_overlap)});
              GGML_ASSERT(plan.tiles.size() == static_cast<size_t>(num_chunks));
@@ -1780,10 +1814,10 @@ index 2fcff4c..4eeb979 100644
                              (int)audio_latent.shape()[0],
                              (int)audio_latent.shape()[1],
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
-index b13c055..3c881fc 100644
+index b13c055..fadc616 100644
 --- a/src/stable-diffusion.cpp
 +++ b/src/stable-diffusion.cpp
-@@ -662,6 +662,42 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
+@@ -662,6 +662,49 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
      free(sd_ctx);
  }
  
@@ -1820,6 +1854,13 @@ index b13c055..3c881fc 100644
 +    if (sd_ctx && sd_ctx->sd) {
 +        kuno_minimax_h3_text      = encoder;
 +        kuno_minimax_h3_text_data = data;
++    }
++}
++
++SD_API void sd_kuno_set_frame_encoder(sd_ctx_t* sd_ctx, sd_kuno_frame_cb_t encoder, void* data) {
++    if (sd_ctx && sd_ctx->sd) {
++        kuno_minimax_h3_frame      = encoder;
++        kuno_minimax_h3_frame_data = data;
 +    }
 +}
 +

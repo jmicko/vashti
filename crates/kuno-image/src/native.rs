@@ -137,6 +137,7 @@ unsafe extern "C" {
         >,
         evaluate_dit: Option<extern "C" fn(*const DitStep, *mut f32, *mut c_void) -> bool>,
         encode_text: Option<extern "C" fn(*const TextInput, *mut f32, *mut c_void) -> bool>,
+        encode_frame: Option<extern "C" fn(*const f32, i64, i64, *mut f32, *mut c_void) -> bool>,
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
         phase: extern "C" fn(i32, i32, i32, *mut c_void),
         userdata: *mut c_void,
@@ -449,6 +450,78 @@ fn text_encoder(
     let encoder = std::sync::Arc::new(GpuTextEncoder::new(&gpu, TextEncoder::open(model)?)?);
     *kept = Some((model.to_owned(), encoder.clone()));
     Ok(encoder)
+}
+/// The Rust single-frame video encoder and the file it reads, kept in video memory (0.4 GB).
+static FRAME_ENCODER: std::sync::Mutex<
+    Option<(
+        std::path::PathBuf,
+        std::sync::Arc<crate::engine::encoder_gpu::GpuEncoder>,
+    )>,
+> = std::sync::Mutex::new(None);
+fn frame_encoder(
+    pci: &str,
+    model: &std::path::Path,
+) -> Result<std::sync::Arc<crate::engine::encoder_gpu::GpuEncoder>, &'static str> {
+    use crate::engine::{encoder_gpu::GpuEncoder, gpu, video_encoder::VideoEncoder};
+    let mut kept = FRAME_ENCODER.lock().map_err(|_| "model_state_lost")?;
+    if let Some((path, encoder)) = kept.as_ref()
+        && path == model
+    {
+        return Ok(encoder.clone());
+    }
+    *kept = None;
+    let gpu = gpu::Gpu::open(gpu::Select::Pci(pci.to_owned()))?;
+    let encoder = std::sync::Arc::new(GpuEncoder::new(&gpu, &VideoEncoder::open(model)?)?);
+    *kept = Some((model.to_owned(), encoder.clone()));
+    Ok(encoder)
+}
+/// Encodes one start, end or reference frame with the Rust GPU encoder. Returning false
+/// hands the frame back to the C++ engine.
+extern "C" fn encode_frame(
+    pixels: *const f32,
+    width: i64,
+    height: i64,
+    latent: *mut f32,
+    data: *mut c_void,
+) -> bool {
+    use crate::engine::video_encoder::{SCALE, supported};
+    use crate::engine::video_vae::LATENT_CHANNELS;
+    // SAFETY: as receive_video_frame.
+    let out = unsafe { &mut *(data as *mut VideoOutput) };
+    let encoded = (|| -> Result<Vec<f32>, &'static str> {
+        let (w, h) = (
+            usize::try_from(width).map_err(|_| "invalid_input")?,
+            usize::try_from(height).map_err(|_| "invalid_input")?,
+        );
+        if pixels.is_null() || latent.is_null() || !supported(w, h) || w * h > 4096 * 4096 {
+            return Err("invalid_input");
+        }
+        // SAFETY: the shim passes one frame of 3 * width * height values.
+        let pixels = unsafe { std::slice::from_raw_parts(pixels, 3 * w * h) };
+        let started = std::time::Instant::now();
+        let encoder = frame_encoder(&out.pci, &out.video_model)?;
+        let loaded = started.elapsed();
+        let values = encoder.encode(pixels, w, h)?;
+        eprintln!(
+            "kuno-image: rust frame encode: setup {} ms, encode {} ms",
+            loaded.as_millis(),
+            (started.elapsed() - loaded).as_millis()
+        );
+        debug_assert_eq!(values.len(), LATENT_CHANNELS * (w / SCALE) * (h / SCALE));
+        Ok(values)
+    })();
+    match encoded {
+        Ok(mut values) => {
+            // SAFETY: `latent` holds 24 * (width / 16) * (height / 16) values, as `encode` returns.
+            unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), latent, values.len()) };
+            values.iter_mut().for_each(|v| *v = 0.0);
+            true
+        }
+        Err(code) => {
+            eprintln!("kuno-image: rust frame encoder unavailable ({code}); engine encodes");
+            false
+        }
+    }
 }
 /// Runs the text encoder's language model with the Rust GPU encoder. Returning false hands
 /// the prompt back to the C++ engine.
@@ -998,6 +1071,7 @@ impl Session {
                 Some(decode_video_latent),
                 cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
                 cfg!(feature = "rust-dit").then_some(encode_text as _),
+                Some(encode_frame),
                 Some(video_preview),
                 video_phase,
                 &mut output as *mut _ as *mut c_void,
