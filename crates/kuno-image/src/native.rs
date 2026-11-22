@@ -1,6 +1,8 @@
 //! Private subprocess entry only. Native callbacks are process-global; never
 //! run concurrent generations or invoke this inside the long-lived gateway.
 use kuno_protocol::ImageRecipe;
+
+mod pipeline;
 use std::{
     ffi::{CString, c_char, c_void},
     path::Path,
@@ -691,8 +693,25 @@ extern "C" fn encode_text(text: *const TextInput, hidden: *mut f32, data: *mut c
 }
 /// Evaluates the diffusion transformer with the Rust GPU DiT. Returning false hands the
 /// step back to the C++ engine, for this and every later step of the clip.
+/// The clip's DiT: the kept one, or this request's read placed in video memory.
+fn placed_dit(out: &mut VideoOutput) -> Result<&crate::engine::dit_gpu::GpuDit, &'static str> {
+    if out.dit.is_none() {
+        out.dit = resident_dit(&out.dit_model);
+    }
+    if out.dit.is_none() {
+        let host = dit_host(&out.pci, &out.dit_model)?;
+        let started = std::time::Instant::now();
+        out.dit = Some(crate::engine::dit_gpu::GpuDit::place(host)?);
+        release_dit_host();
+        eprintln!(
+            "kuno-image: rust dit: place {} ms",
+            started.elapsed().as_millis()
+        );
+    }
+    out.dit.as_ref().ok_or("gpu_failed")
+}
 extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_void) -> bool {
-    use crate::engine::{dit, dit_gpu::GpuDit};
+    use crate::engine::dit;
     // SAFETY: as receive_video_frame; the shim passes a live step whose pointers hold the
     // counts and shapes it states, and `result` has the packed latent's size.
     let (out, step) = unsafe { (&mut *(data as *mut VideoOutput), &*step) };
@@ -783,20 +802,7 @@ extern "C" fn evaluate_dit(step: *const DitStep, result: *mut f32, data: *mut c_
                 audio: index(triple[2], audios.len())?,
             });
         }
-        if out.dit.is_none() {
-            out.dit = resident_dit(&out.dit_model);
-        }
-        if out.dit.is_none() {
-            let host = dit_host(&out.pci, &out.dit_model)?;
-            let started = std::time::Instant::now();
-            out.dit = Some(GpuDit::place(host)?);
-            release_dit_host();
-            eprintln!(
-                "kuno-image: rust dit: place {} ms",
-                started.elapsed().as_millis()
-            );
-        }
-        let network = out.dit.as_ref().ok_or("gpu_failed")?;
+        let network = placed_dit(out)?;
         let started = std::time::Instant::now();
         let mut values = network.forward(&dit::Step {
             packed,
@@ -1140,7 +1146,27 @@ impl Session {
                 }
             })
         };
-        let code = unsafe {
+        let code = if cfg!(feature = "rust-dit") {
+            let request = pipeline::Request {
+                prompt: &recipe.prompt,
+                width: recipe.width as usize,
+                height: recipe.height as usize,
+                frames: recipe.frames as usize,
+                steps: steps as usize,
+                seed,
+                first: &inputs.first,
+                last: &inputs.last,
+                references: &inputs.references,
+            };
+            match pipeline::generate(self.native.as_ptr(), &request, &mut output) {
+                Ok(()) => 0,
+                Err(pipeline::Failure::Cancelled) => 7,
+                Err(pipeline::Failure::Failed(code)) => {
+                    eprintln!("kuno-image: video failed ({code})");
+                    4
+                }
+            }
+        } else { unsafe {
             kuno_minimax_session_generate(
                 self.native.as_ptr(),
                 i32::from(recipe.uses_reference_model()),
@@ -1166,7 +1192,7 @@ impl Session {
                 video_phase,
                 &mut output as *mut _ as *mut c_void,
             )
-        };
+        } };
         drop(references);
         drop(inputs);
         output.dit = None;

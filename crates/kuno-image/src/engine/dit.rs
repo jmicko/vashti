@@ -36,7 +36,7 @@ const VISUAL_CONDITION_TIME: f32 = 0.999;
 
 /// Per-channel mean and deviation of the video decoder's latents; the DiT works on
 /// normalized ones.
-const LATENT_MEAN: [f32; VIDEO_CHANNELS] = [
+pub(crate) const LATENT_MEAN: [f32; VIDEO_CHANNELS] = [
     0.858_090_34,
     -0.960_659_15,
     1.066_164,
@@ -62,7 +62,7 @@ const LATENT_MEAN: [f32; VIDEO_CHANNELS] = [
     0.228_640_93,
     0.705_603_2,
 ];
-const LATENT_STD: [f32; VIDEO_CHANNELS] = [
+pub(crate) const LATENT_STD: [f32; VIDEO_CHANNELS] = [
     1.222_377_4,
     1.276_726_4,
     1.683_177_5,

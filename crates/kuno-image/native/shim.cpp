@@ -125,6 +125,14 @@ extern "C" int kuno_qwen_session_new(const char* directory, const char* pci, voi
     } catch (...) { return 5; }
 }
 
+// Frees the engine's models (Rust runs MiniMax H3 video without them); the next image
+// request loads its own again.
+extern "C" void kuno_qwen_session_release(void* opaque) {
+    auto* session = static_cast<KunoQwenSession*>(opaque);
+    if (session) { session->context.reset(); session->version = -1; }
+}
+// Whether SIGTERM or SIGINT asked the current request to stop.
+extern "C" bool kuno_image_cancel_requested() { return cancelled.load(std::memory_order_relaxed); }
 extern "C" void kuno_qwen_session_free(void* session) {
     delete static_cast<KunoQwenSession*>(session);
 }

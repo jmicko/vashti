@@ -32,8 +32,9 @@ paths from the environment.
 | Qwen3-VL text encoder (INT8, 50 layers) | 3.55 s per clip, of which 3.3 s copying 25.5 GB to the GPU | language model on the GPU with weights streamed from host memory: 2.55 s; the vision tower stays C++ | Rust, in the worker (dev build); text tokens 37 dB from the C++ engine |
 | Video encoder, single frames (start, end, reference images) | about 1.8 s per frame, in 256-pixel tiles | whole frame on the GPU: 106 to 128 ms for 832x544; 76 to 78 dB from exact | Rust, in the worker (dev build); 64.6 dB from the C++ engine's whole-frame encode; multi-frame (video reference) encodes stay C++ |
 | Vision tower (Qwen3-VL, single images) | about 0.39 s per image; 30 to 44 dB from exact | whole image on the GPU: 135 to 150 ms for 832x544; 44 to 58 dB from exact | Rust, in the worker (dev build); video-reference frame pairs stay C++ |
-| Tokenizer, audio encoder | C++ | not started | |
-| Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
+| Tokenizer (Qwen2 BPE) | C++ | Rust, id for id | done; 96 synthetic strings match the engine's own tokenizer |
+| Pipeline (latents, noise, schedule, Euler loop, previews, decode glue) | `video.cpp` | `native/pipeline.rs` | Rust, in the worker (dev build): MiniMax H3 video no longer calls the C++ engine |
+| Audio encoder, video references | C++ | not started | Kuno does not send audio or video references yet |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
 
 The audio decoder runs on CPU threads on purpose: the engine hands over the audio latent
@@ -921,6 +922,42 @@ The tower's weights (1.2 GB as half floats) are placed on a thread of their own 
 request has images, beside the text encoder's and the DiT's reads, and stay in video memory.
 Placing them goes straight from the file into upload memory (0.67 s). Run first and the text
 encoder's 24 GB read waited for it: that cost the first clip 3 s.
+
+## The pipeline in Rust (2026-11-22)
+
+`native/pipeline.rs` is the engine's `generate_video` for the requests Kuno makes, so MiniMax
+H3 video no longer calls the C++ engine (the worker frees the engine's context before a
+clip, so an earlier image job's models leave video memory):
+
+- Start and end frames, or reference pictures (resized nearest-neighbour to at most the
+  clip's area, multiples of 32), go through the Rust frame encoder, the latent mean and
+  deviation, and the engine's conditioning noise (`latent * 0.999 + philox * 0.001`, a
+  fresh Philox generator on the clip's seed for each).
+- The prompt is `<Picture n>: <|vision_start|>`, one `<|image_pad|>` per vision row,
+  `<|vision_end|>` for each picture, then the text, tokenized by `engine/tokenizer.rs`
+  (Qwen2's BPE, id for id with the engine) and encoded by the Rust vision tower and text
+  encoder. Text tokens are tagged 1, picture rows and their two markers 0.
+- The packed latent (24 video channels, the audio latent in further channels) starts as
+  PyTorch-compatible MT19937 noise on the seed (`engine/rng.rs`; the first sigma is 1).
+  Sigmas follow the discrete flow schedule with shift 12, and each step is the engine's
+  Euler update through its denoised estimate. Previews project the denoised middle frame
+  to RGB with the engine's fixed matrix; they also drive the sampling progress.
+- After the loop the audio channels leave the video schedule's scale (times 3/12), the
+  audio latent goes to the Rust audio decoder on CPU threads, and the video latent to the
+  Rust decoder; frames are converted to 8 bits as the engine does.
+
+Step inputs match the engine's exactly (noise, schedule, text rows, tags, keyframes) and
+its conditioning latents to 160 dB. The clips are not byte-identical to the hybrid path's:
+given identical inputs, the DiT's output differs (25 dB at the first step) while the C++
+engine's video context is live in the process. Each path is deterministic on its own (the
+same seed gives the same clip, also after an image job in the same worker), and the
+outputs are equally faithful (an image-to-video clip's first frame is 27.44 dB from the
+input image against 27.43 dB). The cause was not isolated; the engine's video context no
+longer exists in this path.
+
+Checked: all seven video modes, same-seed clips, an image job after video, cancellation
+(SIGTERM during sampling ends the request after the current step with `image_cancelled`).
+A warm image-to-video clip takes 38.3 s, the first 48.0 to 49.3 s, as before.
 
 ## Running the comparisons
 
