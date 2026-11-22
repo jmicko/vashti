@@ -9,6 +9,7 @@ pub mod gpu;
 pub mod safetensors;
 pub mod text_encoder;
 pub mod text_gpu;
+pub mod tokenizer;
 pub mod video_gpu;
 pub mod video_encoder;
 pub mod video_tiles;

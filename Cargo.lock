@@ -2791,6 +2791,7 @@ dependencies = [
  "base64 0.22.1",
  "cc",
  "crc32fast",
+ "fancy-regex",
  "flacenc",
  "flate2",
  "gemm",

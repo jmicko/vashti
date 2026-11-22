@@ -16,6 +16,8 @@ gemm = "0.19"
 ash = "0.38"
 libloading = "0.8"
 rayon = "1"
+# Qwen2 tokenizer pattern (lookahead), as in kuno-text.
+fancy-regex = "=0.11.0"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
 # Pure-Rust video output, only in the private worker build.
 rav1e = { version = "0.8", default-features = false, features = ["threading", "asm"], optional = true }
