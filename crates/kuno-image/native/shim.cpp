@@ -297,6 +297,8 @@ using DitEvaluator = bool (*)(const sd_kuno_dit_step_t*, float*, void*);
 using TextEncoder = bool (*)(const sd_kuno_text_t*, float*, void*);
 // Encodes one start, end or reference frame in Rust; false makes the engine encode it.
 using FrameEncoder = bool (*)(const float*, int64_t, int64_t, float*, void*);
+// Runs the vision tower on one image in Rust; false makes the engine run it.
+using VisionEncoder = bool (*)(const float*, int64_t, int64_t, float*, void*);
 struct KunoRgbImage { uint32_t width; uint32_t height; const uint8_t* data; };
 extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, const char* prompt,
     int width, int height, int frames, int fps, int steps, int64_t seed, const uint8_t* first_frame,
@@ -305,6 +307,7 @@ extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, 
     DitEvaluator evaluate_dit,
     TextEncoder encode_text,
     FrameEncoder encode_frame,
+    VisionEncoder encode_vision,
     PreviewReceiver preview_receiver,
     PhaseReceiver phase, void* userdata) {
     auto* session = static_cast<KunoQwenSession*>(opaque);
@@ -428,6 +431,7 @@ extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, 
                     sd_kuno_set_dit(context, nullptr, nullptr);
                     sd_kuno_set_text_encoder(context, nullptr, nullptr);
                     sd_kuno_set_frame_encoder(context, nullptr, nullptr);
+                    sd_kuno_set_vision_encoder(context, nullptr, nullptr);
                 }
             } latent_receiver{state.context};
             sd_kuno_set_audio_latent_receiver(state.context, receive_audio_latent, userdata);
@@ -435,6 +439,7 @@ extern "C" int kuno_minimax_session_generate(void* opaque, int reference_model, 
             sd_kuno_set_dit(state.context, evaluate_dit, userdata);
             sd_kuno_set_text_encoder(state.context, encode_text, userdata);
             sd_kuno_set_frame_encoder(state.context, encode_frame, userdata);
+            sd_kuno_set_vision_encoder(state.context, encode_vision, userdata);
             const bool ok = generate_video(state.context, &request, &output.frames, &output.count, &output.audio, &fps_out);
             bool frames_valid = ok && output.frames && output.count == frames && fps_out == fps;
             for (int i = 0; frames_valid && i < output.count; ++i) {

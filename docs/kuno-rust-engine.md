@@ -31,7 +31,8 @@ paths from the environment.
 | DiT sampling (INT8, 8 or 4 steps) | 3.35 s per step (66 ms per block); warm 2.3 s clip 47.7 s | whole network and text refiner on the GPU, follows the C++ sampler; 3.40 s per step (66 ms per block); warm clip 48.1 s, first clip 56 to 60 s (C++ 60.9 s) | correct, within 2% per step; kept in video memory between clips; with the machine-code decoder and the Rust text encoder a warm clip is 40.2 to 40.3 s |
 | Qwen3-VL text encoder (INT8, 50 layers) | 3.55 s per clip, of which 3.3 s copying 25.5 GB to the GPU | language model on the GPU with weights streamed from host memory: 2.55 s; the vision tower stays C++ | Rust, in the worker (dev build); text tokens 37 dB from the C++ engine |
 | Video encoder, single frames (start, end, reference images) | about 1.8 s per frame, in 256-pixel tiles | whole frame on the GPU: 106 to 128 ms for 832x544; 76 to 78 dB from exact | Rust, in the worker (dev build); 64.6 dB from the C++ engine's whole-frame encode; multi-frame (video reference) encodes stay C++ |
-| Vision tower, tokenizer, audio encoder | C++ | not started | |
+| Vision tower (Qwen3-VL, single images) | about 0.39 s per image; 30 to 44 dB from exact | whole image on the GPU: 135 to 150 ms for 832x544; 44 to 58 dB from exact | Rust, in the worker (dev build); video-reference frame pairs stay C++ |
+| Tokenizer, audio encoder | C++ | not started | |
 | Pipeline glue (sampler, latents, keyframes) | `video.cpp` | not started | moves with the DiT |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
 
@@ -871,6 +872,56 @@ The encoder's weights stay in video memory (0.4 GB) once a frame has needed them
 clips never place them. Multi-frame encodes (video references) and sizes not a multiple of 16
 fall back to the C++ engine.
 
+## Vision tower (2026-11-22)
+
+Images in a MiniMax H3 prompt (the start frame of image-to-video, reference pictures) are
+read by Qwen3-VL's vision tower: a ViT of 27 pre-norm blocks (width 1152, 16 heads of 72,
+LayerNorm, tanh GELU, 4304-wide feed-forward) over 16x16 patches, about 0.6 billion BF16
+weights. Positions enter twice, as a learned 48x48 table interpolated bilinearly to the patch
+grid and as a 2D rotary turn (rows on a head's first 18 channel pairs, columns on the next
+18; pair i is channels i and i + 36). Patches are ordered in 2x2 blocks, so the final merger
+(LayerNorm per patch, then two linear layers around an erf GELU) reads four neighbouring rows
+as one 4608-wide row and emits one 5120-wide row per 32x32 pixels; three deep-stack mergers
+do the same after blocks 8, 16 and 24, with the LayerNorm over the merged row, and the text
+encoder adds their rows after its first three layers. An 832x544 frame is 1768 patches and
+442 rows.
+
+`vision.rs` holds the layout, the preprocessing (patch rows, interpolated positions, rotary
+angles) and the exact form (f64). `vision_gpu.rs` keeps the patch stream f32 (patches padded
+to 512, so merged rows fill whole 128-row tiles) and runs every linear layer in `gemm16` on
+half-float rows. Five small kernels do the rest: `vnorm` (LayerNorm to half floats), `vbias`
+(bias, then the residual, a GELU or the output), `vheads` (query/key/value split with the
+rotary turn), `vsoft` (softmax over one head's scores) and `vgather` (attention output laid
+out for the projection). Attention runs head by head as two products, scores and then
+weighted values, so its scratch grows with the square of the patch count; images above 8192
+patches fall back to the C++ engine. An image is one submission.
+
+The engine patch adds `sd_kuno_set_vision_encoder`: the image as the engine resized it for
+the tower (values in -1..1) is offered to Rust, which returns the four sets of rows.
+
+Accuracy, from an in-worker comparison on a real 832x544 start frame (main rows, then the
+three deep-stack sets):
+
+| | Main | Deep-stack 1 | 2 | 3 |
+|---|---|---|---|---|
+| Rust, from exact | 44.1 dB | 57.7 dB | 52.2 dB | 49.1 dB |
+| C++ engine, from exact | 30.4 dB | 43.8 dB | 40.1 dB | 30.4 dB |
+
+The Rust tower is 14 dB closer to the model on every set; the two differ by exactly the
+engine's own error. On synthetic images the GPU form is 53 to 68 dB from exact.
+
+| 2.3 s image-to-video clip, dev worker | C++ tower | Rust tower |
+|---|---|---|
+| Tower | about 0.39 s | 150 ms (237 ms on the first clip) |
+| Warm clip, first step at | 6.77 s | 6.55 s |
+| Warm clip | 38.3 to 38.6 s | 38.4 s |
+| First clip | 48.2 s | 48.6 s (within run-to-run noise of the weight reads) |
+
+The tower's weights (1.2 GB as half floats) are placed on a thread of their own when a
+request has images, beside the text encoder's and the DiT's reads, and stay in video memory.
+Placing them goes straight from the file into upload memory (0.67 s). Run first and the text
+encoder's 24 GB read waited for it: that cost the first clip 3 s.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
@@ -905,6 +956,13 @@ KUNO_DIT=<model> KUNO_DIT_GOLDEN=<dir>/step0 \
 cargo test --release -p kuno-image engine::dit_gpu -- --include-ignored --nocapture --test-threads 1
 KUNO_DIT=<model> KUNO_DIT_STEPS=<dir with step0.. of one clip> KUNO_VIDEO_VAE=<decoder> \
 cargo test --release -p kuno-image sampling_follows -- --include-ignored --nocapture
+```
+
+Vision tower against the exact form (two small images, then the time of an 832x544 frame):
+
+```
+KUNO_TEXT_ENCODER=<models>/qwen3vl_32b_minimax_h3_int8_convrot.safetensors \
+cargo test --release -p kuno-image engine::vision -- --include-ignored --nocapture
 ```
 
 Text encoder (the reference test reads 24 GB and takes about two minutes on the CPU):

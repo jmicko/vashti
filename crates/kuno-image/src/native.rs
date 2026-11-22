@@ -138,6 +138,7 @@ unsafe extern "C" {
         evaluate_dit: Option<extern "C" fn(*const DitStep, *mut f32, *mut c_void) -> bool>,
         encode_text: Option<extern "C" fn(*const TextInput, *mut f32, *mut c_void) -> bool>,
         encode_frame: Option<extern "C" fn(*const f32, i64, i64, *mut f32, *mut c_void) -> bool>,
+        encode_vision: Option<extern "C" fn(*const f32, i64, i64, *mut f32, *mut c_void) -> bool>,
         preview: Option<extern "C" fn(i32, *const u8, u32, u32, u32, *mut c_void)>,
         phase: extern "C" fn(i32, i32, i32, *mut c_void),
         userdata: *mut c_void,
@@ -519,6 +520,87 @@ extern "C" fn encode_frame(
         }
         Err(code) => {
             eprintln!("kuno-image: rust frame encoder unavailable ({code}); engine encodes");
+            false
+        }
+    }
+}
+/// The Rust vision tower and the file it reads, kept in video memory (1.2 GB).
+static VISION: std::sync::Mutex<
+    Option<(
+        std::path::PathBuf,
+        std::sync::Arc<crate::engine::vision_gpu::GpuVision>,
+    )>,
+> = std::sync::Mutex::new(None);
+fn vision(
+    pci: &str,
+    model: &std::path::Path,
+) -> Result<std::sync::Arc<crate::engine::vision_gpu::GpuVision>, &'static str> {
+    use crate::engine::{gpu, vision::Vision, vision_gpu::GpuVision};
+    let mut kept = VISION.lock().map_err(|_| "model_state_lost")?;
+    if let Some((path, tower)) = kept.as_ref()
+        && path == model
+    {
+        return Ok(tower.clone());
+    }
+    *kept = None;
+    let gpu = gpu::Gpu::open(gpu::Select::Pci(pci.to_owned()))?;
+    let tower = std::sync::Arc::new(GpuVision::new(&gpu, &Vision::open(model)?)?);
+    *kept = Some((model.to_owned(), tower.clone()));
+    Ok(tower)
+}
+/// Runs the vision tower on one image the engine resized for it. Returning false hands the
+/// image back to the C++ engine.
+extern "C" fn encode_vision(
+    pixels: *const f32,
+    width: i64,
+    height: i64,
+    out_rows: *mut f32,
+    data: *mut c_void,
+) -> bool {
+    use crate::engine::vision::{OUT, PATCH, supported};
+    use crate::engine::vision_gpu::MAX_PATCHES;
+    // SAFETY: as receive_video_frame.
+    let out = unsafe { &mut *(data as *mut VideoOutput) };
+    let encoded = (|| -> Result<[Vec<f32>; 4], &'static str> {
+        let (w, h) = (
+            usize::try_from(width).map_err(|_| "invalid_input")?,
+            usize::try_from(height).map_err(|_| "invalid_input")?,
+        );
+        if pixels.is_null()
+            || out_rows.is_null()
+            || !supported(w, h)
+            || (w / PATCH) * (h / PATCH) > MAX_PATCHES
+        {
+            return Err("invalid_input");
+        }
+        // SAFETY: the shim passes one image of 3 * width * height values.
+        let pixels = unsafe { std::slice::from_raw_parts(pixels, 3 * w * h) };
+        let started = std::time::Instant::now();
+        let tower = vision(&out.pci, &out.text_model)?;
+        let loaded = started.elapsed();
+        let sets = tower.encode(pixels, w, h)?;
+        eprintln!(
+            "kuno-image: rust vision: setup {} ms, encode {} ms",
+            loaded.as_millis(),
+            (started.elapsed() - loaded).as_millis()
+        );
+        debug_assert!(sets.iter().all(|s| s.len() == (w / 32) * (h / 32) * OUT));
+        Ok(sets)
+    })();
+    match encoded {
+        Ok(mut sets) => {
+            let mut at = 0;
+            for set in &mut sets {
+                // SAFETY: `out_rows` holds four sets of (width / 32) * (height / 32) * 5120
+                // values, the lengths `encode` returns.
+                unsafe { std::ptr::copy_nonoverlapping(set.as_ptr(), out_rows.add(at), set.len()) };
+                at += set.len();
+                set.iter_mut().for_each(|v| *v = 0.0);
+            }
+            true
+        }
+        Err(code) => {
+            eprintln!("kuno-image: rust vision unavailable ({code}); engine encodes");
             false
         }
     }
@@ -1037,7 +1119,14 @@ impl Session {
                 output.dit_model.clone(),
                 output.video_model.clone(),
             );
+            // The vision tower (when the request has images) on a thread of its own: it is
+            // needed first, and waiting for it would delay the text encoder's longer read.
+            let sees = !inputs.first.is_empty() || !inputs.last.is_empty() || !references.is_empty();
             std::thread::spawn(move || {
+                let tower = sees.then(|| {
+                    let (pci, text) = (pci.clone(), text.clone());
+                    std::thread::spawn(move || drop(vision(&pci, &text)))
+                });
                 let texts = cfg!(feature = "rust-dit").then(|| {
                     let pci = pci.clone();
                     std::thread::spawn(move || drop(text_encoder(&pci, &text)))
@@ -1046,8 +1135,8 @@ impl Session {
                     drop(dit_host(&pci, &dit));
                 }
                 drop(video_host(&pci, &video));
-                if let Some(texts) = texts {
-                    let _ = texts.join();
+                for thread in [tower, texts].into_iter().flatten() {
+                    let _ = thread.join();
                 }
             })
         };
@@ -1072,6 +1161,7 @@ impl Session {
                 cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
                 cfg!(feature = "rust-dit").then_some(encode_text as _),
                 Some(encode_frame),
+                Some(encode_vision),
                 Some(video_preview),
                 video_phase,
                 &mut output as *mut _ as *mut c_void,

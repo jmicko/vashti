@@ -1,8 +1,8 @@
 diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
-index a2bfdb6..efe7186 100644
+index a2bfdb6..bd7635b 100644
 --- a/include/stable-diffusion.h
 +++ b/include/stable-diffusion.h
-@@ -503,6 +503,76 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
+@@ -503,6 +503,84 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
  
  SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
  SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
@@ -76,11 +76,19 @@ index a2bfdb6..efe7186 100644
 +typedef bool (*sd_kuno_frame_cb_t)(const float* pixels, int64_t width, int64_t height, float* latent,
 +                                   void* data);
 +SD_API void sd_kuno_set_frame_encoder(sd_ctx_t* sd_ctx, sd_kuno_frame_cb_t encoder, void* data);
++// Kuno can run the MiniMax H3 text encoder's vision tower on single images in Rust.
++// `pixels` is the image as the engine resized it for the tower ([3][height][width], values
++// in -1..1); `out` receives four [tokens][hidden] sets, tokens = (width / 32) * (height / 32):
++// the image's rows for the language model, then the deep-stack rows in layer order. When
++// the encoder returns false the engine runs the tower itself.
++typedef bool (*sd_kuno_vision_cb_t)(const float* pixels, int64_t width, int64_t height, float* out,
++                                    void* data);
++SD_API void sd_kuno_set_vision_encoder(sd_ctx_t* sd_ctx, sd_kuno_vision_cb_t encoder, void* data);
  SD_API void free_sd_audio(sd_audio_t* audio);
  
  SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
 diff --git a/src/conditioning/conditioner.hpp b/src/conditioning/conditioner.hpp
-index 6b750f9..a3f6254 100644
+index 6b750f9..f9b0fd4 100644
 --- a/src/conditioning/conditioner.hpp
 +++ b/src/conditioning/conditioner.hpp
 @@ -156,6 +156,7 @@ public:
@@ -194,6 +202,60 @@ index 6b750f9..a3f6254 100644
          if (hidden_states.empty()) {
              LOG_ERROR("LLM prompt encoding failed");
              return {};
+@@ -2347,6 +2412,31 @@ struct LLMEmbedder : public Conditioner {
+                     return resized;
+                 };
+ 
++                // Kuno runs the tower for single images when it can; the engine otherwise.
++                auto vision_outputs = [&](const sd::Tensor<float>& resized) -> std::vector<sd::Tensor<float>> {
++                    if (kuno_minimax_h3_vision != nullptr && resized.dim() >= 3 && resized.shape()[2] == 3 &&
++                        (resized.dim() == 3 || resized.shape()[3] == 1)) {
++                        const int64_t w = resized.shape()[0], h = resized.shape()[1];
++                        const int64_t tokens = (w / factor) * (h / factor);
++                        const int64_t hidden = llm->config.hidden_size;
++                        const size_t sets    = llm->config.vision.deepstack_visual_indexes.size() + 1;
++                        if (sets == 4) {
++                            std::vector<float> out(static_cast<size_t>(tokens * hidden) * sets);
++                            if (kuno_minimax_h3_vision(resized.data(), w, h, out.data(), kuno_minimax_h3_vision_data)) {
++                                std::vector<sd::Tensor<float>> outputs;
++                                for (size_t i = 0; i < sets; ++i) {
++                                    sd::Tensor<float> t({hidden, tokens});
++                                    std::copy(out.begin() + i * tokens * hidden, out.begin() + (i + 1) * tokens * hidden, t.data());
++                                    outputs.push_back(std::move(t));
++                                }
++                                std::fill(out.begin(), out.end(), 0.f);
++                                return outputs;
++                            }
++                        }
++                    }
++                    return llm->encode_image_outputs(n_threads, resized, false);
++                };
++
+                 auto add_vision_outputs = [&](std::vector<sd::Tensor<float>> image_outputs,
+                                               int grid_h,
+                                               int grid_w) {
+@@ -2390,9 +2480,7 @@ struct LLMEmbedder : public Conditioner {
+                             GGML_ASSERT(item.frames.size() == 1);
+                             auto resized = resize_for_vision(item.frames[0]);
+                             prompt += "<Picture " + std::to_string(++picture_index) + ">: ";
+-                            if (!add_vision_outputs(llm->encode_image_outputs(n_threads,
+-                                                                              resized,
+-                                                                              false),
++                            if (!add_vision_outputs(vision_outputs(resized),
+                                                     static_cast<int>(resized.shape()[1]) / patch_size,
+                                                     static_cast<int>(resized.shape()[0]) / patch_size)) {
+                                 return {};
+@@ -2433,9 +2521,7 @@ struct LLMEmbedder : public Conditioner {
+                     for (size_t i = 0; i < conditioner_params.ref_images->size(); ++i) {
+                         auto resized = resize_for_vision((*conditioner_params.ref_images)[i]);
+                         prompt += "<Picture " + std::to_string(i + 1) + ">: ";
+-                        if (!add_vision_outputs(llm->encode_image_outputs(n_threads,
+-                                                                          resized,
+-                                                                          false),
++                        if (!add_vision_outputs(vision_outputs(resized),
+                                                 static_cast<int>(resized.shape()[1]) / patch_size,
+                                                 static_cast<int>(resized.shape()[0]) / patch_size)) {
+                             return {};
 diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
 index 7432416..c149352 100644
 --- a/src/core/ggml_extend.cpp
@@ -915,7 +977,7 @@ index ed7c5ac..d59996e 100644
                  return build_graph(*params.x,
                                     *params.timesteps,
 diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
-index c82b9d7..01add95 100644
+index c82b9d7..b236c6b 100644
 --- a/src/model/diffusion/model.hpp
 +++ b/src/model/diffusion/model.hpp
 @@ -6,6 +6,7 @@
@@ -926,7 +988,7 @@ index c82b9d7..01add95 100644
  #include "core/tensor_ggml.hpp"
  #include "model/common/rope_circular.hpp"
  #include "model_manager.h"
-@@ -111,6 +112,17 @@ struct MiniMaxH3ReferenceBlock {
+@@ -111,6 +112,20 @@ struct MiniMaxH3ReferenceBlock {
      int32_t audio_index         = -1;
  };
  
@@ -940,11 +1002,14 @@ index c82b9d7..01add95 100644
 +// Kuno: optional external single-frame video encoder (see sd_kuno_set_frame_encoder).
 +inline sd_kuno_frame_cb_t kuno_minimax_h3_frame = nullptr;
 +inline void* kuno_minimax_h3_frame_data         = nullptr;
++// Kuno: optional external vision tower for single images (see sd_kuno_set_vision_encoder).
++inline sd_kuno_vision_cb_t kuno_minimax_h3_vision = nullptr;
++inline void* kuno_minimax_h3_vision_data          = nullptr;
 +
  struct MiniMaxH3DiffusionExtra {
      const sd::Tensor<int32_t>* text_token_tags                    = nullptr;
      const sd::Tensor<int32_t>* keyframe_indices                   = nullptr;
-@@ -196,6 +208,10 @@ public:
+@@ -196,6 +211,10 @@ public:
          : GGMLRunner(backend, weight_manager),
            prefix(prefix) {}
  
@@ -1814,10 +1879,10 @@ index 2fcff4c..4eeb979 100644
                              (int)audio_latent.shape()[0],
                              (int)audio_latent.shape()[1],
 diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
-index b13c055..fadc616 100644
+index b13c055..5a2e050 100644
 --- a/src/stable-diffusion.cpp
 +++ b/src/stable-diffusion.cpp
-@@ -662,6 +662,49 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
+@@ -662,6 +662,56 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
      free(sd_ctx);
  }
  
@@ -1861,6 +1926,13 @@ index b13c055..fadc616 100644
 +    if (sd_ctx && sd_ctx->sd) {
 +        kuno_minimax_h3_frame      = encoder;
 +        kuno_minimax_h3_frame_data = data;
++    }
++}
++
++SD_API void sd_kuno_set_vision_encoder(sd_ctx_t* sd_ctx, sd_kuno_vision_cb_t encoder, void* data) {
++    if (sd_ctx && sd_ctx->sd) {
++        kuno_minimax_h3_vision      = encoder;
++        kuno_minimax_h3_vision_data = data;
 +    }
 +}
 +

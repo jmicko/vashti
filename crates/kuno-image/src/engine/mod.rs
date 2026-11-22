@@ -13,4 +13,6 @@ pub mod video_gpu;
 pub mod video_encoder;
 pub mod video_tiles;
 pub mod video_vae;
+pub mod vision;
+pub mod vision_gpu;
 pub mod xe2;

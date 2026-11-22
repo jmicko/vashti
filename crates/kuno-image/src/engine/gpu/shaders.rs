@@ -40,6 +40,11 @@ pub const ECOL: &[u8] = include_bytes!("shaders/ecol.spv");
 pub const ESTATS: &[u8] = include_bytes!("shaders/estats.spv");
 pub const ESTATSEND: &[u8] = include_bytes!("shaders/estatsend.spv");
 pub const EBIAS: &[u8] = include_bytes!("shaders/ebias.spv");
+pub const VNORM: &[u8] = include_bytes!("shaders/vnorm.spv");
+pub const VBIAS: &[u8] = include_bytes!("shaders/vbias.spv");
+pub const VHEADS: &[u8] = include_bytes!("shaders/vheads.spv");
+pub const VSOFT: &[u8] = include_bytes!("shaders/vsoft.spv");
+pub const VGATHER: &[u8] = include_bytes!("shaders/vgather.spv");
 
 #[cfg(test)]
 mod tests {

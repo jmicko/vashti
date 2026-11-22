@@ -1,0 +1,54 @@
+// Vision tower attention operands from the query/key/value product g[t][3 * 1152] (row
+// stride `g_stride`, bias not yet added), one workgroup of 128 lanes (channels) per token
+// and head. Queries and keys get the rotary turn on channel pairs (i, i + 36):
+//   out[i] = a cos - b sin, out[i + 36] = a sin + b cos, (a, b) = (in[i], in[i + 36])
+//   q[head][t][80], k[head][t][80]: channels 72..79 zero
+//   vt[head][128][t]: values transposed, channels 72..127 zero
+// Tokens from `count` up to `padded` are zeros. Dispatch x = padded tokens, y = 16 heads.
+#version 460
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer G { float g[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { float v[]; };
+layout(set = 0, binding = 2) readonly buffer Turns { vec2 turn[]; };
+layout(set = 0, binding = 3) writeonly buffer Q { float16_t q[]; };
+layout(set = 0, binding = 4) writeonly buffer K { float16_t k[]; };
+layout(set = 0, binding = 5) writeonly buffer VT { float16_t vt[]; };
+layout(push_constant) uniform Constants { uint count; uint padded; uint g_stride; uint bias_first; } p;
+
+const uint HEAD = 72;
+const uint HALF = 36;
+const uint WIDTH = 1152;
+const uint QK = 80;
+
+void main() {
+    uint t = gl_WorkGroupID.x;
+    uint hd = gl_WorkGroupID.y;
+    uint c = gl_LocalInvocationID.x;
+    uint qk = (hd * p.padded + t) * QK + c;
+    uint vo = (hd * 128 + c) * p.padded + t;
+    bool live = t < p.count && c < HEAD;
+    if (!live) {
+        if (c < QK) {
+            q[qk] = float16_t(0.0);
+            k[qk] = float16_t(0.0);
+        }
+        vt[vo] = float16_t(0.0);
+        return;
+    }
+    uint base = t * p.g_stride + hd * HEAD;
+    uint bias = p.bias_first + hd * HEAD;
+    uint lo = c < HALF ? c : c - HALF;
+    vec2 cs = turn[t * HALF + lo];
+    for (uint kind = 0; kind < 2; kind++) {
+        uint at = base + kind * WIDTH;
+        uint b = bias + kind * WIDTH;
+        float a = g[at + lo] + v[b + lo];
+        float s = g[at + lo + HALF] + v[b + lo + HALF];
+        float out_ = c < HALF ? a * cs.x - s * cs.y : a * cs.y + s * cs.x;
+        if (kind == 0) q[qk] = float16_t(out_); else k[qk] = float16_t(out_);
+    }
+    vt[vo] = float16_t(g[base + 2 * WIDTH + c] + v[bias + 2 * WIDTH + c]);
+}
