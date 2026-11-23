@@ -33,6 +33,8 @@ const PRODUCTS: [(usize, usize); 4] =
 const QKV: usize = 0;
 const OUT: usize = 1;
 const FC1: usize = 2;
+/// Attention threads per group: neighbouring query tiles share a core's cache.
+const ATTEND_GROUP: u32 = 8;
 /// Byte offset of the gated product's weight scales in its weight buffer.
 const GATED_SCALES: usize = 2 * HIDDEN * DIM + int8::SLACK;
 const FC2: usize = 3;
@@ -411,6 +413,10 @@ impl Work {
         })();
         let shape = attend::Shape::new(keys, tokens + earlier, HEADS, 1.0 / (HEAD as f32).sqrt())
             .and_then(|s| s.with_queries(padded, HEADS))
+            .map(|s| attend::Shape {
+                group: ATTEND_GROUP,
+                ..s
+            })
             .ok_or("gpu_unsupported")?;
         let native = zebin::write(&zebin::Kernel {
             name: "attend",
@@ -419,6 +425,7 @@ impl Work {
             pointers: 4,
         });
         let attend = (fast.kernel(&native, "attend", 4)?, shape.groups(HEADS));
+        attend.0.set_group([16 * ATTEND_GROUP, 1, 1])?;
         let [bytes, sums, query, kv, mixed, weights] = buffers;
         let counts = [
             padded * DIM,
@@ -1091,9 +1098,34 @@ mod tests {
             QwenGpu::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
         let golden = Golden::load(&dir, 0);
-        let (height, width) = (111, 74);
+        // `KUNO_QWEN_SIZE=HxW` (latent rows and columns, default the generate benchmark's
+        // 111x74) and `KUNO_QWEN_REFERENCE=HxW` (a reference latent in the prefix, as edits
+        // have; the edit benchmark is 52x78 with a 52x78 reference).
+        let size = |name: &str| {
+            std::env::var(name).ok().map(|v| {
+                let (h, w) = v.split_once('x').unwrap();
+                (h.parse::<usize>().unwrap(), w.parse::<usize>().unwrap())
+            })
+        };
+        let (height, width) = size("KUNO_QWEN_SIZE").unwrap_or((111, 74));
+        let reference =
+            size("KUNO_QWEN_REFERENCE").map(|(h, w)| (vec![0.25f32; CHANNELS * h * w], h, w));
+        let references: Vec<(&[f32], usize, usize)> = reference
+            .iter()
+            .map(|(l, h, w)| (l.as_slice(), *h, *w))
+            .collect();
+        // A reference needs its vision rows in the context (one per four latent cells).
+        let (mut context, mut slots) = (golden.context.clone(), golden.slots.clone());
+        if let Some((_, h, w)) = reference {
+            let text = context.len() / CONTEXT;
+            if slots.is_empty() {
+                slots = vec![0; text];
+            }
+            context.resize((text + h * w / 4) * CONTEXT, 0.01);
+            slots.resize(text + h * w / 4, 1);
+        }
         let prefix = model
-            .prefix(&golden.context, &golden.slots, &[], (height, width))
+            .prefix(&context, &slots, &references, (height, width))
             .unwrap();
         let mut state = 1u64;
         let x: Vec<f32> = (0..CHANNELS * height * width)

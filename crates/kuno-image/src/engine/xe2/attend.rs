@@ -67,6 +67,9 @@ pub struct Shape {
     /// Only channels 0..64 of every head are in use (the rest of the streams is zero and
     /// stays unread; the upper half of the output is not written).
     pub narrow: bool,
+    /// Hardware threads per group (`Kernel::set_group([16 * group, 1, 1])`): consecutive query
+    /// tiles of one head, which share an Xe core and so its cache.
+    pub group: u32,
 }
 impl Shape {
     /// None when the offsets leave 32 bits.
@@ -82,6 +85,7 @@ impl Shape {
             scale,
             bounded: false,
             narrow: false,
+            group: 1,
         })
     }
     /// `queries` padded queries per head, attending to the same keys. None unless a
@@ -97,7 +101,11 @@ impl Shape {
     }
     /// Thread groups: query tiles, heads.
     pub fn groups(&self, heads: usize) -> [u32; 3] {
-        [self.queries / TILE as u32, heads as u32, 1]
+        [
+            (self.queries / TILE as u32).div_ceil(self.group),
+            heads as u32,
+            1,
+        ]
     }
 }
 
@@ -172,6 +180,7 @@ const LAST_MIX: u16 = 20;
 // Lanes of INT: 0 counts steps, 1..3 are scratch.
 const CHUNK: u32 = 4;
 const START: u32 = 5;
+const TILE_ID: u32 = 6;
 // Lanes of CONST.
 const C: u32 = 0;
 const A1: u32 = 1;
@@ -495,6 +504,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         scale,
         bounded,
         narrow,
+        group,
     } = *shape;
     let (tiles, query_tiles) = (padded / TILE as u32, queries / TILE as u32);
     let w = Swsb::after(1);
@@ -515,6 +525,18 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     for (lane, value) in consts {
         k.mov(1, r(CONST, lane, F), immf(value), Swsb::NONE);
     }
+    // The query tile: group x times the group's threads plus the thread's index in its group
+    // (byte 8 of the header); threads past the last tile leave at once.
+    let exit = k.label();
+    if group > 1 {
+        k.and(1, int(1), r(0, 2, D), imm(0xff), Swsb::NONE);
+        k.mul(1, int(TILE_ID), r(0, 1, D), imm(group as i32), Swsb::NONE);
+        k.add(1, int(TILE_ID), int(TILE_ID), int(1), w);
+        k.cmp(Cond::Ge, int(TILE_ID), imm(query_tiles as i32), w);
+        k.jmpi(exit, true, w);
+    } else {
+        k.mov(1, int(TILE_ID), r(0, 1, D), Swsb::NONE);
+    }
     // Addresses of this thread's streams: per head, plus per query tile.
     let sizes = [TILE_BYTES, CHUNK_BYTES, OUT_BYTES, SUM_BYTES];
     for (i, size) in sizes.into_iter().enumerate() {
@@ -523,7 +545,13 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         k.mov(1, int(1), imm((per_head * size as u32) as i32), Swsb::NONE);
         k.mul(1, int(2), int(1), r(0, 12, Uw), w);
         if i != 1 {
-            k.shl(1, int(3), r(0, 1, D), immw(size.trailing_zeros() as i16), w);
+            k.shl(
+                1,
+                int(3),
+                int(TILE_ID),
+                immw(size.trailing_zeros() as i16),
+                w,
+            );
             k.add(1, int(2), int(2), int(3), w);
         }
         k.mov(1, r(WIDE, 0, Uq), r(INT, 2, Ud), w);
@@ -536,13 +564,13 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     k.mov(1, int(START), imm(0), Swsb::NONE);
     if full > 0 {
         let first = k.label();
-        k.cmp(Cond::Ge, r(0, 1, D), imm(full as i32), w);
+        k.cmp(Cond::Ge, int(TILE_ID), imm(full as i32), w);
         k.jmpi(first, true, w);
-        k.mov(1, int(START), r(0, 1, D), w);
+        k.mov(1, int(START), int(TILE_ID), w);
         k.shl(
             1,
             int(2),
-            r(0, 1, D),
+            int(TILE_ID),
             immw(CHUNK_BYTES.trailing_zeros() as i16),
             w,
         );
@@ -657,6 +685,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     for token in 0..=16 {
         k.sync(Swsb::dst(token));
     }
+    k.place(exit);
     k.end(r(HEADER, 0, F));
     k.bytes()
 }
@@ -711,6 +740,7 @@ mod tests {
             (3usize, 256usize, 100usize, 1.0f32, 768usize),
             (2, 256, 250, 6.0, 512),
             (56, 8704, 8611, 1.5, 48),
+            (32, 8240, 8239, 1.5, 48),
         ] {
             let half = |values: Vec<f32>| -> Vec<f32> {
                 values.into_iter().map(|v| widen(narrow(v))).collect()
@@ -768,6 +798,7 @@ mod tests {
                 best = best.min(started.elapsed().as_secs_f64() * 1e3);
             }
             let mixed = floats(&gpu.download(&buffers[2], 0, out_size).unwrap());
+            let reference = mixed.clone();
             let sums = floats(&gpu.download(&buffers[3], 0, sum_size).unwrap());
             let (mut error, mut power, mut worst) = (0f64, 0f64, 0f64);
             for check in 0..checks {
@@ -810,6 +841,27 @@ mod tests {
             );
             assert!(db > 50.0);
             if heads > 8 {
+                for group in [2u32, 4, 8, 16] {
+                    let shape = Shape { group, ..shape };
+                    let code = kernel(&shape);
+                    let native = zebin::write(&zebin::Kernel {
+                        name: "attend",
+                        code: &code,
+                        grf: 256,
+                        pointers: 4,
+                    });
+                    let bare = fast.kernel(&native, "attend", 4).unwrap();
+                    bare.set_group([16 * group, 1, 1]).unwrap();
+                    let mut best = f64::MAX;
+                    for _ in 0..4 {
+                        let started = std::time::Instant::now();
+                        fast.launch(&bare, &arguments, shape.groups(heads)).unwrap();
+                        best = best.min(started.elapsed().as_secs_f64() * 1e3);
+                    }
+                    let mixed = floats(&gpu.download(&buffers[2], 0, out_size).unwrap());
+                    let same = mixed == reference;
+                    println!("  {group} threads per group: {best:.2} ms, same output {same}");
+                }
                 // Timing only: without the weights (1), the loads (2), the score products
                 // (4), the mixing products (8).
                 for mask in [1u32, 3, 13, 15] {

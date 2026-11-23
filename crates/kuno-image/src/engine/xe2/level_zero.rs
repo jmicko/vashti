@@ -192,6 +192,18 @@ pub struct Kernel {
 // SAFETY: as for `Core`; arguments are set and the kernel launched while holding `turn`.
 unsafe impl Send for Kernel {}
 unsafe impl Sync for Kernel {}
+impl Kernel {
+    /// Work items per group (16 per hardware thread for the machine-code kernels).
+    pub fn set_group(&self, group: [u32; 3]) -> Result<(), &'static str> {
+        // SAFETY: a live kernel handle; group sizes are plain values the driver validates.
+        unsafe {
+            check(
+                (self.core.api.kernel_group_size)(self.kernel, group[0], group[1], group[2]),
+                "gpu_kernel",
+            )
+        }
+    }
+}
 impl Drop for Kernel {
     fn drop(&mut self) {
         // SAFETY: as for `Memory`.
