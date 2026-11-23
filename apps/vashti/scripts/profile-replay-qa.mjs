@@ -190,9 +190,22 @@ try {
   };
   const preferences = device ? await device.saveSettings(profile.revision, settings)
     : await api("/api/personalization/settings", { expected_revision: profile.revision, settings });
+  let ready = preferences;
+  if (process.env.VASHTI_QA_CANCEL === "1") {
+    const pending = device ? await device.rebuild(ready.revision)
+      : await api("/api/personalization/rebuild", { expected_revision: ready.revision });
+    const progress = device ? await device.rebuildProgress() : await api("/api/personalization/rebuild");
+    assert.equal(progress.id, pending.rebuild_id);
+    assert.equal(progress.processed, 0);
+    ready = device ? await device.cancelRebuild(progress.id) : await api(`/api/personalization/rebuild/${progress.id}/cancel`, {});
+    assert.equal(ready.rebuild_id, null);
+    assert.deepEqual(ready.facts, preferences.facts);
+    assert.equal(device ? await device.rebuildProgress() : await api("/api/personalization/rebuild"), null);
+    log("cancel_verified", { storage: report.storage });
+  }
   const start = performance.now();
-  const queued = device ? await device.rebuild(preferences.revision)
-    : await api("/api/personalization/rebuild", { expected_revision: preferences.revision });
+  const queued = device ? await device.rebuild(ready.revision)
+    : await api("/api/personalization/rebuild", { expected_revision: ready.revision });
   assert(queued.rebuild_id);
   log("replay_started", { model: modelName });
   let progressAt = 0;

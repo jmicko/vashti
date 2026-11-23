@@ -14,6 +14,24 @@ export function topicToken(topic: string): string {
     : `sha256:${bytesToHex(sha256(new TextEncoder().encode(topic)))}`;
 }
 
+function foldedTopic(topic: string) {
+  return topic.split(/[._]/).filter(Boolean).sort().join(".");
+}
+
+export function topicTokens(topic: string) {
+  return [topicToken(topic), topicToken(`alias:${foldedTopic(topic)}`)];
+}
+
+export function candidateTopic(topic: string, replaces: string | undefined, facts: ProfileFact[]): string | null {
+  const exact = facts.some((fact) => fact.topic === topic);
+  if (replaces !== undefined)
+    return (!exact || topic === replaces) && facts.some((fact) => fact.topic === replaces) ? replaces : null;
+  if (exact) return topic;
+  const folded = foldedTopic(topic);
+  const matches = folded ? facts.filter((fact) => foldedTopic(fact.topic) === folded) : [];
+  return matches.length > 1 ? null : matches[0]?.topic ?? topic;
+}
+
 export function defaultProfile(): PersonalProfile {
   return {
     revision: 0,

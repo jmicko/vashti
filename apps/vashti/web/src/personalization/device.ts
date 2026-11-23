@@ -13,12 +13,14 @@ import {
 } from "../privateChatStore";
 import {
   allowsProfile,
+  candidateTopic,
   contextWeight,
   defaultProfile,
   factSources,
   fitProfileContext,
   profileContext,
   topicToken,
+  topicTokens,
   validateFact
 } from "./core";
 import type {
@@ -28,7 +30,8 @@ import type {
   ProfileModel,
   ProfileNotice,
   ProfileSettings,
-  ProfileSource
+  ProfileSource,
+  RebuildProgress
 } from "./types";
 
 const IMPORT_SOURCE = "import:chatgpt";
@@ -150,7 +153,7 @@ export async function editFact(
     created_at: old?.created_at ?? now,
     updated_at: now
   };
-  if (old) profile.suppressed = [...new Set([...profile.suppressed, topicToken(old.topic)])];
+  if (old) profile.suppressed = [...new Set([...profile.suppressed, ...topicTokens(old.topic)])];
   profile.facts = [...profile.facts.filter((f) => f.id !== id), fact];
   profile.history[fact.id] = [
     {
@@ -173,19 +176,22 @@ export async function forget(expected: number, id: string | null) {
     throw new Error("Your device profile changed. Refresh and try again.");
   const removed = profile.facts.filter((f) => !id || f.id === id);
   profile.suppressed = [
-    ...new Set([...profile.suppressed, ...removed.map((f) => topicToken(f.topic))])
+    ...new Set([...profile.suppressed, ...removed.flatMap((f) => topicTokens(f.topic))])
   ];
   const processed = new Set(profile.processed);
   const forgotten = new Set(profile.forgotten ?? []);
   for (const fact of removed) {
     for (const source of factSources(fact)) forgotten.add(source.revision_id);
     delete profile.history[fact.id];
-    if (profile.rebuild_draft) {
-      for (const staged of profile.rebuild_draft.facts) {
-        if (staged.topic === fact.topic) delete profile.rebuild_draft.history[staged.id];
-      }
-      profile.rebuild_draft.facts = profile.rebuild_draft.facts.filter((staged) => staged.topic !== fact.topic);
-    }
+  }
+  if (profile.rebuild_draft) {
+    const suppressed = new Set(profile.suppressed);
+    const draft = profile.rebuild_draft;
+    draft.facts = draft.facts.filter((staged) => {
+      if (!isSuppressed(suppressed, staged.topic)) return true;
+      delete draft.history[staged.id];
+      return false;
+    });
   }
   if (!id) {
     for (const chat of await listPrivateChats()) {
@@ -231,6 +237,43 @@ export async function rebuild(expected: number) {
   return save(profile, expected);
 }
 
+export async function cancelRebuild(id: string): Promise<DeviceProfile> {
+  const guard = privateImageGuard();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const profile = await getProfile();
+    guard();
+    if (profile.rebuild_id !== id) throw new Error("This rebuild is no longer running.");
+    const expected = profile.revision;
+    profile.rebuild_id = null;
+    delete profile.rebuild_draft;
+    profile.requested = false;
+    profile.last_attempt_at = Math.floor(Date.now() / 1000);
+    profile.last_error = null;
+    try {
+      const saved = await save(profile, expected);
+      sourceQueue = undefined;
+      if (activeReplay?.id === id) activeReplay.abort.abort();
+      return saved;
+    } catch (error) {
+      guard();
+      if (attempt === 2 || (await getProfile()).revision === expected) throw error;
+    }
+  }
+  throw new Error("Your device profile changed. Refresh and try again.");
+}
+
+export async function rebuildProgress(): Promise<RebuildProgress | null> {
+  const profile = await getProfile();
+  if (!profile.rebuild_id) return null;
+  const phase = !profile.settings.enabled || !profile.settings.processor_model ? "paused"
+    : profile.last_error ? "needs_attention"
+    : streaming ? "waiting_for_generation"
+    : activeReplay?.id === profile.rebuild_id ? "replaying"
+    : waitingForIdle(profile) ? "waiting_for_idle"
+    : profile.last_attempt_at ? "replaying" : "queued";
+  return { id: profile.rebuild_id, processed: profile.rebuild_draft?.processed.length ?? 0, phase };
+}
+
 export async function profileNotices(): Promise<ProfileNotice[]> {
   return (await readPrivateProfile<DeviceProfile>())?.notices ?? [];
 }
@@ -264,6 +307,10 @@ function supportedEvidence(sources: ProfileSource[], checked: Map<string, InputS
   });
 }
 
+function isSuppressed(suppressed: Set<string>, topic: string) {
+  return topicTokens(topic).some((token) => suppressed.has(token));
+}
+
 async function finishScan(profile: DeviceProfile, catalog: ProfileModel[]) {
   if (profile.rebuild_id) {
     const draft = profile.rebuild_draft;
@@ -274,6 +321,7 @@ async function finishScan(profile: DeviceProfile, catalog: ProfileModel[]) {
     const sources = new Map((await eligibleSources(profile, catalog, false, scoped)).map((entry) => [entry.revision_id, entry]));
     const nextHistory: DeviceProfile["history"] = {};
     const nextFacts: ProfileFact[] = [];
+    const suppressed = new Set(profile.suppressed);
     for (const fact of facts) {
       if (nextFacts.length === 200) break;
       if (fact.locked) {
@@ -281,7 +329,7 @@ async function finishScan(profile: DeviceProfile, catalog: ProfileModel[]) {
         nextHistory[fact.id] = profile.history[fact.id] ?? [];
         continue;
       }
-      if (profile.suppressed.includes(topicToken(fact.topic))) continue;
+      if (isSuppressed(suppressed, fact.topic)) continue;
       const valid = supportedEvidence(factSources(fact), sources);
       if (!valid.length) continue;
       nextFacts.push({ ...fact, sources_json: JSON.stringify(valid) });
@@ -294,6 +342,7 @@ async function finishScan(profile: DeviceProfile, catalog: ProfileModel[]) {
     profile.history = nextHistory;
     profile.processed = [...new Set(effectiveLedger(profile))];
     delete profile.rebuild_draft;
+    profile.last_processed_at = Math.floor(Date.now() / 1000);
     const prior = profile.notices ?? [];
     profile.notices = [
       { id: profile.rebuild_id, created_at: Math.floor(Date.now() / 1000), read_at: null },
@@ -450,9 +499,10 @@ async function replayHints(profile: DeviceProfile, catalog: ProfileModel[], sour
   const byRevision = new Map(checked.map((source) => [source.revision_id, source]));
   const byMessage = new Map(checked.map((source) => [source.message_id, source]));
   const forgotten = new Set(profile.forgotten);
+  const suppressed = new Set(profile.suppressed);
   let chars = 0;
   return {
-    facts: ranked.filter((fact) => !profile.suppressed.includes(topicToken(fact.topic)) && supportedEvidence(factSources(fact), byRevision).length)
+    facts: ranked.filter((fact) => !isSuppressed(suppressed, fact.topic) && supportedEvidence(factSources(fact), byRevision).length)
       .map((fact) => ({ topic: fact.topic, content: [...fact.content].slice(0, 320).join("") })),
     earlier_turns: [...ancestors].flatMap(([index, items]) => {
       const excerpts: string[] = [];
@@ -558,10 +608,15 @@ export async function applyProfileToPrompt<T extends import("./types").ProfilePr
 }
 
 let processing = false;
+let activeReplay: { id: string; abort: AbortController } | undefined;
 let lastActivity = Date.now();
 let lastEmptyScan = 0;
 let lastEmptyEpoch = "";
 let streaming = 0;
+
+function waitingForIdle(profile: DeviceProfile) {
+  return !profile.requested && Date.now() - lastActivity < profile.settings.idle_minutes * 60000;
+}
 
 export function profileGenerationActive(active: boolean) {
   streaming = Math.max(0, streaming + (active ? 1 : -1));
@@ -577,6 +632,8 @@ export async function processNow(manual = true) {
   let before: DeviceProfile | null = null;
   try {
     before = await getProfile();
+    const abort = before.rebuild_id ? new AbortController() : undefined;
+    if (before.rebuild_id && abort) activeReplay = { id: before.rebuild_id, abort };
     const settings = before.settings;
     if (!settings.enabled || !settings.processor_backend_id || !settings.processor_model)
       throw new Error("Enable personalization and choose a processing model first.");
@@ -610,18 +667,21 @@ export async function processNow(manual = true) {
     }
     let facts = workingFacts(before);
     const replay = await replayHints(before, catalog, sources, facts);
-    if (streaming || (await getProfile()).revision !== before.revision) return before;
+    const current = await getProfile();
+    if (streaming || current.revision !== before.revision || abort?.signal.aborted) return current;
     guard();
     const now = Math.floor(Date.now() / 1000);
     const result = await requestJson<{
       facts: Array<{
         topic: string;
+        replaces_topic?: string;
         content: string;
         sources: ProfileSource[];
       }>;
     }>("/api/personalization/device-extract", {
       method: "POST",
       expectedServerInstanceId: identity.instance_id,
+      signal: abort?.signal,
       body: JSON.stringify({
         expected_user_id: identity.user_id,
         backend_id: settings.processor_backend_id,
@@ -633,12 +693,16 @@ export async function processNow(manual = true) {
       })
     });
     guard();
+    if (abort?.signal.aborted) return getProfile();
     if (streaming) return before;
     const valid = await eligibleSources(before, await models(), false, scopeSources(sources));
     const draft = before.rebuild_id ? (before.rebuild_draft ??= { facts: [], history: {}, processed: [] }) : undefined;
     const history = draft?.history ?? before.history;
-    for (const fact of result.facts) {
+    const suppressed = new Set(before.suppressed);
+    const sourceTime = (fact: (typeof result.facts)[number]) => Math.max(...fact.sources.map((source) => source.created_at));
+    for (const fact of result.facts.sort((a, b) => sourceTime(a) - sourceTime(b))) {
       validateFact(fact.topic, fact.content);
+      if (fact.replaces_topic !== undefined) validateFact(fact.replaces_topic, fact.content);
       if (
         !fact.sources.length ||
         fact.sources.some(
@@ -655,8 +719,9 @@ export async function processNow(manual = true) {
         )
       )
         throw new Error("A source changed during processing.");
-      if (before.suppressed.includes(topicToken(fact.topic))) continue;
-      const old = facts.find((f) => f.topic === fact.topic);
+      const topic = candidateTopic(fact.topic, fact.replaces_topic, facts);
+      if (!topic || isSuppressed(suppressed, fact.topic) || isSuppressed(suppressed, topic)) continue;
+      const old = facts.find((f) => f.topic === topic);
       if (old && !old.locked && old.content === fact.content) {
         const seen = new Set<string>();
         const sources = [...fact.sources, ...factSources(old)]
@@ -682,7 +747,7 @@ export async function processNow(manual = true) {
         old?.locked ||
         (old &&
           factSources(old).some(
-            (s) => s.created_at > Math.max(...fact.sources.map((v) => v.created_at))
+            (s) => s.created_at > sourceTime(fact)
           ))
       )
         continue;
@@ -699,7 +764,7 @@ export async function processNow(manual = true) {
       }
       const next: ProfileFact = {
         id: old?.id ?? crypto.randomUUID(),
-        topic: fact.topic,
+        topic,
         content: fact.content,
         locked: false,
         version: (old?.version ?? 0) + 1,
@@ -729,7 +794,7 @@ export async function processNow(manual = true) {
       before.processed = [...new Set([...before.processed, ...newIds])];
     }
     before.last_attempt_at = now;
-    before.last_processed_at = now;
+    if (!draft) before.last_processed_at = now;
     before.last_error = null;
     const hasRemaining = (await pendingSources(before, catalog)).length > 0;
     before.requested = (manual || before.requested) && hasRemaining;
@@ -740,6 +805,7 @@ export async function processNow(manual = true) {
     guard();
     // Never persist raw provider output or sensitive request details in status.
     const current = await getProfile();
+    if (before?.rebuild_id && current.rebuild_id !== before.rebuild_id) return current;
     if (
       before &&
       current.revision === before.revision &&
@@ -781,6 +847,7 @@ export async function processNow(manual = true) {
       );
     throw error;
   } finally {
+    activeReplay = undefined;
     processing = false;
   }
 }
@@ -804,7 +871,7 @@ export function startDeviceProfileWorker() {
         !profile.settings.enabled ||
         !profile.settings.processor_model ||
         (!profile.requested && !profile.rebuild_id && lastEmptyScan >= lastActivity && lastEmptyEpoch === privateProfileSourceEpoch()) ||
-        (!profile.requested && Date.now() - lastActivity < profile.settings.idle_minutes * 60000) ||
+        waitingForIdle(profile) ||
         (profile.last_attempt_at &&
           Date.now() / 1000 - profile.last_attempt_at <
             ((profile.requested || profile.rebuild_id) && !profile.last_error ? 10 : 120))

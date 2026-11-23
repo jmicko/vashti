@@ -558,7 +558,7 @@ export function PersonalizationPanel({
           <RebuildProfileButton
             key={mode} mode={mode} profile={profile}
             disabled={busy || dirty || !draft.enabled || !processor || (processor.cloud && !draft.allow_cloud_processor)}
-            onQueued={(value) => { adopt(value); setNotice(null); }}
+            onChanged={(value) => { setProfile(value); setNotice(null); }}
           />
           {editing && (
             <div className="profile-fact-editor">

@@ -95,6 +95,24 @@ pub struct Profile {
     pub rebuild_id: Option<String>,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RebuildPhase {
+    Queued,
+    Replaying,
+    WaitingForIdle,
+    WaitingForGeneration,
+    Paused,
+    NeedsAttention,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RebuildProgress {
+    pub id: String,
+    pub processed: i64,
+    pub phase: RebuildPhase,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Evidence {
@@ -106,6 +124,8 @@ pub struct Evidence {
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub topic: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces_topic: Option<String>,
     pub content: String,
     pub evidence: Vec<Evidence>,
 }

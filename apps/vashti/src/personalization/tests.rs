@@ -43,6 +43,7 @@ fn rejects_hallucinated_evidence_and_bounds_context() {
     }];
     let fact = Candidate {
         topic: "food.favorite".into(),
+        replaces_topic: None,
         content: "The user likes corn.".into(),
         evidence: vec![Evidence {
             source: 0,
@@ -137,12 +138,16 @@ async fn fixture() -> (AppState, tokio::task::JoinHandle<()>) {
             assert!(sources.len() <= service::MAX_SOURCES);
             let facts: Vec<_> = sources.iter().rev().find_map(|source| {
                 let quote = source["text"].as_str().unwrap();
-                let content = match quote {
-                    "My favorite food is corn." => "The user prefers corn.",
-                    "My favorite food is imported beans." => "The user prefers beans.",
+                let (topic, replaces, content) = match quote {
+                    "My favorite food is corn." if input["current_facts"].as_array().unwrap().iter().any(|fact| fact["content"] == "The user prefers beans.") => ("favorite_food", None, "The user prefers corn."),
+                    "My favorite food is corn." => ("food.favorite", None, "The user prefers corn."),
+                    "My favorite food is imported beans." => ("food.favorite", None, "The user prefers beans."),
+                    "My favorite food is tamales now." => ("go_to_meal", Some("food.favorite"), "The user prefers tamales."),
+                    "My favorite food is rice now." => ("favorite_food", None, "The user prefers rice."),
+                    "I like cooking for friends on Sundays." => ("food.cooking", None, "The user likes cooking for friends on Sundays."),
                     _ => return None,
                 };
-                Some(json!({"topic":"food.favorite","content":content,"evidence":[{"source":source["source"],"quote":quote}]}))
+                Some(json!({"topic":topic,"replaces_topic":replaces,"content":content,"evidence":[{"source":source["source"],"quote":quote}]}))
             }).into_iter().collect();
             axum::Json(json!({"done":true,"message":{"content":json!({"facts":facts}).to_string()}}))
         }));
@@ -318,6 +323,7 @@ async fn human_corrections_win_forget_erases_history_and_stale_jobs_cannot_publi
         .unwrap();
     let candidate = Candidate {
         topic: "food.favorite".into(),
+        replaces_topic: None,
         content: "The user prefers corn.".into(),
         evidence: vec![Evidence {
             source: 0,
@@ -401,6 +407,7 @@ async fn settings_and_source_changes_during_work_are_rechecked() {
         Extraction {
             facts: vec![Candidate {
                 topic: "food.favorite".into(),
+                replaces_topic: None,
                 content: "The user prefers corn.".into(),
                 evidence: vec![Evidence {
                     source: 0,
@@ -725,6 +732,180 @@ async fn upgrade_makes_existing_imports_eligible_without_reimporting() {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].revision_id, "old-revision");
     assert_eq!(sources[0].model_key, "import:chatgpt");
+}
+
+#[tokio::test]
+async fn renamed_corrections_keep_one_fact_and_respect_evidence_age_and_user_choices() {
+    use super::worker;
+    let (state, server) = fixture().await;
+    enable(&state).await;
+    worker::process_one(&state, "owner", true).await.unwrap();
+    let first = service::profile(&state.db, "owner").await.unwrap();
+    let id = &first.facts[0].id;
+
+    async fn add(state: &AppState, time: i64, content: &str) {
+        let m = format!("message-{time}");
+        let r = format!("revision-{time}");
+        sqlx::query("INSERT INTO chat_messages(id,chat_id,role,status,active_revision_id,created_at,updated_at) VALUES(?,'chat','user','complete',?,?,?)")
+            .bind(&m).bind(&r).bind(time).bind(time).execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) VALUES(?,?,?,'original',?)")
+            .bind(r).bind(&m).bind(content).bind(time).execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO chat_messages(id,chat_id,parent_message_id,role,status,backend_id,model_name,created_at,updated_at) VALUES(?,'chat',?,'assistant','complete','host','local',?,?)")
+            .bind(format!("answer-{time}")).bind(m).bind(time).bind(time).execute(&state.db).await.unwrap();
+        worker::process_one(state, "owner", true).await.unwrap();
+    }
+    add(&state, 20, "My favorite food is tamales now.").await;
+    let after = service::profile(&state.db, "owner").await.unwrap();
+    assert_eq!(after.facts.len(), 1);
+    assert_eq!(
+        (&after.facts[0].id, after.facts[0].content.as_str()),
+        (id, "The user prefers tamales.")
+    );
+    add(&state, 25, "I like cooking for friends on Sundays.").await;
+    add(&state, 30, "My favorite food is rice now.").await;
+    add(&state, 10, "My favorite food is tamales now.").await;
+    let current = service::profile(&state.db, "owner").await.unwrap();
+    assert_eq!(current.facts.len(), 2);
+    let food = current.facts.iter().find(|fact| fact.id == *id).unwrap();
+    assert_eq!(food.topic, "food.favorite");
+    assert_eq!(food.content, "The user prefers rice.");
+    assert_eq!(food.version, 3);
+    let locked = service::edit_fact(
+        &state.db,
+        "owner",
+        Some(id),
+        EditFact {
+            expected_revision: current.revision,
+            topic: "food.favorite".into(),
+            content: "The user prefers chickpeas.".into(),
+        },
+    )
+    .await
+    .unwrap();
+    add(&state, 40, "My favorite food is tamales now.").await;
+    let protected = service::profile(&state.db, "owner").await.unwrap();
+    assert_eq!(
+        protected
+            .facts
+            .iter()
+            .find(|fact| fact.id == *id)
+            .unwrap()
+            .content,
+        "The user prefers chickpeas."
+    );
+    assert!(protected.revision > locked.revision);
+    service::forget(&state.db, "owner", Some(id), protected.revision)
+        .await
+        .unwrap();
+    add(&state, 50, "My favorite food is rice now.").await;
+    let final_profile = service::profile(&state.db, "owner").await.unwrap();
+    assert_eq!(final_profile.facts.len(), 1);
+    assert_eq!(final_profile.facts[0].topic, "food.cooking");
+    server.abort();
+}
+
+#[tokio::test]
+async fn rebuild_progress_and_cancel_leave_the_published_profile_and_ledger_intact() {
+    use super::worker;
+    use std::sync::atomic::Ordering;
+
+    let (state, server) = fixture().await;
+    enable(&state).await;
+    worker::process_one(&state, "owner", true).await.unwrap();
+    let published = service::profile(&state.db, "owner").await.unwrap();
+    let public_facts = serde_json::to_value(&published.facts).unwrap();
+    let history = service::fact_history(&state.db, "owner", &published.facts[0].id)
+        .await
+        .unwrap();
+    let queued = service::rebuild(&state, "owner", published.revision)
+        .await
+        .unwrap();
+    let id = queued.rebuild_id.as_deref().unwrap();
+    let progress = |owner| worker::rebuild_progress(&state, owner);
+    assert_eq!(
+        progress("owner").await.unwrap().unwrap().phase,
+        RebuildPhase::Queued
+    );
+    assert!(progress("other").await.unwrap().is_none());
+    assert!(
+        service::cancel_rebuild(&state.db, "other", id)
+            .await
+            .is_err()
+    );
+    state.private_activity.store(1, Ordering::Relaxed);
+    assert_eq!(
+        progress("owner").await.unwrap().unwrap().phase,
+        RebuildPhase::WaitingForGeneration
+    );
+    state.private_activity.store(0, Ordering::Relaxed);
+    sqlx::query("UPDATE chat_messages SET updated_at=? WHERE id='message'")
+        .bind(crate::auth::service::unix_timestamp())
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        progress("owner").await.unwrap().unwrap().phase,
+        RebuildPhase::WaitingForIdle
+    );
+    let sources = service::sources(&state, "owner", &queued.settings, true)
+        .await
+        .unwrap();
+    let candidate = serde_json::from_value(json!({"facts":[{"topic":"food.favorite","content":"Draft only","evidence":[{"source":0,"quote":sources[0].text}]}]})).unwrap();
+    let candidates = service::validate_candidates(candidate, &sources).unwrap();
+    service::publish(&state, "owner", &queued, &sources, candidates.clone())
+        .await
+        .unwrap();
+    assert_eq!(progress("owner").await.unwrap().unwrap().processed, 1);
+    let in_flight = service::profile(&state.db, "owner").await.unwrap();
+    let canceled = service::cancel_rebuild(&state.db, "owner", id)
+        .await
+        .unwrap();
+    assert!(progress("owner").await.unwrap().is_none());
+    assert!(
+        service::publish(&state, "owner", &in_flight, &sources, candidates)
+            .await
+            .is_err()
+    );
+    service::finish_scan(&state, "owner", in_flight.revision, &in_flight)
+        .await
+        .unwrap();
+    let after = service::profile(&state.db, "owner").await.unwrap();
+    assert_eq!(serde_json::to_value(&after.facts).unwrap(), public_facts);
+    assert_eq!(after.last_processed_at, published.last_processed_at);
+    assert_eq!(
+        service::fact_history(&state.db, "owner", &after.facts[0].id)
+            .await
+            .unwrap(),
+        history
+    );
+    for (table, count) in [
+        ("personalization_processed", 1),
+        ("personalization_replay_processed", 0),
+        ("personalization_replay_facts", 0),
+        ("assistant_notices", 0),
+    ] {
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            count,
+            "{table}"
+        );
+    }
+    let next = service::rebuild(&state, "owner", canceled.revision)
+        .await
+        .unwrap();
+    assert!(
+        service::cancel_rebuild(&state.db, "owner", id)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        progress("owner").await.unwrap().unwrap().id,
+        next.rebuild_id.unwrap()
+    );
+    server.abort();
 }
 
 #[tokio::test]

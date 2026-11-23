@@ -59,6 +59,18 @@ but are not saved to its database, queue, profile or logs.
   and preserves manual facts. The draft replaces the automatic profile in a
   single transaction, including its Assistant completion notice. Recent evidence
   can replace the least recent automatic draft fact when the fact cap is reached.
+- Memories and the import panel show the number of eligible messages processed
+  so far and whether a rebuild is waiting on foreground work or idle time.
+  Canceling targets that specific rebuild, discards its draft, and does not
+  replace the published profile, prior history, or normal processed ledger.
+  An in-flight response cannot publish after canceling; no completion notice is
+  sent for a canceled rebuild.
+- Corrections reuse a stable fact and version history when topic names differ
+  only by separator or ordering of the same words. For a different name, the
+  processor can identify the exact existing topic it is correcting. Unknown or
+  ambiguous targets are skipped; unrelated facts, user locks, forgetting and
+  newer evidence are not overwritten. This does not automatically merge old
+  duplicates or arbitrary synonyms the processor does not link.
 
 The installed Kuno native route does not support Ollama's `format` parameter.
 The model catalog's existing `kuno_backend` marker selects prompt-only JSON on

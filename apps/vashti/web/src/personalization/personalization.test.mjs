@@ -40,11 +40,18 @@ globalThis.__profileApi = async (path, options) => {
       });
     const input = JSON.parse(options.body),
       source = input.sources.at(-1);
+    const named = {
+      "My favorite food is tamales now.": { topic: "go_to_meal", replaces_topic: "food.favorite", content: "The user prefers tamales." },
+      "My favorite food is rice now.": { topic: "favorite_food", content: "The user prefers rice." },
+      "I like cooking for friends on Sundays.": { topic: "food.cooking", content: "The user likes cooking for friends on Sundays." }
+    }[source.text];
+    const correctingBeans = source.text === "My favorite food is corn." && input.replay.facts.some((fact) => fact.content === "The user prefers beans.");
     return {
       facts: [
         {
-          topic: "food.favorite",
+          topic: correctingBeans ? "favorite_food" : "food.favorite",
           content: source.text.includes("imported beans") ? "The user prefers beans." : "The user prefers corn.",
+          ...named,
           sources: [
             {
               message_id: source.message_id,
@@ -385,6 +392,80 @@ test("late processing cannot overwrite a human correction or cross a vault switc
   hold = null;
   await assert.rejects(switched, /changed/);
   assert.equal((await app.getProfile()).facts.length, 0);
+  app.resetPrivateStorageUser();
+});
+
+test("device cancellation discards staged work and an in-flight response without changing the current profile", async () => {
+  const { chat } = await seededUser("cancel-device-replay");
+  const published = await app.processNow();
+  for (let index = 0; index < 16; index++) {
+    await app.savePrivateMessage(app.createPrivateMessage({
+      chatId: chat.id, parentMessageId: null, createdAt: 50 + index, role: "user",
+      contentText: "My favorite food is imported beans.", backendId: "host", modelName: "local"
+    }));
+  }
+  const queued = await app.rebuild(published.revision);
+  assert.equal((await app.rebuildProgress()).phase, "waiting_for_idle");
+  app.profileGenerationActive(true);
+  assert.equal((await app.rebuildProgress()).phase, "waiting_for_generation");
+  app.profileGenerationActive(false);
+  const staged = await app.processNow(false);
+  assert.equal(staged.rebuild_id, queued.rebuild_id);
+  assert.deepEqual(staged.facts, published.facts);
+  assert.equal((await app.rebuildProgress()).processed, 16);
+  hold = {};
+  const pending = app.processNow(false);
+  while (!hold.resolve) await new Promise((resolve) => setTimeout(resolve, 1));
+  try {
+    assert.equal((await app.rebuildProgress()).phase, "replaying");
+    const canceled = await app.cancelRebuild(queued.rebuild_id);
+    assert.equal(canceled.rebuild_id, null);
+    assert.equal(canceled.rebuild_draft, undefined);
+    assert.equal(await app.rebuildProgress(), null);
+    assert.equal(requests.findLast(({ path }) => path.endsWith("device-extract")).options.signal.aborted, true);
+    const newer = await app.rebuild(canceled.revision);
+    await assert.rejects(app.cancelRebuild(queued.rebuild_id), /no longer running/);
+    assert.equal((await app.rebuildProgress()).id, newer.rebuild_id);
+    await app.cancelRebuild(newer.rebuild_id);
+  } finally {
+    hold.resolve();
+    hold = null;
+    await pending;
+  }
+  const result = await app.getProfile();
+  for (const key of ["facts", "history", "processed", "last_processed_at"]) assert.deepEqual(result[key], published[key]);
+  assert.deepEqual(await app.profileNotices(), []);
+  app.resetPrivateStorageUser();
+});
+
+test("renamed device corrections update one fact and respect old evidence, locks, and forgetting", async () => {
+  const { chat, message } = await seededUser("rename-device-fact");
+  const before = await app.processNow();
+  const id = before.facts[0].id;
+  const start = message.created_at;
+  async function add(offset, contentText) {
+    await app.savePrivateMessage(app.createPrivateMessage({
+      chatId: chat.id, parentMessageId: null, createdAt: start + offset, role: "user",
+      contentText, backendId: "host", modelName: "local"
+    }));
+    return app.processNow();
+  }
+  const corrected = await add(20, "My favorite food is tamales now.");
+  assert.deepEqual(corrected.facts.map((f) => [f.id, f.topic, f.content]), [[id, "food.favorite", "The user prefers tamales."]]);
+  await add(25, "I like cooking for friends on Sundays.");
+  await add(30, "My favorite food is rice now.");
+  const current = await add(10, "My favorite food is tamales now.");
+  assert.equal(current.facts.length, 2);
+  assert.equal(current.facts.find((f) => f.id === id).content, "The user prefers rice.");
+  assert.deepEqual(current.history[id].map((v) => v.version), [3, 2, 1]);
+  await app.editFact(current.revision, id, "food.favorite", "The user prefers chickpeas.");
+  const locked = await add(40, "My favorite food is tamales now.");
+  assert.equal(locked.facts.find((f) => f.id === id).content, "The user prefers chickpeas.");
+  await app.forget(locked.revision, id);
+  const after = await add(50, "My favorite food is rice now.");
+  assert.deepEqual(after.facts.map((f) => f.topic), ["food.cooking"]);
+  assert.equal(app.candidateTopic("food_favorite", undefined, [{ topic: "favorite_food" }, { topic: "food.favorite" }]), null);
+  assert.equal(app.candidateTopic("new_key", "invented_target", after.facts), null);
   app.resetPrivateStorageUser();
 });
 

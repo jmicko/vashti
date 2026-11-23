@@ -59,6 +59,11 @@ export type PersonalProfile = {
   rebuild_id: string | null;
 };
 export type ProfileNotice = { id: string; created_at: number; read_at: number | null };
+export type RebuildProgress = {
+  id: string;
+  processed: number;
+  phase: "queued" | "replaying" | "waiting_for_idle" | "waiting_for_generation" | "paused" | "needs_attention";
+};
 export type ReplayDraft = {
   facts: ProfileFact[];
   processed: string[];

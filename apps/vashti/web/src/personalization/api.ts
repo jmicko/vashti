@@ -1,5 +1,5 @@
 import { requestJson } from "../api";
-import type { PersonalProfile, ProfileModel, ProfileSettings, ProfileVersion } from "./types";
+import type { PersonalProfile, ProfileModel, ProfileSettings, ProfileVersion, RebuildProgress } from "./types";
 import * as device from "./device";
 import type { ProfileMode } from "./types";
 
@@ -57,6 +57,12 @@ export function rebuildProfile(mode: ProfileMode, profile: PersonalProfile): Pro
   return mode === "device"
     ? device.rebuild(profile.revision)
     : post("rebuild", { expected_revision: profile.revision });
+}
+export function getRebuildProgress(mode: ProfileMode): Promise<RebuildProgress | null> {
+  return mode === "device" ? device.rebuildProgress() : requestJson("/api/personalization/rebuild");
+}
+export function cancelRebuild(mode: ProfileMode, id: string): Promise<PersonalProfile> {
+  return mode === "device" ? device.cancelRebuild(id) : post(`rebuild/${encodeURIComponent(id)}/cancel`, {});
 }
 export function profileHistory(mode: ProfileMode, id: string): Promise<ProfileVersion[]> {
   return mode === "device"

@@ -15,7 +15,8 @@ pub fn router() -> Router<AppState> {
         .route("/settings", post(save_settings))
         .route("/models", get(models))
         .route("/process", post(process))
-        .route("/rebuild", post(rebuild))
+        .route("/rebuild", get(rebuild_progress).post(rebuild))
+        .route("/rebuild/{id}/cancel", post(cancel_rebuild))
         .route("/device-extract", post(device_extract))
         .route("/facts", post(create_fact))
         .route("/facts/{id}", post(edit_fact))
@@ -91,6 +92,25 @@ async fn rebuild(
     let owner = owner(&state, &jar).await?;
     Ok(Json(
         service::rebuild(&state, &owner, input.expected_revision).await?,
+    ))
+}
+
+async fn rebuild_progress(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<Option<RebuildProgress>>, ApiError> {
+    Ok(Json(
+        worker::rebuild_progress(&state, &owner(&state, &jar).await?).await?,
+    ))
+}
+
+async fn cancel_rebuild(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Result<Json<Profile>, ApiError> {
+    Ok(Json(
+        service::cancel_rebuild(&state.db, &owner(&state, &jar).await?, &id).await?,
     ))
 }
 
@@ -215,6 +235,10 @@ async fn device_extract(
         }
     };
     Ok(Json(
-        json!({"facts": result.into_iter().map(|(fact,sources)|json!({"topic":fact.topic,"content":fact.content,"sources":sources})).collect::<Vec<_>>()}),
+        json!({"facts": result.into_iter().map(|(fact,sources)| {
+            let mut output = json!({"topic":fact.topic,"content":fact.content,"sources":sources});
+            if let Some(topic) = fact.replaces_topic { output["replaces_topic"] = json!(topic); }
+            output
+        }).collect::<Vec<_>>()}),
     ))
 }

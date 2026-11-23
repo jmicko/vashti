@@ -17,6 +17,79 @@ pub fn topic_token(topic: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(topic.as_bytes()))
 }
 
+fn folded_topic(topic: &str) -> String {
+    let mut parts: Vec<_> = topic
+        .split(['.', '_'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    parts.sort_unstable();
+    parts.join(".")
+}
+
+fn topic_tokens(topic: &str) -> [String; 2] {
+    [
+        topic_token(topic),
+        topic_token(&format!("alias:{}", folded_topic(topic))),
+    ]
+}
+
+fn is_suppressed(suppressed: &HashSet<String>, topic: &str) -> bool {
+    topic_tokens(topic)
+        .iter()
+        .any(|token| suppressed.contains(token))
+}
+
+async fn suppressed_topics(
+    tx: &mut SqliteConnection,
+    owner: &str,
+) -> Result<HashSet<String>, ApiError> {
+    Ok(
+        sqlx::query_scalar("SELECT topic FROM personalization_suppressed WHERE user_id=?")
+            .bind(owner)
+            .fetch_all(tx)
+            .await?
+            .into_iter()
+            .collect(),
+    )
+}
+
+async fn suppress_topic(
+    tx: &mut SqliteConnection,
+    owner: &str,
+    topic: &str,
+) -> Result<(), ApiError> {
+    for token in topic_tokens(topic) {
+        sqlx::query("INSERT OR IGNORE INTO personalization_suppressed VALUES (?,?)")
+            .bind(owner)
+            .bind(token)
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
+fn candidate_topic<'a>(candidate: &'a Candidate, facts: &'a [Fact]) -> Option<&'a str> {
+    let topic = candidate.topic.as_str();
+    let exact = facts.iter().any(|fact| fact.topic == topic);
+    if let Some(target) = candidate.replaces_topic.as_deref() {
+        // A replacement can update one known slot, not merge two occupied slots.
+        return ((!exact || target == topic) && facts.iter().any(|fact| fact.topic == target))
+            .then_some(target);
+    }
+    if exact {
+        return Some(topic);
+    }
+    let folded = folded_topic(topic);
+    let mut matching = facts
+        .iter()
+        .filter(|fact| !folded.is_empty() && folded_topic(&fact.topic) == folded);
+    let first = matching.next().map(|fact| fact.topic.as_str());
+    if matching.next().is_some() {
+        return None;
+    }
+    first.or(Some(topic))
+}
+
 pub async fn migrate_suppression_tokens(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let legacy = sqlx::query(
         "SELECT user_id,topic FROM personalization_suppressed WHERE topic NOT LIKE 'sha256:%'",
@@ -125,6 +198,21 @@ pub async fn rebuild(state: &AppState, owner: &str, expected: i64) -> Result<Pro
     profile(pool, owner).await
 }
 
+pub async fn cancel_rebuild(pool: &SqlitePool, owner: &str, id: &str) -> Result<Profile, ApiError> {
+    let mut tx = pool.begin().await?;
+    let changed = sqlx::query("UPDATE user_personalization SET rebuild_id=NULL,requested=0,last_attempt_at=?,last_error=NULL,failures=0,revision=revision+1 WHERE user_id=? AND rebuild_id=?")
+        .bind(unix_timestamp()).bind(owner).bind(id).execute(&mut *tx).await?.rows_affected();
+    if changed == 0 {
+        return Err(ApiError::conflict(
+            "rebuild_changed",
+            "This rebuild is no longer running",
+        ));
+    }
+    clear_replay(&mut tx, owner).await?;
+    tx.commit().await?;
+    profile(pool, owner).await
+}
+
 pub async fn finish_scan(
     state: &AppState,
     owner: &str,
@@ -137,8 +225,8 @@ pub async fn finish_scan(
         Vec::new()
     };
     let mut tx = state.db.begin().await?;
-    let changed = sqlx::query("UPDATE user_personalization SET requested=0,rebuild_id=NULL,last_error=NULL,failures=0,revision=revision+CASE WHEN rebuild_id IS NULL THEN 0 ELSE 1 END WHERE user_id=? AND revision=? AND rebuild_id IS ?")
-        .bind(owner).bind(expected).bind(&before.rebuild_id).execute(&mut *tx).await?.rows_affected();
+    let changed = sqlx::query("UPDATE user_personalization SET requested=0,rebuild_id=NULL,last_error=NULL,failures=0,last_processed_at=CASE WHEN rebuild_id IS NOT NULL THEN ? ELSE last_processed_at END,revision=revision+CASE WHEN rebuild_id IS NULL THEN 0 ELSE 1 END WHERE user_id=? AND revision=? AND rebuild_id IS ?")
+        .bind(unix_timestamp()).bind(owner).bind(expected).bind(&before.rebuild_id).execute(&mut *tx).await?.rows_affected();
     if let Some(id) = before.rebuild_id.as_deref().filter(|_| changed > 0) {
         promote_replay(&mut tx, owner, &before.settings, &models).await?;
         sqlx::query(
@@ -457,6 +545,9 @@ pub fn validate_candidates(
     let mut result = Vec::new();
     for candidate in extraction.facts {
         validate_fact(&candidate.topic, &candidate.content)?;
+        if let Some(target) = &candidate.replaces_topic {
+            validate_fact(target, &candidate.content)?;
+        }
         if !seen.insert(candidate.topic.clone())
             || candidate.evidence.is_empty()
             || candidate.evidence.len() > 3
@@ -521,11 +612,7 @@ pub async fn edit_fact(
         None
     };
     if let Some(old) = &current {
-        sqlx::query("INSERT OR IGNORE INTO personalization_suppressed VALUES (?,?)")
-            .bind(owner)
-            .bind(topic_token(&old.topic))
-            .execute(&mut *tx)
-            .await?;
+        suppress_topic(&mut tx, owner, &old.topic).await?;
     }
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM personalization_facts WHERE user_id=?")
@@ -717,13 +804,7 @@ async fn promote_replay(
             .bind(owner)
             .fetch_all(&mut *tx)
             .await?;
-    let suppressed: HashSet<String> =
-        sqlx::query_scalar("SELECT topic FROM personalization_suppressed WHERE user_id=?")
-            .bind(owner)
-            .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .collect();
+    let suppressed = suppressed_topics(tx, owner).await?;
     let staged: Vec<(String, String)> = sqlx::query_as("SELECT fact_json,history_json FROM personalization_replay_facts WHERE user_id=? ORDER BY topic")
         .bind(owner).fetch_all(&mut *tx).await?;
     sqlx::query("DELETE FROM personalization_facts WHERE user_id=? AND locked=0")
@@ -737,7 +818,7 @@ async fn promote_replay(
         }
         let mut fact: Fact = decode_fact_data(&fact_data)?;
         if preserved.contains(&fact.topic)
-            || suppressed.contains(&topic_token(&fact.topic))
+            || is_suppressed(&suppressed, &fact.topic)
             || !retain_valid_evidence(tx, owner, settings, models, &mut fact).await?
         {
             continue;
@@ -790,6 +871,7 @@ pub async fn replay_hints(
         .collect();
     ranked.sort_by_key(|(score, fact)| std::cmp::Reverse((*score, fact.updated_at)));
     let mut tx = state.db.acquire().await?;
+    let suppressed = suppressed_topics(&mut tx, owner).await?;
     let mut hints = ReplayHints::default();
     for (_, fact) in ranked {
         if hints.facts.len() == 12 {
@@ -799,14 +881,7 @@ pub async fn replay_hints(
         if fact.locked {
             continue;
         }
-        if sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM personalization_suppressed WHERE user_id=? AND topic=?)",
-        )
-        .bind(owner)
-        .bind(topic_token(&fact.topic))
-        .fetch_one(&mut *tx)
-        .await?
-        {
+        if is_suppressed(&suppressed, &fact.topic) {
             continue;
         }
         if !retain_valid_evidence(&mut tx, owner, settings, &models, &mut fact.clone()).await? {
@@ -903,14 +978,21 @@ pub async fn forget(
     .fetch_all(&mut *tx)
     .await?;
     for topic in topics {
-        sqlx::query("INSERT OR IGNORE INTO personalization_suppressed VALUES (?,?)")
+        suppress_topic(&mut tx, owner, &topic).await?;
+    }
+    let suppressed = suppressed_topics(&mut tx, owner).await?;
+    let staged: Vec<String> =
+        sqlx::query_scalar("SELECT topic FROM personalization_replay_facts WHERE user_id=?")
             .bind(owner)
-            .bind(topic_token(&topic))
-            .execute(&mut *tx)
+            .fetch_all(&mut *tx)
             .await?;
+    for topic in staged
+        .into_iter()
+        .filter(|topic| is_suppressed(&suppressed, topic))
+    {
         sqlx::query("DELETE FROM personalization_replay_facts WHERE user_id=? AND topic=?")
             .bind(owner)
-            .bind(&topic)
+            .bind(topic)
             .execute(&mut *tx)
             .await?;
     }
@@ -1059,18 +1141,16 @@ pub async fn publish(
     } else {
         before.facts.clone()
     };
+    let suppressed = suppressed_topics(&mut tx, owner).await?;
+    accepted.sort_by_key(|(_, evidence)| evidence.iter().map(|s| s.created_at).max());
     for (candidate, evidence) in accepted {
-        let suppressed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM personalization_suppressed WHERE user_id=? AND topic=?)",
-        )
-        .bind(owner)
-        .bind(topic_token(&candidate.topic))
-        .fetch_one(&mut *tx)
-        .await?;
-        if suppressed {
+        let Some(topic) = candidate_topic(&candidate, &working).map(str::to_owned) else {
+            continue;
+        };
+        if is_suppressed(&suppressed, &candidate.topic) || is_suppressed(&suppressed, &topic) {
             continue;
         }
-        let current = working.iter().find(|f| f.topic == candidate.topic).cloned();
+        let current = working.iter().find(|f| f.topic == topic).cloned();
         if current.as_ref().is_some_and(|f| f.locked) {
             continue;
         }
@@ -1126,7 +1206,7 @@ pub async fn publish(
                 .as_ref()
                 .map(|f| f.id.clone())
                 .unwrap_or_else(|| Uuid::new_v4().to_string()),
-            topic: candidate.topic,
+            topic,
             content: candidate.content,
             locked: false,
             version: current.as_ref().map(|f| f.version + 1).unwrap_or(1),
@@ -1153,7 +1233,7 @@ pub async fn publish(
         .execute(&mut *tx)
         .await?;
     }
-    sqlx::query("UPDATE user_personalization SET last_processed_at=?,last_error=NULL,requested=?,failures=0 WHERE user_id=?").bind(unix_timestamp()).bind(before.requested).bind(owner).execute(&mut *tx).await?;
+    sqlx::query("UPDATE user_personalization SET last_processed_at=CASE WHEN rebuild_id IS NULL THEN ? ELSE last_processed_at END,last_error=NULL,requested=?,failures=0 WHERE user_id=?").bind(unix_timestamp()).bind(before.requested).bind(owner).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
