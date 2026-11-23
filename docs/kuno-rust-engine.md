@@ -1061,6 +1061,33 @@ What did not help:
 - bf16 outputs for the attention-out and feed-forward-out products as well: 0.8% faster,
   but the residual increments lost about 3 dB on one captured step; kept as int32 sums.
 
+Installed 2026-11-23 (gateway bff4388d, runtime worker 61064827). After it, over HTTP:
+1024x1024 8-step image 5.0 s warm, same-seed outputs byte-identical.
+
+Where a step's time goes (`step_profile`: the real step's command list with the GPU clock
+stamped after every launch; 1184x1776, 8214 tokens, 32 blocks, 0.994 s):
+
+| Kernel | Share | Per block | Rate |
+|---|---|---|---|
+| Attention | 35% | 10.9 ms | ~102 TFLOPS half float (~56% of peak) |
+| Products FC1 / FC2 / QKV / OUT | 51% | 7.2 / 4.0 / 3.6 / 1.2 ms | 228-237 TOPS (B70 peak 367) |
+| Residual + norm + quantize (x2) | 5.7% | 0.90 ms | ~485 GB/s |
+| Hidden quantize, merge, queries/keys, values | ~7% | 0.75 / 0.59 / 0.30 x2 / 0.31 ms | 280-450 GB/s |
+
+The products alone with zero inputs run 5-9% faster than in the step (epilogues, and real data
+costs clock); best blockings reach 233-263 TOPS. At the edit size (4056 target tokens) the
+products cost per token what they cost at 8214, so running both CFG branches as one batch would
+not speed them up.
+
+Glue at bandwidth (bit-identical; `*_matches_reference` tests run the kept previous kernel
+`<name>_ref` on random input, compare bytes and time both):
+- Hidden quantizer: rotated values stay in registers, local memory only for each sub-group's
+  (bank-padded) transposes: 0.97 -> 0.76 ms, 48 KB -> 17 KB local memory per group.
+- Queries/keys: a group per head and 16-token tile; results meet in local memory and leave
+  as one contiguous 4 KB block instead of scattered 4-byte stores: queries 0.96 -> 0.31 ms,
+  keys 0.52 -> 0.30 ms.
+- Step 1.008 -> 0.994 s in `step_profile`.
+
 Opening the models from page cache (`open_costs`): DiT 2.3 s (layers load on three threads,
 so copies overlap the rearranging; 3.3 s before), VAE about 1.1 s (parallel rearranging;
 2.0 s), text encoder 1.3 s, vision tower 0.7 s. The worker disables Mesa's shader cache,

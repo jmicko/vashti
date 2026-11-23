@@ -171,7 +171,51 @@ inline __attribute__((always_inline)) float4 widen(ushort4 b) {
 }
 
 // ---- Queries or keys into the attention streams (qqk.comp, without the prefix store) -------
-SG WG(64) kernel void q_qk(global const ushort4* g, global const float4* v,
+// A group is one head's 16-token tile: each sub-group normalizes and turns one token's head
+// (as before, lanes are channel pairs), the results meet in local memory in the stream's
+// layout, and the group stores the tile's 4 KB block contiguously. Keys past `tokens` are not
+// written (the prefix's keys go there).
+SG WG(256) kernel void q_qk(global const ushort4* g, global const float4* v,
+                           global const float4* turn, global uint4* o, uint tokens, uint stride,
+                           uint side, uint weight_first) {
+    local uint tile[1024];
+    uint head = get_group_id(0);
+    uint first = get_group_id(1) * 16;
+    if (side == 1 && first >= tokens) return;
+    uint sg = get_sub_group_id();
+    uint lane = get_sub_group_local_id();
+    uint token = first + sg;
+    bool live = token < tokens;
+    uint from = token * (3 * DIM4) + side * DIM4 + head * 32 + lane * 2;
+    float4 mine[2];
+    float squares = 0.0f;
+    for (uint j = 0; j < 2; j++) {
+        mine[j] = live ? widen(g[from + j]) : (float4)(0.0f);
+        squares += dot(mine[j], mine[j]);
+    }
+    float norm = 1.0f / sqrt(sub_group_reduce_add(squares) / 128.0f + 1e-6f);
+    uint to = side == 0 ? (lane >> 1) * 128 + (lane & 1) * 64 + sg
+                        : (lane >> 1) * 128 + sg * 8 + (lane & 1) * 4;
+    uint pair = side == 0 ? 16 : 1;
+    for (uint j = 0; j < 2; j++) {
+        float4 a = mine[j] * (norm * v[(weight_first >> 2) + lane * 2 + j]);
+        float4 t = live ? turn[token * 32 + lane * 2 + j] : (float4)(1.0f, 0.0f, 1.0f, 0.0f);
+        float4 r = (float4)(t.x * a.x - t.y * a.y, t.y * a.x + t.x * a.y,
+                            t.z * a.z - t.w * a.w, t.w * a.z + t.z * a.w);
+        tile[to + (j * 2) * pair] = as_uint((half2)((half)r.x, (half)r.y));
+        tile[to + (j * 2 + 1) * pair] = as_uint((half2)((half)r.z, (half)r.w));
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    uint i = get_local_id(0);
+    uint4 word = (uint4)(tile[i * 4], tile[i * 4 + 1], tile[i * 4 + 2], tile[i * 4 + 3]);
+    // Keys: each 4-word piece belongs to one token, (i * 4 % 128) / 8.
+    if (side == 1 && first + ((i * 4) & 127) / 8 >= tokens) return;
+    uint chunk = head * (stride >> 4) + (first >> 4);
+    o[chunk * (side == 0 ? 256 : 512) + i] = word;
+}
+
+// ---- Queries or keys into the attention streams (qqk.comp, without the prefix store) -------
+SG WG(64) kernel void q_qk_ref(global const ushort4* g, global const float4* v,
                           global const float4* turn, global uint* o, uint tokens, uint stride,
                           uint side, uint weight_first) {
     uint head = get_group_id(0) * 4 + get_sub_group_id();
@@ -275,17 +319,81 @@ SG WG(256) kernel void q_merge(global const float* o, global const float* w, glo
     round_row(mem, q, s, token, top, 16, 1);
 }
 
-// The 12288-wide rotated row: 28 groups in local memory, 20 through `spill`.
+// The 12288-wide rotated row: 48 groups of 256, three per sub-group.
 #define HIDDEN4 3072u
 #define GROUPS 48u
-#define KEPT 28u
-#define SPILLED (GROUPS - KEPT)
+// Element `a * 16 + b` of a group in a sub-group's transpose tile (rows padded to 17 floats so
+// the 16 lanes of a column access hit different banks).
+#define T(a, b) ((a) * 17u + (b))
 // ---- The feed-forward activation (from the gated product, `[token][12288]` bf16) quantized ---
-SG WG(256) kernel void q_hidden(global const ushort4* h, global float* s, global uint4* q,
+// Each lane keeps its 3 x 16 rotated values in registers; local memory only carries the
+// transposes (one small tile per sub-group) and the sub-groups' maxima.
+SG WG(256) kernel void q_hidden(global const ushort16* h, global float* s, global uint4* q,
+                               uint tokens) {
+    local float tiles[16 * 16 * 17];
+    local float maxima[16];
+    uint token = get_group_id(0);
+    uint sg = get_sub_group_id(), lane = get_sub_group_local_id();
+    local float* tile = tiles + sg * (16 * 17);
+    bool live = token < tokens;
+    float top = 0.0f;
+    float w[3][16];
+    for (uint r = 0; r < 3; r++) {
+        uint group = r * 16 + sg;
+        ushort16 raw = live ? h[token * (HIDDEN4 / 4) + group * 16 + lane] : (ushort16)(0);
+        float v[16];
+        ushort b[16];
+        vstore16(raw, 0, b);
+        for (uint j = 0; j < 16; j++) v[j] = as_float((uint)b[j] << 16) * 0.0625f;
+        stages(v);
+        for (uint j = 0; j < 16; j++) tile[T(lane, j)] = v[j];
+        sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+        for (uint j = 0; j < 16; j++) v[j] = tile[T(j, lane)];
+        sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+        stages(v);
+        for (uint j = 0; j < 16; j++) {
+            top = fmax(top, fabs(v[j]));
+            w[r][j] = v[j];
+        }
+    }
+    top = sub_group_reduce_max(top);
+    if (lane == 0) maxima[sg] = top;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (uint i = 0; i < 16; i++) top = fmax(top, maxima[i]);
+    float scale_out = (float)((double)top / 127.0);
+    float inverse = (float)(1.0 / (double)scale_out);
+    if (get_local_id(0) == 0) s[token] = scale_out;
+    for (uint r = 0; r < 3; r++) {
+        uint group = r * 16 + sg;
+        for (uint j = 0; j < 16; j++) tile[T(j, lane)] = w[r][j];
+        sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+        uint4 word = (uint4)(0);
+        for (uint b = 0; b < 16; b++) {
+            float scaled = tile[T(lane, b)] * inverse;
+            int rounded = scale_out == 0.0f ? 0 : (int)clamp(rint(scaled), -127.0f, 127.0f);
+            uint shifted = ((uint)rounded & 255u) << ((b & 3) * 8);
+            if ((b >> 2) == 0) word.x |= shifted;
+            else if ((b >> 2) == 1) word.y |= shifted;
+            else if ((b >> 2) == 2) word.z |= shifted;
+            else word.w |= shifted;
+        }
+        sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+        uint w16 = group * 16 + lane;
+        uint at = (((token >> 5) * (GROUPS * 8) + (w16 >> 1)) * 32 + (token & 31)) * 2 + (w16 & 1);
+        q[at] = word;
+    }
+}
+
+#define REF_GROUPS 48u
+// The 12288-wide rotated row: 28 groups in local memory, 20 through `spill`.
+#define REF_KEPT 28u
+#define REF_SPILLED (REF_GROUPS - REF_KEPT)
+// ---- The feed-forward activation (from the gated product, `[token][12288]` bf16) quantized ---
+SG WG(256) kernel void q_hidden_ref(global const ushort4* h, global float* s, global uint4* q,
                                uint tokens) {
     // The whole rotated row stays in local memory (48 KB). Each sub-group transposes its
     // group in the group's own slots before they hold the result, so no separate tile.
-    local float mem[GROUPS * 256];
+    local float mem[REF_GROUPS * 256];
     local float maxima[16];
     uint token = get_group_id(0);
     uint sg = get_sub_group_id(), lane = get_sub_group_local_id();
@@ -335,7 +443,7 @@ SG WG(256) kernel void q_hidden(global const ushort4* h, global float* s, global
             else word.w |= shifted;
         }
         uint w16 = group * 16 + lane;
-        uint at = (((token >> 5) * (GROUPS * 8) + (w16 >> 1)) * 32 + (token & 31)) * 2 + (w16 & 1);
+        uint at = (((token >> 5) * (REF_GROUPS * 8) + (w16 >> 1)) * 32 + (token & 31)) * 2 + (w16 & 1);
         q[at] = word;
     }
 }

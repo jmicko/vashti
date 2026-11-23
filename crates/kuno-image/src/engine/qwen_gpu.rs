@@ -254,7 +254,7 @@ impl Glue {
             norm: k("q_norm", 256)?,
             resnorm: k("q_resnorm", 256)?,
             resid: k("q_resid", 64)?,
-            qk: k("q_qk", 64)?,
+            qk: k("q_qk", 256)?,
             value: k("q_value", 256)?,
             prefix: k("q_prefix", 64)?,
             merge: k("q_merge", 256)?,
@@ -753,6 +753,18 @@ impl QwenGpu {
         x: &[f32],
         times: &Times,
     ) -> Result<Vec<f32>, &'static str> {
+        Ok(self.step_stamped(prefix, x, times, None)?.0)
+    }
+
+    /// As `step_at`; with `stamps`, the GPU clock is written there before the first launch
+    /// and after each, and the launched kernels are returned (profiling).
+    fn step_stamped(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+        stamps: Option<&level_zero::Memory>,
+    ) -> Result<(Vec<f32>, Vec<usize>), &'static str> {
         use level_zero::Arg::{Memory as M, U32 as U};
         let gpu = &self.gpu;
         let (height, width) = (prefix.height, prefix.width);
@@ -775,6 +787,9 @@ impl QwenGpu {
         let (n, np) = (tokens as u32, w.padded as u32);
         let part = |p: usize| (p * DIM) as u32;
         let mut batch = fast.batch()?;
+        if let Some(memory) = stamps {
+            batch.stamp_into(memory)?;
+        }
         batch.launch(
             &g.embed,
             &[M(rows), M(&self.img_in.memory), M(stream), U(n)],
@@ -817,7 +832,7 @@ impl QwenGpu {
                         U(side),
                         U(weight as u32),
                     ],
-                    [(HEADS / 4) as u32, np, 1],
+                    [HEADS as u32, np / 16, 1],
                 )?;
             }
             batch.launch(
@@ -918,10 +933,11 @@ impl QwenGpu {
             ],
             [n, 1, 1],
         )?;
+        let launched = batch.launched();
         batch.run()?;
         let mut result = vec![0f32; tokens * CHANNELS];
         gpu.read_floats(&w.out, 0, &w.readback, &mut result)?;
-        Ok(qwen_dit::unpatchify(&result, height, width))
+        Ok((qwen_dit::unpatchify(&result, height, width), launched))
     }
 
     /// The calls of one block on `work.stream` with modulation row `row` (0 the step's, 1
@@ -1317,6 +1333,238 @@ mod tests {
             println!("{ms:8.2} ms  {name}");
         }
         println!("{:8.2} ms  sum", totals.iter().map(|t| t.1).sum::<f64>());
+    }
+
+    /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir>` (`KUNO_QWEN_SIZE=<h>x<w>` latent
+    /// patches, default the generate benchmark's): one real step with the GPU clock stamped
+    /// after every launch; time per kernel kind summed over the step.
+    #[test]
+    #[ignore]
+    fn step_profile() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let model =
+            QwenGpu::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
+        let golden = Golden::load(&dir, 0);
+        let (height, width) = std::env::var("KUNO_QWEN_SIZE").map_or((111, 74), |v| {
+            let (h, w) = v.split_once('x').unwrap();
+            (h.parse().unwrap(), w.parse().unwrap())
+        });
+        let prefix = model
+            .prefix(&golden.context, &golden.slots, &[], (height, width))
+            .unwrap();
+        let x = vec![0.5f32; CHANNELS * height * width];
+        let times = model.small.times(&[500.0]).remove(0);
+        model.step_at(&prefix, &x, &times).unwrap();
+        let fast = &model.kernels.fast;
+        let stamps = Shared::new(&model.gpu, fast, 8 * 8192).unwrap();
+        let started = std::time::Instant::now();
+        let (_, launched) = model
+            .step_stamped(&prefix, &x, &times, Some(&stamps.memory))
+            .unwrap();
+        let wall = started.elapsed().as_secs_f64();
+        let raw = model
+            .gpu
+            .download(&stamps.buffer, 0, 8 * (launched.len() + 1))
+            .unwrap();
+        let ticks: Vec<u64> = raw
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let span = (ticks[launched.len()] - ticks[0]) as f64;
+        let g = &model.glue;
+        let works = model.work.lock().unwrap();
+        let w = works.values().find(|w| w.tokens == height * width).unwrap();
+        let mut names: Vec<(usize, &str)> = vec![
+            (g.norm.id(), "norm+quantize"),
+            (g.resnorm.id(), "residual+norm+quantize"),
+            (g.resid.id(), "residual"),
+            (g.qk.id(), "queries/keys"),
+            (g.value.id(), "values"),
+            (g.prefix.id(), "prefix copy"),
+            (g.merge.id(), "merge+quantize"),
+            (g.hidden.id(), "hidden quantize"),
+            (g.embed.id(), "embed"),
+            (g.final_.id(), "final"),
+            (w.attend.0.id(), "attention"),
+        ];
+        for (i, name) in ["product qkv", "product out", "product fc1", "product fc2"]
+            .iter()
+            .enumerate()
+        {
+            names.push((w.products[i].0.id(), name));
+        }
+        let mut totals: Vec<(&str, f64, usize)> = Vec::new();
+        for (i, id) in launched.iter().enumerate() {
+            let name = names.iter().find(|n| n.0 == *id).map_or("?", |n| n.1);
+            let seconds = (ticks[i + 1] - ticks[i]) as f64 / span * wall;
+            match totals.iter_mut().find(|t| t.0 == name) {
+                Some(t) => {
+                    t.1 += seconds;
+                    t.2 += 1;
+                }
+                None => totals.push((name, seconds, 1)),
+            }
+        }
+        totals.sort_by(|a, b| b.1.total_cmp(&a.1));
+        println!(
+            "step {:.1} ms wall ({} launches)",
+            wall * 1e3,
+            launched.len()
+        );
+        for (name, seconds, count) in &totals {
+            println!(
+                "{:8.1} ms {:5.1}%  {count:4} x {:7.3} ms  {name}",
+                seconds * 1e3,
+                seconds / wall * 100.0,
+                seconds * 1e3 / *count as f64
+            );
+        }
+    }
+
+    /// A glue kernel against its kept previous form (`<name>_ref` in `xe2/qwen.cl`) at the
+    /// benchmark size: identical bytes out, and the time of each.
+    fn glue_against_reference(
+        name: &str,
+        inputs: &[(usize, u64)],
+        outputs: &[usize],
+        args: &dyn Fn(&[Shared], u32) -> Vec<level_zero::Arg<'_>>,
+        // (group size, groups) of the reference, then of the new form
+        launches: [(u32, [u32; 3]); 2],
+        bytes_moved: f64,
+    ) {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let kernels = Kernels::new(&gpu).unwrap();
+        let fast = &kernels.fast;
+        let tokens = 111 * 74u32;
+        let mut seed = 0x9e3779b97f4a7c15u64;
+        let mut buffers = Vec::new();
+        for &(bytes, kind) in inputs {
+            let words: Vec<u32> = (0..bytes / 4)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    match kind {
+                        // two bf16 values in about +-4
+                        1 => {
+                            let half = |x: u64| {
+                                let f = ((x & 0xffff) as f32 / 65536.0 - 0.5) * 8.0;
+                                f.to_bits() >> 16
+                            };
+                            half(seed) | (half(seed >> 16) << 16)
+                        }
+                        _ => 0,
+                    }
+                })
+                .collect();
+            buffers.push(Shared::floats(&gpu, fast, bytemuck_floats(&words)).unwrap());
+        }
+        let mut results = Vec::new();
+        for (kernel_name, (size, groups)) in [format!("{name}_ref"), name.to_string()]
+            .into_iter()
+            .zip(launches)
+        {
+            let kernel = fast
+                .compiled_kernel(GLUE, &kernel_name, [size, 1, 1])
+                .unwrap();
+            let mut best = f64::MAX;
+            for _ in 0..5 {
+                let mut batch = fast.batch().unwrap();
+                batch
+                    .launch(&kernel, &args(&buffers, tokens), groups)
+                    .unwrap();
+                let started = std::time::Instant::now();
+                batch.run().unwrap();
+                best = best.min(started.elapsed().as_secs_f64());
+            }
+            println!(
+                "{kernel_name}: {:.3} ms, {:.0} GB/s",
+                best * 1e3,
+                bytes_moved / best / 1e9
+            );
+            let out: Vec<Vec<u8>> = outputs
+                .iter()
+                .map(|&i| gpu.download(&buffers[i].buffer, 0, inputs[i].0).unwrap())
+                .collect();
+            for &i in outputs {
+                gpu.upload(&buffers[i].buffer, 0, &vec![0u8; inputs[i].0])
+                    .unwrap();
+            }
+            results.push(out);
+        }
+        for (k, (a, b)) in results[0].iter().zip(&results[1]).enumerate() {
+            let differ = a.iter().zip(b).filter(|(x, y)| x != y).count();
+            assert_eq!(differ, 0, "output {k}: {differ} bytes differ");
+        }
+    }
+    fn bytemuck_floats(words: &[u32]) -> &[f32] {
+        // SAFETY: u32 and f32 have the same size and alignment; any bits are a valid f32.
+        unsafe { std::slice::from_raw_parts(words.as_ptr().cast(), words.len()) }
+    }
+
+    /// The feed-forward activation quantizer against its previous form.
+    #[test]
+    #[ignore]
+    fn hidden_quantizer_matches_reference() {
+        let tokens = 111 * 74usize;
+        let padded = tokens.next_multiple_of(PAD);
+        glue_against_reference(
+            "q_hidden",
+            &[
+                (padded * HIDDEN * 2, 1),
+                (padded * 4 + 256, 0),
+                (padded * HIDDEN + int8::SLACK, 0),
+            ],
+            &[1, 2],
+            &|b, n| {
+                use level_zero::Arg::{Memory as M, U32 as U};
+                vec![M(&b[0].memory), M(&b[1].memory), M(&b[2].memory), U(n)]
+            },
+            [(256, [padded as u32, 1, 1]); 2],
+            (tokens * HIDDEN * 3) as f64,
+        );
+    }
+
+    /// The query and key streams against their previous form, for both sides (keys with
+    /// a live count that leaves a partial tile).
+    #[test]
+    #[ignore]
+    fn queries_keys_match_reference() {
+        let tokens = 111 * 74usize;
+        let padded = tokens.next_multiple_of(PAD);
+        let keys = (tokens + 25).next_multiple_of(16);
+        for side in [0u32, 1] {
+            let stride = if side == 0 { padded } else { keys };
+            glue_against_reference(
+                "q_qk",
+                &[
+                    (padded * 3 * DIM * 2, 1),
+                    (VECTORS * 4, 1),
+                    (padded * PAIRS * 2 * 4, 1),
+                    (HEADS * stride * HEAD * 2 * 2 + attend::SLACK, 0),
+                ],
+                &[3],
+                &|b, n| {
+                    use level_zero::Arg::{Memory as M, U32 as U};
+                    vec![
+                        M(&b[0].memory),
+                        M(&b[1].memory),
+                        M(&b[2].memory),
+                        M(&b[3].memory),
+                        U(n),
+                        U(stride as u32),
+                        U(side),
+                        U(QUERY_NORM as u32),
+                    ]
+                },
+                [
+                    (64, [(HEADS / 4) as u32, padded as u32, 1]),
+                    (256, [HEADS as u32, (padded / 16) as u32, 1]),
+                ],
+                (tokens * DIM * 4) as f64,
+            );
+        }
     }
 
     /// The INT8 products at the benchmark size with different dispatch blockings.

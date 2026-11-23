@@ -131,6 +131,7 @@ api! {
     kernel_destroy = b"zeKernelDestroy\0": fn(Handle);
     kernel_group_size = b"zeKernelSetGroupSize\0": fn(Handle, u32, u32, u32);
     kernel_argument = b"zeKernelSetArgumentValue\0": fn(Handle, u32, usize, *const c_void);
+    list_timestamp = b"zeCommandListAppendWriteGlobalTimestamp\0": fn(Handle, *mut u64, Handle, u32, *mut Handle);
 }
 
 fn check(code: Code, error: &'static str) -> Result<(), &'static str> {
@@ -193,6 +194,10 @@ pub struct Kernel {
 unsafe impl Send for Kernel {}
 unsafe impl Sync for Kernel {}
 impl Kernel {
+    /// Identifies the kernel among `Batch::launched`.
+    pub fn id(&self) -> usize {
+        self.kernel as usize
+    }
     /// Work items per group (16 per hardware thread for the machine-code kernels).
     pub fn set_group(&self, group: [u32; 3]) -> Result<(), &'static str> {
         // SAFETY: a live kernel handle; group sizes are plain values the driver validates.
@@ -384,7 +389,12 @@ impl LevelZero {
                 "gpu_failed",
             )?;
         }
-        Ok(Batch { fast: self, list })
+        Ok(Batch {
+            fast: self,
+            list,
+            stamps: None,
+            launched: Vec::new(),
+        })
     }
     pub fn kernel(
         &self,
@@ -496,6 +506,9 @@ pub enum Arg<'a> {
 pub struct Batch<'a> {
     fast: &'a LevelZero,
     list: Handle,
+    /// For profiling: after each launch, the GPU clock is written to the next 8 bytes here.
+    stamps: Option<(*mut c_void, usize)>,
+    launched: Vec<Handle>,
 }
 impl Batch<'_> {
     /// Appends `kernel` with `args` over `groups` workgroups, after everything before it.
@@ -535,8 +548,36 @@ impl Batch<'_> {
             check(
                 (core.api.list_barrier)(self.list, null_mut(), 0, null_mut()),
                 "gpu_failed",
+            )?;
+        }
+        self.launched.push(kernel.kernel);
+        self.stamp()
+    }
+    /// Profiling: writes the GPU clock to `memory` (8 bytes per entry, at least one more entry
+    /// than launches) now and after each later launch. `launched` names the launches.
+    pub fn stamp_into(&mut self, memory: &Memory) -> Result<(), &'static str> {
+        self.stamps = Some((memory.address, 0));
+        self.stamp()
+    }
+    fn stamp(&mut self) -> Result<(), &'static str> {
+        let Some((address, count)) = self.stamps.as_mut() else {
+            return Ok(());
+        };
+        let core = &self.fast.core;
+        // SAFETY: the caller sized the memory for every stamp; the barrier before it orders
+        // the write after the launch.
+        unsafe {
+            let at = address.cast::<u64>().add(*count);
+            *count += 1;
+            check(
+                (core.api.list_timestamp)(self.list, at, null_mut(), 0, null_mut()),
+                "gpu_failed",
             )
         }
+    }
+    /// The kernels launched so far, in order (to label profiling stamps).
+    pub fn launched(&self) -> Vec<usize> {
+        self.launched.iter().map(|k| *k as usize).collect()
     }
     /// Runs the list and waits for it.
     pub fn run(self) -> Result<(), &'static str> {
