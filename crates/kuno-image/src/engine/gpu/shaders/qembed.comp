@@ -1,0 +1,26 @@
+// Qwen Image 2.1 latent rows into the stream: out[token][o] = rows[token][..64] . weight[o]
+// (img_in, no bias). One workgroup per token; each lane makes 16 outputs.
+// Dispatch: x = tokens.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Rows { float rows[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { vec4 weight[]; };
+layout(set = 0, binding = 2) writeonly buffer Stream { float x[]; };
+layout(push_constant) uniform Constants { uint tokens; } p;
+
+shared vec4 row[16];
+
+void main() {
+    uint token = gl_WorkGroupID.x, lane = gl_LocalInvocationIndex;
+    if (lane < 16) {
+        uint at = token * 64 + lane * 4;
+        row[lane] = vec4(rows[at], rows[at + 1], rows[at + 2], rows[at + 3]);
+    }
+    barrier();
+    for (uint k = 0; k < 16; k++) {
+        uint o = lane + k * 256;
+        float sum = 0.0;
+        for (uint j = 0; j < 16; j++) sum += dot(row[j], weight[o * 16 + j]);
+        x[token * 4096 + o] = sum;
+    }
+}

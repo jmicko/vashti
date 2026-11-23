@@ -1,0 +1,63 @@
+// Qwen Image 2.1 attention for a run of prompt tokens: query i sees its own run's keys
+// 0..=i (causal) and every earlier prefix key (`base`..`base + earlier`). Queries and keys
+// come from the machine-code attention kernel's streams (xe2/attend.rs; `queries` and
+// `keys` padded tokens per head); the output is that kernel's: mixed values
+// `[head][query tile][channel][16]` f32 and weight sums `[head][query tile][16]`. Runs are
+// short (a prompt), so this is a plain loop: one workgroup of 128 lanes (one per channel) is
+// one query and head, with an online softmax over the keys.
+// Dispatch: x = live queries, y = heads.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Queries { float16_t q[]; };
+layout(set = 0, binding = 1) readonly buffer KeyValues { float16_t kv[]; };
+layout(set = 0, binding = 2) writeonly buffer Mixed { float o[]; };
+layout(set = 0, binding = 3) writeonly buffer Sums { float w[]; };
+layout(push_constant) uniform Constants {
+    uint queries;
+    uint keys;
+    uint base;
+    uint earlier;
+    float scale;
+} p;
+
+shared float partial[8];
+
+float key_at(uint head, uint key, uint c) {
+    return float(kv[(head * (p.keys >> 4) + (key >> 4)) * 4096 + (c >> 4) * 256 + (key & 15) * 16 + (c & 15)]);
+}
+float value_at(uint head, uint key, uint c) {
+    return float(kv[(head * (p.keys >> 4) + (key >> 4)) * 4096 + 2048 + c * 16 + (key & 15)]);
+}
+
+void main() {
+    uint query = gl_WorkGroupID.x, head = gl_WorkGroupID.y;
+    uint c = gl_LocalInvocationIndex;
+    uint sg = gl_SubgroupID, subgroups = gl_NumSubgroups;
+    float qc = float(q[(head * (p.queries >> 4) + (query >> 4)) * 2048 + (c >> 4) * 256
+        + ((c & 15) >> 1) * 32 + (query & 15) * 2 + (c & 1)]);
+    float best = -1.0 / 0.0, total = 0.0, acc = 0.0;
+    uint count = query + 1 + p.earlier;
+    for (uint i = 0; i < count; i++) {
+        uint key = i <= query ? i : p.base + (i - query - 1);
+        float s = subgroupAdd(qc * key_at(head, key, c));
+        if (subgroupElect()) partial[sg] = s;
+        barrier();
+        float score = 0.0;
+        for (uint j = 0; j < subgroups; j++) score += partial[j];
+        barrier();
+        score *= p.scale;
+        float top = max(best, score);
+        float fade = exp(best - top), weight = exp(score - top);
+        total = total * fade + weight;
+        acc = acc * fade + weight * value_at(head, key, c);
+        best = top;
+    }
+    uint tile = head * (p.queries >> 4) + (query >> 4);
+    o[(tile * 128 + c) * 16 + (query & 15)] = acc / total;
+    if (c == 0) w[tile * 16 + (query & 15)] = 1.0;
+}

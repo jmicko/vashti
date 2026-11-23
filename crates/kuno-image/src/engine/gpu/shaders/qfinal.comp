@@ -1,0 +1,54 @@
+// Qwen Image 2.1 output head: LayerNorm (no weights, eps 1e-6) of each stream row, times
+// `1 + scale`, then proj_out (64 x 4096, no bias): out[token][64]. One workgroup per token:
+// the scaled row stays in shared memory, each subgroup of 16 lanes makes 4 outputs.
+// Dispatch: x = tokens.
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Scale { vec4 scale[]; };
+layout(set = 0, binding = 2) readonly buffer Weight { vec4 weight[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { float out_[]; };
+layout(push_constant) uniform Constants { uint tokens; } p;
+const uint DIM4 = 1024;
+
+shared vec4 mem[1024];
+shared float partial[16];
+
+float reduce(float value) {
+    float sum = subgroupAdd(value);
+    barrier();
+    if (gl_SubgroupInvocationID == 0) partial[gl_SubgroupID] = sum;
+    barrier();
+    sum = 0.0;
+    for (uint i = 0; i < 16; i++) sum += partial[i];
+    return sum;
+}
+
+void main() {
+    uint token = gl_WorkGroupID.x, lane = gl_LocalInvocationIndex;
+    vec4 total = vec4(0.0);
+    for (uint c = lane; c < DIM4; c += 256) {
+        vec4 d = x[token * DIM4 + c];
+        mem[c] = d;
+        total += d;
+    }
+    float mean = reduce(total.x + total.y + total.z + total.w) / 4096.0;
+    vec4 squares = vec4(0.0);
+    for (uint c = lane; c < DIM4; c += 256) {
+        vec4 d = mem[c] - mean;
+        squares += d * d;
+    }
+    float norm = 1.0 / sqrt(reduce(squares.x + squares.y + squares.z + squares.w) / 4096.0 + 1e-6);
+    for (uint c = lane; c < DIM4; c += 256) mem[c] = (mem[c] - mean) * norm * (1.0 + scale[c]);
+    barrier();
+    uint sg = gl_SubgroupID, sl = gl_SubgroupInvocationID;
+    for (uint k = 0; k < 4; k++) {
+        uint o = sg * 4 + k;
+        float sum = 0.0;
+        for (uint c = sl; c < DIM4; c += 16) sum += dot(mem[c], weight[o * DIM4 + c]);
+        sum = subgroupAdd(sum);
+        if (sl == 0) out_[token * 64 + o] = sum;
+    }
+}

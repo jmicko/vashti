@@ -80,7 +80,9 @@ impl Layout {
                 let (h0, w0) = ((height - height / 2) as f32, (width - width / 2) as f32);
                 for h in 0..height {
                     for w in 0..width {
-                        layout.positions.push([*position, h as f32 - h0, w as f32 - w0]);
+                        layout
+                            .positions
+                            .push([*position, h as f32 - h0, w as f32 - w0]);
                     }
                 }
                 *position += height.max(width) as f32;
@@ -150,7 +152,7 @@ pub(super) fn rotary(positions: &[[f32; 3]]) -> Vec<[f32; 2]> {
 }
 
 /// Flux-style sinusoidal embedding: cosines then sines, `exp(-ln(10000) j / 128)`.
-fn time_embedding(t: f32) -> Vec<f32> {
+pub(super) fn time_embedding(t: f32) -> Vec<f32> {
     let half = TIME / 2;
     let mut out = vec![0f32; TIME];
     for j in 0..half {
@@ -164,7 +166,7 @@ fn time_embedding(t: f32) -> Vec<f32> {
 fn silu(v: f32) -> f32 {
     v / (1.0 + (-v).exp())
 }
-fn gelu(v: f32) -> f32 {
+pub(super) fn gelu(v: f32) -> f32 {
     0.5 * v * (1.0 + (0.797_884_6 * (v + 0.044_715 * v * v * v)).tanh())
 }
 /// Rows normalized to zero mean and unit variance (no weights).
@@ -242,17 +244,36 @@ impl QwenDit {
     fn floats(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
         self.file.floats(name, shape)
     }
-    fn int8(&self, name: &str, outputs: usize, inputs: usize) -> Result<(Vec<i8>, Vec<f32>), &'static str> {
+    fn int8(
+        &self,
+        name: &str,
+        outputs: usize,
+        inputs: usize,
+    ) -> Result<(Vec<i8>, Vec<f32>), &'static str> {
         Ok((
-            self.file.i8(&format!("{name}.weight"), &[outputs, inputs])?,
-            self.file.f32(&format!("{name}.weight_scale"), &[outputs, 1])?,
+            self.file
+                .i8(&format!("{name}.weight"), &[outputs, inputs])?,
+            self.file
+                .f32(&format!("{name}.weight_scale"), &[outputs, 1])?,
         ))
     }
-    fn dense(&self, x: &[f32], name: &str, outputs: usize, inputs: usize) -> Result<Vec<f32>, &'static str> {
+    fn dense(
+        &self,
+        x: &[f32],
+        name: &str,
+        outputs: usize,
+        inputs: usize,
+    ) -> Result<Vec<f32>, &'static str> {
         let weight = self.floats(&format!("{name}.weight"), &[outputs, inputs])?;
         Ok(linear(x, inputs, &weight, &[]))
     }
-    fn quantized(&self, x: &[f32], name: &str, outputs: usize, inputs: usize) -> Result<Vec<f32>, &'static str> {
+    fn quantized(
+        &self,
+        x: &[f32],
+        name: &str,
+        outputs: usize,
+        inputs: usize,
+    ) -> Result<Vec<f32>, &'static str> {
         let (weight, scale) = self.int8(name, outputs, inputs)?;
         Ok(linear8(x, inputs, &weight, &scale))
     }
@@ -285,8 +306,7 @@ impl QwenDit {
 
     pub fn forward(&self, step: &Step) -> Result<Vec<f32>, &'static str> {
         let text_len = step.context.len() / CONTEXT;
-        let mut images: Vec<(usize, usize)> =
-            step.references.iter().map(|r| (r.1, r.2)).collect();
+        let mut images: Vec<(usize, usize)> = step.references.iter().map(|r| (r.1, r.2)).collect();
         images.push((step.height, step.width));
         let layout = Layout::new(text_len, step.slots, &images)?;
         let times = self.times(step.timestep)?;
@@ -330,12 +350,14 @@ impl QwenDit {
     fn modulate(x: &mut [f32], modulation: &[f32], part: usize, prefix: usize, gate: bool) {
         let row = |r: usize| &modulation[r * 4 * DIM + part * DIM..][..DIM];
         let (target, zero) = (row(0), row(1));
-        x.par_chunks_exact_mut(DIM).enumerate().for_each(|(token, v)| {
-            let m = if token < prefix { zero } else { target };
-            for (v, m) in v.iter_mut().zip(m) {
-                *v *= if gate { m.tanh() } else { 1.0 + m };
-            }
-        });
+        x.par_chunks_exact_mut(DIM)
+            .enumerate()
+            .for_each(|(token, v)| {
+                let m = if token < prefix { zero } else { target };
+                for (v, m) in v.iter_mut().zip(m) {
+                    *v *= if gate { m.tanh() } else { 1.0 + m };
+                }
+            });
     }
 
     fn block(
@@ -412,7 +434,11 @@ fn attention(
             let mut scores = vec![0f32; tokens];
             for segment in segments {
                 for t in segment.start..segment.end {
-                    let keys = if segment.image.is_some() { segment.end } else { t + 1 };
+                    let keys = if segment.image.is_some() {
+                        segment.end
+                    } else {
+                        t + 1
+                    };
                     let qrow = &query[t * HEAD..][..HEAD];
                     let mut top = f32::NEG_INFINITY;
                     for (j, s) in scores[..keys].iter_mut().enumerate() {
@@ -489,9 +515,15 @@ pub(super) mod tests {
             for line in text.lines() {
                 let fields: Vec<&str> = line.split_whitespace().collect();
                 match fields.first() {
-                    Some(&"x") => (width, height) = (fields[1].parse().unwrap(), fields[2].parse().unwrap()),
-                    Some(&"ref") => shapes.push((fields[2].parse().unwrap(), fields[1].parse().unwrap())),
-                    Some(&"slots") => slots = fields[1..].iter().map(|v| v.parse().unwrap()).collect(),
+                    Some(&"x") => {
+                        (width, height) = (fields[1].parse().unwrap(), fields[2].parse().unwrap())
+                    }
+                    Some(&"ref") => {
+                        shapes.push((fields[2].parse().unwrap(), fields[1].parse().unwrap()))
+                    }
+                    Some(&"slots") => {
+                        slots = fields[1..].iter().map(|v| v.parse().unwrap()).collect()
+                    }
                     _ => {}
                 }
             }
@@ -522,7 +554,11 @@ pub(super) mod tests {
                 timestep: self.timestep,
                 context: &self.context,
                 slots: &self.slots,
-                references: self.references.iter().map(|(r, h, w)| (&r[..], *h, *w)).collect(),
+                references: self
+                    .references
+                    .iter()
+                    .map(|(r, h, w)| (&r[..], *h, *w))
+                    .collect(),
             }
         }
     }
@@ -537,7 +573,12 @@ pub(super) mod tests {
             .collect();
         assert_eq!(
             summary,
-            [(0, 2, 0, None), (2, 6, 2, Some(0)), (6, 9, 3, None), (9, 21, 6, Some(1))]
+            [
+                (0, 2, 0, None),
+                (2, 6, 2, Some(0)),
+                (6, 9, 3, None),
+                (9, 21, 6, Some(1))
+            ]
         );
         assert_eq!(layout.prefix, 9);
         assert_eq!(layout.positions[2], [2.0, -1.0, -1.0]);

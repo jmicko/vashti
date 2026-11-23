@@ -1,0 +1,23 @@
+// Qwen Image 2.1 gated residual update from an INT8 product, one vec4 per invocation:
+//   x[token][c] += sum[token][c] * activation scale[token] * weight scale[c] * gate[c]
+// for live tokens; `gate` is tanh(m) of the pass's modulation row, one vector for all tokens.
+// Dispatch: x = 1024 / 64, y = padded tokens.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Sums { ivec4 g[]; };
+layout(set = 0, binding = 2) readonly buffer Scales { float as[]; };
+layout(set = 0, binding = 3) readonly buffer Vectors { vec4 v[]; };
+layout(set = 0, binding = 4) readonly buffer Mods { vec4 m[]; };
+// Offsets are in values and multiples of 4.
+layout(push_constant) uniform Constants { uint tokens; uint scale_first; uint gate_first; } p;
+const uint DIM4 = 1024;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    if (token >= p.tokens) return;
+    uint at = token * DIM4 + c;
+    vec4 update = vec4(g[at]) * as[token] * v[(p.scale_first >> 2) + c];
+    x[at] += update * m[(p.gate_first >> 2) + c];
+}

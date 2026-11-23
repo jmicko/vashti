@@ -51,8 +51,11 @@ const LIMIT: f32 = 11.0;
 
 #[derive(Clone, Copy)]
 pub struct Shape {
-    /// Padded tokens (a multiple of 16): queries per head, and the key chunks' stride.
+    /// Padded keys (a multiple of 16): the key chunks' stride per head.
     pub padded: u32,
+    /// Padded queries (a multiple of 16) per head in Q, OUT and SUM; `padded` unless
+    /// queries and keys differ (`with_queries`).
+    pub queries: u32,
     /// Live keys.
     pub tokens: u32,
     /// Scores are multiplied by this before the softmax.
@@ -74,15 +77,27 @@ impl Shape {
             && heads * (padded / TILE) * CHUNK_BYTES < 1 << 32;
         fits.then_some(Shape {
             padded: padded as u32,
+            queries: padded as u32,
             tokens: tokens as u32,
             scale,
             bounded: false,
             narrow: false,
         })
     }
+    /// `queries` padded queries per head, attending to the same keys. None unless a
+    /// multiple of 16 that keeps the offsets within 32 bits.
+    pub fn with_queries(self, queries: usize, heads: usize) -> Option<Shape> {
+        let fits = queries > 0
+            && queries.is_multiple_of(TILE)
+            && heads * (queries / TILE) * OUT_BYTES < 1 << 32;
+        fits.then_some(Shape {
+            queries: queries as u32,
+            ..self
+        })
+    }
     /// Thread groups: query tiles, heads.
     pub fn groups(&self, heads: usize) -> [u32; 3] {
-        [self.padded / TILE as u32, heads as u32, 1]
+        [self.queries / TILE as u32, heads as u32, 1]
     }
 }
 
@@ -475,12 +490,13 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
 pub fn kernel(shape: &Shape) -> Vec<u8> {
     let Shape {
         padded,
+        queries,
         tokens,
         scale,
         bounded,
         narrow,
     } = *shape;
-    let tiles = padded / TILE as u32;
+    let (tiles, query_tiles) = (padded / TILE as u32, queries / TILE as u32);
     let w = Swsb::after(1);
     let int = |lane: u32| r(INT, lane, D);
     let mut k = Asm::new();
@@ -503,7 +519,8 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     let sizes = [TILE_BYTES, CHUNK_BYTES, OUT_BYTES, SUM_BYTES];
     for (i, size) in sizes.into_iter().enumerate() {
         let i = i as u32;
-        k.mov(1, int(1), imm((tiles * size as u32) as i32), Swsb::NONE);
+        let per_head = if i == 1 { tiles } else { query_tiles };
+        k.mov(1, int(1), imm((per_head * size as u32) as i32), Swsb::NONE);
         k.mul(1, int(2), int(1), r(0, 12, Uw), w);
         if i != 1 {
             k.shl(1, int(3), r(0, 1, D), immw(size.trailing_zeros() as i16), w);
