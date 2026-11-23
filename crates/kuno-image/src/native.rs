@@ -3,6 +3,7 @@
 use kuno_protocol::ImageRecipe;
 
 mod pipeline;
+mod qwen;
 use std::{
     ffi::{CString, c_char, c_void},
     path::Path,
@@ -384,6 +385,10 @@ fn dit_resident(model: &std::path::Path) -> bool {
 pub(crate) fn evict_dit() {
     let kept = RESIDENT_DIT.lock().ok().and_then(|mut kept| kept.take());
     drop(kept);
+}
+/// Frees the Rust Qwen Image 2.1 models.
+pub(crate) fn evict_qwen() {
+    qwen::evict();
 }
 /// The kept DiT if it was placed from `model`; any other kept DiT is freed.
 fn resident_dit(model: &std::path::Path) -> Option<crate::engine::dit_gpu::GpuDit> {
@@ -944,26 +949,47 @@ impl Session {
             })
             .collect();
         let mut pixels = (Vec::<u8>::new(), 0u32, recipe.steps);
-        let code = unsafe {
-            kuno_qwen_session_generate(
+        let rust_qwen = cfg!(feature = "rust-dit") && recipe.workflow != kuno_protocol::QWEN_RECIPE;
+        if !rust_qwen {
+            // The other image model needs the video memory the Rust models hold.
+            evict_qwen();
+        }
+        let code = if rust_qwen {
+            drop(references);
+            let rgba = qwen::generate(
                 self.native.as_ptr(),
-                prompt.as_ptr(),
-                negative.as_ptr(),
-                recipe.width as i32,
-                recipe.height as i32,
-                recipe.steps as i32,
-                recipe.cfg as f32,
-                recipe.flow_shift.unwrap_or(0.0) as f32,
+                &self.directory,
+                &self.pci,
+                recipe,
                 seed,
-                i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
-                references.as_mut_ptr(),
-                references.len() as i32,
-                crate::host_memory::available(),
-                i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
-                receive,
-                previews.then_some(preview),
-                &mut pixels as *mut _ as *mut c_void,
-            )
+                &decoded,
+                previews,
+            )?;
+            pixels.0 = rgba;
+            pixels.1 = 4;
+            0
+        } else {
+            unsafe {
+                kuno_qwen_session_generate(
+                    self.native.as_ptr(),
+                    prompt.as_ptr(),
+                    negative.as_ptr(),
+                    recipe.width as i32,
+                    recipe.height as i32,
+                    recipe.steps as i32,
+                    recipe.cfg as f32,
+                    recipe.flow_shift.unwrap_or(0.0) as f32,
+                    seed,
+                    i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
+                    references.as_mut_ptr(),
+                    references.len() as i32,
+                    crate::host_memory::available(),
+                    i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
+                    receive,
+                    previews.then_some(preview),
+                    &mut pixels as *mut _ as *mut c_void,
+                )
+            }
         };
         match code {
             0 => (),
@@ -1013,6 +1039,8 @@ impl Session {
         previews: bool,
     ) -> Result<Vec<u8>, &'static str> {
         use kuno_protocol::VideoPhase;
+        // The video models need the video memory the Rust image models hold.
+        evict_qwen();
         /// Decoded request pixels, cleared on every exit path.
         #[derive(Default)]
         struct Inputs {

@@ -37,6 +37,17 @@ paths from the environment.
 | Audio encoder, video references | C++ | not started | Kuno does not send audio or video references yet |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
 
+| Stage (Qwen Image 2.1) | C++ today | Rust | State |
+|---|---|---|---|
+| Diffusion transformer (32 blocks, INT8) | about 1.14 s per step at 1184x1776 (8214 tokens) | prompt and references once per request (their keys and values kept per block), then target-only steps: 1.23 s per step at 1184x1776; 38 to 43 dB from captured C++ steps (the CPU reference too) | Rust (dev build) |
+| Text encoder (Qwen3-VL 8B, 36 layers) | C++ | the MiniMax encoder with its sizes from the file; 0.77 s for 469 tokens; 38.4 dB from the CPU reference | Rust (dev build) |
+| Vision tower (references) | C++ | the MiniMax tower with its prefix and width from the file; 146 ms at 832x544 | Rust (dev build) |
+| Prompt template and emphasis | C++ | `(text:1.5)`, `[text]`, `BREAK` byte for byte (18 tricky prompts) | Rust (dev build) |
+| VAE decoder (RGBA) | 2.40 s at 1184x1776 | 1.58 s; 86 to 87 dB from the engine, worst byte 1 | Rust (dev build) |
+| VAE encoder (references, RGBA) | C++ | 20 to 42 ms; 64 to 68 dB from the engine | Rust (dev build) |
+| Pipeline (FLUX schedule, Euler, CFG, previews) | `image.cpp` | `engine/qwen_image.rs`, `native/qwen.rs` | Rust (dev build): text-to-image 40.7 dB from the engine's image of the same request; edits the same picture (CFG amplifies the encoders' small differences) |
+| Qwen Image 2512 (FP8) | C++ | not started | |
+
 The audio decoder runs on CPU threads on purpose: the engine hands over the audio latent
 before it decodes video frames, so audio is decoded while the GPU is busy with video, and it
 is skipped entirely when a request turns audio off. The C++ audio VAE is no longer loaded.
@@ -959,6 +970,51 @@ Checked: all seven video modes, same-seed clips, an image job after video, cance
 (SIGTERM during sampling ends the request after the current step with `image_cancelled`).
 A warm image-to-video clip takes 38.3 s, the first 48.0 to 49.3 s, as before.
 
+## Qwen Image 2.1 in Rust (2026-11-23)
+
+Qwen Image 2.1 is a single-stream DiT (32 blocks of width 4096, 32 heads, SwiGLU 12288,
+INT8 ConvRot linears like MiniMax H3's) over the prompt's tokens, each reference's latent
+in place of its vision tokens, and the target latent. Its LayerNorms have no weights; a
+block scales them by `1 + m` and gates its residual adds by `tanh(m)`. The prefix (prompt
+and references) is modulated with the time-zero row and never attends to the target, and
+text runs attend causally, so the prefix's keys and values do not depend on the step: the
+GPU form runs the prefix once per request, run by run through all blocks (text runs with a
+small causal shader, images with the machine-code attention), keeps each block's keys and
+values, and runs only the target's tokens per step. Their attention reads the target's own
+keys first and the kept prefix after them (the softmax does not depend on the keys' order,
+and the target's keys stay aligned for the stream writers); the attention kernel takes a
+query count separate from its key stride for this.
+
+The VAE is a Wan 2.2-style RGBA image VAE (latent 64 channels at 1/16). For one image its
+temporal paths reduce to their first-chunk forms: the decoder's up blocks add a channel-
+repeating depth-to-space shortcut, the encoder's down blocks an average-pooling shortcut
+whose grouping includes the zero frame padded in front of a single image (half its channels
+read zeros). Both run as unfolded convolutions in `gemm16` with the RMS norm, SiLU, nearest
+upsampling and strided reads folded into the unfold.
+
+The text encoder and vision tower are MiniMax H3's code with their sizes read from the
+file; the 8B file's INT8 token embeddings are scaled and un-rotated in the engine's order.
+The engine parses A1111-style emphasis in the user's text (and tokenizes each piece
+separately), so `prompt.rs` ports that byte for byte.
+
+Measured (B70, 1184x1776, 50 steps unless stated):
+
+| | C++ engine | Rust |
+|---|---|---|
+| DiT step | about 1.14 s | 1.23 s |
+| VAE decode | 2.40 s | 1.58 s |
+| 512x512, 6 steps, end to end | | 1.98 s, 40.7 dB from the engine's image |
+| 512x512 edit, CFG 4, 8 steps | | 5.3 s, same picture (23.4 dB) |
+| Worker, generate 1184x1776, 50 steps (warm) | 61.5 s, 1.165 s per step | 65.4 s, 1.247 s per step; 36.4 dB from the engine's image |
+| Worker, edit 1248x832, 25 steps, CFG 4 (warm) | 37.8 s, 1.20 s per step | 40.6 s, 1.39 s per step; 30.1 dB |
+
+In the worker (`native/qwen.rs`, `rust-dit` builds) Qwen Image 2.1 requests no longer call
+the C++ engine: it releases its own context first, the models stay loaded between image
+requests, and video requests or the other image model free them. Previews are the engine's
+latent projection of each step's denoised latent; SIGTERM cancels after the current step.
+Per step the Rust DiT is still 7% (generate) to 16% (edit, two branches at 4056 tokens plus a
+4056-token prefix) slower than the engine.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
@@ -1022,4 +1078,17 @@ Audio decoder:
 KUNO_AUDIO_VAE=<models>/minimax_h3_audio_vae_fp32.safetensors \
 KUNO_AUDIO_GOLDEN=<dir with audio-latent.f32 and audio-wave.f32> \
 cargo test --release -p kuno-image engine -- --include-ignored --nocapture
+```
+
+Qwen Image 2.1 (captures from the dev CLI with temporary dumps, `kuno-video-dev/qwen-run.sh`):
+
+```
+KUNO_QWEN_DIT=<models>/qwen_image_2.1_int8_convrot.safetensors KUNO_QWEN_GOLDEN=<step dir> \
+cargo test --release -p kuno-image qwen_dit -- --include-ignored --nocapture
+KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<step dir> \
+cargo test --release -p kuno-image qwen_gpu -- --include-ignored --nocapture
+KUNO_QWEN_VAE=<models>/qwen_image_2.1_vae_bf16.safetensors KUNO_QWEN_VAE_GOLDEN=<decode dir> \
+KUNO_QWEN_ENCODE_GOLDEN=<encode dir> cargo test --release -p kuno-image qwen_vae -- --include-ignored --nocapture
+KUNO_QWEN_MODELS=<models> KUNO_QWEN_REFERENCE=<engine PNG> KUNO_QWEN_EDIT=<dir> \
+cargo test --release -p kuno-image qwen_image -- --include-ignored --nocapture --test-threads 1
 ```
