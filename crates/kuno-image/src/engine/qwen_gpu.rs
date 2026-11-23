@@ -59,7 +59,6 @@ pub struct Kernels {
     prefix: Kernel,
     mask: Kernel,
     embed: Kernel,
-    final_: Kernel,
     fast: LevelZero,
 }
 impl Kernels {
@@ -78,7 +77,6 @@ impl Kernels {
             prefix: gpu.kernel(shaders::QPREFIX, 4, 4, None)?,
             mask: gpu.kernel(shaders::QMASK, 4, 5, Some(16))?,
             embed: gpu.kernel(shaders::QEMBED, 3, 1, None)?,
-            final_: gpu.kernel(shaders::QFINAL, 4, 1, Some(16))?,
             fast: LevelZero::open()?,
         })
     }
@@ -89,7 +87,7 @@ impl Kernels {
 /// above.
 pub struct Layer {
     matrices: [(Buffer, level_zero::Memory); 4],
-    vectors: Buffer,
+    vectors: Shared,
 }
 impl Layer {
     pub fn load(
@@ -144,17 +142,64 @@ impl Layer {
                 matrix(&["img_mlp.gate_up"], FC1)?,
                 matrix(&["img_mlp.out"], FC2)?,
             ],
-            vectors: floats_buffer(gpu, &vectors)?,
+            vectors: Shared::floats(gpu, &kernels.fast, &vectors)?,
         })
     }
 }
 
-/// `values` in video memory.
-fn floats_buffer(gpu: &Gpu, values: &[f32]) -> Result<Buffer, &'static str> {
-    gpu.filled(values.len() as u64 * 4, |to| {
-        to.copy_from_slice(bytes_of(values));
-        Ok(())
-    })
+/// A buffer in video memory that both Vulkan and the Level Zero kernels use.
+struct Shared {
+    buffer: Buffer,
+    memory: level_zero::Memory,
+}
+impl Shared {
+    fn new(gpu: &Gpu, fast: &LevelZero, bytes: u64) -> Result<Self, &'static str> {
+        let buffer = gpu.shared(bytes)?;
+        let memory = fast.import(&gpu.export(&buffer)?, bytes)?;
+        Ok(Self { buffer, memory })
+    }
+    fn floats(gpu: &Gpu, fast: &LevelZero, values: &[f32]) -> Result<Self, &'static str> {
+        let bytes = values.len() as u64 * 4;
+        let buffer = gpu.filled_shared(bytes, |to| {
+            to.copy_from_slice(bytes_of(values));
+            Ok(())
+        })?;
+        let memory = fast.import(&gpu.export(&buffer)?, bytes)?;
+        Ok(Self { buffer, memory })
+    }
+}
+
+/// The step's glue as OpenCL kernels (`xe2/qwen.cl`, compiled for the B70 by `ocloc` into
+/// `xe2/qwen.bin`) on the Level Zero queue.
+const GLUE: &[u8] = include_bytes!("xe2/qwen.bin");
+struct Glue {
+    norm: level_zero::Kernel,
+    resnorm: level_zero::Kernel,
+    resid: level_zero::Kernel,
+    qk: level_zero::Kernel,
+    value: level_zero::Kernel,
+    prefix: level_zero::Kernel,
+    merge: level_zero::Kernel,
+    gate: level_zero::Kernel,
+    embed: level_zero::Kernel,
+    final_: level_zero::Kernel,
+}
+impl Glue {
+    fn new(fast: &LevelZero) -> Result<Self, &'static str> {
+        let k = |name: &str, group: u32| fast.compiled_kernel(GLUE, name, [group, 1, 1]);
+        Ok(Self {
+            norm: k("q_norm", 256)?,
+            resnorm: k("q_resnorm", 256)?,
+            resid: k("q_resid", 64)?,
+            qk: k("q_qk", 64)?,
+            value: k("q_value", 256)?,
+            prefix: k("q_prefix", 64)?,
+            merge: k("q_merge", 256)?,
+            gate: k("q_gate", 256)?,
+            embed: k("q_embed", 256)?,
+            final_: k("q_final", 256)?,
+        })
+    }
 }
 
 /// The small float layers, run on the CPU.
@@ -265,6 +310,8 @@ struct Work {
     out: Buffer,
     readback: Readback,
     shared: [level_zero::Memory; 6],
+    /// Level Zero views of stream, turns, rows, mods, final_scale, scales, spill and out.
+    views: [level_zero::Memory; 8],
     products: [(level_zero::Kernel, [u32; 3]); 4],
     attend: (level_zero::Kernel, [u32; 3]),
 }
@@ -278,7 +325,6 @@ impl Work {
         let fast = &kernels.fast;
         let padded = tokens.next_multiple_of(PAD);
         let keys = (tokens + earlier).next_multiple_of(PAD);
-        let f32s = |count: usize| gpu.buffer(count as u64 * 4);
         let sizes = [
             (padded * HIDDEN + int8::SLACK) as u64,
             (padded * 2 * HIDDEN) as u64 * 4,
@@ -320,28 +366,54 @@ impl Work {
         });
         let attend = (fast.kernel(&native, "attend", 4)?, shape.groups(HEADS));
         let [bytes, sums, query, kv, mixed, weights] = buffers;
+        let counts = [
+            padded * DIM,
+            padded * PAIRS * 2,
+            padded * CHANNELS,
+            2 * MODS,
+            DIM,
+            padded,
+            padded * SPILLED,
+            padded * CHANNELS,
+        ];
+        let mut made = Vec::with_capacity(8);
+        for count in counts {
+            let Shared { buffer, memory } = Shared::new(gpu, fast, count as u64 * 4)?;
+            made.push((buffer, memory));
+        }
+        let mut made = made.into_iter();
+        let mut next = || made.next().ok_or("gpu_failed");
+        let (stream, v0) = next()?;
+        let (turns, v1) = next()?;
+        let (rows, v2) = next()?;
+        let (mods, v3) = next()?;
+        let (final_scale, v4) = next()?;
+        let (scales, v5) = next()?;
+        let (spill, v6) = next()?;
+        let (out, v7) = next()?;
         Ok(Self {
             turns_of: std::cell::Cell::new(0),
             tokens,
             earlier,
             padded,
             keys,
-            stream: f32s(padded * DIM)?,
-            turns: f32s(padded * PAIRS * 2)?,
-            rows: f32s(padded * CHANNELS)?,
-            mods: f32s(2 * MODS)?,
-            final_scale: f32s(DIM)?,
+            stream,
+            turns,
+            rows,
+            mods,
+            final_scale,
             bytes,
-            scales: f32s(padded)?,
+            scales,
             sums,
-            spill: f32s(padded * SPILLED)?,
+            spill,
             query,
             kv,
             mixed,
             weights,
-            out: f32s(padded * CHANNELS)?,
+            out,
             readback: gpu.readback((padded * CHANNELS) as u64 * 4)?,
             shared,
+            views: [v0, v1, v2, v3, v4, v5, v6, v7],
             products: [product(QKV)?, product(OUT)?, product(FC1)?, product(FC2)?],
             attend,
         })
@@ -352,9 +424,11 @@ impl Work {
 pub struct Prefix {
     /// Unique per prefix, so a pass knows whether its turns are this prefix's.
     id: u64,
-    /// Per block: keys and values `[head][capacity][128]` f16.
+    /// Per block: keys and values `[head][capacity][128]` f16, and their Level Zero views.
     keys: Vec<Buffer>,
     values: Vec<Buffer>,
+    key_views: Vec<level_zero::Memory>,
+    value_views: Vec<level_zero::Memory>,
     length: usize,
     /// The target's latent size and its tokens' rotary turns.
     height: usize,
@@ -374,10 +448,11 @@ enum Attention {
 pub struct QwenGpu {
     gpu: Gpu,
     kernels: Kernels,
+    glue: Glue,
     layers: Vec<Layer>,
     small: Small,
-    img_in: Buffer,
-    proj_out: Buffer,
+    img_in: Shared,
+    proj_out: Shared,
     /// Pass buffers by shape (own tokens, earlier keys); a request's target pass is reused
     /// every step.
     work: Mutex<HashMap<(usize, usize), Work>>,
@@ -390,13 +465,21 @@ impl QwenGpu {
             .map(|layer| Layer::load(&gpu, &kernels, &model.file, layer))
             .collect::<Result<Vec<_>, _>>()?;
         let small = Small::read(&model.file)?;
-        let img_in = floats_buffer(&gpu, &model.file.floats("img_in.weight", &[DIM, CHANNELS])?)?;
-        let proj_out = floats_buffer(
+        let fast = &kernels.fast;
+        let img_in = Shared::floats(
             &gpu,
+            fast,
+            &model.file.floats("img_in.weight", &[DIM, CHANNELS])?,
+        )?;
+        let proj_out = Shared::floats(
+            &gpu,
+            fast,
             &model.file.floats("proj_out.weight", &[CHANNELS, DIM])?,
         )?;
+        let glue = Glue::new(fast)?;
         Ok(Self {
             gpu,
+            glue,
             kernels,
             layers,
             small,
@@ -423,16 +506,29 @@ impl QwenGpu {
         let layout = Layout::new(text_len, slots, &images)?;
         let rotary = qwen_dit::rotary(&layout.positions);
         let length = layout.prefix;
-        let half_rows = |count: usize| gpu.buffer((HEADS * count.max(1) * HEAD) as u64 * 2);
+        let half_rows = || {
+            Shared::new(
+                gpu,
+                &self.kernels.fast,
+                (HEADS * length.max(1) * HEAD) as u64 * 2,
+            )
+        };
+        let (mut keys, mut values, mut key_views, mut value_views) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..self.layers.len() {
+            let (k, v) = (half_rows()?, half_rows()?);
+            keys.push(k.buffer);
+            key_views.push(k.memory);
+            values.push(v.buffer);
+            value_views.push(v.memory);
+        }
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let prefix = Prefix {
             id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            keys: (0..self.layers.len())
-                .map(|_| half_rows(length))
-                .collect::<Result<_, _>>()?,
-            values: (0..self.layers.len())
-                .map(|_| half_rows(length))
-                .collect::<Result<_, _>>()?,
+            keys,
+            values,
+            key_views,
+            value_views,
             length,
             height: target.0,
             width: target.1,
@@ -499,7 +595,7 @@ impl QwenGpu {
             &self.gpu,
             &[Call::Shader {
                 kernel: &self.kernels.embed,
-                buffers: vec![&work.rows, &self.img_in, &work.stream],
+                buffers: vec![&work.rows, &self.img_in.buffer, &work.stream],
                 constants: vec![work.tokens as u32],
                 groups: [work.tokens as u32, 1, 1],
             }],
@@ -522,55 +618,196 @@ impl QwenGpu {
         self.step_at(prefix, x, &self.small.times(&[timestep])[0])
     }
 
-    /// As `step`, with the timestep's vectors computed beforehand.
+    /// As `step`, with the timestep's vectors computed beforehand. The whole step is one
+    /// Level Zero command list: the glue kernels (`xe2/qwen.cl`) between the machine-code
+    /// products and attention, waited for once.
     pub fn step_at(
         &self,
         prefix: &Prefix,
         x: &[f32],
         times: &Times,
     ) -> Result<Vec<f32>, &'static str> {
+        use level_zero::Arg::{Memory as M, U32 as U};
         let gpu = &self.gpu;
         let (height, width) = (prefix.height, prefix.width);
         let tokens = height * width;
         let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
-        let work = Self::work_for(&mut works, gpu, &self.kernels, tokens, prefix.length)?;
-        if work.turns_of.get() != prefix.id {
+        let w = Self::work_for(&mut works, gpu, &self.kernels, tokens, prefix.length)?;
+        if w.turns_of.get() != prefix.id {
             let mut turns = prefix.turns.clone();
-            turns.resize(work.padded * PAIRS * 2, 0.0);
-            gpu.upload(&work.turns, 0, bytes_of(&turns))?;
-            work.turns_of.set(prefix.id);
+            turns.resize(w.padded * PAIRS * 2, 0.0);
+            gpu.upload(&w.turns, 0, bytes_of(&turns))?;
+            w.turns_of.set(prefix.id);
         }
-        gpu.upload(&work.mods, 0, bytes_of(&times.mods))?;
-        gpu.upload(&work.final_scale, 0, bytes_of(&times.scale))?;
-        gpu.upload(
-            &work.rows,
-            0,
-            bytes_of(&qwen_dit::patchify(x, height, width)),
+        gpu.upload(&w.mods, 0, bytes_of(&times.mods))?;
+        gpu.upload(&w.final_scale, 0, bytes_of(&times.scale))?;
+        gpu.upload(&w.rows, 0, bytes_of(&qwen_dit::patchify(x, height, width)))?;
+        let fast = &self.kernels.fast;
+        let g = &self.glue;
+        let [stream, turns, rows, mods, final_scale, scales, spill, out] = &w.views;
+        let [bytes, sums, query, kv, mixed, weights] = &w.shared;
+        let (n, np) = (tokens as u32, w.padded as u32);
+        let part = |p: usize| (p * DIM) as u32;
+        let mut batch = fast.batch()?;
+        batch.launch(
+            &g.embed,
+            &[M(rows), M(&self.img_in.memory), M(stream), U(n)],
+            [n, 1, 1],
         )?;
+        let layers = self.layers.len();
         for (index, layer) in self.layers.iter().enumerate() {
-            let mut calls = Vec::new();
+            let v = &layer.vectors.memory;
+            let product = |batch: &mut level_zero::Batch, which: usize| {
+                let (kernel, groups) = &w.products[which];
+                batch.launch(
+                    kernel,
+                    &[M(bytes), M(&layer.matrices[which].1), M(sums)],
+                    *groups,
+                )
+            };
             if index == 0 {
-                calls.push(Call::Shader {
-                    kernel: &self.kernels.embed,
-                    buffers: vec![&work.rows, &self.img_in, &work.stream],
-                    constants: vec![tokens as u32],
-                    groups: [tokens as u32, 1, 1],
-                });
+                batch.launch(
+                    &g.norm,
+                    &[M(stream), M(mods), M(bytes), M(scales), U(n), U(part(0))],
+                    [np, 1, 1],
+                )?;
             }
-            calls.extend(self.block(layer, work, 0, Attention::Full, None, prefix, index, false));
-            if index + 1 == self.layers.len() {
-                calls.push(Call::Shader {
-                    kernel: &self.kernels.final_,
-                    buffers: vec![&work.stream, &work.final_scale, &self.proj_out, &work.out],
-                    constants: vec![tokens as u32],
-                    groups: [tokens as u32, 1, 1],
-                });
+            product(&mut batch, QKV)?;
+            for (side, to, weight) in [(0u32, query, QUERY_NORM), (1, kv, KEY_NORM)] {
+                batch.launch(
+                    &g.qk,
+                    &[
+                        M(sums),
+                        M(scales),
+                        M(v),
+                        M(turns),
+                        M(to),
+                        U(n),
+                        U(if side == 0 { np } else { w.keys as u32 }),
+                        U(side),
+                        U(SCALE_QKV as u32),
+                        U(weight as u32),
+                    ],
+                    [(HEADS / 4) as u32, np, 1],
+                )?;
             }
-            run(gpu, &calls)?;
+            batch.launch(
+                &g.value,
+                &[
+                    M(sums),
+                    M(scales),
+                    M(v),
+                    M(kv),
+                    U(n),
+                    U(w.keys as u32),
+                    U(SCALE_QKV as u32),
+                ],
+                [HEADS as u32, np / 32, 1],
+            )?;
+            if prefix.length > 0 {
+                batch.launch(
+                    &g.prefix,
+                    &[
+                        M(&prefix.key_views[index]),
+                        M(&prefix.value_views[index]),
+                        M(kv),
+                        M(kv),
+                        U(prefix.length as u32),
+                        U(n),
+                        U(w.keys as u32),
+                        U(prefix.length as u32),
+                    ],
+                    [(prefix.length * 16).div_ceil(64) as u32, HEADS as u32, 1],
+                )?;
+            }
+            let (attend, groups) = &w.attend;
+            batch.launch(attend, &[M(query), M(kv), M(mixed), M(weights)], *groups)?;
+            batch.launch(
+                &g.merge,
+                &[M(mixed), M(weights), M(bytes), M(scales), U(n), U(np)],
+                [np, 1, 1],
+            )?;
+            product(&mut batch, OUT)?;
+            batch.launch(
+                &g.resnorm,
+                &[
+                    M(stream),
+                    M(mods),
+                    M(bytes),
+                    M(scales),
+                    M(sums),
+                    M(v),
+                    U(n),
+                    U(part(2)),
+                    U(SCALE_OUT as u32),
+                    U(part(1)),
+                ],
+                [np, 1, 1],
+            )?;
+            product(&mut batch, FC1)?;
+            batch.launch(
+                &g.gate,
+                &[
+                    M(sums),
+                    M(scales),
+                    M(v),
+                    M(spill),
+                    M(bytes),
+                    U(n),
+                    U(SCALE_FC1 as u32),
+                ],
+                [np, 1, 1],
+            )?;
+            product(&mut batch, FC2)?;
+            if index + 1 < layers {
+                batch.launch(
+                    &g.resnorm,
+                    &[
+                        M(stream),
+                        M(mods),
+                        M(bytes),
+                        M(scales),
+                        M(sums),
+                        M(v),
+                        U(n),
+                        U(part(0)),
+                        U(SCALE_FC2 as u32),
+                        U(part(3)),
+                    ],
+                    [np, 1, 1],
+                )?;
+            } else {
+                batch.launch(
+                    &g.resid,
+                    &[
+                        M(stream),
+                        M(sums),
+                        M(scales),
+                        M(v),
+                        M(mods),
+                        U(n),
+                        U(SCALE_FC2 as u32),
+                        U(part(3)),
+                    ],
+                    [(DIM / 4 / 64) as u32, np, 1],
+                )?;
+            }
         }
-        let mut out = vec![0f32; tokens * CHANNELS];
-        gpu.read_floats(&work.out, 0, &work.readback, &mut out)?;
-        Ok(qwen_dit::unpatchify(&out, height, width))
+        batch.launch(
+            &g.final_,
+            &[
+                M(stream),
+                M(final_scale),
+                M(&self.proj_out.memory),
+                M(out),
+                U(n),
+            ],
+            [n, 1, 1],
+        )?;
+        batch.run()?;
+        let mut result = vec![0f32; tokens * CHANNELS];
+        gpu.read_floats(&w.out, 0, &w.readback, &mut result)?;
+        Ok(qwen_dit::unpatchify(&result, height, width))
     }
 
     /// The calls of one block on `work.stream` with modulation row `row` (0 the step's, 1
@@ -591,7 +828,7 @@ impl QwenGpu {
     ) -> Vec<Call<'a>> {
         let k = &self.kernels;
         let (n, np) = (w.tokens as u32, w.padded as u32);
-        let v = &layer.vectors;
+        let v = &layer.vectors.buffer;
         let mods = |part: usize| ((row * MODS) + part * DIM) as u32;
         let product = |which: usize| {
             let (kernel, groups) = &w.products[which];
