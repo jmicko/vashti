@@ -9,6 +9,7 @@ pub struct Settings {
     pub processor_backend_id: Option<String>,
     pub processor_model: Option<String>,
     pub allow_cloud_processor: bool,
+    pub learn_from_imports: bool,
     pub allow_local: bool,
     pub allow_cloud: bool,
     pub allow_characters: bool,
@@ -24,6 +25,7 @@ impl Default for Settings {
             processor_backend_id: None,
             processor_model: None,
             allow_cloud_processor: false,
+            learn_from_imports: true,
             allow_local: true,
             allow_cloud: false,
             allow_characters: false,
@@ -90,6 +92,7 @@ pub struct Profile {
     pub last_processed_at: Option<i64>,
     pub last_error: Option<String>,
     pub requested: bool,
+    pub rebuild_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +127,27 @@ pub struct InputSource {
     pub created_at: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReplayHints {
+    pub facts: Vec<FactHint>,
+    pub earlier_turns: Vec<BranchHint>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactHint {
+    pub topic: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BranchHint {
+    pub source: usize,
+    pub excerpts: Vec<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaveSettings {
@@ -154,4 +178,6 @@ pub struct DeviceExtract {
     pub allow_cloud_processor: bool,
     pub sources: Vec<InputSource>,
     pub topics: Vec<String>,
+    #[serde(default)]
+    pub replay: ReplayHints,
 }

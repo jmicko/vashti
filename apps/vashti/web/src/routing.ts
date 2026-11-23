@@ -46,7 +46,7 @@ export function routeFromLocation(): AppRoute {
     if (section === "tasks" && id) return { page: "assistant", taskId: decodeURIComponent(id), runId: new URLSearchParams(window.location.hash.slice(1)).get("run") ?? undefined };
     if (section === "runs" && id) return { page: "assistant", runId: decodeURIComponent(id) };
     if (section === "conversations" && id) return { page: "assistant", conversationId: decodeURIComponent(id) };
-    return { page: "assistant", view: section === "new" || section === "defaults" || section === "tasks" || section === "conversations" || section === "compose" ? section : undefined };
+    return { page: "assistant", view: section === "new" || section === "defaults" || section === "tasks" || section === "conversations" || section === "compose" || section === "notifications" ? section : undefined };
   }
 
   if (path === "/app/videos" || path.startsWith("/app/videos/") || path === "/app/images/video" || path === "/app/images/video/") {
@@ -109,14 +109,14 @@ export function routeFromLocation(): AppRoute {
   if (path.startsWith("/app/chats/")) {
     const chatId = path.split("/")[3];
     if (chatId) {
-      return { page: "chat", chatId };
+      return { page: "chat", chatId, ...(window.location.hash==="#canvas"?{canvas:true}:{}) };
     }
   }
 
   if (path.startsWith("/app/private-chats/")) {
     const chatId = path.split("/")[3];
     if (chatId) {
-      return { page: "private-chat", chatId };
+      return { page: "private-chat", chatId, ...(window.location.hash==="#canvas"?{canvas:true}:{}) };
     }
   }
 
@@ -153,7 +153,7 @@ export function pathForRoute(route: AppRoute) {
   }
 
   if (route.page === "private-chat") {
-    return `/app/private-chats/${route.chatId}`;
+    return `/app/private-chats/${route.chatId}${route.canvas?"#canvas":""}`;
   }
 
   if (route.page === "notes") {
@@ -168,7 +168,7 @@ export function pathForRoute(route: AppRoute) {
   }
 
   if (route.chatId) {
-    return `/app/chats/${route.chatId}`;
+    return `/app/chats/${route.chatId}${route.canvas?"#canvas":""}`;
   }
 
   return "/app";

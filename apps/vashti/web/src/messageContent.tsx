@@ -5,7 +5,7 @@ import { toolIcon } from "./toolUi";
 import { calculatorResult } from "./calculatorResult";
 import { ToolRecordLinks } from "./ToolRecordLinks";
 import { toolEmptyResult } from "./toolRecords";
-import type { ChatMessage, MessageStreamSegment, ThinkingSegment, ToolUsageRecord } from "./types";
+import type { AttachmentInfo, ChatMessage, MessageStreamSegment, ThinkingSegment, ToolUsageRecord } from "./types";
 
 export function MessageStreamContent({
   message,
@@ -13,7 +13,8 @@ export function MessageStreamContent({
   thinkingDurationSeconds,
   isThinkingOpen,
   onThinkingToggle,
-  dimmedEmphasis = false
+  dimmedEmphasis = false,
+  pdfAttachments
 }: {
   message: ChatMessage;
   segments: MessageStreamSegment[];
@@ -21,6 +22,7 @@ export function MessageStreamContent({
   isThinkingOpen: boolean;
   onThinkingToggle: (event: SyntheticEvent<HTMLDetailsElement>) => void;
   dimmedEmphasis?: boolean;
+  pdfAttachments?: AttachmentInfo[];
 }) {
   const visibleSegments = segments.filter(
     (segment) => segment.type === "tool" || segment.text.trim() !== ""
@@ -39,6 +41,7 @@ export function MessageStreamContent({
               key={`content-${index}`}
               content={segment.text}
               dimmedEmphasis={dimmedEmphasis}
+              pdfAttachments={pdfAttachments}
             />
           );
         }

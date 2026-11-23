@@ -53,6 +53,11 @@ export function processProfile(
     ? device.processNow()
     : post("process", { expected_revision: profile.revision });
 }
+export function rebuildProfile(mode: ProfileMode, profile: PersonalProfile): Promise<PersonalProfile> {
+  return mode === "device"
+    ? device.rebuild(profile.revision)
+    : post("rebuild", { expected_revision: profile.revision });
+}
 export function profileHistory(mode: ProfileMode, id: string): Promise<ProfileVersion[]> {
   return mode === "device"
     ? device.history(id)

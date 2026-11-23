@@ -12,6 +12,7 @@ import { useAssistantDraft } from "./useDraft";
 import { Activity, Plan, humanTool } from "./Activity";
 import { useRun } from "./useRun";
 import { ConversationView } from "./ConversationView";
+import { Notifications } from "./Notifications";
 import type { AssistantArtifact, Bootstrap, ReplyDraft, SandboxStatus, TaskResponse, TaskSummary } from "./types";
 
 export type Props = {
@@ -38,6 +39,7 @@ export function AssistantWorkspace(props: Props) {
     return () => { current = false; };
   }, [retry]);
   const home = () => props.onNavigate({ page: "assistant" });
+  if (props.route.view === "notifications") return <Notifications onBack={home} />;
   if (!bootstrap) return <section className="assistant-workspace"><div className="assistant-empty">{error ? <><p role="alert">{error}</p><button type="button" onClick={() => setRetry(v => v + 1)}><RefreshCw />Retry</button></> : <p role="status">Loading assistant...</p>}</div></section>;
   if (props.route.view === "new" || props.route.view === "defaults") return <section className="assistant-workspace assistant-scroll"><TaskForm key={props.route.view} config={bootstrap.config} defaults={props.route.view === "defaults"} groups={props.groups} sandbox={sandbox} onGuardChange={props.onGuardChange}
     onBack={home} onManageModels={props.onManageModels} onSaved={(task, runId, config) => { if (config) setBootstrap(previous => previous ? { ...previous, config } : previous); if (task) props.onNavigate({ page: "assistant", taskId: task.id, runId }); }} /></section>;

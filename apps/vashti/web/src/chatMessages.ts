@@ -1,8 +1,11 @@
 import { isImageAttachment } from "./attachments";
 import { compileContextSystemPrompt } from "./contextBlocks";
 import { messageModelValue } from "./modelSelection";
+import { PDF_CHAT_CONTEXT_BYTES, pdfPrompt, selectPdfText } from "./pdf/types";
 import {
   privateId,
+  readPrivateImportAsset,
+  privateImageGuard,
   unixTimestamp,
   type PrivateChatMessage,
   type PrivateNoteContextSelection,
@@ -31,7 +34,8 @@ const MAX_PRIVATE_NOTE_ATTACHMENTS = 12;
 const MAX_PRIVATE_NOTE_CONTEXT_BYTES = 96_000;
 const MAX_PRIVATE_COMBINED_PROMPT_BYTES = 336_000;
 
-export function parseThinkingText(rawThinkingText: string): ParsedThinkingText {
+export function parseThinkingText(rawThinkingText: string, interpretMarkers = true): ParsedThinkingText {
+  if (!interpretMarkers) return { thinkingText: rawThinkingText, segments: rawThinkingText ? [{ type: "text", text: rawThinkingText }] : [] };
   const segments: ThinkingSegment[] = [];
   const markerPattern =
     /<VASHTI_(TOOL_USAGE|CONTENT_CURSOR)>([\s\S]*?)<\/VASHTI_(?:TOOL_USAGE|CONTENT_CURSOR)>/g;
@@ -96,8 +100,10 @@ export function splitThinkingDelta(delta: string): MessageStreamSegment[] {
 
 export function messageDisplaySegmentsFromRevision(
   contentText: string,
-  thinkingText: string
+  thinkingText: string,
+  interpretMarkers = true
 ): MessageStreamSegment[] {
+  if (!interpretMarkers) return [];
   if (!thinkingText.includes("<VASHTI_CONTENT_CURSOR>")) {
     return [];
   }
@@ -328,11 +334,12 @@ export function privatePromptMessages(
     }
   }
 
+  const budget = { left: PDF_CHAT_CONTEXT_BYTES };
+  const question = ancestors.find(message => !message.is_deleted && message.role === "user")?.active_revision?.content_text ?? "";
   return ancestors
-    .reverse()
     .filter((message) => !message.is_deleted)
     .map((message) => {
-      const attachmentPayload = privateAttachmentPromptPayload(activeMessageAttachments(message));
+      const attachmentPayload = privateAttachmentPromptPayload(activeMessageAttachments(message), budget, question);
       return {
         role: message.role,
         content_text: withPrivateAttachmentText(
@@ -343,7 +350,8 @@ export function privatePromptMessages(
         images: attachmentPayload.images
       };
     })
-    .filter((message) => message.content_text.trim() !== "" || message.images.length > 0);
+    .filter((message) => message.content_text.trim() !== "" || message.images.length > 0)
+    .reverse();
 }
 
 export function privatePromptMessagesWithPersona(
@@ -374,6 +382,30 @@ export function privatePromptMessagesWithPersona(
     },
     ...promptMessages
   ];
+}
+
+export async function privateMessagesWithImportedImages(messages: ChatMessage[], stopBefore: string) {
+  const guard = privateImageGuard();
+  const byId = new Map(messages.map(message => [message.id, message]));
+  const lineage = new Set<string>(); let current = byId.get(stopBefore)?.parent_message_id;
+  while (current && !lineage.has(current)) { lineage.add(current); current = byId.get(current)?.parent_message_id; }
+  const result = [];
+  for (const message of messages) {
+    if (!lineage.has(message.id)) { result.push(message); continue; }
+    const attachments = [];
+    for (const attachment of message.attachments) {
+      if (!attachment.import_asset_id || !isImageAttachment(attachment) || attachment.revision_id !== message.active_revision_id) { attachments.push(attachment); continue; }
+      const blob = await readPrivateImportAsset(attachment.import_asset_id);
+      guard();
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error("Could not read imported image")); reader.readAsDataURL(blob);
+      });
+      guard();
+      attachments.push({ ...attachment, data_url: data });
+    }
+    result.push({ ...message, attachments });
+  }
+  guard(); return result;
 }
 
 function compilePrivateNoteContext(
@@ -457,7 +489,7 @@ export function appendPrivateContinuationPrompt(
   return promptMessages;
 }
 
-function privateAttachmentPromptPayload(attachments: AttachmentInfo[]) {
+function privateAttachmentPromptPayload(attachments: AttachmentInfo[], budget: { left: number }, question: string) {
   const textParts: string[] = [];
   const images: string[] = [];
 
@@ -471,7 +503,13 @@ function privateAttachmentPromptPayload(attachments: AttachmentInfo[]) {
       continue;
     }
 
-    if (attachment.text_content) {
+    if (attachment.pdf_text) {
+      const { document, used } = selectPdfText(attachment.pdf_text, question, budget.left);
+      budget.left -= used;
+      const text = pdfPrompt(attachment.id, attachment.original_filename, document);
+      if (text) textParts.push(text.trimStart());
+      else textParts.push(`Attached PDF (contents not supplied): ${attachment.original_filename}`);
+    } else if (attachment.text_content) {
       textParts.push(
         `Attachment: ${attachment.original_filename}\n\n${attachment.text_content}`
       );
@@ -551,7 +589,11 @@ function privateAttachmentForMessage(
     attachment_kind: attachment.attachment_kind,
     created_at: attachment.created_at ?? unixTimestamp(),
     data_url: attachment.data_url,
-    text_content: attachment.text_content
+    text_content: attachment.text_content,
+    import_asset_id: attachment.import_asset_id,
+    pdf_text: attachment.pdf_text,
+    pdf_has_text: attachment.pdf_has_text,
+    pdf_truncated: attachment.pdf_truncated
   };
 }
 

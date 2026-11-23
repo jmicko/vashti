@@ -1,6 +1,7 @@
-import { BrainCircuit, Calculator, FileText, MessageSquareText, NotebookPen, Search } from "lucide-react";
+import { BrainCircuit, Calculator, FilePenLine, FileText, MessageSquareText, NotebookPen, Search } from "lucide-react";
 
 export function toolIcon(toolName: string) {
+  if(toolName==="canvas"||toolName.endsWith("_canvas")||toolName==="list_canvases")return <FilePenLine/>;
   if (["calculator", "calculate", "convert_units"].includes(toolName)) return <Calculator />;
   if (toolName === "notes" || toolName.endsWith("_note") || toolName.endsWith("_notes")) {
     return <NotebookPen />;

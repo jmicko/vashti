@@ -1,23 +1,39 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { createRequire } from "node:module";
+import { pdfAssets } from "./pdfAssets";
 
 const apiTarget = process.env.VASHTI_DEV_API_URL ?? "http://127.0.0.1:7771";
 const apiOrigin = new URL(apiTarget).origin;
+const resolvePackage = createRequire(import.meta.url).resolve;
 
 export default defineConfig(({ mode }) => {
   const nativeBuild = mode === "native";
 
   return {
-    resolve: nativeBuild
-      ? {
-          alias: {
-            "virtual:pwa-register/react": "/src/pwaRegisterStub.ts"
-          }
-        }
-      : undefined,
+    optimizeDeps: {
+      // Prebundle the lazy Canvas and ZIP worker before the app loads in dev.
+      include: [
+        "@codemirror/commands", "@codemirror/language", "@codemirror/merge",
+        "@codemirror/search", "@codemirror/state", "@codemirror/view",
+        "@codemirror/lang-css", "@codemirror/lang-html", "@codemirror/lang-javascript",
+        "@codemirror/lang-json", "@codemirror/lang-markdown", "@codemirror/lang-python",
+        "@codemirror/lang-rust", "@codemirror/lang-sql",
+        "@zip.js/zip.js/lib/zip-core-native.js",
+        "pdfjs-dist/legacy/build/pdf.mjs", "yjs", "tesseract.js"
+      ]
+    },
+    resolve: {
+      alias: {
+        // Markdown also runs in the ZIP worker, where a DOM decoder cannot run.
+        "decode-named-character-reference": resolvePackage("decode-named-character-reference"),
+        ...(nativeBuild ? { "virtual:pwa-register/react": "/src/pwaRegisterStub.ts" } : {})
+      }
+    },
     plugins: [
       react(),
+      pdfAssets(),
       ...(nativeBuild
         ? []
         : [
@@ -61,6 +77,7 @@ export default defineConfig(({ mode }) => {
               workbox: {
                 globPatterns: ["**/*.{html,js,css,png,webmanifest}"],
                 globIgnores: [
+                  "ocr-runtime/**",
                   "manifest.webmanifest",
                   "brand/pwa/vashti-192.png",
                   "brand/pwa/vashti-512.png",

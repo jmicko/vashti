@@ -14,6 +14,7 @@ fn main() {
     println!("cargo:rerun-if-changed=web/src");
     println!("cargo:rerun-if-changed=web/tsconfig.json");
     println!("cargo:rerun-if-changed=web/vite.config.ts");
+    println!("cargo:rerun-if-changed=web/pdfAssets.ts");
 
     if env::var_os("VASHTI_SKIP_WEB_BUILD").is_some() {
         return;

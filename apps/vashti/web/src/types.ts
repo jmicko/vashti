@@ -289,6 +289,7 @@ export type ChatSummary = {
   updated_at: number;
   last_message_at: number;
   message_count: number;
+  archived_at?: number | null;
 };
 
 export type ChatToolPreferences = {
@@ -386,6 +387,7 @@ export type ChatDetail = {
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
+  archived_at?: number | null;
 };
 
 export type ChatResponse = {
@@ -405,6 +407,7 @@ export type ChatMessageRevision = {
 };
 
 export type AttachmentInfo = {
+  import_asset_id?: string;
   id: string;
   chat_id?: string;
   message_id: string | null;
@@ -416,6 +419,9 @@ export type AttachmentInfo = {
   created_at?: number;
   data_url?: string;
   text_content?: string;
+  pdf_text?: import("./pdf/types").PdfText;
+  pdf_has_text?: boolean;
+  pdf_truncated?: boolean;
 };
 
 export type ImageOpenHandler = (attachment: AttachmentInfo, attachments?: AttachmentInfo[]) => void;
@@ -427,6 +433,7 @@ export type ImageViewerState = {
 
 export type ComposerAttachment = AttachmentInfo & {
   status: "ready" | "uploaded" | "uploading" | "error";
+  progress?: string;
   error?: string;
   file?: File;
   isExisting?: boolean;
@@ -470,6 +477,7 @@ export type MessageStats = {
 
 export type ChatMessage = {
   id: string;
+  import_source?: string | null;
   parent_message_id: string | null;
   active_child_message_id: string | null;
   active_revision_id: string | null;
@@ -726,14 +734,15 @@ export type SettingsSection =
 export type NewChatMode = "standard" | "private";
 export type CustomModelEditorLocation = { personaId?: string; storageMode?: "server" | "device" };
 export type AppRoute =
-  | { page: "assistant"; view?: "new" | "defaults" | "tasks" | "conversations" | "compose"; conversationId?: string; taskId?: string; runId?: string }
+  | { page: "assistant"; view?: "new" | "defaults" | "tasks" | "conversations" | "compose" | "notifications"; conversationId?: string; taskId?: string; runId?: string }
   | { page: "images"; view?: import("./images/types").ImageView; sessionId?: string; storageMode?: "server" | "device" }
   | { page: "videos"; sessionId?: string; storageMode?: "server" | "device" }
-  | { page: "chat"; chatId?: string }
-  | { page: "private-chat"; chatId: string }
+  | { page: "chat"; chatId?: string; canvas?: true }
+  | { page: "private-chat"; chatId: string; canvas?: true }
   | { page: "notes"; storageMode?: "server" | "device"; noteId?: string }
   | { page: "settings"; section: SettingsSection; storageMode?: "server" | "device"; memoryId?: string; modelEditor?: CustomModelEditorLocation };
 export type SettingsGuard = {
+  pendingJob?: string;
   isDirty: boolean;
   save: () => Promise<boolean>;
   discard: () => void;

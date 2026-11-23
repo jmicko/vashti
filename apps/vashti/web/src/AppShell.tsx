@@ -15,6 +15,7 @@ import {
   Bot,
   Cog,
   Download,
+  FilePenLine,
   GitFork,
   LogOut,
   Menu,
@@ -49,6 +50,7 @@ import {
   selectedModelBaseParts
 } from "./modelSelection";
 import { Sidebar } from "./Sidebar";
+import "./canvas/canvas.css";
 import { chatModelGroups } from "./modelEligibility";
 import { UnsavedSettingsDialog } from "./settingsControls";
 import { SettingsPage } from "./settingsPage";
@@ -86,6 +88,7 @@ import {
   saveCachedModelState,
   saveCachedHostedChatList,
   savePrivateChat,
+  setPrivateChatArchived,
   unixTimestamp,
   type PrivateChatSummary,
   type PrivatePersona,
@@ -149,15 +152,44 @@ export function AppShell({
 }) {
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
   const [assistantAttention, setAssistantAttention] = useState(0);
+  const [serverNotices, setServerNotices] = useState(0);
+  const [deviceNotices, setDeviceNotices] = useState(0);
+  const assistantUnread = serverNotices + deviceNotices;
   useEffect(() => {
-    let current = true, timer = 0;
+    let current = true, timer = 0, request = 0, deviceRequest = 0;
+    setAssistantAttention(0);
+    setServerNotices(0);
+    setDeviceNotices(0);
     async function poll() {
-      try { const summary = await requestJson<{ attention: number }>("/api/assistant/summary"); if (current) setAssistantAttention(summary.attention); }
+      clearTimeout(timer);
+      void readDeviceNotices();
+      const id = ++request;
+      try {
+        const summary = await requestJson<{ attention: number; unread?: number }>("/api/assistant/summary");
+        if (current && request === id) {
+          setAssistantAttention(summary.attention);
+          setServerNotices(summary.unread ?? 0);
+        }
+      }
       catch { /* Older servers do not expose Assistant yet. */ }
-      if (current) timer = window.setTimeout(poll, document.hidden ? 60000 : 15000);
+      if (current && request === id) timer = window.setTimeout(poll, document.hidden ? 60000 : 15000);
+    }
+    async function readDeviceNotices() {
+      const id = ++deviceRequest;
+      try {
+        const notices = await (await import("./personalization/device")).profileNotices();
+        if (current && deviceRequest === id) setDeviceNotices(notices.filter((notice) => notice.read_at === null).length);
+      } catch { /* Device storage may be unavailable. */ }
     }
     void poll();
-    return () => { current = false; clearTimeout(timer); };
+    window.addEventListener("vashti:assistant-notices", poll);
+    window.addEventListener("vashti:personalization-changed", readDeviceNotices);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+      window.removeEventListener("vashti:assistant-notices", poll);
+      window.removeEventListener("vashti:personalization-changed", readDeviceNotices);
+    };
   }, [user.id]);
   const routeRef = useRef(route);
   const [noteReturnRoute, setNoteReturnRoute] = useState<AppRoute | null>(null);
@@ -172,6 +204,8 @@ export function AppShell({
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMessageTreeOpen, setIsMessageTreeOpen] = useState(false);
+  const [isCanvasOpen,setIsCanvasOpen]=useState(false);
+  const openCanvas=useCallback(()=>{setIsCanvasOpen(true);setIsMessageTreeOpen(false);setIsSidebarOpen(false);setIsSettingsMenuOpen(false);},[]);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<AppRoute | null>(null);
@@ -222,9 +256,16 @@ export function AppShell({
   const hasHydratedModelCacheRef = useRef(false);
   const hasModelPickerDataRef = useRef(false);
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [archivedChats, setArchivedChats] = useState<ChatSummary[]>([]);
+  const [showingArchivedChats, setShowingArchivedChats] = useState(false);
+  const [isLoadingArchivedChats, setIsLoadingArchivedChats] = useState(false);
+  const [chatHistoryError, setChatHistoryError] = useState<string | null>(null);
+  const archivedChatRequestRef = useRef(0);
+  const chatListRequestRef = useRef(0);
   const chatsRef = useRef<ChatSummary[]>([]);
   const hasHydratedChatListCacheRef = useRef(false);
   const [privateChats, setPrivateChats] = useState<PrivateChatSummary[]>([]);
+  const privateChatRequestRef = useRef(0);
 
   useEffect(() => {
     markPerformance("vashti:shell-mounted");
@@ -404,7 +445,8 @@ export function AppShell({
 
   useEffect(() => {
     setIsMessageTreeOpen(false);
-  }, [currentChatId, currentPrivateChatId]);
+    setIsCanvasOpen((route.page==="chat"||route.page==="private-chat") && route.canvas===true);
+  }, [currentChatId, currentPrivateChatId, (route.page==="chat"||route.page==="private-chat") ? route.canvas : undefined]);
 
   useEffect(() => {
     if (!isSettingsMenuOpen) {
@@ -668,7 +710,27 @@ export function AppShell({
     });
   }, [loadContextLibraries]);
 
+  const loadArchivedChats = useCallback(async () => {
+    const requestId = ++archivedChatRequestRef.current;
+    setIsLoadingArchivedChats(true);
+    setChatHistoryError(null);
+    try {
+      const response = await requestJson<ListChatsResponse>("/api/chats?archived=true");
+      if (requestId === archivedChatRequestRef.current) setArchivedChats(response.chats);
+    } catch (loadError) {
+      if (requestId === archivedChatRequestRef.current)
+        setChatHistoryError(loadError instanceof Error ? loadError.message : "Failed to load archived chats");
+    } finally {
+      if (requestId === archivedChatRequestRef.current) setIsLoadingArchivedChats(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showingArchivedChats) void loadArchivedChats();
+  }, [showingArchivedChats, loadArchivedChats]);
+
   const loadChats = useCallback(async () => {
+    const requestId = ++chatListRequestRef.current;
     setIsLoadingChats(true);
     let displayedCachedChats = false;
 
@@ -676,7 +738,7 @@ export function AppShell({
       hasHydratedChatListCacheRef.current = true;
       try {
         const cachedChats = await getCachedHostedChatList<ChatSummary>();
-        if (cachedChats) {
+        if (cachedChats && requestId === chatListRequestRef.current) {
           chatsRef.current = cachedChats;
           setChats(cachedChats);
           displayedCachedChats = true;
@@ -695,6 +757,7 @@ export function AppShell({
 
     try {
       const response = await requestJson<ListChatsResponse>("/api/chats");
+      if (requestId !== chatListRequestRef.current) return;
       chatsRef.current = response.chats;
       setChats(response.chats);
       markPerformance("vashti:chat-list-live-ready");
@@ -705,11 +768,11 @@ export function AppShell({
       );
       await saveCachedHostedChatList(response.chats).catch(() => undefined);
     } catch (loadError) {
-      if (!displayedCachedChats) {
+      if (!displayedCachedChats && requestId === chatListRequestRef.current) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load chats");
       }
     } finally {
-      setIsLoadingChats(false);
+      if (requestId === chatListRequestRef.current) setIsLoadingChats(false);
     }
   }, []);
 
@@ -718,22 +781,30 @@ export function AppShell({
   }, [loadChats]);
 
   const loadPrivateChats = useCallback(async () => {
+    const requestId = ++privateChatRequestRef.current;
     setIsLoadingPrivateChats(true);
 
     try {
-      setPrivateChats(await listPrivateChats());
+      const chats = await listPrivateChats();
+      if (requestId === privateChatRequestRef.current) setPrivateChats(chats);
     } catch (loadError) {
-      setError(
+      if (requestId === privateChatRequestRef.current) setError(
         loadError instanceof Error ? loadError.message : "Failed to load private chats"
       );
     } finally {
-      setIsLoadingPrivateChats(false);
+      if (requestId === privateChatRequestRef.current) setIsLoadingPrivateChats(false);
     }
   }, []);
 
   useEffect(() => {
     void loadPrivateChats();
   }, [loadPrivateChats]);
+
+  useEffect(() => {
+    const refresh = () => { void loadChats(); void loadPrivateChats(); };
+    window.addEventListener("vashti:chats-imported", refresh);
+    return () => window.removeEventListener("vashti:chats-imported", refresh);
+  }, [loadChats, loadPrivateChats]);
 
   useEffect(() => {
     function handlePopState() {
@@ -837,6 +908,7 @@ export function AppShell({
   }
 
   function openChat(chatId?: string) {
+    if (!chatId) setShowingArchivedChats(false);
     navigate(chatId ? { page: "chat", chatId } : { page: "chat" });
   }
 
@@ -1226,6 +1298,7 @@ export function AppShell({
       );
       chatsRef.current = nextChats;
       setChats(nextChats);
+      setArchivedChats((current) => current.map((chat) => chat.id === chatId ? { ...chat, title: response.chat.title } : chat));
       await saveCachedHostedChatList(nextChats).catch(() => undefined);
     } catch (renameError) {
       setError(renameError instanceof Error ? renameError.message : "Failed to rename chat");
@@ -1261,6 +1334,9 @@ export function AppShell({
       const nextChats = chatsRef.current.filter((item) => item.id !== chat.id);
       chatsRef.current = nextChats;
       setChats(nextChats);
+      archivedChatRequestRef.current++;
+      setIsLoadingArchivedChats(false);
+      setArchivedChats((current) => current.filter((item) => item.id !== chat.id));
       await Promise.all([
         saveCachedHostedChatList(nextChats),
         deleteCachedHostedChat(chat.id),
@@ -1301,6 +1377,36 @@ export function AppShell({
     }
   }
 
+  async function archiveChat(chat: ChatSummary | PrivateChatSummary, isPrivate: boolean, archived: boolean) {
+    setChatHistoryError(null);
+    try {
+      if (isPrivate) {
+        const updated = await setPrivateChatArchived(chat.id, archived);
+        privateChatRequestRef.current++;
+        setIsLoadingPrivateChats(false);
+        setPrivateChats((current) => current.map((item) => item.id === chat.id ? { ...item, archived_at: updated.archived_at } : item));
+      } else {
+        const response = await requestJson<ChatResponse>(`/api/chats/${chat.id}/archive`, {
+          method: "POST", body: JSON.stringify({ archived })
+        });
+        chatListRequestRef.current++;
+        archivedChatRequestRef.current++;
+        setIsLoadingChats(false);
+        setIsLoadingArchivedChats(false);
+        const summary = { ...chat, archived_at: response.chat.archived_at } as ChatSummary;
+        const nextChats = chatsRef.current.filter((item) => item.id !== chat.id);
+        if (!archived) nextChats.push(summary);
+        chatsRef.current = nextChats;
+        setChats(nextChats);
+        setArchivedChats((current) => [...current.filter((item) => item.id !== chat.id), ...(archived ? [summary] : [])]);
+        await saveCachedHostedChatList(nextChats).catch(() => undefined);
+      }
+    } catch (archiveError) {
+      setChatHistoryError(archiveError instanceof Error ? archiveError.message : "Failed to change chat archive");
+      throw archiveError;
+    }
+  }
+
   const handleNotesEditorOpenChange = useCallback((isOpen: boolean) => {
     setIsNotesEditorOpen(isOpen);
     if (isOpen) {
@@ -1323,7 +1429,7 @@ export function AppShell({
       {!isSettingsPage && !(isNotesPage && isNotesEditorOpen) && (
         <>
           <Sidebar
-            chats={chats}
+            chats={showingArchivedChats ? archivedChats : chats}
             privateChats={privateChats}
             currentChatId={currentChatId}
             currentPrivateChatId={currentPrivateChatId}
@@ -1331,7 +1437,7 @@ export function AppShell({
             isImagesActive={isImagesPage}
             isVideosActive={isVideosPage}
             isAssistantActive={isAssistantPage}
-            assistantAttention={assistantAttention}
+            assistantAttention={assistantAttention + assistantUnread}
             onOpenAssistant={() => navigate({ page: "assistant" })}
             currentImageFlowId={route.page === "images" || route.page === "videos" ? route.sessionId : undefined}
             imageStorageMode={route.page === "images" || route.page === "videos" ? route.storageMode ?? "server" : "server"}
@@ -1351,8 +1457,17 @@ export function AppShell({
               }
             }}
             isOpen={isSidebarOpen}
-            isLoading={isLoadingChats}
+            isLoading={showingArchivedChats ? isLoadingArchivedChats : isLoadingChats}
             isLoadingPrivateChats={isLoadingPrivateChats}
+            showingArchived={showingArchivedChats}
+            historyError={chatHistoryError}
+            onToggleArchived={() => { setChatHistoryError(null); setShowingArchivedChats((value) => !value); }}
+            onArchiveChat={archiveChat}
+            onRetryHistory={() => {
+              setChatHistoryError(null);
+              void (showingArchivedChats ? loadArchivedChats() : loadChats());
+              void loadPrivateChats();
+            }}
             personaVersions={knownPersonaVersions}
             privatePersonaVersions={knownPrivatePersonaVersions}
             modelGroups={modelGroups}
@@ -1522,7 +1637,15 @@ export function AppShell({
             )}
           </div>
           <div className="topbar-right">
-            {assistantAttention > 0 && !isAssistantPage && <button type="button" className="icon-button assistant-notification" title={`${assistantAttention} assistant tasks need attention`} aria-label={`${assistantAttention} assistant tasks need attention`} onClick={() => navigate({ page: "assistant", view: "tasks" })}><Bell /><small>{assistantAttention}</small></button>}
+            {(assistantUnread > 0 && !(route.page === "assistant" && route.view === "notifications") || assistantAttention > 0 && !isAssistantPage) && <button
+              type="button" className="icon-button assistant-notification"
+              aria-label={assistantUnread ? `${assistantUnread} unread Assistant notifications` : `${assistantAttention} assistant tasks need attention`}
+              title={assistantUnread ? "Assistant notifications" : "Assistant tasks need attention"}
+              onClick={() => navigate({ page: "assistant", view: assistantUnread ? "notifications" : "tasks" })}
+            ><Bell /><small aria-hidden="true">{Math.min(assistantUnread || assistantAttention, 99)}{(assistantUnread || assistantAttention) > 99 ? "+" : ""}</small></button>}
+            {(currentChatId || currentPrivateChatId) && (
+              <button type="button" className="icon-button desktop-canvas-button" title={isCanvasOpen?"Close canvas":"Open canvas"} aria-label={isCanvasOpen?"Close canvas":"Open canvas"} aria-pressed={isCanvasOpen} onClick={()=>isCanvasOpen?setIsCanvasOpen(false):openCanvas()}><FilePenLine/></button>
+            )}
             {(currentChatId || currentPrivateChatId) && (
               <button
                 type="button"
@@ -1534,6 +1657,7 @@ export function AppShell({
                   setIsSidebarOpen(false);
                   setIsSettingsMenuOpen(false);
                   setIsMessageTreeOpen((open) => !open);
+                  setIsCanvasOpen(false);
                 }}
               >
                 <GitFork />
@@ -1609,6 +1733,7 @@ export function AppShell({
         {page === "settings" ? (
           <SettingsPage
             onOpenProfileSource={(chatId,mode)=>mode === "device" ? openPrivateChat(chatId) : openChat(chatId)}
+            onOpenImportedDocument={(chatId,mode)=>navigate({page:mode==="device"?"private-chat":"chat",chatId,canvas:true})}
             modelEditor={route.page === "settings" ? route.modelEditor : undefined}
             onModelEditorNavigate={(modelEditor) => navigate({ page: "settings", section: "models", modelEditor })}
             initialMemoryId={route.page === "settings" ? route.memoryId : undefined}
@@ -1707,6 +1832,9 @@ export function AppShell({
               contextBlocks={chatContextBlocks}
               availableTools={deviceAvailableTools}
               isTreeOpen={isMessageTreeOpen}
+              isCanvasOpen={isCanvasOpen}
+              onCanvasOpen={openCanvas}
+              onCanvasClose={()=>setIsCanvasOpen(false)}
               onTreeClose={() => setIsMessageTreeOpen(false)}
               onImageOpen={openImageViewer}
               onOpenNote={(noteId) => openReferencedNote("device", noteId)}
@@ -1734,6 +1862,9 @@ export function AppShell({
                 personas={personas}
                 personaVersions={knownPersonaVersions}
                 isTreeOpen={isMessageTreeOpen}
+                isCanvasOpen={isCanvasOpen}
+                onCanvasOpen={openCanvas}
+                onCanvasClose={()=>setIsCanvasOpen(false)}
                 onTreeClose={() => setIsMessageTreeOpen(false)}
                 onChatSettingsLoaded={handleChatSettingsLoaded}
                 onChatsChanged={loadChats}
@@ -1775,6 +1906,13 @@ export function AppShell({
         </aside>
       )}
       {pendingNavigation && (
+        settingsGuardRef.current?.pendingJob === "import" ? <ConfirmDialog
+          title="Stop importing?"
+          message="Saved chats will be kept. Select the same ZIP to resume later. Any unsaved profile changes will also be discarded."
+          confirmLabel="Stop and leave"
+          onCancel={() => setPendingNavigation(null)}
+          onConfirm={discardAndContinueNavigation}
+        /> :
         <UnsavedSettingsDialog
           subject={isAssistantPage ? "task" : "settings"}
           isSaving={isSavingPendingNavigation}

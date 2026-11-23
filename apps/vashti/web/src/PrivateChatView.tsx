@@ -1,9 +1,12 @@
 import { cancelDeviceImages } from "./images/deviceTools";
 import type { ProfilePromptPayload } from "./personalization/types";
 import { mergeInferenceSettings } from "./inferenceSettings";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CANVAS_TOOL_NAMES } from "./canvas/types";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {LazyCanvasPanel,useChatCanvas} from "./canvas/useCanvas";
 import { Lock } from "lucide-react";
 import { isImageAttachment, preparePrivateAttachment } from "./attachments";
+import { messagePdfAttachments } from "./pdf/types";
 import { privateStreamTestEnabled } from "./browserFlags";
 import {
   activateMessagePath,
@@ -18,6 +21,7 @@ import {
   mergeStreamSegmentsByMessage,
   privateAttachmentsForMessage,
   privatePromptMessagesWithPersona,
+  privateMessagesWithImportedImages,
   scrollMessageListToBottom,
   scrollMessageTopIntoListView,
   splitThinkingDelta,
@@ -117,6 +121,9 @@ export function PrivateChatView({
   contextBlocks,
   availableTools,
   isTreeOpen,
+  isCanvasOpen=false,
+  onCanvasOpen=()=>{},
+  onCanvasClose=()=>{},
   onTreeClose,
   onChatSettingsLoaded,
   onConversationSettingsSave,
@@ -141,6 +148,9 @@ export function PrivateChatView({
   contextBlocks: ContextBlockSelection[];
   availableTools: AvailableTool[];
   isTreeOpen: boolean;
+  isCanvasOpen?:boolean;
+  onCanvasOpen?:()=>void;
+  onCanvasClose?:()=>void;
   onTreeClose: () => void;
   onChatSettingsLoaded: (
     override: string | null | undefined,
@@ -228,10 +238,14 @@ export function PrivateChatView({
     () => activePathMessages(messages, chat?.active_root_message_id ?? null),
     [chat?.active_root_message_id, messages]
   );
+  const pdfAttachments = useMemo(() => messagePdfAttachments(visibleMessages), [visibleMessages]);
   const isActiveGenerationVisible =
     Boolean(activeAssistantId) &&
     visibleMessages.some((message) => message.id === activeAssistantId);
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+  const canvas=useChatCanvas(chatId,"device",onCanvasOpen,id=>activePathMessages(messagesRef.current,chatRef.current?.active_root_message_id??null).some(message=>message.id===id));
+  const canvasTail=visibleMessages[visibleMessages.length-1];
+  const canvasScope=useMemo(()=>({message_id:canvasTail?.id??null,revision_id:canvasTail?.active_revision_id??null}),[canvasTail?.id,canvasTail?.active_revision_id]);
   const characterVersionIds = useMemo(
     () => characterPersonaVersionIds(privatePersonaVersions),
     [privatePersonaVersions]
@@ -749,6 +763,19 @@ export function PrivateChatView({
               client_tools: await selectedDeviceToolNames()
             }
           : body;
+      if(path === "/api/private/generate") {
+        await privateSaveChainRef.current;
+        const exact=messagesRef.current.find(m=>m.id===assistantId);
+        if(!exact?.active_revision_id)throw new Error("The generation has no active revision");
+        const canvas=await import("./canvas/device"), scope={message_id:exact.id,revision_id:exact.active_revision_id};
+        const check=()=>{controller.signal.throwIfAborted();if(generationRunRef.current!==runId)throw new Error("The generation changed");};
+        check(); await canvas.captureDeviceCanvas(chatId,scope,check);check();
+        const payload=requestBody as {messages:unknown[];client_tools:string[]};
+        if(payload.client_tools.some(name=>(CANVAS_TOOL_NAMES as readonly string[]).includes(name))) {
+          const content=await canvas.deviceCanvasPrompt(chatId,scope);check();
+          requestBody={...payload,messages:[{role:"system",content_text:content,images:[]},...payload.messages]};
+        }
+      }
       if (personalization && path === "/api/private/generate" && chatRef.current) {
         const payload = requestBody as ProfilePromptPayload;
         const exact = messagesRef.current.find((message) => message.id === assistantId);
@@ -932,7 +959,7 @@ export function PrivateChatView({
     let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
     try {
       generationMessages = privatePromptMessagesWithPersona(
-        nextMessages,
+        await privateMessagesWithImportedImages(nextMessages, assistantMessage.id),
         assistantMessage.id,
         selectedPrivatePersona,
         promptSystemPromptOverride,
@@ -1110,6 +1137,7 @@ export function PrivateChatView({
     switch (event.type) {
       case "thinking_delta":
         {
+          canvas.notice(event.assistant_message_id,event.delta);
           const orderedDelta = orderedPrivateThinkingDelta(
             event.assistant_message_id,
             event.delta
@@ -1192,6 +1220,7 @@ export function PrivateChatView({
       names.push(...await enabledDeviceNoteToolNames());
     }
     if (toolPreferenceEnabled(preferences, "images") && availableTools.some(tool => tool.id === "images")) names.push("generate_image", "edit_image");
+    if (toolPreferenceEnabled(preferences,"canvas") && availableTools.some(tool=>tool.id==="canvas")) names.push(...CANVAS_TOOL_NAMES);
     return names;
   }
 
@@ -1205,10 +1234,17 @@ export function PrivateChatView({
     const modelKey = message.persona_id
       ? `persona:${message.persona_id}`
       : `base:${message.backend_id}:${message.model_name}`;
+    const canvasRevision=message.active_revision_id;
+    const canvasRun=generationRunRef.current;
     await dispatchClientToolCall(event, {
       chatId,
       modelKey,
       modelName: message.persona_name_snapshot ?? message.model_name,
+      canvas: canvasRevision ? {revisionId:canvasRevision,check:()=>{
+        const current=messagesRef.current.find(m=>m.id===event.assistant_message_id);
+        if(generationRunRef.current!==canvasRun || current?.status!=="streaming" || current.active_revision_id!==canvasRevision || abortRef.current?.signal.aborted)throw new Error("The private generation stopped or changed");
+        if(!chatRef.current?.tool_preferences.tool_use_enabled || !toolPreferenceEnabled(chatRef.current.tool_preferences,"canvas"))throw new Error("Canvas tools are disabled");
+      }} : undefined,
       images: {
         preview: frame => setImagePreviews(current => ({ ...current, [event.assistant_message_id]:frame })),
         messages: () => messagesRef.current,
@@ -1395,6 +1431,10 @@ export function PrivateChatView({
           : {}),
         created_at: now
       };
+      if(message.active_revision_id){
+        await privateSaveChainRef.current;
+        await (await import("./canvas/device")).inheritDeviceCanvas(chatId,message.active_revision_id,revision.id);
+      }
       updateMessage(message.id, (current) => {
         const revisions = updateRevisionList(current.revisions, revision);
         const nextAttachments = privateAttachmentsForMessage(current, attachments, revision.id);
@@ -1516,7 +1556,7 @@ export function PrivateChatView({
       let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
       try {
         generationMessages = privatePromptMessagesWithPersona(
-          nextMessages,
+          await privateMessagesWithImportedImages(nextMessages, assistantMessage.id),
           assistantMessage.id,
           selectedPrivatePersona,
           systemPromptOverride,
@@ -1662,7 +1702,7 @@ export function PrivateChatView({
       let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
       try {
         generationMessages = privatePromptMessagesWithPersona(
-          nextMessages,
+          await privateMessagesWithImportedImages(nextMessages, assistantMessage.id),
           assistantMessage.id,
           selectedPrivatePersona,
           systemPromptOverride,
@@ -1707,8 +1747,8 @@ export function PrivateChatView({
       return;
     }
 
-    const backendId = message.backend_id;
-    const modelName = message.model_name;
+    const backendId = message.import_source === "chatgpt" ? chat.default_backend_id : message.backend_id;
+    const modelName = message.import_source === "chatgpt" ? chat.default_model_name : message.model_name;
     if (!backendId || !modelName) {
       setGenerationError("This response does not identify the model needed to continue it");
       return;
@@ -1784,7 +1824,7 @@ export function PrivateChatView({
       let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
       try {
         generationMessages = privatePromptMessagesWithPersona(
-          nextMessages,
+          await privateMessagesWithImportedImages(nextMessages, message.id),
           message.id,
           exactPersona,
           systemPromptOverride,
@@ -1799,6 +1839,8 @@ export function PrivateChatView({
         return;
       }
 
+      await privateSaveChainRef.current;
+      await (await import("./canvas/device")).inheritDeviceCanvas(chat.id,sourceRevision.id,continuationRevision.id);
       replacePrivateChat(nextChat);
       replacePrivateMessages(nextMessages);
       await privateSaveChainRef.current;
@@ -1998,9 +2040,9 @@ export function PrivateChatView({
   return (
     <div
       className={
-        selectedModelInfo?.background_asset_id
+        (selectedModelInfo?.background_asset_id
           ? "chat-view private-chat-view chat-view-with-background"
-          : "chat-view private-chat-view"
+          : "chat-view private-chat-view")+(isCanvasOpen?" canvas-open":"")
       }
       style={modelBackgroundContainerStyle(selectedModelInfo)}
     >
@@ -2071,6 +2113,7 @@ export function PrivateChatView({
             ) : (
               visibleMessages.map((message) => (
                 <MessageBubble
+                  pdfAttachments={pdfAttachments}
                   key={
                     message.parent_message_id
                       ? `message-after:${message.parent_message_id}`
@@ -2105,6 +2148,8 @@ export function PrivateChatView({
                   onRegenerate={regenerateMessage}
                   onContinue={continueMessage}
                   onOpenNote={onOpenNote}
+                    onOpenCanvas={canvas.copyMessage}
+                    onOpenCanvasReference={canvas.openReference}
                   selectedModelInfo={selectedModelInfo}
                   modelAvatar={privateModelAvatarForMessage(
                     message,
@@ -2133,11 +2178,13 @@ export function PrivateChatView({
               isGenerating={isGenerating}
               placeholder={selectedModel ? "Message private chat" : "Select a model to continue"}
               selectedModelInfo={selectedModelInfo}
+              hasPdfContext={pdfAttachments.some(file => file.pdf_has_text)}
               availableTools={availableTools}
               toolPreferences={chat.tool_preferences}
               thinkingMode={thinkingMode}
               warning={modelImageWarning}
               onThinkingModeChange={setThinkingMode}
+              onOpenCanvas={onCanvasOpen}
               onToolPreferencesChange={updatePrivateToolPreferences}
               onJumpToGeneration={
                 isGenerating && activeAssistantId && !isActiveGenerationVisible
@@ -2187,6 +2234,7 @@ export function PrivateChatView({
           dimmedEmphasisForMessage={(message) => characterMessageIds.has(message.id)}
         />
       )}
+      {chat&&isCanvasOpen&&<Suspense fallback={<aside className="canvas-workspace"><p role="status">Loading canvas...</p></aside>}><LazyCanvasPanel key={`device:${chatId}:${canvasScope.revision_id??"root"}`} mode="device" chatId={chatId} scope={canvasScope} request={canvas.request} onConsumed={canvas.consumed} onClose={onCanvasClose} onAsk={prompt=>submitPrompt(prompt)} isGenerating={isGenerating}/></Suspense>}
       {(error || generationError) && (
         <p className="error chat-view-error">{generationError ?? error}</p>
       )}

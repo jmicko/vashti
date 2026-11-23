@@ -19,6 +19,8 @@ pub fn router() -> Router<AppState> {
         .route("/sandbox-status", get(sandbox_status))
         .route("/preferences", axum::routing::put(preferences))
         .route("/summary", get(summary))
+        .route("/notices", get(notices))
+        .route("/notices/{id}/read", post(read_notice))
         .route("/conversations", get(conversations).post(new_conversation))
         .route("/conversations/{id}", get(conversation_page))
         .route("/tasks", get(list).post(create))
@@ -87,7 +89,7 @@ async fn preferences(
 async fn summary(State(state): State<AppState>, jar: CookieJar) -> Result<Json<Value>, ApiError> {
     let owner = owner(&state, &jar).await?;
     let rows=sqlx::query_as::<_,(Option<String>,i64,Option<i64>,Option<String>)>("SELECT r.status,t.viewed_at,r.finished_at,t.schedule_error FROM assistant_tasks t LEFT JOIN assistant_runs r ON r.id=t.last_run_id WHERE t.user_id=? AND t.kind='task' AND t.archived_at IS NULL")
-        .bind(owner).fetch_all(&state.db).await?;
+        .bind(&owner).fetch_all(&state.db).await?;
     let attention = rows
         .iter()
         .filter(|(status, viewed, finished, error)| {
@@ -103,7 +105,47 @@ async fn summary(State(state): State<AppState>, jar: CookieJar) -> Result<Json<V
         .iter()
         .filter(|(status, _, _, _)| matches!(status.as_deref(), Some("queued" | "running")))
         .count();
-    Ok(Json(json!({"attention":attention,"active":active})))
+    let unread: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM assistant_notices WHERE user_id=? AND read_at IS NULL",
+    )
+    .bind(&owner)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(
+        json!({"attention":attention,"active":active,"unread":unread}),
+    ))
+}
+
+async fn notices(State(state): State<AppState>, jar: CookieJar) -> Result<Json<Value>, ApiError> {
+    let owner = owner(&state, &jar).await?;
+    let rows: Vec<(String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT id,created_at,read_at FROM assistant_notices WHERE user_id=?
+         ORDER BY read_at IS NOT NULL,created_at DESC,id DESC LIMIT 100",
+    )
+    .bind(owner)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(
+        json!({"notices":rows.into_iter().map(|(id,created_at,read_at)|
+        json!({"id":id,"created_at":created_at,"read_at":read_at})).collect::<Vec<_>>()}),
+    ))
+}
+
+async fn read_notice(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let owner = owner(&state, &jar).await?;
+    sqlx::query(
+        "UPDATE assistant_notices SET read_at=? WHERE user_id=? AND id=? AND read_at IS NULL",
+    )
+    .bind(auth::service::unix_timestamp())
+    .bind(owner)
+    .bind(id)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(json!({"ok":true})))
 }
 
 #[derive(Deserialize, Default)]

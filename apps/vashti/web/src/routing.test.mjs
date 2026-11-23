@@ -7,6 +7,14 @@ function readRoute(path) {
   return routeFromLocation();
 }
 
+test("imported workspace links open Canvas for the correct storage mode", () => {
+  for (const page of ["chat","private-chat"]) {
+    const route={page,chatId:"imported-page",canvas:true};
+    assert.deepEqual(readRoute(pathForRoute(route)),route);
+    assert.equal(routesEqual(route,{page,chatId:route.chatId}),false);
+  }
+});
+
 test("video is its own workspace, not an image view", () => {
   assert.equal(pathForRoute({ page: "videos" }), "/app/videos");
   assert.deepEqual(readRoute("/app/videos"), {

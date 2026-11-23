@@ -45,6 +45,18 @@ pub struct ListChatsResponse {
     pub chats: Vec<ChatSummary>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct ListChatsQuery {
+    #[serde(default)]
+    pub archived: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveChatRequest {
+    pub archived: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateChatRequest {
     pub title: String,
@@ -276,12 +288,29 @@ struct GenerationLineState<'a> {
 pub async fn list_chats(
     State(state): State<AppState>,
     jar: CookieJar,
+    Query(query): Query<ListChatsQuery>,
 ) -> Result<Json<ListChatsResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let chats = service::list_chats(&state.db, &user.id).await?;
+    let chats = if query.archived {
+        service::list_chats_by_archive(&state.db, &user.id, true).await?
+    } else {
+        service::list_chats(&state.db, &user.id).await?
+    };
 
     Ok(Json(ListChatsResponse { chats }))
+}
+
+pub async fn archive_chat(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(chat_id): Path<String>,
+    Json(payload): Json<ArchiveChatRequest>,
+) -> Result<Json<ChatResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let chat = service::set_chat_archived(&state.db, &user.id, &chat_id, payload.archived).await?;
+    Ok(Json(ChatResponse { chat }))
 }
 
 pub async fn create_chat(
@@ -361,7 +390,16 @@ pub async fn delete_chat(
 ) -> Result<Json<DeleteChatResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let import_assets =
+        crate::imports::service::chat_asset_ids(&state.db, &user.id, &chat_id).await?;
     service::delete_chat(&state.db, &user.id, &chat_id).await?;
+    crate::imports::service::cleanup_deleted_files(
+        &state.config.tmp_dir(),
+        &state.config.uploads_dir(),
+        &chat_id,
+        &import_assets,
+    )
+    .await;
     state.conversation_retrieval.wake();
 
     Ok(Json(DeleteChatResponse { ok: true }))
@@ -624,6 +662,18 @@ async fn stream_generation(task: GenerationStreamTask) {
         .clone()
         .unwrap_or_default();
     let assistant_message_id = prepared.assistant_message.id.clone();
+    if let Err(error) = crate::canvas::service::capture_generation(
+        &db, &user_id, &chat_id, &assistant_message_id, &assistant_revision_id,
+    ).await {
+        let _ = service::fail_generation(
+            &db, &user_id, &chat_id, &assistant_message_id, error.message(),
+        ).await;
+        let _ = send_event(&tx, &GenerateEvent::Error {
+            assistant_message_id: Some(assistant_message_id),
+            message: error.message().to_string(),
+        }).await;
+        return;
+    }
     let assistant_model_key = prepared
         .assistant_message
         .persona_id
@@ -726,6 +776,13 @@ async fn stream_generation(task: GenerationStreamTask) {
     {
         available_tools.extend(image_tools);
     }
+    // Canvas tools are chat-scoped and are not advertised to background tasks.
+    if prepared.tool_selection.tool_use_enabled
+        && prepared.tool_selection.canvas_enabled
+        && tool_settings.as_ref().is_some_and(|settings| settings.tools_enabled)
+    {
+        available_tools.extend(crate::canvas::tools::schemas());
+    }
     if !available_tools.is_empty() {
         let _ = permissions::service::ensure_tool_records(&db).await;
         match (
@@ -755,6 +812,21 @@ async fn stream_generation(task: GenerationStreamTask) {
         available_tools.clear();
     }
     let mut prompt_messages = prepared.prompt_messages;
+    if available_tools.iter().any(|tool| {
+        crate::canvas::tools::NAMES.contains(&tool.function.name.as_str())
+    }) {
+        match crate::canvas::service::prompt_context(
+            &db, &user_id, &chat_id, &assistant_revision_id,
+        ).await {
+            Ok(content) => prompt_messages.insert(0, OllamaChatMessage {
+                role: "system".into(), content, thinking: None,
+                images: None, tool_name: None, tool_calls: None,
+            }),
+            Err(_) => available_tools.retain(|tool| {
+                !crate::canvas::tools::NAMES.contains(&tool.function.name.as_str())
+            }),
+        }
+    }
     ollama::client::filter_unsupported_images(
         &client,
         &prepared.backend_base_url,
@@ -1037,7 +1109,12 @@ async fn stream_generation(task: GenerationStreamTask) {
                     tool_call_id: &tool_call_id,
                     source_assistant_run_id: None,
                 };
-                if crate::images::chat::is_image_tool(&call.function.name) {
+                if crate::canvas::tools::NAMES.contains(&call.function.name.as_str()) {
+                    crate::canvas::tools::execute(
+                        &db, &user_id, &chat_id, &assistant_message_id,
+                        &assistant_revision_id, &assistant_model_name, call,
+                    ).await
+                } else if crate::images::chat::is_image_tool(&call.function.name) {
                     let (previews, mut preview_rx) = tokio::sync::watch::channel(None);
                     let image_work = crate::images::chat::execute(crate::images::chat::Context {
                         state: &image_state,

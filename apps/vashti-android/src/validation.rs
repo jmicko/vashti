@@ -1,12 +1,20 @@
 use url::Url;
 
 pub fn response_limit(path: &str, mime_type: Option<&str>) -> usize {
+    let attachment = matches!(
+        mime_type,
+        Some("application/octet-stream" | "image/png" | "image/jpeg" | "image/gif" | "image/webp")
+    ) && path
+        .strip_prefix("/api/attachments/")
+        .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
     let video = mime_type == Some("video/mp4")
         && path
             .strip_prefix("/api/videos/runs/")
             .and_then(|p| p.strip_suffix("/result"))
             .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
-    if video {
+    if attachment {
+        128 * 1024 * 1024
+    } else if video {
         64 * 1024 * 1024
     } else {
         32 * 1024 * 1024
@@ -35,7 +43,7 @@ pub fn validate_file_export(
     let max_encoded = if mime_type == "video/mp4" {
         (64 * 1024 * 1024_usize).div_ceil(3) * 4
     } else {
-        32 * 1024 * 1024
+        (128 * 1024 * 1024_usize).div_ceil(3) * 4
     };
     if !valid_name || !valid_mime || data_len > max_encoded {
         return Err("Invalid file export".into());
@@ -121,6 +129,27 @@ mod tests {
     }
 
     #[test]
+    fn only_valid_attachment_routes_receive_the_import_download_bound() {
+        let path = "/api/attachments/269ef6f3-f83d-4cc2-863b-d1d89f6a1a4d";
+        assert_eq!(
+            response_limit(path, Some("application/octet-stream")),
+            128 * 1024 * 1024
+        );
+        assert_eq!(response_limit(path, Some("image/png")), 128 * 1024 * 1024);
+        for (path, mime) in [
+            (path, Some("text/html")),
+            ("/api/attachments/invalid", Some("application/octet-stream")),
+            (
+                "/api/attachments/269ef6f3-f83d-4cc2-863b-d1d89f6a1a4d/content",
+                Some("application/octet-stream"),
+            ),
+            ("/api/other", Some("application/octet-stream")),
+        ] {
+            assert_eq!(response_limit(path, mime), 32 * 1024 * 1024);
+        }
+    }
+
+    #[test]
     fn file_exports_are_bounded_and_cannot_choose_paths_or_inject_metadata() {
         assert!(validate_file_export("answer.csv", "text/csv", 1024).is_ok());
         assert!(validate_file_export("report.pdf", "application/pdf", 1024).is_ok());
@@ -130,11 +159,18 @@ mod tests {
         for mime in ["text/csv\r\nother", "text/csv/extra", "", "text/"] {
             assert!(validate_file_export("answer.csv", mime, 1).is_err());
         }
-        assert!(validate_file_export("answer.csv", "text/csv", 33 * 1024 * 1024).is_err());
+        assert!(
+            validate_file_export(
+                "answer.csv",
+                "text/csv",
+                (128 * 1024 * 1024_usize).div_ceil(3) * 4 + 1
+            )
+            .is_err()
+        );
         let limit = (64 * 1024 * 1024_usize).div_ceil(3) * 4;
         assert!(validate_file_export("clip.mp4", "video/mp4", limit).is_ok());
         assert!(validate_file_export("clip.mp4", "video/mp4", limit + 1).is_err());
-        assert!(validate_file_export("clip.bin", "application/octet-stream", limit).is_err());
+        assert!(validate_file_export("clip.bin", "application/octet-stream", limit).is_ok());
     }
 
     #[test]

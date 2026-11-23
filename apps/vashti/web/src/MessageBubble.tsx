@@ -1,3 +1,4 @@
+import { useAttachmentPreparation, type PrepareAttachment } from "./pdf/useAttachmentPreparation";
 import {
   ChangeEvent,
   useEffect,
@@ -11,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  FileText,
   Info,
   LoaderCircle,
   Paperclip,
@@ -45,6 +47,9 @@ import { MessageStreamContent, ThinkingContent, thinkingSummary } from "./messag
 import { ModelAvatar } from "./ModelAvatar";
 import { MessageVersionCarousel } from "./MessageVersionCarousel";
 import { MessageNoteReferences } from "./notes/MessageNoteReferences";
+import {MessageCanvases} from "./canvas/MessageCanvases";
+import {canvasReferences} from "./canvas/references";
+import type {CanvasReference} from "./canvas/types";
 import { NoteContextChips } from "./notes/NoteContextChips";
 import { noteToolReferencesFromSegments } from "./notes/toolReferences";
 import type {
@@ -121,6 +126,7 @@ type MessageAvatarInfo = {
 };
 
 type MessageBubbleProps = {
+  pdfAttachments?: import("./types").AttachmentInfo[];
   imagePreview?: import("./images/types").Preview | null;
   message: ChatMessage;
   versionInfo: VersionInfo | null;
@@ -146,10 +152,12 @@ type MessageBubbleProps = {
   ) => Promise<void>;
   onImageOpen?: ImageOpenHandler;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
-  onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
+  onUploadAttachment?: PrepareAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onContinue: (message: ChatMessage) => Promise<void>;
   onOpenNote: (noteId: string) => void;
+  onOpenCanvas?: (message:ChatMessage)=>void;
+  onOpenCanvasReference?: (reference:CanvasReference)=>void;
   selectedModelInfo?: ModelInfo | null;
   modelAvatar?: MessageAvatarInfo | null;
   modelAvatarForMessage?: (message: ChatMessage) => MessageAvatarInfo | null;
@@ -210,6 +218,7 @@ export function MessageBubble(props: MessageBubbleProps) {
 }
 
 function MessageBubbleCard({
+  pdfAttachments,
   imagePreview,
   message,
   versionInfo,
@@ -231,25 +240,29 @@ function MessageBubbleCard({
   onRegenerate,
   onContinue,
   onOpenNote,
+  onOpenCanvas,
+  onOpenCanvasReference,
   selectedModelInfo,
   modelAvatar,
   dimmedEmphasis = false,
   isCarouselPreview = false
 }: MessageBubbleProps) {
+  const preparation = useAttachmentPreparation();
   const content = message.is_deleted
     ? "Message deleted"
     : message.active_revision?.content_text.trim() || "";
   const parsedThinking = useMemo(
-    () => parseThinkingText(message.active_revision?.thinking_text ?? ""),
-    [message.active_revision?.thinking_text]
+    () => parseThinkingText(message.active_revision?.thinking_text ?? "", message.import_source !== "chatgpt"),
+    [message.active_revision?.thinking_text, message.import_source]
   );
   const storedOrderedSegments = useMemo(
     () =>
       messageDisplaySegmentsFromRevision(
         message.active_revision?.content_text ?? "",
-        message.active_revision?.thinking_text ?? ""
+        message.active_revision?.thinking_text ?? "",
+        message.import_source !== "chatgpt"
       ),
-    [message.active_revision?.content_text, message.active_revision?.thinking_text]
+    [message.active_revision?.content_text, message.active_revision?.thinking_text, message.import_source]
   );
   const thinking = parsedThinking.thinkingText.trim();
   const hasThinkingDetail =
@@ -315,6 +328,7 @@ function MessageBubbleCard({
 
   async function cancelEdit() {
     dismissMobileKeyboard();
+    preparation.cancelAll();
     await cleanupDraftUploads(draftAttachments, onRemoveAttachment);
     setIsEditing(false);
   }
@@ -326,13 +340,18 @@ function MessageBubbleCard({
       return;
     }
 
+    const isActive = preparation.trackBatch();
     for (const file of files) {
+      if (!isActive()) break;
       const pendingId = newPendingAttachmentId();
       const pendingAttachment = pendingComposerAttachment(pendingId, file);
       setDraftAttachments((current) => [...current, pendingAttachment]);
 
       try {
-        const attachment = await onUploadAttachment(file);
+        const attachment = await preparation.prepare(pendingId, file, onUploadAttachment, progress => {
+          setDraftAttachments(current => current.map(item => item.id === pendingId ? {...item, progress} : item));
+        }, onRemoveAttachment);
+        if (!attachment) continue;
         setDraftAttachments((current) =>
           current.map((currentAttachment) =>
             currentAttachment.id === pendingId ? attachment : currentAttachment
@@ -355,6 +374,7 @@ function MessageBubbleCard({
   }
 
   async function removeDraftAttachment(attachment: ComposerAttachment) {
+    preparation.cancel(attachment.id);
     if (attachment.status === "uploaded" && !attachment.isExisting && onRemoveAttachment) {
       try {
         await onRemoveAttachment(attachment);
@@ -498,9 +518,10 @@ function MessageBubbleCard({
           isThinkingOpen={isThinkingOpen}
           onThinkingToggle={handleThinkingToggle}
           dimmedEmphasis={useDimmedEmphasis}
+          pdfAttachments={pdfAttachments}
         />
       ) : content ? (
-        <MarkdownContent content={content} dimmedEmphasis={useDimmedEmphasis} />
+        <MarkdownContent content={content} dimmedEmphasis={useDimmedEmphasis} deferImages={message.import_source === "chatgpt"} importedAttachments={message.import_source === "chatgpt" ? attachments : undefined} pdfAttachments={pdfAttachments}/>
       ) : (
         <p>{message.status === "streaming" ? <RetroLoader /> : "No content"}</p>
       )}
@@ -513,6 +534,7 @@ function MessageBubbleCard({
       {!isEditing && message.role === "assistant" && (
         <MessageNoteReferences references={noteReferences} onOpen={onOpenNote} />
       )}
+      {!isEditing&&onOpenCanvasReference&&<MessageCanvases references={canvasReferences(hasOrderedSegments?orderedSegments:parsedThinking.segments)} onOpen={onOpenCanvasReference}/>}
       {!isEditing && (
         <>
           <div className="message-actions">
@@ -536,6 +558,7 @@ function MessageBubbleCard({
               <Copy />{copied && <span>Copied</span>}
             </button>
             <ActionMenu label="Message actions">
+            {onOpenCanvas&&<button type="button" disabled={message.is_deleted||message.status==="streaming"||!content} onClick={()=>onOpenCanvas(message)}><FileText/><span>Open in canvas</span></button>}
             {message.role === "assistant" && (
               <button
                 type="button"

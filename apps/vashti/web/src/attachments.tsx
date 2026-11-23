@@ -1,4 +1,5 @@
 import {
+  lazy, Suspense,
   PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
@@ -6,14 +7,17 @@ import {
   useRef,
   useState
 } from "react";
+import type { ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, X } from "lucide-react";
 import { requestBlob, requestMultipartJson } from "./api";
 import { PhotoViewer } from "./PhotoViewer";
 import { saveImage } from "./saveImage";
+import { saveFile } from "./saveFile";
 import { RetroLoader } from "./common";
 import { ImageGenerationSettings } from "./ImageGenerationSettings";
-import { unixTimestamp } from "./privateChatStore";
+import { unixTimestamp, readPrivateImportAsset } from "./privateChatStore";
 import { apiAssetUrl } from "./runtime";
+import { isPdfAttachment, type PdfPreparation, type PdfText } from "./pdf/types";
 import type {
   AttachmentInfo,
   AttachmentResponse,
@@ -21,7 +25,11 @@ import type {
   ImageOpenHandler
 } from "./types";
 
+const PdfViewer = lazy(() => import("./pdf/PdfViewer"));
+
 export const attachmentAcceptTypes = [
+  "application/pdf",
+  ".pdf",
   "image/png",
   "image/jpeg",
   "image/gif",
@@ -104,7 +112,8 @@ function ComposerAttachmentItem({
         )}
       </div>
       <span>{attachment.original_filename}</span>
-      <small>{attachment.status === "uploading" ? <RetroLoader /> : formatBytes(attachment.size_bytes)}</small>
+      <small title={attachment.progress || undefined}>{attachment.status === "uploading" ? (attachment.progress || <RetroLoader />) : attachment.pdf_has_text === false
+        ? "No extractable text" : attachment.pdf_truncated ? "Partial text" : formatBytes(attachment.size_bytes)}</small>
       <button
         type="button"
         className="message-icon-button"
@@ -136,21 +145,45 @@ export function MessageAttachments({
       {imageAttachments.length > 0 && (
         <MessageImageCarousel attachments={imageAttachments} onImageOpen={onImageOpen} />
       )}
-      {fileAttachments.map((attachment) => (
-        <a
-          key={attachment.id}
-          className="attachment-chip"
-          href={attachmentDownloadUrl(attachment)}
-          download={attachment.original_filename}
-          title={attachment.original_filename}
-        >
-          {attachmentIcon(attachment)}
-          <span>{attachment.original_filename}</span>
-          <small>{formatBytes(attachment.size_bytes)}</small>
-        </a>
-      ))}
+      {fileAttachments.map(attachment => <DocumentAttachment key={attachment.id} attachment={attachment} />)}
     </div>
   );
+}
+
+export function DocumentAttachment({ attachment, inlineLabel, pdfPage = 1 }: { attachment: AttachmentInfo; inlineLabel?: ReactNode; pdfPage?: number }) {
+  const [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const [preview, setPreview] = useState(false);
+  const inline=inlineLabel!==undefined;
+  const pdf = isPdfAttachment(attachment);
+  return <span className={inline?"imported-file-link":undefined}><button type="button" className={inline?"imported-file-button":"attachment-chip"} disabled={saving} title={attachment.original_filename} onClick={() => {
+    if (pdf) { setPreview(true); return; }
+    setSaving(true); setError("");
+    void readAttachmentBlob(attachment).then(blob => saveFile(blob, attachment.original_filename, attachment.mime_type, true)).catch(cause => setError(cause instanceof Error ? cause.message : "Could not save attachment")).finally(() => setSaving(false));
+  }}>{inline ? (saving?"Saving...":inlineLabel) : <>{attachmentIcon(attachment)}<span>{attachment.original_filename}</span><small>{saving ? "Saving..." : formatBytes(attachment.size_bytes)}</small></>}</button>{error && <span role="alert" className="error">{error}</span>}{preview && <Suspense fallback={<span role="status">Opening PDF...</span>}><PdfViewer attachment={attachment} initialPage={pdfPage} onClose={() => setPreview(false)}/></Suspense>}</span>;
+}
+
+export async function readAttachmentBlob(attachment: AttachmentInfo) {
+  if (attachment.import_asset_id) return readPrivateImportAsset(attachment.import_asset_id);
+  if (attachment.data_url?.startsWith("data:application/pdf;base64,")) {
+    const bytes = Uint8Array.from(atob(attachment.data_url.slice("data:application/pdf;base64,".length)), char => char.charCodeAt(0));
+    return new Blob([bytes], { type: "application/pdf" });
+  }
+  if (attachment.data_url) return (await fetch(attachment.data_url)).blob();
+  if (attachment.text_content !== undefined) return new Blob([attachment.text_content], { type: attachment.mime_type });
+  return requestBlob(`/api/attachments/${attachment.id}`);
+}
+
+function AttachmentImage({ attachment, alt, onLoad }: { attachment: AttachmentInfo; alt?: string; onLoad?: () => void }) {
+  const [url, setUrl] = useState<string | null>(null), [error, setError] = useState("");
+  useEffect(() => {
+    if (!attachment.import_asset_id) return;
+    let cancelled = false, objectUrl: string | null = null;
+    void readPrivateImportAsset(attachment.import_asset_id).then(blob => {
+      if (!cancelled) { objectUrl = URL.createObjectURL(blob); setUrl(objectUrl); }
+    }).catch(() => { if (!cancelled) setError("Attachment unavailable; resume its import"); });
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [attachment.import_asset_id]);
+  return <img src={attachment.import_asset_id ? url ?? undefined : attachmentDisplayUrl(attachment)} alt={error || alt || attachment.original_filename} title={error || undefined} loading="lazy" draggable={false} onLoad={onLoad} />;
 }
 
 function MessageImageCarousel({
@@ -295,12 +328,7 @@ function MessageImageCarousel({
               onImageOpen?.(attachment, attachments);
             }}
           >
-            <img
-              src={attachmentDisplayUrl(attachment)}
-              alt={attachment.original_filename}
-              loading="lazy"
-              onLoad={updateCarouselMetrics}
-            />
+            <AttachmentImage attachment={attachment} onLoad={updateCarouselMetrics} />
           </button>
         ))}
       </div>
@@ -362,24 +390,22 @@ export function ImageViewer({
     setSaving(true);
     setError("");
     try {
-      const blob = attachment.data_url
-        ? await (await fetch(attachment.data_url)).blob()
-        : await requestBlob(`/api/attachments/${attachment.id}/content`);
+      const blob = await readAttachmentBlob(attachment);
       await saveImage(blob, attachment.original_filename.replace(/\.[^.]+$/, ""));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save image"); }
     finally { setSaving(false); }
   }
-  const neighbor = (value: AttachmentInfo | undefined) => value && <img src={attachmentDisplayUrl(value)} alt="" draggable={false} />;
+  const neighbor = (value: AttachmentInfo | undefined) => value && <AttachmentImage attachment={value} alt="" />;
   return (
     <PhotoViewer id={attachment.id} title={`${index + 1} of ${attachments.length}`}
       onClose={onClose} onStep={(direction) => onIndexChange(Math.max(0, Math.min(attachments.length - 1, index + direction)))}
       canPrevious={canPrevious} canNext={canNext}
       previous={neighbor(attachments[index - 1])} next={neighbor(attachments[index + 1])}
       actions={<button type="button" aria-label="Download image" title="Download image" disabled={saving} onClick={() => void download()}><Download /></button>}
-      more={attachment.mime_type === "image/png" && !attachment.data_url
+      more={attachment.mime_type === "image/png" && !attachment.data_url && !attachment.import_asset_id
         ? <ImageGenerationSettings key={attachment.id} attachmentId={attachment.id} /> : undefined}
       notice={error && <p role="alert">{error}</p>}>
-      <img src={attachmentDisplayUrl(attachment)} alt={attachment.original_filename} draggable={false} />
+      <AttachmentImage attachment={attachment} />
     </PhotoViewer>
   );
 }
@@ -431,6 +457,15 @@ function useAttachmentImageUrl(attachment: ComposerAttachment) {
       return () => URL.revokeObjectURL(objectUrl);
     }
 
+    if (attachment.import_asset_id) {
+      let alive = true, objectUrl: string | null = null;
+      setUrl(null);
+      void readPrivateImportAsset(attachment.import_asset_id).then(blob => {
+        if (alive) { objectUrl = URL.createObjectURL(blob); setUrl(objectUrl); }
+      }).catch(() => { if (alive) setUrl(null); });
+      return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    }
+
     if (attachment.status === "uploaded" && !attachment.id.startsWith("pending-")) {
       setUrl(attachmentUrl(attachment.id));
       return;
@@ -464,7 +499,24 @@ function attachmentDownloadUrl(attachment: AttachmentInfo) {
   return attachmentUrl(attachment.id);
 }
 
-export function prepareLocalAttachment(file: File): ComposerAttachment {
+async function preparePdf(file: File, options?: PdfPreparation): Promise<PdfText | undefined> {
+  if (!isPdfAttachment({ mime_type: file.type, original_filename: file.name })) return;
+  const { extractPdfText } = await import("./pdf/reader");
+  return extractPdfText(file, options);
+}
+
+function pdfAttachmentFields(pdf_text: PdfText) {
+  return {
+    mime_type: "application/pdf",
+    attachment_kind: "file",
+    pdf_text,
+    pdf_has_text: pdf_text.pages.length > 0,
+    pdf_truncated: pdf_text.truncated
+  };
+}
+
+export async function prepareLocalAttachment(file: File, options?: PdfPreparation): Promise<ComposerAttachment> {
+  const pdf = await preparePdf(file, options);
   return {
     id: newPendingAttachmentId(),
     chat_id: undefined,
@@ -475,11 +527,12 @@ export function prepareLocalAttachment(file: File): ComposerAttachment {
     size_bytes: file.size,
     attachment_kind: file.type.startsWith("image/") ? "image" : "text",
     status: "ready",
-    file
+    file,
+    ...(pdf ? pdfAttachmentFields(pdf) : {})
   };
 }
 
-export async function preparePrivateAttachment(file: File): Promise<ComposerAttachment> {
+export async function preparePrivateAttachment(file: File, options?: PdfPreparation): Promise<ComposerAttachment> {
   const mimeType = file.type || mimeTypeFromFilename(file.name) || "application/octet-stream";
   const isImage =
     mimeType.startsWith("image/") &&
@@ -496,6 +549,13 @@ export async function preparePrivateAttachment(file: File): Promise<ComposerAtta
     status: "ready" as const,
     file
   };
+
+  const pdf = await preparePdf(file, options);
+  options?.signal?.throwIfAborted();
+  if (pdf) {
+    const original = new File([file], file.name, { type: "application/pdf" });
+    return { ...baseAttachment, ...pdfAttachmentFields(pdf), data_url: await readFileAsDataUrl(original) };
+  }
 
   if (isImage) {
     return {
@@ -591,9 +651,13 @@ async function readFileAsUtf8(file: File) {
   }
 }
 
-export async function uploadAttachmentToChat(chatId: string, file: File) {
+export async function uploadAttachmentToChat(chatId: string, file: File, pdfText?: PdfText, options?: PdfPreparation) {
   const formData = new FormData();
   formData.append("file", file);
+  const document = pdfText ?? await preparePdf(file, options);
+  options?.signal?.throwIfAborted();
+  if (document) options?.onProgress?.("Uploading PDF...");
+  if (document) formData.append("pdf_context", JSON.stringify(document));
 
   const response = await requestMultipartJson<AttachmentResponse>(
     `/api/chats/${chatId}/attachments`,
@@ -617,7 +681,7 @@ export async function uploadComposerAttachments(
 
     if (attachment.status === "ready" && attachment.file) {
       uploadedAttachments.push({
-        ...(await uploadAttachmentToChat(chatId, attachment.file)),
+        ...(await uploadAttachmentToChat(chatId, attachment.file, attachment.pdf_text)),
         status: "uploaded" as const
       });
     }

@@ -1,0 +1,521 @@
+.chat-view.canvas-open {
+  grid-template-columns: minmax(280px, 1fr) minmax(
+      360px,
+      var(--canvas-width, 55%)
+    );
+  column-gap: 0;
+}
+.chat-view.canvas-open > .message-list {
+  grid-column: 1;
+  grid-row: 1;
+}
+.chat-view.canvas-open > .chat-composer-wrap {
+  grid-column: 1;
+  grid-row: 2;
+}
+.chat-view.canvas-open > .chat-view-error {
+  grid-column: 1;
+  grid-row: 3;
+}
+.private-chat-view.canvas-open > .message-list {
+  grid-row: 2;
+}
+.private-chat-view.canvas-open > .chat-composer-wrap {
+  grid-row: 3;
+}
+.private-chat-view.canvas-open > .chat-view-error {
+  grid-row: 4;
+}
+.canvas-workspace {
+  grid-column: 2;
+  grid-row: 1/-1;
+  position: relative;
+  z-index: 5 !important;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  color: var(--text);
+}
+.canvas-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 8;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.canvas-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.canvas-header {
+  height: 52px;
+  min-height: 52px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--panel-strong);
+  border-bottom: 1px solid var(--line);
+}
+.canvas-header > svg {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  flex: none;
+}
+.canvas-header select {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  padding: 6px 2px;
+  font-size: 15px;
+}
+.canvas-header .message-icon-button,
+.canvas-toolbar .message-icon-button {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  flex: none;
+  position: relative;
+}
+.canvas-workspace select option {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+.canvas-document {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.canvas-toolbar {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 4px 10px;
+  min-height: 40px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-strong);
+  flex-wrap: wrap;
+}
+.canvas-toolbar select {
+  min-width: 0;
+  max-width: 140px;
+  flex: 1;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  border: 1px solid var(--line);
+  padding: 5px;
+  border-radius: 4px;
+}
+.canvas-toolbar > button[aria-pressed="true"] {
+  background: var(--hover-muted);
+  color: var(--accent);
+}
+.canvas-toolbar button small {
+  position: absolute;
+  right: 0;
+  top: 0;
+  font-size: 10px;
+  line-height: 1.2;
+  background: var(--panel-strong);
+  color: var(--accent);
+}
+.canvas-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+.canvas-editor-container,
+.canvas-codemirror {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.canvas-editor-container[hidden] {
+  display: none;
+}
+.canvas-code .cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+  font-size: 13px;
+}
+.canvas-prose .cm-content {
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+}
+.canvas-preview,
+.canvas-history,
+.canvas-comments,
+.canvas-library {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 24px;
+  overflow-wrap: anywhere;
+}
+.canvas-preview > .markdown-content {
+  max-width: 800px;
+  margin: auto;
+}
+.canvas-footer {
+  border-top: 1px solid var(--line);
+  padding: 6px 12px 12px;
+  background: var(--panel-strong);
+  flex: none;
+}
+.canvas-save-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--muted);
+}
+.canvas-save-status > small:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.canvas-save-status small {
+  font-size: 11px;
+}
+.canvas-ask {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+.canvas-ask input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.canvas-ask button {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+}
+.canvas-ask button svg {
+  width: 18px;
+  height: 18px;
+}
+.canvas-selection {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  gap: 8px;
+  min-height: 28px;
+}
+.canvas-selection > span {
+  flex: 1;
+}
+.canvas-selection button {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+}
+.canvas-selection button svg {
+  width: 14px;
+  height: 14px;
+}
+.canvas-error,
+.canvas-conflict {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: none;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+.canvas-error {
+  color: var(--danger, #ff6d6d);
+}
+.canvas-error > span {
+  flex: 1;
+  min-width: 0;
+}
+.canvas-conflict button {
+  font-size: 12px;
+  padding: 5px 8px;
+  min-height: 30px;
+}
+.canvas-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  min-height: 0;
+}
+.canvas-empty > svg {
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+}
+.canvas-empty h3 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+.canvas-empty button {
+  min-width: 180px;
+}
+.canvas-rename {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--panel-strong);
+}
+.canvas-rename input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 6px;
+}
+.canvas-rename button {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+}
+.canvas-view-heading,
+.canvas-library > header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 42px;
+  border-bottom: 1px solid var(--line);
+  padding: 6px 12px;
+  flex: none;
+}
+.canvas-view-heading h3,
+.canvas-library h3 {
+  font-size: 15px;
+  margin: 0;
+  flex: 1;
+}
+.canvas-view-heading > span {
+  flex: 1;
+  font-size: 12px;
+  min-width: 80px;
+  overflow-wrap: anywhere;
+}
+.canvas-view-heading > button:not(.message-icon-button) {
+  padding: 6px 8px;
+  font-size: 12px;
+  min-height: 32px;
+}
+.canvas-history-entry {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  background: transparent !important;
+  color: var(--text) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  padding: 12px 0;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.canvas-history-entry small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.canvas-history-entry:hover {
+  background: var(--hover-muted) !important;
+}
+.canvas-version-view,
+.canvas-reference-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.canvas-version-view > .canvas-codemirror,
+.canvas-reference-view > .canvas-codemirror {
+  flex: 1;
+  height: 0;
+}
+.canvas-comment {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 0;
+}
+.canvas-comment header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.canvas-comment header strong {
+  font-size: 13px;
+  flex: 1;
+}
+.canvas-comment small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.canvas-comment p {
+  white-space: pre-wrap;
+  font-size: 14px;
+  margin: 8px 0;
+}
+.canvas-comment blockquote {
+  white-space: pre-wrap;
+  color: var(--muted);
+  border-left: 2px solid var(--line);
+  margin: 10px 0;
+  padding-left: 12px;
+  font-size: 13px;
+  max-height: 160px;
+  overflow: auto;
+}
+.canvas-comments form {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.canvas-comments textarea {
+  width: 100%;
+  background: var(--panel-strong);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 10px;
+  resize: vertical;
+  min-height: 80px;
+}
+.canvas-comments form button {
+  justify-self: end;
+}
+.canvas-library-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.canvas-library-row span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.message-canvas-references {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 4px;
+}
+.message-canvas-references button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  max-width: 100%;
+  padding: 9px 12px;
+}
+.message-canvas-references button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.message-canvas-references button svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  color: var(--accent);
+}
+.message-canvas-references button small {
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+}
+@media (max-width: 1024px) {
+  .chat-view.canvas-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-view.canvas-open > .canvas-workspace {
+    /* Anchor the overlay to the chat, not the desktop's second grid column. */
+    grid-area: auto;
+    position: absolute !important;
+    inset: 0;
+    z-index: 45 !important;
+    border: 0;
+  }
+  .chat-view.canvas-open > .message-list,
+  .chat-view.canvas-open > .chat-composer-wrap,
+  .chat-view.canvas-open > .private-local-banner,
+  .chat-view.canvas-open > .chat-view-error {
+    visibility: hidden;
+  }
+  .canvas-resizer {
+    display: none;
+  }
+  .canvas-header {
+    padding: 6px 10px;
+  }
+  .canvas-preview,
+  .canvas-history,
+  .canvas-comments,
+  .canvas-library {
+    padding: 14px 18px;
+  }
+  .canvas-footer {
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .canvas-codemirror .cm-content {
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+  .canvas-header .message-icon-button {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+  }
+  .desktop-canvas-button {
+    display: none !important;
+  }
+}

@@ -1,4 +1,6 @@
 import { executeDeviceImageTool, type DeviceImageContext } from "./images/deviceTools";
+import { CANVAS_TOOL_NAMES } from "./canvas/types";
+import { executeDeviceCanvasTool } from "./canvas/deviceTools";
 import { requestJson } from "./api";
 import {
   DEVICE_NOTE_TOOL_NAMES,
@@ -24,6 +26,7 @@ export type ClientToolCallEvent = {
 export type ClientToolExecutionContext = {
   chatId: string;
   images?: DeviceImageContext;
+  canvas?: {revisionId:string;check:()=>void};
   modelKey: string;
   modelName: string;
 };
@@ -36,6 +39,12 @@ type ClientToolHandler = (
 
 const handlers = new Map<string, ClientToolHandler>();
 const inFlightCalls = new Map<string, Promise<void>>();
+for (const name of CANVAS_TOOL_NAMES) {
+  handlers.set(name, (args,event,context) => {
+    if(!context.canvas)throw new Error("Canvas context is unavailable");
+    return executeDeviceCanvasTool(name,args,context.chatId,{message_id:event.assistant_message_id,revision_id:context.canvas.revisionId},context.modelName,context.canvas.check);
+  });
+}
 
 for (const name of DEVICE_NOTE_TOOL_NAMES) {
   handlers.set(name, (args, event, context) =>

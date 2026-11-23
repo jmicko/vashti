@@ -1388,6 +1388,7 @@ async fn chat_image_is_committed_with_attachment_and_shared_without_copying_file
         "chat",
         "message",
         "revision",
+        &mut crate::uploads::models::PdfPromptContext::new(72_000),
     )
     .await
     .unwrap();

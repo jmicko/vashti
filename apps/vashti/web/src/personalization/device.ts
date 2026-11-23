@@ -1,11 +1,13 @@
 import { requestJson } from "../api";
 import {
+  getPrivateChat,
   listPrivateChats,
   listPrivateMessages,
   listPrivatePersonas,
   listPrivatePersonaVersions,
   privateImageGuard,
   privateProfileIdentity,
+  privateProfileSourceEpoch,
   readPrivateProfile,
   writePrivateProfile
 } from "../privateChatStore";
@@ -24,9 +26,13 @@ import type {
   InputSource,
   ProfileFact,
   ProfileModel,
+  ProfileNotice,
   ProfileSettings,
   ProfileSource
 } from "./types";
+
+const IMPORT_SOURCE = "import:chatgpt";
+type SourceRef = Pick<InputSource, "chat_id" | "message_id" | "revision_id" | "model_key">;
 
 export async function getProfile(): Promise<DeviceProfile> {
   const guard = privateImageGuard();
@@ -37,6 +43,8 @@ export async function getProfile(): Promise<DeviceProfile> {
     history: {}
   };
   guard();
+  profile.settings = { ...defaultProfile().settings, ...profile.settings };
+  profile.rebuild_id ??= null;
   if (profile.suppressed.some((topic) => !topic.startsWith("sha256:"))) {
     try {
       return await save(
@@ -168,17 +176,29 @@ export async function forget(expected: number, id: string | null) {
     ...new Set([...profile.suppressed, ...removed.map((f) => topicToken(f.topic))])
   ];
   const processed = new Set(profile.processed);
+  const forgotten = new Set(profile.forgotten ?? []);
   for (const fact of removed) {
-    for (const source of factSources(fact)) processed.add(source.revision_id);
+    for (const source of factSources(fact)) forgotten.add(source.revision_id);
     delete profile.history[fact.id];
+    if (profile.rebuild_draft) {
+      for (const staged of profile.rebuild_draft.facts) {
+        if (staged.topic === fact.topic) delete profile.rebuild_draft.history[staged.id];
+      }
+      profile.rebuild_draft.facts = profile.rebuild_draft.facts.filter((staged) => staged.topic !== fact.topic);
+    }
   }
   if (!id) {
     for (const chat of await listPrivateChats()) {
       for (const message of await listPrivateMessages(chat.id)) {
-        for (const revision of message.revisions) processed.add(revision.id);
+        for (const revision of message.revisions) forgotten.add(revision.id);
       }
     }
+    profile.rebuild_id = null;
+    delete profile.rebuild_draft;
+    profile.requested = false;
   }
+  for (const revision of forgotten) processed.add(revision);
+  profile.forgotten = [...forgotten];
   profile.processed = [...processed];
   profile.facts = profile.facts.filter((f) => id && f.id !== id);
   guard();
@@ -189,19 +209,122 @@ export async function history(id: string) {
   return (await getProfile()).history[id] ?? [];
 }
 
+export async function rebuild(expected: number) {
+  const guard = privateImageGuard();
+  const profile = await getProfile();
+  if (profile.revision !== expected) throw new Error("Your device profile changed. Refresh and try again.");
+  const settings = profile.settings;
+  if (!settings.enabled || !settings.processor_backend_id || !settings.processor_model)
+    throw new Error("Enable personalization and choose a processing model first.");
+  if (profile.rebuild_id) throw new Error("A profile rebuild is already queued.");
+  const processor = (await models()).find((model) => model.key === `base:${settings.processor_backend_id}:${settings.processor_model}`);
+  if (!processor || (processor.cloud && !settings.allow_cloud_processor))
+    throw new Error("Choose an available, permitted processing model first.");
+  guard();
+  profile.rebuild_draft = { facts: [], history: {}, processed: [] };
+  profile.rebuild_id = crypto.randomUUID();
+  profile.requested = false;
+  profile.last_attempt_at = null;
+  profile.last_error = null;
+  sourceQueue = undefined;
+  guard();
+  return save(profile, expected);
+}
+
+export async function profileNotices(): Promise<ProfileNotice[]> {
+  return (await readPrivateProfile<DeviceProfile>())?.notices ?? [];
+}
+
+export async function readNotice(id: string) {
+  const guard = privateImageGuard(), profile = await getProfile();
+  const notice = profile.notices?.find((item) => item.id === id);
+  if (!notice || notice.read_at !== null) return;
+  notice.read_at = Math.floor(Date.now() / 1000);
+  guard();
+  await save(profile, profile.revision);
+}
+
+function effectiveLedger(profile: DeviceProfile) {
+  return profile.rebuild_id
+    ? [...(profile.forgotten ?? []), ...(profile.rebuild_draft?.processed ?? [])]
+    : profile.processed;
+}
+
+function workingFacts(profile: DeviceProfile) {
+  if (!profile.rebuild_id) return profile.facts;
+  const manual = profile.facts.filter((fact) => fact.locked);
+  return [...manual, ...(profile.rebuild_draft?.facts ?? []).filter((fact) => !manual.some((item) => item.topic === fact.topic))];
+}
+
+function supportedEvidence(sources: ProfileSource[], checked: Map<string, InputSource>) {
+  return sources.filter((source) => {
+    const current = checked.get(source.revision_id);
+    return current?.chat_id === source.chat_id && current.message_id === source.message_id
+      && current.model_key === source.model_key && current.text.includes(source.quote);
+  });
+}
+
+async function finishScan(profile: DeviceProfile, catalog: ProfileModel[]) {
+  if (profile.rebuild_id) {
+    const draft = profile.rebuild_draft;
+    const facts = workingFacts(profile);
+    const scoped = scopeSources(facts.filter((fact) => !fact.locked).flatMap((fact) => [
+      ...factSources(fact), ...(draft?.history[fact.id] ?? []).flatMap(factSources)
+    ]));
+    const sources = new Map((await eligibleSources(profile, catalog, false, scoped)).map((entry) => [entry.revision_id, entry]));
+    const nextHistory: DeviceProfile["history"] = {};
+    const nextFacts: ProfileFact[] = [];
+    for (const fact of facts) {
+      if (nextFacts.length === 200) break;
+      if (fact.locked) {
+        nextFacts.push(fact);
+        nextHistory[fact.id] = profile.history[fact.id] ?? [];
+        continue;
+      }
+      if (profile.suppressed.includes(topicToken(fact.topic))) continue;
+      const valid = supportedEvidence(factSources(fact), sources);
+      if (!valid.length) continue;
+      nextFacts.push({ ...fact, sources_json: JSON.stringify(valid) });
+      nextHistory[fact.id] = (draft?.history[fact.id] ?? []).flatMap((version) => {
+        const evidence = version.version === fact.version ? valid : supportedEvidence(factSources(version), sources);
+        return evidence.length ? [{ ...version, sources_json: JSON.stringify(evidence) }] : [];
+      });
+    }
+    profile.facts = nextFacts;
+    profile.history = nextHistory;
+    profile.processed = [...new Set(effectiveLedger(profile))];
+    delete profile.rebuild_draft;
+    const prior = profile.notices ?? [];
+    profile.notices = [
+      { id: profile.rebuild_id, created_at: Math.floor(Date.now() / 1000), read_at: null },
+      ...prior.filter((item) => item.read_at === null),
+      ...prior.filter((item) => item.read_at !== null).slice(0, 100)
+    ];
+    profile.rebuild_id = null;
+  }
+  profile.requested = false;
+  profile.last_error = null;
+}
+
 async function eligibleSources(
   profile: DeviceProfile,
   catalog: ProfileModel[],
-  unprocessed: boolean
+  unprocessed: boolean,
+  sourcesByChat?: ReadonlyMap<string, ReadonlySet<string>>
 ): Promise<InputSource[]> {
   const result: InputSource[] = [];
-  const processed = new Set(profile.processed);
-  const chats = await listPrivateChats();
+  const processed = new Set(effectiveLedger(profile));
+  const chats = sourcesByChat
+    ? (await Promise.all([...sourcesByChat.keys()].map(getPrivateChat))).filter((chat) => chat !== null)
+    : await listPrivateChats();
   for (const chat of [...chats].sort((a, b) => a.created_at - b.created_at)) {
+    if (chat.do_not_remember) continue;
+    const messageIds = sourcesByChat?.get(chat.id);
     const messages = await listPrivateMessages(chat.id);
     for (const message of messages) {
       const revision = message.active_revision;
       if (
+        (messageIds && !messageIds.has(message.id)) ||
         message.role !== "user" ||
         message.is_deleted ||
         message.status !== "complete" ||
@@ -209,12 +332,22 @@ async function eligibleSources(
         (unprocessed && processed.has(revision.id))
       )
         continue;
-      const response = messages
-        .filter((m) => m.parent_message_id === message.id && m.role === "assistant")
-        .sort((a, b) => a.created_at - b.created_at)[0];
+      if (!revision.content_text.trim()) continue;
+      if (message.import_source === "chatgpt") {
+        if (profile.settings.learn_from_imports && chat.allow_profile_learning !== false && revision.source === "original") {
+          result.push({
+            message_id: message.id, revision_id: revision.id, chat_id: chat.id,
+            model_key: IMPORT_SOURCE, text: revision.content_text.slice(0, 6000), created_at: revision.created_at
+          });
+        }
+        continue;
+      }
       const snapshot = revision.profile_source;
       // Old edits have no trustworthy model snapshot. Never inherit an earlier revision's model.
       if (!snapshot && revision.source !== "original") continue;
+      const response = snapshot ? undefined : messages
+        .filter((m) => m.parent_message_id === message.id && m.role === "assistant")
+        .sort((a, b) => a.created_at - b.created_at)[0];
       if (!snapshot && !response) continue;
       const personaId = snapshot
         ? snapshot.persona_id
@@ -261,6 +394,82 @@ async function eligibleSources(
   );
 }
 
+function scopeSources(sources: Iterable<Pick<SourceRef, "chat_id" | "message_id">>) {
+  const result = new Map<string, Set<string>>();
+  for (const source of sources) {
+    let ids = result.get(source.chat_id);
+    if (!ids) result.set(source.chat_id, ids = new Set());
+    ids.add(source.message_id);
+  }
+  return result;
+}
+
+let sourceQueue: { epoch: string; policy: string; refs: SourceRef[] } | undefined;
+
+async function pendingSources(profile: DeviceProfile, catalog: ProfileModel[]) {
+  const epoch = privateProfileSourceEpoch();
+  const policy = JSON.stringify([profile.settings, profile.rebuild_id, catalog]);
+  if (sourceQueue?.epoch !== epoch || sourceQueue.policy !== policy) {
+    const guard = privateImageGuard();
+    const refs = (await eligibleSources(profile, catalog, true)).map(({ chat_id, message_id, revision_id, model_key }) =>
+      ({ chat_id, message_id, revision_id, model_key }));
+    guard();
+    sourceQueue = { epoch, policy, refs };
+  }
+  const processed = new Set(effectiveLedger(profile));
+  return sourceQueue.refs.filter((source) => !processed.has(source.revision_id));
+}
+
+async function replayHints(profile: DeviceProfile, catalog: ProfileModel[], sources: InputSource[], facts: ProfileFact[]) {
+  const words = new Set(sources.flatMap((source) => source.text.toLowerCase().split(/[^\p{L}\p{N}]+/u)).filter((word) => word.length >= 4));
+  const ranked = facts.filter((fact) => !fact.locked).map((fact) => ({ fact, score: [...words].filter((word) => `${fact.topic} ${fact.content}`.toLowerCase().includes(word)).length }))
+    .sort((a, b) => b.score - a.score || b.fact.updated_at - a.fact.updated_at).slice(0, 12).map(({ fact }) => fact);
+  const ancestors = new Map<number, Array<{ chat_id: string; message_id: string }>>();
+  const messagesByChat = new Map<string, Awaited<ReturnType<typeof listPrivateMessages>>>();
+  for (const [index, source] of sources.entries()) {
+    if (index > 0 && sources[index - 1].chat_id === source.chat_id) continue;
+    let messages = messagesByChat.get(source.chat_id);
+    if (!messages) {
+      messages = await listPrivateMessages(source.chat_id);
+      messagesByChat.set(source.chat_id, messages);
+    }
+    const byId = new Map(messages.map((message) => [message.id, message]));
+    const prior: Array<{ chat_id: string; message_id: string }> = [];
+    let parent = byId.get(source.message_id)?.parent_message_id;
+    for (let depth = 0; parent && depth < 8; depth++) {
+      const message = byId.get(parent);
+      if (!message || message.is_deleted) break;
+      if (message.role === "user") prior.push({ chat_id: source.chat_id, message_id: message.id });
+      parent = message.parent_message_id;
+    }
+    ancestors.set(index, prior);
+  }
+  const checked = await eligibleSources(profile, catalog, false, scopeSources([
+    ...ranked.flatMap(factSources), ...[...ancestors.values()].flat()
+  ]));
+  const byRevision = new Map(checked.map((source) => [source.revision_id, source]));
+  const byMessage = new Map(checked.map((source) => [source.message_id, source]));
+  const forgotten = new Set(profile.forgotten);
+  let chars = 0;
+  return {
+    facts: ranked.filter((fact) => !profile.suppressed.includes(topicToken(fact.topic)) && supportedEvidence(factSources(fact), byRevision).length)
+      .map((fact) => ({ topic: fact.topic, content: [...fact.content].slice(0, 320).join("") })),
+    earlier_turns: [...ancestors].flatMap(([index, items]) => {
+      const excerpts: string[] = [];
+      for (const item of items) {
+        if (excerpts.length === 2 || chars >= 2400) break;
+        const prior = byMessage.get(item.message_id);
+        if (prior && prior.created_at <= sources[index].created_at && !forgotten.has(prior.revision_id)) {
+          const excerpt = [...prior.text].slice(0, Math.min(240, 2400 - chars));
+          chars += excerpt.length;
+          excerpts.unshift(excerpt.join(""));
+        }
+      }
+      return excerpts.length ? [{ source: index, excerpts }] : [];
+    })
+  };
+}
+
 export async function deviceContext(
   key: string,
   backend: string,
@@ -291,7 +500,9 @@ export async function deviceContext(
     })
   )
     return null;
-  const sources = await eligibleSources(profile, catalog, false);
+  // Validate only the saved citations when building a foreground prompt.
+  const sourcesByChat = scopeSources(profile.facts.filter((fact) => !fact.locked).flatMap(factSources));
+  const sources = await eligibleSources(profile, catalog, false, sourcesByChat);
   const valid = profile.facts.filter(
     (f) =>
       f.locked ||
@@ -349,6 +560,7 @@ export async function applyProfileToPrompt<T extends import("./types").ProfilePr
 let processing = false;
 let lastActivity = Date.now();
 let lastEmptyScan = 0;
+let lastEmptyEpoch = "";
 let streaming = 0;
 
 export function profileGenerationActive(active: boolean) {
@@ -356,7 +568,7 @@ export function profileGenerationActive(active: boolean) {
   lastActivity = Date.now();
 }
 
-export async function processNow() {
+export async function processNow(manual = true) {
   if (processing) throw new Error("Device processing is already running.");
   if (streaming) throw new Error("Wait for the current generation to finish.");
   const guard = privateImageGuard();
@@ -369,21 +581,37 @@ export async function processNow() {
     if (!settings.enabled || !settings.processor_backend_id || !settings.processor_model)
       throw new Error("Enable personalization and choose a processing model first.");
     const catalog = await models();
-    const all = await eligibleSources(before, catalog, true);
+    let refs = (await pendingSources(before, catalog)).slice(0, 16);
+    let all = await eligibleSources(before, catalog, true, scopeSources(refs));
+    const matches = (source: InputSource) => refs.some((ref) => ref.revision_id === source.revision_id && ref.model_key === source.model_key);
+    if (all.filter(matches).length !== refs.length) {
+      // Another tab may have edited one of the queued messages.
+      sourceQueue = undefined;
+      refs = (await pendingSources(before, catalog)).slice(0, 16);
+      all = await eligibleSources(before, catalog, true, scopeSources(refs));
+    }
     let chars = 0;
     const sources: InputSource[] = [];
     for (const source of all) {
+      if (!matches(source)) continue;
       if (sources.length === 16 || chars + [...source.text].length > 24000) break;
       chars += [...source.text].length;
       sources.push(source);
     }
     guard();
+    if (streaming) return before;
     if (!sources.length) {
       lastEmptyScan = Date.now();
-      return before.requested || before.last_error
-        ? await save({ ...before, requested: false, last_error: null }, before.revision)
-        : before;
+      lastEmptyEpoch = privateProfileSourceEpoch();
+      sourceQueue = undefined;
+      if (!before.requested && !before.rebuild_id && !before.last_error) return before;
+      await finishScan(before, catalog);
+      return await save(before, before.revision);
     }
+    let facts = workingFacts(before);
+    const replay = await replayHints(before, catalog, sources, facts);
+    if (streaming || (await getProfile()).revision !== before.revision) return before;
+    guard();
     const now = Math.floor(Date.now() / 1000);
     const result = await requestJson<{
       facts: Array<{
@@ -400,12 +628,15 @@ export async function processNow() {
         model_name: settings.processor_model,
         allow_cloud_processor: settings.allow_cloud_processor,
         sources,
-        topics: before.facts.map((f) => f.topic)
+        topics: facts.slice(0, 200).map((f) => f.topic),
+        replay
       })
     });
     guard();
     if (streaming) return before;
-    const valid = await eligibleSources(before, await models(), false);
+    const valid = await eligibleSources(before, await models(), false, scopeSources(sources));
+    const draft = before.rebuild_id ? (before.rebuild_draft ??= { facts: [], history: {}, processed: [] }) : undefined;
+    const history = draft?.history ?? before.history;
     for (const fact of result.facts) {
       validateFact(fact.topic, fact.content);
       if (
@@ -414,15 +645,18 @@ export async function processNow() {
           (s) =>
             !valid.some(
               (v) =>
+                v.chat_id === s.chat_id &&
                 v.revision_id === s.revision_id &&
                 v.message_id === s.message_id &&
+                v.model_key === s.model_key &&
+                sources.some((sent) => sent.revision_id === s.revision_id && sent.model_key === s.model_key) &&
                 v.text.includes(s.quote)
             )
         )
       )
         throw new Error("A source changed during processing.");
       if (before.suppressed.includes(topicToken(fact.topic))) continue;
-      const old = before.facts.find((f) => f.topic === fact.topic);
+      const old = facts.find((f) => f.topic === fact.topic);
       if (old && !old.locked && old.content === fact.content) {
         const seen = new Set<string>();
         const sources = [...fact.sources, ...factSources(old)]
@@ -433,7 +667,7 @@ export async function processNow() {
             return true;
           })
           .slice(0, 3);
-        before.facts = before.facts.map((current) =>
+        facts = facts.map((current) =>
           current.id === old.id
             ? {
                 ...current,
@@ -452,7 +686,17 @@ export async function processNow() {
           ))
       )
         continue;
-      if (!old && before.facts.length >= 200) continue;
+      if (!old && facts.length >= 200) {
+        if (!draft) continue;
+        const time = Math.max(...fact.sources.map((entry) => entry.created_at));
+        const victim = facts.filter((entry) => !entry.locked)
+          .map((entry) => ({ entry, time: Math.max(0, ...factSources(entry).map((source) => source.created_at)) }))
+          .filter((entry) => entry.time < time)
+          .sort((a, b) => a.time - b.time || a.entry.topic.localeCompare(b.entry.topic))[0]?.entry;
+        if (!victim) continue;
+        facts = facts.filter((entry) => entry.id !== victim.id);
+        delete history[victim.id];
+      }
       const next: ProfileFact = {
         id: old?.id ?? crypto.randomUUID(),
         topic: fact.topic,
@@ -463,8 +707,8 @@ export async function processNow() {
         created_at: old?.created_at ?? now,
         updated_at: now
       };
-      before.facts = [...before.facts.filter((f) => f.id !== next.id), next];
-      before.history[next.id] = [
+      facts = [...facts.filter((f) => f.id !== next.id), next];
+      history[next.id] = [
         {
           version: next.version,
           content: next.content,
@@ -472,16 +716,24 @@ export async function processNow() {
           actor: "processor" as const,
           created_at: now
         },
-        ...(before.history[next.id] ?? [])
+        ...(history[next.id] ?? [])
       ].slice(0, 20);
     }
     // Retain only revision IDs in the processed ledger, never source text.
-    before.processed = [...new Set([...before.processed, ...sources.map((s) => s.revision_id)])];
+    const newIds = sources.map((s) => s.revision_id);
+    if (draft) {
+      draft.facts = facts.filter((fact) => !fact.locked);
+      draft.processed = [...new Set([...draft.processed, ...newIds])];
+    } else {
+      before.facts = facts;
+      before.processed = [...new Set([...before.processed, ...newIds])];
+    }
     before.last_attempt_at = now;
     before.last_processed_at = now;
     before.last_error = null;
-    const processedIds = new Set(before.processed);
-    before.requested = valid.some((source) => !processedIds.has(source.revision_id));
+    const hasRemaining = (await pendingSources(before, catalog)).length > 0;
+    before.requested = (manual || before.requested) && hasRemaining;
+    if (!hasRemaining) await finishScan(before, catalog);
     guard();
     return await save(before, before.revision);
   } catch (error) {
@@ -500,7 +752,7 @@ export async function processNow() {
           ...current,
           last_attempt_at: Math.floor(Date.now() / 1000),
           last_error: null,
-          requested: true
+          requested: current.requested || manual
         },
         current.revision
       );
@@ -551,14 +803,14 @@ export function startDeviceProfileWorker() {
         stopped ||
         !profile.settings.enabled ||
         !profile.settings.processor_model ||
-        (!profile.requested && lastEmptyScan >= lastActivity) ||
+        (!profile.requested && !profile.rebuild_id && lastEmptyScan >= lastActivity && lastEmptyEpoch === privateProfileSourceEpoch()) ||
         (!profile.requested && Date.now() - lastActivity < profile.settings.idle_minutes * 60000) ||
         (profile.last_attempt_at &&
           Date.now() / 1000 - profile.last_attempt_at <
-            (profile.requested && !profile.last_error ? 10 : 120))
+            ((profile.requested || profile.rebuild_id) && !profile.last_error ? 10 : 120))
       )
         return;
-      await processNow();
+      await processNow(false);
     } catch {
       /* Status is available in Memories; background work must not disrupt chat. */
     } finally {
@@ -567,6 +819,7 @@ export function startDeviceProfileWorker() {
   }, 15000);
   return () => {
     stopped = true;
+    sourceQueue = undefined;
     window.clearInterval(timer);
     for (const name of ["pointerdown", "keydown", "touchstart"])
       window.removeEventListener(name, activity);

@@ -5,10 +5,12 @@ export function ActionMenu({
   label,
   children,
   icon,
+  disabled = false,
 }: {
   label: string;
   children: ReactNode;
   icon?: ReactNode;
+  disabled?: boolean;
 }) {
   const id = useId();
   const panel = useRef<HTMLDivElement>(null);
@@ -35,6 +37,7 @@ export function ActionMenu({
         aria-label={label}
         title={label}
         popoverTarget={id}
+        disabled={disabled}
       >
         {icon ?? <MoreHorizontal />}
       </button>

@@ -34,6 +34,7 @@ struct ParsedUpload {
     revision_id: Option<String>,
     original_filename: String,
     bytes: Vec<u8>,
+    pdf_context_json: Option<String>,
 }
 
 pub async fn upload_attachment(
@@ -61,6 +62,7 @@ pub async fn upload_attachment(
             revision_id: upload.revision_id,
             original_filename: upload.original_filename,
             bytes: upload.bytes,
+            pdf_context_json: upload.pdf_context_json,
         },
         app_settings.max_upload_bytes,
     )
@@ -120,11 +122,25 @@ pub async fn delete_attachment(
     Ok(Json(DeleteAttachmentResponse { ok: true }))
 }
 
+pub async fn get_pdf_text(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(attachment_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let json = service::get_pdf_text(&state.db, &user.id, &attachment_id).await?;
+    let mut response = Response::new(Body::from(json.unwrap_or_else(|| "null".to_string())));
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    Ok(response)
+}
+
 async fn parse_upload(multipart: &mut Multipart) -> Result<ParsedUpload, ApiError> {
     let mut message_id = None;
     let mut revision_id = None;
     let mut original_filename = None;
     let mut bytes = None;
+    let mut pdf_context_json = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -138,6 +154,18 @@ async fn parse_upload(multipart: &mut Multipart) -> Result<ParsedUpload, ApiErro
             }
             "revision_id" => {
                 revision_id = optional_field_text(field).await?;
+            }
+            "pdf_context" => {
+                let mut field = field;
+                let mut buffer = Vec::new();
+                let invalid = || ApiError::bad_request("invalid_pdf_context", "Invalid PDF text context");
+                while let Some(chunk) = field.chunk().await.map_err(|_| invalid())? {
+                    if buffer.len() + chunk.len() > super::pdf::PDF_FORM_BYTES {
+                        return Err(invalid());
+                    }
+                    buffer.extend_from_slice(&chunk);
+                }
+                pdf_context_json = Some(String::from_utf8(buffer).map_err(|_| invalid())?);
             }
             "file" => {
                 let filename = field.file_name().unwrap_or("upload").to_string();
@@ -158,6 +186,7 @@ async fn parse_upload(multipart: &mut Multipart) -> Result<ParsedUpload, ApiErro
             .ok_or_else(|| ApiError::bad_request("missing_file", "Upload file is required"))?,
         bytes: bytes
             .ok_or_else(|| ApiError::bad_request("missing_file", "Upload file is required"))?,
+        pdf_context_json,
     })
 }
 

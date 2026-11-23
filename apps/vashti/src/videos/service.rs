@@ -388,7 +388,10 @@ pub async fn submit(
     recipe
         .validate()
         .map_err(|_| invalid("Invalid video recipe"))?;
-    let encoded = recipe.first_frame.clone();
+    let encoded = recipe
+        .first_frame
+        .clone()
+        .ok_or_else(|| invalid("Choose a first frame"))?;
     tokio::task::spawn_blocking(move || kuno_image::references::decode(&[encoded]))
         .await
         .map_err(|_| invalid("Invalid first frame"))?

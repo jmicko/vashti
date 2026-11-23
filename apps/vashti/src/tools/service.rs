@@ -59,6 +59,7 @@ pub struct ToolSelection {
     pub chat_history_enabled: bool,
     pub calculator_enabled: bool,
     pub images_enabled: bool,
+    pub canvas_enabled: bool,
 }
 
 impl Default for ToolSelection {
@@ -74,6 +75,7 @@ impl Default for ToolSelection {
             chat_history_enabled: true,
             calculator_enabled: true,
             images_enabled: true,
+            canvas_enabled: true,
         }
     }
 }
@@ -181,6 +183,7 @@ pub fn chat_tools(
 pub fn permission_tool_id(tool_name: &str) -> &str {
     match tool_name {
         "generate_image" | "edit_image" => "images",
+        "list_canvases" | "read_canvas" | "create_canvas" | "update_canvas" | "comment_canvas" => "canvas",
         TOOL_CALCULATE | TOOL_CONVERT_UNITS => TOOL_CALCULATOR,
         TOOL_SEARCH_NOTES | TOOL_READ_NOTE | TOOL_CREATE_NOTE | TOOL_UPDATE_NOTE
         | TOOL_TRASH_NOTE => TOOL_NOTES,
@@ -497,6 +500,9 @@ pub fn calculator_tool_schema(name: &str) -> Option<OllamaTool> {
 }
 
 pub fn client_tool_schema(name: &str) -> Option<OllamaTool> {
+    if let Some(tool) = crate::canvas::tools::schema(name) {
+        return Some(tool);
+    }
     match name {
         TOOL_SEARCH_NOTES => Some(search_notes_tool()),
         TOOL_READ_NOTE => Some(read_note_tool()),
@@ -650,6 +656,15 @@ pub async fn execute_tool(
 }
 
 pub fn tool_summary(call: &OllamaToolCall) -> String {
+    if crate::canvas::tools::NAMES.contains(&call.function.name.as_str()) {
+        return match call.function.name.as_str() {
+            "create_canvas" => "Created a canvas",
+            "update_canvas" => "Edited a canvas",
+            "comment_canvas" => "Commented on a canvas",
+            "read_canvas" => "Read a canvas",
+            _ => "Listed canvases",
+        }.into();
+    }
     match call.function.name.as_str() {
         TOOL_CALCULATE => call
             .function

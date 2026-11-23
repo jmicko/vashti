@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { build } from "esbuild";
-import { indexedDB, IDBKeyRange } from "fake-indexeddb";
+import { indexedDB, IDBIndex, IDBKeyRange } from "fake-indexeddb";
 import { fileURLToPath } from "node:url";
+import { fixtureZip, syntheticConversation } from "../imports/fixtures.mjs";
 
 Object.assign(globalThis, {
   indexedDB,
@@ -38,12 +39,12 @@ globalThis.__profileApi = async (path, options) => {
         hold.resolve = resolve;
       });
     const input = JSON.parse(options.body),
-      source = input.sources[0];
+      source = input.sources.at(-1);
     return {
       facts: [
         {
           topic: "food.favorite",
-          content: "The user prefers corn.",
+          content: source.text.includes("imported beans") ? "The user prefers beans." : "The user prefers corn.",
           sources: [
             {
               message_id: source.message_id,
@@ -63,7 +64,7 @@ globalThis.__profileApi = async (path, options) => {
 const bundle = await build({
   stdin: {
     contents:
-      'export * from "./personalization/device"; export * from "./personalization/core"; export * from "./privateChatStore";',
+      'export * from "./personalization/device"; export * from "./personalization/core"; export * from "./privateChatStore"; export { runImport } from "./imports/repository"; export { ChatGptArchive } from "./imports/archive";',
     resolveDir: fileURLToPath(new URL("../", import.meta.url)),
     loader: "ts"
   },
@@ -83,7 +84,10 @@ const bundle = await build({
           contents: "export const requestJson=(...args)=>globalThis.__profileApi(...args);"
         }));
       }
-    }
+    },
+    { name: "reuse-yjs", setup(builder) {
+      builder.onResolve({ filter: /^yjs$/ }, () => ({ path: import.meta.resolve("yjs"), external: true }));
+    } }
   ]
 });
 const app = await import(
@@ -157,11 +161,91 @@ test("group rules, overrides, and context bounds mirror the server", () => {
   );
   assert(context.length < 1500);
   assert(context.includes("untrusted"));
+  assert(!context.includes("topic."));
   assert.equal(app.fitProfileContext(context, 64), null);
   const fitted = app.fitProfileContext(context, 600);
   assert(fitted);
   assert(app.contextWeight(fitted) <= 600);
   for (const line of fitted.split("\n").slice(1)) assert.doesNotThrow(() => JSON.parse(line));
+});
+
+test("1500 device imports rebuild with exact evidence, privacy exclusions, and one notice", async () => {
+  const { chat } = await seededUser("bulk-import-profile");
+  await app.processNow();
+  requests = [];
+  const target = { mode: "device", backend_id: "host", backend_name: "Local", model_name: "local", allow_history_search: false };
+  const dataset = Array.from({ length: 1500 }, (_, index) => {
+    const id = `synthetic-${index}`, record = syntheticConversation(id);
+    record.title = id;
+    record.is_do_not_remember = index === 1;
+    record.mapping.user.message.create_time = 100 + index;
+    record.mapping.user.message.content = { content_type: "text", parts: [index === 1499 ? "My favorite food is corn." : "My favorite food is imported beans."] };
+    return record;
+  });
+  async function importRows(rows, options) {
+    const archive = new app.ChatGptArchive(await fixtureZip([["conversations.json", JSON.stringify(rows)]]));
+    await archive.open();
+    try { return await app.runImport(archive, options, new AbortController().signal, () => {}); }
+    finally { await archive.close(); }
+  }
+  assert.equal((await importRows(dataset.filter((_, index) => index !== 2), target)).imported, 1499);
+  assert.equal((await importRows([dataset[2]], { ...target, learn_from_import: false })).imported, 1);
+  const chats = await app.listPrivateChats();
+  const previousImport = chats.find((entry) => entry.title === "synthetic-1499");
+  await app.savePrivateChat({ ...(await app.getPrivateChat(previousImport.id)), allow_profile_learning: undefined });
+
+  const messageReads = [], getAll = IDBIndex.prototype.getAll;
+  IDBIndex.prototype.getAll = function (query, ...rest) {
+    if (this.objectStore.name === "private_messages") messageReads.push(query);
+    return getAll.call(this, query, ...rest);
+  };
+  try {
+    const context = await app.deviceContext("base:host:local", "host", "local", false, "food");
+    assert(context.includes("corn"));
+    assert.deepEqual(messageReads, [chat.id]);
+  } finally {
+    IDBIndex.prototype.getAll = getAll;
+  }
+
+  let profile = await app.getProfile();
+  const withoutImports = await app.saveSettings(profile.revision, { ...profile.settings, learn_from_imports: false });
+  assert.equal((await app.processNow(false)).revision, withoutImports.revision);
+  assert(!requests.some(({ path }) => path.endsWith("/device-extract")));
+  profile = await app.saveSettings(withoutImports.revision, { ...withoutImports.settings, learn_from_imports: true });
+  profile = await app.editFact(profile.revision, null, "answer.style", "Keep explanations concise.");
+  profile = await app.rebuild(profile.revision);
+  const id = profile.rebuild_id;
+  assert(id);
+  assert.equal(profile.facts.length, 2);
+  assert.deepEqual(await app.profileNotices(), []);
+  const firstBatch = await app.processNow(false);
+  assert.equal(firstBatch.rebuild_id, id);
+  assert(!firstBatch.requested);
+  assert.equal(firstBatch.facts.find((fact) => fact.topic === "food.favorite").content, "The user prefers corn.");
+  assert.equal(firstBatch.rebuild_draft.facts.find((fact) => fact.topic === "food.favorite").content, "The user prefers beans.");
+  app.resetPrivateStorageUser();
+  user("bulk-import-profile");
+  profile = await app.getProfile();
+  for (let batches = 1; profile.rebuild_id; batches++) {
+    assert(batches < 94);
+    profile = await app.processNow(false);
+  }
+  const sent = requests.filter(({ path }) => path.endsWith("/device-extract")).map(({ options }) => JSON.parse(options.body).sources);
+  assert.equal(sent.length, 94);
+  assert(sent.every((batch) => batch.length <= 16));
+  assert.equal(sent[0][0].chat_id, chats.find((entry) => entry.title === "synthetic-0").id);
+  assert.equal(sent.at(-1).at(-2).chat_id, previousImport.id);
+  assert.equal(sent.at(-1).at(-1).chat_id, chat.id);
+  assert.equal(sent.flat().filter((source) => source.model_key === "import:chatgpt").length, 1498);
+  const excluded = new Set(chats.filter((entry) => ["synthetic-1", "synthetic-2"].includes(entry.title)).map((entry) => entry.id));
+  assert(!sent.flat().some((source) => excluded.has(source.chat_id) || source.text.includes("answer")));
+  assert.equal(profile.facts.find((fact) => fact.topic === "food.favorite").content, "The user prefers corn.");
+  assert(profile.facts.some((fact) => fact.locked && fact.topic === "answer.style"));
+  assert.deepEqual((await app.profileNotices()).map((item) => [item.id, item.read_at]), [[id, null]]);
+  await app.readNotice(id);
+  assert((await app.profileNotices())[0].read_at);
+  user("other-import-notice-user");
+  assert.deepEqual(await app.profileNotices(), []);
 });
 
 test("device processing stays encrypted, isolates accounts, respects edits and forgetting", async () => {
@@ -257,6 +341,30 @@ test("device processing stays encrypted, isolates accounts, respects edits and f
   app.resetPrivateStorageUser();
 });
 
+test("device replay keeps reopened threads in time order and excludes sibling context", async () => {
+  user("device-replay-branches");
+  requests = [];
+  const create = (title) => app.createPrivateChat({ title, backendId: "host", backendName: "Local", modelName: "local" });
+  const a = await create("Thread A"), b = await create("Thread B");
+  const add = async (chatId, createdAt, contentText, parentMessageId = null, role = "user") => {
+    const message = app.createPrivateMessage({ chatId, createdAt, contentText, parentMessageId, role, backendId: "host", modelName: "local" });
+    await app.savePrivateMessage(message);
+    return message;
+  };
+  const root = await add(a.id, 1, "My favorite food was beans.");
+  const reply = await add(a.id, 2, "Evidence is not from the assistant.", root.id, "assistant");
+  await add(a.id, 3, "This sibling branch is a fictional example.", root.id);
+  await add(b.id, 10, "I use a paper checklist before changes.");
+  const reopen = await add(a.id, 30, "Actually, make that tamales going forward.", reply.id);
+  const profile = await app.getProfile();
+  await app.saveSettings(profile.revision, { ...profile.settings, enabled: true, processor_backend_id: "host", processor_model: "local" });
+  await app.processNow();
+  const extraction = JSON.parse(requests.find(({ path }) => path.endsWith("device-extract")).options.body);
+  assert.deepEqual(extraction.sources.map((source) => source.chat_id), [a.id, a.id, b.id, a.id]);
+  assert.equal(extraction.sources.at(-1).message_id, reopen.id);
+  assert.deepEqual(extraction.replay.earlier_turns, [{ source: 3, excerpts: ["My favorite food was beans."] }]);
+});
+
 test("late processing cannot overwrite a human correction or cross a vault switch", async () => {
   await seededUser("concurrent");
   hold = {};
@@ -285,6 +393,15 @@ test("a signed-out attempt cannot leave the processing lane permanently busy", a
   await assert.rejects(app.processNow(), /Sign in/);
   await seededUser("signed-back-in");
   assert.equal((await app.processNow()).facts.length, 1);
+  app.resetPrivateStorageUser();
+});
+
+test("archiving does not change device profile eligibility or hide its sources", async () => {
+  const { chat } = await seededUser("archived-profile");
+  await app.setPrivateChatArchived(chat.id, true);
+  assert.equal((await app.processNow()).facts.length, 1);
+  assert((await app.deviceContext("base:host:local", "host", "local", false, "food")).includes("corn"));
+  assert.equal((await app.getProfile()).settings.enabled, true);
   app.resetPrivateStorageUser();
 });
 

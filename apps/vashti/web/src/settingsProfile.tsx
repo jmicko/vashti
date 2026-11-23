@@ -23,17 +23,23 @@ import {
   useNativeConnections,
 } from "./nativeConnections";
 import { NativeUpdateSettings } from "./nativeUpdates";
+import { ImportPanel } from "./imports/ImportPanel";
+import type { BackendModelGroup } from "./types";
 
 export function ProfileSettings({
   user,
   onUserChanged,
   onGuardChange,
   view = "profile",
+  modelGroups,
+  onOpenImportedDocument,
 }: {
   user: User;
   onUserChanged: (user: User) => void;
   onGuardChange: (guard: SettingsGuard | null) => void;
   view?: "profile" | "appearance" | "device";
+  modelGroups: BackendModelGroup[];
+  onOpenImportedDocument?: (chatId:string,mode:"server"|"device")=>void;
 }) {
   const { installState, installError, isInstalling, install } = usePwa();
   const { isNative } = useNativeConnections();
@@ -50,6 +56,11 @@ export function ProfileSettings({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [serverVersion, setServerVersion] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const cancelImportRef = useRef<() => void>(() => {});
+  const importBusyChanged = useCallback((busy: boolean, cancel: () => void) => {
+    setImportBusy(busy); cancelImportRef.current = cancel;
+  }, []);
   const themeRef = useRef(theme);
   const savedThemeRef = useRef(savedTheme);
   const statusTimerRef = useRef<number | null>(null);
@@ -212,11 +223,12 @@ export function ProfileSettings({
   };
   useEffect(() => {
     onGuardChange({
-      isDirty,
-      save: () => actions.current.save(),
-      discard: () => actions.current.discard(),
+      isDirty: isDirty || importBusy,
+      pendingJob: importBusy ? "import" : undefined,
+      save: () => importBusy ? Promise.resolve(false) : actions.current.save(),
+      discard: () => { cancelImportRef.current(); actions.current.discard(); },
     });
-  }, [isDirty, onGuardChange]);
+  }, [isDirty, importBusy, onGuardChange]);
   useEffect(() => () => onGuardChange(null), [onGuardChange]);
 
   return (
@@ -416,6 +428,7 @@ export function ProfileSettings({
           </>
         )}
       </form>
+      {view === "profile" && <ImportPanel groups={modelGroups} onBusyChange={importBusyChanged} onOpenImportedDocument={onOpenImportedDocument}/>}
     </SettingsPanel>
   );
 }

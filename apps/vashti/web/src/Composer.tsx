@@ -1,3 +1,4 @@
+import { useAttachmentPreparation, type PrepareAttachment } from "./pdf/useAttachmentPreparation";
 import {
   type CSSProperties,
   type ChangeEvent,
@@ -13,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   CircleAlert,
+  FilePenLine,
   LocateFixed,
   Paperclip,
   SendHorizontal,
@@ -62,11 +64,13 @@ export function StartChatComposer({
   isGenerating = false,
   placeholder,
   selectedModelInfo,
+  hasPdfContext = false,
   availableTools = [],
   toolPreferences,
   thinkingMode = "auto",
   warning,
   onToolPreferencesChange,
+  onOpenCanvas,
   onThinkingModeChange,
   onJumpToGeneration,
   generationNotice,
@@ -86,18 +90,20 @@ export function StartChatComposer({
   isGenerating?: boolean;
   placeholder: string;
   selectedModelInfo?: ModelInfo | null;
+  hasPdfContext?: boolean;
   availableTools?: AvailableTool[];
   toolPreferences?: ChatToolPreferences;
   thinkingMode?: ThinkingMode;
   warning?: string | null;
   onToolPreferencesChange?: (preferences: ChatToolPreferences) => void | Promise<void>;
+  onOpenCanvas?:()=>void;
   onThinkingModeChange?: (mode: ThinkingMode) => void;
   onJumpToGeneration?: () => void;
   generationNotice?: Pick<GenerationNotice, "kind"> & { count: number } | null;
   onJumpToGenerationNotice?: () => void;
   onDismissGenerationNotice?: () => void;
   onStop?: () => void;
-  onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
+  onUploadAttachment?: PrepareAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
   canAttachNotes?: boolean;
   searchNotes?: NoteSearchFunction;
@@ -134,6 +140,7 @@ export function StartChatComposer({
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
   const thinkingMenuRef = useRef<HTMLDivElement | null>(null);
   const canAttach = Boolean(onUploadAttachment);
+  const preparation = useAttachmentPreparation();
   const noteCommand = canAttachNotes ? noteCommandFromPrompt(prompt) : null;
   const isNotePickerOpen = Boolean(noteCommand && isTextInputFocused);
   const noteSearch = useNoteSearch(noteCommand?.query ?? "", isNotePickerOpen, searchNotes);
@@ -142,6 +149,7 @@ export function StartChatComposer({
   const canUseTools =
     Boolean(onToolPreferencesChange) &&
     availableTools.length > 0;
+  const canShowToolMenu = canUseTools || Boolean(onOpenCanvas);
   const selectedModelCannotUseTools =
     Boolean(selectedModelInfo) && !modelSupportsToolUse(selectedModelInfo);
   const canControlThinking = Boolean(onThinkingModeChange && selectedModelInfo?.supports_thinking);
@@ -174,7 +182,7 @@ export function StartChatComposer({
     isTextInputFocused ? "chat-composer-focused" : "",
     isComposerExpanded ? "chat-composer-expanded" : "",
     !canAttach ? "chat-composer-no-attach" : "",
-    !canUseTools ? "chat-composer-no-tools" : "",
+    !canShowToolMenu ? "chat-composer-no-tools" : "",
     !canControlThinking ? "chat-composer-no-thinking" : ""
   ]
     .filter(Boolean)
@@ -278,10 +286,10 @@ export function StartChatComposer({
   }, [activeNoteIndex, noteSearch.notes.length]);
 
   useEffect(() => {
-    if (!canUseTools) {
+    if (!canShowToolMenu) {
       setIsToolMenuOpen(false);
     }
-  }, [canUseTools]);
+  }, [canShowToolMenu]);
 
   useEffect(() => {
     if (!isToolMenuOpen && !isThinkingMenuOpen) {
@@ -357,13 +365,18 @@ export function StartChatComposer({
       return;
     }
 
+    const isActive = preparation.trackBatch();
     for (const file of files) {
+      if (!isActive()) break;
       const pendingAttachment = pendingComposerAttachment(newPendingAttachmentId(), file);
 
       setAttachments((current) => [...current, pendingAttachment]);
 
       try {
-        const attachment = await onUploadAttachment(file);
+        const attachment = await preparation.prepare(pendingAttachment.id, file, onUploadAttachment, progress => {
+          setAttachments(current => current.map(item => item.id === pendingAttachment.id ? {...item, progress} : item));
+        }, onRemoveAttachment);
+        if (!attachment) continue;
         setAttachments((current) =>
           current.map((currentAttachment) =>
             currentAttachment.id === pendingAttachment.id ? attachment : currentAttachment
@@ -386,6 +399,7 @@ export function StartChatComposer({
   }
 
   async function removeAttachment(attachment: ComposerAttachment) {
+    preparation.cancel(attachment.id);
     if (attachment.status === "uploaded" && !attachment.isExisting && onRemoveAttachment) {
       try {
         await onRemoveAttachment(attachment);
@@ -443,6 +457,8 @@ export function StartChatComposer({
   return (
     <>
       {visibleWarning && <p className="composer-warning">{visibleWarning}</p>}
+      {(hasPdfContext || attachments.some(attachment => attachment.pdf_has_text)) &&
+        <p className="composer-warning">PDF text is shared with the selected model, including cloud models.</p>}
       <form ref={formRef} className={composerClassName} style={composerStyle} onSubmit={submit}>
         {isGenerating && onJumpToGeneration && (
           <button
@@ -558,25 +574,26 @@ export function StartChatComposer({
             </button>
           </div>
         )}
-        {canUseTools && (
+        {canShowToolMenu && (
           <div className="composer-tools" ref={toolMenuRef}>
             <button
               type="button"
-              aria-label="Tool settings"
-              title="Tool settings"
+              aria-label={canUseTools?"Tool settings":"Open canvas"}
+              title={canUseTools?"Tool settings":"Open canvas"}
               className={
-                currentToolPreferences.tool_use_enabled
+                !canUseTools || currentToolPreferences.tool_use_enabled
                   ? "composer-tool-button active"
                   : "composer-tool-button composer-tool-button-off"
               }
-              disabled={isDisabled}
+              disabled={isDisabled&&!onOpenCanvas}
               onClick={() => {
                 setIsThinkingMenuOpen(false);
+                if(!canUseTools){onOpenCanvas?.();return;}
                 setIsToolMenuOpen((open) => !open);
               }}
             >
-              <Wrench />
-              {!currentToolPreferences.tool_use_enabled && (
+              {canUseTools?<Wrench />:<FilePenLine/>}
+              {canUseTools&&!currentToolPreferences.tool_use_enabled && (
                 <span className="tool-off-indicator" aria-hidden="true">
                   <X />
                 </span>
@@ -589,6 +606,7 @@ export function StartChatComposer({
             </button>
             {isToolMenuOpen && (
               <div className="composer-tool-menu">
+                {onOpenCanvas&&<button type="button" className="secondary-button" onClick={()=>{setIsToolMenuOpen(false);onOpenCanvas();}}><FilePenLine/><span>Open canvas</span></button>}
                 <ToggleSwitch
                   label="Tool use"
                   description="Allow this chat to use enabled tools."

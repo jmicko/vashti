@@ -6,13 +6,18 @@ import {
   useState
 } from "react";
 import {
+  Archive,
+  ArrowLeft,
+  Undo2,
   Copy,
+  ChevronDown,
   Bot,
   Film,
   Lock,
   MessageSquarePlus,
   MessageSquare,
   Search,
+  RefreshCw,
   MoreHorizontal,
   NotebookPen,
   Images,
@@ -47,6 +52,11 @@ export function Sidebar({
   isOpen,
   isLoading,
   isLoadingPrivateChats,
+  showingArchived,
+  historyError,
+  onToggleArchived,
+  onArchiveChat,
+  onRetryHistory,
   personaVersions,
   privatePersonaVersions,
   modelGroups,
@@ -79,6 +89,11 @@ export function Sidebar({
   isOpen: boolean;
   isLoading: boolean;
   isLoadingPrivateChats: boolean;
+  showingArchived: boolean;
+  historyError: string | null;
+  onToggleArchived: () => void;
+  onArchiveChat: (chat: ChatSummary | PrivateChatSummary, isPrivate: boolean, archived: boolean) => Promise<void>;
+  onRetryHistory: () => void;
   personaVersions: PersonaVersion[];
   privatePersonaVersions: PrivatePersonaVersion[];
   modelGroups: BackendModelGroup[];
@@ -98,6 +113,8 @@ export function Sidebar({
   const [openMenuChatId, setOpenMenuChatId] = useState<string | null>(null);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(100);
+  useEffect(() => setVisibleCount(100), [search, showingArchived]);
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 720px)").matches);
   useEffect(() => {
     const query = window.matchMedia("(max-width: 720px)");
@@ -147,13 +164,14 @@ export function Sidebar({
     () =>
       [
         ...chats.map((chat) => ({ chat, isPrivate: false })),
-        ...privateChats.map((chat) => ({ chat, isPrivate: true }))
+        ...privateChats.filter((chat) => (chat.archived_at != null) === showingArchived)
+          .map((chat) => ({ chat, isPrivate: true }))
       ].sort(
         (left, right) =>
           right.chat.last_message_at - left.chat.last_message_at ||
           left.chat.title.localeCompare(right.chat.title)
       ),
-    [chats, privateChats]
+    [chats, privateChats, showingArchived]
   );
   const isLoadingAnyChats = isLoading || isLoadingPrivateChats;
   const filteredChats = combinedChats.filter(({ chat }) => chat.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
@@ -199,7 +217,7 @@ export function Sidebar({
             <span>{isImagesActive || isVideosActive ? "New Flow" : "New Chat"}</span>
           </button>
           {(isImagesActive || isVideosActive || isNotesActive || isAssistantActive) && <button type="button" className="sidebar-section-button" onClick={() => onOpenChat()}><MessageSquare /><span>Chat</span></button>}
-          {onOpenAssistant && <button type="button" className={isAssistantActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isAssistantActive ? "page" : undefined} onClick={onOpenAssistant}><Bot /><span>Assistant</span>{assistantAttention > 0 && <small className="assistant-attention-count">{assistantAttention}</small>}</button>}
+          {onOpenAssistant && <button type="button" className={isAssistantActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isAssistantActive ? "page" : undefined} aria-label={assistantAttention ? `Assistant, ${assistantAttention === 1 ? "1 item needs" : `${assistantAttention} items need`} attention` : undefined} onClick={onOpenAssistant}><Bot /><span>Assistant</span>{assistantAttention > 0 && <small className="assistant-attention-count" aria-hidden="true">{assistantAttention > 99 ? "99+" : assistantAttention}</small>}</button>}
           <button type="button" className={isImagesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isImagesActive ? "page" : undefined} onClick={() => { setOpenMenuChatId(null); onOpenImages(); }}><Images /><span>Images</span></button>
           {onOpenVideos && (
             <button
@@ -227,16 +245,25 @@ export function Sidebar({
       </div>
       <div className="chat-history" hidden={isAssistantActive}>
         {isVideosActive ? <VideoFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow}/> : isImagesActive ? <ImageFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
-        <p className="eyebrow">Previous Chats</p>
-        {(combinedChats.length > 5 || search) && <label className="history-search"><Search size={16} /><input aria-label="Search chats" placeholder="Search chats" value={search} onChange={(event) => setSearch(event.target.value)} /></label>}
+        <div className="history-heading">
+          <p className="eyebrow">{showingArchived ? "Archived Chats" : "Previous Chats"}</p>
+          <button type="button" className="icon-button" aria-pressed={showingArchived}
+            aria-label={showingArchived ? "Show previous chats" : "Show archived chats"}
+            title={showingArchived ? "Show previous chats" : "Show archived chats"}
+            onClick={() => { setOpenMenuChatId(null); setEditingChatId(null); setSearch(""); onToggleArchived(); }}>
+            {showingArchived ? <ArrowLeft /> : <Archive />}
+          </button>
+        </div>
+        {historyError && <div className="history-error" role="alert"><span>{historyError}</span><button type="button" className="icon-button" aria-label="Retry loading chats" title="Retry loading chats" onClick={onRetryHistory}><RefreshCw /></button></div>}
+        {(showingArchived || combinedChats.length > 5 || search) && <label className="history-search"><Search size={16} /><input aria-label="Search chats" placeholder="Search chats" value={search} onChange={(event) => setSearch(event.target.value)} /></label>}
         {isLoadingAnyChats && combinedChats.length === 0 ? (
           <p>Loading chats...</p>
-        ) : combinedChats.length === 0 ? (
-          <p>No chats yet</p>
+        ) : historyError && combinedChats.length === 0 ? null : combinedChats.length === 0 ? (
+          <p>{showingArchived ? "No archived chats" : "No chats yet"}</p>
         ) : (
           <div className="chat-link-list">
             {!filteredChats.length && <p className="history-empty" role="status">No matching chats</p>}
-            {filteredChats.map(({ chat, isPrivate }) => {
+            {filteredChats.slice(0, visibleCount).map(({ chat, isPrivate }) => {
               const version = chat.persona_version_id
                 ? (isPrivate ? privatePersonaVersions : personaVersions).find(
                     (candidate) => candidate.id === chat.persona_version_id
@@ -278,6 +305,8 @@ export function Sidebar({
                 isEditing={editingChatId === chat.id}
                 isMenuOpen={openMenuChatId === chat.id}
                 isPrivate={isPrivate}
+                isArchived={showingArchived}
+                onArchive={() => onArchiveChat(chat, isPrivate, !showingArchived)}
                 onCancelEditing={() => setEditingChatId(null)}
                 onCloseMenu={() => setOpenMenuChatId(null)}
                 onDelete={() => {
@@ -312,6 +341,7 @@ export function Sidebar({
                 />
               );
             })}
+            {filteredChats.length > visibleCount && <button type="button" className="secondary-button" onClick={() => setVisibleCount(count => count + 100)}><ChevronDown /><span>Show more chats</span></button>}
           </div>
         )}
         </>}
@@ -327,6 +357,8 @@ function ChatListItem({
   isEditing,
   isMenuOpen,
   isPrivate = false,
+  isArchived,
+  onArchive,
   onCancelEditing,
   onCloseMenu,
   onDelete,
@@ -349,6 +381,8 @@ function ChatListItem({
   isEditing: boolean;
   isMenuOpen: boolean;
   isPrivate?: boolean;
+  isArchived: boolean;
+  onArchive: () => Promise<void>;
   onCancelEditing: () => void;
   onCloseMenu: () => void;
   onDelete: () => void;
@@ -363,6 +397,7 @@ function ChatListItem({
   const suppressClickRef = useRef(false);
   const [draftTitle, setDraftTitle] = useState(chat.title);
   const [isSaving, setIsSaving] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
 
   useEffect(() => {
     if (isEditing) {
@@ -501,6 +536,7 @@ function ChatListItem({
           <button
             type="button"
             className="menu-item"
+            disabled={isArchiving}
             onClick={onStartEditing}
           >
             <Pencil />
@@ -514,9 +550,18 @@ function ChatListItem({
             <Copy />
             <span>Copy Title</span>
           </button>
+          <button type="button" className="menu-item" disabled={isArchiving}
+            onClick={() => {
+              setIsArchiving(true);
+              void onArchive().then(onCloseMenu).catch(() => undefined).finally(() => setIsArchiving(false));
+            }}>
+            {isArchived ? <Undo2 /> : <Archive />}
+            <span>{isArchiving ? (isArchived ? "Restoring..." : "Archiving...") : isArchived ? "Restore" : "Archive"}</span>
+          </button>
           <button
             type="button"
             className="menu-item danger-button"
+            disabled={isArchiving}
             onClick={() => {
               onCloseMenu();
               onDelete();

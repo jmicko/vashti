@@ -129,6 +129,81 @@ There are two storage modes.
 * no server persistence of prompt/response content
 * server only receives transient content for live generation requests
 
+#### ChatGPT ZIP imports
+
+Settings -> Profile offers a ZIP picker, compatibility preview, destination,
+and a Vashti reply-model selection before any import is confirmed. Both
+`conversations.json` and numbered `conversations-*.json` arrays are supported.
+A dedicated worker reads the archive with zip.js, reconstructs parent-linked
+branches, and merges exported reasoning into assistant messages. Previewing is
+read-only and does not upload the ZIP or extract files to disk.
+
+Server imports use `POST /api/imports/chatgpt` (one conversation, up to 32 MiB)
+and `POST /api/imports/chatgpt/assets/{id}` (512 KiB binary chunks encoded as
+base64). Sessions and explicit expected-user identity are checked on every
+request. Original JSON and source hashes are retained in `chat_import_records`;
+pending files are tracked in `chat_import_assets`. Checksummed uploads resume
+after interruption. Re-importing skips matching source IDs and never overwrites
+changed conversations. Import files have UUID-only paths; startup recovery
+removes importer-owned orphan files. Limits are 128 MiB/file and 2 GiB of
+imported attachments/account.
+
+Device imports make no import API calls. Originals, chats, archive state, and
+512 KiB asset chunks are encrypted in the account/server-scoped IndexedDB vault.
+Account changes invalidate in-flight work. Cancellation keeps committed chats;
+selecting the same ZIP resumes missing attachments without duplicating chats.
+
+Imports preserve dates, titles, archive state, branches, original model labels,
+Markdown, and referenced raster images. PDFs can be previewed and downloaded;
+other binary attachments are download-only. Imported PDFs never contribute text
+to inference automatically. Hidden/system messages and rich metadata
+remain in original records, not executable tool transcripts or system prompts.
+Remote Markdown images require explicit viewing. Archived `sandbox:/mnt/data/`
+links become file actions only when an explicit ZIP path or unambiguous
+conversation file metadata identifies the bytes. Links do not trigger network
+lookups; downloads are matched to the active message's own attachments. Missing
+or ambiguous links remain unavailable. Previously imported chats are not rewritten.
+
+Newly attached PDFs use embedded text where available and automatically recognize
+scan pages with a local English OCR worker. The worker, code, and language data
+are bundled, and no pages or text are sent to an OCR service. The original PDF is
+preserved; search and citations use the stored page numbers. Scanning is
+cancellable and bounded to 200 pages and 480 KB of extracted text per PDF.
+Small documents fit in the prompt; longer documents use question-relevant pages
+or an overview under the existing context budget. Device-only chats retain the
+original and recognized text in the encrypted vault. Only sending a message
+shares the relevant text with the chosen inference backend.
+
+For Android OCR checks, generate a synthetic document with
+`node apps/vashti/scripts/pdf-ocr-fixture.mjs /tmp/vashti-ocr-orientations.pdf`.
+Attach it in the app and check that the sideways, upside-down, and rotated-metadata
+pages each have their own reference number in PDF search, with no partial-text warning.
+
+Supported `pages/{id}/content/current.json` records open as a Canvas in an archived,
+private-to-the-account chat. A matching complete schema-2 Yjs checkpoint supplies
+the ordered Markdown blocks; the text projection is the fallback.
+Settings shows these under **Imported items** in both storage modes. A Page and
+its Canvas commit atomically, retain the original record and matching bounded
+checkpoint when available, and resume without overwriting local edits. CRDT
+history, non-Markdown blocks, unsupported workspace formats and unlinked library files
+are not reconstructed. Account settings and credentials are not imported.
+Imported user messages are eligible for automatic personalization when enabled,
+including existing imports. Each new import can opt out independently of server
+history search, which remains opt-in. Exported do-not-remember chats exclude
+both existing history and future follow-ups from profile extraction and search.
+The processor replays bounded batches oldest first, grouping consecutive turns by
+their conversation. Rebuilding keeps the existing profile active until a checked
+draft replaces its automatic facts; manual facts and forgotten topics are kept.
+Completion creates one unread Assistant notification in the same storage mode;
+device-only notifications remain encrypted on the device.
+
+Generate a disposable, entirely synthetic UI fixture with
+`node apps/vashti/scripts/chatgpt-import-fixture.mjs`; it writes only to `/tmp`
+unless a destination is explicitly supplied. Never add real exports to this repo.
+After web/native builds, run `node apps/vashti/scripts/chatgpt-worker-check.mjs`
+and the same command with `dist-native` to exercise the compiled worker without
+a DOM, network, WebAssembly, or native compression streams.
+
 ### 2.4 Model personas
 
 Vashti treats personas as reusable model profiles, not as separate provider types.
@@ -494,7 +569,7 @@ Columns:
 * `mime_type` TEXT NOT NULL
 * `size_bytes` INTEGER NOT NULL
 * `attachment_kind` TEXT NOT NULL
-  Allowed values: `image`, `text`
+  Allowed values: `image`, `text`, `file` (imported, download-only binaries)
 * `created_at` INTEGER NOT NULL
 
 Notes:
@@ -1705,12 +1780,15 @@ Use cases:
 
 ### `GET /api/chats`
 
-Returns chat summaries only.
+Returns the authenticated owner's unarchived chat summaries by default.
+`archived=true` returns only archived chats. Summaries and chat details include
+nullable `archived_at`.
 
 Query params:
 
 * `limit` optional
 * `cursor` optional later
+* `archived` optional boolean, default `false`
 
 Response:
 
@@ -1802,6 +1880,22 @@ Request example:
   "persona_version_id": null
 }
 ```
+
+### `POST /api/chats/:chat_id/archive`
+
+Accepts `{ "archived": true }` to archive, or `{ "archived": false }` to restore.
+Returns the usual `{ "chat": ... }` response. Both actions are owner-scoped and
+idempotent, and preserve message timestamps, revisions, branches and attachments.
+
+Each sidebar chat menu offers Archive or Restore. The archive icon beside
+Previous Chats opens searchable Archived Chats; its back arrow returns to active
+history. Archived chats remain readable and usable without silently restoring
+them. Running generations continue. Archiving does not change memory or
+conversation-search permissions.
+
+Device-private chats have the same controls. Their archive state is stored in a
+separate encrypted record in the account/server-scoped device vault, so a stale
+generation save cannot accidentally undo Archive or Restore. It is not uploaded.
 
 ### `DELETE /api/chats/:chat_id`
 
@@ -2695,6 +2789,58 @@ Recommended persona sequence:
 9. add tag-based access rules and persona quotas as a later admin-management slice
 
 ---
+
+## 11.2 Chat-linked Canvas
+
+Canvas is a writing/code workspace, separate from Notes. Desktop chat and editor
+share a resizable split; narrow screens show the editor with a return-to-chat
+control. The editor is lazy-loaded CodeMirror 6, with Markdown preview, code
+languages, selection requests, comments, version review/restore and file export.
+Document contents are never executed. HTML previews and code execution require
+a separate sandbox design and are not part of this slice.
+
+Server persistence uses `canvas_documents`, `canvas_versions`, `canvas_scopes`,
+`canvas_generation_inputs` and `canvas_comments`. A scope belongs to an exact
+message revision, or the chat root. An absent scope inherits its nearest ancestor;
+an existing empty scope is authoritative. Generation captures immutable input
+heads before inference, while writes advance only that generation's workspace.
+Edited/continued revisions inherit their earlier workspace. Regeneration inherits
+the parent branch, not a discarded response's changes.
+
+All updates compare `expected_version_id` inside the write transaction. Exact
+find/replace batches must match uniquely and succeed atomically. Human autosaves
+coalesce within one editing session and ten minutes of activity only while the
+checkpoint has no branch, generation, child-version or comment references. Model
+edits and restores always create retained checkpoints. Removal is branch-local
+and reversible; deleting the owning chat cascades Canvas data.
+
+Authenticated APIs are rooted at `/api/canvas/chats/{chat}`: GET workspace,
+POST `/mutations`, GET `/documents/{document}/versions`, and GET an exact version
+at `/documents/{document}/versions/{version}`. Limits are 16 canvases per branch,
+256 KiB UTF-8 per document, 24 exact patches per update and 200 comments/document.
+History lists return metadata in pages of 50; content loads on demand.
+
+`list_canvases`, `read_canvas`, `create_canvas`, `update_canvas` and `comment_canvas`
+use the existing global, tag-based and per-chat tool controls. Model writes are
+bound to the exact active streaming revision; models cannot remove documents,
+restore history or resolve comments. Prompts contain a bounded manifest, not
+every document. Reads use Unicode-character offsets and 12,000-byte chunks.
+Canvas text/comments are untrusted content, not tool authorization. Background
+Assistant tasks do not receive chat-scoped Canvas tools.
+
+Device-private canvases use the encrypted `private_canvases` IndexedDB store,
+with account/server epoch guards and transactional compare-and-swap records.
+They never use server persistence APIs; only explicit model-tool calls send
+requested document text through the existing transient private inference path.
+Human drafts in both modes are encrypted locally and keyed by scope, document
+and editing session. Save completion clears only its matching draft, not newer
+typing or another window's session. Account switching invalidates queued writes.
+
+Validation includes synthetic server/device branch, checkpoint, concurrency,
+permission, cancellation, comment, restore, encryption and draft tests, plus DOM
+editor interaction tests. DOM tests do not qualify real mobile keyboard, resize,
+selection gestures, popover placement or physical Android behavior. The user's
+ChatGPT export is not a test fixture and is not copied into the repository.
 
 ## 12. Codex Handoff Guidance
 

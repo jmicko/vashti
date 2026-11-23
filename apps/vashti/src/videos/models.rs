@@ -45,7 +45,9 @@ impl Draft {
             height: self.height,
             frames: self.frames,
             audio: self.audio,
-            first_frame,
+            first_frame: Some(first_frame),
+            last_frame: None,
+            reference_images: Vec::new(),
         }
     }
 }

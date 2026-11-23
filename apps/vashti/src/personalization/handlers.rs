@@ -15,6 +15,7 @@ pub fn router() -> Router<AppState> {
         .route("/settings", post(save_settings))
         .route("/models", get(models))
         .route("/process", post(process))
+        .route("/rebuild", post(rebuild))
         .route("/device-extract", post(device_extract))
         .route("/facts", post(create_fact))
         .route("/facts/{id}", post(edit_fact))
@@ -80,6 +81,17 @@ async fn process(
     sqlx::query("UPDATE user_personalization SET requested=1,last_attempt_at=NULL,last_error=NULL,failures=0 WHERE user_id=?").bind(&owner).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(service::profile(&state.db, &owner).await?))
+}
+
+async fn rebuild(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(input): Json<ExpectedRevision>,
+) -> Result<Json<Profile>, ApiError> {
+    let owner = owner(&state, &jar).await?;
+    Ok(Json(
+        service::rebuild(&state, &owner, input.expected_revision).await?,
+    ))
 }
 
 async fn create_fact(
@@ -185,8 +197,11 @@ async fn device_extract(
         &input.backend_id,
         &input.model_name,
         input.allow_cloud_processor,
-        &input.sources,
-        &input.topics,
+        worker::ReplayBatch {
+            sources: &input.sources,
+            topics: &input.topics,
+            hints: &input.replay,
+        },
     );
     tokio::pin!(inference);
     let result = loop {

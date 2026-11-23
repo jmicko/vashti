@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {LazyCanvasPanel,useChatCanvas} from "./canvas/useCanvas";
 import { requestJson } from "./api";
 import { attachmentReferences, isImageAttachment, uploadAttachmentToChat } from "./attachments";
+import { messagePdfAttachments, type PdfPreparation } from "./pdf/types";
 import {
   activateMessagePath,
   activeMessageAttachments,
@@ -109,6 +111,9 @@ export function ChatView({
   personas,
   personaVersions,
   isTreeOpen,
+  isCanvasOpen=false,
+  onCanvasOpen=()=>{},
+  onCanvasClose=()=>{},
   onTreeClose,
   onChatsChanged,
   onChatSettingsLoaded,
@@ -131,6 +136,9 @@ export function ChatView({
   personas: Persona[];
   personaVersions: PersonaVersion[];
   isTreeOpen: boolean;
+  isCanvasOpen?:boolean;
+  onCanvasOpen?:()=>void;
+  onCanvasClose?:()=>void;
   onTreeClose: () => void;
   onChatsChanged: () => Promise<void>;
   onChatSettingsLoaded: (
@@ -246,10 +254,14 @@ export function ChatView({
     () => activePathMessages(messages, chat?.active_root_message_id ?? null),
     [chat?.active_root_message_id, messages]
   );
+  const pdfAttachments = useMemo(() => messagePdfAttachments(visibleMessages), [visibleMessages]);
   const isActiveGenerationVisible =
     Boolean(activeAssistantId) &&
     visibleMessages.some((message) => message.id === activeAssistantId);
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+  const canvas=useChatCanvas(chatId,"server",onCanvasOpen,id=>activePathMessages(messagesStateRef.current,chatStateRef.current?.active_root_message_id??null).some(message=>message.id===id));
+  const canvasTail=visibleMessages[visibleMessages.length-1];
+  const canvasScope=useMemo(()=>({message_id:canvasTail?.id??null,revision_id:canvasTail?.active_revision_id??null}),[canvasTail?.id,canvasTail?.active_revision_id]);
   const characterVersionIds = useMemo(
     () => characterPersonaVersionIds(personaVersions),
     [personaVersions]
@@ -1150,6 +1162,7 @@ export function ChatView({
         });
         break;
       case "thinking_delta":
+        canvas.notice(event.assistant_message_id,event.delta);
         markThinkingStarted(event.assistant_message_id);
         appendStreamSegments(event.assistant_message_id, splitThinkingDelta(event.delta));
         appendMessageText(event.assistant_message_id, "thinking_text", event.delta);
@@ -1316,8 +1329,8 @@ export function ChatView({
     }
   }
 
-  async function uploadAttachment(file: File) {
-    return { ...(await uploadAttachmentToChat(chatId, file)), status: "uploaded" as const };
+  async function uploadAttachment(file: File, options?: PdfPreparation) {
+    return { ...(await uploadAttachmentToChat(chatId, file, undefined, options)), status: "uploaded" as const };
   }
 
   async function removeAttachment(attachment: ComposerAttachment) {
@@ -1830,9 +1843,9 @@ export function ChatView({
   return (
     <div
       className={
-        selectedModelInfo?.background_asset_id
+        (selectedModelInfo?.background_asset_id
           ? "chat-view chat-view-with-background"
-          : "chat-view"
+          : "chat-view")+(isCanvasOpen?" canvas-open":"")
       }
       style={modelBackgroundContainerStyle(selectedModelInfo)}
     >
@@ -1867,6 +1880,7 @@ export function ChatView({
               <>
                 {visibleMessages.map((message) => (
                   <MessageBubble
+                    pdfAttachments={pdfAttachments}
                     key={
                       message.parent_message_id
                         ? `message-after:${message.parent_message_id}`
@@ -1902,6 +1916,8 @@ export function ChatView({
                     onRegenerate={regenerateMessage}
                     onContinue={continueMessage}
                     onOpenNote={onOpenNote}
+                    onOpenCanvas={canvas.copyMessage}
+                    onOpenCanvasReference={canvas.openReference}
                     selectedModelInfo={selectedModelInfo}
                     modelAvatar={hostedModelAvatarForMessage(
                       message,
@@ -1949,6 +1965,7 @@ export function ChatView({
                     : "Select a model to continue"
               }
               selectedModelInfo={selectedModelInfo}
+              hasPdfContext={pdfAttachments.some(file => file.pdf_has_text)}
               availableTools={availableTools}
               toolPreferences={chat.tool_preferences}
               thinkingMode={thinkingMode}
@@ -1957,6 +1974,7 @@ export function ChatView({
                 void updateChatToolPreferences(nextPreferences)
               }
               onThinkingModeChange={setThinkingMode}
+              onOpenCanvas={onCanvasOpen}
               onJumpToGeneration={
                 isGenerating && activeAssistantId && !isActiveGenerationVisible
                   ? jumpToActiveGeneration
@@ -1994,6 +2012,7 @@ export function ChatView({
           dimmedEmphasisForMessage={(message) => characterMessageIds.has(message.id)}
         />
       )}
+      {chat&&isCanvasOpen&&<Suspense fallback={<aside className="canvas-workspace"><p role="status">Loading canvas...</p></aside>}><LazyCanvasPanel key={`server:${chatId}:${canvasScope.revision_id??"root"}`} mode="server" chatId={chatId} scope={canvasScope} request={canvas.request} onConsumed={canvas.consumed} onClose={onCanvasClose} onAsk={prompt=>submitPrompt(prompt)} isGenerating={isGenerating||Boolean(pendingSend)}/></Suspense>}
       {(error || generationError) && (
         <p className="error chat-view-error">{generationError ?? error}</p>
       )}

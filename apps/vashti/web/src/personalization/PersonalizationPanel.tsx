@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { allowsProfile, factSources } from "./core";
 import { models as deviceModels } from "./device";
+import { RebuildProfileButton } from "./RebuildProfileButton";
 import type {
   PersonalProfile,
   ProfileFact,
@@ -183,6 +184,7 @@ export function PersonalizationPanel({
             !stopped &&
             (value.revision !== profile.revision ||
               value.requested !== profile.requested ||
+              value.rebuild_id !== profile.rebuild_id ||
               value.last_attempt_at !== profile.last_attempt_at ||
               value.last_error !== profile.last_error)
           )
@@ -330,6 +332,13 @@ export function PersonalizationPanel({
             checked={draft.enabled}
             disabled={busy}
             onChange={(enabled) => update({ enabled })}
+          />
+          <ToggleSwitch
+            label="Learn from imported chats"
+            description="Includes eligible ChatGPT history unless learning was disabled for that import."
+            checked={draft.learn_from_imports !== false}
+            disabled={busy}
+            onChange={(learn_from_imports) => update({ learn_from_imports })}
           />
           <div className="profile-processor">
             <label htmlFor="profile-processor">Processing model</label>
@@ -546,6 +555,11 @@ export function PersonalizationPanel({
             {profile.requested && !profile.last_error ? " · Queued" : ""}
             {profile.last_error ? ` · ${processingError(profile.last_error)}` : ""}
           </small>
+          <RebuildProfileButton
+            key={mode} mode={mode} profile={profile}
+            disabled={busy || dirty || !draft.enabled || !processor || (processor.cloud && !draft.allow_cloud_processor)}
+            onQueued={(value) => { adopt(value); setNotice(null); }}
+          />
           {editing && (
             <div className="profile-fact-editor">
               <label>

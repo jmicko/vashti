@@ -18,6 +18,7 @@ pub struct ChatSummary {
     pub updated_at: i64,
     pub last_message_at: i64,
     pub message_count: i64,
+    pub archived_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -110,11 +111,13 @@ pub struct ChatDetail {
     pub active_root_message_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub archived_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ChatMessage {
     pub id: String,
+    pub import_source: Option<String>,
     pub parent_message_id: Option<String>,
     pub active_child_message_id: Option<String>,
     pub active_revision_id: Option<String>,

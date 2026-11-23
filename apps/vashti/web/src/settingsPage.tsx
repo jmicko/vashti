@@ -62,6 +62,7 @@ export function SettingsPage({
   onBackendsChanged,
   onToolsChanged,
   onOpenProfileSource,
+  onOpenImportedDocument,
   onPersonasChanged,
   onPrivatePersonasChanged,
   onContextChanged,
@@ -87,6 +88,7 @@ export function SettingsPage({
   onBackendsChanged: () => Promise<void>;
   onToolsChanged: () => Promise<void>;
   onOpenProfileSource?: (chatId:string,mode:"server" | "device")=>void;
+  onOpenImportedDocument?: (chatId:string,mode:"server"|"device")=>void;
   onPersonasChanged: () => Promise<void>;
   onPrivatePersonasChanged: () => Promise<void>;
   onContextChanged: () => Promise<void>;
@@ -172,7 +174,7 @@ export function SettingsPage({
           }
         >
           {["profile", "appearance", "device"].includes(selectedSection) && (
-            <ProfileSettings key={selectedSection} view={selectedSection as "profile" | "appearance" | "device"} user={currentUser} onUserChanged={onUserChanged} onGuardChange={onSettingsGuardChange} />
+            <ProfileSettings key={selectedSection} view={selectedSection as "profile" | "appearance" | "device"} user={currentUser} modelGroups={modelGroups} onUserChanged={onUserChanged} onGuardChange={onSettingsGuardChange} onOpenImportedDocument={onOpenImportedDocument} />
           )}
           {selectedSection === "users" && isAdmin && (
             <AdminUsersPanel currentUserId={currentUser.id} />

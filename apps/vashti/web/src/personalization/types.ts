@@ -3,6 +3,7 @@ export type ProfileSettings = {
   processor_backend_id: string | null;
   processor_model: string | null;
   allow_cloud_processor: boolean;
+  learn_from_imports: boolean;
   allow_local: boolean;
   allow_cloud: boolean;
   allow_characters: boolean;
@@ -55,9 +56,19 @@ export type PersonalProfile = {
   last_processed_at: number | null;
   last_error: string | null;
   requested: boolean;
+  rebuild_id: string | null;
+};
+export type ProfileNotice = { id: string; created_at: number; read_at: number | null };
+export type ReplayDraft = {
+  facts: ProfileFact[];
+  processed: string[];
+  history: Record<string, ProfileVersion[]>;
 };
 export type DeviceProfile = PersonalProfile & {
   processed: string[];
+  forgotten?: string[];
+  notices?: ProfileNotice[];
+  rebuild_draft?: ReplayDraft;
   suppressed: string[];
   history: Record<string, ProfileVersion[]>;
 };

@@ -33,7 +33,7 @@ use crate::{
     rate_limit, settings, tools,
 };
 
-const MAX_CLIENT_TOOLS: usize = 10;
+const MAX_CLIENT_TOOLS: usize = 16;
 const MAX_CLIENT_TOOL_RESULT_CHARS: usize = 24_000;
 
 #[derive(Debug, Deserialize)]
@@ -840,6 +840,15 @@ fn clamp_f64(value: f64, min: f64, max: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_registered_device_tools_fit_the_request_bound() {
+        let other_tools=["calculate","convert_units","search_notes","read_note","create_note","update_note","trash_note","generate_image","edit_image"];
+        assert!(other_tools.len()+crate::canvas::tools::NAMES.len()<=MAX_CLIENT_TOOLS);
+        for name in other_tools.into_iter().chain(crate::canvas::tools::NAMES){
+            assert!(name=="generate_image" || name=="edit_image" || tools::service::client_tool_schema(name).is_some() || tools::service::calculator_tool_schema(name).is_some());
+        }
+    }
 
     #[test]
     fn client_tool_result_requires_exactly_one_payload() {

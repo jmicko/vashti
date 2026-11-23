@@ -81,11 +81,45 @@ fn rejects_hallucinated_evidence_and_bounds_context() {
     assert!(service::fit_context(&context, 64).is_none());
     let fitted = service::fit_context(&context, 600).unwrap();
     for line in fitted.lines().skip(1) {
-        assert!(serde_json::from_str::<serde_json::Value>(line).is_ok());
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert!(record.get("fact").is_some());
+        assert!(record.get("topic").is_none());
     }
     assert!(service::context_weight(&fitted) <= 600);
     assert_eq!(service::context_weight("abc"), 2);
     assert_eq!(service::context_weight("\u{e9}"), 2);
+}
+
+#[test]
+fn full_replay_keeps_manual_facts_and_makes_room_for_newer_evidence() {
+    let fact = |topic: &str, created_at: i64, locked| Fact {
+        id: topic.into(),
+        topic: topic.into(),
+        content: "Synthetic preference".into(),
+        locked,
+        version: 1,
+        created_at,
+        updated_at: 9999,
+        sources_json: json!([Source {
+            message_id: "m".into(),
+            revision_id: "r".into(),
+            chat_id: "c".into(),
+            model_key: "base:h:m".into(),
+            quote: "Synthetic preference".into(),
+            created_at
+        }])
+        .to_string(),
+    };
+    let facts = [
+        fact("manual", 1, true),
+        fact("recent", 30, false),
+        fact("old.automatic", 10, false),
+    ];
+    assert!(service::replay_eviction(&facts, 10).is_none());
+    assert_eq!(
+        service::replay_eviction(&facts, 20).unwrap().topic,
+        "old.automatic"
+    );
 }
 
 async fn fixture() -> (AppState, tokio::task::JoinHandle<()>) {
@@ -98,7 +132,19 @@ async fn fixture() -> (AppState, tokio::task::JoinHandle<()>) {
             assert!(request["tools"].is_null());
             assert_eq!(request["format"]["type"],"object");
             assert_eq!(request["messages"][1]["role"],"user");
-            axum::Json(json!({"done":true,"message":{"content":json!({"facts":[{"topic":"food.favorite","content":"The user prefers corn.","evidence":[{"source":0,"quote":"My favorite food is corn."}]}]}).to_string()}}))
+            let input: serde_json::Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let sources = input["sources"].as_array().unwrap();
+            assert!(sources.len() <= service::MAX_SOURCES);
+            let facts: Vec<_> = sources.iter().rev().find_map(|source| {
+                let quote = source["text"].as_str().unwrap();
+                let content = match quote {
+                    "My favorite food is corn." => "The user prefers corn.",
+                    "My favorite food is imported beans." => "The user prefers beans.",
+                    _ => return None,
+                };
+                Some(json!({"topic":"food.favorite","content":content,"evidence":[{"source":source["source"],"quote":quote}]}))
+            }).into_iter().collect();
+            axum::Json(json!({"done":true,"message":{"content":json!({"facts":facts}).to_string()}}))
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -580,6 +626,254 @@ async fn excluded_history_cannot_hide_later_sources_and_foreground_work_has_prio
             .unwrap()
     );
     drop(lane);
+    server.abort();
+}
+
+#[tokio::test]
+async fn replay_reopens_a_thread_in_time_order_with_only_its_own_ancestor_context() {
+    let (state, server) = fixture().await;
+    let profile = enable(&state).await;
+    sqlx::raw_sql("INSERT INTO chats(id,user_id,default_backend_id,default_model_name,title,created_at,updated_at,last_message_at) VALUES('thread-b','owner','host','local','Thread B',10,10,10),('thread-c','owner','host','local','Thread C',40,40,40);
+        INSERT INTO chat_messages(id,chat_id,parent_message_id,role,status,active_revision_id,created_at,updated_at) VALUES
+           ('sibling','chat','message','user','complete','sibling-rev',3,3),
+           ('b','thread-b',NULL,'user','complete','b-rev',10,10),
+           ('reopen','chat','answer','user','complete','reopen-rev',30,30),
+           ('c','thread-c',NULL,'user','complete','c-rev',40,40);
+        INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) VALUES
+           ('sibling-rev','sibling','This different branch mentions fictional moon rocks.','original',3),
+           ('b-rev','b','My other permanent preference is paper checklists.','original',10),
+           ('reopen-rev','reopen','Actually, make that tamales going forward.','original',30),
+           ('c-rev','c','My preferred way to test changes is a tiny prototype.','original',40);")
+        .execute(&state.db).await.unwrap();
+    let sources = service::sources(&state, "owner", &profile.settings, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        sources
+            .iter()
+            .map(|source| source.message_id.as_str())
+            .collect::<Vec<_>>(),
+        ["message", "sibling", "b", "reopen", "c"]
+    );
+    let hints = service::replay_hints(&state, "owner", &profile.settings, &sources, &[])
+        .await
+        .unwrap();
+    let payload = super::worker::replay_input(&sources, &[], &hints);
+    assert_eq!(payload["conversation_runs"], json!([[0, 1], [2], [3], [4]]));
+    assert_eq!(
+        payload["earlier_turns"],
+        json!([{"source":3,"excerpts":["My favorite food is corn."]}])
+    );
+    assert!(!payload.to_string().contains("thread-b"));
+    sqlx::query("INSERT INTO personalization_processed(user_id,revision_id,explicitly_forgotten) VALUES('owner','revision',1)")
+        .execute(&state.db).await.unwrap();
+    let hints = service::replay_hints(&state, "owner", &profile.settings, &sources, &[])
+        .await
+        .unwrap();
+    assert!(hints.earlier_turns.is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn upgrade_makes_existing_imports_eligible_without_reimporting() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(":memory:")
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    let mut old = sqlx::migrate!("./migrations");
+    old.migrations = old
+        .iter()
+        .filter(|m| m.version < 20261122010000)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    old.run(&pool).await.unwrap();
+    startup::bootstrap::ensure_app_settings(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("INSERT INTO users(id,username,password_hash,role,created_at,updated_at) VALUES('owner','owner','unused','admin',1,1);
+        INSERT INTO ollama_backends(id,name,base_url,created_at,updated_at) VALUES('host','Fixture','http://127.0.0.1:1',1,1);
+        INSERT INTO chats(id,user_id,default_backend_id,default_model_name,title,created_at,updated_at,last_message_at) VALUES('old-chat','owner','host','local','Previously imported',1,1,1);
+        INSERT INTO chat_messages(id,chat_id,role,status,created_at,updated_at,import_source) VALUES('old-message','old-chat','user','complete',1,1,'chatgpt');
+        INSERT INTO chat_message_revisions(id,message_id,content_text,source,created_at) VALUES('old-revision','old-message','My favorite food is corn.','original',1);
+        UPDATE chat_messages SET active_revision_id='old-revision' WHERE id='old-message';
+        INSERT INTO chat_import_records(id,chat_id,user_id,source_id,source_hash,original_json,created_at) VALUES('old-import','old-chat','owner','old-source','hash','{}',2);")
+        .execute(&pool).await.unwrap();
+    startup::migrations::run(&pool).await.unwrap();
+    let state = AppState::new(
+        Config::from_env().unwrap(),
+        pool,
+        reqwest::Client::new(),
+        "fixture".into(),
+    );
+    let sources = service::sources(
+        &state,
+        "owner",
+        &Settings {
+            enabled: true,
+            ..Settings::default()
+        },
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].revision_id, "old-revision");
+    assert_eq!(sources[0].model_key, "import:chatgpt");
+}
+
+#[tokio::test]
+async fn bulk_chatgpt_import_rebuilds_in_batches_and_notifies_once() {
+    let (state, server) = fixture().await;
+    enable(&state).await;
+    assert!(
+        super::worker::process_one(&state, "owner", true)
+            .await
+            .unwrap()
+    );
+    for index in 0..1500 {
+        let source_id = format!("synthetic-{index}");
+        let created = 10 + index;
+        let content = if index == 1499 {
+            "My favorite food is corn."
+        } else {
+            "My favorite food is imported beans."
+        };
+        let input = serde_json::from_value(json!({
+            "backend_id":"host", "model_name":"local", "allow_history_search":index%2==0,
+            "learn_from_import":if index == 2 { Some(false) } else { None },
+            "conversation":{
+                "source_id":source_id, "title":"Synthetic imported chat", "created_at":created,
+                "updated_at":created+1, "archived":index%2==0, "do_not_remember":index==1,
+                "current_node_id":"a", "assets":[], "messages":[
+                    {"source_id":"q","parent_id":null,"role":"user","content":content,"thinking":"","model":null,"created_at":created},
+                    {"source_id":"a","parent_id":"q","role":"assistant","content":"Imported reply.","thinking":"","model":"original","created_at":created+1}
+                ], "original_json":json!({"id":source_id}).to_string()
+            }
+        })).unwrap();
+        let imported = crate::imports::service::import_conversation(&state.db, "owner", input)
+            .await
+            .unwrap();
+        assert!(!imported.existing);
+    }
+    let before = service::profile(&state.db, "owner").await.unwrap();
+    let mut disabled = before.settings.clone();
+    disabled.learn_from_imports = false;
+    assert_eq!(
+        service::sources(&state, "owner", &disabled, true)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    let sources = service::sources(&state, "owner", &before.settings, true)
+        .await
+        .unwrap();
+    assert_eq!(sources.len(), 16);
+    assert_eq!(sources[0].model_key, "import:chatgpt");
+    assert_eq!(sources[0].text, "My favorite food is imported beans.");
+    let manual = service::edit_fact(
+        &state.db,
+        "owner",
+        None,
+        EditFact {
+            expected_revision: before.revision,
+            topic: "answer.style".into(),
+            content: "Keep explanations concise.".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let queued = service::rebuild(&state, "owner", manual.revision)
+        .await
+        .unwrap();
+    assert!(!queued.requested);
+    let id = queued.rebuild_id.unwrap();
+    assert!(
+        super::worker::process_one(&state, "owner", false)
+            .await
+            .unwrap()
+    );
+    let ongoing = service::profile(&state.db, "owner").await.unwrap();
+    assert_eq!(
+        ongoing
+            .facts
+            .iter()
+            .find(|fact| fact.topic == "food.favorite")
+            .unwrap()
+            .content,
+        "The user prefers corn."
+    );
+    let draft = service::processing_facts(&state.db, "owner", &ongoing)
+        .await
+        .unwrap();
+    assert_eq!(
+        draft
+            .iter()
+            .find(|fact| fact.topic == "food.favorite")
+            .unwrap()
+            .content,
+        "The user prefers beans."
+    );
+    let mut batches = 1;
+    while super::worker::process_one(&state, "owner", false)
+        .await
+        .unwrap()
+    {
+        batches += 1;
+        assert!(batches <= 94);
+    }
+    assert_eq!(batches, 94);
+    let processed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM personalization_processed WHERE user_id='owner'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(processed, 1499); // 1498 eligible imports and one native user message.
+    let after = service::profile(&state.db, "owner").await.unwrap();
+    assert!(after.rebuild_id.is_none());
+    assert!(
+        after
+            .facts
+            .iter()
+            .any(|fact| fact.locked && fact.topic == "answer.style")
+    );
+    assert_eq!(
+        after
+            .facts
+            .iter()
+            .find(|fact| fact.topic == "food.favorite")
+            .unwrap()
+            .content,
+        "The user prefers corn."
+    );
+    let notices: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM assistant_notices WHERE user_id='owner' AND read_at IS NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(notices, vec![id]);
+    assert!(
+        service::chat_context(
+            &state,
+            "owner",
+            "base:host:local",
+            "host",
+            "local",
+            None,
+            "favorite food"
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .contains("corn")
+    );
     server.abort();
 }
 

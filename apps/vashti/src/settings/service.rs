@@ -126,6 +126,15 @@ pub async fn get_available_tools(
     let tool_tags = permissions::tool_tags_by_tool(pool).await?;
     let mut tools = Vec::new();
     let mut device_tools = Vec::new();
+    if settings.tools_enabled && tool_allowed("canvas", &user_tags, &tool_tags) {
+        let canvas = AvailableToolResponse {
+            id: "canvas", label: "Canvas",
+            description: "Create and edit documents in this conversation branch.",
+            warning: None,
+        };
+        tools.push(canvas.clone());
+        device_tools.push(canvas);
+    }
 
     let note_settings = notes_service::get_note_settings(pool, user_id).await?;
     let notes_allowed = tool_allowed(crate::tools::service::TOOL_NOTES, &user_tags, &tool_tags);

@@ -95,11 +95,20 @@ impl From<ChatToolPreferences> for ToolSelection {
             chat_history_enabled: preferences.tool_enabled(tools_service::TOOL_CHAT_HISTORY),
             calculator_enabled: preferences.tool_enabled(tools_service::TOOL_CALCULATOR),
             images_enabled: preferences.tool_enabled("images"),
+            canvas_enabled: preferences.tool_enabled("canvas"),
         }
     }
 }
 
 pub async fn list_chats(pool: &SqlitePool, user_id: &str) -> Result<Vec<ChatSummary>, sqlx::Error> {
+    list_chats_by_archive(pool, user_id, false).await
+}
+
+pub async fn list_chats_by_archive(
+    pool: &SqlitePool,
+    user_id: &str,
+    archived: bool,
+) -> Result<Vec<ChatSummary>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
         SELECT c.id,
@@ -112,18 +121,20 @@ pub async fn list_chats(pool: &SqlitePool, user_id: &str) -> Result<Vec<ChatSumm
                pv.display_name AS persona_name,
                c.updated_at,
                c.last_message_at,
-               COUNT(m.id) AS message_count
+               COUNT(m.id) AS message_count,
+               c.archived_at
         FROM chats c
         JOIN ollama_backends b ON b.id = c.default_backend_id
         LEFT JOIN persona_versions pv ON pv.id = c.persona_version_id
         LEFT JOIN chat_messages m ON m.chat_id = c.id
         WHERE c.user_id = ?
-          AND c.archived_at IS NULL
+          AND (c.archived_at IS NOT NULL) = ?
         GROUP BY c.id
         ORDER BY c.updated_at DESC
         "#,
     )
     .bind(user_id)
+    .bind(archived)
     .fetch_all(pool)
     .await?;
 
@@ -141,6 +152,7 @@ pub async fn list_chats(pool: &SqlitePool, user_id: &str) -> Result<Vec<ChatSumm
                 updated_at: row.try_get("updated_at")?,
                 last_message_at: row.try_get("last_message_at")?,
                 message_count: row.try_get("message_count")?,
+                archived_at: row.try_get("archived_at")?,
             })
         })
         .collect()
@@ -290,13 +302,13 @@ pub async fn get_chat(
                c.inference_settings_json,
                c.active_root_message_id,
                c.created_at,
-               c.updated_at
+               c.updated_at,
+               c.archived_at
         FROM chats c
         JOIN ollama_backends b ON b.id = c.default_backend_id
         LEFT JOIN persona_versions pv ON pv.id = c.persona_version_id
         WHERE c.id = ?
           AND c.user_id = ?
-          AND c.archived_at IS NULL
         "#,
     )
     .bind(chat_id)
@@ -481,6 +493,27 @@ pub async fn delete_chat(pool: &SqlitePool, user_id: &str, chat_id: &str) -> Res
     Ok(())
 }
 
+pub async fn set_chat_archived(
+    pool: &SqlitePool,
+    user_id: &str,
+    chat_id: &str,
+    archived: bool,
+) -> Result<ChatDetail, ApiError> {
+    let result = sqlx::query(
+        "UPDATE chats SET archived_at = CASE WHEN ? THEN COALESCE(archived_at, ?) ELSE NULL END WHERE id = ? AND user_id = ?",
+    )
+    .bind(archived)
+    .bind(unix_timestamp())
+    .bind(chat_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("chat_not_found", "Chat not found"));
+    }
+    get_chat(pool, user_id, chat_id).await
+}
+
 pub async fn list_messages(
     pool: &SqlitePool,
     user_id: &str,
@@ -490,6 +523,7 @@ pub async fn list_messages(
     let rows = sqlx::query(
         r#"
         SELECT m.id,
+               m.import_source,
                m.parent_message_id,
                m.active_child_message_id,
                m.active_revision_id,
@@ -1115,18 +1149,24 @@ pub async fn prepare_continuation(
         .inference_settings
         .map(normalized_inference_settings)
         .unwrap_or_else(|| chat.inference_settings.clone());
-    let fallback_model = MessageModel {
-        backend_id: target.backend_id.clone().unwrap_or_default(),
-        model_name: target.model_name.clone().unwrap_or_default(),
-        persona_version_id: target.persona_version_id.clone(),
-    };
+    let fallback_model = target
+        .backend_id
+        .as_ref()
+        .zip(target.model_name.as_ref())
+        .map(|(backend_id, model_name)| MessageModel {
+            backend_id: backend_id.clone(),
+            model_name: model_name.clone(),
+            persona_version_id: target.persona_version_id.clone(),
+        });
     let resolved = resolve_generation_model(
         pool,
         user_id,
         &chat,
-        Some(&fallback_model),
+        fallback_model.as_ref(),
         target.backend_id.clone(),
-        target.model_name.clone(),
+        fallback_model
+            .as_ref()
+            .map(|model| model.model_name.clone()),
         target.persona_version_id.clone(),
     )
     .await?;
@@ -1234,6 +1274,9 @@ pub async fn prepare_continuation(
     .bind(user_id)
     .execute(&mut *tx)
     .await?;
+    if let Some(old) = target.active_revision_id.as_deref() {
+        crate::canvas::service::inherit_revision(&mut tx, chat_id, old, &revision_id).await?;
+    }
     tx.commit().await?;
 
     let mut prompt_messages =
@@ -1531,7 +1574,14 @@ pub async fn edit_message(
     let now = unix_timestamp();
     let attachment_ids = attachment_ids(&payload.attachments)?;
     let revision_id = Uuid::new_v4().to_string();
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let canvas_previous: Option<String> = sqlx::query_scalar(
+        "SELECT active_revision_id FROM chat_messages WHERE id=? AND chat_id=?",
+    )
+    .bind(message_id)
+    .bind(chat_id)
+    .fetch_one(&mut *tx)
+    .await?;
 
     insert_revision(
         &mut tx,
@@ -1583,8 +1633,10 @@ pub async fn edit_message(
     .execute(&mut *tx)
     .await?;
 
+    if let Some(previous) = canvas_previous {
+        crate::canvas::service::inherit_revision(&mut tx, chat_id, &previous, &revision_id).await?;
+    }
     tx.commit().await?;
-
     get_message(pool, user_id, chat_id, message_id).await
 }
 
@@ -1737,7 +1789,6 @@ pub async fn select_active_root(
             WHERE m.id = ?
               AND m.chat_id = ?
               AND c.user_id = ?
-              AND c.archived_at IS NULL
               AND m.parent_message_id IS NULL
         )
         "#,
@@ -2039,7 +2090,6 @@ async fn latest_assistant_model(
         JOIN chats c ON c.id = m.chat_id
         WHERE m.chat_id = ?
           AND c.user_id = ?
-          AND c.archived_at IS NULL
           AND m.role = 'assistant'
           AND m.backend_id IS NOT NULL
           AND m.model_name IS NOT NULL
@@ -2445,6 +2495,7 @@ async fn ancestor_prompt_messages(
     .ok_or_else(|| ApiError::internal("Generation message is missing from its conversation"))?;
     let mut seen = HashSet::new();
     let mut messages = Vec::new();
+    let mut pdf_prompt = uploads::models::PdfPromptContext::new(72_000);
 
     while let Some(message_id) = current {
         if !seen.insert(message_id.clone()) {
@@ -2488,6 +2539,9 @@ async fn ancestor_prompt_messages(
 
         if !is_deleted {
             let mut images = Vec::new();
+            if role == "user" && pdf_prompt.question.is_none() {
+                pdf_prompt.question = Some(content.clone());
+            }
             if let Some(revision_id) = &revision_id {
                 let (attachment_text, attachment_images) =
                     uploads::service::prompt_attachment_payload(
@@ -2497,6 +2551,7 @@ async fn ancestor_prompt_messages(
                         chat_id,
                         &message_id,
                         revision_id,
+                        &mut pdf_prompt,
                     )
                     .await?;
                 content.push_str(&attachment_text);
@@ -2610,7 +2665,6 @@ async fn ensure_message_owner(
             WHERE m.id = ?
               AND m.chat_id = ?
               AND c.user_id = ?
-              AND c.archived_at IS NULL
         )
         "#,
     )
@@ -2650,6 +2704,7 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        archived_at: row.try_get("archived_at")?,
     })
 }
 
@@ -2803,6 +2858,7 @@ fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Err
 
     Ok(ChatMessage {
         id: row.try_get("id")?,
+        import_source: row.try_get("import_source")?,
         parent_message_id: row.try_get("parent_message_id")?,
         active_child_message_id: row.try_get("active_child_message_id")?,
         active_revision_id: row.try_get("active_revision_id")?,
@@ -2928,6 +2984,7 @@ async fn get_message(
     let Some(row) = sqlx::query(
         r#"
         SELECT m.id,
+               m.import_source,
                m.parent_message_id,
                m.active_child_message_id,
                m.active_revision_id,
@@ -2963,7 +3020,6 @@ async fn get_message(
         WHERE m.id = ?
           AND m.chat_id = ?
           AND c.user_id = ?
-          AND c.archived_at IS NULL
         "#,
     )
     .bind(message_id)
@@ -3087,6 +3143,260 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed custom model and replacement backend");
+    }
+
+    #[tokio::test]
+    async fn attached_pdf_supplies_citable_text_only_for_its_revision() {
+        use crate::uploads::service::{self, UploadInput};
+
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+        let dir = std::env::temp_dir().join(format!("vashti-pdf-test-{}", uuid::Uuid::new_v4()));
+        let document = b"%PDF-1.4\nSynthetic original bytes".to_vec();
+        let input = |bytes, context| UploadInput {
+            message_id: Some("parent".into()),
+            revision_id: Some("parent-r1".into()),
+            original_filename: "Report.pdf".into(),
+            bytes,
+            pdf_context_json: Some(context),
+        };
+        let context = r#"{"pages":[{"page":2,"text":"A synthetic fact"}],"truncated":true}"#;
+        assert!(service::create_attachment(&pool, &dir, "user", "chat", input(b"not a PDF".to_vec(), context.into()), 1024).await.is_err());
+        assert!(service::create_attachment(&pool, &dir, "user", "chat", input(document.clone(), r#"{"pages":[{"page":0,"text":"Invalid page"}],"truncated":false}"#.into()), 1024).await.is_err());
+        let file = service::create_attachment(&pool, &dir, "user", "chat", input(document.clone(), context.into()), 1024).await.unwrap();
+        assert_eq!(file.pdf_has_text, Some(true));
+        assert_eq!(file.pdf_truncated, Some(true));
+        assert_eq!(service::get_attachment_file(&pool, &dir, "user", &file.id).await.unwrap().1, document);
+        assert!(service::get_attachment_file(&pool, &dir, "other", &file.id).await.is_err());
+        assert_eq!(service::get_pdf_text(&pool, "user", &file.id).await.unwrap().as_deref(), Some(context));
+        assert!(service::get_pdf_text(&pool, "other", &file.id).await.is_err());
+
+        let compiled = ancestor_prompt_messages(&pool, &dir, "user", "chat", "child-r1").await.unwrap();
+        let user = &compiled[0].content;
+        assert!(user.contains("A synthetic fact"));
+        assert!(user.contains(&format!("/__vashti_pdf/{}/2", file.id)));
+        assert!(!user.contains("Synthetic original bytes"));
+        let mut empty = crate::uploads::models::PdfPromptContext::new(0);
+        let (budgeted, _) = service::prompt_attachment_payload(&pool, &dir, "user", "chat", "parent", "parent-r1", &mut empty).await.unwrap();
+        assert!(!budgeted.contains("A synthetic fact"));
+        let mut remaining = crate::uploads::models::PdfPromptContext::new(72_000);
+        let (other_revision, _) = service::prompt_attachment_payload(&pool, &dir, "user", "chat", "parent", "child-r1-revision", &mut remaining).await.unwrap();
+        assert!(other_revision.is_empty());
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn archive_and_restore_preserve_tree_and_owner_access() {
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+        let before =
+            serde_json::to_value(super::list_messages(&pool, "user", "chat").await.unwrap())
+                .unwrap();
+        let archived = super::set_chat_archived(&pool, "user", "chat", true)
+            .await
+            .unwrap();
+        assert!(archived.archived_at.is_some());
+        assert_eq!(archived.updated_at, 100);
+        assert!(super::list_chats(&pool, "user").await.unwrap().is_empty());
+        let list = super::list_chats_by_archive(&pool, "user", true)
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].message_count, 2);
+        assert!(
+            super::list_chats_by_archive(&pool, "other", true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(super::get_chat(&pool, "other", "chat").await.is_err());
+        for status in [true, false] {
+            assert!(
+                super::set_chat_archived(&pool, "other", "chat", status)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                super::set_chat_archived(&pool, "user", "missing", status)
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            super::set_chat_archived(&pool, "user", "chat", true)
+                .await
+                .unwrap()
+                .archived_at,
+            archived.archived_at
+        );
+        assert_eq!(
+            serde_json::to_value(super::list_messages(&pool, "user", "chat").await.unwrap())
+                .unwrap(),
+            before
+        );
+        // Branch navigation still works inside the archive without restoring it.
+        super::select_active_root(
+            &pool,
+            "user",
+            "chat",
+            serde_json::from_value(serde_json::json!({"active_root_message_id":"parent"})).unwrap(),
+        )
+        .await
+        .unwrap();
+        let restored = super::set_chat_archived(&pool, "user", "chat", false)
+            .await
+            .unwrap();
+        assert!(restored.archived_at.is_none());
+        assert_eq!(restored.active_root_message_id.as_deref(), Some("parent"));
+        assert_eq!(super::list_chats(&pool, "user").await.unwrap().len(), 1);
+        assert!(
+            super::list_chats_by_archive(&pool, "user", true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        super::set_chat_archived(&pool, "user", "chat", true)
+            .await
+            .unwrap();
+        super::delete_chat(&pool, "user", "chat").await.unwrap();
+        assert!(
+            super::list_chats_by_archive(&pool, "user", true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn archiving_does_not_interrupt_generation_or_hide_attachments() {
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+        let pending = super::prepare_regeneration(
+            &pool,
+            Path::new("/tmp"),
+            "user",
+            "chat",
+            "child-r1",
+            serde_json::from_value(serde_json::json!({})).unwrap(),
+        )
+        .await
+        .unwrap();
+        super::set_chat_archived(&pool, "user", "chat", true)
+            .await
+            .unwrap();
+        super::finish_generation(
+            &pool,
+            &pending.assistant_message.id,
+            "Finished while archived",
+            "",
+            Some("stop"),
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, messages) = super::list_messages(&pool, "user", "chat").await.unwrap();
+        assert!(messages.iter().any(|message| {
+            message
+                .active_revision
+                .as_ref()
+                .is_some_and(|revision| revision.content_text == "Finished while archived")
+        }));
+        assert!(
+            super::get_chat(&pool, "user", "chat")
+                .await
+                .unwrap()
+                .archived_at
+                .is_some()
+        );
+
+        let dir =
+            std::env::temp_dir().join(format!("vashti-archive-test-{}", uuid::Uuid::new_v4()));
+        let attachment = crate::uploads::service::create_attachment(
+            &pool,
+            &dir,
+            "user",
+            "chat",
+            crate::uploads::service::UploadInput {
+                message_id: Some("parent".into()),
+                revision_id: Some("parent-r1".into()),
+                original_filename: "archive.txt".into(),
+                bytes: b"Preserved attachment".to_vec(),
+                pdf_context_json: None,
+            },
+            1024,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            crate::uploads::service::get_attachment_file(&pool, &dir, "user", &attachment.id)
+                .await
+                .unwrap()
+                .1,
+            b"Preserved attachment"
+        );
+        assert!(
+            crate::uploads::service::get_attachment(&pool, "other", &attachment.id)
+                .await
+                .is_err()
+        );
+        let (_, messages) = super::list_messages(&pool, "user", "chat").await.unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .find(|message| message.id == "parent")
+                .unwrap()
+                .attachments
+                .len(),
+            1
+        );
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn archiving_preserves_history_search_and_its_permissions() {
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+        sqlx::query("INSERT INTO user_memory_settings(user_id,allow_model_chat_history,updated_at) VALUES ('user',1,100)").execute(&pool).await.unwrap();
+        let retrieval = crate::chats::retrieval::ConversationRetrieval::new(pool.clone());
+        retrieval.rebuild_all().await.unwrap();
+        super::set_chat_archived(&pool, "user", "chat", true)
+            .await
+            .unwrap();
+        retrieval.rebuild_all().await.unwrap();
+        let context = retrieval
+            .read_context("user", "chat", "child-r1", 10)
+            .await
+            .unwrap();
+        assert_eq!(context.messages.len(), 2);
+        assert_eq!(context.messages[0].content, "original");
+        assert!(
+            retrieval
+                .read_context("other", "chat", "child-r1", 10)
+                .await
+                .is_err()
+        );
+        sqlx::query(
+            "UPDATE user_memory_settings SET allow_model_chat_history=0 WHERE user_id='user'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        super::set_chat_archived(&pool, "user", "chat", false)
+            .await
+            .unwrap();
+        assert!(
+            retrieval
+                .read_context("user", "chat", "child-r1", 10)
+                .await
+                .is_err()
+        );
+        let allowed: i64 = sqlx::query_scalar(
+            "SELECT allow_model_chat_history FROM user_memory_settings WHERE user_id='user'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(allowed, 0);
     }
 
     #[tokio::test]

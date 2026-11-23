@@ -48,6 +48,17 @@ but are not saved to its database, queue, profile or logs.
 - Processing is serial, bounded and retry-backed-off. Foreground generation takes
   priority. Failure never prevents ordinary chat. No inference engine changes,
   tools, external actions or production data are required for extraction.
+- Imports and rebuilds process eligible revisions by message time, oldest first.
+  Contiguous portions of the same conversation get distinct run boundaries in the
+  batch; reopening a thread does not reset the timeline. Relevant previously
+  learned facts and bounded, eligible earlier turns on that branch can clarify a
+  correction, but are not evidence for the new fact. Locked manual values are not
+  sent to the processor as hints.
+- Rebuilds keep their draft and processed ledger separate from the live profile,
+  including across restarts. Final publication rechecks evidence and suppressions
+  and preserves manual facts. The draft replaces the automatic profile in a
+  single transaction, including its Assistant completion notice. Recent evidence
+  can replace the least recent automatic draft fact when the fact cap is reached.
 
 The installed Kuno native route does not support Ollama's `format` parameter.
 The model catalog's existing `kuno_backend` marker selects prompt-only JSON on
@@ -60,7 +71,9 @@ contract, source, configuration or service is changed.
 Supply a bounded collection of facts as explicitly untrusted quoted context, not
 as a replacement system prompt. Human corrections and current conversation win.
 Rank with query relevance and recency; do not perform foreground LLM calls to
-decide which facts to use. Source records remain inspectable in Memories.
+decide which facts to use. Internal topic identifiers help with ranking and
+updating facts but are not supplied to the chat model. Source records remain
+inspectable in Memories.
 
 The initial profile holds at most 200 short facts, with 20 history entries per
 fact. Extraction handles up to 16 source revisions / 24,000 characters per batch,
@@ -82,6 +95,35 @@ contradictions, corrections, deleted/edited sources, fictional characters, cloud
 exclusion, user isolation, malformed extraction, injection attempts, stale jobs,
 private-vault account changes and bounded context. Live inference uses synthetic
 content only and records model names and validation limits, never credentials.
+
+### Replay QA
+
+Build the Vashti server, then run the harness from the repository root:
+
+```sh
+cargo build -p vashti
+node apps/vashti/scripts/profile-replay-qa.mjs kuno-qwen3.8-flash-next:iq3_s 1500
+```
+
+The harness uses a temporary database and an isolated account. It imports a
+synthetic history, times the background rebuild through publication, checks
+that exactly one completion notice was written, and asks fresh chats three
+questions with tools disabled. It reports import and replay times separately.
+Use `VASHTI_QA_DEVICE=1` with a short run (36 conversations) to exercise the
+encrypted device store and live inference in Node with an IndexedDB test
+implementation. This is not a physical device or idle-scheduling test.
+
+On the development host, `kuno-qwen3.8-flash-next:iq3_s` rebuilt a profile from
+1,500 synthetic conversations (6,994 total messages, 3,495 eligible user
+messages) in 17m 27s after a separate 29s import. This is elapsed rebuild time,
+including worker waits, through the completion notice. The factual recall probe
+used the latest corrections. The initial open-ended probe cited real evidence
+but overinterpreted it. After stricter chat context guidance and removal of
+internal labels, a smaller Qwen run answered the pattern probe from the
+checklist and prototype facts. This does not guarantee grounded answers to
+every prompt. Live server runs with GLM Flash and Nemotron took about 24s each
+for 79 eligible messages. The 1,500-conversation device test uses a deterministic
+processor; live encrypted-store QA used the smaller Nemotron fixture.
 
 ### Development Acceptance (2026-11-15)
 

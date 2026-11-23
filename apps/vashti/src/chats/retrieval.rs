@@ -757,6 +757,7 @@ impl ConversationRetrieval {
                   AND messages.status = 'complete'
                   AND messages.is_deleted = 0
                   AND trim(revisions.content_text) != ''
+                  AND NOT EXISTS (SELECT 1 FROM chat_import_records imported WHERE imported.chat_id=chats.id AND imported.allow_history_search=0)
             )
             "#,
         )
@@ -777,6 +778,7 @@ impl ConversationRetrieval {
               AND messages.status = 'complete'
               AND messages.is_deleted = 0
               AND trim(revisions.content_text) != ''
+              AND NOT EXISTS (SELECT 1 FROM chat_import_records imported WHERE imported.chat_id=chats.id AND imported.allow_history_search=0)
             ON CONFLICT(message_id) DO UPDATE SET
                 chat_id = excluded.chat_id,
                 user_id = excluded.user_id,

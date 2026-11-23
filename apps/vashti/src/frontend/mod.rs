@@ -26,6 +26,10 @@ pub async fn serve_asset(uri: Uri) -> Response {
 
     match Assets::get(path) {
         Some(asset) => asset_response(path, asset.data.into_owned()),
+        None if path.starts_with("ocr-runtime/") => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .expect("valid missing OCR asset response"),
         None => index_response(),
     }
 }
@@ -39,10 +43,17 @@ fn index_response() -> Response {
 
 fn asset_response(path: &str, body: Vec<u8>) -> Response {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
-    Response::builder()
+    let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime.as_ref())
-        .header(header::CACHE_CONTROL, cache_control_for(path))
+        .header(header::CACHE_CONTROL, cache_control_for(path));
+    if path.starts_with("ocr-runtime/") && path.ends_with("/worker.min.js") {
+        response = response.header(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'",
+        );
+    }
+    response
         .body(Body::from(body))
         .expect("valid static asset response")
 }

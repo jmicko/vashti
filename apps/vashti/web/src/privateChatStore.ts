@@ -28,11 +28,14 @@ import type {
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 12;
+const DB_VERSION = 15;
+const CANVAS_STORE = "private_canvases";
+const IMPORT_STORE = "private_chat_imports";
 const PERSONALIZATION_STORE = "private_personalization";
 const ASSISTANT_DRAFT_STORE = "assistant_drafts";
 const IMAGE_STORE = "private_images";
 const CHAT_STORE = "private_chats";
+const CHAT_ARCHIVE_STORE = "private_chat_archives";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
 const PERSONA_VERSION_STORE = "private_persona_versions";
@@ -121,6 +124,10 @@ export type PrivateChatSummary = {
   updated_at: number;
   last_message_at: number;
   message_count: number;
+  archived_at?: number | null;
+  do_not_remember?: boolean;
+  allow_profile_learning?: boolean;
+  imported_workspace?: boolean;
 };
 
 export type PrivateChatDetail = {
@@ -140,7 +147,13 @@ export type PrivateChatDetail = {
   created_at: number;
   updated_at: number;
   last_message_at: number;
+  archived_at?: number | null;
+  do_not_remember?: boolean;
+  allow_profile_learning?: boolean;
+  imported_workspace?: boolean;
 };
+
+type PrivateChatArchive = { id: string; archived_at: number | null };
 
 export type PrivateMessageProfileSource = {
   backend_id: string;
@@ -159,6 +172,7 @@ export type PrivateChatMessageRevision = {
 };
 
 export type PrivateChatAttachment = {
+  import_asset_id?: string;
   image_recipe?: import("./images/types").Recipe;
   id: string;
   chat_id?: string;
@@ -171,10 +185,14 @@ export type PrivateChatAttachment = {
   created_at?: number;
   data_url?: string;
   text_content?: string;
+  pdf_text?: import("./pdf/types").PdfText;
+  pdf_has_text?: boolean;
+  pdf_truncated?: boolean;
 };
 
 export type PrivateChatMessage = {
   id: string;
+  import_source?: string | null;
   chat_id: string;
   parent_message_id: string | null;
   active_child_message_id: string | null;
@@ -334,6 +352,7 @@ type CachedHostedChatList<TSummary> = {
 
 let currentUserId: string | null = null;
 let storageEpoch = 0;
+let profileSourceEpoch = 0;
 let currentStorageNamespace: string | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 let vaultKeyPromise: Promise<PrivateVaultKeyResponse> | null = null;
@@ -412,6 +431,10 @@ export function privateImageGuard() {
 export function privateProfileIdentity() {
   if (!currentUserId) throw new Error("Sign in to use device storage");
   return { user_id: currentUserId, instance_id: currentStorageNamespace };
+}
+
+export function privateProfileSourceEpoch() {
+  return `${storageEpoch}:${profileSourceEpoch}`;
 }
 
 export async function readPrivateProfile<T>(): Promise<T | null> {
@@ -607,9 +630,108 @@ export function createPrivateMessage({
   };
 }
 
+export async function readPrivateImport<T>(id: string): Promise<T | null> {
+  const guard = privateImageGuard(), db = await openPrivateDb(); guard();
+  const tx = db.transaction(IMPORT_STORE, "readonly");
+  const raw = await requestResult<PrivateStoreRecord | undefined>(tx.objectStore(IMPORT_STORE).get(id));
+  await transactionDone(tx);
+  const record = raw ? await readPrivateRecord<{ value: T }>(raw) : null; guard();
+  return record?.value ?? null;
+}
+
+export async function readPrivateCanvasRecord<T>(id: string): Promise<{ value: T; token: string } | null> {
+  const guard=privateImageGuard(), db=await openPrivateDb(); guard();
+  const tx=db.transaction(CANVAS_STORE,"readonly");
+  const raw=await requestResult<PrivateStoreRecord|undefined>(tx.objectStore(CANVAS_STORE).get(id));
+  await transactionDone(tx);
+  const value=raw ? await readPrivateRecord<{id:string; value:T}>(raw) : null; guard();
+  return raw && value ? {value:value.value,token:JSON.stringify(raw.encrypted_payload)} : null;
+}
+
+export async function listPrivateCanvasRecords<T>(chatId: string, prefix = ""): Promise<T[]> {
+  const guard=privateImageGuard(), db=await openPrivateDb(); guard();
+  const tx=db.transaction(CANVAS_STORE,"readonly");
+  const rows=await requestResult<PrivateStoreRecord[]>(prefix
+    ? tx.objectStore(CANVAS_STORE).getAll(IDBKeyRange.bound(prefix,prefix+"\uffff"))
+    : tx.objectStore(CANVAS_STORE).index("chat_id").getAll(chatId));
+  await transactionDone(tx);
+  const result:T[]=[];
+  for(const row of rows) { if(row.chat_id===chatId && row.id.startsWith(prefix)) result.push((await readPrivateRecord<{value:T}>(row)).value); guard(); }
+  return result;
+}
+
+export async function commitPrivateCanvasRecords(chatId: string, expected: { id:string; token:string|null }[], values: { id:string; value:unknown }[], remove: string[] = [], validate: () => void = () => {}) {
+  const guard=privateImageGuard(), db=await openPrivateDb(), records:PrivateStoreRecord[]=[];
+  for(const value of values) { records.push(await privateStoreRecord(value,{chat_id:chatId})); guard(); }
+  guard(); validate();
+  const tx=db.transaction(CANVAS_STORE,"readwrite"), done=transactionDone(tx), store=tx.objectStore(CANVAS_STORE);
+  try { for(const item of expected) {
+    const old=await requestResult<PrivateStoreRecord|undefined>(store.get(item.id));
+    const token=old ? JSON.stringify(old.encrypted_payload) : null;
+    guard(); validate(); if(token!==item.token) throw new Error("This canvas changed. Your draft is kept; review the latest version before saving.");
+  } }
+  catch(error) {tx.abort(); await done.catch(()=>undefined); throw error;}
+  for(const record of records) store.put(record);
+  for(const id of remove) store.delete(id);
+  await done; guard();
+}
+
+export async function writePrivateImport<T>(id: string, chatId: string, value: T) {
+  const guard = privateImageGuard(), db = await openPrivateDb();
+  const record = await privateStoreRecord({ id, value }, { chat_id: chatId }); guard();
+  const tx = db.transaction(IMPORT_STORE, "readwrite"); tx.objectStore(IMPORT_STORE).put(record);
+  await transactionDone(tx); guard();
+}
+
+export async function commitPrivateImportedChat(sourceKey: string, source: unknown, chat: PrivateChatDetail, messages: PrivateChatMessage[], archived: boolean, canvas: {id:string;value:unknown}[] = []) {
+  const guard = privateImageGuard(), db = await openPrivateDb();
+  const chatRecord = await privateStoreRecord(chat, { created_at: chat.created_at, updated_at: chat.updated_at, last_message_at: chat.last_message_at });
+  const messageRecords = [];
+  for (const message of messages) messageRecords.push(await privateStoreRecord(message, { chat_id: chat.id, created_at: message.created_at, updated_at: message.updated_at }));
+  const sourceRecord = await privateStoreRecord({ id: sourceKey, value: source }, { chat_id: chat.id });
+  const archiveRecord = await privateStoreRecord({ id: chat.id, archived_at: archived ? unixTimestamp() : null }); guard();
+  const canvasRecords=[];
+  for(const value of canvas){guard();canvasRecords.push(await privateStoreRecord(value,{chat_id:chat.id}));}
+  guard();
+  const tx = db.transaction([CHAT_STORE, MESSAGE_STORE, CHAT_ARCHIVE_STORE, IMPORT_STORE, CANVAS_STORE], "readwrite");
+  const done = transactionDone(tx);
+  if (await requestResult(tx.objectStore(IMPORT_STORE).getKey(sourceKey)) !== undefined) {
+    tx.abort(); await done.catch(() => undefined); throw new Error("This conversation was imported in another window. Retry to resume.");
+  }
+  tx.objectStore(CHAT_STORE).put(chatRecord);
+  tx.objectStore(CHAT_ARCHIVE_STORE).put(archiveRecord);
+  for (const record of messageRecords) tx.objectStore(MESSAGE_STORE).put(record);
+  for (const record of canvasRecords) tx.objectStore(CANVAS_STORE).put(record);
+  tx.objectStore(IMPORT_STORE).put(sourceRecord);
+  await done; guard();
+  profileSourceEpoch++;
+}
+
+export async function readPrivateImportAsset(id: string): Promise<Blob> {
+  const guard = privateImageGuard();
+  const metadata = await readPrivateImport<{ chunks: number; mime: string; size: number }>(id);
+  if (!metadata || !Number.isSafeInteger(metadata.size) || metadata.size < 1 || metadata.size > 128 * 1024 * 1024 || !Number.isInteger(metadata.chunks) || metadata.chunks < 1 || metadata.chunks > 256) throw new Error("This attachment has not finished importing. Resume the import to restore it.");
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  for (let i = 0; i < metadata.chunks; i++) {
+    const part = await readPrivateImport<string>(`${id}:${i}`);
+    if (part === null) throw new Error("Imported attachment is incomplete");
+    parts.push(base64ToBytes(part) as Uint8Array<ArrayBuffer>);
+  }
+  guard();
+  const blob = new Blob(parts, { type: metadata.mime });
+  if (blob.size !== metadata.size) throw new Error("Imported attachment is incomplete");
+  return blob;
+}
+
 export async function listPrivateChats(): Promise<PrivateChatSummary[]> {
+  const guard = privateImageGuard();
   const db = await openPrivateDb();
   const chats = await getAllPrivateRecords<PrivateChatDetail>(db, CHAT_STORE);
+  const archives = new Map(
+    (await getAllPrivateRecords<PrivateChatArchive>(db, CHAT_ARCHIVE_STORE))
+      .map((archive) => [archive.id, archive.archived_at])
+  );
+  guard();
   if (chats.length === 0) {
     return [];
   }
@@ -620,10 +742,12 @@ export async function listPrivateChats(): Promise<PrivateChatSummary[]> {
     chats.map((chat) => requestResult<number>(messageIndex.count(IDBKeyRange.only(chat.id))))
   );
   await transactionDone(tx);
+  guard();
 
   return chats
     .map((chat, index) => ({
       ...normalizePrivateChat(chat),
+      archived_at: archives.get(chat.id) ?? null,
       message_count: messageCounts[index] ?? 0
     }))
     .sort(
@@ -670,13 +794,45 @@ export async function createPrivateChat({
 }
 
 export async function getPrivateChat(chatId: string): Promise<PrivateChatDetail | null> {
+  const guard = privateImageGuard();
   const db = await openPrivateDb();
-  const tx = db.transaction(CHAT_STORE, "readonly");
-  const chat = await requestResult<PrivateStoreRecord | PrivateChatDetail | undefined>(
+  guard();
+  const tx = db.transaction([CHAT_STORE, CHAT_ARCHIVE_STORE], "readonly");
+  const chatRequest = requestResult<PrivateStoreRecord | PrivateChatDetail | undefined>(
     tx.objectStore(CHAT_STORE).get(chatId)
   );
+  const archiveRequest = requestResult<PrivateStoreRecord | undefined>(
+    tx.objectStore(CHAT_ARCHIVE_STORE).get(chatId)
+  );
+  const [chat, archiveRecord] = await Promise.all([chatRequest, archiveRequest]);
   await transactionDone(tx);
-  return chat ? normalizePrivateChat(await readPrivateRecord<PrivateChatDetail>(chat)) : null;
+  const detail = chat ? normalizePrivateChat(await readPrivateRecord<PrivateChatDetail>(chat)) : null;
+  const archive = archiveRecord ? await readPrivateRecord<PrivateChatArchive>(archiveRecord) : null;
+  guard();
+  return detail ? { ...detail, archived_at: archive?.archived_at ?? null } : null;
+}
+
+export async function setPrivateChatArchived(chatId: string, archived: boolean): Promise<PrivateChatDetail> {
+  const guard = privateImageGuard();
+  const chat = await getPrivateChat(chatId);
+  if (!chat) throw new Error("Private chat not found");
+  const archivedAt = archived ? (chat.archived_at ?? unixTimestamp()) : null;
+  // Separate state prevents a streaming response saving an older chat from undoing Archive.
+  const record = await privateStoreRecord({ id: chatId, archived_at: archivedAt });
+  const db = await openPrivateDb();
+  guard();
+  const tx = db.transaction([CHAT_STORE, CHAT_ARCHIVE_STORE], "readwrite");
+  const done = transactionDone(tx);
+  const exists = await requestResult(tx.objectStore(CHAT_STORE).getKey(chatId));
+  if (exists === undefined) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new Error("Private chat not found");
+  }
+  tx.objectStore(CHAT_ARCHIVE_STORE).put(record);
+  await done;
+  guard();
+  return { ...chat, archived_at: archivedAt };
 }
 
 export async function savePrivateChat(chat: PrivateChatDetail): Promise<void> {
@@ -689,6 +845,7 @@ export async function savePrivateChat(chat: PrivateChatDetail): Promise<void> {
   const tx = db.transaction(CHAT_STORE, "readwrite");
   tx.objectStore(CHAT_STORE).put(record);
   await transactionDone(tx);
+  profileSourceEpoch++;
 }
 
 export async function renamePrivateChat(chatId: string, title: string): Promise<PrivateChatDetail> {
@@ -708,8 +865,13 @@ export async function renamePrivateChat(chatId: string, title: string): Promise<
 
 export async function deletePrivateChat(chatId: string): Promise<void> {
   const db = await openPrivateDb();
-  const tx = db.transaction([CHAT_STORE, MESSAGE_STORE], "readwrite");
+  const tx = db.transaction([CHAT_STORE, CHAT_ARCHIVE_STORE, MESSAGE_STORE, IMPORT_STORE, CANVAS_STORE], "readwrite");
+  const canvasCursor=tx.objectStore(CANVAS_STORE).index("chat_id").openCursor(IDBKeyRange.only(chatId));
+  canvasCursor.onsuccess=()=>{const cursor=canvasCursor.result;if(cursor){cursor.delete();cursor.continue();}};
   tx.objectStore(CHAT_STORE).delete(chatId);
+  tx.objectStore(CHAT_ARCHIVE_STORE).delete(chatId);
+  const importCursor = tx.objectStore(IMPORT_STORE).index("chat_id").openCursor(IDBKeyRange.only(chatId));
+  importCursor.onsuccess = () => { const cursor = importCursor.result; if (cursor) { cursor.delete(); cursor.continue(); } };
 
   const index = tx.objectStore(MESSAGE_STORE).index("chat_id");
   const cursorRequest = index.openCursor(IDBKeyRange.only(chatId));
@@ -724,6 +886,7 @@ export async function deletePrivateChat(chatId: string): Promise<void> {
   };
 
   await transactionDone(tx);
+  profileSourceEpoch++;
 }
 
 export async function listPrivateMessages(chatId: string): Promise<PrivateChatMessage[]> {
@@ -749,6 +912,7 @@ export async function savePrivateMessage(message: PrivateChatMessage): Promise<v
   const tx = db.transaction(MESSAGE_STORE, "readwrite");
   tx.objectStore(MESSAGE_STORE).put(record);
   await transactionDone(tx);
+  profileSourceEpoch++;
 }
 
 export async function savePrivateMessages(messages: PrivateChatMessage[]): Promise<void> {
@@ -772,6 +936,7 @@ export async function savePrivateMessages(messages: PrivateChatMessage[]): Promi
     store.put(record);
   }
   await transactionDone(tx);
+  profileSourceEpoch++;
 }
 
 export async function getCachedHostedChat<
@@ -2293,6 +2458,13 @@ function privateDbName() {
 }
 
 function ensurePrivateStores(db: IDBDatabase) {
+  if (!db.objectStoreNames.contains(CANVAS_STORE)) db.createObjectStore(CANVAS_STORE,{keyPath:"id"}).createIndex("chat_id","chat_id");
+  if (!db.objectStoreNames.contains(IMPORT_STORE)) {
+    db.createObjectStore(IMPORT_STORE, { keyPath: "id" }).createIndex("chat_id", "chat_id");
+  }
+  if (!db.objectStoreNames.contains(CHAT_ARCHIVE_STORE)) {
+    db.createObjectStore(CHAT_ARCHIVE_STORE, { keyPath: "id" });
+  }
   if (!db.objectStoreNames.contains(PERSONALIZATION_STORE)) {
     db.createObjectStore(PERSONALIZATION_STORE, { keyPath: "id" });
   }

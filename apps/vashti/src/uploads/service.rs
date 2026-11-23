@@ -5,13 +5,15 @@ use sqlx::{Row, SqlitePool, Transaction};
 use tokio::fs;
 use uuid::Uuid;
 
-use crate::{auth::service::unix_timestamp, error::ApiError, uploads::models::Attachment};
+use crate::{auth::service::unix_timestamp, error::ApiError, uploads::models::{Attachment, PdfPromptContext}};
+use super::pdf::{self, PdfText};
 
 const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
 
 enum AttachmentClassification {
     Image(&'static str),
     Text,
+    Pdf,
 }
 
 pub struct UploadInput {
@@ -19,6 +21,7 @@ pub struct UploadInput {
     pub revision_id: Option<String>,
     pub original_filename: String,
     pub bytes: Vec<u8>,
+    pub pdf_context_json: Option<String>,
 }
 
 pub async fn create_attachment(
@@ -55,9 +58,21 @@ pub async fn create_attachment(
 
     let original_filename = normalize_filename(&input.original_filename);
     let classification = classify_attachment(&input.bytes)?;
+    let pdf_context_json = match (&classification, input.pdf_context_json) {
+        (AttachmentClassification::Pdf, context) => {
+            if input.bytes.len() > pdf::PDF_UPLOAD_BYTES {
+                return Err(ApiError::bad_request("upload_too_large", "Attached PDFs must be 8 MiB or smaller"));
+            }
+            context.as_deref().map(PdfText::parse).transpose()?;
+            context
+        }
+        (_, Some(_)) => return Err(ApiError::bad_request("invalid_pdf_context", "PDF text context requires a PDF")),
+        (_, None) => None,
+    };
     let (attachment_kind, mime_type) = match classification {
         AttachmentClassification::Image(mime_type) => ("image", mime_type.to_string()),
         AttachmentClassification::Text => ("text", "text/plain".to_string()),
+        AttachmentClassification::Pdf => ("file", "application/pdf".to_string()),
     };
     let attachment_id = Uuid::new_v4().to_string();
     let storage_path = format!("{chat_id}/{attachment_id}");
@@ -88,9 +103,10 @@ pub async fn create_attachment(
             mime_type,
             size_bytes,
             attachment_kind,
-            created_at
+            created_at,
+            pdf_context_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&attachment_id)
@@ -104,6 +120,7 @@ pub async fn create_attachment(
     .bind(input.bytes.len() as i64)
     .bind(attachment_kind)
     .bind(now)
+    .bind(pdf_context_json)
     .execute(pool)
     .await;
 
@@ -130,7 +147,9 @@ pub async fn get_attachment(
                mime_type,
                size_bytes,
                attachment_kind,
-               created_at
+               created_at,
+               json_array_length(pdf_context_json, '$.pages') > 0 AS pdf_has_text,
+               json_extract(pdf_context_json, '$.truncated') AS pdf_truncated
         FROM attachments
         WHERE id = ?
           AND user_id = ?
@@ -163,7 +182,9 @@ pub async fn get_attachment_file(
                mime_type,
                size_bytes,
                attachment_kind,
-               created_at
+               created_at,
+               json_array_length(pdf_context_json, '$.pages') > 0 AS pdf_has_text,
+               json_extract(pdf_context_json, '$.truncated') AS pdf_truncated
         FROM attachments
         WHERE id = ?
           AND user_id = ?
@@ -190,6 +211,19 @@ pub async fn get_attachment_file(
         })?;
 
     Ok((attachment, bytes))
+}
+
+pub async fn get_pdf_text(
+    pool: &SqlitePool,
+    user_id: &str,
+    attachment_id: &str,
+) -> Result<Option<String>, ApiError> {
+    sqlx::query_scalar("SELECT pdf_context_json FROM attachments WHERE id=? AND user_id=? AND mime_type='application/pdf'")
+        .bind(attachment_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("attachment_not_found", "Attachment not found"))
 }
 
 pub async fn delete_attachment(
@@ -271,7 +305,8 @@ pub async fn attach_referenced_attachments(
                    image_asset_id,
                    mime_type,
                    size_bytes,
-                   attachment_kind
+                   attachment_kind,
+                   pdf_context_json
             FROM attachments
             WHERE id = ?
               AND user_id = ?
@@ -357,9 +392,10 @@ pub async fn attach_referenced_attachments(
                 mime_type,
                 size_bytes,
                 attachment_kind,
-                created_at
+                created_at,
+                pdf_context_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&cloned_attachment_id)
@@ -373,6 +409,7 @@ pub async fn attach_referenced_attachments(
         .bind(row.try_get::<i64, _>("size_bytes")?)
         .bind(row.try_get::<String, _>("attachment_kind")?)
         .bind(unix_timestamp())
+        .bind(row.try_get::<Option<String>, _>("pdf_context_json")?)
         .execute(&mut **tx)
         .await;
 
@@ -402,7 +439,9 @@ pub async fn list_revision_attachments(
                mime_type,
                size_bytes,
                attachment_kind,
-               created_at
+               created_at,
+               json_array_length(pdf_context_json, '$.pages') > 0 AS pdf_has_text,
+               json_extract(pdf_context_json, '$.truncated') AS pdf_truncated
         FROM attachments
         WHERE user_id = ?
           AND chat_id = ?
@@ -428,13 +467,15 @@ pub async fn prompt_attachment_payload(
     chat_id: &str,
     message_id: &str,
     revision_id: &str,
+    pdf_prompt: &mut PdfPromptContext,
 ) -> Result<(String, Vec<String>), ApiError> {
     let rows = sqlx::query(
         r#"
         SELECT id, original_filename,
                storage_path,
                image_asset_id,
-               attachment_kind
+               attachment_kind,
+               pdf_context_json
         FROM attachments
         WHERE user_id = ?
           AND chat_id = ?
@@ -457,6 +498,23 @@ pub async fn prompt_attachment_payload(
         let original_filename: String = row.try_get("original_filename")?;
         let storage_path: String = row.try_get("storage_path")?;
         let attachment_kind: String = row.try_get("attachment_kind")?;
+        if attachment_kind == "file" {
+            if pdf_prompt.remaining > 0 && let Some(json) = row.try_get::<Option<String>, _>("pdf_context_json")? {
+                let document = PdfText::parse(&json)?;
+                let prior = text_payload.len();
+                document.append_prompt(
+                    row.try_get("id")?, &original_filename, &mut text_payload,
+                    &mut pdf_prompt.remaining, pdf_prompt.question.as_deref().unwrap_or(""),
+                );
+                if text_payload.len() != prior {
+                    continue;
+                }
+            }
+            text_payload.push_str(&format!(
+                "\nAttached file (download only, contents not supplied): {original_filename}\n"
+            ));
+            continue;
+        }
         let bytes = if let Some(asset_id) = row.try_get::<Option<String>, _>("image_asset_id")? {
             crate::images::service::asset(pool, user_id, &asset_id)
                 .await?
@@ -503,6 +561,9 @@ pub fn safe_content_disposition(filename: &str) -> String {
 }
 
 fn classify_attachment(bytes: &[u8]) -> Result<AttachmentClassification, ApiError> {
+    if pdf::has_header(bytes) {
+        return Ok(AttachmentClassification::Pdf);
+    }
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Ok(AttachmentClassification::Image("image/png"));
     }
@@ -524,7 +585,7 @@ fn classify_attachment(bytes: &[u8]) -> Result<AttachmentClassification, ApiErro
 
     Err(ApiError::bad_request(
         "unsupported_attachment_type",
-        "Only image files and UTF-8 text files are supported",
+        "Only PDF, image and UTF-8 text files are supported",
     ))
 }
 
@@ -555,7 +616,6 @@ async fn ensure_chat_owner(
             FROM chats
             WHERE id = ?
               AND user_id = ?
-              AND archived_at IS NULL
         )
         "#,
     )
@@ -592,7 +652,6 @@ async fn validate_revision_target(
                       AND r.id = ?
                       AND m.chat_id = ?
                       AND c.user_id = ?
-                      AND c.archived_at IS NULL
                 )
                 "#,
             )
@@ -630,6 +689,8 @@ fn row_to_attachment(row: sqlx::sqlite::SqliteRow) -> Result<Attachment, ApiErro
         size_bytes: row.try_get("size_bytes")?,
         attachment_kind: row.try_get("attachment_kind")?,
         created_at: row.try_get("created_at")?,
+        pdf_has_text: row.try_get("pdf_has_text")?,
+        pdf_truncated: row.try_get("pdf_truncated")?,
     })
 }
 
@@ -649,7 +710,7 @@ mod classification_tests {
         for (bytes, expected_mime) in cases {
             match classify_attachment(bytes).expect("supported image") {
                 AttachmentClassification::Image(mime) => assert_eq!(mime, *expected_mime),
-                AttachmentClassification::Text => panic!("image was classified as text"),
+                _ => panic!("image was not classified as an image"),
             }
         }
     }

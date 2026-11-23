@@ -1,0 +1,62 @@
+.pdf-viewer {
+  width: min(100%, 76rem);
+  height: min(100%, 58rem);
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0;
+  color: var(--text);
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pdf-viewer[open] { display: flex; flex-direction: column; }
+.pdf-viewer::backdrop { background: rgb(0 0 0 / 72%); }
+.pdf-title, .pdf-controls, .pdf-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+}
+.pdf-title, .pdf-find { border-bottom: 1px solid var(--line); }
+.pdf-title { flex-wrap: nowrap; }
+.pdf-title strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdf-viewer button {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-grid;
+  place-items: center;
+  padding: 4px 8px;
+}
+.pdf-viewer button svg { width: 18px; height: 18px; }
+.pdf-find input { flex: 1 1 8rem; min-width: 0; }
+.pdf-find small { flex: 1 0 100%; }
+.pdf-pages {
+  overflow: auto;
+  flex: 1;
+  padding: 12px;
+  background: var(--app-bg);
+}
+.pdf-pages canvas:not([hidden]) {
+  display: block;
+  max-width: none;
+  height: auto;
+  margin-inline: auto;
+  background: white;
+}
+.pdf-pages > p, .pdf-action-error { padding: 8px 12px; }
+.pdf-unlock { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+.pdf-unlock label { display: grid; gap: 4px; }
+.pdf-controls { justify-content: center; border-top: 1px solid var(--line); }
+.pdf-controls span { font-variant-numeric: tabular-nums; text-align: center; min-width: 6ch; }
+@media (max-width: 600px) {
+  .pdf-viewer { width: 100%; height: 100%; border: 0; border-radius: 0; }
+  .pdf-controls { gap: 4px; }
+}

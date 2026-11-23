@@ -2,6 +2,7 @@ mod admin;
 mod app_state;
 mod assistant;
 mod auth;
+mod canvas;
 mod backends;
 mod chats;
 mod client_tools;
@@ -11,6 +12,7 @@ mod db;
 mod error;
 mod frontend;
 mod images;
+mod imports;
 mod memories;
 mod model_cache;
 mod model_pulls;
@@ -88,6 +90,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let db = db::connect(&config).await?;
     startup::secure_data_files(&config).await?;
     startup::migrations::run(&db).await?;
+    imports::service::recover(&db, &config.tmp_dir(), &config.uploads_dir()).await?;
     personalization::service::migrate_suppression_tokens(&db).await?;
     images::service::recover(&db).await?;
     videos::service::recover(&db, &config.data_dir).await?;
@@ -395,6 +398,12 @@ fn router(state: AppState) -> Router {
                 .delete(chats::handlers::delete_chat),
         )
         .route("/chats/{chat_id}/sync", get(chats::handlers::sync_chat))
+        .nest("/imports", imports::router())
+        .nest("/canvas", canvas::handlers::router())
+        .route(
+            "/chats/{chat_id}/archive",
+            post(chats::handlers::archive_chat),
+        )
         .route(
             "/chats/{chat_id}/active-root",
             patch(chats::handlers::set_active_root),
@@ -448,6 +457,7 @@ fn router(state: AppState) -> Router {
             "/attachments/{attachment_id}/image-settings",
             get(uploads::image_settings::get),
         )
+        .route("/attachments/{attachment_id}/pdf-text", get(uploads::handlers::get_pdf_text))
         .route("/private/vault-key", get(private::handlers::vault_key))
         .route(
             "/private/client-tool-result",

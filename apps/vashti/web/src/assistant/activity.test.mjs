@@ -22,7 +22,7 @@ test("incremental activity preserves completed records and their component ident
   assert.deepEqual(mergeActivity(merged, { ...next, run: { id: "other" } }).actions, next.actions);
 });
 test("Assistant routes preserve exact task and run selection", () => {
-  for (const route of [{ page: "assistant" }, ...["new", "defaults", "tasks", "conversations", "compose"].map(view => ({ page: "assistant", view })), { page: "assistant", conversationId: "conversation id" }, { page: "assistant", taskId: "id", runId: "run" }, { page: "assistant", runId: "run" }]) {
+  for (const route of [{ page: "assistant" }, ...["new", "defaults", "tasks", "conversations", "compose", "notifications"].map(view => ({ page: "assistant", view })), { page: "assistant", conversationId: "conversation id" }, { page: "assistant", taskId: "id", runId: "run" }, { page: "assistant", runId: "run" }]) {
     const url = new URL(pathForRoute(route), "https://fixture.invalid");
     globalThis.window = { location: url };
     assert.equal(pathForRoute(routeFromLocation()), pathForRoute(route));

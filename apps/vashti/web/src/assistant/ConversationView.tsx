@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArrowLeft, Check, Clock, Download, History, ListTodo, LoaderCircle, MessageSquarePlus, Pause, Play, Settings2, Square } from "lucide-react";
+import { Archive, ArrowLeft, Bell, Check, Clock, Download, History, ListTodo, LoaderCircle, MessageSquarePlus, Pause, Play, Settings2, Square } from "lucide-react";
 import { requestBlob, requestJson } from "../api";
 import { ActionMenu } from "../ActionMenu";
 import { StartChatComposer } from "../Composer";
@@ -135,7 +135,7 @@ export function ConversationView(props: Props & { config: TaskConfig; onConfig: 
         onChange={value => { const model = modelParts(value); if (model) void changeConfig({ ...config, backend_id: model.backendId, model_name: model.modelName }); }} />
       <span className="assistant-caption assistant-server-label">Server</span>
       <button type="button" className="icon-button" title="Tasks & schedules" aria-label="Tasks and schedules" onClick={() => props.onNavigate({ page: "assistant", view: "tasks" })}><ListTodo /></button>
-      <ActionMenu label="Assistant options"><button type="button" onClick={() => props.onNavigate({ page: "assistant", view: "compose" })}><MessageSquarePlus />New conversation</button><button type="button" onClick={() => props.onNavigate({ page: "assistant", view: "conversations" })}><History />Conversations</button><button type="button" onClick={() => props.onNavigate({ page: "assistant", view: "defaults" })}><Settings2 />Assistant settings</button>{id && <button type="button" disabled={busy || Boolean(current)} onClick={() => { setBusy(true); void assistantApi.post(`tasks/${id}/archive`, { archived: !page?.task.archived_at }).then(home).catch(e => setError(errorMessage(e))).finally(() => setBusy(false)); }}><Archive />{page?.task.archived_at ? "Restore conversation" : "Archive conversation"}</button>}</ActionMenu>
+      <ActionMenu label="Assistant options"><button type="button" onClick={() => props.onNavigate({ page: "assistant", view: "compose" })}><MessageSquarePlus />New conversation</button><button type="button" onClick={() => props.onNavigate({ page: "assistant", view: "conversations" })}><History />Conversations</button><button type="button" onClick={() => props.onNavigate({ page: "assistant", view: "notifications" })}><Bell />Notifications</button><button type="button" onClick={() => props.onNavigate({ page: "assistant", view: "defaults" })}><Settings2 />Assistant settings</button>{id && <button type="button" disabled={busy || Boolean(current)} onClick={() => { setBusy(true); void assistantApi.post(`tasks/${id}/archive`, { archived: !page?.task.archived_at }).then(home).catch(e => setError(errorMessage(e))).finally(() => setBusy(false)); }}><Archive />{page?.task.archived_at ? "Restore conversation" : "Archive conversation"}</button>}</ActionMenu>
     </header>;
   return <section className="assistant-workspace assistant-detail assistant-conversation chat-view">
     {props.headerTarget ? createPortal(header, props.headerTarget) : header}

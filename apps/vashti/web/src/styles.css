@@ -93,6 +93,7 @@
 .profile-heading small, .profile-fact-heading small { color: var(--muted); }
 .profile-heading h2 svg { width: 20px; height: 20px; color: var(--accent); }
 .profile-storage, .profile-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.profile-rebuild-action { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .profile-storage button { flex: 1; }
 .profile-processor, .profile-access, .profile-fact-editor { display: grid; gap: 12px; min-width: 0; }
 .profile-processor label, .profile-fact-editor label { display: grid; gap: 7px; font-size: 14px; }
@@ -8959,6 +8960,40 @@ textarea {
 .gallery-view-options input { width: 18px; height: 18px; min-height: 0; margin: 0; }
 .history-search { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 0 8px; border: 1px solid var(--line-soft); border-radius: 6px; color: var(--muted); }
 .history-search input { min-width: 0; width: 100%; min-height: 40px; border: 0; padding: 8px 0; background: transparent; font-size: .85rem; box-shadow: none; }
+.history-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.history-heading .eyebrow { flex: 1; min-width: 0; margin: 0; }
+.history-heading .icon-button { flex: 0 0 44px; width: 44px; height: 44px; border-color: transparent; color: var(--muted); background: transparent; }
+.history-heading .icon-button[aria-pressed="true"] { color: var(--accent); }
+.history-error { display: flex; align-items: center; gap: 8px; color: var(--error); font-size: .85rem; overflow-wrap: anywhere; }
+.history-error span { flex: 1; min-width: 0; }
+.history-error .icon-button { flex: 0 0 44px; width: 44px; height: 44px; }
+.chat-import-panel { display: grid; gap: 14px; min-width: 0; }
+.chat-import-panel input[type="file"] { width: 100%; max-width: 100%; min-width: 0; }
+.chat-import-filename,.chat-import-panel p { overflow-wrap: anywhere; }
+.chat-import-summary { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 0; }
+.chat-import-summary dt { color: var(--muted); font-size: 13px; }
+.chat-import-summary dd { margin: 4px 0 0; font-weight: 600; }
+.chat-import-options { border: 0; padding: 0; margin: 0; display: grid; gap: 12px; min-width: 0; }
+.chat-import-options legend { padding: 0 0 10px; font-weight: 600; }
+.chat-import-options label { display: grid; gap: 7px; min-width: 0; }
+.chat-import-options .toggle-row { display: flex; align-items: center; gap: 10px; }
+.chat-import-panel progress { width: 100%; accent-color: var(--accent); }
+.imported-file-button {
+  display:inline;
+  padding:0;
+  border:0;
+  background:none;
+  color:var(--accent);
+  font:inherit;
+  text-align:start;
+  text-decoration:underline;
+  overflow-wrap:anywhere;
+}
+.imported-file-link .error { display:block; }
+.chat-import-documents { display:grid; gap:6px; margin-top:10px; }
+.chat-import-documents button { min-width:0; text-align:start; justify-content:start; }
+.chat-import-documents button span { min-width:0; overflow-wrap:anywhere; }
+.chat-import-documents button small { color:var(--muted); margin-inline-start:auto; flex-shrink:0; }
 .history-empty { padding: 12px; color: var(--muted); }
 .notes-drawer-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(var(--shadow-rgb),.55); }
 .persona-avatar-crop-selection:focus-visible { outline: 3px solid var(--text); outline-offset: 4px; }
@@ -9036,9 +9071,12 @@ textarea {
 .assistant-task-copy > strong { overflow-wrap: anywhere; }
 .assistant-task-copy small { color: var(--muted); font-size: .7rem; overflow-wrap: anywhere; }
 .assistant-task-status { display: flex; gap: 6px; align-items: center; font-size: .75rem; color: var(--muted); flex: 0 0 auto; max-width: 140px; }
-.assistant-attention-count { margin-left: auto; color: var(--accent); font-variant-numeric: tabular-nums; }
+.assistant-attention-count { margin-left: auto; color: var(--app-bg); background: var(--accent); font-variant-numeric: tabular-nums; border-radius: 8px; min-width: 18px; padding: 1px 5px; text-align: center; }
 .assistant-notification { position: relative; }
 .assistant-notification small { position: absolute; top: -5px; right: -5px; min-width: 18px; background: var(--accent); color: var(--app-bg); border-radius: 9px; font-size: .65rem; padding: 2px; }
+.assistant-notice-row { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.assistant-notice-row > svg { flex: none; color: var(--accent); width: 20px; height: 20px; }
+.assistant-notice-text { flex: 1; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
 .assistant-detail { display: flex; flex-direction: column; }
 .assistant-detail-heading { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line-soft); flex: 0 0 auto; }
 .assistant-detail-title { min-width: 0; flex: 1; }
