@@ -736,4 +736,116 @@ mod tests {
         }
         println!("{} tokens: best step {best:.3} s", height * width);
     }
+
+    /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir>`: each kernel of one block at the
+    /// benchmark's size alone, and the block as one call list.
+    #[test]
+    #[ignore]
+    fn block_costs_at_benchmark_size() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let model =
+            QwenGpu::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
+        let golden = Golden::load(&dir, 0);
+        let (height, width) = (111, 74);
+        let prefix = model
+            .prefix(&golden.context, &golden.slots, &[], (height, width))
+            .unwrap();
+        let x = vec![0.5f32; CHANNELS * height * width];
+        model.step(&prefix, &x, 500.0).unwrap();
+        let mut works = model.work.lock().unwrap();
+        let work = QwenGpu::work_for(
+            &mut works,
+            &model.gpu,
+            &model.kernels,
+            height * width,
+            prefix.length,
+        )
+        .unwrap();
+        let calls = model.block(
+            &model.layers[3],
+            work,
+            0,
+            Attention::Full,
+            None,
+            &prefix,
+            3,
+            false,
+        );
+        for _ in 0..2 {
+            let started = std::time::Instant::now();
+            run(&model.gpu, &calls).unwrap();
+            println!(
+                "block as one list: {:.2} ms",
+                started.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        drop(works);
+        let started = std::time::Instant::now();
+        let _ = model.small.times(500.0);
+        println!(
+            "time layers on the CPU: {:.2} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        let started = std::time::Instant::now();
+        model.step(&prefix, &x, 500.0).unwrap();
+        println!(
+            "whole step: {:.1} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        let mut works = model.work.lock().unwrap();
+        let work = QwenGpu::work_for(
+            &mut works,
+            &model.gpu,
+            &model.kernels,
+            height * width,
+            prefix.length,
+        )
+        .unwrap();
+        let calls = model.block(
+            &model.layers[3],
+            work,
+            0,
+            Attention::Full,
+            None,
+            &prefix,
+            3,
+            false,
+        );
+        let k = &model.kernels;
+        let mut totals: Vec<(String, f64)> = Vec::new();
+        for (i, call) in calls.iter().enumerate() {
+            let name = match call {
+                Call::Shader { kernel, .. } => {
+                    let names = [
+                        (&k.normq8, "norm+quantize"),
+                        (&k.mergeq8, "merge+quantize"),
+                        (&k.gateq8, "gate+quantize"),
+                        (&k.resid8, "residual"),
+                        (&k.qk, "queries/keys"),
+                        (&k.value, "values"),
+                        (&k.prefix, "prefix copy"),
+                        (&k.mask, "masked attention"),
+                    ];
+                    names
+                        .iter()
+                        .find(|n| std::ptr::eq(n.0, *kernel))
+                        .map_or("?", |n| n.1)
+                        .to_string()
+                }
+                Call::Product { .. } => format!("machine code #{i}"),
+            };
+            let mut best = f64::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                run(&model.gpu, std::slice::from_ref(call)).unwrap();
+                best = best.min(started.elapsed().as_secs_f64());
+            }
+            totals.push((name, best * 1e3));
+        }
+        for (name, ms) in &totals {
+            println!("{ms:8.2} ms  {name}");
+        }
+        println!("{:8.2} ms  sum", totals.iter().map(|t| t.1).sum::<f64>());
+    }
 }
