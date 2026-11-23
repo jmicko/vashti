@@ -33,6 +33,8 @@ const PRODUCTS: [(usize, usize); 4] =
 const QKV: usize = 0;
 const OUT: usize = 1;
 const FC1: usize = 2;
+/// Byte offset of the gated product's weight scales in its weight buffer.
+const GATED_SCALES: usize = 2 * HIDDEN * DIM + int8::SLACK;
 const FC2: usize = 3;
 /// Offsets (in values) into a layer's vector buffer.
 const QUERY_NORM: usize = 0;
@@ -52,7 +54,7 @@ pub struct Kernels {
     /// A residual update and the next norm and quantization in one pass.
     resnorm8: Kernel,
     mergeq8: Kernel,
-    gateq8: Kernel,
+    hidq8: Kernel,
     resid8: Kernel,
     qk: Kernel,
     value: Kernel,
@@ -70,7 +72,7 @@ impl Kernels {
             normq8: gpu.kernel(shaders::QNORMQ8, 4, 3, Some(16))?,
             resnorm8: gpu.kernel(shaders::QRESNORM8, 6, 5, Some(16))?,
             mergeq8: gpu.kernel(shaders::QMERGEQ8, 4, 3, Some(16))?,
-            gateq8: gpu.kernel(shaders::QGATEQ8, 5, 3, Some(16))?,
+            hidq8: gpu.kernel(shaders::QHIDQ8, 4, 2, Some(16))?,
             resid8: gpu.kernel(shaders::QRESID8, 5, 3, None)?,
             qk: gpu.kernel(shaders::QQK, 6, 8, Some(16))?,
             value: gpu.kernel(shaders::QVALUE, 5, 6, None)?,
@@ -135,11 +137,41 @@ impl Layer {
         vectors.extend(file.f32(&name("attn.to_out.0.weight_scale"), &[DIM, 1])?);
         vectors.extend(file.f32(&name("img_mlp.gate_up.weight_scale"), &[2 * HIDDEN, 1])?);
         vectors.extend(file.f32(&name("img_mlp.out.weight_scale"), &[DIM, 1])?);
+        // The feed-forward input product ends in its activation (`int8::Shape::gated8`): its
+        // rows are stored in `gated_rows` order with their scales after the stream.
+        let gated = || -> Result<(Buffer, level_zero::Memory), &'static str> {
+            let (rows, columns) = PRODUCTS[FC1];
+            let tensor = name("img_mlp.gate_up.weight");
+            let scales = file.f32(&name("img_mlp.gate_up.weight_scale"), &[rows, 1])?;
+            let tile = int8::OUTPUTS * columns;
+            let staged = gpu.staged((GATED_SCALES + rows * 4) as u64, |to| {
+                let (stream, rest) = to.split_at_mut(rows * columns);
+                let (slack, tail) = rest.split_at_mut(int8::SLACK);
+                slack.fill(0);
+                for (i, v) in tail.chunks_exact_mut(4).enumerate() {
+                    v.copy_from_slice(&scales[int8::gated_rows(i, HIDDEN)].to_le_bytes());
+                }
+                stream.par_chunks_mut(tile).enumerate().try_for_each_init(
+                    || vec![0u8; tile],
+                    |plain, (n, to)| {
+                        for (i, row) in plain.chunks_exact_mut(columns).enumerate() {
+                            let source = int8::gated_rows(n * int8::OUTPUTS + i, HIDDEN);
+                            file.i8_part_into(&tensor, &[rows, columns], source * columns, row)?;
+                        }
+                        int8::weight_stream(plain, int8::OUTPUTS, columns, to);
+                        Ok(())
+                    },
+                )
+            })?;
+            let buffer = gpu.place(&staged, true)?;
+            let stream = kernels.fast.import(&gpu.export(&buffer)?, staged.bytes())?;
+            Ok((buffer, stream))
+        };
         Ok(Self {
             matrices: [
                 matrix(&["attn.to_q", "attn.to_k", "attn.to_v"], QKV)?,
                 matrix(&["attn.to_out.0"], OUT)?,
-                matrix(&["img_mlp.gate_up"], FC1)?,
+                gated()?,
                 matrix(&["img_mlp.out"], FC2)?,
             ],
             vectors: Shared::floats(gpu, &kernels.fast, &vectors)?,
@@ -180,7 +212,7 @@ struct Glue {
     value: level_zero::Kernel,
     prefix: level_zero::Kernel,
     merge: level_zero::Kernel,
-    gate: level_zero::Kernel,
+    hidden: level_zero::Kernel,
     embed: level_zero::Kernel,
     final_: level_zero::Kernel,
 }
@@ -195,7 +227,7 @@ impl Glue {
             value: k("q_value", 256)?,
             prefix: k("q_prefix", 64)?,
             merge: k("q_merge", 256)?,
-            gate: k("q_gate", 256)?,
+            hidden: k("q_hidden", 256)?,
             embed: k("q_embed", 256)?,
             final_: k("q_final", 256)?,
         })
@@ -355,6 +387,15 @@ impl Work {
             let shape = int8::Shape::linear(padded, rows, columns).ok_or("gpu_unsupported")?;
             Ok((fast_kernel(fast, &shape)?, shape.groups(rows)))
         };
+        let gated = (|| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
+            let (rows, columns) = PRODUCTS[FC1];
+            let shape = int8::Shape::gated8(padded, rows, columns, GATED_SCALES as u32)
+                .ok_or("gpu_unsupported")?;
+            Ok((
+                super::xe2::load(fast, &int8::kernel(&shape), 4)?,
+                shape.groups(rows),
+            ))
+        })();
         let shape = attend::Shape::new(keys, tokens + earlier, HEADS, 1.0 / (HEAD as f32).sqrt())
             .and_then(|s| s.with_queries(padded, HEADS))
             .ok_or("gpu_unsupported")?;
@@ -372,7 +413,8 @@ impl Work {
             padded * CHANNELS,
             2 * MODS,
             DIM,
-            padded,
+            // The gated product reads the token scales 64 at a time.
+            padded + 64,
             padded * SPILLED,
             padded * CHANNELS,
         ];
@@ -414,7 +456,7 @@ impl Work {
             readback: gpu.readback((padded * CHANNELS) as u64 * 4)?,
             shared,
             views: [v0, v1, v2, v3, v4, v5, v6, v7],
-            products: [product(QKV)?, product(OUT)?, product(FC1)?, product(FC2)?],
+            products: [product(QKV)?, product(OUT)?, gated?, product(FC2)?],
             attend,
         })
     }
@@ -744,18 +786,15 @@ impl QwenGpu {
                 ],
                 [np, 1, 1],
             )?;
-            product(&mut batch, FC1)?;
+            let (kernel, groups) = &w.products[FC1];
             batch.launch(
-                &g.gate,
-                &[
-                    M(sums),
-                    M(scales),
-                    M(v),
-                    M(spill),
-                    M(bytes),
-                    U(n),
-                    U(SCALE_FC1 as u32),
-                ],
+                kernel,
+                &[M(bytes), M(&layer.matrices[FC1].1), M(sums), M(scales)],
+                *groups,
+            )?;
+            batch.launch(
+                &g.hidden,
+                &[M(sums), M(scales), M(spill), M(bytes), U(n)],
                 [np, 1, 1],
             )?;
             product(&mut batch, FC2)?;
@@ -945,11 +984,24 @@ impl QwenGpu {
         });
         calls.push(product(OUT));
         calls.push(residual_norm(SCALE_OUT, 1, 2));
-        calls.push(product(FC1));
+        calls.push({
+            let (kernel, groups) = &w.products[FC1];
+            Call::Product {
+                fast: &k.fast,
+                kernel,
+                memory: vec![
+                    &w.shared[0],
+                    &layer.matrices[FC1].1,
+                    &w.shared[1],
+                    &w.views[5],
+                ],
+                groups: *groups,
+            }
+        });
         calls.push(Call::Shader {
-            kernel: &k.gateq8,
-            buffers: vec![&w.sums, &w.scales, v, &w.spill, &w.bytes],
-            constants: vec![n, SCALE_FC1 as u32, 1],
+            kernel: &k.hidq8,
+            buffers: vec![&w.sums, &w.scales, &w.spill, &w.bytes],
+            constants: vec![n, 1],
             groups: [np, 1, 1],
         });
         calls.push(product(FC2));
@@ -1133,7 +1185,7 @@ mod tests {
                         (&k.normq8, "norm+quantize"),
                         (&k.resnorm8, "residual+norm+quantize"),
                         (&k.mergeq8, "merge+quantize"),
-                        (&k.gateq8, "gate+quantize"),
+                        (&k.hidq8, "hidden quantize"),
                         (&k.resid8, "residual"),
                         (&k.qk, "queries/keys"),
                         (&k.value, "values"),

@@ -10,5 +10,5 @@ LD_LIBRARY_PATH="$sdk/compiler/2026.1/lib" "$sdk/compiler/2026.1/bin/compiler/cl
   -cl-ext=+cl_khr_fp64,+cl_khr_fp16,+cl_intel_subgroups,+cl_khr_subgroups,+__opencl_c_subgroups,+__opencl_c_fp64 \
   -emit-llvm-bc -O2 "$dir/qwen.cl" -o "$tmp/qwen.bc"
 LD_LIBRARY_PATH="$sdk/compiler/2026.1/lib" "$sdk/compiler/2026.1/bin/compiler/llvm-spirv" "$tmp/qwen.bc" -o "$tmp/qwen.spv"
-(cd "$tmp" && "$ocloc" compile -spirv_input -file "$tmp/qwen.spv" -device bmg-g31 -output qwen)
+(cd "$tmp" && LD_LIBRARY_PATH="$(dirname "$ocloc")/../lib/x86_64-linux-gnu" "$ocloc" compile -spirv_input -file "$tmp/qwen.spv" -device bmg-g31 -output qwen)
 cp "$tmp/qwen_bmg.bin" "$dir/qwen.bin"

@@ -273,31 +273,27 @@ SG WG(256) kernel void q_merge(global const float* o, global const float* w, glo
     round_row(mem, q, s, token, top, 16, 1);
 }
 
-// ---- Feed-forward activation and its quantization (qgateq8.comp) -----------------------------
 // The 12288-wide rotated row: 28 groups in local memory, 20 through `spill`.
 #define HIDDEN4 3072u
 #define GROUPS 48u
 #define KEPT 28u
 #define SPILLED (GROUPS - KEPT)
-SG WG(256) kernel void q_gate(global const int4* g, global float* s, global const float4* ws,
-                             global float* spill, global uint4* q, uint tokens, uint scale_first) {
+// ---- The feed-forward activation (from the gated product, `[token][12288]` f32) quantized ----
+SG WG(256) kernel void q_hidden(global const float4* h, global float* s, global float* spill,
+                               global uint4* q, uint tokens) {
     local float mem[KEPT * 256];
     local float tile[4096];
     local float maxima[16];
     uint token = get_group_id(0);
     uint sg = get_sub_group_id(), lane = get_sub_group_local_id();
     bool live = token < tokens;
-    float row_scale = live ? s[token] : 0.0f;
-    uint scale = scale_first >> 2;
     float top = 0.0f;
     float v[16];
     for (uint r = 0; r < 3; r++) {
         uint group = r * 16 + sg;
         for (uint j = 0; j < 4; j++) {
             uint c = group * 64 + lane * 4 + j;
-            float4 u = convert_float4(g[token * 2 * HIDDEN4 + c]) * row_scale * ws[scale + c];
-            float4 w = convert_float4(g[token * 2 * HIDDEN4 + HIDDEN4 + c]) * row_scale * ws[scale + HIDDEN4 + c];
-            float4 part = live ? u / (1.0f + exp(-u)) * w : (float4)(0.0f);
+            float4 part = live ? h[token * HIDDEN4 + c] : (float4)(0.0f);
             v[j * 4] = part.x * 0.0625f;
             v[j * 4 + 1] = part.y * 0.0625f;
             v[j * 4 + 2] = part.z * 0.0625f;

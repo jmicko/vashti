@@ -47,7 +47,6 @@ pub const VSOFT: &[u8] = include_bytes!("shaders/vsoft.spv");
 pub const VGATHER: &[u8] = include_bytes!("shaders/vgather.spv");
 pub const QNORMQ8: &[u8] = include_bytes!("shaders/qnormq8.spv");
 pub const QMERGEQ8: &[u8] = include_bytes!("shaders/qmergeq8.spv");
-pub const QGATEQ8: &[u8] = include_bytes!("shaders/qgateq8.spv");
 pub const QRESID8: &[u8] = include_bytes!("shaders/qresid8.spv");
 pub const QQK: &[u8] = include_bytes!("shaders/qqk.spv");
 pub const QVALUE: &[u8] = include_bytes!("shaders/qvalue.spv");
@@ -66,6 +65,8 @@ pub const QVBIAS: &[u8] = include_bytes!("shaders/qvbias.spv");
 pub const QVAVG: &[u8] = include_bytes!("shaders/qvavg.spv");
 
 pub const QRESNORM8: &[u8] = include_bytes!("shaders/qresnorm8.spv");
+
+pub const QHIDQ8: &[u8] = include_bytes!("shaders/qhidq8.spv");
 
 #[cfg(test)]
 mod tests {

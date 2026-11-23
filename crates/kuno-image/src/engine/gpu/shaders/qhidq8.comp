@@ -1,24 +1,15 @@
-// Gated activation between the DiT's feed-forward projections and the ConvRot
-// quantizer (rotate8.comp) on its result in one pass over the INT8 product:
-//   u = value(g[token][i]), w = value(g[token][12288 + i]),  h[token][i] = silu(u) * w
-// with value = sum * activation scale[token] * weight scale[column]; h is rotated in groups
-// of 256, then rounded to INT8 with one scale per token, which replaces the activation
-// scale. One workgroup per token. A rotated row is larger than a workgroup's shared memory,
-// so its first half stays there and its second half goes through `spill`
-// ([token][5120] f32; Qwen Image 2.1 sizes). Padded tokens quantize to zeros. With `stream` set, bytes are
-// written in the machine-code product's layout (xe2/int8.rs).
+// Qwen Image 2.1 feed-forward activation, already computed by the gated INT8 product as f32
+// rows [token][12288], rotated and quantized like qgateq8.comp (which see).
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 layout(local_size_x = 256) in;
-layout(set = 0, binding = 0) readonly buffer Sums { ivec4 g[]; };
+layout(set = 0, binding = 0) readonly buffer Hidden { vec4 h[]; };
 layout(set = 0, binding = 1) buffer Scales { float s[]; };
-layout(set = 0, binding = 2) readonly buffer Vectors { vec4 weight_scale[]; };
-layout(set = 0, binding = 3) buffer Spill { float spill[]; };
-layout(set = 0, binding = 4) writeonly buffer Out { uvec4 q[]; };
-// `scale_first` is in values and a multiple of 4.
-layout(push_constant) uniform Constants { uint tokens; uint scale_first; uint stream; } p;
+layout(set = 0, binding = 2) buffer Spill { float spill[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { uvec4 q[]; };
+layout(push_constant) uniform Constants { uint tokens; uint stream; } p;
 const uint HIDDEN4 = 3072;
 const uint GROUPS = 48;
 const uint ROUNDS = 3;
@@ -52,8 +43,6 @@ void main() {
     uint token = gl_WorkGroupID.x;
     uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
     bool live = token < p.tokens;
-    float row_scale = live ? s[token] : 0.0;
-    uint scale = p.scale_first >> 2;
     float top = 0.0;
     for (uint r = 0; r < ROUNDS; r++) {
         uint group = r * 16 + sg;
@@ -61,10 +50,7 @@ void main() {
         if (used) {
             for (uint j = 0; j < 4; j++) {
                 uint c = group * 64 + lane * 4 + j;
-                vec4 u = vec4(g[token * 2 * HIDDEN4 + c]) * row_scale * weight_scale[scale + c];
-                vec4 w = vec4(g[token * 2 * HIDDEN4 + HIDDEN4 + c]) * row_scale
-                    * weight_scale[scale + HIDDEN4 + c];
-                vec4 part = live ? u / (1.0 + exp(-u)) * w : vec4(0.0);
+                vec4 part = live ? h[token * HIDDEN4 + c] : vec4(0.0);
                 for (uint e = 0; e < 4; e++) v[j * 4 + e] = part[e] * 0.0625;
             }
             stages();
