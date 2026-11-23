@@ -341,14 +341,27 @@ pub fn bundle_artifacts(
     Ok(artifacts)
 }
 
+/// No runtime: the directory is missing, or is an empty real directory. A rolled-back
+/// transaction removes its files but leaves their directories, so an empty one must not
+/// block the next installation.
+fn not_installed(directory: &Path) -> Result<bool> {
+    match fs::symlink_metadata(directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(_) => Err("image_managed_runtime_unavailable"),
+        Ok(metadata) if metadata.is_dir() => Ok(fs::read_dir(directory)
+            .map_err(|_| "image_managed_runtime_unavailable")?
+            .next()
+            .is_none()),
+        Ok(_) => Ok(false),
+    }
+}
+
 /// Keep an installed optional runtime in every replacement transaction even
 /// when the selected image engine is native. Never adopt an untrusted directory.
 pub fn installed_artifacts() -> Result<Vec<crate::deployment::Artifact>> {
     let directory = Path::new(RUNTIME_ROOT).join(SYCL_RUNTIME);
-    match fs::symlink_metadata(&directory) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_) => return Err("image_managed_runtime_unavailable"),
-        Ok(_) => {}
+    if not_installed(&directory)? {
+        return Ok(Vec::new());
     }
     VerifiedRuntime::load(SYCL_RUNTIME)?;
     let (_, bytes) = manifest_at(&directory, Some(0))?;
@@ -419,6 +432,19 @@ pub fn launch(id: &str, models: &str, pci: &str, previews: bool, resident: bool)
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    #[test]
+    fn empty_leftover_runtime_directory_counts_as_not_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(SYCL_RUNTIME);
+        assert!(not_installed(&directory).unwrap());
+        fs::create_dir_all(&directory).unwrap();
+        assert!(not_installed(&directory).unwrap());
+        fs::write(directory.join("manifest.json"), b"{}").unwrap();
+        assert!(!not_installed(&directory).unwrap());
+        fs::remove_dir_all(&directory).unwrap();
+        symlink(root.path(), &directory).unwrap();
+        assert!(!not_installed(&directory).unwrap());
+    }
     fn worker_bytes() -> Vec<u8> {
         let mut bytes = vec![0; 64];
         bytes[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
