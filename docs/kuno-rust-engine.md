@@ -1012,8 +1012,59 @@ In the worker (`native/qwen.rs`, `rust-dit` builds) Qwen Image 2.1 requests no l
 the C++ engine: it releases its own context first, the models stay loaded between image
 requests, and video requests or the other image model free them. Previews are the engine's
 latent projection of each step's denoised latent; SIGTERM cancels after the current step.
-Per step the Rust DiT is still 7% (generate) to 16% (edit, two branches at 4056 tokens plus a
-4056-token prefix) slower than the engine.
+These first numbers had the Rust DiT 7% (generate) to 16% (edit) per step behind the engine;
+the next section closes that.
+
+### Qwen DiT speed work (2026-11-23)
+
+Step at 1184x1776 (`step_speed_at_benchmark_size`, best of four, includes the CPU's time
+layers) after each change, all on the same drivers:
+
+| Change | Step |
+|---|---|
+| Starting point (Vulkan glue, one submission per block) | 1.23 s |
+| Time layers for all steps at once, residual + next norm fused | 1.19 s |
+| Whole step as one Level Zero command list: glue in OpenCL C (`xe2/qwen.cl`, built by `xe2/qwen-glue.sh` into the native `xe2/qwen.bin`), `LevelZero::Batch` | 1.15 s |
+| Feed-forward activation in the INT8 product's epilogue (`int8::Shape::gated8`) | 1.133 s |
+| Product dispatch blocks balanced (about 128 token tiles each) | 1.127 s |
+| Attention query tiles in groups of 8 threads per core (`attend::Shape::group`) | 1.086 s |
+| Hidden quantizer keeps its row in local memory (no spill) | 1.078 s |
+| Feed-forward activation stored as bf16 | 1.063 s |
+| Query/key/value product scales its sums and stores bf16 (`int8::Shape::scaled8`) | 1.048 s |
+
+The C++ engine's step is about 1.165 s in the worker. Captured steps stay 36.9 to 44.6 dB
+from the engine (the mean moved by less than half a decibel over the series).
+
+In the worker (`image-bench.py`, same requests as the table above; first run includes
+opening the models):
+
+| | C++ engine | Rust (d0b26dbc) |
+|---|---|---|
+| Generate 1184x1776, 50 steps, warm | 61.5 s, 1.165 s per step | 55.4 s, 1.045 s per step; 38.5 dB from the engine's image |
+| Generate, first request | 67.4 s | 60.9 s |
+| Edit 1248x832 (1248x832 reference), 25 steps, CFG 4, warm | 37.8 s, 1.20 s per step | 33.7 s, 1.11 s per step; 28.9 dB, same picture |
+
+The edit's distance from the engine's image moves by a few decibels with any change of
+rounding (CFG 4 amplifies it over 25 steps); side by side the pictures match. The final PNG
+is now written with fast compression (lossless; 0.6 s -> 0.02 s, file about 13% larger), not
+yet in these numbers.
+
+What did not help:
+- Chaining Vulkan and Level Zero with timeline semaphores (correct only with
+  `zeCommandListAppendBarrier`, then no faster); a native OpenCL module removed the
+  cross-API hand-offs instead. Loading the glue as SPIR-V at run time failed (`gpu_kernel`);
+  the ocloc-built native binary loads.
+- Attention start chunks spread further than one chunk per tile (`tile >> s`), a group's
+  threads starting on the same chunk, or packed start chunks: all slower. The kernel is
+  bound by loads (10.5 ms loads only against 6.8 ms without loads at 32 heads x 8239 keys);
+  groups keep neighbouring tiles on one core so they reuse each other's lines.
+- bf16 outputs for the attention-out and feed-forward-out products as well: 0.8% faster,
+  but the residual increments lost about 3 dB on one captured step; kept as int32 sums.
+
+Opening the models from page cache (`open_costs`): DiT 2.3 s (layers load on three threads,
+so copies overlap the rearranging; 3.3 s before), VAE about 1.1 s (parallel rearranging;
+2.0 s), text encoder 1.3 s, vision tower 0.7 s. The worker disables Mesa's shader cache,
+which adds about 1 s.
 
 ## Running the comparisons
 

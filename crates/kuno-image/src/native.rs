@@ -1018,6 +1018,9 @@ impl Session {
                 png::ColorType::Rgb
             });
             encoder.set_depth(png::BitDepth::Eight);
+            // Lossless either way: at 1184x1776 the default level takes about 0.6 s, this
+            // about 0.02 s for a file about 13% larger.
+            encoder.set_compression(png::Compression::Fast);
             let mut writer = encoder
                 .write_header()
                 .map_err(|_| "image_encoding_failed")?;
