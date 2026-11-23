@@ -179,6 +179,16 @@ impl Layer {
     }
 }
 
+/// The products' token tiles in equal dispatch blocks of about 128 tiles (measured at the
+/// benchmark's 264 tiles: two blocks of 132 are about 3% faster than the default 100).
+fn balanced(shape: int8::Shape) -> int8::Shape {
+    let blocks = ((shape.tx + 64) / 128).max(1);
+    int8::Shape {
+        xc: shape.tx.div_ceil(blocks),
+        ..shape
+    }
+}
+
 /// A buffer in video memory that both Vulkan and the Level Zero kernels use.
 struct Shared {
     buffer: Buffer,
@@ -384,13 +394,16 @@ impl Work {
         ];
         let product = |which: usize| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
             let (rows, columns) = PRODUCTS[which];
-            let shape = int8::Shape::linear(padded, rows, columns).ok_or("gpu_unsupported")?;
+            let shape =
+                balanced(int8::Shape::linear(padded, rows, columns).ok_or("gpu_unsupported")?);
             Ok((fast_kernel(fast, &shape)?, shape.groups(rows)))
         };
         let gated = (|| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
             let (rows, columns) = PRODUCTS[FC1];
-            let shape = int8::Shape::gated8(padded, rows, columns, GATED_SCALES as u32)
-                .ok_or("gpu_unsupported")?;
+            let shape = balanced(
+                int8::Shape::gated8(padded, rows, columns, GATED_SCALES as u32)
+                    .ok_or("gpu_unsupported")?,
+            );
             Ok((
                 super::xe2::load(fast, &int8::kernel(&shape), 4)?,
                 shape.groups(rows),
@@ -1212,5 +1225,39 @@ mod tests {
             println!("{ms:8.2} ms  {name}");
         }
         println!("{:8.2} ms  sum", totals.iter().map(|t| t.1).sum::<f64>());
+    }
+
+    /// The INT8 products at the benchmark size with different dispatch blockings.
+    #[test]
+    #[ignore]
+    fn product_blocking_sweep() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let kernels = Kernels::new(&gpu).unwrap();
+        let fast = &kernels.fast;
+        let padded = (111 * 74usize).next_multiple_of(PAD);
+        let a = Shared::new(&gpu, fast, (padded * HIDDEN + int8::SLACK) as u64).unwrap();
+        let c = Shared::new(&gpu, fast, (padded * 2 * HIDDEN * 4) as u64).unwrap();
+        for (which, name) in [(QKV, "qkv"), (OUT, "out"), (FC1, "fc1"), (FC2, "fc2")] {
+            let (rows, columns) = PRODUCTS[which];
+            let b = Shared::new(&gpu, fast, (rows * columns + int8::SLACK) as u64).unwrap();
+            for xc in [88u32, 100, 132, 150, 176] {
+                let mut shape = int8::Shape::linear(padded, rows, columns).unwrap();
+                shape.xc = xc;
+                let kernel = fast_kernel(fast, &shape).unwrap();
+                let mut best = f64::MAX;
+                for _ in 0..5 {
+                    let started = std::time::Instant::now();
+                    fast.launch(
+                        &kernel,
+                        &[&a.memory, &b.memory, &c.memory],
+                        shape.groups(rows),
+                    )
+                    .unwrap();
+                    best = best.min(started.elapsed().as_secs_f64());
+                }
+                let tops = 2.0 * (padded * rows * columns) as f64 / best / 1e12;
+                println!("{name} xc {xc}: {:.2} ms, {tops:.0} TOPS", best * 1e3);
+            }
+        }
     }
 }
