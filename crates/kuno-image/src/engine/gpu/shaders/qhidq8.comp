@@ -1,11 +1,13 @@
-// Qwen Image 2.1 feed-forward activation, already computed by the gated INT8 product as f32
-// rows [token][12288], rotated and quantized like qgateq8.comp (which see).
+// Qwen Image 2.1 feed-forward activation, already computed by the gated INT8 product as bf16
+// rows [token][12288]: rotated in Hadamard groups of 256 and quantized to int8 with one scale
+// per token, in the next product's token layout (the Vulkan twin of q_hidden in qwen.cl).
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 
 layout(local_size_x = 256) in;
-layout(set = 0, binding = 0) readonly buffer Hidden { vec4 h[]; };
+// bf16, four values in each uvec2.
+layout(set = 0, binding = 0) readonly buffer Hidden { uvec2 h[]; };
 layout(set = 0, binding = 1) buffer Scales { float s[]; };
 layout(set = 0, binding = 2) buffer Spill { float spill[]; };
 layout(set = 0, binding = 3) writeonly buffer Out { uvec4 q[]; };
@@ -50,7 +52,9 @@ void main() {
         if (used) {
             for (uint j = 0; j < 4; j++) {
                 uint c = group * 64 + lane * 4 + j;
-                vec4 part = live ? h[token * HIDDEN4 + c] : vec4(0.0);
+                uvec2 b = live ? h[token * HIDDEN4 + c] : uvec2(0);
+                vec4 part = vec4(uintBitsToFloat(b.x << 16), uintBitsToFloat(b.x & 0xffff0000u),
+                                 uintBitsToFloat(b.y << 16), uintBitsToFloat(b.y & 0xffff0000u));
                 for (uint e = 0; e < 4; e++) v[j * 4 + e] = part[e] * 0.0625;
             }
             stages();

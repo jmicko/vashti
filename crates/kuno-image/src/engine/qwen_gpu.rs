@@ -846,11 +846,7 @@ impl QwenGpu {
                 &[M(bytes), M(&layer.matrices[FC1].1), M(sums), M(scales)],
                 *groups,
             )?;
-            batch.launch(
-                &g.hidden,
-                &[M(sums), M(scales), M(bytes), U(n)],
-                [np, 1, 1],
-            )?;
+            batch.launch(&g.hidden, &[M(sums), M(scales), M(bytes), U(n)], [np, 1, 1])?;
             product(&mut batch, FC2)?;
             if index + 1 < layers {
                 batch.launch(

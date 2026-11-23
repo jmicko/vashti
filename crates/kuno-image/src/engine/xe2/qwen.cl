@@ -278,8 +278,8 @@ SG WG(256) kernel void q_merge(global const float* o, global const float* w, glo
 #define GROUPS 48u
 #define KEPT 28u
 #define SPILLED (GROUPS - KEPT)
-// ---- The feed-forward activation (from the gated product, `[token][12288]` f32) quantized ----
-SG WG(256) kernel void q_hidden(global const float4* h, global float* s, global uint4* q,
+// ---- The feed-forward activation (from the gated product, `[token][12288]` bf16) quantized ---
+SG WG(256) kernel void q_hidden(global const ushort4* h, global float* s, global uint4* q,
                                uint tokens) {
     // The whole rotated row stays in local memory (48 KB). Each sub-group transposes its
     // group in the group's own slots before they hold the result, so no separate tile.
@@ -294,7 +294,9 @@ SG WG(256) kernel void q_hidden(global const float4* h, global float* s, global 
         uint group = r * 16 + sg;
         for (uint j = 0; j < 4; j++) {
             uint c = group * 64 + lane * 4 + j;
-            float4 part = live ? h[token * HIDDEN4 + c] : (float4)(0.0f);
+            ushort4 b = live ? h[token * HIDDEN4 + c] : (ushort4)(0);
+            float4 part = (float4)(as_float((uint)b.x << 16), as_float((uint)b.y << 16),
+                                   as_float((uint)b.z << 16), as_float((uint)b.w << 16));
             v[j * 4] = part.x * 0.0625f;
             v[j * 4 + 1] = part.y * 0.0625f;
             v[j * 4 + 2] = part.z * 0.0625f;
