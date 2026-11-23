@@ -1,7 +1,7 @@
 // Text encoder feed-forward activation from the INT8 gate/up product, one vec4 per invocation:
-//   g[token][gate 25600, up 25600] (int32 sums), each value = sum * activation scale * weight scale
+//   g[token][gate inner, up inner] (int32 sums), each value = sum * activation scale * weight scale
 //   out[token][c] = silu(gate) * up
-// Dispatch x = 25600 / 4 / 64, y = padded tokens; padded tokens are zeros.
+// Dispatch x = inner / 4 / 64, y = padded tokens; padded tokens are zeros.
 #version 460
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0) readonly buffer Sums { ivec4 g[]; };
@@ -9,20 +9,19 @@ layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
 layout(set = 0, binding = 2) readonly buffer Weights { vec4 ws[]; };
 layout(set = 0, binding = 3) writeonly buffer Out { vec4 o[]; };
 // `scale_first` is in values and a multiple of 4.
-layout(push_constant) uniform Constants { uint tokens; uint scale_first; } p;
-const uint INNER4 = 6400;
+layout(push_constant) uniform Constants { uint tokens; uint scale_first; uint inner4; } p;
 
 void main() {
     uint c = gl_GlobalInvocationID.x;
     uint token = gl_GlobalInvocationID.y;
-    if (c >= INNER4) return;
+    if (c >= p.inner4) return;
     if (token >= p.tokens) {
-        o[token * INNER4 + c] = vec4(0.0);
+        o[token * p.inner4 + c] = vec4(0.0);
         return;
     }
-    uint at = token * 2 * INNER4 + c;
+    uint at = token * 2 * p.inner4 + c;
     uint w = p.scale_first >> 2;
     vec4 gate = vec4(g[at]) * as[token] * ws[w + c];
-    vec4 up = vec4(g[at + INNER4]) * as[token] * ws[w + INNER4 + c];
-    o[token * INNER4 + c] = gate / (1.0 + exp(-gate)) * up;
+    vec4 up = vec4(g[at + p.inner4]) * as[token] * ws[w + p.inner4 + c];
+    o[token * p.inner4 + c] = gate / (1.0 + exp(-gate)) * up;
 }

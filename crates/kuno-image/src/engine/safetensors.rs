@@ -86,6 +86,63 @@ impl Safetensors {
         self.metadata.get(key).map(String::as_str)
     }
     /// Reads rows `first..first + count` of a BF16 matrix `[rows][width]` as f32 (exact).
+    /// A tensor's shape, if the file has it.
+    pub fn shape(&self, name: &str) -> Option<&[usize]> {
+        self.entries.get(name).map(|e| e.shape.as_slice())
+    }
+    /// One row of a 2-D tensor's raw bytes, checking kind, shape and row.
+    fn row_bytes(
+        &self,
+        name: &str,
+        kind: Kind,
+        size: usize,
+        shape: [usize; 2],
+        row: usize,
+    ) -> Result<Vec<u8>, &'static str> {
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        let [rows, width] = shape;
+        if entry.kind != kind
+            || entry.shape != shape
+            || entry.end - entry.begin != (rows * width * size) as u64
+            || row >= rows
+        {
+            return Err("model_tensor_invalid");
+        }
+        let mut bytes = vec![0u8; width * size];
+        self.file
+            .read_exact_at(
+                &mut bytes,
+                self.data + entry.begin + (row * width * size) as u64,
+            )
+            .map_err(|_| "model_file_invalid")?;
+        Ok(bytes)
+    }
+    /// One row of a 2-D INT8 tensor.
+    pub fn i8_row(
+        &self,
+        name: &str,
+        shape: [usize; 2],
+        row: usize,
+    ) -> Result<Vec<i8>, &'static str> {
+        Ok(self
+            .row_bytes(name, Kind::I8, 1, shape, row)?
+            .into_iter()
+            .map(|b| b as i8)
+            .collect())
+    }
+    /// One row of a 2-D F32 tensor.
+    pub fn f32_row(
+        &self,
+        name: &str,
+        shape: [usize; 2],
+        row: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        Ok(self
+            .row_bytes(name, Kind::F32, 4, shape, row)?
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect())
+    }
     pub fn bf16_rows(
         &self,
         name: &str,

@@ -450,7 +450,12 @@ fn text_encoder(
     }
     *kept = None;
     let gpu = gpu::Gpu::open(gpu::Select::Pci(pci.to_owned()))?;
-    let encoder = std::sync::Arc::new(GpuTextEncoder::new(&gpu, TextEncoder::open(model)?)?);
+    let file = TextEncoder::open(model)?;
+    // The video pipeline's vision tower and hooks assume MiniMax H3's encoder.
+    if file.config != crate::engine::text_encoder::Config::MINIMAX_H3 {
+        return Err("model_file_invalid");
+    }
+    let encoder = std::sync::Arc::new(GpuTextEncoder::new(&gpu, file)?);
     *kept = Some((model.to_owned(), encoder.clone()));
     Ok(encoder)
 }
@@ -610,7 +615,8 @@ extern "C" fn encode_vision(
 /// Runs the text encoder's language model with the Rust GPU encoder. Returning false hands
 /// the prompt back to the C++ engine.
 extern "C" fn encode_text(text: *const TextInput, hidden: *mut f32, data: *mut c_void) -> bool {
-    use crate::engine::text_encoder::{Image, Prompt, WIDTH};
+    use crate::engine::text_encoder::{Config, Image, Prompt};
+    const WIDTH: usize = Config::MINIMAX_H3.width;
     // SAFETY: as receive_video_frame; the shim passes a live prompt whose pointers hold the
     // counts it states, and `hidden` has `count * width` values.
     let (out, text) = unsafe { (&mut *(data as *mut VideoOutput), &*text) };
@@ -666,7 +672,7 @@ extern "C" fn encode_text(text: *const TextInput, hidden: *mut f32, data: *mut c
             });
         }
         let prompt = Prompt { ids, images: list };
-        prompt.check()?;
+        prompt.check(&Config::MINIMAX_H3)?;
         let started = std::time::Instant::now();
         let encoder = text_encoder(&out.pci, &out.text_model)?;
         let loaded = started.elapsed();

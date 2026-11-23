@@ -6,6 +6,7 @@ pub mod dit;
 pub mod dit_gpu;
 pub mod encoder_gpu;
 pub mod gpu;
+pub mod prompt;
 pub mod qwen_dit;
 pub mod qwen_gpu;
 pub mod rng;

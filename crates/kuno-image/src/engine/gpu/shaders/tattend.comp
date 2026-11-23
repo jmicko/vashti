@@ -1,8 +1,8 @@
-// Text encoder causal attention with grouped keys and values (64 query heads, 8 key/value
-// heads), f32 with an online softmax:
-//   out[t][h * 128 + c] = sum_{s <= t} softmax_s(q[h][t] . k[h / 8][s] / sqrt(128)) v[h / 8][s][c]
+// Text encoder causal attention with grouped keys and values (`heads` query heads sharing
+// each of the key/value heads in groups of `group`), f32 with an online softmax:
+//   out[t][h * 128 + c] = sum_{s <= t} softmax_s(q[h][t] . k[h / group][s] / sqrt(128)) v[h / group][s][c]
 // One subgroup of 16 lanes per query and head; a lane owns 8 neighbouring channels.
-// Dispatch x = padded tokens / 4, y = 64 heads. Tokens from `tokens` on are zeros.
+// Dispatch x = padded tokens / 4, y = query heads. Tokens from `tokens` on are zeros.
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
@@ -12,14 +12,14 @@ layout(set = 0, binding = 0) readonly buffer Queries { vec4 q[]; };
 layout(set = 0, binding = 1) readonly buffer Keys { vec4 k[]; };
 layout(set = 0, binding = 2) readonly buffer Values { vec4 v[]; };
 layout(set = 0, binding = 3) writeonly buffer Out { vec4 o[]; };
-layout(push_constant) uniform Constants { uint tokens; uint padded; } p;
+layout(push_constant) uniform Constants { uint tokens; uint padded; uint heads; uint group; } p;
 
 void main() {
     uint token = gl_WorkGroupID.x * 4 + gl_SubgroupID;
     uint head = gl_WorkGroupID.y;
     uint lane = gl_SubgroupInvocationID;
-    uint group = head >> 3;
-    uint out_at = token * 2048 + head * 32 + lane * 2;
+    uint group = head / p.group;
+    uint out_at = token * (p.heads * 32) + head * 32 + lane * 2;
     if (token >= p.tokens) {
         if (token < p.padded) {
             o[out_at] = vec4(0.0);

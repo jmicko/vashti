@@ -374,7 +374,7 @@ pub(super) fn generate(
             })
             .collect();
         let prompt = Prompt { ids: &ids, images };
-        prompt.check()?;
+        prompt.check(&crate::engine::text_encoder::Config::MINIMAX_H3)?;
         let started = std::time::Instant::now();
         let encoder = text_encoder(&out.pci, &out.text_model)?;
         let loaded = started.elapsed();

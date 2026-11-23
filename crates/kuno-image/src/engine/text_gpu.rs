@@ -1,6 +1,6 @@
-//! MiniMax H3 text encoder on the GPU (Vulkan), with its weights streamed.
+//! Qwen3-VL text encoders on the GPU (Vulkan), with their weights streamed.
 //!
-//! The 50 layers hold 24.4 GB of INT8 weights, more than fits beside the DiT, and a prompt
+//! MiniMax H3's 50 layers hold 24.4 GB of INT8 weights, more than fits beside the DiT, and a prompt
 //! is short: computing a layer takes about 6 ms where copying its 488 MB over the bus takes
 //! about 44. So the weights stay in host memory (read once) and each layer is copied into a
 //! single device window and computed; the device holds one layer, the prompt's activations
@@ -17,33 +17,81 @@ use rayon::prelude::*;
 use super::{
     dit_gpu::{Call, run},
     gpu::{Buffer, Gpu, Kernel, Staged, bytes_of, shaders},
-    text_encoder::{
-        HEAD, HEADS, INNER, KV_HEADS, LAYERS, PAIRS, Prompt, TextEncoder, WIDTH, positions, rotary,
-    },
+    text_encoder::{Config, HEAD, PAIRS, Prompt, TextEncoder, positions, rotary},
 };
 
-/// Rows of the layer's products as they sit in the window: queries, keys and values; the
-/// attention output; gate and up; down.
-const QKV_ROWS: usize = (HEADS + 2 * KV_HEADS) * HEAD;
-const OUT_COLUMNS: usize = HEADS * HEAD;
-const GATE_ROWS: usize = 2 * INNER;
-/// Byte offsets of the four products in the window.
-const QKV_AT: usize = 0;
-const OUT_AT: usize = QKV_AT + QKV_ROWS * WIDTH;
-const GATE_AT: usize = OUT_AT + WIDTH * OUT_COLUMNS;
-const DOWN_AT: usize = GATE_AT + GATE_ROWS * WIDTH;
-const LAYER_BYTES: usize = DOWN_AT + WIDTH * INNER;
-/// Value offsets in one layer's block of `vectors`: weight scales of the four products, then
-/// the two block norms and the query and key norms.
-const SCALE_QKV: usize = 0;
-const SCALE_OUT: usize = SCALE_QKV + QKV_ROWS;
-const SCALE_GATE: usize = SCALE_OUT + WIDTH;
-const SCALE_DOWN: usize = SCALE_GATE + GATE_ROWS;
-const NORM1: usize = SCALE_DOWN + WIDTH;
-const NORM2: usize = NORM1 + WIDTH;
-const QUERY_NORM: usize = NORM2 + WIDTH;
-const KEY_NORM: usize = QUERY_NORM + HEAD;
-const VECTORS: usize = KEY_NORM + HEAD;
+/// A model's layer layout.
+#[derive(Clone, Copy)]
+struct Sizes {
+    width: usize,
+    layers: usize,
+    heads: usize,
+    kv_heads: usize,
+    inner: usize,
+    /// Rows of the layer's products as they sit in the window: queries, keys and values;
+    /// the attention output; gate and up; down.
+    qkv_rows: usize,
+    out_columns: usize,
+    gate_rows: usize,
+    /// Byte offsets of the four products in the window.
+    qkv_at: usize,
+    out_at: usize,
+    gate_at: usize,
+    down_at: usize,
+    layer_bytes: usize,
+    /// Value offsets in one layer's block of `vectors`: weight scales of the four products,
+    /// then the two block norms and the query and key norms.
+    scale_qkv: usize,
+    scale_out: usize,
+    scale_gate: usize,
+    scale_down: usize,
+    norm1: usize,
+    norm2: usize,
+    query_norm: usize,
+    key_norm: usize,
+    vectors: usize,
+}
+impl Sizes {
+    fn new(c: Config) -> Self {
+        let qkv_rows = (c.heads + 2 * c.kv_heads) * HEAD;
+        let out_columns = c.heads * HEAD;
+        let gate_rows = 2 * c.inner;
+        let out_at = qkv_rows * c.width;
+        let gate_at = out_at + c.width * out_columns;
+        let down_at = gate_at + gate_rows * c.width;
+        let scale_out = qkv_rows;
+        let scale_gate = scale_out + c.width;
+        let scale_down = scale_gate + gate_rows;
+        let norm1 = scale_down + c.width;
+        let norm2 = norm1 + c.width;
+        let query_norm = norm2 + c.width;
+        let key_norm = query_norm + HEAD;
+        Self {
+            width: c.width,
+            layers: c.layers,
+            heads: c.heads,
+            kv_heads: c.kv_heads,
+            inner: c.inner,
+            qkv_rows,
+            out_columns,
+            gate_rows,
+            qkv_at: 0,
+            out_at,
+            gate_at,
+            down_at,
+            layer_bytes: down_at + c.width * c.inner,
+            scale_qkv: 0,
+            scale_out,
+            scale_gate,
+            scale_down,
+            norm1,
+            norm2,
+            query_norm,
+            key_norm,
+            vectors: key_norm + HEAD,
+        }
+    }
+}
 /// Tokens are padded to the integer product's tile.
 const PAD: usize = 128;
 /// Weight rows per dispatch of the integer product.
@@ -75,15 +123,16 @@ struct Work {
     key: Buffer,
     value: Buffer,
     turns: Buffer,
-    /// Every image's deep-stack rows, `[layer][image rows][WIDTH]`.
+    /// Every image's deep-stack rows, `[layer][image rows][width]`.
     deepstack: Buffer,
 }
 
 pub struct GpuTextEncoder {
     gpu: Gpu,
     encoder: TextEncoder,
+    sizes: Sizes,
     kernels: Kernels,
-    /// Every layer's scales and norm weights, `[LAYERS][VECTORS]`.
+    /// Every layer's scales and norm weights, `[layers][vectors]`.
     vectors: Buffer,
     window: Buffer,
     /// Every layer's matrices in the window's layout.
@@ -95,17 +144,18 @@ impl GpuTextEncoder {
             norm: gpu.kernel(shaders::TNORM, 3, 3, Some(16))?,
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, Some(16))?,
             gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
-            qkv: gpu.kernel(shaders::TQKV, 8, 5, Some(16))?,
-            attend: gpu.kernel(shaders::TATTEND, 4, 2, Some(16))?,
+            qkv: gpu.kernel(shaders::TQKV, 8, 7, Some(16))?,
+            attend: gpu.kernel(shaders::TATTEND, 4, 4, Some(16))?,
             resid: gpu.kernel(shaders::TRESID, 4, 3, None)?,
-            gate: gpu.kernel(shaders::TGATE, 4, 2, None)?,
+            gate: gpu.kernel(shaders::TGATE, 4, 3, None)?,
             add: gpu.kernel(shaders::TADD, 2, 3, None)?,
         };
-        let mut vectors = vec![0f32; LAYERS * VECTORS];
+        let sizes = Sizes::new(encoder.config);
+        let mut vectors = vec![0f32; sizes.layers * sizes.vectors];
         vectors
-            .par_chunks_exact_mut(VECTORS)
+            .par_chunks_exact_mut(sizes.vectors)
             .enumerate()
-            .try_for_each(|(layer, to)| layer_vectors(&encoder, layer, to))?;
+            .try_for_each(|(layer, to)| layer_vectors(&encoder, &sizes, layer, to))?;
         let vectors = gpu.filled(bytes_of(&vectors).len() as u64, |to| {
             to.copy_from_slice(bytes_of(&vectors));
             Ok(())
@@ -115,13 +165,18 @@ impl GpuTextEncoder {
             .build()
             .map_err(|_| "text_failed")?;
         let layers = readers.install(|| {
-            (0..LAYERS)
+            (0..sizes.layers)
                 .into_par_iter()
-                .map(|layer| gpu.staged(LAYER_BYTES as u64, |to| read_layer(&encoder, layer, to)))
+                .map(|layer| {
+                    gpu.staged(sizes.layer_bytes as u64, |to| {
+                        read_layer(&encoder, &sizes, layer, to)
+                    })
+                })
                 .collect::<Result<Vec<_>, _>>()
         })?;
         Ok(Self {
-            window: gpu.buffer(LAYER_BYTES as u64)?,
+            window: gpu.buffer(sizes.layer_bytes as u64)?,
+            sizes,
             layers,
             vectors,
             kernels,
@@ -129,8 +184,13 @@ impl GpuTextEncoder {
             gpu: gpu.clone(),
         })
     }
+    /// The encoder's sizes.
+    pub fn config(&self) -> Config {
+        self.encoder.config
+    }
     fn work(&self, prompt: &Prompt) -> Result<Work, &'static str> {
         let gpu = &self.gpu;
+        let s = &self.sizes;
         let tokens = prompt.ids.len();
         let padded = tokens.next_multiple_of(PAD);
         let f32s = |count: usize| gpu.buffer(count as u64 * 4);
@@ -144,25 +204,26 @@ impl GpuTextEncoder {
         Ok(Work {
             tokens,
             padded,
-            x: f32s(padded * WIDTH)?,
-            h: f32s(padded * INNER)?,
-            bytes: gpu.buffer((padded * INNER) as u64)?,
+            x: f32s(padded * s.width)?,
+            h: f32s(padded * s.inner.max(s.out_columns))?,
+            bytes: gpu.buffer((padded * s.inner.max(s.out_columns)) as u64)?,
             scales: f32s(padded)?,
-            sums: f32s(padded * GATE_ROWS)?,
-            query: f32s(HEADS * padded * HEAD)?,
-            key: f32s(KV_HEADS * padded * HEAD)?,
-            value: f32s(KV_HEADS * padded * HEAD)?,
+            sums: f32s(padded * s.gate_rows.max(s.qkv_rows))?,
+            query: f32s(s.heads * padded * HEAD)?,
+            key: f32s(s.kv_heads * padded * HEAD)?,
+            value: f32s(s.kv_heads * padded * HEAD)?,
             turns: f32s(padded * PAIRS * 2)?,
-            deepstack: f32s((layers * rows * WIDTH).max(4))?,
+            deepstack: f32s((layers * rows * s.width).max(4))?,
         })
     }
-    /// Hidden states after the last layer, `[tokens][WIDTH]`.
+    /// Hidden states after the last layer, `[tokens][width]`.
     pub fn forward(&self, prompt: &Prompt) -> Result<Vec<f32>, &'static str> {
-        prompt.check()?;
+        prompt.check(&self.encoder.config)?;
         let gpu = &self.gpu;
+        let width = self.sizes.width;
         let work = self.work(prompt)?;
         let mut x = self.encoder.embed(prompt)?;
-        x.resize(work.padded * WIDTH, 0.0);
+        x.resize(work.padded * width, 0.0);
         gpu.upload(&work.x, 0, bytes_of(&x))?;
         x.iter_mut().for_each(|v| *v = 0.0);
         let mut turns = rotary(&positions(prompt));
@@ -180,7 +241,7 @@ impl GpuTextEncoder {
         for layer in 0..layers {
             for image in &prompt.images {
                 if let Some(rows) = image.deepstack.get(layer) {
-                    adds.push((layer, image.index, extra.len() / WIDTH, image.size));
+                    adds.push((layer, image.index, extra.len() / width, image.size));
                     extra.extend_from_slice(rows);
                 }
             }
@@ -190,7 +251,7 @@ impl GpuTextEncoder {
             extra.iter_mut().for_each(|v| *v = 0.0);
         }
 
-        for layer in 0..LAYERS {
+        for layer in 0..self.sizes.layers {
             gpu.copy_staged(&self.layers[layer], &self.window, 0)?;
             let mut calls = self.layer(&work, layer);
             for &(at, index, from, size) in &adds {
@@ -198,27 +259,29 @@ impl GpuTextEncoder {
                     calls.push(Call::Shader {
                         kernel: &self.kernels.add,
                         buffers: vec![&work.x, &work.deepstack],
-                        constants: vec![WIDTH as u32, index as u32, from as u32],
-                        groups: [(WIDTH / 4 / 64) as u32, size as u32, 1],
+                        constants: vec![width as u32, index as u32, from as u32],
+                        groups: [(width / 4 / 64) as u32, size as u32, 1],
                     });
                 }
             }
             run(gpu, &calls)?;
         }
-        let mut out = vec![0f32; work.tokens * WIDTH];
-        let back = gpu.readback((work.tokens * WIDTH * 4) as u64)?;
+        let mut out = vec![0f32; work.tokens * width];
+        let back = gpu.readback((work.tokens * width * 4) as u64)?;
         gpu.read_floats(&work.x, 0, &back, &mut out)?;
         Ok(out)
     }
     /// The dispatches of one layer, weights in the window.
     fn layer<'a>(&'a self, w: &'a Work, layer: usize) -> Vec<Call<'a>> {
         let k = &self.kernels;
+        let s = &self.sizes;
+        let width = s.width;
         let (n, np) = (w.tokens as u32, w.padded as u32);
-        let first = layer * VECTORS;
+        let first = layer * s.vectors;
         let norm = |weight: usize| Call::Shader {
             kernel: &k.norm,
             buffers: vec![&w.x, &self.vectors, &w.h],
-            constants: vec![n, WIDTH as u32, (first + weight) as u32],
+            constants: vec![n, width as u32, (first + weight) as u32],
             groups: [np, 1, 1],
         };
         let quantize = |width: usize| Call::Shader {
@@ -250,11 +313,11 @@ impl GpuTextEncoder {
         let residual = |scale: usize| Call::Shader {
             kernel: &k.resid,
             buffers: vec![&w.x, &w.sums, &w.scales, &self.vectors],
-            constants: vec![n, WIDTH as u32, (first + scale) as u32],
-            groups: [(WIDTH / 4 / 64) as u32, n, 1],
+            constants: vec![n, width as u32, (first + scale) as u32],
+            groups: [(width / 4 / 64) as u32, n, 1],
         };
-        let mut calls = vec![norm(NORM1), quantize(WIDTH)];
-        product(&mut calls, QKV_ROWS, WIDTH, QKV_AT);
+        let mut calls = vec![norm(s.norm1), quantize(width)];
+        product(&mut calls, s.qkv_rows, width, s.qkv_at);
         calls.push(Call::Shader {
             kernel: &k.qkv,
             buffers: vec![
@@ -270,50 +333,57 @@ impl GpuTextEncoder {
             constants: vec![
                 n,
                 np,
-                (first + SCALE_QKV) as u32,
-                (first + QUERY_NORM) as u32,
-                (first + KEY_NORM) as u32,
+                (first + s.scale_qkv) as u32,
+                (first + s.query_norm) as u32,
+                (first + s.key_norm) as u32,
+                s.heads as u32,
+                s.kv_heads as u32,
             ],
-            groups: [(HEADS + 2 * KV_HEADS) as u32, np, 1],
+            groups: [(s.heads + 2 * s.kv_heads) as u32, np, 1],
         });
         calls.push(Call::Shader {
             kernel: &k.attend,
             buffers: vec![&w.query, &w.key, &w.value, &w.h],
-            constants: vec![n, np],
-            groups: [np / 4, HEADS as u32, 1],
+            constants: vec![n, np, s.heads as u32, (s.heads / s.kv_heads) as u32],
+            groups: [np / 4, s.heads as u32, 1],
         });
-        calls.push(quantize(OUT_COLUMNS));
-        product(&mut calls, WIDTH, OUT_COLUMNS, OUT_AT);
-        calls.push(residual(SCALE_OUT));
-        calls.push(norm(NORM2));
-        calls.push(quantize(WIDTH));
-        product(&mut calls, GATE_ROWS, WIDTH, GATE_AT);
+        calls.push(quantize(s.out_columns));
+        product(&mut calls, width, s.out_columns, s.out_at);
+        calls.push(residual(s.scale_out));
+        calls.push(norm(s.norm2));
+        calls.push(quantize(width));
+        product(&mut calls, s.gate_rows, width, s.gate_at);
         calls.push(Call::Shader {
             kernel: &k.gate,
             buffers: vec![&w.sums, &w.scales, &self.vectors, &w.h],
-            constants: vec![n, (first + SCALE_GATE) as u32],
-            groups: [(INNER / 4 / 64) as u32, np, 1],
+            constants: vec![n, (first + s.scale_gate) as u32, (s.inner / 4) as u32],
+            groups: [(s.inner / 4).div_ceil(64) as u32, np, 1],
         });
-        calls.push(quantize(INNER));
-        product(&mut calls, WIDTH, INNER, DOWN_AT);
-        calls.push(residual(SCALE_DOWN));
+        calls.push(quantize(s.inner));
+        product(&mut calls, width, s.inner, s.down_at);
+        calls.push(residual(s.scale_down));
         calls
     }
 }
 
 /// Reads one layer's matrices into `to` in the window's layout.
-fn read_layer(encoder: &TextEncoder, layer: usize, to: &mut [u8]) -> Result<(), &'static str> {
+fn read_layer(
+    encoder: &TextEncoder,
+    s: &Sizes,
+    layer: usize,
+    to: &mut [u8],
+) -> Result<(), &'static str> {
     let base = format!("model.layers.{layer}");
     let parts: [(&str, usize, usize); 7] = [
-        ("self_attn.q_proj", HEADS * HEAD, WIDTH),
-        ("self_attn.k_proj", KV_HEADS * HEAD, WIDTH),
-        ("self_attn.v_proj", KV_HEADS * HEAD, WIDTH),
-        ("self_attn.o_proj", WIDTH, OUT_COLUMNS),
-        ("mlp.gate_proj", INNER, WIDTH),
-        ("mlp.up_proj", INNER, WIDTH),
-        ("mlp.down_proj", WIDTH, INNER),
+        ("self_attn.q_proj", s.heads * HEAD, s.width),
+        ("self_attn.k_proj", s.kv_heads * HEAD, s.width),
+        ("self_attn.v_proj", s.kv_heads * HEAD, s.width),
+        ("self_attn.o_proj", s.width, s.out_columns),
+        ("mlp.gate_proj", s.inner, s.width),
+        ("mlp.up_proj", s.inner, s.width),
+        ("mlp.down_proj", s.width, s.inner),
     ];
-    let mut rest = &mut to[..LAYER_BYTES];
+    let mut rest = &mut to[..s.layer_bytes];
     for (name, rows, columns) in parts {
         let (matrix, tail) = rest.split_at_mut(rows * columns);
         encoder
@@ -324,31 +394,36 @@ fn read_layer(encoder: &TextEncoder, layer: usize, to: &mut [u8]) -> Result<(), 
     Ok(())
 }
 
-/// One layer's weight scales and norm weights in the `VECTORS` layout.
-fn layer_vectors(encoder: &TextEncoder, layer: usize, to: &mut [f32]) -> Result<(), &'static str> {
+/// One layer's weight scales and norm weights in the `Sizes::vectors` layout.
+fn layer_vectors(
+    encoder: &TextEncoder,
+    s: &Sizes,
+    layer: usize,
+    to: &mut [f32],
+) -> Result<(), &'static str> {
     let file = &encoder.file;
     let base = format!("model.layers.{layer}");
     let scale =
         |name: &str, rows: usize| file.f32(&format!("{base}.{name}.weight_scale"), &[rows, 1]);
     let norm = |name: &str, width: usize| file.floats(&format!("{base}.{name}.weight"), &[width]);
     let parts = [
-        (SCALE_QKV, scale("self_attn.q_proj", HEADS * HEAD)?),
+        (s.scale_qkv, scale("self_attn.q_proj", s.heads * HEAD)?),
         (
-            SCALE_QKV + HEADS * HEAD,
-            scale("self_attn.k_proj", KV_HEADS * HEAD)?,
+            s.scale_qkv + s.heads * HEAD,
+            scale("self_attn.k_proj", s.kv_heads * HEAD)?,
         ),
         (
-            SCALE_QKV + (HEADS + KV_HEADS) * HEAD,
-            scale("self_attn.v_proj", KV_HEADS * HEAD)?,
+            s.scale_qkv + (s.heads + s.kv_heads) * HEAD,
+            scale("self_attn.v_proj", s.kv_heads * HEAD)?,
         ),
-        (SCALE_OUT, scale("self_attn.o_proj", WIDTH)?),
-        (SCALE_GATE, scale("mlp.gate_proj", INNER)?),
-        (SCALE_GATE + INNER, scale("mlp.up_proj", INNER)?),
-        (SCALE_DOWN, scale("mlp.down_proj", WIDTH)?),
-        (NORM1, norm("input_layernorm", WIDTH)?),
-        (NORM2, norm("post_attention_layernorm", WIDTH)?),
-        (QUERY_NORM, norm("self_attn.q_norm", HEAD)?),
-        (KEY_NORM, norm("self_attn.k_norm", HEAD)?),
+        (s.scale_out, scale("self_attn.o_proj", s.width)?),
+        (s.scale_gate, scale("mlp.gate_proj", s.inner)?),
+        (s.scale_gate + s.inner, scale("mlp.up_proj", s.inner)?),
+        (s.scale_down, scale("mlp.down_proj", s.width)?),
+        (s.norm1, norm("input_layernorm", s.width)?),
+        (s.norm2, norm("post_attention_layernorm", s.width)?),
+        (s.query_norm, norm("self_attn.q_norm", HEAD)?),
+        (s.key_norm, norm("self_attn.k_norm", HEAD)?),
     ];
     for (at, values) in parts {
         to[at..at + values.len()].copy_from_slice(&values);
@@ -390,7 +465,7 @@ mod tests {
             println!(
                 "layer {layer}: copy {:.1} ms ({:.1} GB/s), compute {:.1} ms",
                 copy.as_secs_f64() * 1e3,
-                LAYER_BYTES as f64 / copy.as_secs_f64() / 1e9,
+                encoder.sizes.layer_bytes as f64 / copy.as_secs_f64() / 1e9,
                 compute.as_secs_f64() * 1e3
             );
         }
@@ -451,7 +526,8 @@ mod tests {
             snr(&got, &want)
         );
         for token in [0, 5, 200, 449, 468] {
-            let row = token * WIDTH..(token + 1) * WIDTH;
+            let width = encoder.sizes.width;
+            let row = token * width..(token + 1) * width;
             println!(
                 "token {token}: {:.1} dB",
                 snr(&got[row.clone()], &want[row])
