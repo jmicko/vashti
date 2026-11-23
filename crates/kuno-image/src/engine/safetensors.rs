@@ -1,4 +1,5 @@
 //! Minimal safetensors reader: header index plus positioned reads of single tensors.
+use rayon::prelude::*;
 use std::{collections::HashMap, fs::File, os::unix::fs::FileExt, path::Path};
 
 #[derive(PartialEq)]
@@ -347,7 +348,7 @@ impl Safetensors {
                     .map_err(|_| "model_file_invalid")?;
                 // BF16 is the upper half of the f32 bit pattern.
                 Ok(bytes
-                    .chunks_exact(2)
+                    .par_chunks_exact(2)
                     .map(|b| f32::from_bits(u32::from(u16::from_le_bytes([b[0], b[1]])) << 16))
                     .collect())
             }

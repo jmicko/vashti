@@ -14,6 +14,7 @@ use super::{
     },
     safetensors::narrow,
 };
+use rayon::prelude::*;
 
 /// Pixel rows of one product are padded to the matrix kernel's 256.
 const ROWS: usize = 256;
@@ -57,15 +58,17 @@ impl Placer<'_> {
         let rows = padded(outputs, TOKENS);
         let weight_first = self.halves.len();
         self.halves.resize(weight_first + rows * columns, 0);
-        let matrix = &mut self.halves[weight_first..];
-        for o in 0..outputs {
-            for i in 0..inputs {
-                for t in 0..taps {
-                    matrix[o * columns + t * inputs + i] =
-                        narrow(weight[(o * inputs + i) * taps + t]);
+        self.halves[weight_first..]
+            .par_chunks_mut(columns)
+            .take(outputs)
+            .enumerate()
+            .for_each(|(o, row)| {
+                for i in 0..inputs {
+                    for t in 0..taps {
+                        row[t * inputs + i] = narrow(weight[(o * inputs + i) * taps + t]);
+                    }
                 }
-            }
-        }
+            });
         let bias_first = self.vectors.len();
         self.vectors
             .extend(file.floats(&format!("{name}.bias"), &[outputs])?);

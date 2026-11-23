@@ -440,6 +440,76 @@ mod tests {
         assert!((t[3] - 354.66122).abs() < 1e-3 && t[4] == 0.0);
     }
 
+    /// `KUNO_QWEN_MODELS=<dir>`: how long each part of opening the models takes, then a
+    /// first and a second 1184 x 1776 request of two steps (the first pays for building the
+    /// kernels for its size).
+    #[test]
+    #[ignore]
+    fn open_costs() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_MODELS").unwrap());
+        let clock = std::time::Instant::now();
+        let lap = |what: &str, since: &mut f64| {
+            let now = clock.elapsed().as_secs_f64();
+            println!("{what}: {:.2} s", now - *since);
+            *since = now;
+        };
+        let mut at = 0.0;
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        lap("gpu", &mut at);
+        let encoder = dir.join("qwen3vl_8b_int8_convrot.safetensors");
+        let file = TextEncoder::open(&encoder).unwrap();
+        let tower = Vision::open(&encoder).unwrap();
+        lap("text encoder and vision files", &mut at);
+        let tokenizer = Tokenizer::new().unwrap();
+        lap("tokenizer", &mut at);
+        let vision = GpuVision::new(&gpu, &tower).unwrap();
+        lap("vision tower", &mut at);
+        let encoder = GpuTextEncoder::new(&gpu, file).unwrap();
+        lap("text encoder", &mut at);
+        let dit = QwenGpu::load(
+            gpu.clone(),
+            &dir.join("qwen_image_2.1_int8_convrot.safetensors"),
+        )
+        .unwrap();
+        lap("dit", &mut at);
+        let vae = GpuVae::new(
+            &gpu,
+            &QwenVae::open(&dir.join("qwen_image_2.1_vae_bf16.safetensors")).unwrap(),
+        )
+        .unwrap();
+        lap("vae", &mut at);
+        let models = Models {
+            tokenizer,
+            vision,
+            encoder,
+            dit,
+            vae,
+        };
+        for run in 0..2 {
+            let request = Request {
+                prompt: "A lighthouse on a cliff at dusk",
+                negative: "",
+                width: 1184,
+                height: 1776,
+                steps: 2,
+                cfg: 1.0,
+                seed: 7,
+                references: &[],
+            };
+            let mut first = true;
+            models
+                .generate(&request, |_, _| {
+                    if first {
+                        lap(&format!("run {run}: to the first step's end"), &mut at);
+                        first = false;
+                    }
+                    true
+                })
+                .unwrap();
+            lap(&format!("run {run}: rest"), &mut at);
+        }
+    }
+
     /// `KUNO_QWEN_MODELS=<dir with the three files> KUNO_QWEN_REFERENCE=<engine's PNG>`:
     /// the fox prompt at 512 x 512, 6 steps, seed 7, against the engine's image of the same
     /// request; writes the Rust image beside the reference.

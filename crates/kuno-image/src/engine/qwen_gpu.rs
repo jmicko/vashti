@@ -523,8 +523,42 @@ impl QwenGpu {
     pub fn load(gpu: Gpu, path: &Path) -> Result<Self, &'static str> {
         let model = QwenDit::open(path)?;
         let kernels = Kernels::new(&gpu)?;
-        let layers = (0..model.layers)
-            .map(|layer| Layer::load(&gpu, &kernels, &model.file, layer))
+        // Three layers at a time, so one layer's copy to the device overlaps the next ones'
+        // reading and rearranging (each fills its staging memory on the rayon pool).
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let loaded: Vec<Vec<(usize, Result<Layer, &'static str>)>> = std::thread::scope(|scope| {
+            let loaders: Vec<_> = (0..3)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut done = Vec::new();
+                        loop {
+                            let layer = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if layer >= model.layers {
+                                return done;
+                            }
+                            let result = Layer::load(&gpu, &kernels, &model.file, layer);
+                            let failed = result.is_err();
+                            done.push((layer, result));
+                            if failed {
+                                next.store(model.layers, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    })
+                })
+                .collect();
+            loaders
+                .into_iter()
+                .map(|l| l.join().unwrap_or_default())
+                .collect()
+        });
+        let mut loaded: Vec<_> = loaded.into_iter().flatten().collect();
+        loaded.sort_by_key(|(layer, _)| *layer);
+        if loaded.len() != model.layers {
+            return Err("gpu_failed");
+        }
+        let layers = loaded
+            .into_iter()
+            .map(|(_, layer)| layer)
             .collect::<Result<Vec<_>, _>>()?;
         let small = Small::read(&model.file)?;
         let fast = &kernels.fast;
