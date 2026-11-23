@@ -506,7 +506,7 @@ pub(super) fn linear8(x: &[f32], inputs: usize, weight: &[i8], scale: &[f32]) ->
     out
 }
 /// A float linear layer; `bias` may be empty.
-fn linear(x: &[f32], inputs: usize, weight: &[f32], bias: &[f32]) -> Vec<f32> {
+pub(super) fn linear(x: &[f32], inputs: usize, weight: &[f32], bias: &[f32]) -> Vec<f32> {
     let outputs = weight.len() / inputs;
     let rows = x.len() / inputs;
     assert!(x.len() == rows * inputs && weight.len() == outputs * inputs);

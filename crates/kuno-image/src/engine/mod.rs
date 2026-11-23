@@ -6,6 +6,7 @@ pub mod dit;
 pub mod dit_gpu;
 pub mod encoder_gpu;
 pub mod gpu;
+pub mod qwen_dit;
 pub mod rng;
 pub mod safetensors;
 pub mod text_encoder;
