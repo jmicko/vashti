@@ -10,6 +10,7 @@ pub mod prompt;
 pub mod qwen_dit;
 pub mod qwen_gpu;
 pub mod qwen_vae;
+pub mod qwen_vae_gpu;
 pub mod rng;
 pub mod safetensors;
 pub mod text_encoder;

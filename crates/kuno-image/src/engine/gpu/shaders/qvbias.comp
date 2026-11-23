@@ -1,0 +1,21 @@
+// Qwen Image 2.1 VAE: a convolution's product plus its bias, and with `add` a residual read
+// from `skip` (which may be `out` itself):
+//   out[c][q] = y[c][q] + bias[c] (+ skip[c][q]), for q < count (row stride `stride`).
+// Dispatch x = ceil(count / 256), y = channels.
+#version 460
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Y { float y[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { float v[]; };
+layout(set = 0, binding = 2) readonly buffer Skip { float r[]; };
+layout(set = 0, binding = 3) buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint count; uint stride; uint bias_first; uint add; } p;
+
+void main() {
+    uint q = gl_GlobalInvocationID.x;
+    uint c = gl_WorkGroupID.y;
+    if (q >= p.count) return;
+    uint i = c * p.stride + q;
+    float value = y[i] + v[p.bias_first + c];
+    o[i] = p.add != 0 ? r[i] + value : value;
+}

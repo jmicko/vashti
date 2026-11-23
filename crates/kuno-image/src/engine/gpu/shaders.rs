@@ -56,6 +56,13 @@ pub const QMASK: &[u8] = include_bytes!("shaders/qmask.spv");
 pub const QEMBED: &[u8] = include_bytes!("shaders/qembed.spv");
 pub const QFINAL: &[u8] = include_bytes!("shaders/qfinal.spv");
 
+pub const QVSOFT: &[u8] = include_bytes!("shaders/qvsoft.spv");
+pub const QVRMS: &[u8] = include_bytes!("shaders/qvrms.spv");
+pub const QVCOL: &[u8] = include_bytes!("shaders/qvcol.spv");
+pub const QVDUP: &[u8] = include_bytes!("shaders/qvdup.spv");
+pub const QVQKV: &[u8] = include_bytes!("shaders/qvqkv.spv");
+pub const QVBIAS: &[u8] = include_bytes!("shaders/qvbias.spv");
+
 #[cfg(test)]
 mod tests {
     use std::{path::Path, process::Command};

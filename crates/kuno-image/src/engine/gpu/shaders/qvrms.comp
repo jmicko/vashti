@@ -1,0 +1,19 @@
+// Qwen Image 2.1 VAE: each pixel's RMS scale over the channels of a channel-major map
+// x[c][q] (row stride `stride`): scale[q] = 1 / sqrt(mean_c x^2 + 1e-12).
+// Dispatch x = ceil(pixels / 256).
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { float x[]; };
+layout(set = 0, binding = 1) writeonly buffer Scale { float s[]; };
+layout(push_constant) uniform Constants { uint channels; uint pixels; uint stride; } p;
+
+void main() {
+    uint q = gl_GlobalInvocationID.x;
+    if (q >= p.pixels) return;
+    float sum = 0.0;
+    for (uint c = 0; c < p.channels; c++) {
+        float v = x[c * p.stride + q];
+        sum += v * v;
+    }
+    s[q] = 1.0 / sqrt(sum / float(p.channels) + 1e-12);
+}

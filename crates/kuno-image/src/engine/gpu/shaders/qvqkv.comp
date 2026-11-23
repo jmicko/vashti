@@ -1,0 +1,32 @@
+// Qwen Image 2.1 VAE attention operands from the channel-major query/key/value conv output
+// x[3 * 1152][stride] (f32): queries and keys as half-float rows [token][1152] (rows from
+// `tokens` up to `padded` are zeros), values channel-major [1152][padded] half floats (zeros
+// past `tokens`). One invocation per token and 4 channels: x = padded / 64, y = 288.
+#version 460
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer In { float x[]; };
+layout(set = 0, binding = 1) writeonly buffer Q { f16vec4 q[]; };
+layout(set = 0, binding = 2) writeonly buffer K { f16vec4 k[]; };
+layout(set = 0, binding = 3) writeonly buffer V { float16_t v[]; };
+layout(push_constant) uniform Constants { uint tokens; uint padded; uint stride; } p;
+
+void main() {
+    uint t = gl_GlobalInvocationID.x;
+    uint c4 = gl_GlobalInvocationID.y;
+    bool live = t < p.tokens;
+    vec4 qv = vec4(0.0), kv = vec4(0.0), vv = vec4(0.0);
+    if (live) {
+        for (uint e = 0; e < 4; e++) {
+            uint c = c4 * 4 + e;
+            qv[e] = x[c * p.stride + t];
+            kv[e] = x[(1152 + c) * p.stride + t];
+            vv[e] = x[(2304 + c) * p.stride + t];
+        }
+    }
+    q[t * 288 + c4] = f16vec4(qv);
+    k[t * 288 + c4] = f16vec4(kv);
+    for (uint e = 0; e < 4; e++) v[(c4 * 4 + e) * p.padded + t] = float16_t(vv[e]);
+}
