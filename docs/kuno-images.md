@@ -8,10 +8,15 @@ collection picker remains future work. This is an experimental beta.
 
 ## Attention and cache execution
 
-Requests may set `"attention": "fast"` for the Qwen 2.1 CUDA backend. The default
-is `"standard"`. Fast attention uses the native SageAttention implementation;
-it can change output pixels and is not supported for Qwen 2512 or Vulkan.
-Unsupported choices return `image_attention_unsupported`. The embedded
+Requests may set `"attention": "fast"` for Qwen 2.1 (generate and edit). The default
+is `"standard"`. On the CUDA backend fast attention uses the native SageAttention
+implementation; on the managed Intel runtime (worker ABI 5 and later) the Rust engine
+scores attention with int8 queries and keys, each token scaled on its own, while values
+stay half floats. Either way it can change output pixels. Each workflow's `attention`
+list in discovery names the modes the configured backend accepts; Qwen 2512, Vulkan
+and older managed runtimes offer only `"standard"`. Unsupported choices return
+`image_attention_unsupported`. On ABI 5 runtimes one worker serves both modes, so
+switching does not reload the models. The embedded
 CUDA/Vulkan path needs no Python engine or additional runtime installation.
 
 The [optional managed SYCL worker](kuno-managed-sycl.md) adds Qwen 2.1 execution

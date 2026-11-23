@@ -28,6 +28,21 @@
 //!
 //! Keys past the live count are never used; the KV buffer needs `SLACK` bytes after its
 //! last chunk because loads run one chunk ahead.
+//!
+//! With `Shape::int8` queries and keys are signed bytes (SageAttention-style: scores from an
+//! integer `dpas`, half as many key bytes to load), each with its own scale; values and
+//! mixing stay half floats. Streams keep their sizes and places:
+//!   Q   `[head][query tile]`: `[channel chunk 0..4][channel quad 0..8][query 0..16][4
+//!       bytes]`, then at `SCALES` the queries' scales `[query 0..16]` f32.
+//!   KV  `[head][key chunk]`: keys `[channel chunk 0..4][key 0..16][32 bytes]`, at `SCALES`
+//!       the keys' scales `[key 0..16]` f32, and the values at `VALUES` as before.
+//! A score is then `(integer product) * query scale * key scale`. Half the key bytes and
+//! half the query registers leave room for three more load buffers, so every value block is
+//! requested a phase before it is mixed. With loads no longer the limit, the arithmetic
+//! between products is what remains: conversions go four at a time, the largest exponent
+//! is kept as four running maxima (also in the half-float form: exact, so the same result),
+//! the weights come from the math pipe's `2^x` instead of the polynomial, and their sum is
+//! kept as four running sums.
 use super::{Ty::*, *};
 
 /// Queries per thread and keys per step.
@@ -42,10 +57,13 @@ pub const VALUES: usize = TILE * CHANNELS * 2;
 pub const OUT_BYTES: usize = TILE * CHANNELS * 4;
 pub const SUM_BYTES: usize = TILE * 4;
 pub const SLACK: usize = CHUNK_BYTES;
+/// Offset of the scales in an int8 query tile and in an int8 key chunk.
+pub const SCALES: usize = 2048;
 
 const LOAD_64X64: u32 = 0x0288_F780;
 const STORE_64X64: u32 = 0x0200_F784;
 const STORE_64X8: u32 = 0x0200_C784;
+const LOAD_64X8: u32 = 0x0218_C780;
 /// Weights may grow to 2^LIMIT before `ref` is raised (half floats end at 2^16).
 const LIMIT: f32 = 11.0;
 
@@ -70,6 +88,9 @@ pub struct Shape {
     /// Hardware threads per group (`Kernel::set_group([16 * group, 1, 1])`): consecutive query
     /// tiles of one head, which share an Xe core and so its cache.
     pub group: u32,
+    /// Queries and keys as signed bytes with scales (see the module notes). Not with
+    /// `narrow`.
+    pub int8: bool,
 }
 impl Shape {
     /// None when the offsets leave 32 bits.
@@ -86,6 +107,7 @@ impl Shape {
             bounded: false,
             narrow: false,
             group: 1,
+            int8: false,
         })
     }
     /// `queries` padded queries per head, attending to the same keys. None unless a
@@ -123,6 +145,17 @@ pub fn key_at(key: usize, channel: usize) -> usize {
 pub fn value_at(key: usize, channel: usize) -> usize {
     (key / TILE) * CHUNK_BYTES + VALUES + channel * 32 + (key % TILE) * 2
 }
+/// Byte offsets of int8 queries and keys inside one head's streams.
+pub fn query8_at(query: usize, channel: usize) -> usize {
+    (query / TILE) * TILE_BYTES
+        + (channel / 32) * 512
+        + (channel % 32 / 4) * 64
+        + (query % TILE) * 4
+        + channel % 4
+}
+pub fn key8_at(key: usize, channel: usize) -> usize {
+    (key / TILE) * CHUNK_BYTES + (channel / 32) * 512 + (key % TILE) * 32 + channel % 32
+}
 pub fn out_at(query: usize, channel: usize) -> usize {
     (query / TILE) * OUT_BYTES + channel * 64 + (query % TILE) * 4
 }
@@ -141,6 +174,15 @@ const ROUND: u32 = 12;
 const POWER: u32 = 13;
 const STEP: u32 = 14;
 const HEADER: u32 = 15;
+/// Running maxima of the exponents while they are computed (MAX, then registers that are
+/// free until the weights and the slow path).
+const PARTS: [u32; 4] = [MAX, ROUND, POWER, STEP];
+/// int8 only: running sums of the weights (STEP, then registers free once the maxima are
+/// used).
+const SUMS: [u32; 4] = [STEP, ROUND, POWER, MAX];
+/// int8 only: the chunk's key scales, and the queries' scales times `c`.
+const KS: u32 = 48;
+const COMB: u32 = 49;
 /// Queries, eight registers per channel chunk.
 fn q(j: u32) -> u32 {
     16 + j * 8
@@ -157,12 +199,14 @@ fn s(h: u32) -> u32 {
 const P: u32 = 224;
 /// Load buffers as (first register, scoreboard token). Three are buffers only; the weights'
 /// registers serve as a fourth while scores are computed, and the scores' registers as a
-/// fifth and sixth while values are mixed.
+/// fifth and sixth while values are mixed. int8 queries leave room for three more (6..8),
+/// which hold the next chunk's first values from the moment they are mixed.
 fn slot(i: u32) -> (u32, u16) {
     match i {
         0..=2 => (232 + i * 8, i as u16),
         3 => (P, 21),
-        _ => (s(i - 4), 18 + i as u16),
+        4 | 5 => (s(i - 4), 18 + i as u16),
+        _ => (50 + (i - 6) * 8, 20 + i as u16),
     }
 }
 /// Scratch while weights are computed: the third load buffer.
@@ -177,6 +221,7 @@ fn mix(b: u32) -> u16 {
     5 + b as u16
 }
 const LAST_MIX: u16 = 20;
+const KS_TOKEN: u16 = 25;
 // Lanes of INT: 0 counts steps, 1..3 are scratch.
 const CHUNK: u32 = 4;
 const START: u32 = 5;
@@ -234,9 +279,13 @@ fn skip(bit: u32) -> bool {
 
 /// One key chunk with `live` live keys, starting with its first three key loads requested
 /// and ending with the next chunk's requested.
-fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
-    // Channel chunks of 16 scored, and block pairs of 16 channels mixed.
+fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool, int8: bool) {
+    // Channel chunks of 16 mixed in pairs of blocks, and of 16 (32 as bytes) scored.
     let chunks = if narrow { 4 } else { 8 };
+    let scored = if int8 { 4 } else { chunks };
+    let (sum, operand) = if int8 { (D, B) } else { (F, Hf) };
+    // Scaled scores: c per query (int8: times the query's scale) as a vector or scalar.
+    let c = if int8 { r(COMB, 0, F) } else { r(CONST, C, F).s() };
     let w = Swsb::after(1);
     let (exp, init, slow, weights) = (k.label(), k.label(), k.label(), k.label());
     let row = |key: u32| s(key / 8) + key % 8;
@@ -247,15 +296,28 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
     k.sync(w);
     k.sync(Swsb::src(mix(2 * chunks - 1)));
     fetch(k, 3, 3 * 512);
-    for j in 0..chunks {
+    if int8 {
+        k.send(
+            SFID_UGM,
+            r(KS, 0, Ud),
+            r(KV_AT, 0, Ud),
+            null(Ud),
+            0,
+            (SCALES as u32) << 12,
+            LOAD_64X8,
+            false,
+            Swsb::after_set(1, KS_TOKEN),
+        );
+    }
+    for j in 0..scored {
         let (buffer, token) = slot(j % 4);
         k.sync(Swsb::dst(token));
         for h in 0..2 {
             let acc = if j == 0 {
-                null(F)
+                null(sum)
             } else {
                 k.sync(Swsb::dst(score(h)));
-                r(s(h), 0, F)
+                r(s(h), 0, sum)
             };
             if skip(2) {
                 continue;
@@ -264,10 +326,10 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
                 8,
                 8,
                 16,
-                r(s(h), 0, F),
+                r(s(h), 0, sum),
                 acc,
-                r(q(j), 0, Hf),
-                r(buffer + 4 * h, 0, Hf),
+                r(q(j), 0, operand),
+                r(buffer + 4 * h, 0, operand),
                 Swsb::set(score(h)),
             );
         }
@@ -275,6 +337,8 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
         // first values. The third buffer and the weights' registers are needed next.
         k.sync(Swsb::src(score(1)));
         match (narrow, j) {
+            (_, 0 | 1) if int8 => fetch(k, j, VALUES as u32 + (j + 3) * 512),
+            _ if int8 => {}
             (false, 0..=3) => fetch(k, j, (j + 4) * 512),
             (false, 4 | 5) => fetch(k, j - 4, VALUES as u32 + (j - 4) * 512),
             (true, 0 | 1) => fetch(k, j, VALUES as u32 + j * 512),
@@ -283,6 +347,20 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
     }
     k.sync(Swsb::dst(score(0)));
     k.sync(Swsb::dst(score(1)));
+    if int8 {
+        // Integer products to floats, times each key's scale.
+        k.sync(Swsb::dst(KS_TOKEN));
+        for group in keys.chunks(4) {
+            let back = Swsb::after(group.len() as u16);
+            for (i, &key) in group.iter().enumerate() {
+                let wait = if i == 0 { w } else { Swsb::NONE };
+                k.mov(16, r(row(key), 0, F), r(row(key), 0, D), wait);
+            }
+            for &key in group {
+                k.mul(16, r(row(key), 0, F), r(row(key), 0, F), r(KS, key, F).s(), back);
+            }
+        }
+    }
     k.cmp(Cond::Eq, r(INT, 0, D), imm(0), w);
     k.jmpi(init, true, w);
 
@@ -300,24 +378,24 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
                 r(row(key), 0, F),
                 r(REF, 0, F).minus(),
                 r(row(key), 0, F),
-                r(CONST, C, F).s(),
+                c,
                 first(i),
             );
         }
-        for &key in group {
-            if key == 0 {
-                k.mov(16, r(MAX, 0, F), r(row(key), 0, F), w);
+        // Four running maxima (key % 4), each waiting only for its own row's exponent.
+        let back = Swsb::after(group.len() as u16);
+        for (i, &key) in group.iter().enumerate() {
+            let part = r(PARTS[i], 0, F);
+            if key < 4 {
+                k.mov(16, part, r(row(key), 0, F), back);
             } else {
-                k.sel(
-                    16,
-                    Cond::Ge,
-                    r(MAX, 0, F),
-                    r(MAX, 0, F),
-                    r(row(key), 0, F),
-                    w,
-                );
+                k.sel(16, Cond::Ge, part, part, r(row(key), 0, F), back);
             }
         }
+    }
+    // Maxima are exact, so combining them in any order gives the same largest value.
+    for &part in &PARTS[1..keys.len().min(4)] {
+        k.sel(16, Cond::Ge, r(MAX, 0, F), r(MAX, 0, F), r(part, 0, F), w);
     }
     // Largest t of the step per query, floored at zero. Non-negative floats order like
     // their bits, so the reduction across queries can run on integers.
@@ -356,23 +434,28 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
         };
         let (n, pp) = (|i: usize| r(N[i], 0, F), |i: usize| r(PP[i], 0, F));
         let t = |key: u32| r(row(key), 0, F);
-        each(k, &|k, i, key| {
-            k.sel(16, Cond::Ge, t(key), t(key), immf(-126.0), first(i))
-        });
-        each(k, &|k, i, key| k.rnde(16, n(i), t(key), back));
-        each(k, &|k, i, key| {
-            k.add(16, t(key), t(key), n(i).minus(), back)
-        });
-        for part in 0..4 {
-            each(k, &|k, i, key| power(k, part, pp(i), t(key), back));
+        if int8 {
+            // The math pipe's 2^t (its own pipe: the group after waits for it as a whole).
+            each(k, &|k, i, key| k.math(16, Math::Exp, pp(i), t(key), first(i)));
+        } else {
+            each(k, &|k, i, key| {
+                k.sel(16, Cond::Ge, t(key), t(key), immf(-126.0), first(i))
+            });
+            each(k, &|k, i, key| k.rnde(16, n(i), t(key), back));
+            each(k, &|k, i, key| {
+                k.add(16, t(key), t(key), n(i).minus(), back)
+            });
+            for part in 0..4 {
+                each(k, &|k, i, key| power(k, part, pp(i), t(key), back));
+            }
+            each(k, &|k, i, _| k.mov(16, r(N[i], 0, D), n(i), back));
+            each(k, &|k, i, _| {
+                k.shl(16, r(N[i], 0, D), r(N[i], 0, D), immw(23), first(i))
+            });
+            each(k, &|k, i, _| {
+                k.add(16, r(PP[i], 0, D), r(PP[i], 0, D), r(N[i], 0, D), back)
+            });
         }
-        each(k, &|k, i, _| k.mov(16, r(N[i], 0, D), n(i), back));
-        each(k, &|k, i, _| {
-            k.shl(16, r(N[i], 0, D), r(N[i], 0, D), immw(23), first(i))
-        });
-        each(k, &|k, i, _| {
-            k.add(16, r(PP[i], 0, D), r(PP[i], 0, D), r(N[i], 0, D), back)
-        });
         // Even keys convert straight into the low halves; odd keys go through their own
         // row, because a float destination must keep its lanes in place.
         each(k, &|k, i, key| {
@@ -384,7 +467,15 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
             k.mov(16, to.step2(), pp(i), first(i));
         });
         each(k, &|k, i, key| {
-            if key == 0 {
+            if int8 {
+                // Four running sums (key % 4); the first waits for the conversions above.
+                let part = r(SUMS[i], 0, F);
+                if key < 4 {
+                    k.mov(16, part, pp(i), first(i));
+                } else {
+                    k.add(16, part, part, pp(i), first(i));
+                }
+            } else if key == 0 {
                 k.mov(16, r(STEP, 0, F), pp(i), w);
             } else {
                 k.add(16, r(STEP, 0, F), r(STEP, 0, F), pp(i), w);
@@ -402,16 +493,29 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
         });
         k.sync(w);
     }
+    if int8 {
+        for &part in &SUMS[1..weighted.len().clamp(1, 4)] {
+            k.add(16, r(STEP, 0, F), r(STEP, 0, F), r(part, 0, F), w);
+        }
+    }
 
     // Mixing: eight pairs of channel blocks. The first two were requested during scoring;
     // the scratch buffer and the scores' registers take the next three.
     k.add(16, r(SUM, 0, F), r(SUM, 0, F), r(STEP, 0, F), w);
     k.sync(w);
+    // int8: values 0..2 wait in buffers 6..8 and 3, 4 arrived during scoring; 5..7 go
+    // where the weights' scratch and the scores were.
     for m in 2..chunks.min(5) {
-        fetch(k, [2, 4, 5][m as usize - 2], VALUES as u32 + m * 512);
+        let at = if int8 { m + 3 } else { m };
+        fetch(k, [2, 4, 5][m as usize - 2], VALUES as u32 + at * 512);
     }
+    let order = if int8 {
+        [6, 7, 8, 0, 1, 2, 4, 5]
+    } else {
+        [0, 1, 2, 4, 5, 0, 1, 2]
+    };
     for m in 0..chunks {
-        let (buffer, token) = slot([0, 1, 2, 4, 5, 0, 1, 2][m as usize]);
+        let (buffer, token) = slot(order[m as usize]);
         k.sync(Swsb::dst(token));
         for e in 0..2 {
             let b = 2 * m + e;
@@ -432,6 +536,16 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
         }
         // Refill with the last values, then with the next chunk's first keys.
         k.sync(Swsb::src(mix(2 * m + 1)));
+        let next = CHUNK_BYTES as u32;
+        if int8 {
+            // The next chunk's first values, then its first keys.
+            match m {
+                0..=2 => fetch(k, 6 + m, next + VALUES as u32 + m * 512),
+                3..=5 => fetch(k, m - 3, next + (m - 3) * 512),
+                _ => {}
+            }
+            continue;
+        }
         match (narrow, m) {
             (false, 0..=2) => fetch(k, m, VALUES as u32 + (m + 5) * 512),
             (false, 5..=7) => fetch(k, m - 5, CHUNK_BYTES as u32 + (m - 5) * 512),
@@ -439,8 +553,8 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
             _ => {}
         }
     }
-    for i in 0..3 {
-        k.sync(Swsb::src(slot(i).1));
+    for i in if int8 { &[0, 1, 2, 6, 7, 8][..] } else { &[0, 1, 2][..] } {
+        k.sync(Swsb::src(slot(*i).1));
     }
     k.add(
         1,
@@ -458,7 +572,7 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool) {
     if bounded {
         k.mov(16, r(REF, 0, F), immf(0.0), w);
     } else {
-        k.mul(16, r(REF, 0, F), r(row(0), 0, F), r(CONST, C, F).s(), w);
+        k.mul(16, r(REF, 0, F), r(row(0), 0, F), c, w);
     }
     k.jmpi(exp, false, w);
 
@@ -505,7 +619,9 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         bounded,
         narrow,
         group,
+        int8,
     } = *shape;
+    assert!(!(int8 && narrow), "int8 attention needs full heads");
     let (tiles, query_tiles) = (padded / TILE as u32, queries / TILE as u32);
     let w = Swsb::after(1);
     let int = |lane: u32| r(INT, lane, D);
@@ -582,14 +698,19 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     // The queries; the same tokens later belong to the accumulator blocks, so every block
     // token has a predecessor to wait for (the second eight get a throwaway load).
     for j in 0..8 {
+        let (to, offset, descriptor) = match j {
+            _ if !int8 || j < 4 => (q(j), j * 512, LOAD_64X64),
+            4 => (COMB, SCALES as u32, LOAD_64X8),
+            _ => (slot(0).0, 0, LOAD_64X64),
+        };
         k.send(
             SFID_UGM,
-            r(q(j), 0, Ud),
+            r(to, 0, Ud),
             r(2, 0, Ud),
             null(Ud),
             0,
-            (j * 512) << 12,
-            LOAD_64X64,
+            offset << 12,
+            descriptor,
             false,
             Swsb::after_set(1, mix(j)),
         );
@@ -614,21 +735,29 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     for token in mix(0)..=LAST_MIX {
         k.sync(Swsb::dst(token));
     }
-    for j in 0..3 {
-        fetch(&mut k, j, j * 512);
+    if int8 {
+        k.mul(16, r(COMB, 0, F), r(COMB, 0, F), r(CONST, C, F).s(), w);
     }
+    let primed: &[u32] = if int8 { &[0, 1, 2, 6, 7, 8] } else { &[0, 1, 2] };
+    let prime = |k: &mut Asm| {
+        for &j in primed {
+            let offset = if j < 3 { j * 512 } else { VALUES as u32 + (j - 6) * 512 };
+            fetch(k, j, offset);
+        }
+    };
+    prime(&mut k);
 
     // Chunks from the start to the last, then from the first up to the start.
     if full > 0 {
         let top = k.label();
         k.place(top);
-        step(&mut k, TILE as u32, bounded, narrow);
+        step(&mut k, TILE as u32, bounded, narrow, int8);
         k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
         k.cmp(Cond::Lt, int(CHUNK), imm(full as i32), w);
         k.jmpi(top, true, w);
     }
     if rest > 0 {
-        step(&mut k, rest, bounded, narrow);
+        step(&mut k, rest, bounded, narrow, int8);
     }
     if full > 0 {
         let (top, end) = (k.label(), k.label());
@@ -638,15 +767,13 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
         let walked = (full + u32::from(rest > 0)) * CHUNK_BYTES as u32;
         k.add(1, r(KV_AT, 0, Q), r(KV_AT, 0, Q), imm(-(walked as i32)), w);
         k.mov(1, int(CHUNK), imm(0), w);
-        for j in 0..3 {
+        for &j in primed {
             k.sync(Swsb::dst(slot(j).1));
         }
         k.sync(w);
-        for j in 0..3 {
-            fetch(&mut k, j, j * 512);
-        }
+        prime(&mut k);
         k.place(top);
-        step(&mut k, TILE as u32, bounded, narrow);
+        step(&mut k, TILE as u32, bounded, narrow, int8);
         k.add(1, int(CHUNK), int(CHUNK), imm(1), w);
         k.cmp(Cond::Lt, int(CHUNK), int(START), w);
         k.jmpi(top, true, w);
@@ -654,7 +781,7 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     }
 
     // Store. Accumulator registers are in memory order: channel, then query.
-    for token in 0..=LAST_MIX {
+    for token in (0..=LAST_MIX).chain(if int8 { 26..29 } else { 0..0 }) {
         k.sync(Swsb::dst(token));
     }
     k.sync(w);
@@ -724,6 +851,163 @@ mod tests {
         assert!(code.len().is_multiple_of(16) && code.len() > 16 * 500);
         if let Ok(path) = std::env::var("KUNO_XE2_DUMP") {
             std::fs::write(path, &code).unwrap();
+        }
+    }
+
+    /// int8 queries and keys (per-token scales, as the Qwen glue makes them) against the
+    /// half-float kernel and an exact softmax, both timed, on Qwen-like shapes.
+    #[test]
+    #[ignore = "needs the Intel GPU with Level Zero"]
+    fn int8_attention_against_half() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let fast = LevelZero::open().unwrap();
+        let scale = 1.0 / (CHANNELS as f32).sqrt();
+        for (heads, padded, tokens, spread, checks) in [
+            (3usize, 256usize, 100usize, 1.0f32, 768usize),
+            (2, 256, 250, 6.0, 512),
+            (24, 8224, 8214, 1.5, 48),
+            (24, 8224, 8214, 3.0, 48),
+        ] {
+            let half = |values: Vec<f32>| -> Vec<f32> {
+                values.into_iter().map(|v| widen(narrow(v))).collect()
+            };
+            let queries = half(noise(heads * padded * CHANNELS, 1, spread));
+            let keys = half(noise(heads * padded * CHANNELS, 2, spread));
+            let values = half(noise(heads * padded * CHANNELS, 3, 1.0));
+            let tiles = padded / TILE;
+            let quantize = |row: &[f32]| -> (Vec<i8>, f32) {
+                let top = row.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-30);
+                let s = top / 127.0;
+                (row.iter().map(|v| (v / s).round_ties_even() as i8).collect(), s)
+            };
+            let mut streams = Vec::new();
+            for int8 in [false, true] {
+                let mut q_stream = vec![0u8; heads * tiles * TILE_BYTES];
+                let mut kv_stream = vec![0u8; heads * tiles * CHUNK_BYTES + SLACK];
+                for head in 0..heads {
+                    let (q0, kv0) = (head * tiles * TILE_BYTES, head * tiles * CHUNK_BYTES);
+                    for token in 0..padded {
+                        let from = (head * padded + token) * CHANNELS;
+                        let (qr, kr) = (
+                            &queries[from..from + CHANNELS],
+                            &keys[from..from + CHANNELS],
+                        );
+                        for channel in 0..CHANNELS {
+                            let v = narrow(values[from + channel]).to_le_bytes();
+                            let at = kv0 + value_at(token, channel);
+                            kv_stream[at..at + 2].copy_from_slice(&v);
+                        }
+                        if int8 {
+                            let ((qi, qs), (ki, ks)) = (quantize(qr), quantize(kr));
+                            for channel in 0..CHANNELS {
+                                q_stream[q0 + query8_at(token, channel)] = qi[channel] as u8;
+                                kv_stream[kv0 + key8_at(token, channel)] = ki[channel] as u8;
+                            }
+                            let at = q0 + (token / TILE) * TILE_BYTES + SCALES + token % TILE * 4;
+                            q_stream[at..at + 4].copy_from_slice(&qs.to_le_bytes());
+                            let at =
+                                kv0 + (token / TILE) * CHUNK_BYTES + SCALES + token % TILE * 4;
+                            kv_stream[at..at + 4].copy_from_slice(&ks.to_le_bytes());
+                        } else {
+                            for channel in 0..CHANNELS {
+                                let at = q0 + query_at(token, channel);
+                                q_stream[at..at + 2]
+                                    .copy_from_slice(&narrow(qr[channel]).to_le_bytes());
+                                let at = kv0 + key_at(token, channel);
+                                kv_stream[at..at + 2]
+                                    .copy_from_slice(&narrow(kr[channel]).to_le_bytes());
+                            }
+                        }
+                    }
+                }
+                streams.push((q_stream, kv_stream));
+            }
+            let (out_size, sum_size) = (heads * tiles * OUT_BYTES, heads * tiles * SUM_BYTES);
+            for (int8, (q_stream, kv_stream)) in [false, true].into_iter().zip(&streams) {
+                let buffers = [
+                    gpu.shared(q_stream.len() as u64).unwrap(),
+                    gpu.shared(kv_stream.len() as u64).unwrap(),
+                    gpu.shared(out_size as u64).unwrap(),
+                    gpu.shared(sum_size as u64).unwrap(),
+                ];
+                gpu.upload(&buffers[0], 0, q_stream).unwrap();
+                gpu.upload(&buffers[1], 0, kv_stream).unwrap();
+                let sizes = [q_stream.len(), kv_stream.len(), out_size, sum_size];
+                let memory: Vec<_> = buffers
+                    .iter()
+                    .zip(sizes)
+                    .map(|(b, size)| fast.import(&gpu.export(b).unwrap(), size as u64).unwrap())
+                    .collect();
+                let group = if heads > 8 { 8 } else { 1 };
+                let shape = Shape {
+                    int8,
+                    group,
+                    ..Shape::new(padded, tokens, heads, scale).unwrap()
+                };
+                let code = kernel(&shape);
+                let native = zebin::write(&zebin::Kernel {
+                    name: "attend",
+                    code: &code,
+                    grf: 256,
+                    pointers: 4,
+                });
+                let attend = fast.kernel(&native, "attend", 4).unwrap();
+                attend.set_group([16 * group, 1, 1]).unwrap();
+                let arguments: Vec<_> = memory.iter().collect();
+                let mut best = f64::MAX;
+                for _ in 0..6 {
+                    let started = std::time::Instant::now();
+                    fast.launch(&attend, &arguments, shape.groups(heads)).unwrap();
+                    best = best.min(started.elapsed().as_secs_f64() * 1e3);
+                }
+                let mixed = floats(&gpu.download(&buffers[2], 0, out_size).unwrap());
+                let sums = floats(&gpu.download(&buffers[3], 0, sum_size).unwrap());
+                let (mut error, mut power) = (0f64, 0f64);
+                for check in 0..checks {
+                    let (head, query) = if checks == heads * padded {
+                        (check / padded, check % padded)
+                    } else {
+                        ((check * 7) % heads, (check * 2731) % padded)
+                    };
+                    let q = &queries[(head * padded + query) * CHANNELS..][..CHANNELS];
+                    let logits: Vec<f64> = (0..tokens)
+                        .map(|key| {
+                            let k = &keys[(head * padded + key) * CHANNELS..][..CHANNELS];
+                            q.iter().zip(k).map(|(a, b)| f64::from(a * b)).sum::<f64>()
+                                * f64::from(scale)
+                        })
+                        .collect();
+                    let top = logits.iter().copied().fold(f64::MIN, f64::max);
+                    let weights: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();
+                    let total: f64 = weights.iter().sum();
+                    let sum = f64::from(sums[head * padded + query]);
+                    for channel in 0..CHANNELS {
+                        let want: f64 = (0..tokens)
+                            .map(|key| {
+                                weights[key]
+                                    * f64::from(
+                                        values[(head * padded + key) * CHANNELS + channel],
+                                    )
+                            })
+                            .sum::<f64>()
+                            / total;
+                        let got = f64::from(
+                            mixed[(head * tiles * OUT_BYTES + out_at(query, channel)) / 4],
+                        ) / sum;
+                        error += (got - want).powi(2);
+                        power += want.powi(2);
+                    }
+                }
+                let db = 10.0 * (power / error.max(1e-30)).log10();
+                let digest = mixed
+                    .iter()
+                    .fold(0u64, |h, v| (h ^ u64::from(v.to_bits())).wrapping_mul(0x100_0000_01b3));
+                println!(
+                    "{} {heads} heads, {tokens} of {padded}, spread {spread}: {best:.2} ms, {db:.1} dB, output {digest:016x}",
+                    if int8 { "int8" } else { "half" }
+                );
+                assert!(db > if int8 { 25.0 } else { 50.0 });
+            }
         }
     }
 
@@ -864,7 +1148,7 @@ mod tests {
                 }
                 // Timing only: without the weights (1), the loads (2), the score products
                 // (4), the mixing products (8).
-                for mask in [1u32, 3, 13, 15] {
+                for mask in [4u32, 8, 1, 5, 3, 13, 15] {
                     SKIP.store(mask, std::sync::atomic::Ordering::Relaxed);
                     let code = kernel(&shape);
                     SKIP.store(0, std::sync::atomic::Ordering::Relaxed);

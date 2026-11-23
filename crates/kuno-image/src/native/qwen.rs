@@ -48,9 +48,6 @@ pub(super) fn generate(
     references: &[crate::references::Pixels],
     previews: bool,
 ) -> Result<Vec<u8>, &'static str> {
-    if recipe.attention == kuno_protocol::ImageAttention::Fast {
-        return Err("image_attention_unsupported");
-    }
     // The C++ engine's own Qwen context holds its copy of the weights in video memory.
     // SAFETY: the session pointer is live for the request; release only resets its context.
     unsafe { kuno_qwen_session_release(native) };
@@ -85,6 +82,7 @@ pub(super) fn generate(
         cfg: recipe.cfg as f32,
         seed,
         references: &references,
+        fast_attention: recipe.attention == kuno_protocol::ImageAttention::Fast,
     };
     let (h, w) = (recipe.height as usize / 16, recipe.width as usize / 16);
     let result = models.generate(&request, |step, denoised| {

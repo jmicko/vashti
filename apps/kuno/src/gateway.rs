@@ -422,11 +422,6 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
     if let Err(code) = recipe.validate_execution() {
         return error(StatusCode::BAD_REQUEST, code);
     }
-    if recipe.attention == kuno_protocol::ImageAttention::Fast
-        && (!gateway.image_fast_attention || config.uses_sycl(&recipe.workflow))
-    {
-        return error(StatusCode::BAD_REQUEST, "image_attention_unsupported");
-    }
     if !config
         .collections
         .iter()
@@ -440,14 +435,22 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
             "native_image_seed_range_unsupported",
         );
     }
+    // The workflow's advertised attention modes decide (fast needs CUDA, or an ABI 5
+    // managed runtime).
     if let Err(code) = crate::image_access::require_workflow(
         config.clone(),
         &recipe.workflow,
+        recipe.attention,
         gateway.image_fast_attention,
     )
     .await
     {
-        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+        let status = if code == "image_attention_unsupported" {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        return error(status, code);
     }
     let mut lease = match gateway.admission.acquire().await {
         Ok(lease) => lease,

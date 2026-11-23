@@ -214,6 +214,57 @@ SG WG(256) kernel void q_qk(global const ushort4* g, global const float4* v,
     o[chunk * (side == 0 ? 256 : 512) + i] = word;
 }
 
+// ---- Queries or keys as signed bytes for the int8 attention (attend.rs, `Shape::int8`) ---
+// As q_qk, then each token scaled to its largest magnitude (127) and rounded; the scales go
+// to the tile's or chunk's `SCALES` (2048 bytes in).
+SG WG(256) kernel void q_qk8(global const ushort4* g, global const float4* v,
+                            global const float4* turn, global uint4* o, uint tokens, uint stride,
+                            uint side, uint weight_first) {
+    local uint tile[512];
+    uint head = get_group_id(0);
+    uint first = get_group_id(1) * 16;
+    if (side == 1 && first >= tokens) return;
+    uint sg = get_sub_group_id();
+    uint lane = get_sub_group_local_id();
+    uint token = first + sg;
+    bool live = token < tokens;
+    uint from = token * (3 * DIM4) + side * DIM4 + head * 32 + lane * 2;
+    float4 mine[2];
+    float squares = 0.0f;
+    for (uint j = 0; j < 2; j++) {
+        mine[j] = live ? widen(g[from + j]) : (float4)(0.0f);
+        squares += dot(mine[j], mine[j]);
+    }
+    float norm = 1.0f / sqrt(sub_group_reduce_add(squares) / 128.0f + 1e-6f);
+    float4 rotated[2];
+    float top = 0.0f;
+    for (uint j = 0; j < 2; j++) {
+        float4 a = mine[j] * (norm * v[(weight_first >> 2) + lane * 2 + j]);
+        float4 t = live ? turn[token * 32 + lane * 2 + j] : (float4)(1.0f, 0.0f, 1.0f, 0.0f);
+        float4 r = (float4)(t.x * a.x - t.y * a.y, t.y * a.x + t.x * a.y,
+                            t.z * a.z - t.w * a.w, t.w * a.z + t.z * a.w);
+        rotated[j] = r;
+        float4 m = fabs(r);
+        top = fmax(top, fmax(fmax(m.x, m.y), fmax(m.z, m.w)));
+    }
+    float scale = fmax(sub_group_reduce_max(top), 1e-30f) / 127.0f;
+    for (uint j = 0; j < 2; j++) {
+        char4 c = convert_char4_sat_rte(rotated[j] / scale);
+        uint at = side == 0 ? (lane >> 2) * 128 + ((lane & 3) * 2 + j) * 16 + sg
+                            : (lane >> 2) * 128 + sg * 8 + (lane & 3) * 2 + j;
+        tile[at] = as_uint(c);
+    }
+    uint chunk = head * (stride >> 4) + (first >> 4);
+    if (lane == 0 && (side == 0 || live))
+        ((global float*)o)[chunk * (side == 0 ? 1024 : 2048) + 512 + sg] = scale;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    uint i = get_local_id(0);
+    if (i >= 128) return;
+    uint4 word = (uint4)(tile[i * 4], tile[i * 4 + 1], tile[i * 4 + 2], tile[i * 4 + 3]);
+    if (side == 1 && first + ((i * 4) & 127) / 8 >= tokens) return;
+    o[chunk * (side == 0 ? 256 : 512) + i] = word;
+}
+
 // ---- Queries or keys into the attention streams (qqk.comp, without the prefix store) -------
 SG WG(64) kernel void q_qk_ref(global const ushort4* g, global const float4* v,
                           global const float4* turn, global uint* o, uint tokens, uint stride,
@@ -285,6 +336,38 @@ WG(64) kernel void q_prefix(global const uint4* k, global const half4* vs, globa
     uint key = base + row;
     uint chunk = head * (stride >> 4) + (key >> 4);
     ks[chunk * 512 + (part >> 1) * 32 + (key & 15) * 2 + (part & 1)] = k[from];
+    half4 a = vs[from * 2], b = vs[from * 2 + 1];
+    uint at = chunk * 4096 + 2048 + part * 8 * 16 + (key & 15);
+    vh[at] = a.x;
+    vh[at + 16] = a.y;
+    vh[at + 32] = a.z;
+    vh[at + 48] = a.w;
+    vh[at + 64] = b.x;
+    vh[at + 80] = b.y;
+    vh[at + 96] = b.z;
+    vh[at + 112] = b.w;
+}
+
+// ---- The prefix's keys as signed bytes for the int8 attention (as q_prefix) -------------
+// A sub-group is one key (16 parts of 8 channels), scaled as q_qk8 scales keys.
+SG WG(64) kernel void q_prefix8(global const uint4* k, global const half4* vs, global uint2* ks,
+                               global half* vh, uint count, uint base, uint stride,
+                               uint capacity) {
+    uint index = get_global_id(0);
+    uint head = get_global_id(1);
+    uint row = index >> 4, part = index & 15;
+    if (row >= count) return;
+    uint from = (head * capacity + row) * 16 + part;
+    uint key = base + row;
+    uint chunk = head * (stride >> 4) + (key >> 4);
+    float8 f = convert_float8(as_half8(k[from]));
+    float8 m = fabs(f);
+    float4 m4 = fmax(m.lo, m.hi);
+    float top = fmax(fmax(m4.x, m4.y), fmax(m4.z, m4.w));
+    float scale = fmax(sub_group_reduce_max(top), 1e-30f) / 127.0f;
+    ks[chunk * 1024 + (part >> 2) * 64 + (key & 15) * 4 + (part & 3)] =
+        as_uint2(convert_char8_sat_rte(f / scale));
+    if (part == 0) ((global float*)ks)[chunk * 2048 + 512 + (key & 15)] = scale;
     half4 a = vs[from * 2], b = vs[from * 2 + 1];
     uint at = chunk * 4096 + 2048 + part * 8 * 16 + (key & 15);
     vh[at] = a.x;

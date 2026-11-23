@@ -240,8 +240,10 @@ struct Glue {
     resnorm: level_zero::Kernel,
     resid: level_zero::Kernel,
     qk: level_zero::Kernel,
+    qk8: level_zero::Kernel,
     value: level_zero::Kernel,
     prefix: level_zero::Kernel,
+    prefix8: level_zero::Kernel,
     merge: level_zero::Kernel,
     hidden: level_zero::Kernel,
     embed: level_zero::Kernel,
@@ -255,8 +257,10 @@ impl Glue {
             resnorm: k("q_resnorm", 256)?,
             resid: k("q_resid", 64)?,
             qk: k("q_qk", 256)?,
+            qk8: k("q_qk8", 256)?,
             value: k("q_value", 256)?,
             prefix: k("q_prefix", 64)?,
+            prefix8: k("q_prefix8", 64)?,
             merge: k("q_merge", 256)?,
             hidden: k("q_hidden", 256)?,
             embed: k("q_embed", 256)?,
@@ -377,6 +381,8 @@ struct Work {
     views: [level_zero::Memory; 8],
     products: [(level_zero::Kernel, [u32; 3]); 4],
     attend: (level_zero::Kernel, [u32; 3]),
+    /// As `attend` with int8 queries and keys (fast attention).
+    attend8: (level_zero::Kernel, [u32; 3]),
 }
 impl Work {
     fn new(
@@ -448,14 +454,22 @@ impl Work {
                 ..s
             })
             .ok_or("gpu_unsupported")?;
-        let native = zebin::write(&zebin::Kernel {
-            name: "attend",
-            code: &attend::kernel(&shape),
-            grf: 256,
-            pointers: 4,
-        });
-        let attend = (fast.kernel(&native, "attend", 4)?, shape.groups(HEADS));
-        attend.0.set_group([16 * ATTEND_GROUP, 1, 1])?;
+        let attention = |shape: &attend::Shape| -> Result<_, &'static str> {
+            let native = zebin::write(&zebin::Kernel {
+                name: "attend",
+                code: &attend::kernel(shape),
+                grf: 256,
+                pointers: 4,
+            });
+            let kernel = fast.kernel(&native, "attend", 4)?;
+            kernel.set_group([16 * ATTEND_GROUP, 1, 1])?;
+            Ok((kernel, shape.groups(HEADS)))
+        };
+        let attend = attention(&shape)?;
+        let attend8 = attention(&attend::Shape {
+            int8: true,
+            ..shape
+        })?;
         let [bytes, sums, query, kv, mixed, weights] = buffers;
         let counts = [
             padded * DIM,
@@ -508,6 +522,7 @@ impl Work {
             views: [v0, v1, v2, v3, v4, v5, v6, v7],
             products: [scaled?, product(OUT)?, gated?, product(FC2)?],
             attend,
+            attend8,
         })
     }
 }
@@ -753,7 +768,19 @@ impl QwenGpu {
         x: &[f32],
         times: &Times,
     ) -> Result<Vec<f32>, &'static str> {
-        Ok(self.step_stamped(prefix, x, times, None)?.0)
+        self.step_with(prefix, x, times, false)
+    }
+
+    /// As `step_at`; `fast` scores attention with int8 queries and keys (SageAttention-
+    /// style: quicker, and the output is no longer the reference's).
+    pub fn step_with(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+        fast: bool,
+    ) -> Result<Vec<f32>, &'static str> {
+        Ok(self.step_stamped(prefix, x, times, fast, None)?.0)
     }
 
     /// As `step_at`; with `stamps`, the GPU clock is written there before the first launch
@@ -763,6 +790,7 @@ impl QwenGpu {
         prefix: &Prefix,
         x: &[f32],
         times: &Times,
+        int8: bool,
         stamps: Option<&level_zero::Memory>,
     ) -> Result<(Vec<f32>, Vec<usize>), &'static str> {
         use level_zero::Arg::{Memory as M, U32 as U};
@@ -821,7 +849,7 @@ impl QwenGpu {
             )?;
             for (side, to, weight) in [(0u32, query, QUERY_NORM), (1, kv, KEY_NORM)] {
                 batch.launch(
-                    &g.qk,
+                    if int8 { &g.qk8 } else { &g.qk },
                     &[
                         M(sums),
                         M(v),
@@ -842,7 +870,7 @@ impl QwenGpu {
             )?;
             if prefix.length > 0 {
                 batch.launch(
-                    &g.prefix,
+                    if int8 { &g.prefix8 } else { &g.prefix },
                     &[
                         M(&prefix.key_views[index]),
                         M(&prefix.value_views[index]),
@@ -856,7 +884,7 @@ impl QwenGpu {
                     [(prefix.length * 16).div_ceil(64) as u32, HEADS as u32, 1],
                 )?;
             }
-            let (attend, groups) = &w.attend;
+            let (attend, groups) = if int8 { &w.attend8 } else { &w.attend };
             batch.launch(attend, &[M(query), M(kv), M(mixed), M(weights)], *groups)?;
             batch.launch(
                 &g.merge,
@@ -1161,6 +1189,14 @@ mod tests {
                 golden.timestep, golden.height, golden.width, prefix.length
             );
             assert!(db > 25.0, "step {step}: {db:.1} dB");
+            let times = model.small.times(&[golden.timestep]).remove(0);
+            let fast = model.step_with(&prefix, &golden.x, &times, true).unwrap();
+            let (fast_db, apart) = (
+                qwen_dit::tests::db(&golden.out, &fast),
+                qwen_dit::tests::db(&out, &fast),
+            );
+            println!("  fast attention: {fast_db:.1} dB ({apart:.1} dB from standard)");
+            assert!(fast_db > 25.0, "step {step} fast: {fast_db:.1} dB");
         }
     }
 
@@ -1355,12 +1391,13 @@ mod tests {
             .unwrap();
         let x = vec![0.5f32; CHANNELS * height * width];
         let times = model.small.times(&[500.0]).remove(0);
-        model.step_at(&prefix, &x, &times).unwrap();
+        let int8 = std::env::var("KUNO_QWEN_FAST").is_ok();
+        model.step_with(&prefix, &x, &times, int8).unwrap();
         let fast = &model.kernels.fast;
         let stamps = Shared::new(&model.gpu, fast, 8 * 8192).unwrap();
         let started = std::time::Instant::now();
         let (_, launched) = model
-            .step_stamped(&prefix, &x, &times, Some(&stamps.memory))
+            .step_stamped(&prefix, &x, &times, int8, Some(&stamps.memory))
             .unwrap();
         let wall = started.elapsed().as_secs_f64();
         let raw = model
@@ -1380,6 +1417,8 @@ mod tests {
             (g.resnorm.id(), "residual+norm+quantize"),
             (g.resid.id(), "residual"),
             (g.qk.id(), "queries/keys"),
+            (g.qk8.id(), "queries/keys int8"),
+            (g.prefix8.id(), "prefix copy int8"),
             (g.value.id(), "values"),
             (g.prefix.id(), "prefix copy"),
             (g.merge.id(), "merge+quantize"),
@@ -1387,6 +1426,7 @@ mod tests {
             (g.embed.id(), "embed"),
             (g.final_.id(), "final"),
             (w.attend.0.id(), "attention"),
+            (w.attend8.0.id(), "attention int8"),
         ];
         for (i, name) in ["product qkv", "product out", "product fc1", "product fc2"]
             .iter()

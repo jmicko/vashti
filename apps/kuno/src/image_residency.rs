@@ -184,7 +184,14 @@ impl ImageRuntime {
             models: config.models.clone(),
             pci: config.pci_address.clone(),
             version21: recipe.workflow != kuno_protocol::QWEN_RECIPE,
-            attention: recipe.attention,
+            // ABI 5 workers take the attention mode per request.
+            attention: if runtime.as_ref().is_some_and(|runtime| {
+                runtime.manifest.worker_abi >= crate::image_engine::FAST_ATTENTION_WORKER_ABI
+            }) {
+                ImageAttention::Standard
+            } else {
+                recipe.attention
+            },
             runtime_worker: runtime.as_ref().and_then(|runtime| {
                 runtime
                     .manifest

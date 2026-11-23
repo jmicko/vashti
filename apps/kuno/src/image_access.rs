@@ -109,11 +109,15 @@ fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> Discovery {
             Ok(_) => Some("image_runtime_unavailable"),
             Err(code) => Some(*code),
         };
+        let fast = runtime.as_ref().is_ok_and(|r| {
+            r.manifest.worker_abi >= crate::image_engine::FAST_ATTENTION_WORKER_ABI
+        });
         apply_runtime_status(
             &mut images,
             config,
             runtime.err(),
             cfg!(feature = "native-image"),
+            fast,
         );
     }
     let videos = describe_videos(config, privacy.or(video_runtime), |id| {
@@ -220,10 +224,15 @@ fn apply_runtime_status(
     config: &ImageConfig,
     runtime_error: Option<&str>,
     native: bool,
+    fast_attention: bool,
 ) {
     for workflow in &mut images.workflows {
         let reason = if config.uses_sycl(&workflow.id) {
-            workflow.attention = vec!["standard".into()];
+            workflow.attention = if fast_attention {
+                vec!["standard".into(), "fast".into()]
+            } else {
+                vec!["standard".into()]
+            };
             runtime_error
         } else if !native {
             Some("image_engine_not_in_this_build")
@@ -355,13 +364,21 @@ fn describe(
 pub(crate) async fn require_workflow(
     config: ImageConfig,
     workflow: &str,
+    attention: kuno_protocol::ImageAttention,
     fast_attention: bool,
 ) -> Result<(), &'static str> {
     let images = tokio::task::spawn_blocking(move || probe(Some(&config), fast_attention))
         .await
         .map_err(|_| "image_runtime_unavailable")?
         .images;
+    let wanted = match attention {
+        kuno_protocol::ImageAttention::Standard => "standard",
+        kuno_protocol::ImageAttention::Fast => "fast",
+    };
     match images.workflows.iter().find(|w| w.id == workflow) {
+        Some(w) if w.state == "ready" && !w.attention.iter().any(|a| a == wanted) => {
+            Err("image_attention_unsupported")
+        }
         Some(w) if w.state == "ready" => Ok(()),
         Some(w) if w.reason.as_deref() == Some("image_models_unavailable") => {
             Err("image_models_unavailable")
@@ -421,7 +438,13 @@ mod tests {
         c.engine = crate::image_engine::ImageEngine::ManagedSycl;
         c.runtime = Some(crate::image_engine::SYCL_RUNTIME.into());
         let mut images = describe(Some(&c), true, true, None, |_| true);
-        apply_runtime_status(&mut images, &c, Some("image_managed_runtime_corrupt"), true);
+        apply_runtime_status(
+            &mut images,
+            &c,
+            Some("image_managed_runtime_corrupt"),
+            true,
+            false,
+        );
         assert_eq!(images.state, "partial");
         assert_eq!(images.workflows[0].state, "ready");
         assert_eq!(
@@ -430,7 +453,7 @@ mod tests {
         );
         assert_eq!(images.workflows[1].attention, ["standard"]);
         let mut images = describe(Some(&c), true, true, None, |_| true);
-        apply_runtime_status(&mut images, &c, None, false);
+        apply_runtime_status(&mut images, &c, None, false, false);
         assert_eq!(images.state, "partial");
         assert_eq!(
             images.workflows[0].reason.as_deref(),

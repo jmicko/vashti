@@ -1088,6 +1088,38 @@ Glue at bandwidth (bit-identical; `*_matches_reference` tests run the kept previ
   keys 0.52 -> 0.30 ms.
 - Step 1.008 -> 0.994 s in `step_profile`.
 
+### Fast attention: int8 queries and keys (2026-11-23)
+
+Requests with `"attention": "fast"` (worker ABI 5) score attention with signed-byte
+queries and keys, SageAttention-style; values and mixing stay half floats. `q_qk8`
+writes each token's 128 channels scaled to its own largest magnitude, with the scale
+beside the tile (queries) or chunk (keys); `q_prefix8` does the same to the stored
+prompt/reference keys as it copies them, so a chunk shared by target and prefix keys
+needs no common scale. The kernel (`attend::Shape::int8`) converts the integer scores and
+multiplies by the key's scale (the query's is folded into the softmax constant).
+
+The f16 kernel is limited by its loads (loads alone take 92% of its time; without the
+score products it is only 4% faster). In order:
+
+| Change | Attention, 24 heads x 8214 tokens (alone) |
+|---|---|
+| Half floats (standard) | 7.3 ms |
+| int8 queries/keys (key bytes halved) | 6.66 ms |
+| + three more load buffers (values requested a phase ahead) | 6.13 ms |
+| + conversions four at a time | 5.69 ms |
+| + four running maxima (bit-identical in both forms) | 5.50 ms |
+| + four running sums | 5.40 ms |
+| + math pipe `2^x` instead of the polynomial | 4.61 ms |
+
+In the step (`step_profile`, 1184x1776): attention 10.7 -> 6.8 ms per block, step 0.991 ->
+0.867 s (-12.5%). Against the C++ captures fast steps score 35.9-43.8 dB (standard
+37.7-44.2), 34.9-44.7 dB from standard. Random operands: 47.7 dB (spread 1.5) and 39.5 dB
+(spread 3) against an exact softmax, where half floats reach 70-73 dB.
+
+Through the worker (benchmark recipes, warm): generate 53.8 -> 47.6 s, edit 32.8 -> 29.0 s
+(both -11.6%); pixels differ from standard by 1.0-1.2 on average (of 255). A neutral
+1184x1776 prompt: mean 0.45, 0.1% of pixels more than 8 apart, no visible difference.
+
 Opening the models from page cache (`open_costs`): DiT 2.3 s (layers load on three threads,
 so copies overlap the rearranging; 3.3 s before), VAE about 1.1 s (parallel rearranging;
 2.0 s), text encoder 1.3 s, vision tower 0.7 s. The worker disables Mesa's shader cache,

@@ -243,6 +243,8 @@ pub struct Request<'a> {
     pub cfg: f32,
     pub seed: i64,
     pub references: &'a [Reference<'a>],
+    /// Attention scored with int8 queries and keys: quicker, slightly different pixels.
+    pub fast_attention: bool,
 }
 
 impl Models {
@@ -368,6 +370,7 @@ impl Models {
             height,
             steps,
             cfg,
+            fast_attention,
             ..
         } = *request;
         if width == 0
@@ -401,9 +404,9 @@ impl Models {
         let times = self.dit.times(&timesteps);
         for step in 0..steps {
             let sigma = sigmas[step];
-            let mut out = self.dit.step_at(&cond, &x, &times[step])?;
+            let mut out = self.dit.step_with(&cond, &x, &times[step], fast_attention)?;
             if let Some(uncond) = &uncond {
-                let negative = self.dit.step_at(uncond, &x, &times[step])?;
+                let negative = self.dit.step_with(uncond, &x, &times[step], fast_attention)?;
                 for (o, n) in out.iter_mut().zip(&negative) {
                     *o = n + cfg * (*o - n);
                 }
@@ -495,6 +498,7 @@ mod tests {
                 cfg: 1.0,
                 seed: 7,
                 references: &[],
+                fast_attention: std::env::var("KUNO_QWEN_FAST").is_ok(),
             };
             let mut first = true;
             models
@@ -536,6 +540,7 @@ mod tests {
             cfg: 1.0,
             seed: 7,
             references: &[],
+            fast_attention: std::env::var("KUNO_QWEN_FAST").is_ok(),
         };
         let started = std::time::Instant::now();
         let rgba = models.generate(&request, |_, _| true).unwrap();
@@ -616,6 +621,7 @@ mod tests {
             cfg: 4.0,
             seed: 7,
             references: &references,
+            fast_attention: std::env::var("KUNO_QWEN_FAST").is_ok(),
         };
         let started = std::time::Instant::now();
         let got = models.generate(&request, |_, _| true).unwrap();
