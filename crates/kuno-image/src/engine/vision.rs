@@ -32,7 +32,7 @@ pub const LAYERS: usize = 27;
 pub const DEEPSTACK: [usize; 3] = [8, 16, 24];
 /// Width of a merged row: four patches.
 pub const MERGED: usize = WIDTH * MERGE * MERGE;
-/// The text encoder's width.
+/// MiniMax H3's text encoder width (Qwen3-VL 32B); Qwen3-VL 8B's is 4096 (`Vision::out`).
 pub const OUT: usize = 5120;
 /// Side of the learned position table.
 pub const TABLE: usize = 48;
@@ -146,20 +146,31 @@ pub fn angles(width: usize, height: usize) -> Vec<f64> {
 
 pub struct Vision {
     pub(super) file: Safetensors,
+    /// Tensor name prefix: `visual.` (MiniMax H3's file) or `model.visual.` (Qwen3-VL 8B).
+    pub(super) prefix: &'static str,
+    /// The text encoder's width, which the mergers project to.
+    pub out: usize,
 }
 impl Vision {
     /// The vision tower inside the text encoder's file.
     pub fn open(path: &Path) -> Result<Self, &'static str> {
         let file = Safetensors::open(path)?;
-        if file.count("visual.blocks.") != LAYERS
-            || file.count("visual.deepstack_merger_list.") != DEEPSTACK.len()
-        {
+        let prefix = ["visual.", "model.visual."]
+            .into_iter()
+            .find(|p| file.count(&format!("{p}blocks.")) == LAYERS)
+            .ok_or("model_file_invalid")?;
+        let out = file
+            .shape(&format!("{prefix}merger.linear_fc2.weight"))
+            .and_then(|s| s.first().copied())
+            .filter(|out| out.is_multiple_of(256))
+            .ok_or("model_file_invalid")?;
+        if file.count(&format!("{prefix}deepstack_merger_list.")) != DEEPSTACK.len() {
             return Err("model_file_invalid");
         }
-        Ok(Self { file })
+        Ok(Self { file, prefix, out })
     }
     pub(super) fn tensor(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
-        self.file.floats(&format!("visual.{name}"), shape)
+        self.file.floats(&format!("{}{name}", self.prefix), shape)
     }
     /// The patch embedding as a `[WIDTH][PATCH_VALUES]` matrix: the model's kernel spans two
     /// time slices of one image, so they are summed.
@@ -178,7 +189,7 @@ impl Vision {
         }
         Ok(out)
     }
-    /// The image's rows for the text encoder `[tokens][OUT]`, then the three deep-stack sets,
+    /// The image's rows for the text encoder `[tokens][out]`, then the three deep-stack sets,
     /// from an image `[3][height][width]` scaled to -1..1.
     pub fn encode_exact(
         &self,
@@ -233,7 +244,7 @@ impl Vision {
     }
     fn merger_mlp(&self, name: &str, h: &[f64]) -> Result<Vec<f64>, &'static str> {
         let (w1, b1) = self.dense(&format!("{name}.linear_fc1"), MERGED, MERGED)?;
-        let (w2, b2) = self.dense(&format!("{name}.linear_fc2"), OUT, MERGED)?;
+        let (w2, b2) = self.dense(&format!("{name}.linear_fc2"), self.out, MERGED)?;
         let mut g = linear(h, MERGED, &w1, &b1);
         g.iter_mut().for_each(|v| *v = gelu_erf(*v));
         Ok(linear(&g, MERGED, &w2, &b2))

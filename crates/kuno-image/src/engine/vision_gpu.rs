@@ -13,8 +13,8 @@ use super::{
     gpu::{Buffer, Gpu, Kernel, bytes_of, shaders},
     safetensors::narrow,
     vision::{
-        self, DEEPSTACK, HEAD, HEADS, HIDDEN, LAYERS, MERGED, OUT, PATCH, PATCH_VALUES, TABLE,
-        Vision, WIDTH,
+        self, DEEPSTACK, HEAD, HEADS, HIDDEN, LAYERS, MERGED, PATCH, PATCH_VALUES, TABLE, Vision,
+        WIDTH,
     },
 };
 
@@ -113,7 +113,7 @@ impl Placer<'_> {
     fn linear(&mut self, name: &str, rows: usize, columns: usize) -> Result<Linear, &'static str> {
         let bias = self.vision.tensor(&format!("{name}.bias"), &[rows])?;
         Ok(self.place(
-            Source::File(format!("visual.{name}.weight")),
+            Source::File(format!("{}{name}.weight", self.vision.prefix)),
             rows,
             columns,
             &bias,
@@ -131,7 +131,7 @@ impl Placer<'_> {
         Ok(Merger {
             norm: self.norm(&format!("{name}.norm"), width)?,
             fc1: self.linear(&format!("{name}.linear_fc1"), MERGED, MERGED)?,
-            fc2: self.linear(&format!("{name}.linear_fc2"), OUT, MERGED)?,
+            fc2: self.linear(&format!("{name}.linear_fc2"), self.vision.out, MERGED)?,
         })
     }
     /// Writes every matrix as little-endian half floats into `to`, the whole weight buffer.
@@ -175,6 +175,8 @@ pub struct GpuVision {
     merger: Merger,
     /// The learned position table `[48 * 48][1152]`, interpolated per image on the CPU.
     table: Vec<f32>,
+    /// The text encoder's width.
+    out: usize,
 }
 impl GpuVision {
     /// Reads the tower's weights (about 1.2 GB as half floats) into video memory.
@@ -231,6 +233,7 @@ impl GpuVision {
             deepstack,
             merger,
             table,
+            out: vision.out,
         })
     }
     /// The image's rows for the text encoder `[tokens][5120]`, then the three deep-stack
@@ -289,10 +292,10 @@ impl GpuVision {
         let o = float(HEADS * VT * tp)?;
         let rotary = float(turns.len().max(1))?;
         let outs = [
-            float(m * OUT)?,
-            float(m * OUT)?,
-            float(m * OUT)?,
-            float(m * OUT)?,
+            float(m * self.out)?,
+            float(m * self.out)?,
+            float(m * self.out)?,
+            float(m * self.out)?,
         ];
         gpu.upload(&h, 0, bytes_of(&patch_rows))?;
         gpu.upload(&x, 0, bytes_of(&stream))?;
@@ -383,10 +386,10 @@ impl GpuVision {
         w.merge(c, &h, &a, &self.merger, m, mp, &outs[0]);
         run(gpu, &calls)?;
         drop(calls);
-        let through = gpu.readback((m * OUT) as u64 * 4)?;
+        let through = gpu.readback((m * self.out) as u64 * 4)?;
         let mut result: [Vec<f32>; 4] = Default::default();
         for (to, from) in result.iter_mut().zip(&outs) {
-            *to = vec![0f32; m * OUT];
+            *to = vec![0f32; m * self.out];
             gpu.read_floats(from, 0, &through, to)?;
         }
         Ok(result)
@@ -493,14 +496,13 @@ impl<'a> Work<'a> {
         self.product(calls, h, &merger.fc1, mp);
         self.bias(calls, &merger.fc1, MERGED, 2, m, mp, Some(a));
         self.product(calls, a, &merger.fc2, mp);
-        self.bias(calls, &merger.fc2, OUT, 3, m, mp, Some(out));
+        self.bias(calls, &merger.fc2, self.v.out, 3, m, mp, Some(out));
     }
 }
 const _: () = assert!(
     WIDTH.is_multiple_of(16)
         && HIDDEN.is_multiple_of(16)
         && MERGED.is_multiple_of(256)
-        && OUT.is_multiple_of(256)
         && PATCH_VALUES.is_multiple_of(16)
         && PAIRS == 36
         && MAX_PATCHES.is_multiple_of(PATCHES)
