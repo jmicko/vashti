@@ -463,7 +463,7 @@ mod tests {
             );
         }
         // A text-only prompt: the plain generation capture.
-        let small = std::path::PathBuf::from(golden.parent().unwrap().join("qwen-small"));
+        let small = golden.parent().unwrap().join("qwen-small");
         let want = Golden::load(&small, 0);
         let (context, _) = models
             .condition(
