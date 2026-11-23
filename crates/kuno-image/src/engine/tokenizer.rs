@@ -53,10 +53,8 @@ fn byte_chars() -> Vec<(u8, char)> {
     for b in (0..256u32).filter(|&b| printable(b)) {
         out.push((b as u8, char::from_u32(b).unwrap()));
     }
-    let mut n = 0;
-    for b in (0..256u32).filter(|&b| !printable(b)) {
-        out.push((b as u8, char::from_u32(256 + n).unwrap()));
-        n += 1;
+    for (n, b) in (0..256u32).filter(|&b| !printable(b)).enumerate() {
+        out.push((b as u8, char::from_u32(256 + n as u32).unwrap()));
     }
     out
 }

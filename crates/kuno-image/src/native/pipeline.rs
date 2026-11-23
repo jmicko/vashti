@@ -36,6 +36,8 @@ const VISUAL_COND_TIMESTEP: f32 = 0.999;
 const VISION_FACTOR: usize = 32;
 const VISION_MIN_AREA: usize = 3136;
 const VISION_MAX_AREA: usize = 12_845_056;
+// The engine's table, digit for digit.
+#[allow(clippy::excessive_precision)]
 const PREVIEW_PROJECTION: [[f32; 3]; 24] = [
     [0.198_198_57, 0.115_849_99, 0.079_297_77],
     [-0.160_472_24, -0.106_011_7, -0.159_963_24],
