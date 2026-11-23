@@ -220,7 +220,12 @@ impl Vision {
             self.tensor(&format!("{name}.norm.bias"), &[width])?,
         ))
     }
-    fn dense(&self, name: &str, rows: usize, columns: usize) -> Result<(Vec<f32>, Vec<f32>), &'static str> {
+    fn dense(
+        &self,
+        name: &str,
+        rows: usize,
+        columns: usize,
+    ) -> Result<(Vec<f32>, Vec<f32>), &'static str> {
         Ok((
             self.tensor(&format!("{name}.weight"), &[rows, columns])?,
             self.tensor(&format!("{name}.bias"), &[rows])?,
@@ -233,7 +238,13 @@ impl Vision {
         g.iter_mut().for_each(|v| *v = gelu_erf(*v));
         Ok(linear(&g, MERGED, &w2, &b2))
     }
-    fn block(&self, layer: usize, x: &mut [f64], n: usize, turns: &[f64]) -> Result<(), &'static str> {
+    fn block(
+        &self,
+        layer: usize,
+        x: &mut [f64],
+        n: usize,
+        turns: &[f64],
+    ) -> Result<(), &'static str> {
         let p = format!("blocks.{layer}");
         let ln = |which: &str| -> Result<(Vec<f32>, Vec<f32>), &'static str> {
             Ok((
@@ -289,7 +300,9 @@ impl Vision {
                     let out = &mut row[hd * HEAD..][..HEAD];
                     for (s, &w) in scores.iter().enumerate() {
                         let vr = &v[(hd * n + s) * HEAD..][..HEAD];
-                        out.iter_mut().zip(vr).for_each(|(o, v)| *o += w / total * v);
+                        out.iter_mut()
+                            .zip(vr)
+                            .for_each(|(o, v)| *o += w / total * v);
                     }
                 }
             });
@@ -382,9 +395,16 @@ pub(crate) mod tests {
         assert_eq!(MERGED, 4608);
         let order = order(64, 32);
         // 4 x 2 patches: two 2x2 blocks side by side.
-        assert_eq!(&order[..6], &[(0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (0, 3)]);
+        assert_eq!(
+            &order[..6],
+            &[(0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (0, 3)]
+        );
         assert!(supported(832, 544) && !supported(840, 544));
-        for (x, want) in [(0.5, 0.520_499_877_813_046_5), (1.0, 0.842_700_792_949_714_9), (3.0, 0.999_977_909_503_001_4)] {
+        for (x, want) in [
+            (0.5, 0.520_499_877_813_046_5),
+            (1.0, 0.842_700_792_949_714_9),
+            (3.0, 0.999_977_909_503_001_4),
+        ] {
             assert!((erf(x) - want).abs() < 1e-14, "{x}");
         }
         assert!((gelu_erf(-1.0) + 0.158_655_253_931_457_05).abs() < 1e-14);

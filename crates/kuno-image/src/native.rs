@@ -1045,7 +1045,8 @@ impl Session {
                 .map_err(|_| code)?
                 .pop()
                 .ok_or(code)?;
-            let (rgb, w, h) = crate::video::keyframe_rgb(decoded, recipe.width, recipe.height, code)?;
+            let (rgb, w, h) =
+                crate::video::keyframe_rgb(decoded, recipe.width, recipe.height, code)?;
             // The engine path takes frames at the clip's size only.
             if !cfg!(feature = "rust-dit") && (w, h) != (recipe.width, recipe.height) {
                 return Err(code);
@@ -1053,7 +1054,8 @@ impl Session {
             Ok((rgb, (w, h)))
         };
         let mut inputs = Inputs::default();
-        (inputs.first, inputs.first_size) = keyframe(&recipe.first_frame, "video_first_frame_invalid")?;
+        (inputs.first, inputs.first_size) =
+            keyframe(&recipe.first_frame, "video_first_frame_invalid")?;
         (inputs.last, inputs.last_size) = keyframe(&recipe.last_frame, "video_last_frame_invalid")?;
         if !recipe.reference_images.is_empty() {
             for pixels in crate::references::decode(&recipe.reference_images)
@@ -1139,7 +1141,8 @@ impl Session {
             );
             // The vision tower (when the request has images) on a thread of its own: it is
             // needed first, and waiting for it would delay the text encoder's longer read.
-            let sees = !inputs.first.is_empty() || !inputs.last.is_empty() || !references.is_empty();
+            let sees =
+                !inputs.first.is_empty() || !inputs.last.is_empty() || !references.is_empty();
             std::thread::spawn(move || {
                 let tower = sees.then(|| {
                     let (pci, text) = (pci.clone(), text.clone());
@@ -1185,33 +1188,35 @@ impl Session {
                     }
                 }
             }
-        } else { unsafe {
-            kuno_minimax_session_generate(
-                self.native.as_ptr(),
-                i32::from(recipe.uses_reference_model()),
-                prompt.as_ptr(),
-                recipe.width as i32,
-                recipe.height as i32,
-                recipe.frames as i32,
-                kuno_protocol::VIDEO_FPS as i32,
-                steps as i32,
-                seed,
-                optional(&inputs.first),
-                optional(&inputs.last),
-                references.as_ptr(),
-                references.len() as i32,
-                receive_video_frame,
-                receive_audio_latent,
-                Some(decode_video_latent),
-                cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
-                cfg!(feature = "rust-dit").then_some(encode_text as _),
-                Some(encode_frame),
-                Some(encode_vision),
-                Some(video_preview),
-                video_phase,
-                &mut output as *mut _ as *mut c_void,
-            )
-        } };
+        } else {
+            unsafe {
+                kuno_minimax_session_generate(
+                    self.native.as_ptr(),
+                    i32::from(recipe.uses_reference_model()),
+                    prompt.as_ptr(),
+                    recipe.width as i32,
+                    recipe.height as i32,
+                    recipe.frames as i32,
+                    kuno_protocol::VIDEO_FPS as i32,
+                    steps as i32,
+                    seed,
+                    optional(&inputs.first),
+                    optional(&inputs.last),
+                    references.as_ptr(),
+                    references.len() as i32,
+                    receive_video_frame,
+                    receive_audio_latent,
+                    Some(decode_video_latent),
+                    cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
+                    cfg!(feature = "rust-dit").then_some(encode_text as _),
+                    Some(encode_frame),
+                    Some(encode_vision),
+                    Some(video_preview),
+                    video_phase,
+                    &mut output as *mut _ as *mut c_void,
+                )
+            }
+        };
         drop(references);
         drop(inputs);
         output.dit = None;

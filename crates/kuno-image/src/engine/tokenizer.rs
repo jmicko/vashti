@@ -49,7 +49,8 @@ pub const SPECIAL: [&str; 31] = [
 /// GPT-2's map from bytes to printable characters, in vocabulary order: (byte, char).
 fn byte_chars() -> Vec<(u8, char)> {
     let mut out = Vec::with_capacity(256);
-    let printable = |b: u32| (33..=126).contains(&b) || (161..=172).contains(&b) || (174..=255).contains(&b);
+    let printable =
+        |b: u32| (33..=126).contains(&b) || (161..=172).contains(&b) || (174..=255).contains(&b);
     for b in (0..256u32).filter(|&b| printable(b)) {
         out.push((b as u8, char::from_u32(b).unwrap()));
     }
@@ -79,7 +80,9 @@ impl Tokenizer {
             bytes[b as usize] = id as u32;
         }
         let raw = |s: &str| -> Result<Vec<u8>, &'static str> {
-            s.chars().map(|c| byte_of.get(&c).copied().ok_or(invalid)).collect()
+            s.chars()
+                .map(|c| byte_of.get(&c).copied().ok_or(invalid))
+                .collect()
         };
         // Token ids by raw bytes: the bytes, then one per merge.
         let mut ids: HashMap<Vec<u8>, u32> = HashMap::with_capacity(160_000);
@@ -189,7 +192,10 @@ mod tests {
         assert_eq!(t.special("<|vision_start|>"), Some(151_652));
         assert_eq!(t.encode("").unwrap(), Vec::<u32>::new());
         // Every merge makes a distinct token, so ids are positional as in the engine.
-        assert_eq!(t.special, 256 + MERGES.split_terminator('\n').count() as u32);
+        assert_eq!(
+            t.special,
+            256 + MERGES.split_terminator('\n').count() as u32
+        );
     }
 
     /// Ids from the C++ engine's tokenizer (its Oniguruma split) on 96 synthetic strings:

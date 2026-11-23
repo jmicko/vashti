@@ -112,7 +112,12 @@ impl Placer<'_> {
     }
     fn linear(&mut self, name: &str, rows: usize, columns: usize) -> Result<Linear, &'static str> {
         let bias = self.vision.tensor(&format!("{name}.bias"), &[rows])?;
-        Ok(self.place(Source::File(format!("visual.{name}.weight")), rows, columns, &bias))
+        Ok(self.place(
+            Source::File(format!("visual.{name}.weight")),
+            rows,
+            columns,
+            &bias,
+        ))
     }
     fn norm(&mut self, name: &str, width: usize) -> Result<Norm, &'static str> {
         let gamma = self.vision.tensor(&format!("{name}.weight"), &[width])?;
@@ -182,7 +187,12 @@ impl GpuVision {
         };
         let patch_bias = vision.tensor("patch_embed.proj.bias", &[WIDTH])?;
         let patch_matrix = vision.patch_matrix()?.into_iter().map(narrow).collect();
-        let patch = p.place(Source::Values(patch_matrix), WIDTH, PATCH_VALUES, &patch_bias);
+        let patch = p.place(
+            Source::Values(patch_matrix),
+            WIDTH,
+            PATCH_VALUES,
+            &patch_bias,
+        );
         let mut blocks = Vec::with_capacity(LAYERS);
         for layer in 0..LAYERS {
             let b = format!("blocks.{layer}");
@@ -232,7 +242,9 @@ impl GpuVision {
         height: usize,
     ) -> Result<[Vec<f32>; 4], &'static str> {
         let n = (width / PATCH) * (height / PATCH);
-        if !vision::supported(width, height) || n > MAX_PATCHES || pixels.len() != 3 * width * height
+        if !vision::supported(width, height)
+            || n > MAX_PATCHES
+            || pixels.len() != 3 * width * height
         {
             return Err("invalid_input");
         }
@@ -276,7 +288,12 @@ impl GpuVision {
         let weights = half(block * tp)?;
         let o = float(HEADS * VT * tp)?;
         let rotary = float(turns.len().max(1))?;
-        let outs = [float(m * OUT)?, float(m * OUT)?, float(m * OUT)?, float(m * OUT)?];
+        let outs = [
+            float(m * OUT)?,
+            float(m * OUT)?,
+            float(m * OUT)?,
+            float(m * OUT)?,
+        ];
         gpu.upload(&h, 0, bytes_of(&patch_rows))?;
         gpu.upload(&x, 0, bytes_of(&stream))?;
         gpu.upload(&rotary, 0, bytes_of(&turns))?;
@@ -413,7 +430,11 @@ impl<'a> Work<'a> {
         rows: usize,
         out: Option<&'a Buffer>,
     ) {
-        let stream = if mode == 3 { out.unwrap_or(self.x) } else { self.x };
+        let stream = if mode == 3 {
+            out.unwrap_or(self.x)
+        } else {
+            self.x
+        };
         let half = if mode == 1 || mode == 2 {
             out.unwrap_or(self.g)
         } else {

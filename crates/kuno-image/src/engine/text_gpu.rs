@@ -117,9 +117,7 @@ impl GpuTextEncoder {
         let layers = readers.install(|| {
             (0..LAYERS)
                 .into_par_iter()
-                .map(|layer| {
-                    gpu.staged(LAYER_BYTES as u64, |to| read_layer(&encoder, layer, to))
-                })
+                .map(|layer| gpu.staged(LAYER_BYTES as u64, |to| read_layer(&encoder, layer, to)))
                 .collect::<Result<Vec<_>, _>>()
         })?;
         Ok(Self {
@@ -330,11 +328,15 @@ fn read_layer(encoder: &TextEncoder, layer: usize, to: &mut [u8]) -> Result<(), 
 fn layer_vectors(encoder: &TextEncoder, layer: usize, to: &mut [f32]) -> Result<(), &'static str> {
     let file = &encoder.file;
     let base = format!("model.layers.{layer}");
-    let scale = |name: &str, rows: usize| file.f32(&format!("{base}.{name}.weight_scale"), &[rows, 1]);
+    let scale =
+        |name: &str, rows: usize| file.f32(&format!("{base}.{name}.weight_scale"), &[rows, 1]);
     let norm = |name: &str, width: usize| file.floats(&format!("{base}.{name}.weight"), &[width]);
     let parts = [
         (SCALE_QKV, scale("self_attn.q_proj", HEADS * HEAD)?),
-        (SCALE_QKV + HEADS * HEAD, scale("self_attn.k_proj", KV_HEADS * HEAD)?),
+        (
+            SCALE_QKV + HEADS * HEAD,
+            scale("self_attn.k_proj", KV_HEADS * HEAD)?,
+        ),
         (
             SCALE_QKV + (HEADS + KV_HEADS) * HEAD,
             scale("self_attn.v_proj", KV_HEADS * HEAD)?,
@@ -450,7 +452,10 @@ mod tests {
         );
         for token in [0, 5, 200, 449, 468] {
             let row = token * WIDTH..(token + 1) * WIDTH;
-            println!("token {token}: {:.1} dB", snr(&got[row.clone()], &want[row]));
+            println!(
+                "token {token}: {:.1} dB",
+                snr(&got[row.clone()], &want[row])
+            );
         }
     }
 }

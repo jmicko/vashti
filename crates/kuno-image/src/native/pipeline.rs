@@ -111,7 +111,11 @@ impl Picture {
                 values[c * plane + p] = f32::from(pixel[c]) / 255.0;
             }
         }
-        Ok(Self { width, height, values })
+        Ok(Self {
+            width,
+            height,
+            values,
+        })
     }
     /// The engine's default (nearest) resize: source index `i * in / out` on each axis.
     fn resized(&self, width: usize, height: usize) -> Self {
@@ -132,7 +136,11 @@ impl Picture {
                 }
             }
         }
-        Self { width, height, values }
+        Self {
+            width,
+            height,
+            values,
+        }
     }
 }
 
@@ -151,7 +159,11 @@ fn cancelled() -> bool {
 
 /// Latent frames for a clip's frame count.
 pub(super) fn latent_frames(frames: usize) -> usize {
-    if frames <= 5 { 2 } else { (frames - 5) / 17 * 5 + 2 }
+    if frames <= 5 {
+        2
+    } else {
+        (frames - 5) / 17 * 5 + 2
+    }
 }
 /// The discrete flow schedule: `steps` sigmas from 1 down, then 0.
 pub(super) fn sigmas(steps: usize) -> Vec<f32> {
@@ -204,7 +216,11 @@ fn reference_size(width: usize, height: usize, clip: (usize, usize)) -> (usize, 
 
 /// A conditioning latent: the video encoder's means at the diffusion model's scale, mostly
 /// kept and slightly noised (the engine seeds a fresh generator for each).
-fn condition_latent(out: &VideoOutput, picture: &Picture, seed: i64) -> Result<Vec<f32>, &'static str> {
+fn condition_latent(
+    out: &VideoOutput,
+    picture: &Picture,
+    seed: i64,
+) -> Result<Vec<f32>, &'static str> {
     let encoder = frame_encoder(&out.pci, &out.video_model)?;
     let means = encoder.encode(&picture.values, picture.width, picture.height)?;
     let plane = means.len() / LATENT_CHANNELS;
@@ -239,7 +255,8 @@ pub(super) fn generate(
     // The engine's models (an earlier image job's, say) leave video memory first.
     // SAFETY: the session is live and the caller holds the engine lock.
     unsafe { kuno_qwen_session_release(native) };
-    let (width, height, frames, steps) = (request.width, request.height, request.frames, request.steps);
+    let (width, height, frames, steps) =
+        (request.width, request.height, request.frames, request.steps);
     if width % 16 != 0 || height % 16 != 0 || frames < 5 || steps == 0 {
         return Err(Failure::Failed("video_input_invalid"));
     }
@@ -253,7 +270,8 @@ pub(super) fn generate(
     {
         return Err(Failure::Failed("image_host_memory_unavailable"));
     }
-    let audio_length = ((frames as f64 * 40.0 / f64::from(kuno_protocol::VIDEO_FPS)).round() as usize).max(1);
+    let audio_length =
+        ((frames as f64 * 40.0 / f64::from(kuno_protocol::VIDEO_FPS)).round() as usize).max(1);
 
     // Conditioning images: start and end frames, or reference pictures.
     let mut pictures = Vec::new();
@@ -272,7 +290,11 @@ pub(super) fn generate(
             // A frame of another shape enters on its own grid; the model composes it into
             // the clip.
             let picture = Picture::from_rgb(rgb, fw, fh)?;
-            latents.push((condition_latent(out, &picture, request.seed)?, fw / 16, fh / 16));
+            latents.push((
+                condition_latent(out, &picture, request.seed)?,
+                fw / 16,
+                fh / 16,
+            ));
             keyframes.push(index);
             pictures.push(picture);
         }
@@ -281,7 +303,11 @@ pub(super) fn generate(
             let source = Picture::from_rgb(rgb, *rw as usize, *rh as usize)?;
             let (pw, ph) = reference_size(source.width, source.height, (width, height));
             let picture = source.resized(pw, ph);
-            latents.push((condition_latent(out, &picture, request.seed)?, pw / 16, ph / 16));
+            latents.push((
+                condition_latent(out, &picture, request.seed)?,
+                pw / 16,
+                ph / 16,
+            ));
             references.push(Reference {
                 kind: ReferenceKind::Image,
                 video: Some(i),
@@ -295,15 +321,22 @@ pub(super) fn generate(
     }
 
     // The prompt: each picture as the vision tower sees it, then the text.
-    static TOKENIZER: std::sync::OnceLock<Result<Tokenizer, &'static str>> = std::sync::OnceLock::new();
-    let tokenizer = TOKENIZER.get_or_init(Tokenizer::new).as_ref().map_err(|e| *e)?;
+    static TOKENIZER: std::sync::OnceLock<Result<Tokenizer, &'static str>> =
+        std::sync::OnceLock::new();
+    let tokenizer = TOKENIZER
+        .get_or_init(Tokenizer::new)
+        .as_ref()
+        .map_err(|e| *e)?;
     let mut text = String::new();
     let mut seen = Vec::new();
     for (i, picture) in pictures.iter().enumerate() {
         text.push_str(&format!("<Picture {}>: ", i + 1));
         let (vw, vh) = vision_size(picture.width, picture.height);
         let mut input = picture.resized(vw, vh);
-        input.values.iter_mut().for_each(|v| *v = v.clamp(0.0, 1.0) * 2.0 - 1.0);
+        input
+            .values
+            .iter_mut()
+            .for_each(|v| *v = v.clamp(0.0, 1.0) * 2.0 - 1.0);
         let tower = vision(&out.pci, &out.text_model)?;
         let rows = tower.encode(&input.values, vw, vh)?;
         text.push_str("<|vision_start|>");
@@ -322,7 +355,11 @@ pub(super) fn generate(
         });
     }
     text.push_str(request.prompt);
-    let ids: Vec<i32> = tokenizer.encode(&text)?.into_iter().map(|id| id as i32).collect();
+    let ids: Vec<i32> = tokenizer
+        .encode(&text)?
+        .into_iter()
+        .map(|id| id as i32)
+        .collect();
     crate::worker_protocol::clear_bytes(&mut text.into_bytes());
     let context = {
         let images = seen
@@ -403,7 +440,10 @@ pub(super) fn generate(
             video_shift: VIDEO_SHIFT,
             audio_shift: AUDIO_SHIFT,
         })?;
-        eprintln!("kuno-image: rust dit: step {} ms", started.elapsed().as_millis());
+        eprintln!(
+            "kuno-image: rust dit: step {} ms",
+            started.elapsed().as_millis()
+        );
         // The engine's Euler step through its denoised estimate.
         let change = schedule[i + 1] - sigma;
         let mut denoised = vec![0f32; x.len()];
@@ -422,7 +462,14 @@ pub(super) fn generate(
             }
         }
         let preview = preview_rgb(&denoised[..video_values], w, h, t, t / 2);
-        video_preview(step, preview.as_ptr(), w as u32, h as u32, 3, out as *mut _ as *mut c_void);
+        video_preview(
+            step,
+            preview.as_ptr(),
+            w as u32,
+            h as u32,
+            3,
+            out as *mut _ as *mut c_void,
+        );
     }
     drop(videos);
     drop((context, tags, latents));
@@ -479,7 +526,8 @@ pub(super) fn generate(
     for f in 0..frames {
         for p in 0..plane {
             for c in 0..3 {
-                out.rgb.push(to_u8(pixels[(c * pixel_frames + f) * plane + p]));
+                out.rgb
+                    .push(to_u8(pixels[(c * pixel_frames + f) * plane + p]));
             }
         }
     }

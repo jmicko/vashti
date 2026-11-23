@@ -178,7 +178,10 @@ mod tests {
             0.3500, 0.3081, 0.1198, 1.2377, 1.1168, -0.2473,
         ];
         let four = [1.5410, -0.2934, -2.1788, 0.5684];
-        for (want, got) in [(&sixteen[..], Mt19937::new(0).randn(16)), (&four[..], Mt19937::new(0).randn(4))] {
+        for (want, got) in [
+            (&sixteen[..], Mt19937::new(0).randn(16)),
+            (&four[..], Mt19937::new(0).randn(4)),
+        ] {
             for (g, w) in got.iter().zip(want) {
                 assert!((g - w).abs() < 1e-4, "{got:?}");
             }

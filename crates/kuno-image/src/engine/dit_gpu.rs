@@ -775,7 +775,11 @@ impl Host {
     /// Frees the weights' host memory. A DiT placed from this host keeps running; placing
     /// another needs a fresh read.
     pub fn release(&self) {
-        let weights = self.weights.lock().ok().and_then(|mut weights| weights.take());
+        let weights = self
+            .weights
+            .lock()
+            .ok()
+            .and_then(|mut weights| weights.take());
         drop(weights);
     }
 }

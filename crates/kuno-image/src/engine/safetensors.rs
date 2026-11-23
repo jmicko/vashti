@@ -104,7 +104,10 @@ impl Safetensors {
         }
         let mut bytes = vec![0u8; count * width * 2];
         self.file
-            .read_exact_at(&mut bytes, self.data + entry.begin + (first * width * 2) as u64)
+            .read_exact_at(
+                &mut bytes,
+                self.data + entry.begin + (first * width * 2) as u64,
+            )
             .map_err(|_| "model_file_invalid")?;
         // BF16 is the upper half of the f32 bit pattern.
         Ok(bytes

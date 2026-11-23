@@ -63,7 +63,10 @@ impl Prompt<'_> {
                 || gh * gw != image.size
                 || image.embeds.len() != image.size * WIDTH
                 || image.deepstack.len() >= LAYERS
-                || image.deepstack.iter().any(|d| d.len() != image.size * WIDTH)
+                || image
+                    .deepstack
+                    .iter()
+                    .any(|d| d.len() != image.size * WIDTH)
             {
                 return invalid;
             }
@@ -228,7 +231,9 @@ impl TextEncoder {
 fn norm_in_place(row: &mut [f32], weight: &[f32]) {
     let mean = row.iter().map(|v| v * v).sum::<f32>() / row.len() as f32;
     let scale = 1.0 / (mean + EPS).sqrt();
-    row.iter_mut().zip(weight).for_each(|(v, w)| *v = *v * scale * w);
+    row.iter_mut()
+        .zip(weight)
+        .for_each(|(v, w)| *v = *v * scale * w);
 }
 fn rms_norm(x: &[f32], weight: &[f32]) -> Vec<f32> {
     let mut out = x.to_vec();
@@ -368,5 +373,4 @@ pub(crate) mod tests {
         let turns = rotary(&p);
         assert_eq!(turns[PAIRS + 61], [1.0, 0.0]);
     }
-
 }
