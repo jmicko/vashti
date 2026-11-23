@@ -23,6 +23,8 @@ pub const OUT: usize = 4;
 /// Latent cells per image side.
 pub const SCALE: usize = 16;
 
+// The engine's statistics, digit for digit (one entry is near pi / 6 by chance).
+#[allow(clippy::approx_constant)]
 pub(crate) const MEAN: [f32; LATENT] = [
     0.5126, 0.7721, -0.0631, 1.3506, -0.7855, -2.1025, -0.3458, 1.3722, 1.8873, -1.7177, -0.6510,
     0.2732, 0.7562, -0.6163, -1.0277, 3.8363, 2.0210, 0.0472, 0.9320, 2.0087, 2.4954, -0.1391,
