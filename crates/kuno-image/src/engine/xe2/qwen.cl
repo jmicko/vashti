@@ -279,10 +279,11 @@ SG WG(256) kernel void q_merge(global const float* o, global const float* w, glo
 #define KEPT 28u
 #define SPILLED (GROUPS - KEPT)
 // ---- The feed-forward activation (from the gated product, `[token][12288]` f32) quantized ----
-SG WG(256) kernel void q_hidden(global const float4* h, global float* s, global float* spill,
-                               global uint4* q, uint tokens) {
-    local float mem[KEPT * 256];
-    local float tile[4096];
+SG WG(256) kernel void q_hidden(global const float4* h, global float* s, global uint4* q,
+                               uint tokens) {
+    // The whole rotated row stays in local memory (48 KB). Each sub-group transposes its
+    // group in the group's own slots before they hold the result, so no separate tile.
+    local float mem[GROUPS * 256];
     local float maxima[16];
     uint token = get_group_id(0);
     uint sg = get_sub_group_id(), lane = get_sub_group_local_id();
@@ -300,19 +301,16 @@ SG WG(256) kernel void q_hidden(global const float4* h, global float* s, global 
             v[j * 4 + 3] = part.w * 0.0625f;
         }
         stages(v);
-        for (uint j = 0; j < 16; j++) tile[sg * 256 + lane * 16 + j] = v[j];
-        barrier(CLK_LOCAL_MEM_FENCE);
-        for (uint j = 0; j < 16; j++) v[j] = tile[sg * 256 + j * 16 + lane];
+        local float* tile = mem + group * 256;
+        for (uint j = 0; j < 16; j++) tile[lane * 16 + j] = v[j];
+        sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+        for (uint j = 0; j < 16; j++) v[j] = tile[j * 16 + lane];
+        sub_group_barrier(CLK_LOCAL_MEM_FENCE);
         stages(v);
         for (uint j = 0; j < 16; j++) {
             top = fmax(top, fabs(v[j]));
-            if (group < KEPT) {
-                mem[group * 256 + j * 16 + lane] = v[j];
-            } else {
-                spill[(token * SPILLED + group - KEPT) * 256 + j * 16 + lane] = v[j];
-            }
+            tile[j * 16 + lane] = v[j];
         }
-        barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
     }
     top = sub_group_reduce_max(top);
     if (lane == 0) maxima[sg] = top;
@@ -325,8 +323,7 @@ SG WG(256) kernel void q_hidden(global const float4* h, global float* s, global 
         uint group = r * 16 + sg;
         uint4 word = (uint4)(0);
         for (uint b = 0; b < 16; b++) {
-            float value = group < KEPT ? mem[group * 256 + lane * 16 + b]
-                                       : spill[(token * SPILLED + group - KEPT) * 256 + lane * 16 + b];
+            float value = mem[group * 256 + lane * 16 + b];
             float scaled = value * inverse;
             int rounded = scale_out == 0.0f ? 0 : (int)clamp(rint(scaled), -127.0f, 127.0f);
             uint shifted = ((uint)rounded & 255u) << ((b & 3) * 8);

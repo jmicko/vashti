@@ -848,7 +848,7 @@ impl QwenGpu {
             )?;
             batch.launch(
                 &g.hidden,
-                &[M(sums), M(scales), M(spill), M(bytes), U(n)],
+                &[M(sums), M(scales), M(bytes), U(n)],
                 [np, 1, 1],
             )?;
             product(&mut batch, FC2)?;
