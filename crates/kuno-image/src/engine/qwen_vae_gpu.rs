@@ -1,14 +1,17 @@
-//! Qwen Image 2.1's VAE decoder on the GPU (`qwen_vae` holds the layout and the CPU
-//! reference). Maps stay channel-major f32, `[channels][pixels]` with the pixel count padded
-//! to 256. A convolution unfolds its input into half-float rows (`qvcol`, which also applies
-//! a block's RMS norm and SiLU, and reads an upsampled map for the up blocks' convolutions)
-//! and multiplies them with the half-float weights in `gemm16`, output channels in the token
-//! slot so the product lands channel-major; `qvbias` adds the bias and the residual. The
-//! middle attention is `gemm16` twice around a softmax. One image is one submission.
+//! Qwen Image 2.1's VAE on the GPU (`qwen_vae` holds the layout and the CPU reference).
+//! Maps stay channel-major f32, `[channels][pixels]` with the pixel count padded to 256. A
+//! convolution unfolds its input into half-float rows (`qvcol`, which also applies a block's
+//! RMS norm and SiLU, reads an upsampled map for the decoder's up blocks and strides for the
+//! encoder's downsampling) and multiplies them with the half-float weights in `gemm16`,
+//! output channels in the token slot so the product lands channel-major; `qvbias` adds the
+//! bias and the residual. The middle attention is `gemm16` twice around a softmax. One image
+//! is one submission.
 use super::{
     dit_gpu::{Call, run},
     gpu::{Buffer, Gpu, Kernel, bytes_of, shaders},
-    qwen_vae::{LATENT, MEAN, OUT, QwenVae, SCALE, STD, TEMPORAL, WIDTHS},
+    qwen_vae::{
+        ENCODER_TEMPORAL, ENCODER_WIDTHS, LATENT, MEAN, OUT, QwenVae, SCALE, STD, TEMPORAL, WIDTHS,
+    },
     safetensors::narrow,
 };
 
@@ -18,7 +21,6 @@ const ROWS: usize = 256;
 const TOKENS: usize = 128;
 /// Half floats of one unfolded chunk (128 MB).
 const CHUNK: usize = 64 << 20;
-const ATTENTION: usize = 1152;
 
 fn padded(n: usize, to: usize) -> usize {
     n.div_ceil(to) * to
@@ -87,6 +89,31 @@ impl Placer<'_> {
             .extend(file.floats(&format!("{name}.gamma"), &shape)?);
         Ok(first)
     }
+    fn residual(&mut self, name: &str) -> Result<Residual, &'static str> {
+        Ok(Residual {
+            norm1: self.norm(&format!("{name}.residual.0"))?,
+            conv1: self.conv(&format!("{name}.residual.2"))?,
+            norm2: self.norm(&format!("{name}.residual.3"))?,
+            conv2: self.conv(&format!("{name}.residual.6"))?,
+            shortcut: self
+                .vae
+                .file
+                .shape(&format!("{name}.shortcut.weight"))
+                .map(|_| self.conv(&format!("{name}.shortcut")))
+                .transpose()?,
+        })
+    }
+    fn attention(&mut self, name: &str) -> Result<Attention, &'static str> {
+        let norm = self.norm(&format!("{name}.norm"))?;
+        let to_qkv = self.conv(&format!("{name}.to_qkv"))?;
+        let proj = self.conv(&format!("{name}.proj"))?;
+        Ok(Attention {
+            norm,
+            channels: proj.outputs,
+            to_qkv,
+            proj,
+        })
+    }
 }
 
 struct Residual {
@@ -96,19 +123,33 @@ struct Residual {
     conv2: Placed,
     shortcut: Option<Placed>,
 }
-fn residual(p: &mut Placer, name: &str) -> Result<Residual, &'static str> {
-    Ok(Residual {
-        norm1: p.norm(&format!("{name}.residual.0"))?,
-        conv1: p.conv(&format!("{name}.residual.2"))?,
-        norm2: p.norm(&format!("{name}.residual.3"))?,
-        conv2: p.conv(&format!("{name}.residual.6"))?,
-        shortcut: p
-            .vae
-            .file
-            .shape(&format!("{name}.shortcut.weight"))
-            .map(|_| p.conv(&format!("{name}.shortcut")))
-            .transpose()?,
-    })
+struct Attention {
+    norm: usize,
+    channels: usize,
+    to_qkv: Placed,
+    proj: Placed,
+}
+
+struct Decoder {
+    conv2: Placed,
+    conv1: Placed,
+    middle: [Residual; 2],
+    attention: Attention,
+    /// Five up blocks of three residual blocks, the first four with an upsampling conv.
+    ups: Vec<(Vec<Residual>, Option<Placed>)>,
+    head_norm: usize,
+    head: Placed,
+}
+struct Encoder {
+    conv1: Placed,
+    /// Five down blocks of two residual blocks, the first four with a strided conv.
+    downs: Vec<(Vec<Residual>, Option<Placed>)>,
+    middle: [Residual; 2],
+    attention: Attention,
+    head_norm: usize,
+    head: Placed,
+    /// The VAE's 1x1 conv after the encoder, to means and log-variances.
+    quant: Placed,
 }
 
 pub struct GpuVae {
@@ -117,52 +158,69 @@ pub struct GpuVae {
     rms: Kernel,
     bias: Kernel,
     dup: Kernel,
+    avg: Kernel,
     qkv: Kernel,
     soft: Kernel,
     gemm: Kernel,
     weights: Buffer,
     vectors: Buffer,
-    conv2: Placed,
-    conv1: Placed,
-    middle: [Residual; 2],
-    attention_norm: usize,
-    to_qkv: Placed,
-    proj: Placed,
-    /// Five up blocks of three residual blocks, the first four with an upsampling conv.
-    ups: Vec<(Vec<Residual>, Option<Placed>)>,
-    head_norm: usize,
-    head: Placed,
+    decoder: Decoder,
+    encoder: Encoder,
 }
 impl GpuVae {
-    /// Reads the decoder's weights (about 0.3 GB as half floats) into video memory.
+    /// Reads the VAE's weights (about 0.35 GB as half floats) into video memory.
     pub fn new(gpu: &Gpu, vae: &QwenVae) -> Result<Self, &'static str> {
         let mut p = Placer {
             vae,
             halves: Vec::new(),
             vectors: Vec::new(),
         };
-        let conv2 = p.conv("conv2")?;
-        let conv1 = p.conv("decoder.conv1")?;
-        let middle = [
-            residual(&mut p, "decoder.middle.0")?,
-            residual(&mut p, "decoder.middle.2")?,
-        ];
-        let attention_norm = p.norm("decoder.middle.1.norm")?;
-        let to_qkv = p.conv("decoder.middle.1.to_qkv")?;
-        let proj = p.conv("decoder.middle.1.proj")?;
-        let mut ups = Vec::new();
-        for block in 0..5 {
-            let base = format!("decoder.upsamples.{block}.upsamples");
-            let blocks = (0..3)
-                .map(|i| residual(&mut p, &format!("{base}.{i}")))
-                .collect::<Result<Vec<_>, _>>()?;
-            let resample = (block < 4)
-                .then(|| p.conv(&format!("{base}.3.resample.1")))
-                .transpose()?;
-            ups.push((blocks, resample));
-        }
-        let head_norm = p.norm("decoder.head.0")?;
-        let head = p.conv("decoder.head.2")?;
+        let decoder = Decoder {
+            conv2: p.conv("conv2")?,
+            conv1: p.conv("decoder.conv1")?,
+            middle: [
+                p.residual("decoder.middle.0")?,
+                p.residual("decoder.middle.2")?,
+            ],
+            attention: p.attention("decoder.middle.1")?,
+            ups: (0..5)
+                .map(|block| -> Result<_, &'static str> {
+                    let base = format!("decoder.upsamples.{block}.upsamples");
+                    let blocks = (0..3)
+                        .map(|i| p.residual(&format!("{base}.{i}")))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let resample = (block < 4)
+                        .then(|| p.conv(&format!("{base}.3.resample.1")))
+                        .transpose()?;
+                    Ok((blocks, resample))
+                })
+                .collect::<Result<_, _>>()?,
+            head_norm: p.norm("decoder.head.0")?,
+            head: p.conv("decoder.head.2")?,
+        };
+        let encoder = Encoder {
+            conv1: p.conv("encoder.conv1")?,
+            downs: (0..5)
+                .map(|block| -> Result<_, &'static str> {
+                    let base = format!("encoder.downsamples.{block}.downsamples");
+                    let blocks = (0..2)
+                        .map(|i| p.residual(&format!("{base}.{i}")))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let resample = (block < 4)
+                        .then(|| p.conv(&format!("{base}.2.resample.1")))
+                        .transpose()?;
+                    Ok((blocks, resample))
+                })
+                .collect::<Result<_, _>>()?,
+            middle: [
+                p.residual("encoder.middle.0")?,
+                p.residual("encoder.middle.2")?,
+            ],
+            attention: p.attention("encoder.middle.1")?,
+            head_norm: p.norm("encoder.head.0")?,
+            head: p.conv("encoder.head.2")?,
+            quant: p.conv("conv1")?,
+        };
         let (halves, vectors) = (p.halves, p.vectors);
         let weights = gpu.filled(halves.len() as u64 * 2, |to| {
             to.copy_from_slice(bytes_of(&halves));
@@ -174,24 +232,49 @@ impl GpuVae {
         })?;
         Ok(Self {
             gpu: gpu.clone(),
-            col: gpu.kernel(shaders::QVCOL, 4, 11, None)?,
+            col: gpu.kernel(shaders::QVCOL, 4, 14, None)?,
             rms: gpu.kernel(shaders::QVRMS, 2, 3, None)?,
             bias: gpu.kernel(shaders::QVBIAS, 4, 4, None)?,
             dup: gpu.kernel(shaders::QVDUP, 2, 7, None)?,
-            qkv: gpu.kernel(shaders::QVQKV, 4, 3, None)?,
+            avg: gpu.kernel(shaders::QVAVG, 2, 7, None)?,
+            qkv: gpu.kernel(shaders::QVQKV, 4, 4, None)?,
             soft: gpu.kernel(shaders::QVSOFT, 2, 4, None)?,
             gemm: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
             weights,
             vectors,
-            conv2,
-            conv1,
-            middle,
-            attention_norm,
-            to_qkv,
-            proj,
-            ups,
-            head_norm,
-            head,
+            decoder,
+            encoder,
+        })
+    }
+
+    /// Buffers for maps of at most `largest` values, products of at most `products`, and
+    /// attention over `cells` tokens of `channels`.
+    fn buffers(
+        &self,
+        largest: usize,
+        products: usize,
+        scale_cells: usize,
+        cells: usize,
+        channels: usize,
+    ) -> Result<Buffers, &'static str> {
+        let gpu = &self.gpu;
+        let bytes = largest as u64 * 4;
+        let tokens = padded(cells, ROWS);
+        Ok(Buffers {
+            maps: [
+                gpu.buffer(bytes)?,
+                gpu.buffer(bytes)?,
+                gpu.buffer(bytes)?,
+                gpu.buffer(bytes)?,
+            ],
+            product: gpu.buffer(products as u64 * 4)?,
+            col: gpu.buffer(CHUNK as u64 * 2)?,
+            scale: gpu.buffer((padded(scale_cells, ROWS) * 4) as u64)?,
+            q: gpu.buffer((tokens * channels * 2) as u64)?,
+            k: gpu.buffer((tokens * channels * 2) as u64)?,
+            v: gpu.buffer((tokens * channels * 2) as u64)?,
+            scores: gpu.buffer((tokens * tokens * 4) as u64)?,
+            weights: gpu.buffer((tokens * tokens * 2) as u64)?,
         })
     }
 
@@ -204,18 +287,19 @@ impl GpuVae {
         width: usize,
     ) -> Result<Vec<f32>, &'static str> {
         let gpu = &self.gpu;
+        let d = &self.decoder;
         let plane = height * width;
         if latent.len() != LATENT * plane || plane == 0 {
             return Err("invalid_input");
         }
+        let attention = d.attention.channels;
         // The largest map (channels times padded pixels at every level), and the largest
         // product (output channels padded to the matrix kernel's tiles).
-        let mut w = width;
-        let mut h = height;
         let level = |channels: usize, w: usize, h: usize| channels * padded(w * h, ROWS);
-        let mut largest = level(3 * ATTENTION, w, h);
-        let mut products = level(padded(3 * ATTENTION, TOKENS), w, h);
-        for (block, (_, resample)) in self.ups.iter().enumerate() {
+        let (mut w, mut h) = (width, height);
+        let mut largest = level(3 * attention, w, h);
+        let mut products = level(padded(3 * attention, TOKENS), w, h);
+        for (block, (_, resample)) in d.ups.iter().enumerate() {
             let channels = WIDTHS[block].max(WIDTHS[block + 1]);
             largest = largest.max(level(channels, w, h));
             products = products.max(level(padded(channels, TOKENS), w, h));
@@ -225,23 +309,7 @@ impl GpuVae {
                 products = products.max(level(padded(WIDTHS[block + 1], TOKENS), w, h));
             }
         }
-        let bytes = largest as u64 * 4;
-        let maps = [
-            gpu.buffer(bytes)?,
-            gpu.buffer(bytes)?,
-            gpu.buffer(bytes)?,
-            gpu.buffer(bytes)?,
-        ];
-        let product = gpu.buffer(products as u64 * 4)?;
-        let col = gpu.buffer(CHUNK as u64 * 2)?;
-        let scale = gpu.buffer((padded(w * h, ROWS) * 4) as u64)?;
-        let tokens = padded(plane, ROWS);
-        let q = gpu.buffer((tokens * ATTENTION * 2) as u64)?;
-        let k = gpu.buffer((tokens * ATTENTION * 2) as u64)?;
-        let v = gpu.buffer((tokens * ATTENTION * 2) as u64)?;
-        let scores = gpu.buffer((tokens * tokens * 4) as u64)?;
-        let weights = gpu.buffer((tokens * tokens * 2) as u64)?;
-
+        let b = self.buffers(largest, products, w * h, plane, attention)?;
         // The un-normalized latent, channel-major with padded rows.
         let stride = padded(plane, ROWS);
         let mut input = vec![0f32; LATENT * stride];
@@ -253,99 +321,22 @@ impl GpuVae {
                 *to = v * STD[c] + MEAN[c];
             }
         }
-        gpu.upload(&maps[0], 0, bytes_of(&input))?;
+        gpu.upload(&b.maps[0], 0, bytes_of(&input))?;
         drop(input);
-        let work = Work {
-            vae: self,
-            product: &product,
-            col: &col,
-            scale: &scale,
-        };
+        let work = Work { vae: self, b: &b };
+        let maps = &b.maps;
         let mut calls = Vec::new();
-        let (w, h) = (width, height);
-        work.conv(
-            &mut calls,
-            &self.conv2,
-            &maps[0],
-            (w, h),
-            Norm::None,
-            false,
-            &maps[1],
-            None,
-        );
-        work.conv(
-            &mut calls,
-            &self.conv1,
-            &maps[1],
-            (w, h),
-            Norm::None,
-            false,
-            &maps[2],
-            None,
-        );
-        let mut x = 2;
-        x = work.residual(&mut calls, &self.middle[0], &maps, x, (w, h));
-        // Attention over all cells: queries, keys and values from a normalized 1x1 conv.
-        let free = (0..4).filter(|i| *i != x).collect::<Vec<_>>();
-        let (qkv, mixed, out) = (free[0], free[1], free[2]);
-        work.conv(
-            &mut calls,
-            &self.to_qkv,
-            &maps[x],
-            (w, h),
-            Norm::Only(self.attention_norm),
-            false,
-            &maps[qkv],
-            None,
-        );
-        calls.push(Call::Shader {
-            kernel: &self.qkv,
-            buffers: vec![&maps[qkv], &q, &k, &v],
-            constants: vec![plane as u32, tokens as u32, stride as u32],
-            groups: [(tokens / 64) as u32, (ATTENTION / 4) as u32, 1],
-        });
-        // Scores [query][key], then the softmax weights.
-        calls.push(Call::Shader {
-            kernel: &self.gemm,
-            buffers: vec![&q, &k, &scores],
-            constants: vec![ATTENTION as u32, 0, 0, 0, tokens as u32],
-            groups: [(tokens / ROWS) as u32, (tokens / TOKENS) as u32, 1],
-        });
-        calls.push(Call::Shader {
-            kernel: &self.soft,
-            buffers: vec![&scores, &weights],
-            constants: vec![
-                plane as u32,
-                tokens as u32,
-                0,
-                (1.0 / (ATTENTION as f32).sqrt()).to_bits(),
-            ],
-            groups: [tokens as u32, 1, 1],
-        });
-        // Mixed values, channel-major: [channel][query] = values[channel][..] . weights[query][..].
-        calls.push(Call::Shader {
-            kernel: &self.gemm,
-            buffers: vec![&v, &weights, &maps[mixed]],
-            constants: vec![tokens as u32, 0, 0, 0, stride as u32],
-            groups: [(tokens / ROWS) as u32, (ATTENTION / TOKENS) as u32, 1],
-        });
-        work.conv(
-            &mut calls,
-            &self.proj,
-            &maps[mixed],
-            (w, h),
-            Norm::None,
-            false,
-            &maps[out],
-            Some(&maps[x]),
-        );
-        x = out;
-        x = work.residual(&mut calls, &self.middle[1], &maps, x, (w, h));
-        let (mut w, mut h) = (width, height);
-        for (block, (blocks, resample)) in self.ups.iter().enumerate() {
+        let size = (width, height);
+        work.conv(&mut calls, &d.conv2, 0, Same(size), Norm::None, 1, None);
+        work.conv(&mut calls, &d.conv1, 1, Same(size), Norm::None, 2, None);
+        let mut x = work.residual(&mut calls, &d.middle[0], 2, 2, size);
+        x = work.attention(&mut calls, &d.attention, x, size);
+        x = work.residual(&mut calls, &d.middle[1], x, x, size);
+        let (mut w, mut h) = size;
+        for (block, (blocks, resample)) in d.ups.iter().enumerate() {
             let input = x;
             for r in blocks {
-                x = work.residual_keeping(&mut calls, r, &maps, x, input, (w, h));
+                x = work.residual(&mut calls, r, x, input, (w, h));
             }
             if let Some(resample) = resample {
                 let free = (0..4).find(|i| *i != x && *i != input).unwrap_or_default();
@@ -353,11 +344,10 @@ impl GpuVae {
                 work.conv(
                     &mut calls,
                     resample,
-                    &maps[x],
-                    (wo, ho),
+                    x,
+                    Up((wo, ho)),
                     Norm::None,
-                    true,
-                    &maps[free],
+                    free,
                     None,
                 );
                 calls.push(Call::Shader {
@@ -381,29 +371,179 @@ impl GpuVae {
         let out = (0..4).find(|i| *i != x).unwrap_or_default();
         work.conv(
             &mut calls,
-            &self.head,
-            &maps[x],
-            (w, h),
-            Norm::Silu(self.head_norm),
-            false,
-            &maps[out],
+            &d.head,
+            x,
+            Same((w, h)),
+            Norm::Silu(d.head_norm),
+            out,
             None,
         );
         run(gpu, &calls)?;
         drop(calls);
-        let pixels = w * h;
-        let stride = padded(pixels, ROWS);
-        let mut image = vec![0f32; OUT * stride];
-        let through = gpu.readback(image.len() as u64 * 4)?;
-        gpu.read_floats(&maps[out], 0, &through, &mut image)?;
-        let mut packed = vec![0f32; OUT * pixels];
-        for c in 0..OUT {
-            packed[c * pixels..(c + 1) * pixels]
-                .copy_from_slice(&image[c * stride..c * stride + pixels]);
-        }
         debug_assert_eq!((w, h), (width * SCALE, height * SCALE));
-        Ok(packed)
+        read_map(gpu, &maps[out], OUT, w * h)
     }
+
+    /// The diffusion latent `[LATENT][height / 16][width / 16]` of an RGBA image
+    /// (interleaved bytes): scaled to [-1, 1], encoded, the means kept and normalized.
+    pub fn encode(
+        &self,
+        rgba: &[u8],
+        height: usize,
+        width: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        let gpu = &self.gpu;
+        let e = &self.encoder;
+        if height == 0
+            || width == 0
+            || !height.is_multiple_of(SCALE)
+            || !width.is_multiple_of(SCALE)
+            || rgba.len() != height * width * OUT
+        {
+            return Err("invalid_input");
+        }
+        let plane = height * width;
+        let level = |channels: usize, w: usize, h: usize| channels * padded(w * h, ROWS);
+        let (mut w, mut h) = (width, height);
+        let mut largest = level(ENCODER_WIDTHS[0].max(OUT), w, h);
+        let mut products = level(padded(ENCODER_WIDTHS[0], TOKENS), w, h);
+        for block in 0..5 {
+            let channels = ENCODER_WIDTHS[block].max(ENCODER_WIDTHS[block + 1]);
+            largest = largest.max(level(channels, w, h));
+            products = products.max(level(padded(channels, TOKENS), w, h));
+            if block < 4 {
+                (w, h) = (w / 2, h / 2);
+            }
+        }
+        let attention = e.attention.channels;
+        largest = largest.max(level(3 * attention, w, h));
+        products = products.max(level(padded(3 * attention, TOKENS), w, h));
+        let b = self.buffers(largest, products, plane, w * h, attention)?;
+        // The image in [-1, 1], channel-major with padded rows.
+        let stride = padded(plane, ROWS);
+        let mut input = vec![0f32; OUT * stride];
+        for (cell, pixel) in rgba.chunks_exact(OUT).enumerate() {
+            for (c, byte) in pixel.iter().enumerate() {
+                input[c * stride + cell] = f32::from(*byte) / 255.0 * 2.0 - 1.0;
+            }
+        }
+        gpu.upload(&b.maps[0], 0, bytes_of(&input))?;
+        drop(input);
+        let work = Work { vae: self, b: &b };
+        let maps = &b.maps;
+        let mut calls = Vec::new();
+        let (mut w, mut h) = (width, height);
+        work.conv(&mut calls, &e.conv1, 0, Same((w, h)), Norm::None, 1, None);
+        let mut x = 1;
+        for (block, (blocks, resample)) in e.downs.iter().enumerate() {
+            let input = x;
+            for r in blocks {
+                x = work.residual(&mut calls, r, x, input, (w, h));
+            }
+            let Some(resample) = resample else {
+                // No downsampling: the shortcut is the block's input itself.
+                let out = (0..4).find(|i| *i != x && *i != input).unwrap_or_default();
+                work.add(&mut calls, x, input, out, ENCODER_WIDTHS[block + 1], (w, h));
+                x = out;
+                continue;
+            };
+            let free = (0..4).find(|i| *i != x && *i != input).unwrap_or_default();
+            let (wo, ho) = (w / 2, h / 2);
+            work.conv(
+                &mut calls,
+                resample,
+                x,
+                Down((w, h)),
+                Norm::None,
+                free,
+                None,
+            );
+            calls.push(Call::Shader {
+                kernel: &self.avg,
+                buffers: vec![&maps[input], &maps[free]],
+                constants: vec![
+                    w as u32,
+                    h as u32,
+                    padded(w * h, ROWS) as u32,
+                    padded(wo * ho, ROWS) as u32,
+                    ENCODER_WIDTHS[block] as u32,
+                    ENCODER_WIDTHS[block + 1] as u32,
+                    if ENCODER_TEMPORAL[block] { 2 } else { 1 },
+                ],
+                groups: [
+                    (wo * ho).div_ceil(256) as u32,
+                    ENCODER_WIDTHS[block + 1] as u32,
+                    1,
+                ],
+            });
+            x = free;
+            (w, h) = (wo, ho);
+        }
+        x = work.residual(&mut calls, &e.middle[0], x, x, (w, h));
+        x = work.attention(&mut calls, &e.attention, x, (w, h));
+        x = work.residual(&mut calls, &e.middle[1], x, x, (w, h));
+        let head = (0..4).find(|i| *i != x).unwrap_or_default();
+        work.conv(
+            &mut calls,
+            &e.head,
+            x,
+            Same((w, h)),
+            Norm::Silu(e.head_norm),
+            head,
+            None,
+        );
+        let out = (0..4).find(|i| *i != head).unwrap_or_default();
+        work.conv(
+            &mut calls,
+            &e.quant,
+            head,
+            Same((w, h)),
+            Norm::None,
+            out,
+            None,
+        );
+        run(gpu, &calls)?;
+        drop(calls);
+        let mut latent = read_map(gpu, &maps[out], LATENT, w * h)?;
+        let cells = w * h;
+        for (c, row) in latent.chunks_exact_mut(cells).enumerate() {
+            for v in row {
+                *v = (*v - MEAN[c]) / STD[c];
+            }
+        }
+        Ok(latent)
+    }
+}
+
+/// The first `channels` rows of a channel-major map of `cells` pixels, packed.
+fn read_map(
+    gpu: &Gpu,
+    map: &Buffer,
+    channels: usize,
+    cells: usize,
+) -> Result<Vec<f32>, &'static str> {
+    let stride = padded(cells, ROWS);
+    let mut values = vec![0f32; channels * stride];
+    let through = gpu.readback(values.len() as u64 * 4)?;
+    gpu.read_floats(map, 0, &through, &mut values)?;
+    let mut packed = vec![0f32; channels * cells];
+    for c in 0..channels {
+        packed[c * cells..(c + 1) * cells].copy_from_slice(&values[c * stride..c * stride + cells]);
+    }
+    Ok(packed)
+}
+
+/// Scratch of one image.
+struct Buffers {
+    maps: [Buffer; 4],
+    product: Buffer,
+    col: Buffer,
+    scale: Buffer,
+    q: Buffer,
+    k: Buffer,
+    v: Buffer,
+    scores: Buffer,
+    weights: Buffer,
 }
 
 /// What a convolution's unfolding applies to its input first.
@@ -415,35 +555,52 @@ enum Norm {
     /// RMS norm only.
     Only(usize),
 }
+/// A convolution's geometry.
+#[derive(Clone, Copy)]
+enum Geometry {
+    /// Stride 1, padding (k - 1) / 2: the output is the input's size.
+    Same((usize, usize)),
+    /// Stride 1 over the input upsampled 2x (nearest) to this size.
+    Up((usize, usize)),
+    /// Stride 2 over an input of this size padded right and bottom by one: half the size.
+    Down((usize, usize)),
+}
+use Geometry::{Down, Same, Up};
 
-/// The buffers one image shares between its convolutions.
 struct Work<'a> {
     vae: &'a GpuVae,
-    product: &'a Buffer,
-    col: &'a Buffer,
-    scale: &'a Buffer,
+    b: &'a Buffers,
 }
 impl<'a> Work<'a> {
-    /// `out = conv(x') + bias (+ skip)` where `x'` is `x` (of the convolution's input size
-    /// `size`, or half that with `up`) after `norm`.
+    /// `maps[out] = conv(maps[x]') + bias (+ maps[skip])` where `'` is `norm`.
     #[allow(clippy::too_many_arguments)]
     fn conv(
         &self,
         calls: &mut Vec<Call<'a>>,
         placed: &'a Placed,
-        x: &'a Buffer,
-        size: (usize, usize),
+        x: usize,
+        geometry: Geometry,
         norm: Norm,
-        up: bool,
-        out: &'a Buffer,
-        skip: Option<&'a Buffer>,
+        out: usize,
+        skip: Option<usize>,
     ) {
         let e = self.vae;
-        let (w, h) = size;
-        let source = if up { (w / 2) * (h / 2) } else { w * h };
+        let maps = &self.b.maps;
+        let ((w_in, h_in), (w_out, h_out), source, stride, pad, up) = match geometry {
+            Same((w, h)) => ((w, h), (w, h), w * h, 1, (placed.kernel - 1) / 2, false),
+            Up((w, h)) => (
+                (w, h),
+                (w, h),
+                (w / 2) * (h / 2),
+                1,
+                (placed.kernel - 1) / 2,
+                true,
+            ),
+            Down((w, h)) => ((w, h), (w / 2, h / 2), w * h, 2, 0, false),
+        };
         let in_stride = padded(source, ROWS);
-        let pixels = w * h;
-        let stride = padded(pixels, ROWS);
+        let pixels = w_out * h_out;
+        let out_stride = padded(pixels, ROWS);
         let (mode, gamma) = match norm {
             Norm::None => (0, 0),
             Norm::Silu(gamma) => (1, gamma),
@@ -452,22 +609,22 @@ impl<'a> Work<'a> {
         if mode != 0 {
             calls.push(Call::Shader {
                 kernel: &e.rms,
-                buffers: vec![x, self.scale],
+                buffers: vec![&maps[x], &self.b.scale],
                 constants: vec![placed.inputs as u32, source as u32, in_stride as u32],
                 groups: [source.div_ceil(256) as u32, 1, 1],
             });
         }
-        let chunk = (CHUNK / placed.columns / ROWS * ROWS).clamp(ROWS, stride);
+        let chunk = (CHUNK / placed.columns / ROWS * ROWS).clamp(ROWS, out_stride);
         let rows = padded(placed.outputs, TOKENS);
-        for first in (0..stride).step_by(chunk) {
-            let count = chunk.min(stride - first);
+        for first in (0..out_stride).step_by(chunk) {
+            let count = chunk.min(out_stride - first);
             calls.push(Call::Shader {
                 kernel: &e.col,
-                buffers: vec![x, self.scale, &e.vectors, self.col],
+                buffers: vec![&maps[x], &self.b.scale, &e.vectors, &self.b.col],
                 constants: vec![
                     placed.inputs as u32,
-                    w as u32,
-                    h as u32,
+                    w_in as u32,
+                    h_in as u32,
                     in_stride as u32,
                     pixels as u32,
                     first as u32,
@@ -476,6 +633,9 @@ impl<'a> Work<'a> {
                     mode,
                     gamma as u32,
                     u32::from(up),
+                    w_out as u32,
+                    stride as u32,
+                    pad as u32,
                 ],
                 groups: [
                     placed.inputs.div_ceil(128) as u32,
@@ -485,96 +645,151 @@ impl<'a> Work<'a> {
             });
             calls.push(Call::Shader {
                 kernel: &e.gemm,
-                buffers: vec![&e.weights, self.col, self.product],
+                buffers: vec![&e.weights, &self.b.col, &self.b.product],
                 constants: vec![
                     placed.columns as u32,
                     placed.weight_first as u32,
                     0,
                     first as u32,
-                    stride as u32,
+                    out_stride as u32,
                 ],
                 groups: [(count / ROWS) as u32, (rows / TOKENS) as u32, 1],
             });
         }
         calls.push(Call::Shader {
             kernel: &e.bias,
-            buffers: vec![self.product, &e.vectors, skip.unwrap_or(out), out],
+            buffers: vec![
+                &self.b.product,
+                &e.vectors,
+                &maps[skip.unwrap_or(out)],
+                &maps[out],
+            ],
             constants: vec![
                 pixels as u32,
-                stride as u32,
+                out_stride as u32,
                 placed.bias_first as u32,
                 u32::from(skip.is_some()),
             ],
             groups: [pixels.div_ceil(256) as u32, placed.outputs as u32, 1],
         });
     }
-    /// A residual block on map `x`; returns the map holding its output (never `x`'s own
-    /// buffer unless the block has no shortcut and nothing else needs `x`).
+    /// A residual block on map `x`, keeping map `keep` intact; returns the output's map.
     fn residual(
         &self,
         calls: &mut Vec<Call<'a>>,
         r: &'a Residual,
-        maps: &'a [Buffer; 4],
-        x: usize,
-        size: (usize, usize),
-    ) -> usize {
-        self.residual_keeping(calls, r, maps, x, x, size)
-    }
-    /// As `residual`, keeping map `keep` intact as well.
-    fn residual_keeping(
-        &self,
-        calls: &mut Vec<Call<'a>>,
-        r: &'a Residual,
-        maps: &'a [Buffer; 4],
         x: usize,
         keep: usize,
         size: (usize, usize),
     ) -> usize {
         let free: Vec<usize> = (0..4).filter(|i| *i != x && *i != keep).collect();
         let (t, out) = (free[0], free[1]);
-        self.conv(
-            calls,
-            &r.conv1,
-            &maps[x],
-            size,
-            Norm::Silu(r.norm1),
-            false,
-            &maps[t],
-            None,
-        );
+        self.conv(calls, &r.conv1, x, Same(size), Norm::Silu(r.norm1), t, None);
         if let Some(shortcut) = &r.shortcut {
-            self.conv(
-                calls,
-                shortcut,
-                &maps[x],
-                size,
-                Norm::None,
-                false,
-                &maps[out],
-                None,
-            );
+            self.conv(calls, shortcut, x, Same(size), Norm::None, out, None);
             self.conv(
                 calls,
                 &r.conv2,
-                &maps[t],
-                size,
+                t,
+                Same(size),
                 Norm::Silu(r.norm2),
-                false,
-                &maps[out],
-                Some(&maps[out]),
+                out,
+                Some(out),
             );
         } else {
             self.conv(
                 calls,
                 &r.conv2,
-                &maps[t],
-                size,
+                t,
+                Same(size),
                 Norm::Silu(r.norm2),
-                false,
-                &maps[out],
-                Some(&maps[x]),
+                out,
+                Some(x),
             );
         }
+        out
+    }
+    /// `maps[out] = maps[a] + maps[b]` over `channels` rows (a block's identity shortcut):
+    /// the bias kernel without a bias.
+    fn add(
+        &self,
+        calls: &mut Vec<Call<'a>>,
+        a: usize,
+        b: usize,
+        out: usize,
+        channels: usize,
+        size: (usize, usize),
+    ) {
+        let maps = &self.b.maps;
+        let pixels = size.0 * size.1;
+        calls.push(Call::Shader {
+            kernel: &self.vae.bias,
+            buffers: vec![&maps[a], &self.vae.vectors, &maps[b], &maps[out]],
+            constants: vec![pixels as u32, padded(pixels, ROWS) as u32, u32::MAX, 1],
+            groups: [pixels.div_ceil(256) as u32, channels as u32, 1],
+        });
+    }
+    /// Single-head attention over all cells of map `x`, with its residual; returns the
+    /// output's map.
+    fn attention(
+        &self,
+        calls: &mut Vec<Call<'a>>,
+        a: &'a Attention,
+        x: usize,
+        size: (usize, usize),
+    ) -> usize {
+        let e = self.vae;
+        let b = self.b;
+        let free: Vec<usize> = (0..4).filter(|i| *i != x).collect();
+        let (qkv, mixed, out) = (free[0], free[1], free[2]);
+        let cells = size.0 * size.1;
+        let tokens = padded(cells, ROWS);
+        let channels = a.channels;
+        self.conv(
+            calls,
+            &a.to_qkv,
+            x,
+            Same(size),
+            Norm::Only(a.norm),
+            qkv,
+            None,
+        );
+        calls.push(Call::Shader {
+            kernel: &e.qkv,
+            buffers: vec![&b.maps[qkv], &b.q, &b.k, &b.v],
+            constants: vec![cells as u32, tokens as u32, tokens as u32, channels as u32],
+            groups: [(tokens / 64) as u32, (channels / 4) as u32, 1],
+        });
+        // Scores [query][key], then the softmax weights.
+        calls.push(Call::Shader {
+            kernel: &e.gemm,
+            buffers: vec![&b.q, &b.k, &b.scores],
+            constants: vec![channels as u32, 0, 0, 0, tokens as u32],
+            groups: [(tokens / ROWS) as u32, (tokens / TOKENS) as u32, 1],
+        });
+        calls.push(Call::Shader {
+            kernel: &e.soft,
+            buffers: vec![&b.scores, &b.weights],
+            constants: vec![
+                cells as u32,
+                tokens as u32,
+                0,
+                (1.0 / (channels as f32).sqrt()).to_bits(),
+            ],
+            groups: [tokens as u32, 1, 1],
+        });
+        // Mixed values, channel-major: [channel][query] = values[channel] . weights[query].
+        calls.push(Call::Shader {
+            kernel: &e.gemm,
+            buffers: vec![&b.v, &b.weights, &b.maps[mixed]],
+            constants: vec![tokens as u32, 0, 0, 0, tokens as u32],
+            groups: [
+                (tokens / ROWS) as u32,
+                (padded(channels, TOKENS) / TOKENS) as u32,
+                1,
+            ],
+        });
+        self.conv(calls, &a.proj, mixed, Same(size), Norm::None, out, Some(x));
         out
     }
 }
@@ -590,19 +805,24 @@ mod tests {
         *,
     };
 
-    /// `KUNO_QWEN_VAE=<model> KUNO_QWEN_VAE_GOLDEN=<dir>`: the GPU decoder against the
-    /// engine's decode of the same latent, and its time.
-    #[test]
-    #[ignore]
-    fn gpu_decoder_matches_cpp_engine() {
+    fn open() -> (QwenVae, GpuVae) {
         let vae = QwenVae::open(std::path::Path::new(
             &std::env::var("KUNO_QWEN_VAE").unwrap(),
         ))
         .unwrap();
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
         let started = std::time::Instant::now();
-        let decoder = GpuVae::new(&gpu, &vae).unwrap();
+        let placed = GpuVae::new(&gpu, &vae).unwrap();
         println!("placed in {:.2} s", started.elapsed().as_secs_f64());
+        (vae, placed)
+    }
+
+    /// `KUNO_QWEN_VAE=<model> KUNO_QWEN_VAE_GOLDEN=<dir>`: the GPU decoder against the
+    /// engine's decode of the same latent, and its time.
+    #[test]
+    #[ignore]
+    fn gpu_decoder_matches_cpp_engine() {
+        let (_, decoder) = open();
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_VAE_GOLDEN").unwrap());
         let shape = std::fs::read_to_string(dir.join("shape.txt")).unwrap();
         let dims: Vec<usize> = shape
@@ -638,5 +858,37 @@ mod tests {
         let mean = diffs.iter().map(|d| f64::from(*d)).sum::<f64>() / diffs.len() as f64;
         println!("{width}x{height} latent: {db:.1} dB, worst byte {worst}, mean {mean:.3}");
         assert!(db > 35.0);
+    }
+
+    /// `KUNO_QWEN_VAE=<model> KUNO_QWEN_ENCODE_GOLDEN=<dir>`: the GPU encoder against the
+    /// engine's encode of the same image.
+    #[test]
+    #[ignore]
+    fn gpu_encoder_matches_cpp_engine() {
+        let (_, placed) = open();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_ENCODE_GOLDEN").unwrap());
+        let shape = std::fs::read_to_string(dir.join("shape.txt")).unwrap();
+        let dims: Vec<usize> = shape
+            .split_whitespace()
+            .map(|v| v.parse().unwrap())
+            .collect();
+        let (width, height) = (dims[0], dims[1]);
+        let image = read(&dir.join("image.f32"));
+        let plane = width * height;
+        let mut rgba = vec![0u8; plane * OUT];
+        for c in 0..OUT {
+            for cell in 0..plane {
+                rgba[cell * OUT + c] = (image[c * plane + cell] * 255.0).round() as u8;
+            }
+        }
+        let want = read(&dir.join("latent.f32"));
+        let mut got = Vec::new();
+        for run in 0..2 {
+            let started = std::time::Instant::now();
+            got = placed.encode(&rgba, height, width).unwrap();
+            println!("run {run}: {:.3} s", started.elapsed().as_secs_f64());
+        }
+        println!("{width}x{height}: {:.1} dB", db(&want, &got));
+        assert!(db(&want, &got) > 30.0);
     }
 }

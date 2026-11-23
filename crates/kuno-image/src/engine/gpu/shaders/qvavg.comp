@@ -1,0 +1,38 @@
+// Qwen Image 2.1 VAE down block shortcut, added to its output (half size): output channel
+// o averages `group` entries k = o * group + g, entry k being input channel k / F at time
+// slot (k % F) / 4 (slots before ft - 1 are the zero frame padded in front of one image)
+// and 2x2 sub-cell k % 4, with F = 4 ft and group = inputs * F / outputs.
+// Maps are channel-major with row strides `in_stride` and `out_stride`; the input is w x h.
+// Dispatch x = ceil(w h / 4 / 256), y = outputs.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { float x[]; };
+layout(set = 0, binding = 1) buffer Out { float o[]; };
+layout(push_constant) uniform Constants {
+    uint w;
+    uint h;
+    uint in_stride;
+    uint out_stride;
+    uint inputs;
+    uint outputs;
+    uint ft;
+} p;
+
+void main() {
+    uint q = gl_GlobalInvocationID.x;
+    uint out_c = gl_WorkGroupID.y;
+    uint wo = p.w / 2;
+    if (q >= wo * (p.h / 2)) return;
+    uint y = q / wo, xx = q - y * wo;
+    uint factor = 4 * p.ft;
+    uint group = p.inputs * factor / p.outputs;
+    float sum = 0.0;
+    for (uint g = 0; g < group; g++) {
+        uint k = out_c * group + g;
+        uint c = k / factor, r = k % factor;
+        if (r / 4 != p.ft - 1) continue;
+        uint sub = r % 4;
+        sum += x[c * p.in_stride + (2 * y + sub / 2) * p.w + 2 * xx + (sub & 1)];
+    }
+    o[out_c * p.out_stride + q] += sum / float(group);
+}

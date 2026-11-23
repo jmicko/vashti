@@ -1,10 +1,11 @@
-// Qwen Image 2.1 VAE: unfolds a channel-major f32 map x[ci][y * w_src + x] for one stride-1
-// k x k convolution (k = 1 or 3, zero padding (k - 1) / 2) into rows of half floats for
-// gemm16: col[p][tap * inputs + ci], tap = ky * k + kx, for output pixels p of one chunk.
+// Qwen Image 2.1 VAE: unfolds a channel-major f32 map x[ci][y * w_src + x] for one k x k
+// convolution (k = 1 or 3) into rows of half floats for gemm16: col[p][tap * inputs + ci],
+// tap = ky * k + kx, for output pixels p (w_out wide) of one chunk. Output (oy, ox) reads
+// input (oy * stride + ky - pad, ox * stride + kx - pad), zero outside the w_in x h_in map.
 // With `norm` 1, each value is first RMS-normalized over channels and passed through SiLU:
 //   silu(v * scale[pixel] * gamma[ci]); with `norm` 2 only normalized.
-// With `up`, the convolution reads the map upsampled 2x (nearest): the input is w_in x h_in
-// and the source half of that. Columns from taps * inputs to `columns` are zeros, and so are
+// With `up`, the convolution reads the map upsampled 2x (nearest): w_in x h_in is the
+// upsampled size and the source half of that. Columns from taps * inputs to `columns` are zeros, and so are
 // pixels past `pixels`.
 // Dispatch x = ceil(inputs / 128), y = 256, z = chunk / 256; one invocation per (ci, p).
 #version 460
@@ -28,6 +29,9 @@ layout(push_constant) uniform Constants {
     uint norm;
     uint gamma_first;
     uint up;
+    uint w_out;
+    uint stride;
+    uint pad;
 } p;
 
 void main() {
@@ -44,16 +48,16 @@ void main() {
         for (uint t = 0; t < taps; t++) col[row + t * p.inputs + ci] = float16_t(0.0);
         return;
     }
-    uint oy = q / p.w_in;
-    uint ox = q - oy * p.w_in;
-    int pad = int(p.kernel - 1) / 2;
+    uint oy = q / p.w_out;
+    uint ox = q - oy * p.w_out;
+    int pad = int(p.pad);
     uint w_src = p.up != 0 ? p.w_in / 2 : p.w_in;
     float gamma = p.norm != 0 ? v[p.gamma_first + ci] : 1.0;
     uint base = ci * p.in_stride;
     for (uint ky = 0; ky < p.kernel; ky++) {
-        int iy = int(oy + ky) - pad;
+        int iy = int(oy * p.stride + ky) - pad;
         for (uint kx = 0; kx < p.kernel; kx++) {
-            int ix = int(ox + kx) - pad;
+            int ix = int(ox * p.stride + kx) - pad;
             float value = 0.0;
             if (iy >= 0 && iy < int(p.h_in) && ix >= 0 && ix < int(p.w_in)) {
                 uint sy = p.up != 0 ? uint(iy) / 2 : uint(iy);

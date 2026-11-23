@@ -44,6 +44,11 @@ pub(crate) const STD: [f32; LATENT] = [
 
 /// Decoder widths: the middle, then each up block's output.
 pub(super) const WIDTHS: [usize; 6] = [1152, 1152, 1152, 576, 288, 144];
+/// Encoder widths: the input conv's, then each down block's output.
+pub(super) const ENCODER_WIDTHS: [usize; 6] = [96, 96, 192, 384, 768, 768];
+/// Whether down block `i`'s downsample has a temporal factor of 2 (only its shortcut's
+/// channel grouping changes for a single image).
+pub(super) const ENCODER_TEMPORAL: [bool; 4] = [false, true, true, true];
 /// Whether up block `i`'s upsample has a temporal factor of 2 (which only changes how its
 /// shortcut groups channels for a single image).
 pub(super) const TEMPORAL: [bool; 4] = [true, true, true, false];
@@ -91,11 +96,25 @@ fn rms_norm(x: &Map, gamma: &[f32]) -> Map {
 
 /// Stride-1 convolution with zero padding `(k - 1) / 2`: `weight` `[out][in][k][k]`.
 fn conv(x: &Map, weight: &[f32], bias: &[f32], k: usize) -> Map {
+    conv_strided(x, weight, bias, k, 1, (k - 1) / 2, x.height, x.width)
+}
+/// Convolution with `stride` reading input `(o * stride + tap - pad)` (zeros outside the map),
+/// giving an `out_h` x `out_w` map.
+#[allow(clippy::too_many_arguments)]
+fn conv_strided(
+    x: &Map,
+    weight: &[f32],
+    bias: &[f32],
+    k: usize,
+    stride: usize,
+    pad: usize,
+    out_h: usize,
+    out_w: usize,
+) -> Map {
     let (cin, h, w) = (x.channels, x.height, x.width);
     let out = bias.len();
     assert_eq!(weight.len(), out * cin * k * k);
-    let plane = h * w;
-    let pad = (k - 1) / 2;
+    let plane = out_h * out_w;
     let mut data = vec![0f32; out * plane];
     for (o, row) in data.chunks_exact_mut(plane).enumerate() {
         row.fill(bias[o]);
@@ -104,16 +123,16 @@ fn conv(x: &Map, weight: &[f32], bias: &[f32], k: usize) -> Map {
     let mut tap = vec![0f32; out * cin];
     for dy in 0..k {
         for dx in 0..k {
-            // The input moved by the tap, zeros where it leaves the map.
+            // The input under the tap for every output cell, zeros where it leaves the map.
             shifted
                 .par_chunks_exact_mut(plane)
-                .zip(x.data.par_chunks_exact(plane))
+                .zip(x.data.par_chunks_exact(h * w))
                 .for_each(|(to, from)| {
-                    for y in 0..h {
-                        let sy = y as isize + dy as isize - pad as isize;
-                        for xx in 0..w {
-                            let sx = xx as isize + dx as isize - pad as isize;
-                            to[y * w + xx] =
+                    for y in 0..out_h {
+                        let sy = (y * stride + dy) as isize - pad as isize;
+                        for xx in 0..out_w {
+                            let sx = (xx * stride + dx) as isize - pad as isize;
+                            to[y * out_w + xx] =
                                 if sy >= 0 && sy < h as isize && sx >= 0 && sx < w as isize {
                                     from[sy as usize * w + sx as usize]
                                 } else {
@@ -156,6 +175,54 @@ fn conv(x: &Map, weight: &[f32], bias: &[f32], k: usize) -> Map {
     Map {
         data,
         channels: out,
+        height: out_h,
+        width: out_w,
+    }
+}
+
+/// The down blocks' shortcut for one image: output channel `o` averages `group` entries
+/// `k = o * group + g` of the space-to-depth input, entry `k` being input channel `k / F`
+/// at time slot `(k % F) / 4` (slots before `ft - 1` are the zero frame padded in front of a
+/// single image) and 2x2 sub-cell `k % 4` (row-major), with `F = 4 ft` and
+/// `group = in * F / out`. Without downsampling (`down` false) it is the identity.
+pub(super) fn avg_entry(
+    o: usize,
+    g: usize,
+    input: usize,
+    output: usize,
+    temporal: bool,
+) -> Option<(usize, usize)> {
+    let ft = if temporal { 2 } else { 1 };
+    let factor = 4 * ft;
+    let group = input * factor / output;
+    let k = o * group + g;
+    let (c, r) = (k / factor, k % factor);
+    (r / 4 == ft - 1).then_some((c, r % 4))
+}
+fn avg_down(x: &Map, output: usize, temporal: bool) -> Map {
+    let (h, w) = (x.height / 2, x.width / 2);
+    let ft = if temporal { 2 } else { 1 };
+    let group = x.channels * 4 * ft / output;
+    let mut data = vec![0f32; output * h * w];
+    data.par_chunks_exact_mut(h * w)
+        .enumerate()
+        .for_each(|(o, to)| {
+            for y in 0..h {
+                for xx in 0..w {
+                    let mut sum = 0f32;
+                    for g in 0..group {
+                        if let Some((c, sub)) = avg_entry(o, g, x.channels, output, temporal) {
+                            let (i, j) = (sub / 2, sub % 2);
+                            sum += x.data[c * x.plane() + (2 * y + i) * x.width + 2 * xx + j];
+                        }
+                    }
+                    to[y * w + xx] = sum / group as f32;
+                }
+            }
+        });
+    Map {
+        data,
+        channels: output,
         height: h,
         width: w,
     }
@@ -272,8 +339,7 @@ impl QwenVae {
         add(&mut h, &skip);
         Ok(h)
     }
-    fn attention(&self, x: Map) -> Result<Map, &'static str> {
-        let name = "decoder.middle.1";
+    fn attention(&self, x: Map, name: &str) -> Result<Map, &'static str> {
         let h = self.norm(&x, &format!("{name}.norm"))?;
         let qkv = self.conv(&h, &format!("{name}.to_qkv"), 1)?;
         let (c, n) = (x.channels, x.plane());
@@ -357,7 +423,7 @@ impl QwenVae {
         let x = self.conv(&x, "conv2", 1)?;
         let x = self.conv(&x, "decoder.conv1", 3)?;
         let x = self.residual(x, "decoder.middle.0", WIDTHS[0])?;
-        let x = self.attention(x)?;
+        let x = self.attention(x, "decoder.middle.1")?;
         let mut x = self.residual(x, "decoder.middle.2", WIDTHS[0])?;
         for block in 0..5 {
             let output = WIDTHS[block + 1];
@@ -383,6 +449,81 @@ impl QwenVae {
         x.data.par_iter_mut().for_each(|v| *v = silu(*v));
         let x = self.conv(&x, "decoder.head.2", 3)?;
         Ok(x.data)
+    }
+}
+
+impl QwenVae {
+    /// The diffusion latent `[LATENT][height / 16][width / 16]` of an RGBA image (interleaved
+    /// bytes): scaled to [-1, 1], encoded, the means kept and normalized per channel.
+    pub fn encode(
+        &self,
+        rgba: &[u8],
+        height: usize,
+        width: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        if !height.is_multiple_of(SCALE)
+            || !width.is_multiple_of(SCALE)
+            || rgba.len() != height * width * OUT
+            || height == 0
+            || width == 0
+        {
+            return Err("invalid_input");
+        }
+        let plane = height * width;
+        let mut data = vec![0f32; OUT * plane];
+        for (cell, pixel) in rgba.chunks_exact(OUT).enumerate() {
+            for (c, byte) in pixel.iter().enumerate() {
+                data[c * plane + cell] = f32::from(*byte) / 255.0 * 2.0 - 1.0;
+            }
+        }
+        let mut x = Map {
+            data,
+            channels: OUT,
+            height,
+            width,
+        };
+        x = self.conv(&x, "encoder.conv1", 3)?;
+        for block in 0..5 {
+            let output = ENCODER_WIDTHS[block + 1];
+            let input = x.clone();
+            let base = format!("encoder.downsamples.{block}.downsamples");
+            for i in 0..2 {
+                x = self.residual(x, &format!("{base}.{i}"), output)?;
+            }
+            if block < 4 {
+                // Pad right and bottom by one, 3x3 conv with stride 2.
+                let name = format!("{base}.2.resample.1");
+                let (h, w) = (x.height / 2, x.width / 2);
+                x = conv_strided(
+                    &x,
+                    &self.floats(&format!("{name}.weight"))?,
+                    &self.floats(&format!("{name}.bias"))?,
+                    3,
+                    2,
+                    0,
+                    h,
+                    w,
+                );
+                add(&mut x, &avg_down(&input, output, ENCODER_TEMPORAL[block]));
+            } else {
+                add(&mut x, &input);
+            }
+        }
+        let x = self.residual(x, "encoder.middle.0", ENCODER_WIDTHS[5])?;
+        let x = self.attention(x, "encoder.middle.1")?;
+        let x = self.residual(x, "encoder.middle.2", ENCODER_WIDTHS[5])?;
+        let mut x = self.norm(&x, "encoder.head.0")?;
+        x.data.par_iter_mut().for_each(|v| *v = silu(*v));
+        let x = self.conv(&x, "encoder.head.2", 3)?;
+        let x = self.conv(&x, "conv1", 1)?;
+        let plane = x.plane();
+        let mut latent = x.data[..LATENT * plane].to_vec();
+        for (c, row) in latent.chunks_exact_mut(plane).enumerate() {
+            for v in row {
+                *v = (*v - MEAN[c]) / STD[c];
+            }
+        }
+        Ok(latent)
     }
 }
 
@@ -468,5 +609,46 @@ mod tests {
             started.elapsed().as_secs_f64()
         );
         assert!(db > 35.0);
+    }
+
+    /// `KUNO_QWEN_VAE=<model> KUNO_QWEN_ENCODE_GOLDEN=<dir with image.f32 ([w][h][4] in 0..1),
+    /// latent.f32>`: the encoder against the engine's.
+    #[test]
+    #[ignore]
+    fn encoder_matches_cpp_engine() {
+        let vae = QwenVae::open(Path::new(&std::env::var("KUNO_QWEN_VAE").unwrap())).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_ENCODE_GOLDEN").unwrap());
+        let shape = std::fs::read_to_string(dir.join("shape.txt")).unwrap();
+        let dims: Vec<usize> = shape
+            .split_whitespace()
+            .map(|v| v.parse().unwrap())
+            .collect();
+        let (width, height) = (dims[0], dims[1]);
+        let image = read(&dir.join("image.f32"));
+        let plane = width * height;
+        let mut rgba = vec![0u8; plane * OUT];
+        for c in 0..OUT {
+            for cell in 0..plane {
+                rgba[cell * OUT + c] = (image[c * plane + cell] * 255.0).round() as u8;
+            }
+        }
+        let want = read(&dir.join("latent.f32"));
+        let started = std::time::Instant::now();
+        let got = vae.encode(&rgba, height, width).unwrap();
+        println!(
+            "{width}x{height}: {:.1} dB, {:.1} s",
+            db(&want, &got),
+            started.elapsed().as_secs_f64()
+        );
+        assert!(db(&want, &got) > 30.0);
+    }
+
+    #[test]
+    fn average_shortcut_groups_channels_like_the_engine() {
+        // 96 -> 96 without a temporal factor: a plain 2x2 average of each channel.
+        assert_eq!(avg_entry(5, 3, 96, 96, false), Some((5, 3)));
+        // 96 -> 192 with one: even outputs read the zero frame, odd ones channel o / 2.
+        assert_eq!(avg_entry(4, 1, 96, 192, true), None);
+        assert_eq!(avg_entry(5, 2, 96, 192, true), Some((2, 2)));
     }
 }

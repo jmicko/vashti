@@ -1,6 +1,7 @@
 // Qwen Image 2.1 VAE: a convolution's product plus its bias, and with `add` a residual read
 // from `skip` (which may be `out` itself):
 //   out[c][q] = y[c][q] + bias[c] (+ skip[c][q]), for q < count (row stride `stride`).
+// `bias_first` 0xffffffff means no bias (a plain sum of two maps).
 // Dispatch x = ceil(count / 256), y = channels.
 #version 460
 
@@ -16,6 +17,6 @@ void main() {
     uint c = gl_WorkGroupID.y;
     if (q >= p.count) return;
     uint i = c * p.stride + q;
-    float value = y[i] + v[p.bias_first + c];
+    float value = y[i] + (p.bias_first == 0xffffffffu ? 0.0 : v[p.bias_first + c]);
     o[i] = p.add != 0 ? r[i] + value : value;
 }
