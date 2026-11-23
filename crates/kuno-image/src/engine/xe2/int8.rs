@@ -61,6 +61,9 @@ pub struct Shape {
     /// per stored weight row). Each tile's 64 weight rows are 32 gates then their 32 values
     /// (`gated_rows`); the output is `[token][rows / 2]` (see `Shape::gated8`).
     pub silu8: Option<u32>,
+    /// INT8 only, without `silu8`: store each sum as bf16 after scaling it by its token's and
+    /// its weight row's scale (read as for `silu8`); the output is `[token][rows]` bf16.
+    pub scaled8: Option<u32>,
 }
 
 impl Shape {
@@ -87,6 +90,21 @@ impl Shape {
             half: false,
             gate: None,
             silu8: None,
+            scaled8: None,
+        })
+    }
+    /// An INT8 product whose sums leave scaled, as bf16 (`scaled8`); the weight scales sit
+    /// `weight_scales` bytes into the B stream's buffer, one f32 per weight row.
+    pub fn scaled8(
+        tokens: usize,
+        rows: usize,
+        columns: usize,
+        weight_scales: u32,
+    ) -> Option<Shape> {
+        Some(Shape {
+            c_row: (rows * 2) as u32,
+            scaled8: Some(weight_scales),
+            ..Self::linear(tokens, rows, columns)?
         })
     }
     /// An INT8 feed-forward input product with its activation (`silu8`): `rows` stored weight
@@ -187,6 +205,7 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
         half,
         gate,
         silu8,
+        scaled8,
     } = *s;
     let (sum, operand) = if half { (F, Hf) } else { (D, B) };
     let (a_step, b_step) = ((ma * 256) as i32, (nb * 512) as i32);
@@ -219,6 +238,8 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
         4 * 512
     } else if silu8.is_some() {
         16 * nb
+    } else if scaled8.is_some() {
+        32 * nb
     } else {
         64 * nb
     };
@@ -430,7 +451,7 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
         for id in 1..5 {
             k.sync(Swsb::dst(id));
         }
-    } else if let Some(scales_at) = silu8 {
+    } else if let Some(scales_at) = silu8.or(scaled8) {
         assert!(!half && ma == 4 && nb == 4);
         let w = Swsb::after(1);
         // Token scales (this tile's 32, read as 64) in 60..63, weight scales (this output
@@ -482,7 +503,47 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
             );
         }
         let mut stores = 0u32;
-        for tf in 0..ma {
+        // To bf16, rounded to nearest: the upper half after adding half its unit.
+        let bf16 = |k: &mut Asm, from: u32, to: Reg| {
+            k.add(16, r(from, 0, Ud), r(from, 0, Ud), imm(0x8000), w);
+            k.mov(16, to, r(from, 1, Uw).step2(), w);
+        };
+        if scaled8.is_some() {
+            for tf in 0..ma {
+                for row in 0..8 {
+                    let token = tf * 8 + row;
+                    let ts = r(tokens_at + token / 16, token % 16, F).s();
+                    for half in 0..2 {
+                        let id = (stores % 32) as u16;
+                        let packed = 72 + id as u32;
+                        if stores >= 32 {
+                            k.sync(Swsb::dst(id));
+                        }
+                        for j in 0..2 {
+                            let n = 2 * half + j;
+                            let x = c(tf * nb + n) + row;
+                            k.mov(16, r(x, 0, F), r(x, 0, D), w);
+                            k.mul(16, r(x, 0, F), r(x, 0, F), ts, w);
+                            k.mul(16, r(x, 0, F), r(x, 0, F), r(rows_at + n, 0, F), w);
+                            bf16(&mut k, x, r(packed, 16 * j, Uw));
+                        }
+                        k.send(
+                            SFID_UGM,
+                            null(Ud),
+                            r(addr(token), 0, Ud),
+                            r(packed, 0, Ud),
+                            1,
+                            (64 * half) << 12,
+                            STORE_64X8,
+                            false,
+                            Swsb::after_set(1, id),
+                        );
+                        stores += 1;
+                    }
+                }
+            }
+        }
+        for tf in 0..if silu8.is_some() { ma } else { 0 } {
             for row in 0..8 {
                 let token = tf * 8 + row;
                 let ts = r(tokens_at + token / 16, token % 16, F).s();
@@ -512,9 +573,7 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
                     k.math(16, Math::Inv, r(scratch, 0, F), r(scratch, 0, F), w);
                     k.mul(16, r(scratch, 0, F), r(scratch, 0, F), r(g, 0, F), w);
                     k.mul(16, r(g, 0, F), r(scratch, 0, F), r(v, 0, F), w);
-                    // To bf16, rounded to nearest: the upper half after adding half its unit.
-                    k.add(16, r(g, 0, Ud), r(g, 0, Ud), imm(0x8000), w);
-                    k.mov(16, r(packed, 16 * j, Uw), r(g, 1, Uw).step2(), w);
+                    bf16(&mut k, g, r(packed, 16 * j, Uw));
                 }
                 k.send(
                     SFID_UGM,

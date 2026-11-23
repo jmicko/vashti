@@ -164,22 +164,26 @@ WG(64) kernel void q_resid(global float4* x, global const int4* g, global const 
     x[at] += update * m[(gate_first >> 2) + c];
 }
 
+// Four bf16 values (the products' scaled outputs) to f32.
+inline __attribute__((always_inline)) float4 widen(ushort4 b) {
+    return (float4)(as_float((uint)b.x << 16), as_float((uint)b.y << 16),
+                    as_float((uint)b.z << 16), as_float((uint)b.w << 16));
+}
+
 // ---- Queries or keys into the attention streams (qqk.comp, without the prefix store) -------
-SG WG(64) kernel void q_qk(global const int4* g, global const float* as, global const float4* v,
+SG WG(64) kernel void q_qk(global const ushort4* g, global const float4* v,
                           global const float4* turn, global uint* o, uint tokens, uint stride,
-                          uint side, uint scale_first, uint weight_first) {
+                          uint side, uint weight_first) {
     uint head = get_group_id(0) * 4 + get_sub_group_id();
     uint token = get_group_id(1);
     uint lane = get_sub_group_local_id();
     bool live = token < tokens;
     if (!live && side == 1) return;
-    float row_scale = live ? as[token] : 0.0f;
     uint from = token * (3 * DIM4) + side * DIM4 + head * 32 + lane * 2;
-    uint scales = (scale_first >> 2) + side * DIM4 + head * 32 + lane * 2;
     float4 mine[2];
     float squares = 0.0f;
     for (uint j = 0; j < 2; j++) {
-        mine[j] = convert_float4(g[from + j]) * row_scale * v[scales + j];
+        mine[j] = live ? widen(g[from + j]) : (float4)(0.0f);
         squares += dot(mine[j], mine[j]);
     }
     float norm = 1.0f / sqrt(sub_group_reduce_add(squares) / 128.0f + 1e-6f);
@@ -199,8 +203,7 @@ SG WG(64) kernel void q_qk(global const int4* g, global const float* as, global 
 }
 
 // ---- Values into the key/value stream (qvalue.comp, without the prefix store) --------------
-WG(256) kernel void q_value(global const int4* g, global const float* as, global const float4* v,
-                            global half4* vt, uint tokens, uint stride, uint scale_first) {
+WG(256) kernel void q_value(global const ushort4* g, global half4* vt, uint tokens, uint stride) {
     local float tile[4096];
     uint head = get_group_id(0);
     uint first = get_group_id(1) * 32;
@@ -209,9 +212,8 @@ WG(256) kernel void q_value(global const int4* g, global const float* as, global
         uint index = lane + j * 256;
         uint t = index >> 5, c = index & 31;
         uint token = first + t;
-        float row_scale = token < tokens ? as[token] : 0.0f;
         uint at = token * (3 * DIM4) + 2 * DIM4 + head * 32 + c;
-        float4 value = convert_float4(g[at]) * row_scale * v[(scale_first >> 2) + 2 * DIM4 + head * 32 + c];
+        float4 value = token < tokens ? widen(g[at]) : (float4)(0.0f);
         tile[(c * 4) * 32 + t] = value.x;
         tile[(c * 4 + 1) * 32 + t] = value.y;
         tile[(c * 4 + 2) * 32 + t] = value.z;
@@ -294,9 +296,7 @@ SG WG(256) kernel void q_hidden(global const ushort4* h, global float* s, global
         uint group = r * 16 + sg;
         for (uint j = 0; j < 4; j++) {
             uint c = group * 64 + lane * 4 + j;
-            ushort4 b = live ? h[token * HIDDEN4 + c] : (ushort4)(0);
-            float4 part = (float4)(as_float((uint)b.x << 16), as_float((uint)b.y << 16),
-                                   as_float((uint)b.z << 16), as_float((uint)b.w << 16));
+            float4 part = live ? widen(h[token * HIDDEN4 + c]) : (float4)(0.0f);
             v[j * 4] = part.x * 0.0625f;
             v[j * 4 + 1] = part.y * 0.0625f;
             v[j * 4 + 2] = part.z * 0.0625f;

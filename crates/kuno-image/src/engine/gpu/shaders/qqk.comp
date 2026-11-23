@@ -1,6 +1,5 @@
 // Qwen Image 2.1 attention queries or keys from the INT8 query/key/value product:
-//   g[token][query 4096, key 4096, value 4096] (int32 sums), each [head][128]
-//   value = sum * activation scale[token] * weight scale[column]
+//   g[token][query 4096, key 4096, value 4096] (bf16, already scaled), each [head][128]
 // then unit RMS over the head's 128 channels (eps 1e-6) times a weight, then the rotary
 // turn on neighbouring pairs (2i, 2i + 1), 64 per head.
 //   out: half floats in the machine-code attention kernel's stream layouts (xe2/attend.rs):
@@ -20,19 +19,18 @@
 spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
 
 layout(local_size_x = 64) in;
-layout(set = 0, binding = 0) readonly buffer Sums { ivec4 g[]; };
-layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
-layout(set = 0, binding = 2) readonly buffer Vectors { vec4 v[]; };
-layout(set = 0, binding = 3) readonly buffer Rotary { vec4 turn[]; };
+// Four bf16 values per uvec2.
+layout(set = 0, binding = 0) readonly buffer Sums { uvec2 g[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { vec4 v[]; };
+layout(set = 0, binding = 2) readonly buffer Rotary { vec4 turn[]; };
 // Two half floats per word.
-layout(set = 0, binding = 4) writeonly buffer Out { uint o[]; };
-layout(set = 0, binding = 5) writeonly buffer Store { uvec4 cache[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { uint o[]; };
+layout(set = 0, binding = 4) writeonly buffer Store { uvec4 cache[]; };
 // Offsets are in values and multiples of 4.
 layout(push_constant) uniform Constants {
     uint tokens;
     uint stride;
     uint side;
-    uint scale_first;
     uint weight_first;
     uint store;
     uint store_first;
@@ -40,19 +38,22 @@ layout(push_constant) uniform Constants {
 } p;
 const uint DIM4 = 1024;
 
+vec4 widen(uvec2 b) {
+    return vec4(uintBitsToFloat(b.x << 16), uintBitsToFloat(b.x & 0xffff0000u),
+                uintBitsToFloat(b.y << 16), uintBitsToFloat(b.y & 0xffff0000u));
+}
+
 void main() {
     uint head = gl_WorkGroupID.x * 4 + gl_SubgroupID;
     uint token = gl_WorkGroupID.y;
     uint lane = gl_SubgroupInvocationID;
     bool live = token < p.tokens;
     if (!live && p.side == 1) return;
-    float row_scale = live ? as[token] : 0.0;
     uint from = token * (3 * DIM4) + p.side * DIM4 + head * 32 + lane * 2;
-    uint scales = (p.scale_first >> 2) + p.side * DIM4 + head * 32 + lane * 2;
     vec4 mine[2];
     float squares = 0.0;
     for (uint j = 0; j < 2; j++) {
-        mine[j] = vec4(g[from + j]) * row_scale * v[scales + j];
+        mine[j] = live ? widen(g[from + j]) : vec4(0.0);
         squares += dot(mine[j], mine[j]);
     }
     float norm = 1.0 / sqrt(subgroupAdd(squares) / 128.0 + 1e-6);

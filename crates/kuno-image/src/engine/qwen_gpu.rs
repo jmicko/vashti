@@ -35,6 +35,8 @@ const OUT: usize = 1;
 const FC1: usize = 2;
 /// Attention threads per group: neighbouring query tiles share a core's cache.
 const ATTEND_GROUP: u32 = 8;
+/// Byte offset of the query/key/value product's weight scales in its weight buffer.
+const QKV_SCALES: usize = 3 * DIM * DIM + int8::SLACK;
 /// Byte offset of the gated product's weight scales in its weight buffer.
 const GATED_SCALES: usize = 2 * HIDDEN * DIM + int8::SLACK;
 const FC2: usize = 3;
@@ -76,8 +78,8 @@ impl Kernels {
             mergeq8: gpu.kernel(shaders::QMERGEQ8, 4, 3, Some(16))?,
             hidq8: gpu.kernel(shaders::QHIDQ8, 4, 2, Some(16))?,
             resid8: gpu.kernel(shaders::QRESID8, 5, 3, None)?,
-            qk: gpu.kernel(shaders::QQK, 6, 8, Some(16))?,
-            value: gpu.kernel(shaders::QVALUE, 5, 6, None)?,
+            qk: gpu.kernel(shaders::QQK, 5, 7, Some(16))?,
+            value: gpu.kernel(shaders::QVALUE, 3, 5, None)?,
             prefix: gpu.kernel(shaders::QPREFIX, 4, 4, None)?,
             mask: gpu.kernel(shaders::QMASK, 4, 5, Some(16))?,
             embed: gpu.kernel(shaders::QEMBED, 3, 1, None)?,
@@ -101,35 +103,52 @@ impl Layer {
         layer: usize,
     ) -> Result<Self, &'static str> {
         let name = |part: &str| format!("transformer_blocks.{layer}.{part}");
-        let matrix =
-            |parts: &[&str], which: usize| -> Result<(Buffer, level_zero::Memory), &'static str> {
-                let (rows, columns) = PRODUCTS[which];
-                let per_part = rows / parts.len();
-                let tile = int8::OUTPUTS * columns;
-                let staged = gpu.staged((rows * columns + int8::SLACK) as u64, |to| {
-                    let (stream, slack) = to.split_at_mut(rows * columns);
-                    slack.fill(0);
-                    stream.par_chunks_mut(tile).enumerate().try_for_each_init(
-                        || vec![0u8; tile],
-                        |plain, (n, to)| {
-                            let first = n * int8::OUTPUTS;
-                            let part = first / per_part;
-                            let tensor = name(&format!("{}.weight", parts[part]));
-                            file.i8_part_into(
-                                &tensor,
-                                &[per_part, columns],
-                                (first - part * per_part) * columns,
-                                plain,
-                            )?;
-                            int8::weight_stream(plain, int8::OUTPUTS, columns, to);
-                            Ok(())
-                        },
-                    )
-                })?;
-                let buffer = gpu.place(&staged, true)?;
-                let stream = kernels.fast.import(&gpu.export(&buffer)?, staged.bytes())?;
-                Ok((buffer, stream))
+        let matrix = |parts: &[&str],
+                      which: usize|
+         -> Result<(Buffer, level_zero::Memory), &'static str> {
+            let (rows, columns) = PRODUCTS[which];
+            let per_part = rows / parts.len();
+            let tile = int8::OUTPUTS * columns;
+            // The query/key/value product scales its own sums (`int8::Shape::scaled8`):
+            // its weight scales follow the stream.
+            let scales = if which == QKV {
+                let mut all = Vec::with_capacity(rows);
+                for part in parts {
+                    all.extend(file.f32(&name(&format!("{part}.weight_scale")), &[per_part, 1])?);
+                }
+                all
+            } else {
+                Vec::new()
             };
+            let bytes = rows * columns + int8::SLACK + scales.len() * 4;
+            let staged = gpu.staged(bytes as u64, |to| {
+                let (stream, rest) = to.split_at_mut(rows * columns);
+                let (slack, tail) = rest.split_at_mut(int8::SLACK);
+                slack.fill(0);
+                for (v, scale) in tail.chunks_exact_mut(4).zip(&scales) {
+                    v.copy_from_slice(&scale.to_le_bytes());
+                }
+                stream.par_chunks_mut(tile).enumerate().try_for_each_init(
+                    || vec![0u8; tile],
+                    |plain, (n, to)| {
+                        let first = n * int8::OUTPUTS;
+                        let part = first / per_part;
+                        let tensor = name(&format!("{}.weight", parts[part]));
+                        file.i8_part_into(
+                            &tensor,
+                            &[per_part, columns],
+                            (first - part * per_part) * columns,
+                            plain,
+                        )?;
+                        int8::weight_stream(plain, int8::OUTPUTS, columns, to);
+                        Ok(())
+                    },
+                )
+            })?;
+            let buffer = gpu.place(&staged, true)?;
+            let stream = kernels.fast.import(&gpu.export(&buffer)?, staged.bytes())?;
+            Ok((buffer, stream))
+        };
         let mut vectors = Vec::with_capacity(VECTORS);
         vectors.extend(file.floats(&name("attn.norm_q.weight"), &[HEAD])?);
         vectors.extend(file.floats(&name("attn.norm_k.weight"), &[HEAD])?);
@@ -400,6 +419,17 @@ impl Work {
                 balanced(int8::Shape::linear(padded, rows, columns).ok_or("gpu_unsupported")?);
             Ok((fast_kernel(fast, &shape)?, shape.groups(rows)))
         };
+        let scaled = (|| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
+            let (rows, columns) = PRODUCTS[QKV];
+            let shape = balanced(
+                int8::Shape::scaled8(padded, rows, columns, QKV_SCALES as u32)
+                    .ok_or("gpu_unsupported")?,
+            );
+            Ok((
+                super::xe2::load(fast, &int8::kernel(&shape), 4)?,
+                shape.groups(rows),
+            ))
+        })();
         let gated = (|| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
             let (rows, columns) = PRODUCTS[FC1];
             let shape = balanced(
@@ -476,7 +506,7 @@ impl Work {
             readback: gpu.readback((padded * CHANNELS) as u64 * 4)?,
             shared,
             views: [v0, v1, v2, v3, v4, v5, v6, v7],
-            products: [product(QKV)?, product(OUT)?, gated?, product(FC2)?],
+            products: [scaled?, product(OUT)?, gated?, product(FC2)?],
             attend,
         })
     }
@@ -740,7 +770,7 @@ impl QwenGpu {
         gpu.upload(&w.rows, 0, bytes_of(&qwen_dit::patchify(x, height, width)))?;
         let fast = &self.kernels.fast;
         let g = &self.glue;
-        let [stream, turns, rows, mods, final_scale, scales, spill, out] = &w.views;
+        let [stream, turns, rows, mods, final_scale, scales, _, out] = &w.views;
         let [bytes, sums, query, kv, mixed, weights] = &w.shared;
         let (n, np) = (tokens as u32, w.padded as u32);
         let part = |p: usize| (p * DIM) as u32;
@@ -768,20 +798,23 @@ impl QwenGpu {
                     [np, 1, 1],
                 )?;
             }
-            product(&mut batch, QKV)?;
+            let (kernel, groups) = &w.products[QKV];
+            batch.launch(
+                kernel,
+                &[M(bytes), M(&layer.matrices[QKV].1), M(sums), M(scales)],
+                *groups,
+            )?;
             for (side, to, weight) in [(0u32, query, QUERY_NORM), (1, kv, KEY_NORM)] {
                 batch.launch(
                     &g.qk,
                     &[
                         M(sums),
-                        M(scales),
                         M(v),
                         M(turns),
                         M(to),
                         U(n),
                         U(if side == 0 { np } else { w.keys as u32 }),
                         U(side),
-                        U(SCALE_QKV as u32),
                         U(weight as u32),
                     ],
                     [(HEADS / 4) as u32, np, 1],
@@ -789,15 +822,7 @@ impl QwenGpu {
             }
             batch.launch(
                 &g.value,
-                &[
-                    M(sums),
-                    M(scales),
-                    M(v),
-                    M(kv),
-                    U(n),
-                    U(w.keys as u32),
-                    U(SCALE_QKV as u32),
-                ],
+                &[M(sums), M(kv), U(n), U(w.keys as u32)],
                 [HEADS as u32, np / 32, 1],
             )?;
             if prefix.length > 0 {
@@ -956,16 +981,28 @@ impl QwenGpu {
         if first {
             calls.push(norm(0));
         }
-        calls.push(product(QKV));
+        calls.push({
+            let (kernel, groups) = &w.products[QKV];
+            Call::Product {
+                fast: &k.fast,
+                kernel,
+                memory: vec![
+                    &w.shared[0],
+                    &layer.matrices[QKV].1,
+                    &w.shared[1],
+                    &w.views[5],
+                ],
+                groups: *groups,
+            }
+        });
         for (side, to, weight) in [(0u32, &w.query, QUERY_NORM), (1, &w.kv, KEY_NORM)] {
             calls.push(Call::Shader {
                 kernel: &k.qk,
-                buffers: vec![&w.sums, &w.scales, v, &w.turns, to, cache_keys],
+                buffers: vec![&w.sums, v, &w.turns, to, cache_keys],
                 constants: vec![
                     n,
                     if side == 0 { np } else { w.keys as u32 },
                     side,
-                    SCALE_QKV as u32,
                     weight as u32,
                     stored * side,
                     w.earlier as u32,
@@ -976,15 +1013,8 @@ impl QwenGpu {
         }
         calls.push(Call::Shader {
             kernel: &k.value,
-            buffers: vec![&w.sums, &w.scales, v, &w.kv, cache_values],
-            constants: vec![
-                n,
-                w.keys as u32,
-                SCALE_QKV as u32,
-                stored,
-                w.earlier as u32,
-                capacity as u32,
-            ],
+            buffers: vec![&w.sums, &w.kv, cache_values],
+            constants: vec![n, w.keys as u32, stored, w.earlier as u32, capacity as u32],
             groups: [HEADS as u32, np / 32, 1],
         });
         if w.earlier > 0 {
