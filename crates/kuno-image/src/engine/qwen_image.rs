@@ -397,12 +397,13 @@ impl Models {
         let uncond = guided.then(|| prefix(request.negative)).transpose()?;
         let mut x = Mt19937::new(request.seed as u64).randn(CHANNELS * h * w);
         let sigmas = sigmas(steps, h * w);
+        let timesteps: Vec<f32> = sigmas[..steps].iter().map(|s| s * 1000.0).collect();
+        let times = self.dit.times(&timesteps);
         for step in 0..steps {
             let sigma = sigmas[step];
-            let timestep = sigma * 1000.0;
-            let mut out = self.dit.step(&cond, &x, timestep)?;
+            let mut out = self.dit.step_at(&cond, &x, &times[step])?;
             if let Some(uncond) = &uncond {
-                let negative = self.dit.step(uncond, &x, timestep)?;
+                let negative = self.dit.step_at(uncond, &x, &times[step])?;
                 for (o, n) in out.iter_mut().zip(&negative) {
                     *o = n + cfg * (*o - n);
                 }

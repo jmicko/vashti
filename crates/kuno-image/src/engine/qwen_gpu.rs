@@ -49,6 +49,8 @@ const MODS: usize = 4 * DIM;
 
 pub struct Kernels {
     normq8: Kernel,
+    /// A residual update and the next norm and quantization in one pass.
+    resnorm8: Kernel,
     mergeq8: Kernel,
     gateq8: Kernel,
     resid8: Kernel,
@@ -67,6 +69,7 @@ impl Kernels {
         }
         Ok(Self {
             normq8: gpu.kernel(shaders::QNORMQ8, 4, 3, Some(16))?,
+            resnorm8: gpu.kernel(shaders::QRESNORM8, 6, 5, Some(16))?,
             mergeq8: gpu.kernel(shaders::QMERGEQ8, 4, 3, Some(16))?,
             gateq8: gpu.kernel(shaders::QGATEQ8, 5, 3, Some(16))?,
             resid8: gpu.kernel(shaders::QRESID8, 5, 3, None)?,
@@ -181,12 +184,15 @@ impl Small {
             text_out: file.floats("txt_in.out_layer.weight", &[DIM, DIM])?,
         })
     }
-    /// The modulation vectors of the step's row and the time-zero row `[2][MODS]`, and the
-    /// output head's scale.
-    fn times(&self, timestep: f32) -> (Vec<f32>, Vec<f32>) {
+    /// For each timestep, the modulation vectors of its row and the time-zero row
+    /// `[2][MODS]` and the output head's scale; one pass over the weights for all of them.
+    fn times(&self, timesteps: &[f32]) -> Vec<Times> {
         let silu = |v: &mut f32| *v /= 1.0 + (-*v).exp();
-        let mut rows = qwen_dit::time_embedding(timestep);
-        rows.extend(qwen_dit::time_embedding(0.0));
+        let mut rows = Vec::with_capacity(timesteps.len() * 2 * 256);
+        for &t in timesteps {
+            rows.extend(qwen_dit::time_embedding(t));
+            rows.extend(qwen_dit::time_embedding(0.0));
+        }
         let mut h = linear(&rows, 256, &self.linear_1, &[]);
         h.iter_mut().for_each(silu);
         let mut h = linear(&h, DIM, &self.linear_2, &[]);
@@ -199,8 +205,19 @@ impl Small {
                 }
             }
         }
-        let scale = linear(&h[..DIM], DIM, &self.norm_out, &[]);
-        (mods, scale)
+        // The head's scale comes from each step's own row.
+        let own: Vec<f32> = h
+            .chunks_exact(2 * DIM)
+            .flat_map(|pair| pair[..DIM].to_vec())
+            .collect();
+        let scales = linear(&own, DIM, &self.norm_out, &[]);
+        mods.chunks_exact(2 * MODS)
+            .zip(scales.chunks_exact(DIM))
+            .map(|(mods, scale)| Times {
+                mods: mods.to_vec(),
+                scale: scale.to_vec(),
+            })
+            .collect()
     }
     fn text(&self, context: &[f32]) -> Vec<f32> {
         let mut x = context.to_vec();
@@ -217,8 +234,16 @@ impl Small {
     }
 }
 
+/// A step's time-dependent vectors (`QwenGpu::times`).
+pub struct Times {
+    mods: Vec<f32>,
+    scale: Vec<f32>,
+}
+
 /// Buffers and kernels of one pass shape: `tokens` own tokens after `earlier` cached keys.
 struct Work {
+    /// The prefix whose target turns `turns` holds (0: none).
+    turns_of: std::cell::Cell<u64>,
     tokens: usize,
     earlier: usize,
     padded: usize,
@@ -296,6 +321,7 @@ impl Work {
         let attend = (fast.kernel(&native, "attend", 4)?, shape.groups(HEADS));
         let [bytes, sums, query, kv, mixed, weights] = buffers;
         Ok(Self {
+            turns_of: std::cell::Cell::new(0),
             tokens,
             earlier,
             padded,
@@ -324,6 +350,8 @@ impl Work {
 
 /// The prompt's (and reference images') keys and values for every block, for one request.
 pub struct Prefix {
+    /// Unique per prefix, so a pass knows whether its turns are this prefix's.
+    id: u64,
     /// Per block: keys and values `[head][capacity][128]` f16.
     keys: Vec<Buffer>,
     values: Vec<Buffer>,
@@ -396,7 +424,9 @@ impl QwenGpu {
         let rotary = qwen_dit::rotary(&layout.positions);
         let length = layout.prefix;
         let half_rows = |count: usize| gpu.buffer((HEADS * count.max(1) * HEAD) as u64 * 2);
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let prefix = Prefix {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             keys: (0..self.layers.len())
                 .map(|_| half_rows(length))
                 .collect::<Result<_, _>>()?,
@@ -409,7 +439,7 @@ impl QwenGpu {
             turns: rotary[length * PAIRS..].iter().flatten().copied().collect(),
         };
         let text = self.small.text(context);
-        let (mods, _) = self.small.times(0.0);
+        let mods = self.small.times(&[0.0]).remove(0).mods;
         for segment in layout.segments.iter().filter(|s| s.start < length) {
             let tokens = segment.end - segment.start;
             let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
@@ -421,6 +451,7 @@ impl QwenGpu {
                 .collect();
             turns.resize(work.padded * PAIRS * 2, 0.0);
             gpu.upload(&work.turns, 0, bytes_of(&turns))?;
+            work.turns_of.set(0);
             gpu.upload(&work.mods, 0, bytes_of(&mods))?;
             let attention = match segment.image {
                 None => {
@@ -475,6 +506,11 @@ impl QwenGpu {
         )
     }
 
+    /// The time-dependent vectors of each of `timesteps`, for `step_at`.
+    pub fn times(&self, timesteps: &[f32]) -> Vec<Times> {
+        self.small.times(timesteps)
+    }
+
     /// One evaluation of the target `x` (`[CHANNELS][height][width]`) at `timestep` after a
     /// prefix: the model's output in the same shape.
     pub fn step(
@@ -483,33 +519,55 @@ impl QwenGpu {
         x: &[f32],
         timestep: f32,
     ) -> Result<Vec<f32>, &'static str> {
+        self.step_at(prefix, x, &self.small.times(&[timestep])[0])
+    }
+
+    /// As `step`, with the timestep's vectors computed beforehand.
+    pub fn step_at(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+    ) -> Result<Vec<f32>, &'static str> {
         let gpu = &self.gpu;
         let (height, width) = (prefix.height, prefix.width);
         let tokens = height * width;
         let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
         let work = Self::work_for(&mut works, gpu, &self.kernels, tokens, prefix.length)?;
-        let mut turns = prefix.turns.clone();
-        turns.resize(work.padded * PAIRS * 2, 0.0);
-        gpu.upload(&work.turns, 0, bytes_of(&turns))?;
-        let (mods, scale) = self.small.times(timestep);
-        gpu.upload(&work.mods, 0, bytes_of(&mods))?;
-        gpu.upload(&work.final_scale, 0, bytes_of(&scale))?;
-        self.embed(work, &qwen_dit::patchify(x, height, width))?;
-        for (index, layer) in self.layers.iter().enumerate() {
-            run(
-                gpu,
-                &self.block(layer, work, 0, Attention::Full, None, prefix, index, false),
-            )?;
+        if work.turns_of.get() != prefix.id {
+            let mut turns = prefix.turns.clone();
+            turns.resize(work.padded * PAIRS * 2, 0.0);
+            gpu.upload(&work.turns, 0, bytes_of(&turns))?;
+            work.turns_of.set(prefix.id);
         }
-        run(
-            gpu,
-            &[Call::Shader {
-                kernel: &self.kernels.final_,
-                buffers: vec![&work.stream, &work.final_scale, &self.proj_out, &work.out],
-                constants: vec![tokens as u32],
-                groups: [tokens as u32, 1, 1],
-            }],
+        gpu.upload(&work.mods, 0, bytes_of(&times.mods))?;
+        gpu.upload(&work.final_scale, 0, bytes_of(&times.scale))?;
+        gpu.upload(
+            &work.rows,
+            0,
+            bytes_of(&qwen_dit::patchify(x, height, width)),
         )?;
+        for (index, layer) in self.layers.iter().enumerate() {
+            let mut calls = Vec::new();
+            if index == 0 {
+                calls.push(Call::Shader {
+                    kernel: &self.kernels.embed,
+                    buffers: vec![&work.rows, &self.img_in, &work.stream],
+                    constants: vec![tokens as u32],
+                    groups: [tokens as u32, 1, 1],
+                });
+            }
+            calls.extend(self.block(layer, work, 0, Attention::Full, None, prefix, index, false));
+            if index + 1 == self.layers.len() {
+                calls.push(Call::Shader {
+                    kernel: &self.kernels.final_,
+                    buffers: vec![&work.stream, &work.final_scale, &self.proj_out, &work.out],
+                    constants: vec![tokens as u32],
+                    groups: [tokens as u32, 1, 1],
+                });
+            }
+            run(gpu, &calls)?;
+        }
         let mut out = vec![0f32; tokens * CHANNELS];
         gpu.read_floats(&work.out, 0, &work.readback, &mut out)?;
         Ok(qwen_dit::unpatchify(&out, height, width))
@@ -556,9 +614,23 @@ impl QwenGpu {
             constants: vec![n, scale as u32, mods(part)],
             groups: [(DIM / 4 / 64) as u32, np, 1],
         };
+        // The residual with gate `part`, then the norm with modulation `next`.
+        let residual_norm = |scale: usize, part: usize, next: usize| Call::Shader {
+            kernel: &k.resnorm8,
+            buffers: vec![&w.stream, &w.mods, &w.bytes, &w.scales, &w.sums, v],
+            constants: vec![n, mods(next), 1, scale as u32, mods(part)],
+            groups: [np, 1, 1],
+        };
+        // Blocks after the first find their input quantized by the previous block's end.
+        let first = index == 0;
+        let fuse_out = index + 1 < self.layers.len();
         let (cache_keys, cache_values, capacity) = store.unwrap_or((&w.kv, &w.kv, 0));
         let stored = u32::from(store.is_some());
-        let mut calls = vec![norm(0), product(QKV)];
+        let mut calls = Vec::new();
+        if first {
+            calls.push(norm(0));
+        }
+        calls.push(product(QKV));
         for (side, to, weight) in [(0u32, &w.query, QUERY_NORM), (1, &w.kv, KEY_NORM)] {
             calls.push(Call::Shader {
                 kernel: &k.qk,
@@ -635,8 +707,7 @@ impl QwenGpu {
             groups: [np, 1, 1],
         });
         calls.push(product(OUT));
-        calls.push(residual(SCALE_OUT, 1));
-        calls.push(norm(2));
+        calls.push(residual_norm(SCALE_OUT, 1, 2));
         calls.push(product(FC1));
         calls.push(Call::Shader {
             kernel: &k.gateq8,
@@ -645,7 +716,11 @@ impl QwenGpu {
             groups: [np, 1, 1],
         });
         calls.push(product(FC2));
-        calls.push(residual(SCALE_FC2, 3));
+        calls.push(if fuse_out {
+            residual_norm(SCALE_FC2, 3, 0)
+        } else {
+            residual(SCALE_FC2, 3)
+        });
         calls
     }
 }
@@ -782,7 +857,7 @@ mod tests {
         }
         drop(works);
         let started = std::time::Instant::now();
-        let _ = model.small.times(500.0);
+        let _ = model.small.times(&[500.0]);
         println!(
             "time layers on the CPU: {:.2} ms",
             started.elapsed().as_secs_f64() * 1e3
@@ -819,6 +894,7 @@ mod tests {
                 Call::Shader { kernel, .. } => {
                     let names = [
                         (&k.normq8, "norm+quantize"),
+                        (&k.resnorm8, "residual+norm+quantize"),
                         (&k.mergeq8, "merge+quantize"),
                         (&k.gateq8, "gate+quantize"),
                         (&k.resid8, "residual"),

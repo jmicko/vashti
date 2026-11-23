@@ -65,6 +65,8 @@ pub const QVBIAS: &[u8] = include_bytes!("shaders/qvbias.spv");
 
 pub const QVAVG: &[u8] = include_bytes!("shaders/qvavg.spv");
 
+pub const QRESNORM8: &[u8] = include_bytes!("shaders/qresnorm8.spv");
+
 #[cfg(test)]
 mod tests {
     use std::{path::Path, process::Command};
