@@ -1420,6 +1420,53 @@ mod tests {
             assert!(db > 40.0);
         }
     }
+    /// `KUNO_GPU_VENDOR=<hex> [KUNO_GEMM8_SPV=<file>]`: the INT8 product at Qwen 2.1's step
+    /// shapes (8448 tokens), all rows in one dispatch against blocks of rows.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn gemm8_blocking_at_qwen_shapes() {
+        let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        let custom = std::env::var("KUNO_GEMM8_SPV").ok().map(|f| std::fs::read(f).unwrap());
+        let kernel = match &custom {
+            Some(code) => gpu.kernel(code, 3, 5, Some(32)).unwrap(),
+            None => gpu.gemm8().unwrap(),
+        };
+        let tokens = 8448usize;
+        for (rows, columns) in [(12288usize, 4096usize), (4096, 4096), (24576, 4096), (4096, 12288)] {
+            let a = gpu.buffer((tokens * columns) as u64).unwrap();
+            let b = gpu.buffer((rows * columns) as u64).unwrap();
+            let out = gpu.buffer((tokens * rows) as u64 * 4).unwrap();
+            let buffers = [&a, &b, &out];
+            for block in [8usize] {
+                let tiles = rows / 256;
+                let constants: Vec<[u32; 5]> = (0..tiles)
+                    .step_by(block)
+                    .map(|first| [columns as u32, 0, (first * 256 * columns) as u32, (first * 256) as u32, rows as u32])
+                    .collect();
+                let steps: Vec<Step> = constants
+                    .iter()
+                    .enumerate()
+                    .map(|(i, constants)| Step {
+                        kernel: &kernel,
+                        buffers: &buffers,
+                        constants,
+                        groups: [block.min(tiles - i * block) as u32, (tokens / 128) as u32, 1],
+                    })
+                    .collect();
+                gpu.pass(&steps).unwrap();
+                let mut best = f64::MAX;
+                for _ in 0..3 {
+                    let started = std::time::Instant::now();
+                    gpu.pass(&steps).unwrap();
+                    best = best.min(started.elapsed().as_secs_f64());
+                }
+                let ops = 2.0 * (tokens * rows * columns) as f64;
+                println!("{rows}x{columns}, blocks of {block} tiles: {:.2} ms, {:.1} TOPS", best * 1e3, ops / best / 1e12);
+            }
+        }
+    }
+
     /// Deterministic values in -1..1.
     fn noise(count: usize, seed: u64) -> Vec<f32> {
         let mut state = seed | 1;

@@ -24,6 +24,8 @@ use super::{
     safetensors::{Safetensors, fp8_e4m3},
 };
 
+/// Weight row tiles (of 256) per product dispatch.
+const ROW_TILES: usize = 8;
 /// Rows of each stream are padded to the products' token block.
 const PAD: usize = 128;
 /// Queries and keys are padded to `fattend16`'s blocks.
@@ -718,23 +720,31 @@ impl Qwen2512Vk {
         let k = &self.kernels;
         let layer = &self.layers[index];
         let last = index + 1 == self.layers.len();
+        // Weight rows in dispatches of ROW_TILES tiles (measured faster on the RTX 3060).
         let product = |work: &'a StreamWork, s: usize, which: usize| {
             let (rows, columns) = PRODUCTS[which];
-            Call::Shader {
-                kernel: &k.gemm8,
-                buffers: vec![&work.bytes, matrices, &work.sums],
-                constants: vec![
-                    columns as u32,
-                    0,
-                    product_at(s, which) as u32,
-                    0,
-                    rows as u32,
-                ],
-                groups: [(rows / 256) as u32, (work.padded / PAD) as u32, 1],
-            }
+            (0..rows / 256)
+                .step_by(ROW_TILES)
+                .map(move |first| Call::Shader {
+                    kernel: &k.gemm8,
+                    buffers: vec![&work.bytes, matrices, &work.sums],
+                    constants: vec![
+                        columns as u32,
+                        0,
+                        (product_at(s, which) + first * 256 * columns) as u32,
+                        (first * 256) as u32,
+                        rows as u32,
+                    ],
+                    groups: [
+                        ROW_TILES.min(rows / 256 - first) as u32,
+                        (work.padded / PAD) as u32,
+                        1,
+                    ],
+                })
+                .collect::<Vec<_>>()
         };
         for (s, work) in w.streams.iter().enumerate() {
-            calls.push(product(work, s, QKV));
+            calls.extend(product(work, s, QKV));
             calls.push(Call::Shader {
                 kernel: &k.qkv,
                 buffers: vec![
@@ -811,9 +821,9 @@ impl Qwen2512Vk {
                 ],
                 groups: [work.tokens as u32, 1, 1],
             });
-            calls.push(product(work, s, OUT));
+            calls.extend(product(work, s, OUT));
             calls.push(norm(OUT_SCALE, OUT_BIAS, b + GATE1, b + SHIFT2));
-            calls.push(product(work, s, FC1));
+            calls.extend(product(work, s, FC1));
             calls.push(Call::Shader {
                 kernel: &k.gelu,
                 buffers: vec![&work.sums, &work.scales, v, &work.hidden],
@@ -826,7 +836,7 @@ impl Qwen2512Vk {
                 constants: vec![work.tokens as u32, 0],
                 groups: [work.padded as u32, 1, 1],
             });
-            calls.push(product(work, s, FC2));
+            calls.extend(product(work, s, FC2));
             calls.push(if last {
                 Call::Shader {
                     kernel: &k.resid,

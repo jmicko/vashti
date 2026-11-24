@@ -23,6 +23,8 @@ use super::{
     safetensors::Safetensors,
 };
 
+/// Weight row tiles (of 256) per product dispatch.
+const ROW_TILES: usize = 8;
 /// Tokens are padded to the products' token block (and `fattend16`'s query block).
 const PAD: usize = 128;
 /// Host-memory prefixes from this many tokens are copied in through device slots.
@@ -502,14 +504,24 @@ impl QwenVk {
         let (n, np) = (w.tokens as u32, w.padded as u32);
         let v = &layer.vectors;
         let mods = |part: usize| ((row * MODS) + part * DIM) as u32;
+        // Weight rows in dispatches of ROW_TILES tiles (measured faster on the RTX 3060).
         let product = |which: usize| {
             let (rows, columns) = PRODUCTS[which];
-            Call::Shader {
-                kernel: &k.gemm8,
-                buffers: vec![&w.bytes, &layer.matrices[which], &w.sums],
-                constants: vec![columns as u32, 0, 0, 0, rows as u32],
-                groups: [(rows / 256) as u32, np / PAD as u32, 1],
-            }
+            (0..rows / 256)
+                .step_by(ROW_TILES)
+                .map(move |first| Call::Shader {
+                    kernel: &k.gemm8,
+                    buffers: vec![&w.bytes, &layer.matrices[which], &w.sums],
+                    constants: vec![
+                        columns as u32,
+                        0,
+                        (first * 256 * columns) as u32,
+                        (first * 256) as u32,
+                        rows as u32,
+                    ],
+                    groups: [ROW_TILES.min(rows / 256 - first) as u32, np / PAD as u32, 1],
+                })
+                .collect::<Vec<_>>()
         };
         let norm = |part: usize| Call::Shader {
             kernel: &k.normq8,
@@ -529,7 +541,7 @@ impl QwenVk {
         if index == 0 {
             calls.push(norm(0));
         }
-        calls.push(product(QKV));
+        calls.extend(product(QKV));
         calls.push(Call::Shader {
             kernel: &k.qkv,
             buffers: vec![
@@ -596,9 +608,9 @@ impl QwenVk {
             constants: vec![DIM as u32, (DIM / 256).div_ceil(16) as u32, 0, 0],
             groups: [np, 1, 1],
         });
-        calls.push(product(OUT));
+        calls.extend(product(OUT));
         calls.push(residual_norm(SCALE_OUT, 1, 2));
-        calls.push(product(FC1));
+        calls.extend(product(FC1));
         calls.push(Call::Shader {
             kernel: &k.gate,
             buffers: vec![&w.sums, &w.scales, v, &w.hidden],
@@ -611,7 +623,7 @@ impl QwenVk {
             constants: vec![n, 0],
             groups: [np, 1, 1],
         });
-        calls.push(product(FC2));
+        calls.extend(product(FC2));
         calls.push(if index + 1 < self.layers.len() {
             residual_norm(SCALE_FC2, 3, 0)
         } else {
@@ -680,22 +692,8 @@ mod tests {
         let works = model.work.lock().unwrap();
         let w = &works[&(height * width)];
         let calls = model.block(w, 0, false, None, &prefix, 3, false, None);
-        let names = [
-            "qkv product",
-            "qkv16",
-            "prefix copy",
-            "attention",
-            "quantize",
-            "out product",
-            "residual+norm",
-            "fc1 product",
-            "gate",
-            "hidden quantize",
-            "fc2 product",
-            "residual+norm",
-        ];
         let mut total = 0.0;
-        for (call, name) in calls.iter().zip(names) {
+        for (name, call) in calls.iter().enumerate() {
             let mut best = f64::MAX;
             for _ in 0..3 {
                 let started = std::time::Instant::now();
@@ -703,7 +701,7 @@ mod tests {
                 best = best.min(started.elapsed().as_secs_f64() * 1e3);
             }
             total += best;
-            println!("{name}: {best:.2} ms");
+            println!("call {name}: {best:.2} ms");
         }
         println!(
             "block {total:.1} ms, x {} blocks = {:.2} s",
