@@ -23,8 +23,9 @@ layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer In { vec4 x[]; };
 layout(set = 0, binding = 1) writeonly buffer Out { uvec4 q[]; };
 layout(set = 0, binding = 2) writeonly buffer Scales { float s[]; };
-// `width` is a multiple of 256; `rounds` is ceil(width / 256 / 16).
-layout(push_constant) uniform Constants { uint width; uint rounds; uint stream; } p;
+// `width` is a multiple of 256; `rounds` is ceil(width / 256 / 16). Input rows start at
+// `first` (outputs at 0).
+layout(push_constant) uniform Constants { uint width; uint rounds; uint stream; uint first; } p;
 
 shared float tile[4096];
 shared uint bytes[4096];
@@ -66,7 +67,7 @@ void main() {
     uint sg = SG, lane = LANE;
     uint row = gl_WorkGroupID.x;
     uint groups = p.width >> 8;
-    uint first = row * (p.width >> 2);
+    uint first = (row + p.first) * (p.width >> 2);
     float top = 0.0;
     for (uint r = 0; r < p.rounds; r++) {
         uint g = r * 16 + sg;

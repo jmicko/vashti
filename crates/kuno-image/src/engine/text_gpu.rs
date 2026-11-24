@@ -145,7 +145,7 @@ impl GpuTextEncoder {
     pub fn new(gpu: &Gpu, encoder: TextEncoder) -> Result<Self, &'static str> {
         let kernels = Kernels {
             norm: gpu.kernel(shaders::TNORM, 3, 3, gpu.subgroup())?,
-            rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, gpu.subgroup())?,
+            rotate8: gpu.kernel(shaders::ROTATE8, 3, 4, gpu.subgroup())?,
             gemm8: gpu.gemm8()?,
             qkv: gpu.kernel(shaders::TQKV, 8, 9, gpu.subgroup())?,
             attend: if gpu.narrow() {
@@ -304,7 +304,7 @@ impl GpuTextEncoder {
         let quantize = |width: usize| Call::Shader {
             kernel: &k.rotate8,
             buffers: vec![&w.h, &w.bytes, &w.scales],
-            constants: vec![width as u32, (width / 256).div_ceil(16) as u32, 0],
+            constants: vec![width as u32, (width / 256).div_ceil(16) as u32, 0, 0],
             groups: [np, 1, 1],
         };
         let product = |calls: &mut Vec<Call<'a>>, rows: usize, columns: usize, at: usize| {
