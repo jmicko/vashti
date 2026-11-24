@@ -1004,6 +1004,85 @@ mod tests {
         *,
     };
 
+    /// Fused attention (`fattend16`, NVIDIA-shaped matrices) against a plain softmax on the
+    /// CPU: mild scores, sharp ones (which raise the reference), and a Qwen 2512-sized head
+    /// set that is timed.
+    #[test]
+    #[ignore = "needs a GPU with 16 x 16 x 16 half-precision matrices (KUNO_GPU_VENDOR)"]
+    fn fused_attention_matches_cpu() {
+        let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
+        let kernel = gpu.kernel(shaders::FATTEND16, 4, 6, Some(32)).unwrap();
+        let scale = 1.0 / 128f32.sqrt();
+        for (heads, queries, keys, spread, checks) in [
+            (3usize, 100usize, 250usize, 1.0f32, 300usize),
+            (2, 64, 200, 6.0, 128),
+            (24, 4078, 4078, 1.5, 48),
+        ] {
+            let (qp, kp) = (queries.next_multiple_of(32), keys.next_multiple_of(64));
+            let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
+                let mut values = noise(heads * padded * 128, seed);
+                for (i, v) in values.iter_mut().enumerate() {
+                    *v = if (i / 128) % padded < live { widen(narrow(*v * spread)) } else { 0.0 };
+                }
+                values
+            };
+            let (q, k, v) = (make(qp, queries, 1, spread), make(kp, keys, 2, spread), make(kp, keys, 3, 1.0));
+            let upload = |values: &[f32]| {
+                let h = halves(values);
+                let b = gpu.buffer((h.len() * 2) as u64).unwrap();
+                gpu.upload(&b, 0, bytes_of(&h)).unwrap();
+                b
+            };
+            let (bq, bk, bv) = (upload(&q), upload(&k), upload(&v));
+            let out = gpu.buffer((queries * heads * 128 * 4) as u64).unwrap();
+            let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits()];
+            let mut best = f64::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                gpu.pass(&[Step {
+                    kernel: &kernel,
+                    buffers: &[&bq, &bk, &bv, &out],
+                    constants: &constants,
+                    groups: [(qp / 32) as u32, heads as u32, 1],
+                }])
+                .unwrap();
+                best = best.min(started.elapsed().as_secs_f64() * 1e3);
+            }
+            let got = floats(&gpu.download(&out, 0, out.bytes() as usize).unwrap());
+            let (mut error, mut power) = (0f64, 0f64);
+            for check in 0..checks {
+                let (head, query) = ((check * 7) % heads, (check * 2731) % queries);
+                let qr = &q[(head * qp + query) * 128..][..128];
+                let logits: Vec<f64> = (0..keys)
+                    .map(|key| {
+                        let kr = &k[(head * kp + key) * 128..][..128];
+                        qr.iter().zip(kr).map(|(a, b)| f64::from(a * b)).sum::<f64>() * f64::from(scale)
+                    })
+                    .collect();
+                let top = logits.iter().copied().fold(f64::MIN, f64::max);
+                let weights: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();
+                let total: f64 = weights.iter().sum();
+                for c in 0..128 {
+                    let want: f64 = (0..keys)
+                        .map(|key| weights[key] * f64::from(v[(head * kp + key) * 128 + c]))
+                        .sum::<f64>()
+                        / total;
+                    let have = f64::from(got[query * heads * 128 + head * 128 + c]);
+                    error += (have - want).powi(2);
+                    power += want.powi(2);
+                }
+            }
+            let db = 10.0 * (power / error.max(1e-30)).log10();
+            let flops = 4.0 * (heads * queries * keys * 128) as f64;
+            println!(
+                "{heads} heads, {queries} queries x {keys} keys, spread {spread}: {best:.2} ms ({:.1} TFLOPS), {db:.1} dB",
+                flops / best / 1e9
+            );
+            assert!(db > 40.0);
+        }
+    }
     /// Deterministic values in -1..1.
     fn noise(count: usize, seed: u64) -> Vec<f32> {
         let mut state = seed | 1;

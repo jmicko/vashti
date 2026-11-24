@@ -1,0 +1,141 @@
+// Fused attention on cooperative matrices (16 x 16 x 16 half precision, f32 sums; 32-lane
+// subgroups, as NVIDIA's): for each query of each head
+//   out[q][h * 128 + c] = sum_k softmax_k(q . k / sqrt(128)) v[k][c]
+// with no score ever written to memory.
+//
+// Q, K and V are half precision `[head][padded][128]`; `out` is f32 `[query][heads * 128]`.
+// A workgroup is two subgroups of 16 queries each of one head; dispatch x = padded queries /
+// 32, y = heads. Keys go 64 at a time: the subgroup multiplies its queries with the keys (S),
+// two lanes per query turn S into weights in f32 and store them as half floats (P), and P
+// times the values adds into the f32 accumulators (O).
+//
+// Weights are taken relative to a reference per query, `2^(s * c - ref)`, kept within half
+// precision (below 2^8); the reference starts at the first block's largest score and is only
+// raised, rescaling O through shared memory, when a later score exceeds it by more than 8.
+// The division by the weights' sum comes at the end.
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// Keep half-precision subnormals instead of reading them as zero.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Queries { uvec4 q[]; };
+layout(set = 0, binding = 1) readonly buffer Keys { uvec4 k[]; };
+layout(set = 0, binding = 2) readonly buffer Values { uvec4 v[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants {
+    uint queries;
+    uint keys;
+    uint query_padded;
+    uint key_padded;
+    uint heads;
+    float scale;
+} p;
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>
+
+// Per subgroup: scores 16 x 64 f32, weights 16 x 64 half (8 words a row), O 16 x 128 f32.
+shared float ss[2 * 16 * 64];
+shared uvec4 sp[2 * 16 * 8];
+shared float so[2 * 16 * 128];
+
+void main() {
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint head = gl_WorkGroupID.y;
+    uint q0 = gl_WorkGroupID.x * 32 + sg * 16;
+    uint s0 = sg * 16 * 64, o0 = sg * 16 * 128, p0 = sg * 16 * 8;
+    // Rows are 128 halves = 16 words; a 16-channel chunk is 2 words.
+    uint qrow = (head * p.query_padded + q0) * 16;
+    uint krow = head * p.key_padded * 16;
+    A qa[8];
+    for (uint c = 0; c < 8; c++)
+        coopMatLoad(qa[c], q, qrow + c * 2, 16, gl_CooperativeMatrixLayoutRowMajor);
+    C acc[8];
+    for (uint c = 0; c < 8; c++) acc[c] = C(0.0);
+    // Two lanes per query row: this lane's row and its half of the 64 keys.
+    uint row = lane >> 1, half_ = lane & 1;
+    float c2 = p.scale * 1.4426950408889634;
+    float ref = -1.0 / 0.0, total = 0.0;
+    for (uint kb = 0; kb < p.keys; kb += 64) {
+        C sc[4];
+        for (uint j = 0; j < 4; j++) {
+            sc[j] = C(0.0);
+            for (uint c = 0; c < 8; c++) {
+                B kt;
+                coopMatLoad(kt, k, krow + (kb + j * 16) * 16 + c * 2, 16,
+                            gl_CooperativeMatrixLayoutColumnMajor);
+                sc[j] = coopMatMulAdd(qa[c], kt, sc[j]);
+            }
+            coopMatStore(sc[j], ss, s0 + j * 16, 64, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        subgroupMemoryBarrierShared();
+        subgroupBarrier();
+        // This lane's 32 exponents and their largest.
+        float t[32];
+        float top = -1.0 / 0.0;
+        for (uint i = 0; i < 32; i++) {
+            uint key = kb + half_ * 32 + i;
+            t[i] = key < p.keys ? ss[s0 + row * 64 + half_ * 32 + i] * c2 : -1.0 / 0.0;
+            top = max(top, t[i]);
+        }
+        top = max(top, subgroupShuffleXor(top, 1));
+        bool raise = top > ref + 8.0;
+        if (subgroupAny(raise)) {
+            float next = raise ? top : ref;
+            float factor = exp2(ref - next);
+            total *= factor;
+            ref = next;
+            for (uint c = 0; c < 8; c++)
+                coopMatStore(acc[c], so, o0 + c * 16, 128, gl_CooperativeMatrixLayoutRowMajor);
+            subgroupMemoryBarrierShared();
+            subgroupBarrier();
+            for (uint i = 0; i < 64; i++) so[o0 + row * 128 + half_ * 64 + i] *= factor;
+            subgroupMemoryBarrierShared();
+            subgroupBarrier();
+            for (uint c = 0; c < 8; c++)
+                coopMatLoad(acc[c], so, o0 + c * 16, 128, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        // Weights as half floats, four words of eight per lane.
+        for (uint w = 0; w < 4; w++) {
+            uvec4 word;
+            for (uint e = 0; e < 4; e++) {
+                float a = exp2(t[w * 8 + e * 2] - ref), b = exp2(t[w * 8 + e * 2 + 1] - ref);
+                total += a + b;
+                word[e] = packHalf2x16(vec2(a, b));
+            }
+            sp[p0 + row * 8 + half_ * 4 + w] = word;
+        }
+        subgroupMemoryBarrierShared();
+        subgroupBarrier();
+        for (uint j = 0; j < 4; j++) {
+            A pa;
+            coopMatLoad(pa, sp, p0 + j * 2, 8, gl_CooperativeMatrixLayoutRowMajor);
+            for (uint c = 0; c < 8; c++) {
+                B vb;
+                coopMatLoad(vb, v, krow + (kb + j * 16) * 16 + c * 2, 16,
+                            gl_CooperativeMatrixLayoutRowMajor);
+                acc[c] = coopMatMulAdd(pa, vb, acc[c]);
+            }
+        }
+        subgroupBarrier();
+    }
+    total += subgroupShuffleXor(total, 1);
+    for (uint c = 0; c < 8; c++)
+        coopMatStore(acc[c], so, o0 + c * 16, 128, gl_CooperativeMatrixLayoutRowMajor);
+    subgroupMemoryBarrierShared();
+    subgroupBarrier();
+    uint query = q0 + row;
+    if (query < p.queries) {
+        uint at = query * p.heads * 128 + head * 128 + half_ * 64;
+        for (uint i = 0; i < 64; i++) o[at + i] = so[o0 + row * 128 + half_ * 64 + i] / total;
+    }
+}
