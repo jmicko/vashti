@@ -89,7 +89,10 @@ impl Model {
             max_tensor_read_bytes: 1 << 36,
             ..GgufLimits::default()
         };
-        let gguf = GgufFile::open_shards(shards, limits).map_err(|_| "model_file_invalid")?;
+        let gguf = GgufFile::open_shards(shards, limits).map_err(|e| {
+            eprintln!("gguf: {e:?}");
+            "model_file_invalid"
+        })?;
         if meta(&gguf, "general.architecture")?.as_str() != Some("glm5-next") {
             return Err("model_file_invalid");
         }

@@ -2391,6 +2391,9 @@ mod tests {
     // TensorType::decode, packed CPU kernels or the model scalar executor.
     fn block(kind: TensorType, seed: usize) -> (Vec<u8>, Vec<f32>) {
         match kind {
+            TensorType::Q2K | TensorType::Q3K => {
+                unimplemented!("no CPU expert fixtures for Q2_K and Q3_K")
+            }
             TensorType::F32 => {
                 let value = (seed % 13) as f32 / 32. - 0.1875;
                 (value.to_le_bytes().to_vec(), vec![value])
