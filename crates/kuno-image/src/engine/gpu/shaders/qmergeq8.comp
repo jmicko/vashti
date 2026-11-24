@@ -8,6 +8,11 @@
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+// Groups of 16 invocations (the subgroups on 16-lane devices, clusters of wider ones).
+#define SG16 (gl_LocalInvocationIndex >> 4)
+#define LANE16 (gl_LocalInvocationIndex & 15u)
 
 layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer Mixed { float o[]; };
@@ -53,7 +58,7 @@ void stages() {
 // Rotates the row into `mem` in natural order and returns the row's largest magnitude.
 // The first stages' results pass through the group's own slots of `mem` to be transposed.
 float rotate_row() {
-    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint sg = SG16, lane = LANE16;
     float top = 0.0;
     for (uint r = 0; r < ROUNDS; r++) {
         uint g = r * 16 + sg;
@@ -81,7 +86,7 @@ float rotate_row() {
             }
         }
     }
-    top = subgroupMax(top);
+    top = subgroupClusteredMax(top, 16);
     if (lane == 0) maxima[sg] = top;
     memoryBarrierShared();
     barrier();
@@ -91,7 +96,7 @@ float rotate_row() {
 
 // Rounds the rotated row to INT8 with one scale and writes 16 bytes per lane and group.
 void round_row(uint row, float top, uint stream) {
-    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint sg = SG16, lane = LANE16;
     // The GPU's single-precision divide is not correctly rounded; a last-bit difference in
     // the scale would move bytes at rounding ties. Dividing in double precision and rounding
     // once gives the reference's values.

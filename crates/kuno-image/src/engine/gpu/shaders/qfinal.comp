@@ -5,6 +5,11 @@
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+// Groups of 16 invocations (the subgroups on 16-lane devices, clusters of wider ones).
+#define SG16 (gl_LocalInvocationIndex >> 4)
+#define LANE16 (gl_LocalInvocationIndex & 15u)
 layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer Stream { vec4 x[]; };
 layout(set = 0, binding = 1) readonly buffer Scale { vec4 scale[]; };
@@ -17,9 +22,9 @@ shared vec4 mem[1024];
 shared float partial[16];
 
 float reduce(float value) {
-    float sum = subgroupAdd(value);
+    float sum = subgroupClusteredAdd(value, 16);
     barrier();
-    if (gl_SubgroupInvocationID == 0) partial[gl_SubgroupID] = sum;
+    if (LANE16 == 0) partial[SG16] = sum;
     barrier();
     sum = 0.0;
     for (uint i = 0; i < 16; i++) sum += partial[i];
@@ -43,12 +48,12 @@ void main() {
     float norm = 1.0 / sqrt(reduce(squares.x + squares.y + squares.z + squares.w) / 4096.0 + 1e-6);
     for (uint c = lane; c < DIM4; c += 256) mem[c] = (mem[c] - mean) * norm * (1.0 + scale[c]);
     barrier();
-    uint sg = gl_SubgroupID, sl = gl_SubgroupInvocationID;
+    uint sg = SG16, sl = LANE16;
     for (uint k = 0; k < 4; k++) {
         uint o = sg * 4 + k;
         float sum = 0.0;
         for (uint c = sl; c < DIM4; c += 16) sum += dot(mem[c], weight[o * DIM4 + c]);
-        sum = subgroupAdd(sum);
+        sum = subgroupClusteredAdd(sum, 16);
         if (sl == 0) out_[token * 64 + o] = sum;
     }
 }

@@ -4,6 +4,11 @@
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+// Groups of 16 invocations (the subgroups on 16-lane devices, clusters of wider ones).
+#define SG16 (gl_LocalInvocationIndex >> 4)
+#define LANE16 (gl_LocalInvocationIndex & 15u)
 
 layout(local_size_x = 256) in;
 // bf16, four values in each uvec2.
@@ -43,7 +48,7 @@ void stages() {
 
 void main() {
     uint token = gl_WorkGroupID.x;
-    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint sg = SG16, lane = LANE16;
     bool live = token < p.tokens;
     float top = 0.0;
     for (uint r = 0; r < ROUNDS; r++) {
@@ -77,7 +82,7 @@ void main() {
         memoryBarrierShared();
         barrier();
     }
-    top = subgroupMax(top);
+    top = subgroupClusteredMax(top, 16);
     if (lane == 0) maxima[sg] = top;
     memoryBarrierShared();
     memoryBarrierBuffer();

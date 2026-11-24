@@ -15,6 +15,11 @@
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+// Groups of 16 invocations (the subgroups on 16-lane devices, clusters of wider ones).
+#define SG16 (gl_LocalInvocationIndex >> 4)
+#define LANE16 (gl_LocalInvocationIndex & 15u)
 #extension GL_EXT_spirv_intrinsics : require
 spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
 
@@ -44,9 +49,9 @@ vec4 widen(uvec2 b) {
 }
 
 void main() {
-    uint head = gl_WorkGroupID.x * 4 + gl_SubgroupID;
+    uint head = gl_WorkGroupID.x * 4 + SG16;
     uint token = gl_WorkGroupID.y;
-    uint lane = gl_SubgroupInvocationID;
+    uint lane = LANE16;
     bool live = token < p.tokens;
     if (!live && p.side == 1) return;
     uint from = token * (3 * DIM4) + p.side * DIM4 + head * 32 + lane * 2;
@@ -56,7 +61,7 @@ void main() {
         mine[j] = live ? widen(g[from + j]) : vec4(0.0);
         squares += dot(mine[j], mine[j]);
     }
-    float norm = 1.0 / sqrt(subgroupAdd(squares) / 128.0 + 1e-6);
+    float norm = 1.0 / sqrt(subgroupClusteredAdd(squares, 16) / 128.0 + 1e-6);
     uint tiles = p.stride >> 4;
     // Words: a query tile is 1024, a key chunk (keys, then values) 2048.
     uint to = p.side == 0
