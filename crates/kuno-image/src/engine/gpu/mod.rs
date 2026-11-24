@@ -46,6 +46,7 @@ const MATRIX2_FEATURES: vk::StructureType = vk::StructureType::from_raw(1_000_59
 struct Core {
     _entry: ash::Entry,
     instance: ash::Instance,
+    physical: vk::PhysicalDevice,
     device: ash::Device,
     queue: vk::Queue,
     pool: vk::CommandPool,
@@ -338,6 +339,7 @@ impl Gpu {
                 core: Arc::new(Core {
                     _entry: entry,
                     instance,
+                    physical,
                     device,
                     queue,
                     pool,
@@ -653,6 +655,43 @@ impl Gpu {
             return Ok(());
         };
         self.copy(stage, 0, stage.bytes, to, offset)
+    }
+    /// A zero-filled storage buffer in host memory that kernels read and write over the bus
+    /// (data kept for a while but used rarely, when device memory is short).
+    pub fn host_buffer(&self, bytes: u64) -> Result<Buffer, &'static str> {
+        let buffer = self.allocate(
+            bytes,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            false,
+        )?;
+        self.run(|device, commands| unsafe {
+            // SAFETY: the fill covers the whole buffer just created.
+            device.cmd_fill_buffer(commands, buffer.buffer, 0, vk::WHOLE_SIZE, 0);
+        })?;
+        Ok(buffer)
+    }
+    /// Device memory this process can still allocate by the driver's budget
+    /// (`VK_EXT_memory_budget`), or `None` where it is not reported.
+    pub fn free_memory(&self) -> Option<u64> {
+        let core = &self.core;
+        let mut budget = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+        let mut all = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut budget);
+        // SAFETY: plain query into structures owned here.
+        unsafe {
+            core.instance
+                .get_physical_device_memory_properties2(core.physical, &mut all);
+        }
+        let heaps = &core.memory.memory_heaps[..core.memory.memory_heap_count as usize];
+        let free: u64 = heaps
+            .iter()
+            .enumerate()
+            .filter(|(_, heap)| heap.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
+            .map(|(i, _)| budget.heap_budget[i].saturating_sub(budget.heap_usage[i]))
+            .sum();
+        (free > 0).then_some(free)
     }
     fn staging(&self, bytes: u64) -> Result<Buffer, &'static str> {
         self.allocate(

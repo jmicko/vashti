@@ -524,7 +524,10 @@ mod tests {
     #[ignore]
     fn gpu_vision_matches_exact() {
         let Some(vision) = model() else { return };
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
         let started = std::time::Instant::now();
         let placed = GpuVision::new(&gpu, &vision).unwrap();
         println!("placed in {:.2} s", started.elapsed().as_secs_f64());

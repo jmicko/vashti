@@ -9,7 +9,8 @@ use super::{
     gpu::Gpu,
     prompt::{apply_weights, parse_attention},
     qwen_dit::{CHANNELS, CONTEXT},
-    qwen_gpu::{Prefix, QwenGpu},
+    qwen_gpu::{self, QwenGpu, Times},
+    qwen_vk::{self, QwenVk},
     qwen_vae::{QwenVae, SCALE, to_rgba},
     qwen_vae_gpu::GpuVae,
     rng::Mt19937,
@@ -207,12 +208,79 @@ pub fn sigmas(steps: usize, tokens: usize) -> Vec<f32> {
     out
 }
 
+/// The diffusion transformer: Xe2 machine code on Intel GPUs that run it, else Vulkan
+/// shaders on any GPU with cooperative matrices.
+enum Dit {
+    Xe2(Box<QwenGpu>),
+    Vulkan(QwenVk),
+}
+enum Prefix {
+    Xe2(qwen_gpu::Prefix),
+    Vulkan(qwen_vk::Prefix),
+}
+impl Dit {
+    fn load(gpu: &Gpu, path: &Path) -> Result<Self, &'static str> {
+        if gpu.vendor() == 0x8086 {
+            match QwenGpu::load(gpu.clone(), path) {
+                Ok(dit) => return Ok(Self::Xe2(Box::new(dit))),
+                Err("gpu_unsupported") => {}
+                Err(error) => return Err(error),
+            }
+        }
+        QwenVk::load(gpu.clone(), path).map(Self::Vulkan)
+    }
+    fn prefix(
+        &self,
+        context: &[f32],
+        slots: &[i32],
+        references: &[(&[f32], usize, usize)],
+        target: (usize, usize),
+    ) -> Result<Prefix, &'static str> {
+        Ok(match self {
+            Self::Xe2(dit) => Prefix::Xe2(dit.prefix(context, slots, references, target)?),
+            Self::Vulkan(dit) => Prefix::Vulkan(dit.prefix(context, slots, references, target)?),
+        })
+    }
+    fn times(&self, timesteps: &[f32]) -> Vec<Times> {
+        match self {
+            Self::Xe2(dit) => dit.times(timesteps),
+            Self::Vulkan(dit) => dit.times(timesteps),
+        }
+    }
+    /// Frees what only the steps need: the Vulkan pass buffers (the Xe2 ones hold kernels
+    /// built for their size and are kept).
+    fn release_work(&self) {
+        if let Self::Vulkan(dit) = self {
+            dit.release_work();
+        }
+    }
+    /// One step; `fast` (int8 attention scores) is the Xe2 kernels' option, and the Vulkan
+    /// form runs standard attention.
+    fn step_with(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+        fast: bool,
+    ) -> Result<Vec<f32>, &'static str> {
+        match (self, prefix) {
+            (Self::Xe2(dit), Prefix::Xe2(prefix)) => dit.step_with(prefix, x, times, fast),
+            (Self::Vulkan(dit), Prefix::Vulkan(prefix)) => dit.step_at(prefix, x, times),
+            _ => Err("gpu_failed"),
+        }
+    }
+}
+
 /// The models of one generation, kept between requests.
 pub struct Models {
     tokenizer: Tokenizer,
     encoder: GpuTextEncoder,
     vision: GpuVision,
-    dit: QwenGpu,
+    /// The DiT, which on a card too small to also hold the VAE decoder's buffers is freed
+    /// for the decoding and loaded again by the next request.
+    dit: std::sync::Mutex<Option<Dit>>,
+    dit_path: std::path::PathBuf,
+    gpu: Gpu,
     vae: GpuVae,
 }
 
@@ -263,7 +331,9 @@ impl Models {
             tokenizer: Tokenizer::new()?,
             vision: GpuVision::new(gpu, &tower)?,
             encoder: GpuTextEncoder::new(gpu, file)?,
-            dit: QwenGpu::load(gpu.clone(), dit)?,
+            dit: std::sync::Mutex::new(Some(Dit::load(gpu, dit)?)),
+            dit_path: dit.to_owned(),
+            gpu: gpu.clone(),
             vae: GpuVae::new(gpu, &QwenVae::open(vae)?)?,
         })
     }
@@ -369,8 +439,6 @@ impl Models {
             width,
             height,
             steps,
-            cfg,
-            fast_attention,
             ..
         } = *request;
         if width == 0
@@ -382,35 +450,65 @@ impl Models {
             return Err("invalid_input");
         }
         let (h, w) = (height / SCALE, width / SCALE);
-        let guided = cfg != 1.0;
         let encoded = request
             .references
             .iter()
             .map(|r| self.encode_reference(r))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut kept = self.dit.lock().map_err(|_| "gpu_failed")?;
+        if kept.is_none() {
+            *kept = Some(Dit::load(&self.gpu, &self.dit_path)?);
+        }
+        let x = self.sample(kept.as_ref().ok_or("gpu_failed")?, request, &encoded, &mut progress)?;
+        if self
+            .gpu
+            .free_memory()
+            .is_some_and(|free| free < self.vae.decode_bytes(h, w))
+        {
+            *kept = None;
+        }
+        drop(kept);
+        let image = self.vae.decode(&x, h, w)?;
+        Ok(to_rgba(&image, height, width))
+    }
+
+    /// The sampled latent `[CHANNELS][h][w]` of `generate`.
+    fn sample(
+        &self,
+        dit: &Dit,
+        request: &Request,
+        encoded: &[Encoded],
+        progress: &mut impl FnMut(usize, &[f32]) -> bool,
+    ) -> Result<Vec<f32>, &'static str> {
+        let Request {
+            width,
+            height,
+            steps,
+            cfg,
+            fast_attention,
+            ..
+        } = *request;
+        let (h, w) = (height / SCALE, width / SCALE);
+        let guided = cfg != 1.0;
         let latents: Vec<(&[f32], usize, usize)> = encoded
             .iter()
             .map(|e| (&e.latent[..], e.size.0, e.size.1))
             .collect();
         let prefix = |text: &str| -> Result<Prefix, &'static str> {
-            let (context, slots) = self.condition(text, &encoded)?;
-            self.dit.prefix(&context, &slots, &latents, (h, w))
+            let (context, slots) = self.condition(text, encoded)?;
+            dit.prefix(&context, &slots, &latents, (h, w))
         };
         let cond = prefix(request.prompt)?;
         let uncond = guided.then(|| prefix(request.negative)).transpose()?;
         let mut x = Mt19937::new(request.seed as u64).randn(CHANNELS * h * w);
         let sigmas = sigmas(steps, h * w);
         let timesteps: Vec<f32> = sigmas[..steps].iter().map(|s| s * 1000.0).collect();
-        let times = self.dit.times(&timesteps);
+        let times = dit.times(&timesteps);
         for step in 0..steps {
             let sigma = sigmas[step];
-            let mut out = self
-                .dit
-                .step_with(&cond, &x, &times[step], fast_attention)?;
+            let mut out = dit.step_with(&cond, &x, &times[step], fast_attention)?;
             if let Some(uncond) = &uncond {
-                let negative = self
-                    .dit
-                    .step_with(uncond, &x, &times[step], fast_attention)?;
+                let negative = dit.step_with(uncond, &x, &times[step], fast_attention)?;
                 for (o, n) in out.iter_mut().zip(&negative) {
                     *o = n + cfg * (*o - n);
                 }
@@ -428,14 +526,24 @@ impl Models {
                 return Err("cancelled");
             }
         }
-        let image = self.vae.decode(&x, h, w)?;
-        Ok(to_rgba(&image, height, width))
+        drop((cond, uncond));
+        dit.release_work();
+        Ok(x)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{super::gpu::Select, *};
+
+    /// The B70, or the GPU of PCI vendor `KUNO_GPU_VENDOR` (hex).
+    fn test_gpu() -> Gpu {
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
+        gpu
+    }
 
     #[test]
     fn schedule_follows_the_engine() {
@@ -461,7 +569,7 @@ mod tests {
             *since = now;
         };
         let mut at = 0.0;
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let gpu = test_gpu();
         lap("gpu", &mut at);
         let encoder = dir.join("qwen3vl_8b_int8_convrot.safetensors");
         let file = TextEncoder::open(&encoder).unwrap();
@@ -473,11 +581,7 @@ mod tests {
         lap("vision tower", &mut at);
         let encoder = GpuTextEncoder::new(&gpu, file).unwrap();
         lap("text encoder", &mut at);
-        let dit = QwenGpu::load(
-            gpu.clone(),
-            &dir.join("qwen_image_2.1_int8_convrot.safetensors"),
-        )
-        .unwrap();
+        let dit = Dit::load(&gpu, &dir.join("qwen_image_2.1_int8_convrot.safetensors")).unwrap();
         lap("dit", &mut at);
         let vae = GpuVae::new(
             &gpu,
@@ -489,7 +593,9 @@ mod tests {
             tokenizer,
             vision,
             encoder,
-            dit,
+            dit: std::sync::Mutex::new(Some(dit)),
+            dit_path: dir.join("qwen_image_2.1_int8_convrot.safetensors"),
+            gpu: gpu.clone(),
             vae,
         };
         for run in 0..2 {
@@ -525,7 +631,7 @@ mod tests {
     #[ignore]
     fn generation_matches_cpp_engine() {
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_MODELS").unwrap());
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let gpu = test_gpu();
         let started = std::time::Instant::now();
         let models = Models::open(
             &gpu,
@@ -595,13 +701,79 @@ mod tests {
         (rgba, w, h)
     }
 
+    /// `KUNO_QWEN_MODELS=<dir> KUNO_QWEN_EDIT=<dir with ref-cat-512x384.png>
+    /// [KUNO_QWEN_STEPS=<n>]`: a 1248 x 832 edit with CFG and a reference of the same size
+    /// (the cat scaled up), for memory and time on small cards; the time per step is the
+    /// whole time less a one-step run's.
+    #[test]
+    #[ignore]
+    fn large_edit_runs() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_MODELS").unwrap());
+        let gpu = test_gpu();
+        let models = Models::open(
+            &gpu,
+            &dir.join("qwen3vl_8b_int8_convrot.safetensors"),
+            &dir.join("qwen_image_2.1_int8_convrot.safetensors"),
+            &dir.join("qwen_image_2.1_vae_bf16.safetensors"),
+        )
+        .unwrap();
+        let shots = std::path::PathBuf::from(std::env::var("KUNO_QWEN_EDIT").unwrap());
+        let (small, sw, sh) = read_png(&shots.join("ref-cat-512x384.png"));
+        let (width, height) = (1248, 832);
+        let mut rgba = vec![0u8; width * height * 4];
+        for y in 0..height {
+            for x in 0..width {
+                let from = ((y * sh / height) * sw + x * sw / width) * 4;
+                rgba[(y * width + x) * 4..][..4].copy_from_slice(&small[from..from + 4]);
+            }
+        }
+        let references = [Reference {
+            rgba: &rgba,
+            width,
+            height,
+        }];
+        let steps: usize = std::env::var("KUNO_QWEN_STEPS").map_or(4, |s| s.parse().unwrap());
+        let mut times = Vec::new();
+        for steps in [steps, steps] {
+            let request = Request {
+                prompt: "Make the cat wear a small red hat",
+                negative: "blurry",
+                width,
+                height,
+                steps,
+                cfg: 4.0,
+                seed: 7,
+                references: &references,
+                fast_attention: false,
+            };
+            let started = std::time::Instant::now();
+            let mut marks = Vec::new();
+            let got = models
+                .generate(&request, |_, _| {
+                    marks.push(started.elapsed().as_secs_f64());
+                    true
+                })
+                .unwrap();
+            assert_eq!(got.len(), width * height * 4);
+            let total = started.elapsed().as_secs_f64();
+            times.push(total);
+            let gaps: Vec<String> = marks.windows(2).map(|p| format!("{:.2}", p[1] - p[0])).collect();
+            println!(
+                "{steps} steps: {total:.2} s; first step done at {:.2} s, later steps {} s, decode {:.2} s",
+                marks[0],
+                gaps.join(" "),
+                total - marks.last().unwrap()
+            );
+        }
+    }
+
     /// `KUNO_QWEN_MODELS=<dir> KUNO_QWEN_EDIT=<dir with ref-cat-512x384.png, qedit512.png>`:
     /// an edit with one reference (CFG 4, 8 steps, 512 x 512, seed 7) against the engine's.
     #[test]
     #[ignore]
     fn edit_matches_cpp_engine() {
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_MODELS").unwrap());
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let gpu = test_gpu();
         let models = Models::open(
             &gpu,
             &dir.join("qwen3vl_8b_int8_convrot.safetensors"),
@@ -661,7 +833,7 @@ mod tests {
     fn edit_conditioning_matches_cpp_engine() {
         use super::super::qwen_dit::tests::{Golden, db};
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_MODELS").unwrap());
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let gpu = test_gpu();
         let models = Models::open(
             &gpu,
             &dir.join("qwen3vl_8b_int8_convrot.safetensors"),

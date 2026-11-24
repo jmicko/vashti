@@ -154,6 +154,16 @@ struct Work {
     readback: Readback,
 }
 impl Work {
+    /// The device memory `new` takes.
+    fn bytes(tokens: usize, earlier: usize) -> u64 {
+        let padded = tokens.next_multiple_of(PAD);
+        let keys = (tokens + earlier).next_multiple_of(KEY_PAD);
+        let f32s = padded * (2 * DIM + PAIRS * 2 + 2 * CHANNELS + 1 + 2 * HIDDEN + SPILLED)
+            + 2 * MODS
+            + DIM;
+        let halves = padded * HIDDEN + HEADS * padded * HEAD + 2 * HEADS * keys * HEAD;
+        (f32s * 4 + padded * HIDDEN + halves * 2) as u64
+    }
     fn new(gpu: &Gpu, tokens: usize, earlier: usize) -> Result<Self, &'static str> {
         let padded = tokens.next_multiple_of(PAD);
         let keys = (tokens + earlier).next_multiple_of(KEY_PAD);
@@ -189,7 +199,8 @@ impl Work {
 pub struct Prefix {
     /// Unique per prefix, so a pass knows whether its turns are this prefix's.
     id: u64,
-    /// Per block: keys and values `[head][capacity][128]` f16.
+    /// Per block: keys and values `[head][capacity][128]` f16, in device memory or, when
+    /// it is short, in host memory (each step then copies them over the bus).
     keys: Vec<Buffer>,
     values: Vec<Buffer>,
     pub length: usize,
@@ -209,6 +220,9 @@ pub struct QwenVk {
     /// Pass buffers by shape (own tokens, earlier keys); a request's target pass is reused
     /// every step.
     work: Mutex<HashMap<(usize, usize), Work>>,
+    /// Where prefixes go: `None` by the device's free memory, else in host memory or not.
+    #[cfg(test)]
+    host_prefix: Option<bool>,
 }
 impl QwenVk {
     pub fn load(gpu: Gpu, path: &Path) -> Result<Self, &'static str> {
@@ -228,10 +242,13 @@ impl QwenVk {
             img_in,
             proj_out,
             work: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            host_prefix: None,
         })
     }
 
-    /// As `QwenGpu::prefix`.
+    /// As `QwenGpu::prefix`. The keys and values stay in device memory when the steps'
+    /// buffers still fit beside them, else in host memory.
     pub fn prefix(
         &self,
         context: &[f32],
@@ -246,7 +263,19 @@ impl QwenVk {
         let layout = Layout::new(text_len, slots, &images)?;
         let rotary = qwen_dit::rotary(&layout.positions);
         let length = layout.prefix;
-        let half_rows = || gpu.buffer((HEADS * length.max(1) * HEAD) as u64 * 2);
+        let rows_bytes = (HEADS * length.max(1) * HEAD) as u64 * 2;
+        let need = 2 * self.layers.len() as u64 * rows_bytes
+            + Work::bytes(target.0 * target.1, length);
+        let host = gpu.free_memory().is_some_and(|free| free < need);
+        #[cfg(test)]
+        let host = self.host_prefix.unwrap_or(host);
+        let half_rows = || {
+            if host {
+                gpu.host_buffer(rows_bytes)
+            } else {
+                gpu.buffer(rows_bytes)
+            }
+        };
         let (mut keys, mut values) = (Vec::new(), Vec::new());
         for _ in 0..self.layers.len() {
             keys.push(half_rows()?);
@@ -297,8 +326,18 @@ impl QwenVk {
                 calls.extend(self.block(work, 1, causal, store, &prefix, index, last));
             }
             run(gpu, &calls)?;
+            // Only this prefix uses these buffers.
+            works.remove(&(tokens, segment.start));
         }
         Ok(prefix)
+    }
+
+    /// Frees the pass buffers (made again when next needed), for the VAE to have the
+    /// memory on small cards.
+    pub fn release_work(&self) {
+        if let Ok(mut works) = self.work.lock() {
+            works.clear();
+        }
     }
 
     fn work_for<'a>(
@@ -527,6 +566,65 @@ mod tests {
         *,
     };
 
+    /// `KUNO_QWEN_DIT=<model> [KUNO_GPU_VENDOR=<hex>] [KUNO_PREFIX_HOST=1]`: the time of each
+    /// kind of kernel in a step of a 1248 x 832 edit with a reference of the same size (4056
+    /// own tokens after 4356 prefix keys), each call run and waited for alone.
+    #[test]
+    #[ignore = "needs a GPU and the model"]
+    fn block_costs_of_a_large_edit() {
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        let model =
+            QwenVk::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        let (height, width, length) = (52, 78, 4356);
+        let host = std::env::var("KUNO_PREFIX_HOST").is_ok_and(|v| v == "1");
+        let rows = (HEADS * length * HEAD) as u64 * 2;
+        let half = || {
+            if host {
+                model.gpu.host_buffer(rows).unwrap()
+            } else {
+                model.gpu.buffer(rows).unwrap()
+            }
+        };
+        let prefix = Prefix {
+            id: 1,
+            keys: (0..model.layers.len()).map(|_| half()).collect(),
+            values: (0..model.layers.len()).map(|_| half()).collect(),
+            length,
+            height,
+            width,
+            turns: vec![0.0; height * width * PAIRS * 2],
+        };
+        let x = vec![0.1f32; CHANNELS * height * width];
+        let times = model.times(&[500.0]).remove(0);
+        for _ in 0..2 {
+            let started = std::time::Instant::now();
+            model.step_at(&prefix, &x, &times).unwrap();
+            println!("step {:.3} s", started.elapsed().as_secs_f64());
+        }
+        let works = model.work.lock().unwrap();
+        let w = &works[&(height * width, length)];
+        let calls = model.block(w, 0, false, None, &prefix, 3, false);
+        let names = [
+            "qkv product", "qkv16", "prefix copy", "attention", "quantize", "out product",
+            "residual+norm", "fc1 product", "gate", "hidden quantize", "fc2 product",
+            "residual+norm",
+        ];
+        let mut total = 0.0;
+        for (call, name) in calls.iter().zip(names) {
+            let mut best = f64::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                run(&model.gpu, std::slice::from_ref(call)).unwrap();
+                best = best.min(started.elapsed().as_secs_f64() * 1e3);
+            }
+            total += best;
+            println!("{name}: {best:.2} ms");
+        }
+        println!("block {total:.1} ms, x {} blocks = {:.2} s", model.layers.len(), total * model.layers.len() as f64 / 1e3);
+    }
+
     /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir> [KUNO_GPU_VENDOR=<hex>]`: steps against
     /// the captured C++ engine's, as `qwen_gpu::tests::steps_match_cpp_engine`.
     #[test]
@@ -537,8 +635,10 @@ mod tests {
         let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
         println!("{}", gpu.name());
         let started = std::time::Instant::now();
-        let model =
+        let mut model =
             QwenVk::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        // KUNO_PREFIX_HOST=1: prefixes in host memory, read over the bus.
+        model.host_prefix = std::env::var("KUNO_PREFIX_HOST").ok().map(|v| v == "1");
         println!("load {:.1} s", started.elapsed().as_secs_f64());
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
         for step in 0.. {

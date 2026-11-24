@@ -336,23 +336,12 @@ impl GpuVae {
         })
     }
 
-    /// The image `[OUT][16 height][16 width]` in [-1, 1] (before clamping) for a diffusion
-    /// latent `[LATENT][height][width]`.
-    pub fn decode(
-        &self,
-        latent: &[f32],
-        height: usize,
-        width: usize,
-    ) -> Result<Vec<f32>, &'static str> {
-        let gpu = &self.gpu;
+    /// For a latent of `height` x `width`: the decoder's largest map and largest product (in
+    /// values: channels times padded pixels at every level, output channels padded to the
+    /// matrix kernel's tiles) and the output size.
+    fn decode_sizes(&self, height: usize, width: usize) -> (usize, usize, (usize, usize)) {
         let d = &self.decoder;
-        let plane = height * width;
-        if latent.len() != d.latent * plane || plane == 0 {
-            return Err("invalid_input");
-        }
         let attention = d.attention.channels;
-        // The largest map (channels times padded pixels at every level), and the largest
-        // product (output channels padded to the matrix kernel's tiles).
         let level = |channels: usize, w: usize, h: usize| channels * padded(w * h, ROWS);
         let (mut w, mut h) = (width, height);
         let mut largest = level(3 * attention, w, h);
@@ -371,6 +360,36 @@ impl GpuVae {
                 products = products.max(level(padded(resample.outputs, TOKENS), w, h));
             }
         }
+        (largest, products, (w, h))
+    }
+    /// The device memory `decode` takes for a latent of `height` x `width` (`buffers`).
+    pub fn decode_bytes(&self, height: usize, width: usize) -> u64 {
+        let (largest, products, _) = self.decode_sizes(height, width);
+        let channels = self.decoder.attention.channels;
+        let tokens = padded(height * width, ROWS);
+        let (w, h) = (width, height);
+        (4 * largest as u64 + products as u64) * 4
+            + CHUNK as u64 * 2
+            + (padded(w * h * 64, ROWS) * 4) as u64
+            + (3 * tokens * channels * 2) as u64
+            + (tokens * tokens * 6) as u64
+    }
+    /// The image `[OUT][16 height][16 width]` in [-1, 1] (before clamping) for a diffusion
+    /// latent `[LATENT][height][width]`.
+    pub fn decode(
+        &self,
+        latent: &[f32],
+        height: usize,
+        width: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        let gpu = &self.gpu;
+        let d = &self.decoder;
+        let plane = height * width;
+        if latent.len() != d.latent * plane || plane == 0 {
+            return Err("invalid_input");
+        }
+        let attention = d.attention.channels;
+        let (largest, products, (w, h)) = self.decode_sizes(height, width);
         let b = self.buffers(largest, products, w * h, plane, attention)?;
         // The un-normalized latent, channel-major with padded rows.
         let stride = padded(plane, ROWS);
