@@ -42,6 +42,8 @@ struct Core {
     /// The device's vendor id and the matrix shapes its cooperative matrices support.
     vendor: u32,
     shapes: Vec<Shape>,
+    /// The subgroup sizes a kernel may require.
+    subgroups: (u32, u32),
     /// Command and descriptor pools and the queue are used by one thread at a time.
     turn: std::sync::Mutex<()>,
 }
@@ -248,6 +250,10 @@ impl Gpu {
                 )
                 .map_err(|_| "gpu_unavailable")?;
             let memory = instance.get_physical_device_memory_properties(physical);
+            let mut v13p = vk::PhysicalDeviceVulkan13Properties::default();
+            let mut all = vk::PhysicalDeviceProperties2::default().push_next(&mut v13p);
+            instance.get_physical_device_properties2(physical, &mut all);
+            let subgroups = (v13p.min_subgroup_size, v13p.max_subgroup_size);
             let shapes = ash::khr::cooperative_matrix::Instance::new(&entry, &instance)
                 .get_physical_device_cooperative_matrix_properties(physical)
                 .unwrap_or_default()
@@ -277,6 +283,7 @@ impl Gpu {
                     name,
                     vendor: properties.vendor_id,
                     shapes,
+                    subgroups,
                     turn: std::sync::Mutex::new(()),
                 }),
             })
@@ -919,6 +926,17 @@ impl Gpu {
         } else {
             Err("gpu_unsupported")
         }
+    }
+    /// Whether kernels can run on 16-lane subgroups (Intel); elsewhere kernels written for
+    /// them take their 32-lane forms.
+    pub fn narrow(&self) -> bool {
+        let (min, max) = self.core.subgroups;
+        min <= 16 && 16 <= max
+    }
+    /// The subgroup size to require of a kernel that works at any size: 16 where the device
+    /// has it (the numbers checked on Intel), else its widest.
+    pub fn subgroup(&self) -> Option<u32> {
+        Some(if self.narrow() { 16 } else { self.core.subgroups.1 })
     }
     /// The PCI vendor id (0x8086 Intel, 0x10de NVIDIA, 0x1002 AMD).
     pub fn vendor(&self) -> u32 {

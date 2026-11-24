@@ -1,6 +1,7 @@
 // ConvRot quantizer: rotates each f32 row by a regular Hadamard transform in groups of 256
 // values, then rounds the row to INT8 with one scale (largest magnitude / 127).
-// One workgroup per row. Each of its 16 subgroups rotates one group per round: a lane holds
+// One workgroup per row. Each of its 16 groups of 16 invocations (the subgroups where they are
+// 16 lanes wide; clusters of wider ones) rotates one group per round: a lane holds
 // 16 neighbouring values and does the two short-stride butterfly stages on them, the
 // subgroup transposes its 16 x 16 block through shared memory, and the same two stages then
 // cover the long strides. Stage order and expressions are the reference's (dit.rs), so bytes
@@ -11,6 +12,12 @@
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+// The 16-invocation group and lane (`gl_SubgroupID` and `gl_SubgroupInvocationID` on 16-lane
+// subgroups).
+#define SG (gl_LocalInvocationIndex >> 4)
+#define LANE (gl_LocalInvocationIndex & 15u)
 
 layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer In { vec4 x[]; };
@@ -42,7 +49,7 @@ void stages() {
 }
 // Leaves value `16 * j + lane` of the group in v[j].
 void rotate(uint at, bool live) {
-    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint sg = SG, lane = LANE;
     for (uint j = 0; j < 4; j++) {
         vec4 part = live ? x[at + lane * 4 + j] : vec4(0.0);
         for (uint e = 0; e < 4; e++) v[j * 4 + e] = part[e] * 0.0625;
@@ -56,7 +63,7 @@ void rotate(uint at, bool live) {
 }
 
 void main() {
-    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint sg = SG, lane = LANE;
     uint row = gl_WorkGroupID.x;
     uint groups = p.width >> 8;
     uint first = row * (p.width >> 2);
@@ -68,7 +75,7 @@ void main() {
         memoryBarrierShared();
         barrier();
     }
-    top = subgroupMax(top);
+    top = subgroupClusteredMax(top, 16);
     if (lane == 0) maxima[sg] = top;
     memoryBarrierShared();
     barrier();

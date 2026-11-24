@@ -144,11 +144,15 @@ pub struct GpuTextEncoder {
 impl GpuTextEncoder {
     pub fn new(gpu: &Gpu, encoder: TextEncoder) -> Result<Self, &'static str> {
         let kernels = Kernels {
-            norm: gpu.kernel(shaders::TNORM, 3, 3, Some(16))?,
-            rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, Some(16))?,
+            norm: gpu.kernel(shaders::TNORM, 3, 3, gpu.subgroup())?,
+            rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, gpu.subgroup())?,
             gemm8: gpu.gemm8()?,
-            qkv: gpu.kernel(shaders::TQKV, 8, 9, Some(16))?,
-            attend: gpu.kernel(shaders::TATTEND, 4, 4, Some(16))?,
+            qkv: gpu.kernel(shaders::TQKV, 8, 9, gpu.subgroup())?,
+            attend: if gpu.narrow() {
+                gpu.kernel(shaders::TATTEND, 4, 4, Some(16))?
+            } else {
+                gpu.kernel(shaders::TATTEND32, 4, 4, gpu.subgroup())?
+            },
             resid: gpu.kernel(shaders::TRESID, 4, 3, None)?,
             gate: gpu.kernel(shaders::TGATE, 4, 3, None)?,
             add: gpu.kernel(shaders::TADD, 2, 3, None)?,
@@ -568,7 +572,10 @@ mod tests {
         let reference = open();
         // 469 tokens with a 17 x 26 image, as for a clip at 832 x 544.
         let synthetic = Synthetic::new(&reference, 469, (34, 52));
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
         let started = std::time::Instant::now();
         let encoder = GpuTextEncoder::new(&gpu, open()).unwrap();
         println!("setup {:.2} s", started.elapsed().as_secs_f64());
