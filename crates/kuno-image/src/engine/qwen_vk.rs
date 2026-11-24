@@ -131,15 +131,16 @@ fn floats(gpu: &Gpu, values: &[f32]) -> Result<Buffer, &'static str> {
     })
 }
 
-/// Buffers of one pass shape: `tokens` own tokens after `earlier` cached keys.
+/// Buffers of one pass size: `tokens` own tokens after `earlier` cached keys (set per pass;
+/// the key and value rows have room for up to `stride` keys per head).
 struct Work {
     /// The prefix whose target turns `turns` holds (0: none).
     turns_of: std::cell::Cell<u64>,
     tokens: usize,
-    earlier: usize,
+    earlier: std::cell::Cell<usize>,
     padded: usize,
-    /// Keys per head: own then earlier, padded.
-    keys: usize,
+    /// Key and value rows per head: own then earlier, padded.
+    stride: usize,
     stream: Buffer,
     turns: Buffer,
     rows: Buffer,
@@ -170,15 +171,15 @@ impl Work {
     }
     fn new(gpu: &Gpu, tokens: usize, earlier: usize) -> Result<Self, &'static str> {
         let padded = tokens.next_multiple_of(PAD);
-        let keys = (tokens + earlier).next_multiple_of(KEY_PAD);
+        let stride = (tokens + earlier).next_multiple_of(KEY_PAD);
         let f32s = |count: usize| gpu.buffer(count as u64 * 4);
         let halves = |count: usize| gpu.buffer(count as u64 * 2);
         Ok(Self {
             turns_of: std::cell::Cell::new(0),
             tokens,
-            earlier,
+            earlier: std::cell::Cell::new(earlier),
             padded,
-            keys,
+            stride,
             stream: f32s(padded * DIM)?,
             turns: f32s(padded * PAIRS * 2)?,
             rows: f32s(padded * CHANNELS)?,
@@ -190,8 +191,8 @@ impl Work {
             hidden: halves(padded * HIDDEN)?,
             spill: f32s(padded * SPILLED)?,
             query: halves(HEADS * padded * HEAD)?,
-            key: halves(HEADS * keys * HEAD)?,
-            value: halves(HEADS * keys * HEAD)?,
+            key: halves(HEADS * stride * HEAD)?,
+            value: halves(HEADS * stride * HEAD)?,
             mixed: f32s(padded * DIM)?,
             out: f32s(padded * CHANNELS)?,
             readback: gpu.readback((padded * CHANNELS) as u64 * 4)?,
@@ -221,9 +222,9 @@ pub struct QwenVk {
     small: Small,
     img_in: Buffer,
     proj_out: Buffer,
-    /// Pass buffers by shape (own tokens, earlier keys); a request's target pass is reused
+    /// Pass buffers by own tokens; a request's target passes (CFG's both prompts) reuse one
     /// every step.
-    work: Mutex<HashMap<(usize, usize), Work>>,
+    work: Mutex<HashMap<usize, Work>>,
     /// Where prefixes go: `None` by the device's free memory, else in host memory or not.
     #[cfg(test)]
     host_prefix: Option<bool>,
@@ -331,7 +332,7 @@ impl QwenVk {
             }
             run(gpu, &calls)?;
             // Only this prefix uses these buffers.
-            works.remove(&(tokens, segment.start));
+            works.remove(&tokens);
         }
         Ok(prefix)
     }
@@ -344,18 +345,27 @@ impl QwenVk {
         }
     }
 
+    /// The pass buffers for `tokens` own tokens after `earlier` keys, made (or made again
+    /// with more key rows) when needed.
     fn work_for<'a>(
-        works: &'a mut HashMap<(usize, usize), Work>,
+        works: &'a mut HashMap<usize, Work>,
         gpu: &Gpu,
         tokens: usize,
         earlier: usize,
     ) -> Result<&'a Work, &'static str> {
-        match works.entry((tokens, earlier)) {
-            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                Ok(entry.insert(Work::new(gpu, tokens, earlier)?))
-            }
+        let need = (tokens + earlier).next_multiple_of(KEY_PAD);
+        if works.get(&tokens).is_some_and(|w| w.stride < need) {
+            // Freed before the larger one is made.
+            works.remove(&tokens);
         }
+        let work = match works.entry(tokens) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Work::new(gpu, tokens, earlier)?)
+            }
+        };
+        work.earlier.set(earlier);
+        Ok(work)
     }
 
     /// Latent rows (`work.rows`) into the stream.
@@ -484,12 +494,12 @@ impl QwenVk {
             constants: vec![
                 n,
                 np,
-                w.keys as u32,
+                w.stride as u32,
                 QUERY_NORM as u32,
                 KEY_NORM as u32,
                 SCALE_QKV as u32,
                 u32::from(store.is_some()),
-                w.earlier as u32,
+                w.earlier.get() as u32,
                 capacity as u32,
             ],
             groups: [(3 * HEADS / 4) as u32, np, 1],
@@ -497,17 +507,17 @@ impl QwenVk {
         if last {
             return calls;
         }
-        if w.earlier > 0 {
+        if w.earlier.get() > 0 {
             calls.push(Call::Shader {
                 kernel: &k.copy,
                 buffers: vec![&prefix.keys[index], &prefix.values[index], &w.key, &w.value],
                 constants: vec![
-                    w.earlier as u32,
+                    w.earlier.get() as u32,
                     n,
-                    w.keys as u32,
+                    w.stride as u32,
                     prefix.length.max(1) as u32,
                 ],
-                groups: [(w.earlier * 16).div_ceil(64) as u32, HEADS as u32, 1],
+                groups: [(w.earlier.get() * 16).div_ceil(64) as u32, HEADS as u32, 1],
             });
         }
         calls.push(Call::Shader {
@@ -515,9 +525,9 @@ impl QwenVk {
             buffers: vec![&w.query, &w.key, &w.value, &w.mixed],
             constants: vec![
                 n,
-                (w.tokens + w.earlier) as u32,
+                (w.tokens + w.earlier.get()) as u32,
                 np,
-                w.keys as u32,
+                w.stride as u32,
                 HEADS as u32,
                 (1.0 / (HEAD as f32).sqrt()).to_bits(),
                 u32::from(causal),
@@ -608,7 +618,7 @@ mod tests {
             println!("step {:.3} s", started.elapsed().as_secs_f64());
         }
         let works = model.work.lock().unwrap();
-        let w = &works[&(height * width, length)];
+        let w = &works[&(height * width)];
         let calls = model.block(w, 0, false, None, &prefix, 3, false);
         let names = [
             "qkv product", "qkv16", "prefix copy", "attention", "quantize", "out product",

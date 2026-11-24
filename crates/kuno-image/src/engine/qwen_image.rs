@@ -276,8 +276,8 @@ pub struct Models {
     tokenizer: Tokenizer,
     encoder: GpuTextEncoder,
     vision: GpuVision,
-    /// The DiT, which on a card too small to also hold the VAE decoder's buffers is freed
-    /// for the decoding and loaded again by the next request.
+    /// The DiT, which on a card too small to also hold the VAE decoder's buffers (in strips
+    /// of reasonable size) is freed for the decoding and loaded again by the next request.
     dit: std::sync::Mutex<Option<Dit>>,
     dit_path: std::path::PathBuf,
     gpu: Gpu,
@@ -463,7 +463,7 @@ impl Models {
         if self
             .gpu
             .free_memory()
-            .is_some_and(|free| free < self.vae.decode_bytes(h, w))
+            .is_some_and(|free| !self.vae.fits(h, w, free))
         {
             *kept = None;
         }
@@ -571,6 +571,8 @@ mod tests {
         let mut at = 0.0;
         let gpu = test_gpu();
         lap("gpu", &mut at);
+        let free = || gpu.free_memory().unwrap_or(0) >> 20;
+        println!("free {} MiB", free());
         let encoder = dir.join("qwen3vl_8b_int8_convrot.safetensors");
         let file = TextEncoder::open(&encoder).unwrap();
         let tower = Vision::open(&encoder).unwrap();
@@ -579,16 +581,20 @@ mod tests {
         lap("tokenizer", &mut at);
         let vision = GpuVision::new(&gpu, &tower).unwrap();
         lap("vision tower", &mut at);
+        println!("free {} MiB", free());
         let encoder = GpuTextEncoder::new(&gpu, file).unwrap();
         lap("text encoder", &mut at);
+        println!("free {} MiB", free());
         let dit = Dit::load(&gpu, &dir.join("qwen_image_2.1_int8_convrot.safetensors")).unwrap();
         lap("dit", &mut at);
+        println!("free {} MiB", free());
         let vae = GpuVae::new(
             &gpu,
             &QwenVae::open(&dir.join("qwen_image_2.1_vae_bf16.safetensors")).unwrap(),
         )
         .unwrap();
         lap("vae", &mut at);
+        println!("free {} MiB", free());
         let models = Models {
             tokenizer,
             vision,
@@ -605,7 +611,7 @@ mod tests {
                 width: 1184,
                 height: 1776,
                 steps: 2,
-                cfg: 1.0,
+                cfg: std::env::var("KUNO_QWEN_CFG").map_or(1.0, |c| c.parse().unwrap()),
                 seed: 7,
                 references: &[],
                 fast_attention: std::env::var("KUNO_QWEN_FAST").is_ok(),

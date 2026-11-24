@@ -142,8 +142,8 @@ impl Dit {
 pub struct Models {
     tokenizer: Tokenizer,
     encoder: GpuTextEncoder,
-    /// The DiT, which on a card too small to also hold the VAE decoder's buffers is freed
-    /// for the decoding and loaded again by the next request.
+    /// The DiT, which on a card too small to also hold the VAE decoder's buffers (in strips
+    /// of reasonable size) is freed for the decoding and loaded again by the next request.
     dit: std::sync::Mutex<Option<Dit>>,
     dit_path: std::path::PathBuf,
     gpu: Gpu,
@@ -245,7 +245,7 @@ impl Models {
         if self
             .gpu
             .free_memory()
-            .is_some_and(|free| free < self.vae.decode_bytes(h, w))
+            .is_some_and(|free| !self.vae.fits(h, w, free))
         {
             *kept = None;
         }

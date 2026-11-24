@@ -23,6 +23,8 @@ const ROWS: usize = 256;
 const TOKENS: usize = 128;
 /// Half floats of one unfolded chunk (128 MB).
 const CHUNK: usize = 64 << 20;
+/// Device memory `decode` leaves free beyond its buffers.
+const MARGIN: u64 = 256 << 20;
 
 fn padded(n: usize, to: usize) -> usize {
     n.div_ceil(to) * to
@@ -362,7 +364,8 @@ impl GpuVae {
         }
         (largest, products, (w, h))
     }
-    /// The device memory `decode` takes for a latent of `height` x `width` (`buffers`).
+    /// The device memory `decode` takes for a latent of `height` x `width` in one piece
+    /// (`buffers`).
     pub fn decode_bytes(&self, height: usize, width: usize) -> u64 {
         let (largest, products, _) = self.decode_sizes(height, width);
         let channels = self.decoder.attention.channels;
@@ -375,23 +378,112 @@ impl GpuVae {
             + (tokens * tokens * 6) as u64
     }
     /// The image `[OUT][16 height][16 width]` in [-1, 1] (before clamping) for a diffusion
-    /// latent `[LATENT][height][width]`.
+    /// latent `[LATENT][height][width]`. When the device's free memory cannot hold the
+    /// whole image's buffers, the upsampling path runs in strips of latent rows with enough
+    /// rows around each for every convolution's reach (the layers after the attention are
+    /// all per pixel or 3 x 3), so the pixels are the same.
     pub fn decode(
         &self,
         latent: &[f32],
         height: usize,
         width: usize,
     ) -> Result<Vec<f32>, &'static str> {
-        let gpu = &self.gpu;
         let d = &self.decoder;
         let plane = height * width;
         if latent.len() != d.latent * plane || plane == 0 {
             return Err("invalid_input");
         }
-        let attention = d.attention.channels;
-        let (largest, products, (w, h)) = self.decode_sizes(height, width);
-        let b = self.buffers(largest, products, w * h, plane, attention)?;
-        // The un-normalized latent, channel-major with padded rows.
+        let need = self.decode_bytes(height, width);
+        let budget = self
+            .gpu
+            .free_memory()
+            .map(|free| free.saturating_sub(MARGIN));
+        match budget {
+            Some(budget) if budget < need => self.decode_strips(latent, height, width, budget),
+            _ => self.decode_whole(latent, height, width),
+        }
+    }
+
+    /// Whether `decode` runs in `free` bytes of device memory without strips of less than
+    /// twice their halo (the overlap computed again).
+    pub fn fits(&self, height: usize, width: usize, free: u64) -> bool {
+        let budget = free.saturating_sub(MARGIN);
+        self.decode_bytes(height, width) <= budget
+            || self.strip_bytes((4 * self.halo()).min(height), width) <= budget
+    }
+
+    /// Latent rows each side of a strip whose outputs every convolution of the upsampling
+    /// path still reaches correctly from: each 3 x 3 conv reaches one row at its scale.
+    fn halo(&self) -> usize {
+        let d = &self.decoder;
+        let mut reach = 0f64;
+        let mut scale = 1f64;
+        for (blocks, resample) in &d.ups {
+            for r in blocks {
+                reach += (r.conv1.kernel / 2 + r.conv2.kernel / 2) as f64 / scale;
+            }
+            if let Some(resample) = resample {
+                scale *= 2.0;
+                reach += (resample.kernel / 2) as f64 / scale;
+            }
+        }
+        reach += (d.head.kernel / 2) as f64 / scale;
+        reach.ceil() as usize + 1
+    }
+
+    /// `decode` in strips: the latent through the convolutions, middle blocks and attention
+    /// whole (at latent size), then each strip of rows with its halo through the rest.
+    fn decode_strips(
+        &self,
+        latent: &[f32],
+        height: usize,
+        width: usize,
+        budget: u64,
+    ) -> Result<Vec<f32>, &'static str> {
+        let d = &self.decoder;
+        let (middle, channels) = self.decode_middle(latent, height, width)?;
+        let halo = self.halo();
+        // The most rows a strip may own with its halo inside the budget.
+        let mut own = height;
+        while own > 1 && self.strip_bytes((own + 2 * halo).min(height), width) > budget {
+            own = own.div_ceil(2);
+        }
+        let (scale, out) = (d.scale, d.out);
+        let (wide, tall) = (width * scale, height * scale);
+        let mut image = vec![0f32; out * wide * tall];
+        for first in (0..height).step_by(own) {
+            let last = (first + own).min(height);
+            let (from, to) = (first.saturating_sub(halo), (last + halo).min(height));
+            let rows = to - from;
+            let mut slice = vec![0f32; channels * rows * width];
+            for c in 0..channels {
+                slice[c * rows * width..(c + 1) * rows * width].copy_from_slice(
+                    &middle[c * height * width + from * width..c * height * width + to * width],
+                );
+            }
+            let pixels = self.decode_up(&slice, channels, rows, width)?;
+            let skip = (first - from) * scale;
+            let keep = (last - first) * scale;
+            for c in 0..out {
+                let strip = &pixels[c * rows * scale * wide..];
+                image[c * tall * wide + first * scale * wide..][..keep * wide]
+                    .copy_from_slice(&strip[skip * wide..(skip + keep) * wide]);
+            }
+        }
+        Ok(image)
+    }
+
+    /// The device memory `decode_up` takes for `rows` latent rows.
+    fn strip_bytes(&self, rows: usize, width: usize) -> u64 {
+        let (largest, products, _) = self.decode_sizes(rows, width);
+        (4 * largest as u64 + products as u64) * 4
+            + CHUNK as u64 * 2
+            + (padded(rows * width * 64, ROWS) * 4) as u64
+    }
+
+    /// Uploads the un-normalized latent, channel-major with padded rows, into `map`.
+    fn upload_latent(&self, map: &Buffer, latent: &[f32], plane: usize) -> Result<(), &'static str> {
+        let d = &self.decoder;
         let stride = padded(plane, ROWS);
         let mut input = vec![0f32; d.latent * stride];
         for c in 0..d.latent {
@@ -402,10 +494,36 @@ impl GpuVae {
                 *to = v * d.std[c] + d.mean[c];
             }
         }
-        gpu.upload(&b.maps[0], 0, bytes_of(&input))?;
-        drop(input);
+        self.gpu.upload(map, 0, bytes_of(&input))
+    }
+
+    /// The decoder up to its upsampling path at latent size: the map `[channels][plane]`.
+    fn decode_middle(
+        &self,
+        latent: &[f32],
+        height: usize,
+        width: usize,
+    ) -> Result<(Vec<f32>, usize), &'static str> {
+        let d = &self.decoder;
+        let plane = height * width;
+        let attention = d.attention.channels;
+        let level = |channels: usize| channels * padded(plane, ROWS);
+        let widest = d
+            .middle
+            .iter()
+            .flat_map(|r| [r.conv1.inputs, r.conv1.outputs, r.conv2.outputs])
+            .chain([3 * attention, d.conv2.inputs, d.conv2.outputs, d.conv1.outputs])
+            .max()
+            .unwrap_or(0);
+        let b = self.buffers(
+            level(widest),
+            level(padded(widest, TOKENS)),
+            plane,
+            plane,
+            attention,
+        )?;
+        self.upload_latent(&b.maps[0], latent, plane)?;
         let work = Work { vae: self, b: &b };
-        let maps = &b.maps;
         let mut calls = Vec::new();
         let size = (width, height);
         work.conv(&mut calls, &d.conv2, 0, Same(size), Norm::None, 1, None);
@@ -413,24 +531,62 @@ impl GpuVae {
         let mut x = work.residual(&mut calls, &d.middle[0], 2, 2, size);
         x = work.attention(&mut calls, &d.attention, x, size);
         x = work.residual(&mut calls, &d.middle[1], x, x, size);
+        run(&self.gpu, &calls)?;
+        drop(calls);
+        let channels = d.middle[1].conv2.outputs;
+        Ok((read_map(&self.gpu, &b.maps[x], channels, plane)?, channels))
+    }
+
+    /// The decoder's upsampling path and head on a map `[channels][rows][width]` from
+    /// `decode_middle`: the pixels `[OUT][rows * scale][width * scale]`.
+    fn decode_up(
+        &self,
+        middle: &[f32],
+        channels: usize,
+        rows: usize,
+        width: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        let gpu = &self.gpu;
+        let d = &self.decoder;
+        let plane = rows * width;
+        let (largest, products, (w, h)) = self.decode_sizes(rows, width);
+        let b = self.buffers(largest, products, w * h, 0, d.attention.channels)?;
+        let stride = padded(plane, ROWS);
+        let mut input = vec![0f32; channels * stride];
+        for c in 0..channels {
+            input[c * stride..c * stride + plane]
+                .copy_from_slice(&middle[c * plane..(c + 1) * plane]);
+        }
+        gpu.upload(&b.maps[0], 0, bytes_of(&input))?;
+        drop(input);
+        let work = Work { vae: self, b: &b };
+        let mut calls = Vec::new();
+        let (w, h, out) = self.up_path(&work, &mut calls, 0, (width, rows));
+        run(gpu, &calls)?;
+        drop(calls);
+        read_map(gpu, &b.maps[out], d.out, w * h)
+    }
+
+    /// The upsampling path and head from map `x` of size `size`: the output size and map.
+    fn up_path<'a>(
+        &'a self,
+        work: &Work<'a>,
+        calls: &mut Vec<Call<'a>>,
+        mut x: usize,
+        size: (usize, usize),
+    ) -> (usize, usize, usize) {
+        let d = &self.decoder;
+        let maps = &work.b.maps;
         let (mut w, mut h) = size;
         for (block, (blocks, resample)) in d.ups.iter().enumerate() {
             let input = x;
             for r in blocks {
-                x = work.residual(&mut calls, r, x, input, (w, h));
+                x = work.residual(calls, r, x, input, (w, h));
             }
             if let Some(resample) = resample {
                 let free = (0..4).find(|i| *i != x && *i != input).unwrap_or_default();
                 let (wo, ho) = (w * 2, h * 2);
-                work.conv(
-                    &mut calls,
-                    resample,
-                    x,
-                    Up((wo, ho)),
-                    Norm::None,
-                    free,
-                    None,
-                );
+                work.conv(calls, resample, x, Up((wo, ho)), Norm::None, free, None);
                 if d.shortcut {
                     calls.push(Call::Shader {
                         kernel: &self.dup,
@@ -452,19 +608,38 @@ impl GpuVae {
             }
         }
         let out = (0..4).find(|i| *i != x).unwrap_or_default();
-        work.conv(
-            &mut calls,
-            &d.head,
-            x,
-            Same((w, h)),
-            Norm::Silu(d.head_norm),
-            out,
-            None,
-        );
+        work.conv(calls, &d.head, x, Same((w, h)), Norm::Silu(d.head_norm), out, None);
+        (w, h, out)
+    }
+
+    /// `decode` in one piece.
+    fn decode_whole(
+        &self,
+        latent: &[f32],
+        height: usize,
+        width: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        let gpu = &self.gpu;
+        let d = &self.decoder;
+        let plane = height * width;
+        let attention = d.attention.channels;
+        let (largest, products, (w, h)) = self.decode_sizes(height, width);
+        let b = self.buffers(largest, products, w * h, plane, attention)?;
+        self.upload_latent(&b.maps[0], latent, plane)?;
+        let work = Work { vae: self, b: &b };
+        let mut calls = Vec::new();
+        let size = (width, height);
+        work.conv(&mut calls, &d.conv2, 0, Same(size), Norm::None, 1, None);
+        work.conv(&mut calls, &d.conv1, 1, Same(size), Norm::None, 2, None);
+        let mut x = work.residual(&mut calls, &d.middle[0], 2, 2, size);
+        x = work.attention(&mut calls, &d.attention, x, size);
+        x = work.residual(&mut calls, &d.middle[1], x, x, size);
+        let (w2, h2, out) = self.up_path(&work, &mut calls, x, size);
         run(gpu, &calls)?;
         drop(calls);
+        debug_assert_eq!((w2, h2), (w, h));
         debug_assert_eq!((w, h), (width * d.scale, height * d.scale));
-        read_map(gpu, &maps[out], d.out, w * h)
+        read_map(gpu, &b.maps[out], d.out, w * h)
     }
 
     /// The diffusion latent `[LATENT][height / 16][width / 16]` of an RGBA image
@@ -898,6 +1073,38 @@ mod tests {
         let placed = GpuVae::new(&gpu, &vae).unwrap();
         println!("placed in {:.2} s", started.elapsed().as_secs_f64());
         (vae, placed)
+    }
+
+    /// `KUNO_QWEN_VAE=<file> [KUNO_QWEN2512_VAE=<dir>] [KUNO_GPU_VENDOR=<hex>]`: decoding in
+    /// strips (a budget that fits a few rows) gives the whole decode's pixels, for the Qwen
+    /// 2.1 VAE and the Wan 2.1 one.
+    #[test]
+    #[ignore]
+    fn strips_match_whole() {
+        let (_, gpu_vae) = open();
+        let mut vaes = vec![("2.1", gpu_vae)];
+        if let Ok(dir) = std::env::var("KUNO_QWEN2512_VAE") {
+            let vae = QwenVae::open_wan21(std::path::Path::new(&dir)).unwrap();
+            vaes.push(("2512", GpuVae::new(&vaes[0].1.gpu, &vae).unwrap()));
+        }
+        for (name, vae) in &vaes {
+            let (h, w) = (37, 29);
+            let latent: Vec<f32> = (0..vae.decoder.latent * h * w)
+                .map(|i| ((i as f32 * 0.618).fract() - 0.5) * 2.0)
+                .collect();
+            let whole = vae.decode_whole(&latent, h, w).unwrap();
+            for strips in [2, 5] {
+                let budget = vae.strip_bytes(h.div_ceil(strips) + 2 * vae.halo(), w);
+                let parts = vae.decode_strips(&latent, h, w, budget).unwrap();
+                let worst = whole
+                    .iter()
+                    .zip(&parts)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0f32, f32::max);
+                println!("{name}: about {strips} strips (halo {}), worst difference {worst:e}", vae.halo());
+                assert!(worst < 1e-4, "{name}: {worst}");
+            }
+        }
     }
 
     /// `KUNO_QWEN_VAE=<model> KUNO_QWEN_VAE_GOLDEN=<dir>`: the GPU decoder against the
