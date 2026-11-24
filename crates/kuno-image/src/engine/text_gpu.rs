@@ -146,7 +146,7 @@ impl GpuTextEncoder {
         let kernels = Kernels {
             norm: gpu.kernel(shaders::TNORM, 3, 3, Some(16))?,
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, Some(16))?,
-            gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
+            gemm8: gpu.gemm8()?,
             qkv: gpu.kernel(shaders::TQKV, 8, 9, Some(16))?,
             attend: gpu.kernel(shaders::TATTEND, 4, 4, Some(16))?,
             resid: gpu.kernel(shaders::TRESID, 4, 3, None)?,

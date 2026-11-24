@@ -18,6 +18,16 @@ pub enum Select {
     /// The adapter at a PCI address such as `0000:04:00.0`.
     Pci(String),
 }
+/// One cooperative matrix shape: `[m][k] x [k][n] + [m][n]` with A/B, C and result types.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shape {
+    pub m: u32,
+    pub n: u32,
+    pub k: u32,
+    pub a: vk::ComponentTypeKHR,
+    pub c: vk::ComponentTypeKHR,
+    pub result: vk::ComponentTypeKHR,
+}
 struct Core {
     _entry: ash::Entry,
     instance: ash::Instance,
@@ -29,6 +39,9 @@ struct Core {
     /// Present when the device can hand buffers to another interface as dma-bufs.
     sharing: Option<ash::khr::external_memory_fd::Device>,
     name: String,
+    /// The device's vendor id and the matrix shapes its cooperative matrices support.
+    vendor: u32,
+    shapes: Vec<Shape>,
     /// Command and descriptor pools and the queue are used by one thread at a time.
     turn: std::sync::Mutex<()>,
 }
@@ -235,6 +248,20 @@ impl Gpu {
                 )
                 .map_err(|_| "gpu_unavailable")?;
             let memory = instance.get_physical_device_memory_properties(physical);
+            let shapes = ash::khr::cooperative_matrix::Instance::new(&entry, &instance)
+                .get_physical_device_cooperative_matrix_properties(physical)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| p.scope == vk::ScopeKHR::SUBGROUP)
+                .map(|p| Shape {
+                    m: p.m_size,
+                    n: p.n_size,
+                    k: p.k_size,
+                    a: p.a_type,
+                    c: p.c_type,
+                    result: p.result_type,
+                })
+                .collect();
             let sharing =
                 sharing.then(|| ash::khr::external_memory_fd::Device::new(&instance, &device));
             Ok(Self {
@@ -248,6 +275,8 @@ impl Gpu {
                     memory,
                     sharing,
                     name,
+                    vendor: properties.vendor_id,
+                    shapes,
                     turn: std::sync::Mutex::new(()),
                 }),
             })
@@ -872,6 +901,33 @@ impl Gpu {
     pub fn name(&self) -> &str {
         &self.core.name
     }
+    /// Whether the device multiplies `m x k` by `k x n` signed bytes into 32-bit sums.
+    fn has_int8(&self, m: u32, n: u32) -> bool {
+        self.core.shapes.iter().any(|s| {
+            (s.m, s.n, s.k) == (m, n, 32)
+                && s.a == vk::ComponentTypeKHR::SINT8
+                && s.result == vk::ComponentTypeKHR::SINT32
+        })
+    }
+    /// The integer product (`gemm8`) in the form this device's matrices and subgroups take;
+    /// all forms share buffers, constants and tiling.
+    pub fn gemm8(&self) -> Result<Kernel, &'static str> {
+        if self.has_int8(8, 16) {
+            self.kernel(shaders::GEMM8, 3, 5, Some(16))
+        } else if self.has_int8(16, 16) {
+            self.kernel(shaders::GEMM8_NV, 3, 5, Some(32))
+        } else {
+            Err("gpu_unsupported")
+        }
+    }
+    /// The PCI vendor id (0x8086 Intel, 0x10de NVIDIA, 0x1002 AMD).
+    pub fn vendor(&self) -> u32 {
+        self.core.vendor
+    }
+    /// The cooperative matrix shapes the device multiplies at subgroup scope.
+    pub fn shapes(&self) -> &[Shape] {
+        &self.core.shapes
+    }
 }
 /// One dispatch: a kernel, its buffers in binding order, its push constants and the number
 /// of workgroups on each axis.
@@ -897,6 +953,17 @@ pub fn floats(bytes: &[u8]) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
+    /// `KUNO_GPU_VENDOR=<hex>` (default NVIDIA): prints the device's cooperative matrix shapes.
+    #[test]
+    #[ignore = "needs the GPU"]
+    fn cooperative_shapes() {
+        let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
+        for s in gpu.shapes() {
+            println!("  {}x{}x{} a {:?} c {:?} -> {:?}", s.m, s.n, s.k, s.a, s.c, s.result);
+        }
+    }
     use super::{
         super::safetensors::{narrow, widen},
         *,
@@ -1031,10 +1098,13 @@ mod tests {
     /// The integer kernel is exact, so it is compared bit for bit, then timed at the shapes of
     /// the DiT's four linear layers.
     #[test]
-    #[ignore = "needs the Intel GPU"]
+    #[ignore = "needs the GPU (KUNO_GPU_VENDOR, default Intel)"]
     fn gemm8_is_exact_and_reports_speed() {
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
-        let kernel = gpu.kernel(shaders::GEMM8, 3, 5, Some(16)).unwrap();
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
+        let kernel = gpu.gemm8().unwrap();
         let bytes = |count: usize, seed: u64| -> Vec<i8> {
             noise(count, seed)
                 .iter()
