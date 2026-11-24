@@ -224,8 +224,10 @@ impl Gpu {
                 block_loads: 0,
             };
             let matrix2_ok = has(c"VK_NV_cooperative_matrix2") && {
-                let mut query = vk::PhysicalDeviceFeatures2::default();
-                query.p_next = (&mut matrix2 as *mut Matrix2Features).cast();
+                let mut query = vk::PhysicalDeviceFeatures2 {
+                    p_next: (&mut matrix2 as *mut Matrix2Features).cast(),
+                    ..Default::default()
+                };
                 instance.get_physical_device_features2(physical, &mut query);
                 matrix2.workgroup_scope != 0
                     && matrix2.flexible_dimensions != 0
