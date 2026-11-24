@@ -4,6 +4,9 @@ use kuno_protocol::ImageRecipe;
 
 mod pipeline;
 mod qwen;
+mod qwen2512;
+#[cfg(not(feature = "native-sd"))]
+mod rust_shim;
 use std::{
     ffi::{CString, c_char, c_void},
     path::Path,
@@ -386,9 +389,23 @@ pub(crate) fn evict_dit() {
     let kept = RESIDENT_DIT.lock().ok().and_then(|mut kept| kept.take());
     drop(kept);
 }
-/// Frees the Rust Qwen Image 2.1 models.
+/// Free host memory for the C++ engine's caches (none without it).
+fn host_available() -> u64 {
+    #[cfg(feature = "native-sd")]
+    return crate::host_memory::available();
+    #[cfg(not(feature = "native-sd"))]
+    0
+}
+/// Frees the Rust Qwen Image models (2.1 and 2512).
 pub(crate) fn evict_qwen() {
     qwen::evict();
+    qwen2512::evict();
+}
+unsafe extern "C" {
+    #[link_name = "kuno_qwen_session_release"]
+    fn qwen_session_release(session: *mut c_void);
+    #[link_name = "kuno_image_cancel_requested"]
+    fn cancel_requested() -> bool;
 }
 /// The kept DiT if it was placed from `model`; any other kept DiT is freed.
 fn resident_dit(model: &std::path::Path) -> Option<crate::engine::dit_gpu::GpuDit> {
@@ -950,11 +967,26 @@ impl Session {
             .collect();
         let mut pixels = (Vec::<u8>::new(), 0u32, recipe.steps);
         let rust_qwen = cfg!(feature = "rust-dit") && recipe.workflow != kuno_protocol::QWEN_RECIPE;
+        let rust_2512 = cfg!(feature = "rust-dit") && recipe.workflow == kuno_protocol::QWEN_RECIPE;
+        // Each model needs the video memory the other Rust models hold.
         if !rust_qwen {
-            // The other image model needs the video memory the Rust models hold.
-            evict_qwen();
+            qwen::evict();
         }
-        let code = if rust_qwen {
+        if !rust_2512 {
+            qwen2512::evict();
+        }
+        let code = if rust_2512 {
+            drop(references);
+            // The C++ engine's own context holds its copy of its weights in video memory.
+            // SAFETY: the session pointer is live; release only resets its context.
+            unsafe { qwen_session_release(self.native.as_ptr()) };
+            pixels.0 = qwen2512::generate(&self.directory, &self.pci, recipe, seed, previews, || {
+                // SAFETY: a plain flag read set by the worker's SIGTERM handler.
+                unsafe { cancel_requested() }
+            })?;
+            pixels.1 = 4;
+            0
+        } else if rust_qwen {
             drop(references);
             let rgba = qwen::generate(
                 self.native.as_ptr(),
@@ -983,7 +1015,7 @@ impl Session {
                     i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
                     references.as_mut_ptr(),
                     references.len() as i32,
-                    crate::host_memory::available(),
+                    host_available(),
                     i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
                     receive,
                     previews.then_some(preview),

@@ -285,7 +285,11 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool, int8: bool) {
     let scored = if int8 { 4 } else { chunks };
     let (sum, operand) = if int8 { (D, B) } else { (F, Hf) };
     // Scaled scores: c per query (int8: times the query's scale) as a vector or scalar.
-    let c = if int8 { r(COMB, 0, F) } else { r(CONST, C, F).s() };
+    let c = if int8 {
+        r(COMB, 0, F)
+    } else {
+        r(CONST, C, F).s()
+    };
     let w = Swsb::after(1);
     let (exp, init, slow, weights) = (k.label(), k.label(), k.label(), k.label());
     let row = |key: u32| s(key / 8) + key % 8;
@@ -357,7 +361,13 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool, int8: bool) {
                 k.mov(16, r(row(key), 0, F), r(row(key), 0, D), wait);
             }
             for &key in group {
-                k.mul(16, r(row(key), 0, F), r(row(key), 0, F), r(KS, key, F).s(), back);
+                k.mul(
+                    16,
+                    r(row(key), 0, F),
+                    r(row(key), 0, F),
+                    r(KS, key, F).s(),
+                    back,
+                );
             }
         }
     }
@@ -436,7 +446,9 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool, int8: bool) {
         let t = |key: u32| r(row(key), 0, F);
         if int8 {
             // The math pipe's 2^t (its own pipe: the group after waits for it as a whole).
-            each(k, &|k, i, key| k.math(16, Math::Exp, pp(i), t(key), first(i)));
+            each(k, &|k, i, key| {
+                k.math(16, Math::Exp, pp(i), t(key), first(i))
+            });
         } else {
             each(k, &|k, i, key| {
                 k.sel(16, Cond::Ge, t(key), t(key), immf(-126.0), first(i))
@@ -553,7 +565,11 @@ fn step(k: &mut Asm, live: u32, bounded: bool, narrow: bool, int8: bool) {
             _ => {}
         }
     }
-    for i in if int8 { &[0, 1, 2, 6, 7, 8][..] } else { &[0, 1, 2][..] } {
+    for i in if int8 {
+        &[0, 1, 2, 6, 7, 8][..]
+    } else {
+        &[0, 1, 2][..]
+    } {
         k.sync(Swsb::src(slot(*i).1));
     }
     k.add(
@@ -738,10 +754,18 @@ pub fn kernel(shape: &Shape) -> Vec<u8> {
     if int8 {
         k.mul(16, r(COMB, 0, F), r(COMB, 0, F), r(CONST, C, F).s(), w);
     }
-    let primed: &[u32] = if int8 { &[0, 1, 2, 6, 7, 8] } else { &[0, 1, 2] };
+    let primed: &[u32] = if int8 {
+        &[0, 1, 2, 6, 7, 8]
+    } else {
+        &[0, 1, 2]
+    };
     let prime = |k: &mut Asm| {
         for &j in primed {
-            let offset = if j < 3 { j * 512 } else { VALUES as u32 + (j - 6) * 512 };
+            let offset = if j < 3 {
+                j * 512
+            } else {
+                VALUES as u32 + (j - 6) * 512
+            };
             fetch(k, j, offset);
         }
     };
@@ -878,7 +902,12 @@ mod tests {
             let quantize = |row: &[f32]| -> (Vec<i8>, f32) {
                 let top = row.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-30);
                 let s = top / 127.0;
-                (row.iter().map(|v| (v / s).round_ties_even() as i8).collect(), s)
+                (
+                    row.iter()
+                        .map(|v| (v / s).round_ties_even() as i8)
+                        .collect(),
+                    s,
+                )
             };
             let mut streams = Vec::new();
             for int8 in [false, true] {
@@ -905,8 +934,7 @@ mod tests {
                             }
                             let at = q0 + (token / TILE) * TILE_BYTES + SCALES + token % TILE * 4;
                             q_stream[at..at + 4].copy_from_slice(&qs.to_le_bytes());
-                            let at =
-                                kv0 + (token / TILE) * CHUNK_BYTES + SCALES + token % TILE * 4;
+                            let at = kv0 + (token / TILE) * CHUNK_BYTES + SCALES + token % TILE * 4;
                             kv_stream[at..at + 4].copy_from_slice(&ks.to_le_bytes());
                         } else {
                             for channel in 0..CHANNELS {
@@ -957,7 +985,8 @@ mod tests {
                 let mut best = f64::MAX;
                 for _ in 0..6 {
                     let started = std::time::Instant::now();
-                    fast.launch(&attend, &arguments, shape.groups(heads)).unwrap();
+                    fast.launch(&attend, &arguments, shape.groups(heads))
+                        .unwrap();
                     best = best.min(started.elapsed().as_secs_f64() * 1e3);
                 }
                 let mixed = floats(&gpu.download(&buffers[2], 0, out_size).unwrap());
@@ -985,9 +1014,7 @@ mod tests {
                         let want: f64 = (0..tokens)
                             .map(|key| {
                                 weights[key]
-                                    * f64::from(
-                                        values[(head * padded + key) * CHANNELS + channel],
-                                    )
+                                    * f64::from(values[(head * padded + key) * CHANNELS + channel])
                             })
                             .sum::<f64>()
                             / total;
@@ -999,9 +1026,9 @@ mod tests {
                     }
                 }
                 let db = 10.0 * (power / error.max(1e-30)).log10();
-                let digest = mixed
-                    .iter()
-                    .fold(0u64, |h, v| (h ^ u64::from(v.to_bits())).wrapping_mul(0x100_0000_01b3));
+                let digest = mixed.iter().fold(0u64, |h, v| {
+                    (h ^ u64::from(v.to_bits())).wrapping_mul(0x100_0000_01b3)
+                });
                 println!(
                     "{} {heads} heads, {tokens} of {padded}, spread {spread}: {best:.2} ms, {db:.1} dB, output {digest:016x}",
                     if int8 { "int8" } else { "half" }

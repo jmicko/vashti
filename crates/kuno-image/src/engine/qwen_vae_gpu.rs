@@ -10,7 +10,8 @@ use super::{
     dit_gpu::{Call, run},
     gpu::{Buffer, Gpu, Kernel, bytes_of, shaders},
     qwen_vae::{
-        ENCODER_TEMPORAL, ENCODER_WIDTHS, LATENT, MEAN, OUT, QwenVae, SCALE, STD, TEMPORAL, WIDTHS,
+        ENCODER_TEMPORAL, ENCODER_WIDTHS, LATENT, MEAN, OUT, QwenVae, SCALE, STD, TEMPORAL,
+        WAN21_LATENT, WAN21_MEAN, WAN21_SCALE, WAN21_STD, WIDTHS,
     },
     safetensors::narrow,
 };
@@ -52,8 +53,18 @@ impl Placer<'_> {
             .ok_or("model_tensor_missing")?
             .to_vec();
         let (outputs, inputs, kernel) = (shape[0], shape[1], *shape.last().unwrap_or(&1));
-        let weight = file.floats(&format!("{name}.weight"), &shape)?;
+        let mut weight = file.floats(&format!("{name}.weight"), &shape)?;
         let taps = kernel * kernel;
+        // A causal 3-D kernel on a single image: only its last time slice sees the image.
+        if shape.len() == 5 && shape[2] > 1 {
+            let time = shape[2];
+            weight = (0..outputs * inputs)
+                .flat_map(|oi| {
+                    let at = (oi * time + time - 1) * taps;
+                    weight[at..at + taps].to_vec()
+                })
+                .collect();
+        }
         let columns = padded(taps * inputs, 16);
         let rows = padded(outputs, TOKENS);
         let weight_first = self.halves.len();
@@ -133,13 +144,22 @@ struct Attention {
     proj: Placed,
 }
 
+/// Up blocks: residual blocks, then the upsampling conv if any.
+type Ups = Vec<(Vec<Residual>, Option<Placed>)>;
 struct Decoder {
+    latent: usize,
+    out: usize,
+    scale: usize,
+    mean: &'static [f32],
+    std: &'static [f32],
+    /// Qwen Image 2.1's channel-repeating depth-to-space shortcut around each upsampling.
+    shortcut: bool,
     conv2: Placed,
     conv1: Placed,
     middle: [Residual; 2],
     attention: Attention,
     /// Five up blocks of three residual blocks, the first four with an upsampling conv.
-    ups: Vec<(Vec<Residual>, Option<Placed>)>,
+    ups: Ups,
     head_norm: usize,
     head: Placed,
 }
@@ -168,7 +188,7 @@ pub struct GpuVae {
     weights: Buffer,
     vectors: Buffer,
     decoder: Decoder,
-    encoder: Encoder,
+    encoder: Option<Encoder>,
 }
 impl GpuVae {
     /// Reads the VAE's weights (about 0.35 GB as half floats) into video memory.
@@ -178,15 +198,33 @@ impl GpuVae {
             halves: Vec::new(),
             vectors: Vec::new(),
         };
-        let decoder = Decoder {
-            conv2: p.conv("conv2")?,
-            conv1: p.conv("decoder.conv1")?,
-            middle: [
-                p.residual("decoder.middle.0")?,
-                p.residual("decoder.middle.2")?,
-            ],
-            attention: p.attention("decoder.middle.1")?,
-            ups: (0..5)
+        let wan21 = vae.wan21;
+        let conv2 = p.conv("conv2")?;
+        let conv1 = p.conv("decoder.conv1")?;
+        let middle = [
+            p.residual("decoder.middle.0")?,
+            p.residual("decoder.middle.2")?,
+        ];
+        let attention = p.attention("decoder.middle.1")?;
+        // Wan 2.1: four stages of three residual blocks in one list, the first three
+        // followed by an upsampling conv.
+        let mut wan21_ups = || -> Result<Ups, &'static str> {
+            (0..4)
+                .map(|stage| {
+                    let blocks = (0..3)
+                        .map(|i| p.residual(&format!("decoder.upsamples.{}", stage * 4 + i)))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let resample = (stage < 3)
+                        .then(|| p.conv(&format!("decoder.upsamples.{}.resample.1", stage * 4 + 3)))
+                        .transpose()?;
+                    Ok((blocks, resample))
+                })
+                .collect()
+        };
+        let ups = if wan21 {
+            wan21_ups()?
+        } else {
+            (0..5)
                 .map(|block| -> Result<_, &'static str> {
                     let base = format!("decoder.upsamples.{block}.upsamples");
                     let blocks = (0..3)
@@ -197,33 +235,50 @@ impl GpuVae {
                         .transpose()?;
                     Ok((blocks, resample))
                 })
-                .collect::<Result<_, _>>()?,
+                .collect::<Result<_, _>>()?
+        };
+        let decoder = Decoder {
+            latent: if wan21 { WAN21_LATENT } else { LATENT },
+            out: if wan21 { 3 } else { OUT },
+            scale: if wan21 { WAN21_SCALE } else { SCALE },
+            mean: if wan21 { &WAN21_MEAN } else { &MEAN },
+            std: if wan21 { &WAN21_STD } else { &STD },
+            shortcut: !wan21,
+            conv2,
+            conv1,
+            middle,
+            attention,
+            ups,
             head_norm: p.norm("decoder.head.0")?,
             head: p.conv("decoder.head.2")?,
         };
-        let encoder = Encoder {
-            conv1: p.conv("encoder.conv1")?,
-            downs: (0..5)
-                .map(|block| -> Result<_, &'static str> {
-                    let base = format!("encoder.downsamples.{block}.downsamples");
-                    let blocks = (0..2)
-                        .map(|i| p.residual(&format!("{base}.{i}")))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let resample = (block < 4)
-                        .then(|| p.conv(&format!("{base}.2.resample.1")))
-                        .transpose()?;
-                    Ok((blocks, resample))
+        let encoder = (!wan21)
+            .then(|| -> Result<Encoder, &'static str> {
+                Ok(Encoder {
+                    conv1: p.conv("encoder.conv1")?,
+                    downs: (0..5)
+                        .map(|block| -> Result<_, &'static str> {
+                            let base = format!("encoder.downsamples.{block}.downsamples");
+                            let blocks = (0..2)
+                                .map(|i| p.residual(&format!("{base}.{i}")))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let resample = (block < 4)
+                                .then(|| p.conv(&format!("{base}.2.resample.1")))
+                                .transpose()?;
+                            Ok((blocks, resample))
+                        })
+                        .collect::<Result<_, _>>()?,
+                    middle: [
+                        p.residual("encoder.middle.0")?,
+                        p.residual("encoder.middle.2")?,
+                    ],
+                    attention: p.attention("encoder.middle.1")?,
+                    head_norm: p.norm("encoder.head.0")?,
+                    head: p.conv("encoder.head.2")?,
+                    quant: p.conv("conv1")?,
                 })
-                .collect::<Result<_, _>>()?,
-            middle: [
-                p.residual("encoder.middle.0")?,
-                p.residual("encoder.middle.2")?,
-            ],
-            attention: p.attention("encoder.middle.1")?,
-            head_norm: p.norm("encoder.head.0")?,
-            head: p.conv("encoder.head.2")?,
-            quant: p.conv("conv1")?,
-        };
+            })
+            .transpose()?;
         let (halves, vectors) = (p.halves, p.vectors);
         let weights = gpu.filled(halves.len() as u64 * 2, |to| {
             to.copy_from_slice(bytes_of(&halves));
@@ -292,7 +347,7 @@ impl GpuVae {
         let gpu = &self.gpu;
         let d = &self.decoder;
         let plane = height * width;
-        if latent.len() != LATENT * plane || plane == 0 {
+        if latent.len() != d.latent * plane || plane == 0 {
             return Err("invalid_input");
         }
         let attention = d.attention.channels;
@@ -302,26 +357,30 @@ impl GpuVae {
         let (mut w, mut h) = (width, height);
         let mut largest = level(3 * attention, w, h);
         let mut products = level(padded(3 * attention, TOKENS), w, h);
-        for (block, (_, resample)) in d.ups.iter().enumerate() {
-            let channels = WIDTHS[block].max(WIDTHS[block + 1]);
+        for (blocks, resample) in &d.ups {
+            let channels = blocks
+                .iter()
+                .map(|r| r.conv1.inputs.max(r.conv2.outputs))
+                .max()
+                .unwrap_or(0);
             largest = largest.max(level(channels, w, h));
             products = products.max(level(padded(channels, TOKENS), w, h));
-            if resample.is_some() {
+            if let Some(resample) = resample {
                 (w, h) = (w * 2, h * 2);
-                largest = largest.max(level(WIDTHS[block + 1], w, h));
-                products = products.max(level(padded(WIDTHS[block + 1], TOKENS), w, h));
+                largest = largest.max(level(resample.outputs, w, h));
+                products = products.max(level(padded(resample.outputs, TOKENS), w, h));
             }
         }
         let b = self.buffers(largest, products, w * h, plane, attention)?;
         // The un-normalized latent, channel-major with padded rows.
         let stride = padded(plane, ROWS);
-        let mut input = vec![0f32; LATENT * stride];
-        for c in 0..LATENT {
+        let mut input = vec![0f32; d.latent * stride];
+        for c in 0..d.latent {
             for (to, &v) in input[c * stride..c * stride + plane]
                 .iter_mut()
                 .zip(&latent[c * plane..(c + 1) * plane])
             {
-                *to = v * STD[c] + MEAN[c];
+                *to = v * d.std[c] + d.mean[c];
             }
         }
         gpu.upload(&b.maps[0], 0, bytes_of(&input))?;
@@ -353,20 +412,22 @@ impl GpuVae {
                     free,
                     None,
                 );
-                calls.push(Call::Shader {
-                    kernel: &self.dup,
-                    buffers: vec![&maps[input], &maps[free]],
-                    constants: vec![
-                        w as u32,
-                        h as u32,
-                        padded(w * h, ROWS) as u32,
-                        padded(wo * ho, ROWS) as u32,
-                        WIDTHS[block] as u32,
-                        WIDTHS[block + 1] as u32,
-                        if TEMPORAL[block] { 2 } else { 1 },
-                    ],
-                    groups: [(wo * ho).div_ceil(256) as u32, WIDTHS[block + 1] as u32, 1],
-                });
+                if d.shortcut {
+                    calls.push(Call::Shader {
+                        kernel: &self.dup,
+                        buffers: vec![&maps[input], &maps[free]],
+                        constants: vec![
+                            w as u32,
+                            h as u32,
+                            padded(w * h, ROWS) as u32,
+                            padded(wo * ho, ROWS) as u32,
+                            WIDTHS[block] as u32,
+                            WIDTHS[block + 1] as u32,
+                            if TEMPORAL[block] { 2 } else { 1 },
+                        ],
+                        groups: [(wo * ho).div_ceil(256) as u32, WIDTHS[block + 1] as u32, 1],
+                    });
+                }
                 x = free;
                 (w, h) = (wo, ho);
             }
@@ -383,8 +444,8 @@ impl GpuVae {
         );
         run(gpu, &calls)?;
         drop(calls);
-        debug_assert_eq!((w, h), (width * SCALE, height * SCALE));
-        read_map(gpu, &maps[out], OUT, w * h)
+        debug_assert_eq!((w, h), (width * d.scale, height * d.scale));
+        read_map(gpu, &maps[out], d.out, w * h)
     }
 
     /// The diffusion latent `[LATENT][height / 16][width / 16]` of an RGBA image
@@ -396,7 +457,7 @@ impl GpuVae {
         width: usize,
     ) -> Result<Vec<f32>, &'static str> {
         let gpu = &self.gpu;
-        let e = &self.encoder;
+        let e = self.encoder.as_ref().ok_or("invalid_input")?;
         if height == 0
             || width == 0
             || !height.is_multiple_of(SCALE)
@@ -861,6 +922,48 @@ mod tests {
         let mean = diffs.iter().map(|d| f64::from(*d)).sum::<f64>() / diffs.len() as f64;
         println!("{width}x{height} latent: {db:.1} dB, worst byte {worst}, mean {mean:.3}");
         assert!(db > 35.0);
+    }
+
+    /// `KUNO_QWEN2512_VAE=<qwen_image_vae> KUNO_QWEN2512_GOLDEN=<dir>`: Qwen Image 2512's
+    /// (Wan 2.1) decoder against the engine's decode (`vae.latent0`, `vae.pixels0`).
+    #[test]
+    #[ignore]
+    fn wan21_decoder_matches_cpp_engine() {
+        let vae = QwenVae::open_wan21(std::path::Path::new(&std::env::var("KUNO_QWEN2512_VAE").unwrap()))
+            .unwrap();
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let decoder = GpuVae::new(&gpu, &vae).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN2512_GOLDEN").unwrap());
+        let dims: Vec<usize> = std::fs::read_to_string(dir.join("vae.latent0.txt"))
+            .unwrap()
+            .split_whitespace()
+            .map(|v| v.parse().unwrap())
+            .collect();
+        let (width, height) = (dims[0], dims[1]);
+        let latent = read(&dir.join("vae.latent0.f32"));
+        let want = read(&dir.join("vae.pixels0.f32"));
+        let mut got = Vec::new();
+        for run in 0..2 {
+            let started = std::time::Instant::now();
+            got = decoder.decode(&latent, height, width).unwrap();
+            println!("run {run}: {:.2} s", started.elapsed().as_secs_f64());
+        }
+        let scaled: Vec<f32> = got
+            .iter()
+            .map(|v| ((v + 1.0) * 0.5).clamp(0.0, 1.0))
+            .collect();
+        let worst = want
+            .iter()
+            .zip(&scaled)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        let db = db(&want, &scaled);
+        println!("{width}x{height} latent: {db:.1} dB, worst {:.0}/255", worst * 255.0);
+        if let Ok(path) = std::env::var("KUNO_QWEN2512_VAE_DUMP") {
+            std::fs::write(path, bytes_of(&scaled)).unwrap();
+        }
+        // The engine decodes in half floats on Vulkan: fine texture differs by a few levels.
+        assert!(db > 30.0);
     }
 
     /// `KUNO_QWEN_VAE=<model> KUNO_QWEN_ENCODE_GOLDEN=<dir>`: the GPU encoder against the

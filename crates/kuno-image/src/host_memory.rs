@@ -1,3 +1,4 @@
+#[cfg(any(feature = "native-sd", test))]
 use std::{io, path::Path};
 
 #[cfg(feature = "native-sd")]
@@ -7,6 +8,7 @@ pub(crate) fn available() -> u64 {
 
 // Respect ancestor limits as well as host availability. Unknown accounting
 // disables the optional RAM cache; it must not prevent ordinary GPU inference.
+#[cfg(any(feature = "native-sd", test))]
 fn available_with(mut read: impl FnMut(&Path) -> io::Result<String>) -> Option<u64> {
     let info = read(Path::new("/proc/meminfo")).ok()?;
     let mut available = info.lines().find_map(|line| {

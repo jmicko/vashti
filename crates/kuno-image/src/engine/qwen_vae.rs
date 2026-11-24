@@ -296,14 +296,36 @@ fn dup_up(x: &Map, output: usize, temporal: bool) -> Map {
 
 pub struct QwenVae {
     pub(super) file: Safetensors,
+    /// Qwen Image (2512)'s Wan 2.1 VAE: 16 latent channels at 1/8 scale, RGB, causal 3-D
+    /// kernels (a single image sees only their last time slice). Decoding only, GPU only.
+    pub(super) wan21: bool,
 }
+/// The Wan 2.1 VAE's latent channels, scale and per-channel statistics (the C++ engine's).
+pub const WAN21_LATENT: usize = 16;
+pub const WAN21_SCALE: usize = 8;
+pub(crate) const WAN21_MEAN: [f32; WAN21_LATENT] = [
+    -0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508, 0.4134, -0.0715, 0.5517,
+    -0.3632, -0.1922, -0.9497, 0.2503, -0.2921,
+];
+pub(crate) const WAN21_STD: [f32; WAN21_LATENT] = [
+    2.8184, 1.4541, 2.3275, 2.6558, 1.2196, 1.7708, 2.6052, 2.0743, 3.2687, 2.1526, 2.8652, 1.5579,
+    1.6382, 1.1253, 2.8251, 1.9160,
+];
 impl QwenVae {
     pub fn open(path: &Path) -> Result<Self, &'static str> {
         let file = Safetensors::open(path)?;
         file.shape("decoder.conv1.weight")
             .filter(|s| *s == [WIDTHS[0], LATENT, 1, 3, 3])
             .ok_or("model_file_invalid")?;
-        Ok(Self { file })
+        Ok(Self { file, wan21: false })
+    }
+    /// Qwen Image 2512's VAE (`qwen_image_vae.safetensors`).
+    pub fn open_wan21(path: &Path) -> Result<Self, &'static str> {
+        let file = Safetensors::open(path)?;
+        file.shape("decoder.conv1.weight")
+            .filter(|s| *s == [384, WAN21_LATENT, 3, 3, 3])
+            .ok_or("model_file_invalid")?;
+        Ok(Self { file, wan21: true })
     }
     fn floats(&self, name: &str) -> Result<Vec<f32>, &'static str> {
         let shape = self
@@ -528,6 +550,18 @@ impl QwenVae {
 }
 
 /// `[OUT][h][w]` decoder output in [-1, 1] to interleaved RGBA bytes, as the engine rounds.
+/// RGBA bytes (opaque) of an RGB decoder output `[3][height][width]` in [-1, 1].
+pub fn to_rgb(image: &[f32], height: usize, width: usize) -> Vec<u8> {
+    let plane = height * width;
+    let mut out = vec![255u8; plane * 4];
+    for (cell, pixel) in out.chunks_exact_mut(4).enumerate() {
+        for (c, byte) in pixel[..3].iter_mut().enumerate() {
+            let v = ((image[c * plane + cell] + 1.0) * 0.5).clamp(0.0, 1.0);
+            *byte = (v * 255.0 + 0.5) as u8;
+        }
+    }
+    out
+}
 pub fn to_rgba(image: &[f32], height: usize, width: usize) -> Vec<u8> {
     let plane = height * width;
     let mut out = vec![0u8; plane * OUT];

@@ -17,7 +17,7 @@ use rayon::prelude::*;
 use super::{
     dit_gpu::{Call, run},
     gpu::{Buffer, Gpu, Kernel, Staged, bytes_of, shaders},
-    text_encoder::{Config, HEAD, PAIRS, Prompt, TextEncoder, positions, rotary},
+    text_encoder::{Config, HEAD, PAIRS, Prompt, TextEncoder},
 };
 
 /// A model's layer layout.
@@ -49,6 +49,8 @@ struct Sizes {
     norm2: usize,
     query_norm: usize,
     key_norm: usize,
+    /// Query, key and value biases (Qwen2.5-VL).
+    bias: usize,
     vectors: usize,
 }
 impl Sizes {
@@ -88,7 +90,8 @@ impl Sizes {
             norm2,
             query_norm,
             key_norm,
-            vectors: key_norm + HEAD,
+            bias: key_norm + HEAD,
+            vectors: key_norm + HEAD + qkv_rows,
         }
     }
 }
@@ -144,35 +147,44 @@ impl GpuTextEncoder {
             norm: gpu.kernel(shaders::TNORM, 3, 3, Some(16))?,
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, Some(16))?,
             gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
-            qkv: gpu.kernel(shaders::TQKV, 8, 7, Some(16))?,
+            qkv: gpu.kernel(shaders::TQKV, 8, 9, Some(16))?,
             attend: gpu.kernel(shaders::TATTEND, 4, 4, Some(16))?,
             resid: gpu.kernel(shaders::TRESID, 4, 3, None)?,
             gate: gpu.kernel(shaders::TGATE, 4, 3, None)?,
             add: gpu.kernel(shaders::TADD, 2, 3, None)?,
         };
         let sizes = Sizes::new(encoder.config);
-        let mut vectors = vec![0f32; sizes.layers * sizes.vectors];
-        vectors
-            .par_chunks_exact_mut(sizes.vectors)
-            .enumerate()
-            .try_for_each(|(layer, to)| layer_vectors(&encoder, &sizes, layer, to))?;
-        let vectors = gpu.filled(bytes_of(&vectors).len() as u64, |to| {
-            to.copy_from_slice(bytes_of(&vectors));
-            Ok(())
-        })?;
         let readers = rayon::ThreadPoolBuilder::new()
             .num_threads(READERS)
             .build()
             .map_err(|_| "text_failed")?;
-        let layers = readers.install(|| {
-            (0..sizes.layers)
-                .into_par_iter()
-                .map(|layer| {
-                    gpu.staged(sizes.layer_bytes as u64, |to| {
-                        read_layer(&encoder, &sizes, layer, to)
+        let (layers, scales): (Vec<Staged>, Vec<Option<Vec<f32>>>) = readers
+            .install(|| {
+                (0..sizes.layers)
+                    .into_par_iter()
+                    .map(|layer| {
+                        let mut scales = None;
+                        let staged = gpu.staged(sizes.layer_bytes as u64, |to| {
+                            scales = read_layer(&encoder, &sizes, layer, to)?;
+                            Ok(())
+                        })?;
+                        Ok((staged, scales))
                     })
-                })
-                .collect::<Result<Vec<_>, _>>()
+                    .collect::<Result<Vec<_>, &'static str>>()
+            })?
+            .into_iter()
+            .unzip();
+        let mut vectors = vec![0f32; sizes.layers * sizes.vectors];
+        vectors
+            .par_chunks_exact_mut(sizes.vectors)
+            .zip(&scales)
+            .enumerate()
+            .try_for_each(|(layer, (to, scales))| {
+                layer_vectors(&encoder, &sizes, layer, to, scales.as_deref())
+            })?;
+        let vectors = gpu.filled(bytes_of(&vectors).len() as u64, |to| {
+            to.copy_from_slice(bytes_of(&vectors));
+            Ok(())
         })?;
         Ok(Self {
             window: gpu.buffer(sizes.layer_bytes as u64)?,
@@ -226,7 +238,7 @@ impl GpuTextEncoder {
         x.resize(work.padded * width, 0.0);
         gpu.upload(&work.x, 0, bytes_of(&x))?;
         x.iter_mut().for_each(|v| *v = 0.0);
-        let mut turns = rotary(&positions(prompt));
+        let mut turns = self.encoder.turns(prompt);
         turns.resize(work.padded * PAIRS, [1.0, 0.0]);
         gpu.upload(&work.turns, 0, bytes_of(&turns))?;
         // Deep-stack rows by layer, then image.
@@ -269,6 +281,7 @@ impl GpuTextEncoder {
         let mut out = vec![0f32; work.tokens * width];
         let back = gpu.readback((work.tokens * width * 4) as u64)?;
         gpu.read_floats(&work.x, 0, &back, &mut out)?;
+        self.encoder.final_norm(&mut out)?;
         Ok(out)
     }
     /// The dispatches of one layer, weights in the window.
@@ -338,6 +351,8 @@ impl GpuTextEncoder {
                 (first + s.key_norm) as u32,
                 s.heads as u32,
                 s.kv_heads as u32,
+                (first + s.bias) as u32,
+                if self.encoder.qwen25 { 2 } else { 1 },
             ],
             groups: [(s.heads + 2 * s.kv_heads) as u32, np, 1],
         });
@@ -366,13 +381,15 @@ impl GpuTextEncoder {
     }
 }
 
-/// Reads one layer's matrices into `to` in the window's layout.
+/// Reads one layer's matrices into `to` in the window's layout. FP8 matrices (Qwen2.5-VL)
+/// are rounded to INT8 in the rotated basis here; their row scales are returned, in the
+/// order of the vectors' scales.
 fn read_layer(
     encoder: &TextEncoder,
     s: &Sizes,
     layer: usize,
     to: &mut [u8],
-) -> Result<(), &'static str> {
+) -> Result<Option<Vec<f32>>, &'static str> {
     let base = format!("model.layers.{layer}");
     let parts: [(&str, usize, usize); 7] = [
         ("self_attn.q_proj", s.heads * HEAD, s.width),
@@ -384,14 +401,24 @@ fn read_layer(
         ("mlp.down_proj", s.width, s.inner),
     ];
     let mut rest = &mut to[..s.layer_bytes];
+    let mut scales = Vec::new();
     for (name, rows, columns) in parts {
         let (matrix, tail) = rest.split_at_mut(rows * columns);
-        encoder
-            .file
-            .i8_into(&format!("{base}.{name}.weight"), &[rows, columns], matrix)?;
+        if encoder.qwen25 {
+            let weight = encoder.fp8_matrix(layer, name, rows, columns)?;
+            let (bytes, row_scales) = crate::engine::dit::quantize(&weight, columns);
+            for (to, b) in matrix.iter_mut().zip(&bytes) {
+                *to = *b as u8;
+            }
+            scales.extend(row_scales);
+        } else {
+            encoder
+                .file
+                .i8_into(&format!("{base}.{name}.weight"), &[rows, columns], matrix)?;
+        }
         rest = tail;
     }
-    Ok(())
+    Ok(encoder.qwen25.then_some(scales))
 }
 
 /// One layer's weight scales and norm weights in the `Sizes::vectors` layout.
@@ -400,12 +427,29 @@ fn layer_vectors(
     s: &Sizes,
     layer: usize,
     to: &mut [f32],
+    scales: Option<&[f32]>,
 ) -> Result<(), &'static str> {
     let file = &encoder.file;
     let base = format!("model.layers.{layer}");
+    let norm = |name: &str, width: usize| file.floats(&format!("{base}.{name}.weight"), &[width]);
+    if let Some(scales) = scales {
+        to[..scales.len()].copy_from_slice(scales);
+        to[s.norm1..s.norm1 + s.width].copy_from_slice(&norm("input_layernorm", s.width)?);
+        to[s.norm2..s.norm2 + s.width].copy_from_slice(&norm("post_attention_layernorm", s.width)?);
+        let mut at = s.bias;
+        for (name, rows) in [
+            ("self_attn.q_proj", s.heads * HEAD),
+            ("self_attn.k_proj", s.kv_heads * HEAD),
+            ("self_attn.v_proj", s.kv_heads * HEAD),
+        ] {
+            to[at..at + rows]
+                .copy_from_slice(&file.floats(&format!("{base}.{name}.bias"), &[rows])?);
+            at += rows;
+        }
+        return Ok(());
+    }
     let scale =
         |name: &str, rows: usize| file.f32(&format!("{base}.{name}.weight_scale"), &[rows, 1]);
-    let norm = |name: &str, width: usize| file.floats(&format!("{base}.{name}.weight"), &[width]);
     let parts = [
         (s.scale_qkv, scale("self_attn.q_proj", s.heads * HEAD)?),
         (

@@ -25,7 +25,7 @@ pub(crate) fn evict() {
 }
 
 /// Engine error names to the worker's image errors.
-fn failure(error: &'static str) -> &'static str {
+pub(super) fn failure(error: &'static str) -> &'static str {
     match error {
         "cancelled" => "image_cancelled",
         "gpu_memory" => "image_gpu_memory_unavailable",

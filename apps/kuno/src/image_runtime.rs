@@ -78,9 +78,16 @@ impl ImageConfig {
                 || id == kuno_protocol::MINIMAX_H3_REFERENCE_COLLECTION
         })
     }
+    /// Whether a workflow runs in the managed runtime: Qwen 2.1 always, Qwen 2512 when the
+    /// verified runtime's worker has it (ABI 6); otherwise 2512 stays with this executable.
     pub fn uses_sycl(&self, workflow: &str) -> bool {
         self.engine == crate::image_engine::ImageEngine::ManagedSycl
-            && workflow != kuno_protocol::QWEN_RECIPE
+            && (workflow != kuno_protocol::QWEN_RECIPE
+                || self.runtime.as_deref().is_some_and(|id| {
+                    crate::image_engine::VerifiedRuntime::load(id).is_ok_and(|runtime| {
+                        runtime.manifest.worker_abi >= crate::image_engine::QWEN2512_WORKER_ABI
+                    })
+                }))
     }
 }
 pub type Output = Result<Vec<u8>, &'static str>;

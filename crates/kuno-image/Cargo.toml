@@ -28,6 +28,8 @@ native-sd = ["dep:cc", "video-encode"]
 video-encode = ["dep:rav1e", "dep:flacenc"]
 # Sample MiniMax H3 with the Rust DiT instead of the C++ engine's. Off until it is as fast.
 rust-dit = []
+# The private worker with every model in Rust and no C++ engine (nor its oneAPI runtime).
+rust-image = ["video-encode", "rust-dit"]
 
 [build-dependencies]
 cc = { version = "1", optional = true }

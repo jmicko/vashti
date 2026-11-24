@@ -62,9 +62,6 @@ impl ImageRecipe {
         ) {
             return Err("unsupported_image_workflow");
         }
-        if self.attention == ImageAttention::Fast && self.workflow == QWEN_RECIPE {
-            return Err("image_attention_unsupported");
-        }
         if self.prompt.len() > 32768
             || self.negative_prompt.len() > 32768
             || self.prompt.contains('\0')

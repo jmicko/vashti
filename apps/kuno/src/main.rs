@@ -61,12 +61,12 @@ fn run_image_launcher() -> Result<(), &'static str> {
     )
 }
 
-#[cfg(not(feature = "native-image"))]
+#[cfg(not(any(feature = "native-image", feature = "rust-image")))]
 fn run_resident_image_worker() -> Result<(), &'static str> {
     Err("image_engine_not_in_this_build")
 }
 
-#[cfg(feature = "native-image")]
+#[cfg(any(feature = "native-image", feature = "rust-image"))]
 fn run_resident_image_worker() -> Result<(), &'static str> {
     // Protect the original thread before creating a session/vendor threads or
     // reading content. Model/session identity is supplied only by the gateway.
@@ -91,12 +91,12 @@ fn run_resident_image_worker() -> Result<(), &'static str> {
     )
 }
 
-#[cfg(not(feature = "native-image"))]
+#[cfg(not(any(feature = "native-image", feature = "rust-image")))]
 fn run_image_worker() -> Result<(), &'static str> {
     Err("image_engine_not_in_this_build")
 }
 
-#[cfg(feature = "native-image")]
+#[cfg(any(feature = "native-image", feature = "rust-image"))]
 fn run_image_worker() -> Result<(), &'static str> {
     let mut args = std::env::args().skip(2);
     use std::io::{Read, Write};

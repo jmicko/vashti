@@ -404,9 +404,13 @@ impl Models {
         let times = self.dit.times(&timesteps);
         for step in 0..steps {
             let sigma = sigmas[step];
-            let mut out = self.dit.step_with(&cond, &x, &times[step], fast_attention)?;
+            let mut out = self
+                .dit
+                .step_with(&cond, &x, &times[step], fast_attention)?;
             if let Some(uncond) = &uncond {
-                let negative = self.dit.step_with(uncond, &x, &times[step], fast_attention)?;
+                let negative = self
+                    .dit
+                    .step_with(uncond, &x, &times[step], fast_attention)?;
                 for (o, n) in out.iter_mut().zip(&negative) {
                     *o = n + cfg * (*o - n);
                 }

@@ -46,7 +46,14 @@ paths from the environment.
 | VAE decoder (RGBA) | 2.40 s at 1184x1776 | 1.58 s; 86 to 87 dB from the engine, worst byte 1 | Rust (dev build) |
 | VAE encoder (references, RGBA) | C++ | 20 to 42 ms; 64 to 68 dB from the engine | Rust (dev build) |
 | Pipeline (FLUX schedule, Euler, CFG, previews) | `image.cpp` | `engine/qwen_image.rs`, `native/qwen.rs` | Rust (dev build): text-to-image 40.7 dB from the engine's image of the same request; edits the same picture (CFG amplifies the encoders' small differences) |
-| Qwen Image 2512 (FP8) | C++ | not started | |
+
+
+| Stage (Qwen Image 2512, FP8) | C++ today (Vulkan) | Rust | State |
+|---|---|---|---|
+| Diffusion transformer (60 dual-stream blocks) | about 17.8 s per pass at 832x1248 (4056 tokens) | INT8 block linears made at load from the FP8 weights (rotated, per row), FP8 modulation evaluated exactly per step: 0.53 s per pass (0.49 s fast); 37 to 48 dB from captured C++ steps | Rust (dev build) |
+| Text encoder (Qwen2.5-VL 7B, FP8) | C++ | the streamed GPU encoder with biases, no query/key norms, plain rotary and the final norm; 0.69 s per prompt; 30 to 32 dB from the engine | Rust (dev build) |
+| VAE decoder (Wan 2.1, RGB) | 2.8 s at 256x256, tiles at 832x1248 | the 2.1 decoder with the causal kernels' last time slice: 0.32 s at 832x1248; 34.5 dB from the engine's half-float decode | Rust (dev build) |
+| Pipeline (simple schedule with shift, Euler, CFG, previews) | `image.cpp` | `engine/qwen2512_image.rs`, `native/qwen2512.rs` | Rust (dev build): 20 steps at 832x1248 with CFG 23.1 s warm (C++ 755 s); the same picture, 3.5 of 255 apart on average |
 
 The audio decoder runs on CPU threads on purpose: the engine hands over the audio latent
 before it decodes video frames, so audio is decoded while the GPU is busy with video, and it
@@ -1124,6 +1131,62 @@ Opening the models from page cache (`open_costs`): DiT 2.3 s (layers load on thr
 so copies overlap the rearranging; 3.3 s before), VAE about 1.1 s (parallel rearranging;
 2.0 s), text encoder 1.3 s, vision tower 0.7 s. The worker disables Mesa's shader cache,
 which adds about 1 s.
+
+## Qwen Image 2512 in Rust (2026-11-23)
+
+Qwen Image 2512 is not a variant of 2.1: 60 blocks of two streams (text and image) with
+their own weights, 3072 wide, plain GELU MLPs, a modulation layer per block and stream, and
+the text attending to the image in every block (so nothing is computed once per prompt).
+Its file is FP8 (e4m3) without scales: 13.6 G parameters of block linears and 6.8 G of
+modulation.
+
+- `qwen2512_dit.rs`: the CPU reference from the engine's graph (`qwen_image.hpp`), 34 to 47
+  dB from captured C++ calls (the engine computes in half floats); with the block linears
+  through INT8 as on the GPU, 34 to 44 dB.
+- `qwen2512_gpu.rs`, `xe2/qwen2512.cl`: one command list per pass. Block linears become
+  the machine-code INT8 products at load (widened, rotated in groups of 256, one scale per
+  row; 21 s for the whole model); the FP8 modulation rows stay on the device and are
+  evaluated exactly once per step (`k_mod`) for both CFG passes. Queries sit in one slot
+  stream (image, then text after the image's padded rows); keys and values in one key
+  stream with the text right after the image's live keys, so `attend.rs` runs unchanged.
+- Fast attention: block 0's query and key norm weights have a 57x outlier channel (blocks
+  52 and 58 about 8x). One channel then dominates the scores and per-token int8 queries lose
+  the rest (25 dB; smoothing the keys does not help, 22 dB). Blocks whose norm weights peak
+  above three times their median keep half-float attention; the rest use int8: 38.6 to
+  46.6 dB from the captures, as standard does.
+- Text encoder: Qwen2.5-VL 7B through the streamed GPU encoder (`TextEncoder::qwen25`):
+  FP8 matrices times their scale, rotated and rounded to INT8 at load; query, key and value
+  biases (`tqkv.comp` flag 2), no query/key norms (flag 1 off), plain rotary with theta 1e6,
+  and the final norm (the engine takes the normed last layer: without it -2 dB). The
+  template's first 34 tokens are dropped; captured row counts (22, 10) match.
+- VAE: the Wan 2.1 decoder through the 2.1 GPU decoder (`QwenVae::open_wan21`): 16
+  latent channels at 1/8, 384/192/96 channels, three upsamplings without the depth-to-space
+  shortcut, RGB out; the causal 3x3x3 kernels see a single image only through their last
+  time slice.
+- Schedule: the engine's simple scheduler, `index = 999 - trunc(i * 1000 / n)`,
+  `sigma = shift t / (1 + (shift - 1) t)` with `t = (index + 1) / 1000`; Euler on the flow
+  output, CFG on the outputs.
+
+The worker runs 2512 itself from ABI 6 (`QWEN2512_WORKER_ABI`): the gateway sends 2512 to
+the managed runtime when its verified worker has that ABI, and to its own engine otherwise.
+
+## The worker without C++ (2026-11-23)
+
+With 2512 in Rust, the worker's C++ engine only held a session object and the SIGTERM flag.
+`--features rust-image` builds the worker without it: `native/rust_shim.rs` provides the six
+`kuno_*` entry points (an empty session, the cancellation flag set by a Rust SIGTERM/SIGINT
+handler, and the C++ generate entries answering "unsupported", which the Rust paths never
+call). The binary is 22 MB (the C++ worker 333 MB) and links only libc, libm and libgcc;
+Vulkan and Level Zero come from the system loaders at run time, so the runtime directory
+needs no oneAPI libraries (`make-image-candidate-v7.py`: worker, license, manifest). It
+builds in seconds instead of twelve minutes.
+
+Qwen 2.1 images from this worker differ slightly from the C++-linked worker's for the same
+request (0.8 of 255 on average, the same picture; still identical run to run). The Rust code
+is the same: in the C++-linked worker Intel's `libimf` is loaded ahead of glibc's `libm`, so
+Rust's `expf`, `sinf`, `cosf`, `powf` and `tanhf` (rotary tables, time embeddings, small CPU
+layers) bind to Intel's versions, which round differently in the last bits. Preloading
+`libimf` into the Rust-only worker reproduces the old images bit for bit.
 
 ## Running the comparisons
 

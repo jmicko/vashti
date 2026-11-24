@@ -1,6 +1,6 @@
 //! Bounded, in-memory ComfyUI execution-graph import. Never execute imported
 //! nodes, follow URLs, open model paths, or infer settings from canvas notes.
-#[cfg(any(feature = "native-sd", test))]
+#[cfg(any(feature = "native-sd", feature = "rust-image", test))]
 pub mod engine;
 mod host_memory;
 mod json;
@@ -438,5 +438,5 @@ mod tests {
     }
 }
 
-#[cfg(feature = "native-sd")]
+#[cfg(any(feature = "native-sd", feature = "rust-image"))]
 pub mod native;

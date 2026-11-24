@@ -13,8 +13,9 @@ is `"standard"`. On the CUDA backend fast attention uses the native SageAttentio
 implementation; on the managed Intel runtime (worker ABI 5 and later) the Rust engine
 scores attention with int8 queries and keys, each token scaled on its own, while values
 stay half floats. Either way it can change output pixels. Each workflow's `attention`
-list in discovery names the modes the configured backend accepts; Qwen 2512, Vulkan
-and older managed runtimes offer only `"standard"`. Unsupported choices return
+list in discovery names the modes the configured backend accepts; Vulkan and older managed
+runtimes offer only `"standard"`, and Qwen 2512 offers `"fast"` only on managed runtimes
+from worker ABI 6, which run it in Rust. Unsupported choices return
 `image_attention_unsupported`. On ABI 5 runtimes one worker serves both modes, so
 switching does not reload the models. The embedded
 CUDA/Vulkan path needs no Python engine or additional runtime installation.

@@ -7,12 +7,20 @@
 //! its patch grid and the deep-stack additions to the first layers. The linear layers are
 //! INT8 in the rotated basis of the DiT's (`dit::linear8`).
 //!
+//! Qwen Image 2512's encoder is Qwen2.5-VL 7B (`TextEncoder::qwen25`): biases on queries,
+//! keys and values, no query/key norms, plain rotary positions (theta 1e6; text tokens have
+//! the same position on all three axes) and FP8 matrices with one scale each, which are
+//! widened, rotated and rounded to INT8 per row here as the GPU form does.
+//!
 //! This is the CPU reference form: exact integer products, f32 elsewhere.
 use std::path::Path;
 
 use rayon::prelude::*;
 
-use super::{dit::linear8, safetensors::Safetensors};
+use super::{
+    dit::{linear8, quantize},
+    safetensors::Safetensors,
+};
 
 /// The language model's sizes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +135,21 @@ pub fn positions(prompt: &Prompt) -> Vec<[i32; 3]> {
     out
 }
 
+/// Qwen2.5-VL's rotary base.
+const THETA_QWEN25: f32 = 1_000_000.0;
+/// Cosine and sine of each token's channel pairs `[tokens][PAIRS]` for plain rotary
+/// positions (one position per token).
+pub fn rotary_plain(positions: &[[i32; 3]], theta: f32) -> Vec<[f32; 2]> {
+    let mut out = Vec::with_capacity(positions.len() * PAIRS);
+    for position in positions {
+        for pair in 0..PAIRS {
+            let frequency = theta.powf(-2.0 * pair as f32 / HEAD as f32);
+            let angle = position[0] as f32 * frequency;
+            out.push([angle.cos(), angle.sin()]);
+        }
+    }
+    out
+}
 /// Cosine and sine of each token's channel pairs, `[tokens][PAIRS]`. Pairs are interleaved
 /// over the axes (time, height, width, time, ...); the last two use a fourth position that
 /// is always 0, as in ggml's IMROPE.
@@ -155,6 +178,10 @@ pub struct TextEncoder {
     pub config: Config,
     /// INT8 token embeddings in the rotated basis (with one scale per row), else BF16.
     int8_embeddings: bool,
+    /// Rows of the embedding table.
+    vocabulary: usize,
+    /// Qwen2.5-VL (Qwen Image 2512's encoder) rather than Qwen3-VL.
+    pub qwen25: bool,
 }
 impl TextEncoder {
     pub fn open(path: &Path) -> Result<Self, &'static str> {
@@ -185,19 +212,32 @@ impl TextEncoder {
             return Err("model_file_invalid");
         }
         let int8_embeddings = file.shape("model.embed_tokens.weight_scale").is_some();
+        let vocabulary = *file
+            .shape("model.embed_tokens.weight")
+            .and_then(|s| s.first())
+            .ok_or("model_file_invalid")?;
+        let qwen25 = file.is_fp8("model.layers.0.self_attn.q_proj.weight");
+        if vocabulary < VOCABULARY {
+            return Err("model_file_invalid");
+        }
         Ok(Self {
             file,
             config,
             int8_embeddings,
+            vocabulary,
+            qwen25,
         })
     }
     /// One token's embedding row.
     fn embedding(&self, id: usize) -> Result<Vec<f32>, &'static str> {
         let width = self.config.width;
         if !self.int8_embeddings {
-            return self
-                .file
-                .bf16_rows("model.embed_tokens.weight", [VOCABULARY, width], id, 1);
+            return self.file.bf16_rows(
+                "model.embed_tokens.weight",
+                [self.vocabulary, width],
+                id,
+                1,
+            );
         }
         // Scaled bytes, then the inverse of the normalized Hadamard rotation, in the C++
         // engine's order (a 0.5 per radix-4 stage).
@@ -256,16 +296,54 @@ impl TextEncoder {
         columns: usize,
     ) -> Result<(Vec<i8>, Vec<f32>), &'static str> {
         let base = format!("model.layers.{layer}.{name}");
+        if self.qwen25 {
+            let weight = self.fp8_matrix(layer, name, rows, columns)?;
+            return Ok(quantize(&weight, columns));
+        }
         Ok((
             self.file.i8(&format!("{base}.weight"), &[rows, columns])?,
             self.file.f32(&format!("{base}.weight_scale"), &[rows, 1])?,
         ))
     }
+    /// An FP8 matrix widened and multiplied by its scale.
+    pub(super) fn fp8_matrix(
+        &self,
+        layer: usize,
+        name: &str,
+        rows: usize,
+        columns: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        let base = format!("model.layers.{layer}.{name}");
+        let scale = self.file.f32(&format!("{base}.scale_weight"), &[])?[0];
+        let mut weight = self
+            .file
+            .floats(&format!("{base}.weight"), &[rows, columns])?;
+        weight.par_iter_mut().for_each(|v| *v *= scale);
+        Ok(weight)
+    }
+    /// Qwen2.5-VL's outputs are the final norm's (Qwen3-VL's are taken before it).
+    pub fn final_norm(&self, x: &mut [f32]) -> Result<(), &'static str> {
+        if self.qwen25 {
+            let width = self.config.width;
+            let weight = self.file.floats("model.norm.weight", &[width])?;
+            x.par_chunks_exact_mut(width)
+                .for_each(|row| norm_in_place(row, &weight));
+        }
+        Ok(())
+    }
+    /// The rotary turns of a prompt's tokens.
+    pub(super) fn turns(&self, prompt: &Prompt) -> Vec<[f32; 2]> {
+        if self.qwen25 {
+            rotary_plain(&positions(prompt), THETA_QWEN25)
+        } else {
+            rotary(&positions(prompt))
+        }
+    }
     /// Hidden states after the last layer, `[tokens][width]`.
     pub fn forward(&self, prompt: &Prompt) -> Result<Vec<f32>, &'static str> {
         prompt.check(&self.config)?;
         let width = self.config.width;
-        let turns = rotary(&positions(prompt));
+        let turns = self.turns(prompt);
         let mut x = self.embed(prompt)?;
         for layer in 0..self.config.layers {
             self.block(layer, &mut x, &turns)?;
@@ -276,6 +354,7 @@ impl TextEncoder {
                 }
             }
         }
+        self.final_norm(&mut x)?;
         Ok(x)
     }
     fn block(&self, layer: usize, x: &mut [f32], turns: &[[f32; 2]]) -> Result<(), &'static str> {
@@ -294,15 +373,36 @@ impl TextEncoder {
         };
         let mut q = project("self_attn.q_proj", heads * HEAD)?;
         let mut k = project("self_attn.k_proj", kv_heads * HEAD)?;
-        let v = project("self_attn.v_proj", kv_heads * HEAD)?;
+        let mut v = project("self_attn.v_proj", kv_heads * HEAD)?;
+        if self.qwen25 {
+            for (values, name) in [
+                (&mut q, "self_attn.q_proj"),
+                (&mut k, "self_attn.k_proj"),
+                (&mut v, "self_attn.v_proj"),
+            ] {
+                let rows = values.len() / n;
+                let bias = self
+                    .file
+                    .floats(&format!("model.layers.{layer}.{name}.bias"), &[rows])?;
+                values.par_chunks_exact_mut(rows).for_each(|row| {
+                    row.iter_mut().zip(&bias).for_each(|(v, b)| *v += b);
+                });
+            }
+        }
         for (values, name) in [(&mut q, "self_attn.q_norm"), (&mut k, "self_attn.k_norm")] {
-            let weight = self.vector(layer, name, HEAD)?;
+            let weight = if self.qwen25 {
+                None
+            } else {
+                Some(self.vector(layer, name, HEAD)?)
+            };
             let heads = values.len() / n / HEAD;
             values
                 .par_chunks_exact_mut(HEAD)
                 .enumerate()
                 .for_each(|(i, head)| {
-                    norm_in_place(head, &weight);
+                    if let Some(weight) = &weight {
+                        norm_in_place(head, weight);
+                    }
                     rotate(head, &turns[i / heads * PAIRS..][..PAIRS]);
                 });
         }

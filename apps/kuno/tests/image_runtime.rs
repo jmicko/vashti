@@ -52,7 +52,11 @@ fn image_engine_configuration_preserves_legacy_defaults_and_old_workflow() {
     assert!(image.validate().is_err());
     image.runtime = Some(SYCL_RUNTIME.into());
     image.validate().unwrap();
-    assert!(!image.uses_sycl(kuno_protocol::QWEN_RECIPE));
+    // Qwen 2512 joins only when the installed runtime's worker runs it (ABI 6 and later).
+    let runs_2512 = kuno::image_engine::VerifiedRuntime::load(SYCL_RUNTIME).is_ok_and(|r| {
+        r.manifest.worker_abi >= kuno::image_engine::QWEN2512_WORKER_ABI
+    });
+    assert_eq!(image.uses_sycl(kuno_protocol::QWEN_RECIPE), runs_2512);
     assert!(image.uses_sycl(kuno_protocol::QWEN21_RECIPE));
     assert!(image.uses_sycl(kuno_protocol::QWEN21_EDIT_RECIPE));
 }
@@ -267,7 +271,7 @@ mod attention_tests {
     use kuno_protocol::{ImageAttention, ImageRecipe, QWEN_RECIPE, QWEN21_RECIPE};
 
     #[test]
-    fn attention_is_opt_in_and_rejects_unsupported_values_and_workflows() {
+    fn attention_is_opt_in_and_rejects_unknown_values() {
         let mut value = serde_json::json!({"workflow":QWEN21_RECIPE,"prompt":"test",
             "negative_prompt":"","seed":"1","width":512,"height":512,"steps":4,"cfg":1});
         let standard: ImageRecipe = serde_json::from_value(value.clone()).unwrap();
@@ -276,9 +280,13 @@ mod attention_tests {
         let fast: ImageRecipe = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(fast.attention, ImageAttention::Fast);
         assert!(fast.validate().is_ok());
+        // Whether a workflow takes fast attention depends on the backend; discovery and the
+        // gateway decide (`image_attention_unsupported`), not the recipe.
         value["workflow"] = QWEN_RECIPE.into();
-        let unsupported: ImageRecipe = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(unsupported.validate(), Err("image_attention_unsupported"));
+        value["flow_shift"] = 3.1.into();
+        let qwen2512: ImageRecipe = serde_json::from_value(value.clone()).unwrap();
+        assert!(qwen2512.validate().is_ok());
+        value.as_object_mut().unwrap().remove("flow_shift");
         value["attention"] = "unknown".into();
         assert!(serde_json::from_value::<ImageRecipe>(value).is_err());
     }

@@ -19,6 +19,9 @@ pub const VIDEO_WORKER_ABI: u32 = 4;
 /// ABI 5 workers run Qwen 2.1 with fast (int8 query/key) attention on request; the mode is
 /// per request, so one worker serves both.
 pub const FAST_ATTENTION_WORKER_ABI: u32 = 5;
+/// ABI 6 workers also run Qwen Image 2512 (in Rust), so its requests go to the managed
+/// runtime instead of the gateway's own engine.
+pub const QWEN2512_WORKER_ABI: u32 = 6;
 const ENGINE_REVISION: &str = "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be";
 const GGML_REVISION: &str = "4bf5f6000653b7881d00963cd6ddb665ccd62a8d";
 const MAX_MANIFEST: u64 = 64 * 1024;
@@ -83,7 +86,7 @@ impl RuntimeManifest {
     fn validate(&self) -> Result<()> {
         if self.version != 1
             || self.id != SYCL_RUNTIME
-            || !matches!(self.worker_abi, 1..=FAST_ATTENTION_WORKER_ABI)
+            || !matches!(self.worker_abi, 1..=QWEN2512_WORKER_ABI)
             || self.ggml_max_name != 160
             || self.engine_revision != ENGINE_REVISION
             || self.ggml_revision != GGML_REVISION
@@ -525,6 +528,8 @@ mod tests {
         m.worker_abi = 5;
         assert!(m.validate().is_ok());
         m.worker_abi = 6;
+        assert!(m.validate().is_ok());
+        m.worker_abi = 7;
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.ggml_max_name = 64;
