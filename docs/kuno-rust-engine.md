@@ -1280,7 +1280,8 @@ Speed work since (2026-11-24, later):
   for every Qwen workflow; GPUs without `VK_NV_cooperative_matrix2` run standard attention
   for it.
 
-Qwen 2.1 1184x1776, 20 steps, CFG 4 through the worker on the 3060: 199 s standard.
+Qwen 2.1 1184x1776, 20 steps, CFG 4 through the worker on the 3060: 199 s standard, 177 s
+fast (ComfyUI 193 s).
 
 ### The gateway's engine
 
