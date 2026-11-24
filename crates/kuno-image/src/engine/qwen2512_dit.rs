@@ -576,21 +576,43 @@ pub(super) mod tests {
             ("INT8 conversion", "KUNO_QWEN2512_ENCODER_INT8"),
         ]
         .into_iter()
-        .map(|(l, v)| (l, GpuTextEncoder::new(&gpu, TextEncoder::open(Path::new(&var(v))).unwrap()).unwrap()))
+        .map(|(l, v)| {
+            (
+                l,
+                GpuTextEncoder::new(&gpu, TextEncoder::open(Path::new(&var(v))).unwrap()).unwrap(),
+            )
+        })
         .collect();
         for (step, text) in [
-            (0, "A red fox sitting on a mossy rock in a misty forest, morning light"),
+            (
+                0,
+                "A red fox sitting on a mossy rock in a misty forest, morning light",
+            ),
             (1, "blurry, low quality"),
         ] {
             let full = format!("{TEMPLATE}{text}<|im_end|>\n<|im_start|>assistant\n");
-            let ids: Vec<i32> = tokenizer.encode(&full).unwrap().into_iter().map(|i| i as i32).collect();
-            let prompt = Prompt { ids: &ids, images: vec![] };
+            let ids: Vec<i32> = tokenizer
+                .encode(&full)
+                .unwrap()
+                .into_iter()
+                .map(|i| i as i32)
+                .collect();
+            let prompt = Prompt {
+                ids: &ids,
+                images: vec![],
+            };
             let truth = exact.forward(&prompt).unwrap()[START * CONTEXT..].to_vec();
             let golden = read(&dir.join(format!("step{step}.context.f32")));
-            println!("prompt {step}: C++ FP8 engine {:.1} dB from exact", db(&truth, &golden));
+            println!(
+                "prompt {step}: C++ FP8 engine {:.1} dB from exact",
+                db(&truth, &golden)
+            );
             for (label, encoder) in &encoders {
                 let rows = encoder.forward(&prompt).unwrap()[START * CONTEXT..].to_vec();
-                println!("prompt {step}: GPU from {label}: {:.1} dB from exact", db(&truth, &rows));
+                println!(
+                    "prompt {step}: GPU from {label}: {:.1} dB from exact",
+                    db(&truth, &rows)
+                );
             }
         }
     }

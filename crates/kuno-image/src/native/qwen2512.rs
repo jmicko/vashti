@@ -19,11 +19,15 @@ pub(crate) fn evict() {
     drop(kept);
 }
 
-/// The text encoder, DiT and VAE: Kuno's INT8 conversion of the publisher's files
-/// (`qwen-image-2512-int8`) when installed, else ComfyUI's FP8 files.
+/// The text encoder, DiT and VAE: the better form installed, Kuno's INT8 conversion of the
+/// publisher's files (`qwen-image-2512-int8`, closer to the original model and loaded without
+/// conversion) when it is complete, else ComfyUI's FP8 files.
 fn files(directory: &std::path::Path) -> [PathBuf; 3] {
     let int8 = directory.join(INT8);
-    if int8.join("transformer").is_dir() {
+    if ["text_encoder", "transformer", "vae"]
+        .iter()
+        .all(|part| complete(&int8.join(part)))
+    {
         ["text_encoder", "transformer", "vae"].map(|part| int8.join(part))
     } else {
         [
@@ -33,6 +37,37 @@ fn files(directory: &std::path::Path) -> [PathBuf; 3] {
         ]
         .map(|file| directory.join(file))
     }
+}
+/// Whether a part's directory holds a whole model: at least one file, and for files split as
+/// `<name>-NNNNN-of-MMMMM.safetensors`, every piece. The installer only activates files that
+/// match their pins, so present means verified; an install still in progress is incomplete.
+fn complete(directory: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return false;
+    };
+    let names: Vec<String> = entries
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".safetensors"))
+        .collect();
+    !names.is_empty()
+        && names.iter().all(|name| {
+            let stem = name.trim_end_matches(".safetensors");
+            let Some((head, total)) = stem.rsplit_once("-of-") else {
+                return true;
+            };
+            let Some((base, _)) = head.rsplit_once('-') else {
+                return true;
+            };
+            let Ok(count) = total.parse::<usize>() else {
+                return true;
+            };
+            (1..=count).all(|i| {
+                names.contains(&format!(
+                    "{base}-{i:0width$}-of-{total}.safetensors",
+                    width = total.len()
+                ))
+            })
+        })
 }
 /// The directory the `qwen-image-2512-int8` collection's conversions are written to.
 pub const INT8: &str = "qwen-image-2512-int8";
@@ -97,5 +132,45 @@ pub(super) fn generate(
             }
             Err(super::qwen::failure(error))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn int8_is_chosen_only_when_every_piece_is_installed() {
+        let root = tempfile_dir();
+        let put = |path: &str| {
+            let p = root.join(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"").unwrap();
+        };
+        let int8 = |part: &str, file: &str| format!("{INT8}/{part}/{file}");
+        put(&int8("text_encoder", "model-00001-of-00002.safetensors"));
+        put(&int8(
+            "transformer",
+            "diffusion_pytorch_model-00001-of-00002.safetensors",
+        ));
+        put(&int8(
+            "transformer",
+            "diffusion_pytorch_model-00002-of-00002.safetensors",
+        ));
+        put(&int8("vae", "diffusion_pytorch_model.safetensors"));
+        // A text encoder piece is still missing: ComfyUI's FP8 files.
+        assert_eq!(
+            files(&root)[1],
+            root.join("qwen_image_2512_fp8_e4m3fn.safetensors")
+        );
+        put(&int8("text_encoder", "model-00002-of-00002.safetensors"));
+        assert_eq!(files(&root)[1], root.join(INT8).join("transformer"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    fn tempfile_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kuno-2512-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }

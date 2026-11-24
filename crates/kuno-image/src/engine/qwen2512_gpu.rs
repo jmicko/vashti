@@ -1077,7 +1077,8 @@ mod tests {
             .take_while(|s| dir.join(format!("step{s}.x.f32")).exists())
             .map(|s| Golden::load(&dir, s))
             .collect();
-        let exact = Qwen2512Dit::open(Path::new(&std::env::var("KUNO_QWEN2512_BF16").unwrap())).unwrap();
+        let exact =
+            Qwen2512Dit::open(Path::new(&std::env::var("KUNO_QWEN2512_BF16").unwrap())).unwrap();
         let truth: Vec<Vec<f32>> = goldens
             .iter()
             .map(|g| {
@@ -1094,9 +1095,15 @@ mod tests {
             .collect();
         drop(exact);
         for (step, (g, t)) in goldens.iter().zip(&truth).enumerate() {
-            println!("step {step}: C++ FP8 engine {:.1} dB from exact", db(t, &g.out));
+            println!(
+                "step {step}: C++ FP8 engine {:.1} dB from exact",
+                db(t, &g.out)
+            );
         }
-        for (label, var) in [("FP8 file", "KUNO_QWEN2512_DIT"), ("INT8 conversion", "KUNO_QWEN2512_DIT_INT8")] {
+        for (label, var) in [
+            ("FP8 file", "KUNO_QWEN2512_DIT"),
+            ("INT8 conversion", "KUNO_QWEN2512_DIT_INT8"),
+        ] {
             let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
             let model = Qwen2512Gpu::load(gpu, Path::new(&std::env::var(var).unwrap())).unwrap();
             for (step, (g, t)) in goldens.iter().zip(&truth).enumerate() {
