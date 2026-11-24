@@ -25,6 +25,8 @@ use super::{
 
 /// Tokens are padded to the products' token block (and `fattend16`'s query block).
 const PAD: usize = 128;
+/// Host-memory prefixes from this many tokens are copied in through device slots.
+const SLOTTED: usize = 1024;
 /// Keys are padded to `fattend16`'s key block.
 const KEY_PAD: usize = 64;
 /// The four integer products of a block: weight rows and columns.
@@ -208,6 +210,9 @@ pub struct Prefix {
     /// it is short, in host memory (each step then copies them over the bus).
     keys: Vec<Buffer>,
     values: Vec<Buffer>,
+    /// When they are in host memory: two device slots of one block's keys and values, the
+    /// next block's copied in while one computes.
+    slots: Vec<Buffer>,
     pub length: usize,
     /// The target's latent size and its tokens' rotary turns.
     height: usize,
@@ -289,11 +294,19 @@ impl QwenVk {
             keys.push(half_rows()?);
             values.push(half_rows()?);
         }
+        // Small prefixes are read over the bus in the step's one submission; large ones
+        // through slots, a submission per block.
+        let slots = if host && length >= SLOTTED {
+            (0..4).map(|_| gpu.buffer(rows_bytes)).collect::<Result<_, _>>()?
+        } else {
+            Vec::new()
+        };
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let prefix = Prefix {
             id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             keys,
             values,
+            slots,
             length,
             height: target.0,
             width: target.1,
@@ -331,7 +344,7 @@ impl QwenVk {
             for index in 0..self.layers.len() {
                 let last = index + 1 == self.layers.len();
                 let store = Some((&prefix.keys[index], &prefix.values[index], length));
-                calls.extend(self.block(work, 1, causal, store, &prefix, index, last));
+                calls.extend(self.block(work, 1, causal, store, &prefix, index, last, None));
             }
             run(gpu, &calls)?;
             // Only this prefix uses these buffers.
@@ -417,17 +430,51 @@ impl QwenVk {
         gpu.upload(&w.mods, 0, bytes_of(&times.mods))?;
         gpu.upload(&w.final_scale, 0, bytes_of(&times.scale))?;
         gpu.upload(&w.rows, 0, bytes_of(&qwen_dit::patchify(x, height, width)))?;
-        let mut calls = vec![self.embed(w)];
-        for index in 0..self.layers.len() {
-            calls.extend(self.block(w, 0, false, None, prefix, index, false));
-        }
-        calls.push(Call::Shader {
+        let mut head = Some(Call::Shader {
             kernel: &self.kernels.final_,
             buffers: vec![&w.stream, &w.final_scale, &self.proj_out, &w.out],
             constants: vec![tokens as u32],
             groups: [tokens as u32, 1, 1],
         });
-        run(gpu, &calls)?;
+        if prefix.slots.is_empty() {
+            let mut calls = vec![self.embed(w)];
+            for index in 0..self.layers.len() {
+                calls.extend(self.block(w, 0, false, None, prefix, index, false, None));
+            }
+            calls.extend(head.take());
+            run(gpu, &calls)?;
+        } else {
+            // A submission per block, each block's prefix rows copied from host memory into
+            // a slot while the previous block computes.
+            let begin = |index: usize| -> Result<_, &'static str> {
+                let slot = 2 * (index % 2);
+                let keys = gpu.copy_begin(&prefix.keys[index], &prefix.slots[slot], 0)?;
+                let values = gpu.copy_begin(&prefix.values[index], &prefix.slots[slot + 1], 0)?;
+                Ok((keys, values))
+            };
+            let mut copying = Some(begin(0)?);
+            let layers = self.layers.len();
+            for index in 0..layers {
+                if let Some((keys, values)) = copying.take() {
+                    keys.wait()?;
+                    values.wait()?;
+                }
+                if index + 1 < layers {
+                    copying = Some(begin(index + 1)?);
+                }
+                let slot = 2 * (index % 2);
+                let rows = (&prefix.slots[slot], &prefix.slots[slot + 1]);
+                let mut calls = Vec::new();
+                if index == 0 {
+                    calls.push(self.embed(w));
+                }
+                calls.extend(self.block(w, 0, false, None, prefix, index, false, Some(rows)));
+                if index + 1 == layers {
+                    calls.push(head.take().ok_or("gpu_failed")?);
+                }
+                run(gpu, &calls)?;
+            }
+        }
         let mut result = vec![0f32; tokens * CHANNELS];
         gpu.read_floats(&w.out, 0, &w.readback, &mut result)?;
         Ok(qwen_dit::unpatchify(&result, height, width))
@@ -447,6 +494,8 @@ impl QwenVk {
         prefix: &'a Prefix,
         index: usize,
         last: bool,
+        // Where this block's prefix rows are, if not in `prefix` (a device slot).
+        rows: Option<(&'a Buffer, &'a Buffer)>,
     ) -> Vec<Call<'a>> {
         let k = &self.kernels;
         let layer = &self.layers[index];
@@ -513,7 +562,11 @@ impl QwenVk {
         if w.earlier.get() > 0 {
             calls.push(Call::Shader {
                 kernel: &k.copy,
-                buffers: vec![&prefix.keys[index], &prefix.values[index], &w.key, &w.value],
+                buffers: {
+                    let (keys, values) =
+                        rows.unwrap_or((&prefix.keys[index], &prefix.values[index]));
+                    vec![keys, values, &w.key, &w.value]
+                },
                 constants: vec![
                     w.earlier.get() as u32,
                     n,
@@ -607,6 +660,11 @@ mod tests {
             id: 1,
             keys: (0..model.layers.len()).map(|_| half()).collect(),
             values: (0..model.layers.len()).map(|_| half()).collect(),
+            slots: if host && length >= SLOTTED {
+                (0..4).map(|_| model.gpu.buffer(rows).unwrap()).collect()
+            } else {
+                Vec::new()
+            },
             length,
             height,
             width,
@@ -621,7 +679,7 @@ mod tests {
         }
         let works = model.work.lock().unwrap();
         let w = &works[&(height * width)];
-        let calls = model.block(w, 0, false, None, &prefix, 3, false);
+        let calls = model.block(w, 0, false, None, &prefix, 3, false, None);
         let names = [
             "qkv product",
             "qkv16",

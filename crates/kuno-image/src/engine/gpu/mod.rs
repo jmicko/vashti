@@ -536,10 +536,19 @@ impl Gpu {
         to: &Buffer,
         offset: u64,
     ) -> Result<Copying, &'static str> {
+        match &from.stage {
+            Some(stage) => self.copy_begin(stage, to, offset),
+            None => Ok(Copying { pending: None }),
+        }
+    }
+    /// `copy_staged_begin` for a whole buffer (host memory made by `host_buffer`, say).
+    pub fn copy_begin(
+        &self,
+        stage: &Buffer,
+        to: &Buffer,
+        offset: u64,
+    ) -> Result<Copying, &'static str> {
         let core = &self.core;
-        let Some(stage) = &from.stage else {
-            return Ok(Copying { pending: None });
-        };
         let Some((_, queue, pool, turn)) = &core.transfer else {
             self.copy(stage, 0, stage.bytes, to, offset)?;
             return Ok(Copying { pending: None });
