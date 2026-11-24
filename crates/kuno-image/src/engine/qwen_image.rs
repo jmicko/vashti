@@ -10,9 +10,9 @@ use super::{
     prompt::{apply_weights, parse_attention},
     qwen_dit::{CHANNELS, CONTEXT},
     qwen_gpu::{self, QwenGpu, Times},
-    qwen_vk::{self, QwenVk},
     qwen_vae::{QwenVae, SCALE, to_rgba},
     qwen_vae_gpu::GpuVae,
+    qwen_vk::{self, QwenVk},
     rng::Mt19937,
     text_encoder::{Config, Image, Prompt, TextEncoder},
     text_gpu::GpuTextEncoder,
@@ -459,7 +459,12 @@ impl Models {
         if kept.is_none() {
             *kept = Some(Dit::load(&self.gpu, &self.dit_path)?);
         }
-        let x = self.sample(kept.as_ref().ok_or("gpu_failed")?, request, &encoded, &mut progress)?;
+        let x = self.sample(
+            kept.as_ref().ok_or("gpu_failed")?,
+            request,
+            &encoded,
+            &mut progress,
+        )?;
         if self
             .gpu
             .free_memory()
@@ -763,7 +768,10 @@ mod tests {
             assert_eq!(got.len(), width * height * 4);
             let total = started.elapsed().as_secs_f64();
             times.push(total);
-            let gaps: Vec<String> = marks.windows(2).map(|p| format!("{:.2}", p[1] - p[0])).collect();
+            let gaps: Vec<String> = marks
+                .windows(2)
+                .map(|p| format!("{:.2}", p[1] - p[0]))
+                .collect();
             println!(
                 "{steps} steps: {total:.2} s; first step done at {:.2} s, later steps {} s, decode {:.2} s",
                 marks[0],

@@ -238,7 +238,10 @@ impl QwenVk {
             .collect::<Result<Vec<_>, _>>()?;
         let small = Small::read(&model.file)?;
         let img_in = floats(&gpu, &model.file.floats("img_in.weight", &[DIM, CHANNELS])?)?;
-        let proj_out = floats(&gpu, &model.file.floats("proj_out.weight", &[CHANNELS, DIM])?)?;
+        let proj_out = floats(
+            &gpu,
+            &model.file.floats("proj_out.weight", &[CHANNELS, DIM])?,
+        )?;
         Ok(Self {
             gpu,
             kernels,
@@ -269,8 +272,8 @@ impl QwenVk {
         let rotary = qwen_dit::rotary(&layout.positions);
         let length = layout.prefix;
         let rows_bytes = (HEADS * length.max(1) * HEAD) as u64 * 2;
-        let need = 2 * self.layers.len() as u64 * rows_bytes
-            + Work::bytes(target.0 * target.1, length);
+        let need =
+            2 * self.layers.len() as u64 * rows_bytes + Work::bytes(target.0 * target.1, length);
         let host = gpu.free_memory().is_some_and(|free| free < need);
         #[cfg(test)]
         let host = self.host_prefix.unwrap_or(host);
@@ -589,8 +592,7 @@ mod tests {
         let vendor = std::env::var("KUNO_GPU_VENDOR")
             .map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
         let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
-        let model =
-            QwenVk::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        let model = QwenVk::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
         let (height, width, length) = (52, 78, 4356);
         let host = std::env::var("KUNO_PREFIX_HOST").is_ok_and(|v| v == "1");
         let rows = (HEADS * length * HEAD) as u64 * 2;
@@ -621,8 +623,17 @@ mod tests {
         let w = &works[&(height * width)];
         let calls = model.block(w, 0, false, None, &prefix, 3, false);
         let names = [
-            "qkv product", "qkv16", "prefix copy", "attention", "quantize", "out product",
-            "residual+norm", "fc1 product", "gate", "hidden quantize", "fc2 product",
+            "qkv product",
+            "qkv16",
+            "prefix copy",
+            "attention",
+            "quantize",
+            "out product",
+            "residual+norm",
+            "fc1 product",
+            "gate",
+            "hidden quantize",
+            "fc2 product",
             "residual+norm",
         ];
         let mut total = 0.0;
@@ -636,7 +647,11 @@ mod tests {
             total += best;
             println!("{name}: {best:.2} ms");
         }
-        println!("block {total:.1} ms, x {} blocks = {:.2} s", model.layers.len(), total * model.layers.len() as f64 / 1e3);
+        println!(
+            "block {total:.1} ms, x {} blocks = {:.2} s",
+            model.layers.len(),
+            total * model.layers.len() as f64 / 1e3
+        );
     }
 
     /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir> [KUNO_GPU_VENDOR=<hex>]`: steps against

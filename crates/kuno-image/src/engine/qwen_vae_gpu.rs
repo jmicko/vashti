@@ -482,7 +482,12 @@ impl GpuVae {
     }
 
     /// Uploads the un-normalized latent, channel-major with padded rows, into `map`.
-    fn upload_latent(&self, map: &Buffer, latent: &[f32], plane: usize) -> Result<(), &'static str> {
+    fn upload_latent(
+        &self,
+        map: &Buffer,
+        latent: &[f32],
+        plane: usize,
+    ) -> Result<(), &'static str> {
         let d = &self.decoder;
         let stride = padded(plane, ROWS);
         let mut input = vec![0f32; d.latent * stride];
@@ -512,7 +517,12 @@ impl GpuVae {
             .middle
             .iter()
             .flat_map(|r| [r.conv1.inputs, r.conv1.outputs, r.conv2.outputs])
-            .chain([3 * attention, d.conv2.inputs, d.conv2.outputs, d.conv1.outputs])
+            .chain([
+                3 * attention,
+                d.conv2.inputs,
+                d.conv2.outputs,
+                d.conv1.outputs,
+            ])
             .max()
             .unwrap_or(0);
         let b = self.buffers(
@@ -608,7 +618,15 @@ impl GpuVae {
             }
         }
         let out = (0..4).find(|i| *i != x).unwrap_or_default();
-        work.conv(calls, &d.head, x, Same((w, h)), Norm::Silu(d.head_norm), out, None);
+        work.conv(
+            calls,
+            &d.head,
+            x,
+            Same((w, h)),
+            Norm::Silu(d.head_norm),
+            out,
+            None,
+        );
         (w, h, out)
     }
 
@@ -1068,7 +1086,11 @@ mod tests {
             &std::env::var("KUNO_QWEN_VAE").unwrap(),
         ))
         .unwrap();
-        let gpu = Gpu::open(Select::Vendor(std::env::var("KUNO_GPU_VENDOR").map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap()))).unwrap();
+        let gpu = Gpu::open(Select::Vendor(
+            std::env::var("KUNO_GPU_VENDOR")
+                .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap()),
+        ))
+        .unwrap();
         let started = std::time::Instant::now();
         let placed = GpuVae::new(&gpu, &vae).unwrap();
         println!("placed in {:.2} s", started.elapsed().as_secs_f64());
@@ -1101,7 +1123,10 @@ mod tests {
                     .zip(&parts)
                     .map(|(a, b)| (a - b).abs())
                     .fold(0f32, f32::max);
-                println!("{name}: about {strips} strips (halo {}), worst difference {worst:e}", vae.halo());
+                println!(
+                    "{name}: about {strips} strips (halo {}), worst difference {worst:e}",
+                    vae.halo()
+                );
                 assert!(worst < 1e-4, "{name}: {worst}");
             }
         }
@@ -1159,7 +1184,11 @@ mod tests {
             &std::env::var("KUNO_QWEN2512_VAE").unwrap(),
         ))
         .unwrap();
-        let gpu = Gpu::open(Select::Vendor(std::env::var("KUNO_GPU_VENDOR").map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap()))).unwrap();
+        let gpu = Gpu::open(Select::Vendor(
+            std::env::var("KUNO_GPU_VENDOR")
+                .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap()),
+        ))
+        .unwrap();
         let decoder = GpuVae::new(&gpu, &vae).unwrap();
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN2512_GOLDEN").unwrap());
         let dims: Vec<usize> = std::fs::read_to_string(dir.join("vae.latent0.txt"))

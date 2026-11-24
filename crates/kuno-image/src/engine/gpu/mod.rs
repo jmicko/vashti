@@ -65,6 +65,11 @@ struct Core {
     matrix2: bool,
     /// Command and descriptor pools and the queue are used by one thread at a time.
     turn: std::sync::Mutex<()>,
+    /// A dedicated copy queue (its family, queue and command pool, used by one thread at a
+    /// time), on GPUs other than Intel's that have one: copies there run beside compute.
+    /// Buffers are then shared by both families (`families`).
+    transfer: Option<(u32, vk::Queue, vk::CommandPool, std::sync::Mutex<()>)>,
+    families: Vec<u32>,
 }
 impl Drop for Core {
     fn drop(&mut self) {
@@ -72,6 +77,9 @@ impl Drop for Core {
         // created from these handles is still alive.
         unsafe {
             let _ = self.device.device_wait_idle();
+            if let Some((_, _, pool, _)) = &self.transfer {
+                self.device.destroy_command_pool(*pool, None);
+            }
             self.device.destroy_descriptor_pool(self.descriptors, None);
             self.device.destroy_command_pool(self.pool, None);
             self.device.destroy_device(None);
@@ -90,6 +98,42 @@ pub struct Buffer {
     bytes: u64,
 }
 /// A buffer's contents in host memory (`Gpu::staged`): no video memory is held.
+/// A copy started by `Gpu::copy_staged_begin`.
+pub struct Copying {
+    pending: Option<(Arc<Core>, vk::CommandBuffer, vk::Fence)>,
+}
+impl Copying {
+    /// Waits for the copy.
+    pub fn wait(mut self) -> Result<(), &'static str> {
+        self.finish()
+    }
+    fn finish(&mut self) -> Result<(), &'static str> {
+        let Some((core, commands, fence)) = self.pending.take() else {
+            return Ok(());
+        };
+        let Some((_, _, pool, turn)) = &core.transfer else {
+            return Err("gpu_failed");
+        };
+        // SAFETY: the fence and command buffer were made for this copy; after the wait the
+        // device no longer uses them.
+        unsafe {
+            let waited = core.device.wait_for_fences(&[fence], true, u64::MAX);
+            if waited.is_err() {
+                let _ = core.device.device_wait_idle();
+            }
+            core.device.destroy_fence(fence, None);
+            let _turn = turn.lock();
+            core.device.free_command_buffers(*pool, &[commands]);
+            waited.map_err(|_| "gpu_failed")
+        }
+    }
+}
+impl Drop for Copying {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
+}
+
 pub struct Staged {
     stage: Option<Buffer>,
 }
@@ -197,9 +241,32 @@ impl Gpu {
                 .iter()
                 .position(|q| q.queue_flags.contains(vk::QueueFlags::COMPUTE))
                 .ok_or("gpu_unavailable")? as u32;
-            let queues = [vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(family)
-                .queue_priorities(&[1.0])];
+            let copy_family = (properties.vendor_id != 0x8086)
+                .then(|| {
+                    instance
+                        .get_physical_device_queue_family_properties(physical)
+                        .iter()
+                        .position(|q| {
+                            q.queue_flags.contains(vk::QueueFlags::TRANSFER)
+                                && !q
+                                    .queue_flags
+                                    .intersects(vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS)
+                        })
+                        .map(|f| f as u32)
+                })
+                .flatten();
+            let mut queues = vec![
+                vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(family)
+                    .queue_priorities(&[1.0]),
+            ];
+            if let Some(copy) = copy_family {
+                queues.push(
+                    vk::DeviceQueueCreateInfo::default()
+                        .queue_family_index(copy)
+                        .queue_priorities(&[1.0]),
+                );
+            }
             let available = instance
                 .enumerate_device_extension_properties(physical)
                 .unwrap_or_default();
@@ -294,6 +361,26 @@ impl Gpu {
                 }
             };
             let queue = device.get_device_queue(family, 0);
+            let transfer = match copy_family {
+                Some(copy) => Some((
+                    copy,
+                    device.get_device_queue(copy, 0),
+                    device
+                        .create_command_pool(
+                            &vk::CommandPoolCreateInfo::default()
+                                .queue_family_index(copy)
+                                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
+                            None,
+                        )
+                        .map_err(|_| "gpu_unavailable")?,
+                    std::sync::Mutex::new(()),
+                )),
+                None => None,
+            };
+            let families = match copy_family {
+                Some(copy) => vec![family, copy],
+                None => vec![family],
+            };
             let pool = device
                 .create_command_pool(
                     &vk::CommandPoolCreateInfo::default()
@@ -351,6 +438,8 @@ impl Gpu {
                     shapes,
                     subgroups,
                     matrix2: matrix2_ok,
+                    transfer,
+                    families,
                     turn: std::sync::Mutex::new(()),
                 }),
             })
@@ -375,6 +464,11 @@ impl Gpu {
             let mut info = vk::BufferCreateInfo::default()
                 .size(bytes.max(4))
                 .usage(usage);
+            if core.families.len() > 1 {
+                info = info
+                    .sharing_mode(vk::SharingMode::CONCURRENT)
+                    .queue_family_indices(&core.families);
+            }
             if shared {
                 info = info.push_next(&mut external);
             }
@@ -432,6 +526,77 @@ impl Gpu {
             // SAFETY: the ranges were checked against both buffers above.
             device.cmd_copy_buffer(commands, from.buffer, to.buffer, &region);
         })
+    }
+    /// Starts copying host contents made by `staged` to byte `offset` of `to` on the copy
+    /// queue, beside whatever compute runs; `Copying::wait` (or dropping it) waits for it.
+    /// Without a copy queue the copy is done before this returns.
+    pub fn copy_staged_begin(
+        &self,
+        from: &Staged,
+        to: &Buffer,
+        offset: u64,
+    ) -> Result<Copying, &'static str> {
+        let core = &self.core;
+        let Some(stage) = &from.stage else {
+            return Ok(Copying { pending: None });
+        };
+        let Some((_, queue, pool, turn)) = &core.transfer else {
+            self.copy(stage, 0, stage.bytes, to, offset)?;
+            return Ok(Copying { pending: None });
+        };
+        if offset + stage.bytes > to.bytes {
+            return Err("gpu_range");
+        }
+        let _turn = turn.lock().map_err(|_| "gpu_failed")?;
+        // SAFETY: the command buffer and fence live in the returned `Copying`, which waits
+        // for the device before freeing them; the caller keeps both buffers alive until then.
+        unsafe {
+            let commands = check(
+                core.device.allocate_command_buffers(
+                    &vk::CommandBufferAllocateInfo::default()
+                        .command_pool(*pool)
+                        .command_buffer_count(1),
+                ),
+                "gpu_failed",
+            )?[0];
+            let started = (|| {
+                core.device.begin_command_buffer(
+                    commands,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )?;
+                core.device.cmd_copy_buffer(
+                    commands,
+                    stage.buffer,
+                    to.buffer,
+                    &[vk::BufferCopy::default()
+                        .dst_offset(offset)
+                        .size(stage.bytes)],
+                );
+                core.device.end_command_buffer(commands)?;
+                let fence = core
+                    .device
+                    .create_fence(&vk::FenceCreateInfo::default(), None)?;
+                if let Err(e) = core.device.queue_submit(
+                    *queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[commands])],
+                    fence,
+                ) {
+                    core.device.destroy_fence(fence, None);
+                    return Err(e);
+                }
+                Ok(fence)
+            })();
+            match started {
+                Ok(fence) => Ok(Copying {
+                    pending: Some((core.clone(), commands, fence)),
+                }),
+                Err(_) => {
+                    core.device.free_command_buffers(*pool, &[commands]);
+                    Err("gpu_failed")
+                }
+            }
+        }
     }
     /// Whether buffers can be shared with another interface (`shared`, `export`).
     pub fn shares(&self) -> bool {
@@ -1040,7 +1205,11 @@ impl Gpu {
     /// The subgroup size to require of a kernel that works at any size: 16 where the device
     /// has it (the numbers checked on Intel), else its widest.
     pub fn subgroup(&self) -> Option<u32> {
-        Some(if self.narrow() { 16 } else { self.core.subgroups.1 })
+        Some(if self.narrow() {
+            16
+        } else {
+            self.core.subgroups.1
+        })
     }
     /// The half-precision product (`gemm16`, f32 sums) in this device's form, as `gemm8`.
     pub fn gemm16(&self) -> Result<Kernel, &'static str> {
@@ -1109,11 +1278,15 @@ mod tests {
     #[test]
     #[ignore = "needs the GPU"]
     fn cooperative_shapes() {
-        let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
         let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
         println!("{}", gpu.name());
         for s in gpu.shapes() {
-            println!("  {}x{}x{} a {:?} c {:?} -> {:?}", s.m, s.n, s.k, s.a, s.c, s.result);
+            println!(
+                "  {}x{}x{} a {:?} c {:?} -> {:?}",
+                s.m, s.n, s.k, s.a, s.c, s.result
+            );
         }
     }
     use super::{
@@ -1127,13 +1300,16 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU with 16 x 16 x 16 half-precision matrices (KUNO_GPU_VENDOR)"]
     fn fused_attention_matches_cpu() {
-        let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
         let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
         println!("{}", gpu.name());
         let nv = std::env::var_os("KUNO_ATTEND_PLAIN").is_none() && gpu.matrix2();
         println!("cooperative matrix 2: {nv}");
         // KUNO_ATTEND_SPV=<file> KUNO_ATTEND_BLOCK=<queries>: another kernel (experiments).
-        let custom = std::env::var("KUNO_ATTEND_SPV").ok().map(|f| std::fs::read(f).unwrap());
+        let custom = std::env::var("KUNO_ATTEND_SPV")
+            .ok()
+            .map(|f| std::fs::read(f).unwrap());
         let kernel = match &custom {
             Some(code) => gpu.kernel(code, 4, 7, None).unwrap(),
             None if nv => gpu.kernel(shaders::FATTEND16_NV, 4, 7, None).unwrap(),
@@ -1153,11 +1329,19 @@ mod tests {
             let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
                 let mut values = noise(heads * padded * 128, seed);
                 for (i, v) in values.iter_mut().enumerate() {
-                    *v = if (i / 128) % padded < live { widen(narrow(*v * spread)) } else { 0.0 };
+                    *v = if (i / 128) % padded < live {
+                        widen(narrow(*v * spread))
+                    } else {
+                        0.0
+                    };
                 }
                 values
             };
-            let (q, k, v) = (make(qp, queries, 1, spread), make(kp, keys, 2, spread), make(kp, keys, 3, 1.0));
+            let (q, k, v) = (
+                make(qp, queries, 1, spread),
+                make(kp, keys, 2, spread),
+                make(kp, keys, 3, 1.0),
+            );
             let upload = |values: &[f32]| {
                 let h = halves(values);
                 let b = gpu.buffer((h.len() * 2) as u64).unwrap();
@@ -1166,7 +1350,15 @@ mod tests {
             };
             let (bq, bk, bv) = (upload(&q), upload(&k), upload(&v));
             let out = gpu.buffer((qp * heads * 128 * 4) as u64).unwrap();
-            let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits(), u32::from(causal)];
+            let constants = [
+                queries as u32,
+                keys as u32,
+                qp as u32,
+                kp as u32,
+                heads as u32,
+                scale.to_bits(),
+                u32::from(causal),
+            ];
             let mut best = f64::MAX;
             for _ in 0..3 {
                 let started = std::time::Instant::now();
@@ -1190,7 +1382,11 @@ mod tests {
                             return f64::NEG_INFINITY;
                         }
                         let kr = &k[(head * kp + key) * 128..][..128];
-                        qr.iter().zip(kr).map(|(a, b)| f64::from(a * b)).sum::<f64>() * f64::from(scale)
+                        qr.iter()
+                            .zip(kr)
+                            .map(|(a, b)| f64::from(a * b))
+                            .sum::<f64>()
+                            * f64::from(scale)
                     })
                     .collect();
                 let top = logits.iter().copied().fold(f64::MIN, f64::max);

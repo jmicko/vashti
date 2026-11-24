@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use super::{
     dit::{GROUP, quantize, rotate},
     dit_gpu::{Call, run},
-    gpu::{Buffer, Gpu, Kernel, Readback, Staged, bytes_of, shaders},
+    gpu::{Buffer, Copying, Gpu, Kernel, Readback, Staged, bytes_of, shaders},
     qwen_dit::rotary,
     qwen2512_dit::{
         CHANNELS, DIM, HEAD, HEADS, HIDDEN, PAIRS, Qwen2512Dit, patchify, positions, unpatchify,
@@ -122,7 +122,9 @@ fn plain_int8(
     let mut scales = Vec::with_capacity(rows);
     for (tensor, to) in tensors.iter().zip(to.chunks_exact_mut(per_part * columns)) {
         if file.is_i8(tensor) {
-            let base = tensor.strip_suffix(".weight").ok_or("model_tensor_invalid")?;
+            let base = tensor
+                .strip_suffix(".weight")
+                .ok_or("model_tensor_invalid")?;
             scales.extend(file.f32(&format!("{base}.weight_scale"), &[per_part, 1])?);
             file.i8_part_into(tensor, &[per_part, columns], 0, to)?;
         } else {
@@ -140,8 +142,15 @@ fn plain_int8(
 /// Modulation rows in host memory, evaluated on the CPU: exact FP8 bytes (ComfyUI's file),
 /// or INT8 in the rotated basis with a scale per row.
 enum Modulation {
-    Fp8 { weight: Vec<u8>, bias: Vec<f32> },
-    Int8 { weight: Vec<i8>, scales: Vec<f32>, bias: Vec<f32> },
+    Fp8 {
+        weight: Vec<u8>,
+        bias: Vec<f32>,
+    },
+    Int8 {
+        weight: Vec<i8>,
+        scales: Vec<f32>,
+        bias: Vec<f32>,
+    },
 }
 impl Modulation {
     fn load(file: &Safetensors, names: &[String], rows: usize) -> Result<Self, &'static str> {
@@ -402,6 +411,33 @@ impl Work {
     }
 }
 
+/// A step's modulation rows arriving from the CPU thread, uploaded in order: blocks
+/// `0..blocks`, then the head's.
+struct Mods<'a> {
+    receive: std::sync::mpsc::Receiver<Vec<f32>>,
+    uploaded: usize,
+    blocks: usize,
+    gpu: &'a Gpu,
+    mods: &'a Buffer,
+    final_mods: &'a Buffer,
+}
+impl Mods<'_> {
+    /// Waits until block `upto`'s rows (`blocks`: the head's) are on the device.
+    fn ready(&mut self, upto: usize) -> Result<(), &'static str> {
+        while self.uploaded <= upto.min(self.blocks) {
+            let rows = self.receive.recv().map_err(|_| "gpu_failed")?;
+            if self.uploaded == self.blocks {
+                self.gpu.upload(self.final_mods, 0, bytes_of(&rows))?;
+            } else {
+                let at = (self.uploaded * BLOCK_MODS * 4) as u64;
+                self.gpu.upload(self.mods, at, bytes_of(&rows))?;
+            }
+            self.uploaded += 1;
+        }
+        Ok(())
+    }
+}
+
 pub struct Qwen2512Vk {
     gpu: Gpu,
     kernels: Kernels,
@@ -410,8 +446,9 @@ pub struct Qwen2512Vk {
     img_in: (Buffer, Buffer),
     proj_out: (Buffer, Buffer),
     final_modulation: Modulation,
-    /// The device slot host-memory blocks are copied into.
-    slot: Option<Buffer>,
+    /// The two device slots host-memory blocks are copied into: the next one's copy runs
+    /// while a block computes.
+    slots: Vec<Buffer>,
     /// This step's modulation rows `[block][stream][6 * DIM]`, and the head's (scale, shift).
     mods: Buffer,
     final_mods: Buffer,
@@ -421,17 +458,21 @@ impl Qwen2512Vk {
     pub fn load(gpu: Gpu, path: &Path) -> Result<Self, &'static str> {
         let model = Qwen2512Dit::open(path)?;
         let kernels = Kernels::new(&gpu)?;
-        // Blocks are resident while the budget leaves room for a block slot and the reserve.
+        // Blocks are resident while the budget leaves room for two block slots and the
+        // reserve.
         let free = gpu.free_memory().unwrap_or(u64::MAX);
-        let spare = free.saturating_sub(RESERVE + BLOCK_BYTES as u64);
+        let spare = free.saturating_sub(RESERVE + 2 * BLOCK_BYTES as u64);
         let resident = (spare / BLOCK_BYTES as u64) as usize;
         let layers = (0..model.layers)
             .map(|layer| Layer::load(&gpu, &model, layer, layer < resident))
             .collect::<Result<Vec<_>, _>>()?;
-        let slot = if resident < model.layers {
-            Some(gpu.buffer(BLOCK_BYTES as u64)?)
+        let slots = if resident < model.layers {
+            vec![
+                gpu.buffer(BLOCK_BYTES as u64)?,
+                gpu.buffer(BLOCK_BYTES as u64)?,
+            ]
         } else {
-            None
+            Vec::new()
         };
         let small = Small::read(&model)?;
         let f = |name: &str, shape: &[usize]| model.floats(name, shape);
@@ -445,8 +486,11 @@ impl Qwen2512Vk {
             "proj_out.bias",
             &[CHANNELS],
         )?;
-        let final_modulation =
-            Modulation::load(&model.file, &[model.name("norm_out.linear.weight")], 2 * DIM)?;
+        let final_modulation = Modulation::load(
+            &model.file,
+            &[model.name("norm_out.linear.weight")],
+            2 * DIM,
+        )?;
         let mods = gpu.buffer((layers.len() * BLOCK_MODS * 4) as u64)?;
         let final_mods = gpu.buffer((2 * DIM * 4) as u64)?;
         Ok(Self {
@@ -457,7 +501,7 @@ impl Qwen2512Vk {
             img_in,
             proj_out,
             final_modulation,
-            slot,
+            slots,
             mods,
             final_mods,
             work: Mutex::new(HashMap::new()),
@@ -513,65 +557,115 @@ impl Qwen2512Vk {
         for group in rotated.chunks_exact_mut(GROUP) {
             rotate(group.try_into().map_err(|_| "gpu_failed")?);
         }
-        let mut mods = vec![0f32; self.layers.len() * BLOCK_MODS];
-        for (layer, out) in self.layers.iter().zip(mods.chunks_exact_mut(BLOCK_MODS)) {
-            layer.modulation.apply(t, &rotated, out);
-        }
-        gpu.upload(&self.mods, 0, bytes_of(&mods))?;
-        let mut final_mods = vec![0f32; 2 * DIM];
-        self.final_modulation.apply(t, &rotated, &mut final_mods);
-        gpu.upload(&self.final_mods, 0, bytes_of(&final_mods))?;
-        let rows = patchify(x, height, width);
-        let passes: Vec<&Work> = prompts
-            .iter()
-            .map(|p| &works[&(height, width, p.tokens)])
-            .collect();
-        let mut calls = Vec::new();
-        for (w, prompt) in passes.iter().zip(prompts) {
-            gpu.upload(&w.rows, 0, bytes_of(&rows))?;
-            gpu.upload(&w.streams[TEXT].x, 0, bytes_of(&prompt.rows))?;
-            self.start(&mut calls, w);
-        }
-        run(gpu, &calls)?;
-        for (index, layer) in self.layers.iter().enumerate() {
-            let matrices = match &layer.matrices {
-                Matrices::Device(buffer) => buffer,
-                Matrices::Host(staged) => {
-                    let slot = self.slot.as_ref().ok_or("gpu_failed")?;
-                    gpu.copy_staged(staged, slot, 0)?;
-                    slot
+        // This step's modulation rows on the CPU, shared by the passes, block by block on
+        // another thread while the GPU runs the earlier blocks (the head's last).
+        std::thread::scope(|scope| -> Result<Vec<Vec<f32>>, &'static str> {
+            let (send, receive) = std::sync::mpsc::channel::<Vec<f32>>();
+            let layers = &self.layers;
+            let final_modulation = &self.final_modulation;
+            let rotated = &rotated;
+            scope.spawn(move || {
+                for layer in layers {
+                    let mut out = vec![0f32; BLOCK_MODS];
+                    layer.modulation.apply(t, rotated, &mut out);
+                    if send.send(out).is_err() {
+                        return;
+                    }
+                }
+                let mut out = vec![0f32; 2 * DIM];
+                final_modulation.apply(t, rotated, &mut out);
+                let _ = send.send(out);
+            });
+            let mut mods = Mods {
+                receive,
+                uploaded: 0,
+                blocks: layers.len(),
+                gpu,
+                mods: &self.mods,
+                final_mods: &self.final_mods,
+            };
+            let rows = patchify(x, height, width);
+            let passes: Vec<&Work> = prompts
+                .iter()
+                .map(|p| &works[&(height, width, p.tokens)])
+                .collect();
+            // Host-memory blocks in order, each copied into the slot after the previous one's.
+            let streamed: Vec<(usize, &Staged)> = self
+                .layers
+                .iter()
+                .enumerate()
+                .filter_map(|(i, l)| match &l.matrices {
+                    Matrices::Host(staged) => Some((i, staged)),
+                    Matrices::Device(_) => None,
+                })
+                .collect();
+            let begin = |n: usize| -> Result<Option<Copying>, &'static str> {
+                match streamed.get(n) {
+                    Some((_, staged)) => {
+                        let slot = self.slots.get(n % 2).ok_or("gpu_failed")?;
+                        gpu.copy_staged_begin(staged, slot, 0).map(Some)
+                    }
+                    None => Ok(None),
                 }
             };
+            let mut copying = begin(0)?;
+            let mut next = 0;
+            let mut calls = Vec::new();
+            for (w, prompt) in passes.iter().zip(prompts) {
+                gpu.upload(&w.rows, 0, bytes_of(&rows))?;
+                gpu.upload(&w.streams[TEXT].x, 0, bytes_of(&prompt.rows))?;
+                self.start(&mut calls, w);
+            }
+            mods.ready(0)?;
+            run(gpu, &calls)?;
+            for (index, layer) in self.layers.iter().enumerate() {
+                // A block's end norms with the next block's modulation.
+                mods.ready(index + 1)?;
+                let matrices = match &layer.matrices {
+                    Matrices::Device(buffer) => buffer,
+                    Matrices::Host(_) => {
+                        if let Some(done) = copying.take() {
+                            done.wait()?;
+                        }
+                        let slot = self.slots.get(next % 2).ok_or("gpu_failed")?;
+                        // The other slot's last block has finished computing: fill it next.
+                        next += 1;
+                        copying = begin(next)?;
+                        slot
+                    }
+                };
+                let mut calls = Vec::new();
+                for w in &passes {
+                    self.block(&mut calls, w, index, matrices);
+                }
+                run(gpu, &calls)?;
+            }
+            mods.ready(self.layers.len())?;
             let mut calls = Vec::new();
             for w in &passes {
-                self.block(&mut calls, w, index, matrices);
+                let image = &w.streams[0];
+                calls.push(Call::Shader {
+                    kernel: &self.kernels.final_,
+                    buffers: vec![
+                        &image.x,
+                        &self.final_mods,
+                        &self.proj_out.0,
+                        &self.proj_out.1,
+                        &w.out,
+                    ],
+                    constants: vec![image.tokens as u32],
+                    groups: [image.tokens as u32, 1, 1],
+                });
             }
             run(gpu, &calls)?;
-        }
-        let mut calls = Vec::new();
-        for w in &passes {
-            let image = &w.streams[0];
-            calls.push(Call::Shader {
-                kernel: &self.kernels.final_,
-                buffers: vec![
-                    &image.x,
-                    &self.final_mods,
-                    &self.proj_out.0,
-                    &self.proj_out.1,
-                    &w.out,
-                ],
-                constants: vec![image.tokens as u32],
-                groups: [image.tokens as u32, 1, 1],
-            });
-        }
-        run(gpu, &calls)?;
-        let mut outputs = Vec::with_capacity(passes.len());
-        for w in &passes {
-            let mut result = vec![0f32; height * width * CHANNELS];
-            gpu.read_floats(&w.out, 0, &w.readback, &mut result)?;
-            outputs.push(unpatchify(&result, height, width));
-        }
-        Ok(outputs)
+            let mut outputs = Vec::with_capacity(passes.len());
+            for w in &passes {
+                let mut result = vec![0f32; height * width * CHANNELS];
+                gpu.read_floats(&w.out, 0, &w.readback, &mut result)?;
+                outputs.push(unpatchify(&result, height, width));
+            }
+            Ok(outputs)
+        })
     }
 
     /// The modulation offset of a stream in a block.
@@ -688,7 +782,14 @@ impl Qwen2512Vk {
             let b = Self::base(index, s);
             let norm = |add_scale: usize, add_bias: usize, gate: usize, next: usize| Call::Shader {
                 kernel: &k.norm,
-                buffers: vec![&work.x, &self.mods, &work.bytes, &work.scales, &work.sums, v],
+                buffers: vec![
+                    &work.x,
+                    &self.mods,
+                    &work.bytes,
+                    &work.scales,
+                    &work.sums,
+                    v,
+                ],
                 constants: vec![
                     work.tokens as u32,
                     next as u32,
@@ -768,8 +869,7 @@ mod tests {
         println!("{}", gpu.name());
         let started = std::time::Instant::now();
         let model =
-            Qwen2512Vk::load(gpu, Path::new(&std::env::var("KUNO_QWEN2512_DIT").unwrap()))
-                .unwrap();
+            Qwen2512Vk::load(gpu, Path::new(&std::env::var("KUNO_QWEN2512_DIT").unwrap())).unwrap();
         let (device, all) = model.resident();
         println!(
             "load {:.1} s, {device} of {all} blocks in device memory",
@@ -805,7 +905,14 @@ mod tests {
                 let prompt = model.prompt(&golden.context).unwrap();
                 let times = model.times(&[golden.timestep]).remove(0);
                 let theirs = model
-                    .step(&[&prompt], &golden.x, golden.height, golden.width, &times, false)
+                    .step(
+                        &[&prompt],
+                        &golden.x,
+                        golden.height,
+                        golden.width,
+                        &times,
+                        false,
+                    )
                     .unwrap()
                     .remove(0);
                 super::super::qwen_dit::tests::db(&theirs, &out)
