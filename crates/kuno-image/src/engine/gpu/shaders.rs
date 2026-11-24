@@ -13,6 +13,8 @@ pub const GEMM16_NV: &[u8] = include_bytes!("shaders/gemm16nv.spv");
 pub const FATTEND16: &[u8] = include_bytes!("shaders/fattend16.spv");
 /// `fattend16` on VK_NV_cooperative_matrix2 workgroup-scope matrices (64-query blocks).
 pub const FATTEND16_NV: &[u8] = include_bytes!("shaders/fattend16nv.spv");
+/// `fattend16nv` with int8 queries and keys, each row with a scale (fast attention).
+pub const FATTEND8_NV: &[u8] = include_bytes!("shaders/fattend8nv.spv");
 /// Qwen Image 2.1 queries, keys and values for `fattend16` from the INT8 product.
 pub const QKV16: &[u8] = include_bytes!("shaders/qkv16.spv");
 /// Qwen Image 2.1 feed-forward activation from the INT8 product, bf16 rows for `qhidq8`.

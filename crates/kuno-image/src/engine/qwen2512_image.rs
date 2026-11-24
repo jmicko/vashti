@@ -113,8 +113,8 @@ impl Dit {
             Self::Vulkan(dit) => dit.times(timesteps),
         }
     }
-    /// One step under each prompt; `fast` (int8 attention scores) is the Xe2 kernels'
-    /// option, and the Vulkan form runs standard attention.
+    /// One step under each prompt; `fast` scores attention with int8 queries and keys (on
+    /// Vulkan where the device has the kernel).
     fn step(
         &self,
         prompts: &[&DitPrompt],
@@ -126,7 +126,7 @@ impl Dit {
     ) -> Result<Vec<Vec<f32>>, &'static str> {
         match self {
             Self::Xe2(dit) => dit.step(prompts, x, height, width, times, fast),
-            Self::Vulkan(dit) => dit.step(prompts, x, height, width, times),
+            Self::Vulkan(dit) => dit.step(prompts, x, height, width, times, fast),
         }
     }
     /// Frees what only the steps need (the Vulkan pass buffers; the Xe2 ones hold kernels

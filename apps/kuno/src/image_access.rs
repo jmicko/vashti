@@ -352,7 +352,7 @@ fn describe(
                 reason: reason.map(str::to_owned),
                 reference_images_min: u32::from(edit),
                 reference_images_max: if edit { 10 } else { 0 },
-                attention: if *id == QWEN_RECIPE || !fast_attention {
+                attention: if !fast_attention {
                     vec!["standard".into()]
                 } else {
                     vec!["standard".into(), "fast".into()]
@@ -518,13 +518,14 @@ mod tests {
     }
 
     #[test]
-    fn fast_attention_is_advertised_only_for_a_supported_cuda_image_device() {
+    fn fast_attention_is_advertised_only_when_the_engine_takes_it() {
         let c = config();
-        let vulkan = describe(Some(&c), true, false, None, |_| true);
-        assert!(vulkan.workflows.iter().all(|w| w.attention == ["standard"]));
-        let cuda = describe(Some(&c), true, true, None, |_| true);
-        assert_eq!(cuda.workflows[0].attention, ["standard"]);
-        assert_eq!(cuda.workflows[1].attention, ["standard", "fast"]);
+        let without = describe(Some(&c), true, false, None, |_| true);
+        assert!(without.workflows.iter().all(|w| w.attention == ["standard"]));
+        // Every Qwen workflow, 2512 included.
+        let with = describe(Some(&c), true, true, None, |_| true);
+        assert!(!with.workflows.is_empty());
+        assert!(with.workflows.iter().all(|w| w.attention == ["standard", "fast"]));
     }
     #[tokio::test]
     async fn readiness_is_cached_and_has_no_private_paths() {

@@ -153,8 +153,9 @@ impl Gateway {
                 )
             })
             .transpose()?;
-        // The embedded engine's attention is standard only (fast attention: managed ABI 5+).
-        let image_fast_attention = false;
+        // The embedded engine takes fast attention per request (int8 queries and keys on the
+        // Intel and NVIDIA kernels; other GPUs run standard attention for it).
+        let image_fast_attention = crate::image_engine::EMBEDDED_ENGINE;
         let image_readiness =
             crate::image_access::ImageReadiness::new(config.image.as_ref(), image_fast_attention);
         Ok(Arc::new(Self {

@@ -18,7 +18,8 @@ use super::{
     gpu::{Buffer, Copying, Gpu, Kernel, Readback, Staged, bytes_of, shaders},
     qwen_dit::rotary,
     qwen2512_dit::{
-        CHANNELS, DIM, HEAD, HEADS, HIDDEN, PAIRS, Qwen2512Dit, patchify, positions, unpatchify,
+        CHANNELS, DIM, HEAD, HEADS, HIDDEN, PAIRS, Qwen2512Dit, outlier_norms, patchify,
+        positions, unpatchify,
     },
     qwen2512_gpu::{Prompt, Small, Times, float_matrix},
     safetensors::{Safetensors, fp8_e4m3},
@@ -81,6 +82,8 @@ struct Kernels {
     rotate8: Kernel,
     attend: Kernel,
     attend_block: u32,
+    /// Fast attention (int8 queries and keys), where the device has the kernel.
+    attend8: Option<Kernel>,
     embed: Kernel,
     final_: Kernel,
 }
@@ -95,7 +98,7 @@ impl Kernels {
             gemm8: gpu.gemm8()?,
             norm: gpu.kernel(shaders::Q25NORM, 6, 6, any)?,
             resid: gpu.kernel(shaders::Q25RESID, 5, 4, None)?,
-            qkv: gpu.kernel(shaders::Q25QKV, 7, 7, any)?,
+            qkv: gpu.kernel(shaders::Q25QKV, 11, 8, any)?,
             gelu: gpu.kernel(shaders::Q25GELU, 4, 3, None)?,
             hidq8: gpu.kernel(shaders::QHIDQ8, 4, 2, any)?,
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 4, any)?,
@@ -105,6 +108,11 @@ impl Kernels {
                 gpu.kernel(shaders::FATTEND16, 4, 7, Some(32))?
             },
             attend_block: if gpu.matrix2() { 64 } else { 32 },
+            attend8: if gpu.matrix2() {
+                Some(gpu.kernel(shaders::FATTEND8_NV, 6, 7, None)?)
+            } else {
+                None
+            },
             embed: gpu.kernel(shaders::Q25EMBED, 4, 1, None)?,
             final_: gpu.kernel(shaders::Q25FINAL, 5, 1, any)?,
         })
@@ -246,6 +254,8 @@ struct Layer {
     matrices: Matrices,
     vectors: [Buffer; 2],
     modulation: Modulation,
+    /// Its query/key norms have an outlier channel: fast mode keeps half-float attention here.
+    outlier: bool,
 }
 impl Layer {
     fn load(
@@ -329,6 +339,12 @@ impl Layer {
                 &[name("img_mod.1.weight"), name("txt_mod.1.weight")],
                 MOD_ROWS,
             )?,
+            outlier: outlier_norms(
+                &["norm_q", "norm_k", "norm_added_q", "norm_added_k"]
+                    .iter()
+                    .map(|n| file.floats(&name(&format!("attn.{n}.weight")), &[HEAD]))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
         })
     }
 }
@@ -364,6 +380,11 @@ struct Work {
     key: Buffer,
     value: Buffer,
     mixed: Buffer,
+    /// Fast attention's int8 queries and keys and their row scales.
+    query8: Buffer,
+    key8: Buffer,
+    query_scales: Buffer,
+    key_scales: Buffer,
     padded: usize,
     rows: Buffer,
     out: Buffer,
@@ -405,6 +426,10 @@ impl Work {
             key: gpu.buffer(halves)?,
             value: gpu.buffer(halves)?,
             mixed: gpu.buffer((padded * DIM * 4) as u64)?,
+            query8: gpu.buffer((HEADS * padded * HEAD) as u64)?,
+            key8: gpu.buffer((HEADS * padded * HEAD) as u64)?,
+            query_scales: gpu.buffer((HEADS * padded * 4) as u64)?,
+            key_scales: gpu.buffer((HEADS * padded * 4) as u64)?,
             padded,
             rows: gpu.buffer((image.next_multiple_of(PAD) * CHANNELS * 4) as u64)?,
             out: gpu.buffer((image * CHANNELS * 4) as u64)?,
@@ -544,6 +569,7 @@ impl Qwen2512Vk {
         height: usize,
         width: usize,
         times: &Times,
+        fast: bool,
     ) -> Result<Vec<Vec<f32>>, &'static str> {
         let gpu = &self.gpu;
         let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
@@ -638,7 +664,7 @@ impl Qwen2512Vk {
                 };
                 let mut calls = Vec::new();
                 for w in &passes {
-                    self.block(&mut calls, w, index, matrices);
+                    self.block(&mut calls, w, index, matrices, fast);
                 }
                 run(gpu, &calls)?;
             }
@@ -716,9 +742,11 @@ impl Qwen2512Vk {
         w: &'a Work,
         index: usize,
         matrices: &'a Buffer,
+        fast: bool,
     ) {
         let k = &self.kernels;
         let layer = &self.layers[index];
+        let attend8 = k.attend8.as_ref().filter(|_| fast && !layer.outlier);
         let last = index + 1 == self.layers.len();
         // Weight rows in dispatches of ROW_TILES tiles (measured faster on the RTX 3060).
         let product = |work: &'a StreamWork, s: usize, which: usize| {
@@ -755,6 +783,10 @@ impl Qwen2512Vk {
                     &w.query,
                     &w.key,
                     &w.value,
+                    &w.query8,
+                    &w.key8,
+                    &w.query_scales,
+                    &w.key_scales,
                 ],
                 constants: vec![
                     work.first as u32,
@@ -764,14 +796,19 @@ impl Qwen2512Vk {
                     KEY_NORM as u32,
                     QKV_SCALE as u32,
                     QKV_BIAS as u32,
+                    u32::from(attend8.is_some()),
                 ],
                 groups: [(3 * HEADS / 4) as u32, work.tokens as u32, 1],
             });
         }
         let total = (w.streams[0].tokens + w.streams[1].tokens) as u32;
         calls.push(Call::Shader {
-            kernel: &k.attend,
-            buffers: vec![&w.query, &w.key, &w.value, &w.mixed],
+            kernel: attend8.unwrap_or(&k.attend),
+            buffers: if attend8.is_some() {
+                vec![&w.query8, &w.key8, &w.value, &w.mixed, &w.query_scales, &w.key_scales]
+            } else {
+                vec![&w.query, &w.key, &w.value, &w.mixed]
+            },
             constants: vec![
                 total,
                 total,
@@ -905,7 +942,7 @@ mod tests {
             for _ in 0..2 {
                 let started = std::time::Instant::now();
                 out = model
-                    .step(&[&prompt], &golden.x, golden.height, golden.width, &times)
+                    .step(&[&prompt], &golden.x, golden.height, golden.width, &times, false)
                     .unwrap()
                     .remove(0);
                 best = best.min(started.elapsed().as_secs_f64());
@@ -937,6 +974,17 @@ mod tests {
                 against.map_or(String::new(), |a| format!(", {a:.1} dB from the Xe2 form"))
             );
             assert!(db > 22.0, "step {step}: {db:.1} dB");
+            let started = std::time::Instant::now();
+            let fast = model
+                .step(&[&prompt], &golden.x, golden.height, golden.width, &times, true)
+                .unwrap()
+                .remove(0);
+            let elapsed = started.elapsed().as_secs_f64();
+            println!(
+                "  fast attention {elapsed:.3} s: {:.1} dB from the capture, {:.1} dB from standard",
+                super::super::qwen_dit::tests::db(&golden.out, &fast),
+                super::super::qwen_dit::tests::db(&out, &fast)
+            );
             if let Some(a) = against {
                 assert!(a > 30.0, "step {step}: {a:.1} dB from the Xe2 form");
             }

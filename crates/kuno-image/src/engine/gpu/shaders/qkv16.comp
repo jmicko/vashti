@@ -26,6 +26,12 @@ layout(set = 0, binding = 5) writeonly buffer Keys { uvec4 k[]; };
 layout(set = 0, binding = 6) writeonly buffer Values { uvec4 vs[]; };
 layout(set = 0, binding = 7) writeonly buffer KeyCache { uvec4 ck[]; };
 layout(set = 0, binding = 8) writeonly buffer ValueCache { uvec4 cv[]; };
+// With `int8` (fast attention): queries and keys as int8 rows `[head][stride][128]` with a
+// scale per row (`[head][stride]`) instead of half floats.
+layout(set = 0, binding = 9) writeonly buffer Queries8 { uvec2 q8[]; };
+layout(set = 0, binding = 10) writeonly buffer Keys8 { uvec2 k8[]; };
+layout(set = 0, binding = 11) writeonly buffer QueryScales { float qs[]; };
+layout(set = 0, binding = 12) writeonly buffer KeyScales { float ks[]; };
 // Vector offsets are in values and multiples of 4.
 layout(push_constant) uniform Constants {
     uint tokens;
@@ -37,6 +43,7 @@ layout(push_constant) uniform Constants {
     uint store;
     uint store_first;
     uint capacity;
+    uint int8;
 } p;
 const uint HEADS = 32;
 const uint DIM4 = 1024;
@@ -62,13 +69,38 @@ void main() {
     if (part < 2) {
         float norm = 1.0 / sqrt(subgroupClusteredAdd(squares, 16) / 128.0 + 1e-6);
         uint weight = ((part == 0 ? p.query_norm : p.key_norm) >> 2) + lane * 2;
+        vec4 r[2];
+        float top = 0.0;
         for (uint j = 0; j < 2; j++) {
             vec4 a = mine[j] * (norm * v[weight + j]);
             vec4 t = live ? turn[token * 32 + lane * 2 + j] : vec4(1.0, 0.0, 1.0, 0.0);
-            vec4 r = vec4(t.x * a.x - t.y * a.y, t.y * a.x + t.x * a.y,
-                          t.z * a.z - t.w * a.w, t.w * a.z + t.z * a.w);
-            words[j * 2] = packHalf2x16(r.xy);
-            words[j * 2 + 1] = packHalf2x16(r.zw);
+            r[j] = vec4(t.x * a.x - t.y * a.y, t.y * a.x + t.x * a.y,
+                        t.z * a.z - t.w * a.w, t.w * a.z + t.z * a.w);
+            words[j * 2] = packHalf2x16(r[j].xy);
+            words[j * 2 + 1] = packHalf2x16(r[j].zw);
+            vec4 m = abs(r[j]);
+            top = max(top, max(max(m.x, m.y), max(m.z, m.w)));
+        }
+        if (p.int8 != 0) {
+            float scale = max(subgroupClusteredMax(top, 16), 1e-30) / 127.0;
+            uint packed[2];
+            for (uint j = 0; j < 2; j++) {
+                ivec4 b = ivec4(clamp(roundEven(r[j] / scale), -127.0, 127.0));
+                packed[j] = (uint(b.x) & 255u) | ((uint(b.y) & 255u) << 8)
+                    | ((uint(b.z) & 255u) << 16) | ((uint(b.w) & 255u) << 24);
+            }
+            uint row = head * (part == 0 ? p.query_stride : p.key_stride) + token;
+            if (part == 0) {
+                q8[row * 16 + lane] = uvec2(packed[0], packed[1]);
+                if (lane == 0) qs[row] = scale;
+                return;
+            }
+            k8[row * 16 + lane] = uvec2(packed[0], packed[1]);
+            if (lane == 0) ks[row] = scale;
+            if (p.store != 0)
+                ck[(head * p.capacity + p.store_first + token) * 16 + lane] =
+                    uvec4(words[0], words[1], words[2], words[3]);
+            return;
         }
     } else {
         for (uint j = 0; j < 2; j++) {

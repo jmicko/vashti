@@ -254,8 +254,8 @@ impl Dit {
             dit.release_work();
         }
     }
-    /// One step; `fast` (int8 attention scores) is the Xe2 kernels' option, and the Vulkan
-    /// form runs standard attention.
+    /// One step; `fast` scores attention with int8 queries and keys (on Vulkan where the
+    /// device has the kernel).
     fn step_with(
         &self,
         prefix: &Prefix,
@@ -265,7 +265,7 @@ impl Dit {
     ) -> Result<Vec<f32>, &'static str> {
         match (self, prefix) {
             (Self::Xe2(dit), Prefix::Xe2(prefix)) => dit.step_with(prefix, x, times, fast),
-            (Self::Vulkan(dit), Prefix::Vulkan(prefix)) => dit.step_at(prefix, x, times),
+            (Self::Vulkan(dit), Prefix::Vulkan(prefix)) => dit.step_with(prefix, x, times, fast),
             _ => Err("gpu_failed"),
         }
     }

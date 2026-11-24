@@ -50,6 +50,8 @@ struct Kernels {
     gate: Kernel,
     copy: Kernel,
     attend: Kernel,
+    /// Fast attention (int8 queries and keys), where the device has the kernel.
+    attend8: Option<Kernel>,
     /// Queries per `attend` workgroup.
     attend_block: u32,
     embed: Kernel,
@@ -69,15 +71,20 @@ impl Kernels {
             resid8: gpu.kernel(shaders::QRESID8, 5, 3, None)?,
             rotate8: gpu.kernel(shaders::ROTATE8, 3, 4, any)?,
             hidq8: gpu.kernel(shaders::QHIDQ8, 4, 2, any)?,
-            qkv: gpu.kernel(shaders::QKV16, 9, 9, any)?,
+            qkv: gpu.kernel(shaders::QKV16, 13, 10, any)?,
             gate: gpu.kernel(shaders::QGATE16, 4, 2, None)?,
-            copy: gpu.kernel(shaders::QCOPY16, 4, 4, None)?,
+            copy: gpu.kernel(shaders::QCOPY16, 6, 5, any)?,
             attend: if gpu.matrix2() {
                 gpu.kernel(shaders::FATTEND16_NV, 4, 7, None)?
             } else {
                 gpu.kernel(shaders::FATTEND16, 4, 7, Some(32))?
             },
             attend_block: if gpu.matrix2() { 64 } else { 32 },
+            attend8: if gpu.matrix2() {
+                Some(gpu.kernel(shaders::FATTEND8_NV, 6, 7, None)?)
+            } else {
+                None
+            },
             embed: gpu.kernel(shaders::QEMBED, 3, 1, None)?,
             final_: gpu.kernel(shaders::QFINAL, 4, 1, any)?,
         })
@@ -159,6 +166,13 @@ struct Work {
     key: Buffer,
     value: Buffer,
     mixed: Buffer,
+    /// Fast attention's int8 queries and keys and their row scales.
+    query8: Buffer,
+    key8: Buffer,
+    query_scales: Buffer,
+    key_scales: Buffer,
+    /// Whether this pass uses fast attention.
+    fast: std::cell::Cell<bool>,
     out: Buffer,
     readback: Readback,
 }
@@ -171,7 +185,9 @@ impl Work {
             + 2 * MODS
             + DIM;
         let halves = padded * HIDDEN + HEADS * padded * HEAD + 2 * HEADS * keys * HEAD;
-        (f32s * 4 + padded * HIDDEN + halves * 2) as u64
+        // Fast attention's int8 rows and scales.
+        let fast = HEADS * (padded + keys) * (HEAD + 4);
+        (f32s * 4 + padded * HIDDEN + halves * 2 + fast) as u64
     }
     fn new(gpu: &Gpu, tokens: usize, earlier: usize) -> Result<Self, &'static str> {
         let padded = tokens.next_multiple_of(PAD);
@@ -198,6 +214,11 @@ impl Work {
             key: halves(HEADS * stride * HEAD)?,
             value: halves(HEADS * stride * HEAD)?,
             mixed: f32s(padded * DIM)?,
+            query8: gpu.buffer((HEADS * padded * HEAD) as u64)?,
+            key8: gpu.buffer((HEADS * stride * HEAD) as u64)?,
+            query_scales: f32s(HEADS * padded)?,
+            key_scales: f32s(HEADS * stride)?,
+            fast: std::cell::Cell::new(false),
             out: f32s(padded * CHANNELS)?,
             readback: gpu.readback((padded * CHANNELS) as u64 * 4)?,
         })
@@ -320,6 +341,7 @@ impl QwenVk {
             let tokens = segment.end - segment.start;
             let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
             let work = Self::work_for(&mut works, gpu, tokens, segment.start)?;
+            work.fast.set(false);
             let mut turns: Vec<f32> = rotary[segment.start * PAIRS..segment.end * PAIRS]
                 .iter()
                 .flatten()
@@ -418,11 +440,24 @@ impl QwenVk {
         x: &[f32],
         times: &Times,
     ) -> Result<Vec<f32>, &'static str> {
+        self.step_with(prefix, x, times, false)
+    }
+
+    /// As `step_at`; `fast` scores attention with int8 queries and keys where the device has
+    /// that kernel (else standard attention).
+    pub fn step_with(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+        fast: bool,
+    ) -> Result<Vec<f32>, &'static str> {
         let gpu = &self.gpu;
         let (height, width) = (prefix.height, prefix.width);
         let tokens = height * width;
         let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
         let w = Self::work_for(&mut works, gpu, tokens, prefix.length)?;
+        w.fast.set(fast && self.kernels.attend8.is_some());
         if w.turns_of.get() != prefix.id {
             let mut turns = prefix.turns.clone();
             turns.resize(w.padded * PAIRS * 2, 0.0);
@@ -554,6 +589,10 @@ impl QwenVk {
                 &w.value,
                 cache_keys,
                 cache_values,
+                &w.query8,
+                &w.key8,
+                &w.query_scales,
+                &w.key_scales,
             ],
             constants: vec![
                 n,
@@ -565,6 +604,7 @@ impl QwenVk {
                 u32::from(store.is_some()),
                 w.earlier.get() as u32,
                 capacity as u32,
+                u32::from(w.fast.get()),
             ],
             groups: [(3 * HEADS / 4) as u32, np, 1],
         });
@@ -577,20 +617,28 @@ impl QwenVk {
                 buffers: {
                     let (keys, values) =
                         rows.unwrap_or((&prefix.keys[index], &prefix.values[index]));
-                    vec![keys, values, &w.key, &w.value]
+                    vec![keys, values, &w.key, &w.value, &w.key8, &w.key_scales]
                 },
                 constants: vec![
                     w.earlier.get() as u32,
                     n,
                     w.stride as u32,
                     prefix.length.max(1) as u32,
+                    u32::from(w.fast.get()),
                 ],
                 groups: [(w.earlier.get() * 16).div_ceil(64) as u32, HEADS as u32, 1],
             });
         }
         calls.push(Call::Shader {
-            kernel: &k.attend,
-            buffers: vec![&w.query, &w.key, &w.value, &w.mixed],
+            kernel: match (&k.attend8, w.fast.get()) {
+                (Some(fast), true) => fast,
+                _ => &k.attend,
+            },
+            buffers: if w.fast.get() {
+                vec![&w.query8, &w.key8, &w.value, &w.mixed, &w.query_scales, &w.key_scales]
+            } else {
+                vec![&w.query, &w.key, &w.value, &w.mixed]
+            },
             constants: vec![
                 n,
                 (w.tokens + w.earlier.get()) as u32,
@@ -760,6 +808,11 @@ mod tests {
                 golden.timestep, golden.height, golden.width, prefix.length
             );
             assert!(db > 25.0, "step {step}: {db:.1} dB");
+            let times = model.times(&[golden.timestep]).remove(0);
+            let fast = model.step_with(&prefix, &golden.x, &times, true).unwrap();
+            let (fast_db, apart) = (super::super::qwen_dit::tests::db(&golden.out, &fast), super::super::qwen_dit::tests::db(&out, &fast));
+            println!("  fast attention: {fast_db:.1} dB ({apart:.1} dB from standard)");
+            assert!(fast_db > 25.0, "step {step} fast: {fast_db:.1} dB");
         }
     }
 }

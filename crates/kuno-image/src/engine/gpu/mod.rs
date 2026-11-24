@@ -1420,6 +1420,96 @@ mod tests {
             assert!(db > 40.0);
         }
     }
+    /// Fast attention (`fattend8nv`: int8 queries and keys with a scale per row) against an
+    /// exact softmax of the unrounded inputs, beside the half-precision kernel, and timed.
+    #[test]
+    #[ignore = "needs a GPU with VK_NV_cooperative_matrix2"]
+    fn fast_attention_matches_cpu() {
+        let gpu = Gpu::open(Select::Vendor(0x10de)).unwrap();
+        assert!(gpu.matrix2());
+        let fast = gpu.kernel(shaders::FATTEND8_NV, 6, 7, None).unwrap();
+        let plain = gpu.kernel(shaders::FATTEND16_NV, 4, 7, None).unwrap();
+        let scale = 1.0 / 128f32.sqrt();
+        for (heads, queries, keys, spread, causal) in
+            [(2usize, 90usize, 150usize, 3.0f32, true), (3, 100, 250, 1.0, false), (24, 4078, 4078, 1.5, false)]
+        {
+            let (qp, kp) = (queries.next_multiple_of(64), keys.next_multiple_of(64));
+            let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
+                let mut values = noise(heads * padded * 128, seed);
+                for (i, v) in values.iter_mut().enumerate() {
+                    *v = if (i / 128) % padded < live { widen(narrow(*v * spread)) } else { 0.0 };
+                }
+                values
+            };
+            let (q, k, v) = (make(qp, queries, 1, spread), make(kp, keys, 2, spread), make(kp, keys, 3, 1.0));
+            let quantize = |x: &[f32]| -> (Vec<u8>, Vec<f32>) {
+                let mut bytes = vec![0u8; x.len()];
+                let mut scales = Vec::with_capacity(x.len() / 128);
+                for (row, out) in x.chunks_exact(128).zip(bytes.chunks_exact_mut(128)) {
+                    let top = row.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-30) / 127.0;
+                    for (o, v) in out.iter_mut().zip(row) {
+                        *o = (v / top).round_ties_even().clamp(-127.0, 127.0) as i8 as u8;
+                    }
+                    scales.push(top);
+                }
+                (bytes, scales)
+            };
+            let ((q8, qs), (k8, ks)) = (quantize(&q), quantize(&k));
+            let up = |data: &[u8]| {
+                let b = gpu.buffer(data.len() as u64).unwrap();
+                gpu.upload(&b, 0, data).unwrap();
+                b
+            };
+            let halves16 = |x: &[f32]| up(bytes_of(&halves(x)));
+            let (bq, bk, bv) = (halves16(&q), halves16(&k), halves16(&v));
+            let (bq8, bk8) = (up(&q8), up(&k8));
+            let (bqs, bks) = (up(bytes_of(&qs)), up(bytes_of(&ks)));
+            let out = gpu.buffer((qp * heads * 128 * 4) as u64).unwrap();
+            let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits(), u32::from(causal)];
+            let mut results = Vec::new();
+            for (name, kernel, buffers) in [
+                ("half", &plain, vec![&bq, &bk, &bv, &out]),
+                ("int8", &fast, vec![&bq8, &bk8, &bv, &out, &bqs, &bks]),
+            ] {
+                let mut best = f64::MAX;
+                for _ in 0..3 {
+                    let started = std::time::Instant::now();
+                    gpu.pass(&[Step { kernel, buffers: &buffers, constants: &constants, groups: [(qp / 64) as u32, heads as u32, 1] }]).unwrap();
+                    best = best.min(started.elapsed().as_secs_f64() * 1e3);
+                }
+                results.push((name, best, floats(&gpu.download(&out, 0, out.bytes() as usize).unwrap())));
+            }
+            for (name, best, got) in &results {
+                let (mut error, mut power) = (0f64, 0f64);
+                for check in 0..64 {
+                    let (head, query) = ((check * 7) % heads, (check * 2731) % queries);
+                    let qr = &q[(head * qp + query) * 128..][..128];
+                    let logits: Vec<f64> = (0..keys)
+                        .map(|key| {
+                            if causal && key < queries && key > query {
+                                return f64::NEG_INFINITY;
+                            }
+                            let kr = &k[(head * kp + key) * 128..][..128];
+                            qr.iter().zip(kr).map(|(a, b)| f64::from(a * b)).sum::<f64>() * f64::from(scale)
+                        })
+                        .collect();
+                    let top = logits.iter().copied().fold(f64::MIN, f64::max);
+                    let weights: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();
+                    let total: f64 = weights.iter().sum();
+                    for c in 0..128 {
+                        let want: f64 = (0..keys).map(|key| weights[key] * f64::from(v[(head * kp + key) * 128 + c])).sum::<f64>() / total;
+                        let have = f64::from(got[query * heads * 128 + head * 128 + c]);
+                        error += (have - want).powi(2);
+                        power += want.powi(2);
+                    }
+                }
+                let db = 10.0 * (power / error.max(1e-30)).log10();
+                println!("{heads} heads, {queries} x {keys}, causal {causal}, {name}: {best:.2} ms, {db:.1} dB");
+                assert!(db > 30.0);
+            }
+        }
+    }
+
     /// `KUNO_GPU_VENDOR=<hex> [KUNO_GEMM8_SPV=<file>]`: the INT8 product at Qwen 2.1's step
     /// shapes (8448 tokens), all rows in one dispatch against blocks of rows.
     #[test]

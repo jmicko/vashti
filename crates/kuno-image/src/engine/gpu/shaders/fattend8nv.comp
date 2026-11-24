@@ -1,0 +1,92 @@
+// fattend16nv.comp with int8 queries and keys (fast attention, SageAttention-style): the
+// scores are int32 products of int8 rows, each row of `q8` and `k8` with its own scale
+// (`[head][padded]` in `qs`, `ks`), so a score is `sum * qs * ks`; the weights and values stay
+// half precision as there. Same layouts otherwise (`q8`, `k8`: `[head][padded][128]` bytes).
+// Dispatch: x = padded queries / 64, y = heads.
+#version 460
+#define BR 64
+#define BC 64
+#define THREADS 128
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_NV_cooperative_matrix2 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = THREADS) in;
+layout(set = 0, binding = 0) readonly buffer Queries { uvec4 q[]; };
+layout(set = 0, binding = 1) readonly buffer Keys { uvec4 k[]; };
+layout(set = 0, binding = 2) readonly buffer Values { uvec4 v[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { float o[]; };
+layout(set = 0, binding = 4) readonly buffer QueryScales { float qs[]; };
+layout(set = 0, binding = 5) readonly buffer KeyScales { float ks[]; };
+layout(push_constant) uniform Constants {
+    uint queries; uint keys; uint query_padded; uint key_padded; uint heads; float scale; uint causal;
+} p;
+
+#define S coopmat<float, gl_ScopeWorkgroup, BR, BC, gl_MatrixUseAccumulator>
+
+float larger(const in float a, const in float b) { return max(a, b); }
+float sum(const in float a, const in float b) { return a + b; }
+float larger_of(const in uint r, const in uint c, const in float a, const in float b) { return max(a, b); }
+float power(const in uint r, const in uint c, const in float a) { return exp2(a); }
+float masked(const in uint r, const in uint c, const in float s, const in uint key0, const in uint query0) {
+    uint key = key0 + c, query = query0 + r;
+    bool seen = key < p.keys && (p.causal == 0 || key >= p.queries || key <= query);
+    return seen ? s : -1.0 / 0.0;
+}
+// Scales an integer score by its query's and key's scales (rows `qbase + r`, `kbase + c`).
+float scaled(const in uint r, const in uint c, const in float s, const in uint qbase, const in uint kbase) {
+    return s * qs[qbase + r] * ks[kbase + c];
+}
+
+void main() {
+    uint head = gl_WorkGroupID.y;
+    uint q0 = gl_WorkGroupID.x * BR;
+    // Byte rows are 8 words; half-precision value rows 16.
+    uint qrow = (head * p.query_padded + q0) * 8;
+    uint k8row = head * p.key_padded * 8;
+    uint krow = head * p.key_padded * 16;
+    coopmat<int8_t, gl_ScopeWorkgroup, BR, 128, gl_MatrixUseA> qa;
+    coopMatLoad(qa, q, qrow, 8, gl_CooperativeMatrixLayoutRowMajor);
+    S acc0 = S(0.0), acc1 = S(0.0);
+    S ref = S(-1e30), total = S(0.0);
+    float c2 = p.scale * 1.4426950408889634;
+    for (uint kb = 0; kb < p.keys; kb += BC) {
+        coopmat<int8_t, gl_ScopeWorkgroup, 128, BC, gl_MatrixUseB> kt;
+        coopMatLoad(kt, k, k8row + kb * 8, 8, gl_CooperativeMatrixLayoutColumnMajor);
+        coopmat<int32_t, gl_ScopeWorkgroup, BR, BC, gl_MatrixUseAccumulator> si =
+            coopmat<int32_t, gl_ScopeWorkgroup, BR, BC, gl_MatrixUseAccumulator>(0);
+        si = coopMatMulAdd(qa, kt, si);
+        S sc = S(si);
+        coopMatPerElementNV(sc, sc, scaled, head * p.query_padded + q0, head * p.key_padded + kb);
+        sc = sc * c2;
+        if (kb + BC > p.keys || (p.causal != 0 && kb < p.queries))
+            coopMatPerElementNV(sc, sc, masked, kb, q0);
+        S top;
+        coopMatReduceNV(top, sc, gl_CooperativeMatrixReduceRowNV, larger);
+        S next;
+        coopMatPerElementNV(next, top, larger_of, ref);
+        S factor = ref - next;
+        coopMatPerElementNV(factor, factor, power);
+        ref = next;
+        S w = sc - next;
+        coopMatPerElementNV(w, w, power);
+        S t;
+        coopMatReduceNV(t, w, gl_CooperativeMatrixReduceRowNV, sum);
+        total = total * factor + t;
+        coopmat<float16_t, gl_ScopeWorkgroup, BR, BC, gl_MatrixUseA> wa =
+            coopmat<float16_t, gl_ScopeWorkgroup, BR, BC, gl_MatrixUseA>(w);
+        coopmat<float16_t, gl_ScopeWorkgroup, BC, BC, gl_MatrixUseB> v0, v1;
+        coopMatLoad(v0, v, krow + kb * 16, 16, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(v1, v, krow + kb * 16 + 8, 16, gl_CooperativeMatrixLayoutRowMajor);
+        acc0 = coopMatMulAdd(wa, v0, acc0 * factor);
+        acc1 = coopMatMulAdd(wa, v1, acc1 * factor);
+    }
+    uint stride = p.heads * 128;
+    S r0 = acc0 / total, r1 = acc1 / total;
+    coopMatStore(r0, o, q0 * stride + head * 128, stride, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(r1, o, q0 * stride + head * 128 + 64, stride, gl_CooperativeMatrixLayoutRowMajor);
+}
