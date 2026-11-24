@@ -26,7 +26,6 @@ def load(name):
 
 
 runtime = load("package-image-runtime")
-notices = load("collect-native-notices")
 
 
 class RuntimePackageTests(unittest.TestCase):
@@ -41,7 +40,7 @@ class RuntimePackageTests(unittest.TestCase):
         worker[18:20] = b"\x3e\x00"
         (self.bundle / "worker").write_bytes(worker)
         (self.bundle / "libfixture.so.1").write_bytes(b"public test library")
-        self.manifest = dict(runtime.PINS, files=[
+        self.manifest = dict(runtime.PINS, worker_abi=6, files=[
             {"name": p.name, "bytes": p.stat().st_size,
              "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
             for p in sorted(self.bundle.iterdir())])
@@ -97,6 +96,11 @@ class RuntimePackageTests(unittest.TestCase):
         self.approve()
         with self.assertRaises(ValueError):
             runtime.package(self.bundle, self.checksum, self.root / "bad.tar.gz")
+        self.manifest["ggml_max_name"] = 160
+        self.manifest["worker_abi"] = 7
+        self.approve()
+        with self.assertRaises(ValueError):
+            runtime.package(self.bundle, self.checksum, self.root / "bad.tar.gz")
 
 
 class StandardPackageTests(unittest.TestCase):
@@ -106,22 +110,11 @@ class StandardPackageTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         scripts = self.root / "apps/kuno/scripts"
         scripts.mkdir(parents=True)
-        for name in ("package-release.sh", "collect-native-notices.py"):
-            shutil.copyfile(SCRIPTS / name, scripts / name)
+        shutil.copyfile(SCRIPTS / "package-release.sh", scripts / "package-release.sh")
         readme = self.root / "apps/kuno/packaging/README-install.txt"
         readme.parent.mkdir()
         readme.write_text("test setup instructions\n")
         (self.root / "LICENSE").write_text("test repository license\n")
-        self.source = self.root / "native-source"
-        for relative in notices.FILES.values():
-            path = self.source / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("test notice\n")
-        (self.source / "LICENSE").write_text("test copyright\nPermission is hereby granted test MIT text\n")
-        (self.source / "thirdparty/json.hpp").write_text("// test JSON copyright\n// SPDX-License-Identifier: MIT\n")
-        build = self.root / "native-build"
-        build.mkdir()
-        (build / "CMakeCache.txt").write_text("SD_CUDA:BOOL=OFF\n")
         stale = self.root / "target/release/kuno"
         stale.parent.mkdir(parents=True)
         self.elf = Path("/bin/true").read_bytes()
@@ -143,8 +136,7 @@ out.write_bytes(pathlib.Path("/bin/true").read_bytes() + b"FRESH_STANDARD_BINARY
         for path in mockbin.iterdir():
             path.chmod(0o755)
         self.env = dict(os.environ, PATH=f"{mockbin}:{os.environ['PATH']}",
-                        KUNO_DEV_SYCL_BUILD="0", KUNO_SD_SOURCE_DIR=str(self.source),
-                        KUNO_SD_BUILD_DIR=str(build), VERSION="0.0.0-packaging-test",
+                        VERSION="0.0.0-packaging-test",
                         CARGO_TARGET_DIR=str(self.root / "private target"),
                         CARGO_BUILD_TARGET="unrelated-private-target")
         self.archive = self.root / "apps/vashti/dist/release/v0.0.0-packaging-test/kuno-linux-x86_64.tar.gz"
@@ -158,20 +150,14 @@ out.write_bytes(pathlib.Path("/bin/true").read_bytes() + b"FRESH_STANDARD_BINARY
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         with tarfile.open(self.archive) as archive:
             self.assertEqual(archive.extractfile("kuno").read(), self.elf + b"FRESH_STANDARD_BINARY")
-            self.assertIn("licenses/NOTICE-miniz-source.txt", archive.getnames())
-            self.assertIn("licenses/LICENSE-json.txt", archive.getnames())
+            self.assertEqual(sorted(archive.getnames()),
+                             ["LICENSE", "README-install.txt", "VERSION", "kuno"])
         expected = hashlib.sha256(self.archive.read_bytes()).hexdigest()
         self.assertIn(expected, (self.archive.parent / "SHA256SUMS").read_text())
 
     def test_failed_build_never_packages_stale_binary(self):
         self.env["FAIL_BUILD"] = "1"
         self.assertNotEqual(self.run_package().returncode, 0)
-        self.assertFalse(self.archive.exists())
-
-    def test_private_worker_gate_rejects_before_build(self):
-        self.env["KUNO_DEV_SYCL_BUILD"] = "1"
-        self.assertNotEqual(self.run_package().returncode, 0)
-        self.assertFalse((self.root / "cargo-called").exists())
         self.assertFalse(self.archive.exists())
 
 

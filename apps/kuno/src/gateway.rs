@@ -153,18 +153,8 @@ impl Gateway {
                 )
             })
             .transpose()?;
-        let image_fast_attention = kuno_image::NATIVE_CUDA_ENABLED
-            && config.image.as_ref().is_some_and(|image| {
-                config.managed.as_ref().is_some_and(|pool| {
-                    pool.workers.iter().any(|worker| {
-                        matches!(worker.device, crate::worker::DeviceSelection::Cuda { .. })
-                            && worker
-                                .device
-                                .pci_address()
-                                .eq_ignore_ascii_case(&image.pci_address)
-                    })
-                })
-            });
+        // The embedded engine's attention is standard only (fast attention: managed ABI 5+).
+        let image_fast_attention = false;
         let image_readiness =
             crate::image_access::ImageReadiness::new(config.image.as_ref(), image_fast_attention);
         Ok(Arc::new(Self {

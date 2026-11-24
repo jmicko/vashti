@@ -18,8 +18,10 @@ import tarfile
 import tempfile
 
 
+# The manifest's fixed fields (the runtime id and the provenance fields the gateway checks,
+# kept from the C++ engine's runtimes); the worker ABI is any the gateway accepts.
 PINS = {
-    "version": 1, "id": "qwen21-sycl-2026.1-v1", "worker_abi": 3,
+    "version": 1, "id": "qwen21-sycl-2026.1-v1",
     "ggml_max_name": 160,
     "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
     "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
@@ -27,6 +29,7 @@ PINS = {
     "ggml_patch_sha256": "7298590faed44cad4733c78f6f6c2bf261b647712b5ec5f75840da450f0067dc",
     "sycl_patch_sha256": "3d1191da4eb004a25c52116fa30421c3a7b617fc4e854d416248b2d7b0070794",
 }
+WORKER_ABIS = range(1, 7)
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 
@@ -83,7 +86,8 @@ def package(directory, manifest_sha256, output):
         raw = stream.read(65537)
     require(len(raw) <= 65536 and hashlib.sha256(raw).hexdigest() == manifest_sha256)
     manifest = json.loads(raw, object_pairs_hook=unique_object)
-    require(set(manifest) == set(PINS) | {"files"})
+    require(set(manifest) == set(PINS) | {"files", "worker_abi"})
+    require(type(manifest["worker_abi"]) is int and manifest["worker_abi"] in WORKER_ABIS)
     require(all(type(manifest[key]) is type(value) and manifest[key] == value
                 for key, value in PINS.items()))
     entries = manifest["files"]

@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-# The image engine is Rust (`rust-image`). The older C++ engine (`native-image`) is exclusive
-# with it: build that with `--no-default-features --features native-image`.
+# The image engine (Rust); `--no-default-features` builds the gateway without one.
 default = ["rust-image"]
-native-image = ["kuno-image/native-sd"]
 rust-dit = ["kuno-image/rust-dit"]
 # The private image worker with every model in Rust (no C++ engine): the managed runtime's.
 rust-image = ["kuno-image/rust-image"]

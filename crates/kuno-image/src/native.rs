@@ -5,7 +5,6 @@ use kuno_protocol::ImageRecipe;
 mod pipeline;
 mod qwen;
 mod qwen2512;
-#[cfg(not(feature = "native-sd"))]
 mod rust_shim;
 use std::{
     ffi::{CString, c_char, c_void},
@@ -388,13 +387,6 @@ fn dit_resident(model: &std::path::Path) -> bool {
 pub(crate) fn evict_dit() {
     let kept = RESIDENT_DIT.lock().ok().and_then(|mut kept| kept.take());
     drop(kept);
-}
-/// Free host memory for the C++ engine's caches (none without it).
-fn host_available() -> u64 {
-    #[cfg(feature = "native-sd")]
-    return crate::host_memory::available();
-    #[cfg(not(feature = "native-sd"))]
-    0
 }
 /// Frees the Rust Qwen Image models (2.1 and 2512).
 pub(crate) fn evict_qwen() {
@@ -1016,7 +1008,7 @@ impl Session {
                     i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
                     references.as_mut_ptr(),
                     references.len() as i32,
-                    host_available(),
+                    0,
                     i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
                     receive,
                     previews.then_some(preview),

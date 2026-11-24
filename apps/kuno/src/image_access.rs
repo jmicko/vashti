@@ -318,7 +318,7 @@ fn describe(
         } else if int8_2512
             && !config.is_some_and(|c| {
                 c.uses_sycl(QWEN_RECIPE)
-                    || (c.engine.is_native() && crate::image_engine::EMBEDDED_RUST)
+                    || (c.engine.is_native() && crate::image_engine::EMBEDDED_ENGINE)
             })
         {
             // Only the Rust engine (embedded, or an ABI 6 managed runtime) reads the INT8

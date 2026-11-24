@@ -2789,7 +2789,6 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "base64 0.22.1",
- "cc",
  "crc32fast",
  "fancy-regex",
  "flacenc",

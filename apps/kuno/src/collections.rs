@@ -569,7 +569,7 @@ fn convert_one(
     );
     Ok(())
 }
-#[cfg(any(feature = "native-image", feature = "rust-image"))]
+#[cfg(feature = "rust-image")]
 fn convert_file(part: &str, input: &Path, output: &Path, source: &str) -> Result<()> {
     use kuno_image::engine::convert::{Part, convert};
     let part = match part {
@@ -582,7 +582,7 @@ fn convert_file(part: &str, input: &Path, output: &Path, source: &str) -> Result
         .map(|_| ())
         .map_err(|_| "model_conversion_failed")
 }
-#[cfg(not(any(feature = "native-image", feature = "rust-image")))]
+#[cfg(not(feature = "rust-image"))]
 fn convert_file(_: &str, _: &Path, _: &Path, _: &str) -> Result<()> {
     Err("model_conversion_not_in_this_build")
 }
