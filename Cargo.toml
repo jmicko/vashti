@@ -9,5 +9,6 @@ members = [
     "crates/kuno-image",
     "crates/kuno-text",
     "crates/kuno-audio",
+    "crates/kuno-glm",
 ]
 resolver = "3"
