@@ -212,7 +212,7 @@ pub fn sigmas(steps: usize, tokens: usize) -> Vec<f32> {
 /// shaders on any GPU with cooperative matrices.
 enum Dit {
     Xe2(Box<QwenGpu>),
-    Vulkan(QwenVk),
+    Vulkan(Box<QwenVk>),
 }
 enum Prefix {
     Xe2(qwen_gpu::Prefix),
@@ -227,7 +227,7 @@ impl Dit {
                 Err(error) => return Err(error),
             }
         }
-        QwenVk::load(gpu.clone(), path).map(Self::Vulkan)
+        Ok(Self::Vulkan(Box::new(QwenVk::load(gpu.clone(), path)?)))
     }
     fn prefix(
         &self,
