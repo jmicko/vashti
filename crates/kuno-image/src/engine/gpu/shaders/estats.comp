@@ -1,0 +1,49 @@
+// Video encoder group norm, first half: partial statistics of x[c][0..pixels] (row stride
+// `stride`) for each group of `per_group` channels, split in `gl_NumWorkGroups.y` slices.
+// Each slice writes (count, mean, sum of squared deviations from that mean), from two
+// passes over its values. Dispatch x = groups, y = slices.
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { float x[]; };
+layout(set = 0, binding = 1) writeonly buffer Partial { vec4 partial[]; };
+layout(push_constant) uniform Constants { uint per_group; uint pixels; uint stride; } p;
+
+shared float sums[32];
+
+float total(float value) {
+    value = subgroupAdd(value);
+    if (gl_SubgroupInvocationID == 0) sums[gl_SubgroupID] = value;
+    barrier();
+    float t = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) t += sums[i];
+    barrier();
+    return t;
+}
+
+void main() {
+    uint g = gl_WorkGroupID.x;
+    uint slices = gl_NumWorkGroups.y;
+    uint s = gl_WorkGroupID.y;
+    uint count = p.per_group * p.pixels;
+    uint share = count / slices, extra = count % slices;
+    uint begin = s * share + min(s, extra);
+    uint end = begin + share + (s < extra ? 1 : 0);
+    float sum = 0.0;
+    for (uint e = begin + gl_LocalInvocationIndex; e < end; e += 256) {
+        uint c = g * p.per_group + e / p.pixels;
+        sum += x[c * p.stride + e % p.pixels];
+    }
+    float n = float(end - begin);
+    float mean = total(sum) / max(n, 1.0);
+    float squares = 0.0;
+    for (uint e = begin + gl_LocalInvocationIndex; e < end; e += 256) {
+        uint c = g * p.per_group + e / p.pixels;
+        float d = x[c * p.stride + e % p.pixels] - mean;
+        squares += d * d;
+    }
+    squares = total(squares);
+    if (gl_LocalInvocationIndex == 0) partial[g * slices + s] = vec4(n, mean, squares, 0.0);
+}

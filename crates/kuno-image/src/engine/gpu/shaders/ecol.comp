@@ -1,0 +1,77 @@
+// Video encoder: unfolds a channel-major f32 activation x[ci][y * w_in + x] for one k x k
+// convolution (k = 1 or 3) into rows of half floats for gemm16:
+//   col[p][tap * inputs + ci], tap = ky * k + kx, for output pixels p of one chunk.
+// Positions past an edge reflect (stride 1 pads 1 on every side, stride 2 only on the far
+// sides). With `norm`, each value is first group-normalized and passed through SiLU:
+//   silu((v - mean[g]) * rstd[g] * gamma[ci] + beta[ci]), g = ci / per_group.
+// Columns from taps * inputs to `columns` are zeros, and so are pixels past `pixels`.
+// Dispatch x = ceil(inputs / 128), y = 256, z = chunk / 256; one invocation per (ci, p).
+#version 460
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer In { float x[]; };
+layout(set = 0, binding = 1) readonly buffer Stats { vec2 stats[]; };
+layout(set = 0, binding = 2) readonly buffer Vectors { float v[]; };
+layout(set = 0, binding = 3) writeonly buffer Col { float16_t col[]; };
+layout(push_constant) uniform Constants {
+    uint inputs;
+    uint w_in;
+    uint h_in;
+    uint in_stride;
+    uint w_out;
+    uint pixels;
+    uint first;
+    uint kernel;
+    uint stride;
+    uint pad;
+    uint columns;
+    uint norm;
+    uint per_group;
+    uint gamma_first;
+    uint beta_first;
+} p;
+
+uint reflect_index(int i, uint n) {
+    if (i < 0) return uint(-i);
+    if (uint(i) >= n) return 2 * n - 2 - uint(i);
+    return uint(i);
+}
+
+void main() {
+    uint ci = gl_WorkGroupID.x * 128 + gl_LocalInvocationID.x;
+    uint local = gl_WorkGroupID.z * 256 + gl_WorkGroupID.y;
+    uint q = p.first + local;
+    if (ci >= p.inputs) return;
+    uint taps = p.kernel * p.kernel;
+    uint row = local * p.columns;
+    if (ci == 0) {
+        for (uint c = taps * p.inputs; c < p.columns; c++) col[row + c] = float16_t(0.0);
+    }
+    if (q >= p.pixels) {
+        for (uint t = 0; t < taps; t++) col[row + t * p.inputs + ci] = float16_t(0.0);
+        return;
+    }
+    uint oy = q / p.w_out;
+    uint ox = q - oy * p.w_out;
+    float scale = 1.0, shift = 0.0;
+    if (p.norm != 0) {
+        vec2 s = stats[ci / p.per_group];
+        scale = s.y * v[p.gamma_first + ci];
+        shift = v[p.beta_first + ci] - s.x * scale;
+    }
+    uint base = ci * p.in_stride;
+    for (uint ky = 0; ky < p.kernel; ky++) {
+        uint iy = reflect_index(int(oy * p.stride + ky) - int(p.pad), p.h_in);
+        for (uint kx = 0; kx < p.kernel; kx++) {
+            uint ix = reflect_index(int(ox * p.stride + kx) - int(p.pad), p.w_in);
+            float value = x[base + iy * p.w_in + ix];
+            if (p.norm != 0) {
+                value = value * scale + shift;
+                value = value / (1.0 + exp(-value));
+            }
+            col[row + (ky * p.kernel + kx) * p.inputs + ci] = float16_t(value);
+        }
+    }
+}

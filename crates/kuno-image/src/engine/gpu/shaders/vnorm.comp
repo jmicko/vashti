@@ -1,0 +1,59 @@
+// Vision tower LayerNorm of each f32 row (eps 1e-6) with weight and bias, written as half
+// floats for gemm16:
+//   h[t][c] = (x[t][c] - mean) / sqrt(var + eps) * gamma[c] + beta[c]
+// Mean, then variance about it (two passes over the row). Rows from `count` up are zeros.
+// One workgroup per row; `width` is a multiple of 4. Dispatch x = rows.
+#version 460
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { float v[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { float16_t h[]; };
+layout(push_constant) uniform Constants { uint width; uint count; uint gamma_first; uint beta_first; } p;
+
+shared float part[256];
+
+float total(float value) {
+    uint i = gl_LocalInvocationID.x;
+    part[i] = value;
+    barrier();
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (i < s) part[i] += part[i + s];
+        barrier();
+    }
+    float sum = part[0];
+    barrier();
+    return sum;
+}
+
+void main() {
+    uint t = gl_WorkGroupID.x;
+    uint i = gl_LocalInvocationID.x;
+    uint quads = p.width / 4;
+    uint row = t * p.width;
+    if (t >= p.count) {
+        for (uint c = i; c < p.width; c += 256) h[row + c] = float16_t(0.0);
+        return;
+    }
+    float sum = 0.0;
+    for (uint q = i; q < quads; q += 256) {
+        vec4 a = x[t * quads + q];
+        sum += (a.x + a.y) + (a.z + a.w);
+    }
+    float mean = total(sum) / float(p.width);
+    float squares = 0.0;
+    for (uint q = i; q < quads; q += 256) {
+        vec4 d = x[t * quads + q] - mean;
+        squares += dot(d, d);
+    }
+    float rstd = inversesqrt(total(squares) / float(p.width) + 1e-6);
+    for (uint q = i; q < quads; q += 256) {
+        vec4 d = (x[t * quads + q] - mean) * rstd;
+        uint c = q * 4;
+        for (uint j = 0; j < 4; j++) {
+            h[row + c + j] = float16_t(d[j] * v[p.gamma_first + c + j] + v[p.beta_first + c + j]);
+        }
+    }
+}

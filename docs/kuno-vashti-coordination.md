@@ -110,6 +110,88 @@ This is the shared handoff between the **Build Kuno inference helper** task
 (Kuno backend) and the **Vashti** task (frontend and application integration).
 Repository contracts and decisions should survive switching tasks; neither task
 should depend on having the other's entire conversation history.
+
+**Kuno video contract change (2026-11-22): no duration or size caps, no cropping; memory
+decides. NOT installed; Vashti handoff below. Requested by the user:** "Kuno should just do
+the best it can with what it's given in the API"; limits and framing (crop, letterbox,
+black bars) are Vashti's choice, and failures must be graceful (no manual restarts).
+Branch `claude/rust-engine` (needs the Rust video pipeline, `0aa4f01b` and later).
+
+- **Accepted requests.** `frames` is any `5 + 17k` (5, 22, 39, ... 226, 243, ...);
+  `width` and `height` any multiple of 32 (so 1280x720 is not valid: use 1280x704 or
+  1280x736). The bounds left (frames <= 100001, sides <= 8192) only keep arithmetic safe.
+  New request shapes, so the current Vashti keeps working unchanged.
+- **Start and end frames are no longer cropped.** A frame of the clip's exact size is used
+  as is. A frame of any other size or shape is scaled with its aspect kept to about the
+  clip's area (sides multiples of 16) and the model composes it into the clip: a 4:3 or
+  portrait photo in a 16:9 clip becomes a full 16:9 scene without cropping or bars (tested).
+  Vashti should crop, letterbox or pad before sending when it wants that framing; note that
+  black bars sent in a frame stay in the video (the model treats them as content).
+  Reference images are unchanged (the model's own resize to at most the clip's area).
+- **Discovery.** `frames`, `max_pixels`, `min_dimension` and `max_dimension` stay, now as
+  the tested defaults (unchanged values) for clients without their own limits. New fields:
+  `frame_base` (5), `frame_step` (17) and `limits` (`"memory"`; older Kuno omits it, read
+  as `"advertised"`, meaning the old fields were enforced). Vashti should validate against
+  `frame_base`/`frame_step` and `dimension_multiple`, and apply its own product limits.
+- **Failures.** A clip that does not fit returns `image_gpu_memory_unavailable` (GPU) or
+  the new `image_host_memory_unavailable` (host RAM, checked before any GPU work), within
+  seconds; the gateway replaces the worker after any failed request, and the next request
+  succeeds. A failed GPU submission reports `image_vulkan_device_lost` as before.
+- **Measured on the B70 (dev worker, image-to-video, warm DiT):**
+
+  | Clip | Result |
+  |---|---|
+  | 832x544, 56 frames (2.3 s) | 38 s warm |
+  | 832x544, 243 frames (10.1 s) | 284 s (about 30 s per step) |
+  | 1280x704, 124 frames (5.2 s) | 298 s |
+  | 832x544, 481 frames (20 s) | `image_gpu_memory_unavailable` after 15 s; next clip OK |
+
+  Sampling time grows faster than length (attention), so a 10 s clip costs about 7 times a
+  2.3 s one. Suggested Vashti defaults: up to about 10 s at 832x544 or 5 s at 1280x704.
+- **Required Vashti changes:** validate frames as `frame_base + k * frame_step` and sizes
+  as multiples of `dimension_multiple` when `limits == "memory"`; move any cropping or
+  letterboxing of start/end frames into Vashti (or send the photo as is and let the model
+  compose it); show the two memory errors as "too long or too large for this server"; set
+  Vashti's own duration and size limits.
+
+**Kuno Rust engine, second model (2026-11-10): MiniMax H3 video decode in Rust on the GPU.
+Backend only, no contract change; NOT installed (the user asked to hold installs unless a
+rewrite brings a large speed gain; this one takes a warm 2.3 s clip from 59 s to 50 s).**
+Branch `claude/rust-engine`. The worker decodes video frames with `kuno-image`'s
+`engine::video_gpu` (Vulkan compute through `ash`, kernels in `engine/gpu/shaders`);
+stable-diffusion.cpp hands over the video latent (`sd_kuno_set_video_decoder`, patch 001)
+and decodes itself only if the Rust decoder reports failure. Frames agree with the C++
+decoder to 69.7 dB (its own distance from an exact decode is 70.9 dB), so clips are not
+byte-identical to earlier ones. No Vashti change is needed. Details and measurements:
+[Kuno Rust model engine](kuno-rust-engine.md).
+
+- Checks (2026-11-10): dev worker `7ac0b9ee…`: all seven video modes produce clips and
+  the Qwen image after video is OK; three same-seed clips are byte-identical; warm clip
+  49.9 to 50.1 s, first clip 62.8 s; no kernel GPU resets. Re-encoded frames are 43 to
+  45 dB PSNR from the previous worker's clips (two lossy encodes of near-identical frames).
+- Not yet done: install candidate and protected Qwen acceptance (to run before any
+  install).
+
+**Kuno Rust engine, first model (2026-11-09): MiniMax H3 audio decode in Rust. Backend
+only, no contract change; NOT installed yet (awaiting user approval).** Branch
+`claude/rust-engine`. See [Kuno Rust model engine](kuno-rust-engine.md) for the plan (one
+model at a time, each checked against an exact reference and the C++ engine) and status.
+The worker now decodes audio with `kuno-image`'s `engine::audio_vae` on CPU threads while
+the GPU decodes video; stable-diffusion.cpp hands over the audio latent
+(`sd_kuno_set_audio_latent_receiver`, patch 001) and no longer loads its audio VAE. Video
+frames are byte-identical; audio is closer to the model (129 dB from an exact decode
+against 51 dB before), so it differs slightly from earlier clips. `audio: false` now skips
+the audio decode. No Vashti change is needed.
+
+- Checks (2026-11-09): dev worker `4949209a…` (commit `5e7545f2`), all seven video modes
+  (image-to-video, first frame, text-only, first+last, last-only, 1 and 2 references):
+  video tracks byte-identical to the installed worker; audio 34 to 53 dB from the old
+  decoder, which is the old decoder's error (Rust stays above 109 dB from exact even on
+  latents far louder than real ones). Warm clip 59 s as before; Qwen image after video OK.
+- Protected Qwen acceptance with candidate `/usr/local/lib/kuno-test/qwen21-video-v3`
+  (manifest `b6e9e45b…`, ABI 4): passed, pixel-identical in all four runs, privacy checks
+  pass, no kernel GPU events. Runtime-only install; the installed gateway `e52c1cf2` stays.
+
 **Kuno video modes contract (2026-11-08): text-only, first/last frame and reference images.
 Installed 2026-11-09 and tested over HTTP; Vashti handoff below.** Requested by the user: describe a video without a first frame, first+last frame,
 and reference images. See [Kuno video generation](kuno-video.md). Additive for clients:

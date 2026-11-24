@@ -1,0 +1,16 @@
+// Adds rows to the text encoder stream: x[first + r][c] += d[from + r][c], one vec4 per
+// invocation. Dispatch x = width / 4 / 64, y = rows.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Rows { vec4 d[]; };
+// Row offsets in rows; `width` is a multiple of 256.
+layout(push_constant) uniform Constants { uint width; uint first; uint from; } p;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    uint r = gl_GlobalInvocationID.y;
+    uint width4 = p.width >> 2;
+    if (c >= width4) return;
+    x[(p.first + r) * width4 + c] += d[(p.from + r) * width4 + c];
+}

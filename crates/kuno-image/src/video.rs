@@ -181,45 +181,44 @@ pub fn validate_mp4(bytes: &[u8], max_bytes: usize) -> Result<Mp4Summary> {
     })
 }
 
-/// Scale an image to cover `width x height` (aspect preserved) and centre-crop it to RGB.
-/// Transparent pixels are composited over black. `code` names the input on failure.
-pub fn cover_rgb(
+/// A start or end frame for a clip of `width x height`: unchanged when it already has that
+/// size, otherwise scaled with its aspect ratio kept to about the clip's area, each side a
+/// multiple of 16 (what the video encoder takes). Nothing is cropped or padded: framing is
+/// the client's choice, and the model composes a frame of another shape into the clip.
+/// Transparent pixels are composited over black. Returns RGB and its size.
+pub fn keyframe_rgb(
     pixels: crate::references::Pixels,
     width: u32,
     height: u32,
     code: &'static str,
-) -> Result<Vec<u8>> {
-    use image::imageops::{FilterType, crop_imm, resize};
-    let crate::references::Pixels {
-        width: w,
-        height: h,
-        mut rgba,
-    } = pixels;
-    let scale = (f64::from(width) / f64::from(w)).max(f64::from(height) / f64::from(h));
-    let sw = ((f64::from(w) * scale).round() as u32).max(width);
-    let sh = ((f64::from(h) * scale).round() as u32).max(height);
+) -> Result<(Vec<u8>, u32, u32)> {
+    use image::imageops::{FilterType, resize};
+    let (w, h) = (pixels.width, pixels.height);
+    if w == 0 || h == 0 {
+        return Err(code);
+    }
+    if (w, h) == (width, height) {
+        return Ok((rgb(pixels), w, h));
+    }
+    let scale = ((f64::from(width) * f64::from(height)) / (f64::from(w) * f64::from(h))).sqrt();
+    let side = |n: u32| (((f64::from(n) * scale / 16.0).round() as u32) * 16).max(32);
+    let (sw, sh) = (side(w), side(h));
     if sw > 8192 || sh > 8192 {
+        let mut rgba = pixels.rgba;
         crate::worker_protocol::clear_bytes(&mut rgba);
         return Err(code);
     }
+    let mut rgba = pixels.rgba;
     let source = image::RgbaImage::from_raw(w, h, std::mem::take(&mut rgba)).ok_or(code)?;
-    let mut scaled = resize(&source, sw, sh, FilterType::Lanczos3);
+    let scaled = resize(&source, sw, sh, FilterType::Lanczos3);
     let mut source = source.into_raw();
     crate::worker_protocol::clear_bytes(&mut source);
-    let cropped = crop_imm(&scaled, (sw - width) / 2, (sh - height) / 2, width, height).to_image();
-    let mut out = Vec::with_capacity(width as usize * height as usize * 3);
-    for p in cropped.pixels() {
-        let a = u16::from(p[3]);
-        out.extend(
-            p.0[..3]
-                .iter()
-                .map(|c| ((u16::from(*c) * a + 127) / 255) as u8),
-        );
-    }
-    let mut cropped = cropped.into_raw();
-    crate::worker_protocol::clear_bytes(&mut cropped);
-    scaled.iter_mut().for_each(|b| *b = 0);
-    Ok(out)
+    let out = rgb(crate::references::Pixels {
+        width: sw,
+        height: sh,
+        rgba: scaled.into_raw(),
+    });
+    Ok((out, sw, sh))
 }
 
 /// RGB at the original size, transparent pixels composited over black. Reference images
@@ -240,30 +239,40 @@ pub fn rgb(pixels: crate::references::Pixels) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod cover_tests {
+mod keyframe_tests {
     use super::*;
-    #[test]
-    fn cover_fills_the_frame_and_crops_the_centre() {
-        // 400x100 image: left half red, right half blue; cover into 64x64 keeps the centre.
+    fn image(width: u32, height: u32) -> crate::references::Pixels {
+        // Left half red, right half blue.
         let mut rgba = Vec::new();
-        for _ in 0..100 {
-            for x in 0..400 {
-                rgba.extend(if x < 200 {
+        for _ in 0..height {
+            for x in 0..width {
+                rgba.extend(if x < width / 2 {
                     [255, 0, 0, 255]
                 } else {
                     [0, 0, 255, 255]
                 });
             }
         }
-        let pixels = crate::references::Pixels {
-            width: 400,
-            height: 100,
+        crate::references::Pixels {
+            width,
+            height,
             rgba,
-        };
-        let rgb = cover_rgb(pixels, 64, 64, "video_first_frame_invalid").unwrap();
-        assert_eq!(rgb.len(), 64 * 64 * 3);
+        }
+    }
+    #[test]
+    fn keyframes_keep_their_shape_and_content() {
+        // Exactly the clip's size: unchanged.
+        let (rgb, w, h) = keyframe_rgb(image(64, 32), 64, 32, "x").unwrap();
+        assert_eq!((w, h, rgb.len()), (64, 32, 64 * 32 * 3));
+        // 4:1 into a square clip of 64x64: same area, same shape, nothing cropped (both
+        // halves survive at the edges).
+        let (rgb, w, h) = keyframe_rgb(image(400, 100), 64, 64, "x").unwrap();
+        assert_eq!((w, h), (128, 32));
         assert_eq!(&rgb[..3], &[255, 0, 0]);
         assert_eq!(&rgb[rgb.len() - 3..], &[0, 0, 255]);
+        // Portrait into landscape: portrait.
+        let (_, w, h) = keyframe_rgb(image(480, 640), 832, 544, "x").unwrap();
+        assert!(h > w && w % 16 == 0 && h % 16 == 0);
     }
 }
 

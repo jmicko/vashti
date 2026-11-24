@@ -1,0 +1,24 @@
+// Video encoder group norm, second half: merges each group's slices (Chan's formula) into
+// (mean, 1 / sqrt(variance + 1e-6)). Dispatch x = groups / 64.
+#version 460
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Partial { vec4 partial[]; };
+layout(set = 0, binding = 1) writeonly buffer Stats { vec2 stats[]; };
+layout(push_constant) uniform Constants { uint groups; uint slices; } p;
+
+void main() {
+    uint g = gl_GlobalInvocationID.x;
+    if (g >= p.groups) return;
+    float n = 0.0, mean = 0.0, m2 = 0.0;
+    for (uint s = 0; s < p.slices; s++) {
+        vec4 b = partial[g * p.slices + s];
+        if (b.x == 0.0) continue;
+        float total = n + b.x;
+        float d = b.y - mean;
+        mean += d * b.x / total;
+        m2 += b.z + d * d * n * b.x / total;
+        n = total;
+    }
+    stats[g] = vec2(mean, inversesqrt(m2 / n + 1e-6));
+}

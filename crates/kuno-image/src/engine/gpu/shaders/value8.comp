@@ -1,0 +1,46 @@
+// DiT attention values from the INT8 query/key/value product, transposed for the mixing
+// product:  vt[head][channel][token] = sum * activation scale[token] * weight scale (f16).
+// One workgroup moves 32 tokens of one head through shared memory, so both the read
+// (token rows) and the write (channel rows) are contiguous. Padded tokens are zeros.
+// Dispatch: x = heads, y = padded tokens / 32.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Sums { ivec4 g[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { float as[]; };
+layout(set = 0, binding = 2) readonly buffer Vectors { vec4 v[]; };
+layout(set = 0, binding = 3) writeonly buffer Value { f16vec4 vt[]; };
+// `scale_first` is in values and a multiple of 4.
+layout(push_constant) uniform Constants { uint tokens; uint padded; uint scale_first; } p;
+const uint INNER4 = 1792;
+
+// [channel][token in block]
+shared float tile[4096];
+
+void main() {
+    uint head = gl_WorkGroupID.x;
+    uint first = gl_WorkGroupID.y * 32;
+    uint lane = gl_LocalInvocationIndex;
+    for (uint j = 0; j < 4; j++) {
+        uint index = lane + j * 256;
+        uint t = index >> 5, c = index & 31;
+        uint token = first + t;
+        float row_scale = token < p.tokens ? as[token] : 0.0;
+        vec4 value = vec4(g[token * (3 * INNER4) + 2 * INNER4 + head * 32 + c]) * row_scale
+            * v[(p.scale_first >> 2) + 2 * INNER4 + head * 32 + c];
+        for (uint e = 0; e < 4; e++) tile[(c * 4 + e) * 32 + t] = value[e];
+    }
+    memoryBarrierShared();
+    barrier();
+    for (uint j = 0; j < 4; j++) {
+        uint index = lane + j * 256;
+        uint channel = index >> 3, quad = index & 7;
+        uint at = channel * 32 + quad * 4;
+        vt[((head * 128 + channel) * p.padded + first) / 4 + quad] =
+            f16vec4(tile[at], tile[at + 1], tile[at + 2], tile[at + 3]);
+    }
+}

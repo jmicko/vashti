@@ -1,0 +1,23 @@
+// Gated activation between the text refiner's feed-forward projections, f32 to half floats:
+//   h[token][i] = silu(g[token][i]) * g[token][14336 + i]
+// One vec4 per invocation; tokens from `tokens` up are written as zeros.
+// Dispatch: x = 14336 / 4 / 64, y = padded tokens.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer In { vec4 g[]; };
+layout(set = 0, binding = 1) writeonly buffer Out { f16vec4 h[]; };
+layout(push_constant) uniform Constants { uint tokens; } p;
+const uint HIDDEN4 = 3584;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    vec4 u = g[token * 2 * HIDDEN4 + c];
+    vec4 w = g[token * 2 * HIDDEN4 + HIDDEN4 + c];
+    h[token * HIDDEN4 + c] = token < p.tokens ? f16vec4(u / (1.0 + exp(-u)) * w) : f16vec4(0.0);
+}

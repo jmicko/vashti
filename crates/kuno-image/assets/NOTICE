@@ -1,0 +1,5 @@
+qwen2-merges.txt is the byte-level BPE merge list of the Qwen2 tokenizer (as used by
+Qwen3-VL, the MiniMax H3 text encoder), Apache-2.0, Copyright Alibaba Cloud (Qwen team).
+It was extracted byte for byte from stable-diffusion.cpp's embedded copy
+(src/tokenizers/vocab/qwen_merges.hpp, MIT), which Kuno's pinned engine source uses, so
+the Rust and C++ tokenizers read identical data: 151387 merges, one per line.

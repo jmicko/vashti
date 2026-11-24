@@ -1,0 +1,59 @@
+// Vision tower attention weights for one head and one block of queries: a softmax over each
+// query's scores s[r][j] (row stride `stride`, j < count keys) scaled by 1 / sqrt(72),
+// written as half floats p[r][j] with zeros for keys from `count` up to `stride`, and zero
+// rows for queries (`first + r`) from `count` up. One workgroup per row of the block.
+#version 460
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Scores { float s[]; };
+layout(set = 0, binding = 1) writeonly buffer Weights { float16_t w[]; };
+layout(push_constant) uniform Constants { uint count; uint stride; uint first; } p;
+
+shared float part[256];
+
+float reduce_max(float value) {
+    uint i = gl_LocalInvocationID.x;
+    part[i] = value;
+    barrier();
+    for (uint n = 128; n > 0; n >>= 1) {
+        if (i < n) part[i] = max(part[i], part[i + n]);
+        barrier();
+    }
+    float r = part[0];
+    barrier();
+    return r;
+}
+float reduce_sum(float value) {
+    uint i = gl_LocalInvocationID.x;
+    part[i] = value;
+    barrier();
+    for (uint n = 128; n > 0; n >>= 1) {
+        if (i < n) part[i] += part[i + n];
+        barrier();
+    }
+    float r = part[0];
+    barrier();
+    return r;
+}
+
+void main() {
+    uint t = gl_WorkGroupID.x;
+    uint i = gl_LocalInvocationID.x;
+    uint row = t * p.stride;
+    if (p.first + t >= p.count) {
+        for (uint j = i; j < p.stride; j += 256) w[row + j] = float16_t(0.0);
+        return;
+    }
+    const float scale = 0.1178511302; // 1 / sqrt(72)
+    float top = -1e30;
+    for (uint j = i; j < p.count; j += 256) top = max(top, s[row + j]);
+    top = reduce_max(top) * scale;
+    float sum = 0.0;
+    for (uint j = i; j < p.count; j += 256) sum += exp(s[row + j] * scale - top);
+    float inv = 1.0 / reduce_sum(sum);
+    for (uint j = i; j < p.stride; j += 256) {
+        w[row + j] = float16_t(j < p.count ? exp(s[row + j] * scale - top) * inv : 0.0);
+    }
+}

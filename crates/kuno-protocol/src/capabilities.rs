@@ -45,6 +45,9 @@ pub struct VideoCapabilities {
     pub workflows: Vec<VideoWorkflowCapability>,
 }
 
+fn advertised() -> String {
+    "advertised".into()
+}
 fn unsupported() -> String {
     "unsupported".into()
 }
@@ -66,7 +69,22 @@ pub struct VideoWorkflowCapability {
     #[serde(default)]
     pub steps: u32,
     pub fps: u32,
+    /// Tested frame counts, a default for clients; any `frame_base + k * frame_step` is
+    /// accepted (see below).
     pub frames: Vec<u32>,
+    /// Frame counts the model accepts: `frame_base + k * frame_step`, k >= 0. Absent from
+    /// older Kuno (only `frames` was accepted).
+    #[serde(default)]
+    pub frame_base: u32,
+    #[serde(default)]
+    pub frame_step: u32,
+    /// "memory" when Kuno sets no size or duration limit and a request that does not fit
+    /// fails with `image_gpu_memory_unavailable` or `image_host_memory_unavailable`;
+    /// "advertised" (older Kuno) when `frames`, `max_pixels` and the dimension bounds are
+    /// enforced.
+    #[serde(default = "advertised")]
+    pub limits: String,
+    /// The tested largest width x height, a default for clients.
     pub max_pixels: u32,
     pub dimension_multiple: u32,
     pub min_dimension: u32,

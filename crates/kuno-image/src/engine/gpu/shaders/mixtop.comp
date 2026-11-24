@@ -1,0 +1,159 @@
+// Attention mixing with a true softmax's weights computed on the way in:
+//   out[z][q][r] = sum_k exp((score[z][q][k] + best[z][q][k / 128] - top[z][q]) * scale)
+//                        * value[z][r][k]
+// over live keys, for scores as `scoremax` leaves them: half precision, relative to the row's
+// largest score in each key tile (`best`). `rowmax` supplies each row's largest score
+// overall, so weights lie in 0..1. The weights never exist in video memory: the lanes that copy a
+// query's scores to shared memory turn them into half-precision weights on the way, and sum
+// the rounded weights (two partial sums per query, in slots 0 and 1 of eight) for `merge8`
+// to divide by.
+//
+// The product is gemm16.comp's plan with the tile turned: 256 queries x 128 value rows per
+// workgroup, eight accumulators (32 queries x 32 rows) per subgroup, 16 keys per step,
+// scores requested one step ahead of the multiply. The caller pads queries and keys to
+// multiples of 256; `value` holds 128 rows per z.
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// Keep half-precision subnormals (tiny weights) instead of reading them as zero.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 512) in;
+layout(set = 0, binding = 0) readonly buffer Scores { uvec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Value { uvec4 w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { float y[]; };
+layout(set = 0, binding = 3) readonly buffer Top { float top[]; };
+layout(set = 0, binding = 4) writeonly buffer Sums { float sums[]; };
+layout(set = 0, binding = 5) readonly buffer Best { float best[]; };
+// Offsets are in values and multiples of 8.
+layout(push_constant) uniform Constants {
+    uint columns;
+    uint in_first;
+    uint in_batch;
+    uint weight_first;
+    uint weight_batch;
+    uint out_first;
+    uint out_batch;
+    uint out_stride;
+    uint keys;
+    // Index of this dispatch's first row (z = 0, token 0) in `top` and `sums`, the rows per z,
+    // and the score scale.
+    uint row_first;
+    uint row_batch;
+    float scale;
+    // `best`'s values per token; its rows are this dispatch's z and token.
+    uint best_stride;
+} p;
+
+// Per buffer: 256 queries x 2 words of weights, 128 value rows x 2 words.
+shared uvec4 a[1024];
+shared uvec4 b[512];
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
+
+float highest;
+float total = 0.0;
+
+// Index in `best` of this lane's query row.
+uint tiles;
+
+// Eight relative scores (keys `key` ..) to packed half-precision weights; adds what was kept.
+uvec4 weights(uvec4 scores, uint key) {
+    float shift = best[tiles + (key >> 7)] - highest;
+    vec4 s0 = vec4(unpackHalf2x16(scores.x), unpackHalf2x16(scores.y)) + shift;
+    vec4 s1 = vec4(unpackHalf2x16(scores.z), unpackHalf2x16(scores.w)) + shift;
+    vec4 w0 = mix(vec4(0.0), exp(s0 * p.scale),
+                  lessThan(uvec4(key) + uvec4(0, 1, 2, 3), uvec4(p.keys)));
+    vec4 w1 = mix(vec4(0.0), exp(s1 * p.scale),
+                  lessThan(uvec4(key) + uvec4(4, 5, 6, 7), uvec4(p.keys)));
+    uvec4 packed = uvec4(packHalf2x16(w0.xy), packHalf2x16(w0.zw), packHalf2x16(w1.xy),
+                         packHalf2x16(w1.zw));
+    vec2 k0 = unpackHalf2x16(packed.x) + unpackHalf2x16(packed.y);
+    vec2 k1 = unpackHalf2x16(packed.z) + unpackHalf2x16(packed.w);
+    total += k0.x + k0.y + k1.x + k1.y;
+    return packed;
+}
+
+void main() {
+    uint sg = gl_SubgroupID;
+    uint lane = sg * 16 + gl_SubgroupInvocationID;
+    uint am = (sg >> 2) * 32;
+    uint bn = (sg & 3) * 32;
+    uint token = gl_WorkGroupID.y * 256;
+    uint z = gl_WorkGroupID.z;
+    // Every lane copies half a step (8 keys) of one query; the first 256 lanes also one word
+    // of a value row.
+    uint mine = p.row_first + z * p.row_batch + token + (lane >> 1);
+    uint side = (lane & 1) * 8;
+    bool copies = lane < 256;
+    uint in8 = ((p.in_first + z * p.in_batch) >> 3) + (token + (lane >> 1)) * (p.columns >> 3)
+        + (lane & 1);
+    tiles = (z * p.row_batch + token + (lane >> 1)) * p.best_stride;
+    uint weight8 = ((p.weight_first + z * p.weight_batch) >> 3) + (lane >> 1) * (p.columns >> 3)
+        + (lane & 1);
+    highest = top[mine];
+    uvec4 ts, tb;
+    A a0, a1, a2, a3;
+    B b0, b1;
+    C c00 = C(0.0), c01 = C(0.0), c10 = C(0.0), c11 = C(0.0);
+    C c20 = C(0.0), c21 = C(0.0), c30 = C(0.0), c31 = C(0.0);
+    a[lane] = weights(x[in8], side);
+    if (copies) {
+        b[lane] = w[weight8];
+    }
+    memoryBarrierShared();
+    barrier();
+    uint cur = 0;
+    for (uint k = 0; k < p.columns; k += 16) {
+        uint next = 1 - cur;
+        bool more = k + 16 < p.columns;
+        if (more) {
+            ts = x[in8 + ((k + 16) >> 3)];
+            if (copies) {
+                tb = w[weight8 + ((k + 16) >> 3)];
+            }
+        }
+        uint aa = cur * 512 + am * 2;
+        uint bb = cur * 256 + bn * 2;
+        coopMatLoad(a0, a, aa, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a1, a, aa + 16, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a2, a, aa + 32, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a3, a, aa + 48, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(b0, b, bb, 2, gl_CooperativeMatrixLayoutColumnMajor);
+        coopMatLoad(b1, b, bb + 32, 2, gl_CooperativeMatrixLayoutColumnMajor);
+        c00 = coopMatMulAdd(a0, b0, c00);
+        c10 = coopMatMulAdd(a1, b0, c10);
+        c20 = coopMatMulAdd(a2, b0, c20);
+        c30 = coopMatMulAdd(a3, b0, c30);
+        c01 = coopMatMulAdd(a0, b1, c01);
+        c11 = coopMatMulAdd(a1, b1, c11);
+        c21 = coopMatMulAdd(a2, b1, c21);
+        c31 = coopMatMulAdd(a3, b1, c31);
+        if (more) {
+            a[next * 512 + lane] = weights(ts, k + 16 + side);
+            if (copies) {
+                b[next * 256 + lane] = tb;
+            }
+        }
+        memoryBarrierShared();
+        barrier();
+        cur = next;
+    }
+    sums[mine * 8 + (lane & 1)] = total;
+    uint first = p.out_first + z * p.out_batch + (token + am) * p.out_stride + bn;
+    uint s = p.out_stride;
+    coopMatStore(c00, y, first, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c01, y, first + 16, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c10, y, first + 8 * s, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c11, y, first + 8 * s + 16, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c20, y, first + 16 * s, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c21, y, first + 16 * s + 16, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c30, y, first + 24 * s, s, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c31, y, first + 24 * s + 16, s, gl_CooperativeMatrixLayoutRowMajor);
+}

@@ -1,0 +1,43 @@
+// RMS normalization of each 5376-wide token row of an f32 stream with a weight, written as
+// half floats (the text refiner's block inputs):
+//   h = x / sqrt(mean(x^2) + 1e-5) * weight
+// Rows from `tokens` up are written as zeros. One workgroup per token; lanes read
+// neighbouring vec4s.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { vec4 v[]; };
+layout(set = 0, binding = 2) writeonly buffer Half { f16vec4 h[]; };
+// `weight_first` is in values and a multiple of 4.
+layout(push_constant) uniform Constants { uint tokens; uint weight_first; } p;
+const uint DIM4 = 1344;
+
+shared float part[64];
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint base = token * DIM4;
+    uint lane = gl_LocalInvocationIndex;
+    bool live = token < p.tokens;
+    vec4 squares = vec4(0.0);
+    for (uint j = 0; j < 21; j++) {
+        vec4 d = x[base + lane + j * 64];
+        squares += d * d;
+    }
+    part[lane] = squares.x + squares.y + squares.z + squares.w;
+    memoryBarrierShared();
+    barrier();
+    float sum = 0.0;
+    for (uint i = 0; i < 64; i++) sum += part[i];
+    float norm = 1.0 / sqrt(sum / 5376.0 + 1e-5);
+    for (uint j = 0; j < 21; j++) {
+        uint c = lane + j * 64;
+        vec4 t = x[base + c] * (norm * v[(p.weight_first >> 2) + c]);
+        h[base + c] = live ? f16vec4(t) : f16vec4(0.0);
+    }
+}

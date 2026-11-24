@@ -109,6 +109,7 @@ pub(crate) async fn diagnostics(mut stderr: tokio::process::ChildStderr) -> Opti
         "image_model_load_failed",
         "image_generation_failed",
         "image_gpu_memory_unavailable",
+        "image_host_memory_unavailable",
         "image_native_runtime_failed",
         "image_vulkan_device_lost",
         "image_gpu_int8_unsupported",

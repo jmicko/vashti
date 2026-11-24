@@ -1,0 +1,41 @@
+// The DiT's input projections, written into the token stream: one vec4 of one token per
+// invocation.
+//   video tokens: x[token] = in[token][..96] . weight + bias
+//   audio tokens: x[token] = in[token][..32] . weight + bias
+// Text tokens (kind 0) are left as they are; tokens from `tokens` up are written as zeros.
+//   in:  [token][96]
+//   hv:  video weight [5376][96], audio weight [5376][32], video bias [5376], audio bias
+//   kinds[token] = 1 video, 2 audio, 0 neither
+// Dispatch: x = 5376 / 4 / 64, y = padded tokens.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer In { vec4 values[]; };
+layout(set = 0, binding = 1) readonly buffer Vectors { vec4 hv[]; };
+layout(set = 0, binding = 2) readonly buffer Kinds { uint kinds[]; };
+layout(set = 0, binding = 3) writeonly buffer Stream { vec4 x[]; };
+layout(push_constant) uniform Constants { uint tokens; } p;
+const uint DIM = 5376;
+const uint DIM4 = 1344;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    uint token = gl_GlobalInvocationID.y;
+    if (token >= p.tokens) {
+        x[token * DIM4 + c] = vec4(0.0);
+        return;
+    }
+    uint kind = kinds[token];
+    if (kind == 0) return;
+    // vec4s per weight row, and where the weights and the bias start.
+    uint width = kind == 1 ? 24 : 8;
+    uint weights = kind == 1 ? 0 : DIM * 24;
+    vec4 result = hv[DIM * 32 + (kind == 1 ? 0 : DIM4) + c];
+    for (uint e = 0; e < 4; e++) {
+        vec4 acc = vec4(0.0);
+        for (uint j = 0; j < width; j++) {
+            acc += values[token * 24 + j] * hv[weights + (c * 4 + e) * width + j];
+        }
+        result[e] += acc.x + acc.y + acc.z + acc.w;
+    }
+    x[token * DIM4 + c] = result;
+}
