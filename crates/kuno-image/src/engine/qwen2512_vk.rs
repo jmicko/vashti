@@ -84,6 +84,10 @@ struct Kernels {
 }
 impl Kernels {
     fn new(gpu: &Gpu) -> Result<Self, &'static str> {
+        // Attention needs 16 x 16 x 16 half-precision matrices.
+        if !gpu.matrix2() && !gpu.has_half16() {
+            return Err("gpu_unsupported");
+        }
         let any = gpu.subgroup();
         Ok(Self {
             gemm8: gpu.gemm8()?,

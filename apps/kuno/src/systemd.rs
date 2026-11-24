@@ -833,7 +833,7 @@ pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Resu
     transaction.verify_installed()?;
     let mut installation = current_installation()?;
     if let Some(image) = &image {
-        if !cfg!(feature = "native-image")
+        if !crate::image_engine::EMBEDDED_ENGINE
             && (image.engine == crate::image_engine::ImageEngine::Native
                 || image
                     .collections
@@ -981,7 +981,7 @@ pub fn configure_native_text(native: Option<crate::native_text::Config>) -> Resu
             .iter()
             .any(|id| id == "qwen-image-2512-fp8")
             || image.engine == crate::image_engine::ImageEngine::Native
-    }) && !cfg!(feature = "native-image")
+    }) && !crate::image_engine::EMBEDDED_ENGINE
     {
         return Err("image_engine_not_in_this_build");
     }
@@ -1007,7 +1007,7 @@ pub fn install_image_runtime(directory: &Path, manifest_sha256: &str) -> Result<
                 .collections
                 .iter()
                 .any(|id| id == "qwen-image-2512-fp8")
-    }) && !cfg!(feature = "native-image")
+    }) && !crate::image_engine::EMBEDDED_ENGINE
     {
         return Err("image_engine_not_in_this_build");
     }
@@ -1053,7 +1053,7 @@ pub fn configure_timeouts(response_headers: Option<u64>, stream_idle: Option<u64
                 .collections
                 .iter()
                 .any(|id| id == "qwen-image-2512-fp8")
-    }) && !cfg!(feature = "native-image")
+    }) && !crate::image_engine::EMBEDDED_ENGINE
     {
         return Err("image_engine_not_in_this_build");
     }
@@ -1116,7 +1116,7 @@ pub fn upgrade_for_user(cli_user: Option<&str>) -> Result<()> {
                 .collections
                 .iter()
                 .any(|id| id == "qwen-image-2512-fp8")
-    }) && !cfg!(feature = "native-image")
+    }) && !crate::image_engine::EMBEDDED_ENGINE
     {
         return Err("image_engine_not_in_this_build");
     }

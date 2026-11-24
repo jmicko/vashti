@@ -11,6 +11,13 @@ use std::{
 };
 
 pub const SYCL_RUNTIME: &str = "qwen21-sycl-2026.1-v1";
+/// Whether this executable carries an image engine and serves as its own worker (the Rust
+/// engine, or the older C++ one).
+pub const EMBEDDED_ENGINE: bool = cfg!(any(feature = "native-image", feature = "rust-image"));
+/// Whether that engine is the Rust one, which also reads Kuno's INT8 Qwen 2512 conversion.
+pub const EMBEDDED_RUST: bool = cfg!(feature = "rust-image");
+#[cfg(all(feature = "native-image", feature = "rust-image"))]
+compile_error!("the C++ (`native-image`) and Rust (`rust-image`) engines are exclusive");
 pub const RUNTIME_ROOT: &str = "/usr/local/lib/kuno/runtimes";
 /// ABI 3 is the resident ABI 2 plus MiniMax video jobs and progress frames.
 /// ABI 3 added video jobs and progress frames; ABI 4 adds text-only, last-frame and

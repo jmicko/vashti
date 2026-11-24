@@ -36,7 +36,7 @@ impl ImageReadiness {
                 value: Discovery {
                     images: describe(
                         config,
-                        cfg!(feature = "native-image"),
+                        crate::image_engine::EMBEDDED_ENGINE,
                         fast_attention,
                         Some("image_runtime_unavailable"),
                         |_| true,
@@ -82,7 +82,7 @@ impl ImageReadiness {
 
 fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> Discovery {
     let managed = config.is_some_and(|c| c.engine == crate::image_engine::ImageEngine::ManagedSycl);
-    let privacy = if (cfg!(feature = "native-image") || managed) && config.is_some() {
+    let privacy = if (crate::image_engine::EMBEDDED_ENGINE || managed) && config.is_some() {
         (crate::image_privacy::require_no_swap().is_err()
             || crate::image_privacy::require_landlock().is_err())
         .then_some("image_privacy_unavailable")
@@ -91,7 +91,7 @@ fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> Discovery {
     };
     let mut images = describe(
         config,
-        cfg!(feature = "native-image") || managed,
+        crate::image_engine::EMBEDDED_ENGINE || managed,
         fast_attention,
         privacy,
         |id| config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok()),
@@ -116,7 +116,7 @@ fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> Discovery {
             &mut images,
             config,
             runtime.err(),
-            cfg!(feature = "native-image"),
+            crate::image_engine::EMBEDDED_ENGINE,
             fast,
         );
     }
@@ -315,8 +315,14 @@ fn describe(
         let int8_2512 = collection == "qwen-image-2512-int8";
         let reason = if !models_ready(collection) {
             Some("image_models_unavailable")
-        } else if int8_2512 && !config.is_some_and(|c| c.uses_sycl(QWEN_RECIPE)) {
-            // Only the Rust engine (an ABI 6 managed runtime) reads the INT8 conversion.
+        } else if int8_2512
+            && !config.is_some_and(|c| {
+                c.uses_sycl(QWEN_RECIPE)
+                    || (c.engine.is_native() && crate::image_engine::EMBEDDED_RUST)
+            })
+        {
+            // Only the Rust engine (embedded, or an ABI 6 managed runtime) reads the INT8
+            // conversion.
             Some("image_runtime_unavailable")
         } else {
             privacy

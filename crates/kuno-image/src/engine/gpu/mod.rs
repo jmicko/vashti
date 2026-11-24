@@ -1059,6 +1059,15 @@ impl Gpu {
             Err("gpu_unsupported")
         }
     }
+    /// Whether the device multiplies 16 x 16 x 16 half-precision matrices with f32 sums at
+    /// subgroup scope (`fattend16`, `gemm16nv`).
+    pub fn has_half16(&self) -> bool {
+        self.core.shapes.iter().any(|s| {
+            (s.m, s.n, s.k) == (16, 16, 16)
+                && s.a == vk::ComponentTypeKHR::FLOAT16
+                && s.result == vk::ComponentTypeKHR::FLOAT32
+        })
+    }
     /// Whether `VK_NV_cooperative_matrix2` kernels can run (`FATTEND16_NV`).
     pub fn matrix2(&self) -> bool {
         self.core.matrix2
