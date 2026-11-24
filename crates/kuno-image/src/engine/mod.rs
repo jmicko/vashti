@@ -10,6 +10,7 @@ pub mod gpu;
 pub mod prompt;
 pub mod qwen2512_dit;
 pub mod qwen2512_gpu;
+pub mod qwen2512_vk;
 pub mod qwen2512_image;
 pub mod qwen_dit;
 pub mod qwen_gpu;

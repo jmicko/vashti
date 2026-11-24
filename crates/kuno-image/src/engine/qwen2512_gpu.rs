@@ -201,7 +201,7 @@ fn int8_stream(
 }
 
 /// A float matrix widened to f32 (FP8 times its `scale_weight` if the file has one).
-fn float_matrix(
+pub(super) fn float_matrix(
     file: &Safetensors,
     name: &str,
     rows: usize,
@@ -384,23 +384,78 @@ impl Layer {
     }
 }
 
-/// The small float layers, run on the CPU.
-struct Small {
+/// The small float layers, run on the CPU (shared with `qwen2512_vk.rs`).
+pub(super) struct Small {
     linear_1: (Vec<f32>, Vec<f32>),
     linear_2: (Vec<f32>, Vec<f32>),
     text_norm: Vec<f32>,
     text_in: (Vec<f32>, Vec<f32>),
 }
+impl Small {
+    pub(super) fn read(model: &Qwen2512Dit) -> Result<Self, &'static str> {
+        let f = |name: &str, shape: &[usize]| model.floats(name, shape);
+        let t = "time_text_embed.timestep_embedder";
+        Ok(Self {
+            linear_1: (
+                f(&format!("{t}.linear_1.weight"), &[DIM, 256])?,
+                f(&format!("{t}.linear_1.bias"), &[DIM])?,
+            ),
+            linear_2: (
+                f(&format!("{t}.linear_2.weight"), &[DIM, DIM])?,
+                f(&format!("{t}.linear_2.bias"), &[DIM])?,
+            ),
+            text_norm: f("txt_norm.weight", &[CONTEXT])?,
+            text_in: (
+                f("txt_in.weight", &[DIM, CONTEXT])?,
+                f("txt_in.bias", &[DIM])?,
+            ),
+        })
+    }
+    /// Each timestep's `silu(time embedding)`.
+    pub(super) fn times(&self, timesteps: &[f32]) -> Vec<Times> {
+        timesteps
+            .iter()
+            .map(|&t| {
+                let (w1, b1) = &self.linear_1;
+                let (w2, b2) = &self.linear_2;
+                let mut h = linear(&time_embedding(t), 256, w1, b1);
+                h.iter_mut().for_each(|v| *v = silu(*v));
+                let mut h = linear(&h, DIM, w2, b2);
+                h.iter_mut().for_each(|v| *v = silu(*v));
+                Times { silu: h }
+            })
+            .collect()
+    }
+    /// The text encoder's rows `[tokens][CONTEXT]` of one prompt into the text stream's width.
+    pub(super) fn prompt(&self, context: &[f32]) -> Result<Prompt, &'static str> {
+        if context.is_empty() || !context.len().is_multiple_of(CONTEXT) {
+            return Err("invalid_input");
+        }
+        let mut x = context.to_vec();
+        x.par_chunks_exact_mut(CONTEXT).for_each(|row| {
+            let mean = row.iter().map(|v| v * v).sum::<f32>() / CONTEXT as f32;
+            let scale = 1.0 / (mean + 1e-6).sqrt();
+            for (v, w) in row.iter_mut().zip(&self.text_norm) {
+                *v *= scale * w;
+            }
+        });
+        let (w, b) = &self.text_in;
+        Ok(Prompt {
+            rows: linear(&x, CONTEXT, w, b),
+            tokens: context.len() / CONTEXT,
+        })
+    }
+}
 
 /// A step's time-dependent input: `silu(time embedding)`.
 pub struct Times {
-    silu: Vec<f32>,
+    pub(super) silu: Vec<f32>,
 }
 
 /// A prompt's rows in the text stream's width (`txt_in` of the normed encoder rows).
 pub struct Prompt {
-    rows: Vec<f32>,
-    tokens: usize,
+    pub(super) rows: Vec<f32>,
+    pub(super) tokens: usize,
 }
 impl Prompt {
     pub fn tokens(&self) -> usize {
@@ -619,22 +674,7 @@ impl Qwen2512Gpu {
             .map(|(_, layer)| layer)
             .collect::<Result<Vec<_>, _>>()?;
         let f = |name: &str, shape: &[usize]| model.floats(name, shape);
-        let t = "time_text_embed.timestep_embedder";
-        let small = Small {
-            linear_1: (
-                f(&format!("{t}.linear_1.weight"), &[DIM, 256])?,
-                f(&format!("{t}.linear_1.bias"), &[DIM])?,
-            ),
-            linear_2: (
-                f(&format!("{t}.linear_2.weight"), &[DIM, DIM])?,
-                f(&format!("{t}.linear_2.bias"), &[DIM])?,
-            ),
-            text_norm: f("txt_norm.weight", &[CONTEXT])?,
-            text_in: (
-                f("txt_in.weight", &[DIM, CONTEXT])?,
-                f("txt_in.bias", &[DIM])?,
-            ),
-        };
+        let small = Small::read(&model)?;
         let pair = |w: &str, ws: &[usize], b: &str, bs: &[usize]| -> Result<_, &'static str> {
             Ok((
                 Shared::floats(&gpu, &fast, &f(w, ws)?)?,
@@ -679,38 +719,12 @@ impl Qwen2512Gpu {
 
     /// Each timestep's `silu(time embedding)`.
     pub fn times(&self, timesteps: &[f32]) -> Vec<Times> {
-        timesteps
-            .iter()
-            .map(|&t| {
-                let (w1, b1) = &self.small.linear_1;
-                let (w2, b2) = &self.small.linear_2;
-                let mut h = linear(&time_embedding(t), 256, w1, b1);
-                h.iter_mut().for_each(|v| *v = silu(*v));
-                let mut h = linear(&h, DIM, w2, b2);
-                h.iter_mut().for_each(|v| *v = silu(*v));
-                Times { silu: h }
-            })
-            .collect()
+        self.small.times(timesteps)
     }
 
     /// The text encoder's rows `[tokens][CONTEXT]` of one prompt into the text stream's width.
     pub fn prompt(&self, context: &[f32]) -> Result<Prompt, &'static str> {
-        if context.is_empty() || !context.len().is_multiple_of(CONTEXT) {
-            return Err("invalid_input");
-        }
-        let mut x = context.to_vec();
-        x.par_chunks_exact_mut(CONTEXT).for_each(|row| {
-            let mean = row.iter().map(|v| v * v).sum::<f32>() / CONTEXT as f32;
-            let scale = 1.0 / (mean + 1e-6).sqrt();
-            for (v, w) in row.iter_mut().zip(&self.small.text_norm) {
-                *v *= scale * w;
-            }
-        });
-        let (w, b) = &self.small.text_in;
-        Ok(Prompt {
-            rows: linear(&x, CONTEXT, w, b),
-            tokens: context.len() / CONTEXT,
-        })
+        self.small.prompt(context)
     }
 
     /// The model's output for the latent `x` (`[16][2 * height][2 * width]`, `height` and

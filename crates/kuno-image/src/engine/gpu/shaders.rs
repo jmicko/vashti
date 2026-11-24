@@ -17,6 +17,14 @@ pub const FATTEND16_NV: &[u8] = include_bytes!("shaders/fattend16nv.spv");
 pub const QKV16: &[u8] = include_bytes!("shaders/qkv16.spv");
 /// Qwen Image 2.1 feed-forward activation from the INT8 product, bf16 rows for `qhidq8`.
 pub const QGATE16: &[u8] = include_bytes!("shaders/qgate16.spv");
+/// Qwen Image 2512 glue for `qwen2512_vk.rs`: residual, norm, modulation and quantizer; the
+/// last residual; queries, keys and values; feed-forward activation; embedding; output head.
+pub const Q25NORM: &[u8] = include_bytes!("shaders/q25norm.spv");
+pub const Q25RESID: &[u8] = include_bytes!("shaders/q25resid.spv");
+pub const Q25QKV: &[u8] = include_bytes!("shaders/q25qkv.spv");
+pub const Q25GELU: &[u8] = include_bytes!("shaders/q25gelu.spv");
+pub const Q25EMBED: &[u8] = include_bytes!("shaders/q25embed.spv");
+pub const Q25FINAL: &[u8] = include_bytes!("shaders/q25final.spv");
 /// Cached prefix keys and values into `fattend16`'s rows.
 pub const QCOPY16: &[u8] = include_bytes!("shaders/qcopy16.spv");
 pub const TATTEND32: &[u8] = include_bytes!("shaders/tattend32.spv");
