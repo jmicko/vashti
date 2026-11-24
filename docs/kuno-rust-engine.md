@@ -1263,10 +1263,24 @@ Through the gateway's own worker (default build) on the RTX 3060 (PCIe x4 slot):
 | Qwen 2512 832x1248, 20 steps, CFG 5 | 137 s | 6.5 s | B70 23 s |
 | Qwen 2.1 1248x832 edit, same-size reference, CFG 4 | about 170 s (25 steps, estimated) | 5.85 s | ComfyUI 109 s, C++ CUDA 283 s |
 
-Fast attention (int8 queries and keys) is not implemented on Vulkan yet; the embedded engine
-advertises standard attention only. Known speed work: copying streamed 2512 blocks and
-host-memory prefixes while the previous block computes (a transfer queue), and the
-products' efficiency at large token counts (44-56 TOPS in the step).
+Speed work since (2026-11-24, later):
+
+- **Copies beside compute.** Where a GPU has a dedicated transfer queue (not used on Intel),
+  `Gpu::copy_begin` copies there while compute runs. 2512 fills one of two device slots
+  with the next host-memory block while a block computes, and evaluates the modulation
+  rows on a CPU thread block by block ahead of the GPU: a 78x52 pass 4.26 -> 3.26 s, the
+  832x1248 request 137 -> 101 s. Qwen 2.1 prefixes of 1024+ tokens kept in host memory are
+  copied in per block the same way: the large edit's step 5.85 -> 4.67 s.
+- **Product dispatches of 2048 weight rows** (46-58 -> 54-64 TOPS at Qwen 2.1's shapes).
+  A 64x64-per-subgroup tile spills its accumulators (2.5 TOPS).
+- **Fast attention** (`fattend8nv`): int8 query and key rows with a scale each, int32
+  scores scaled per element, f16 weights and values; 30% faster than `fattend16nv`, 42-53
+  dB from an exact softmax. Qwen 2.1 steps 41-45 dB from standard attention, 2512 50-52 dB
+  (its outlier blocks keep f16, as on Intel). The embedded engine advertises fast attention
+  for every Qwen workflow; GPUs without `VK_NV_cooperative_matrix2` run standard attention
+  for it.
+
+Qwen 2.1 1184x1776, 20 steps, CFG 4 through the worker on the 3060: 199 s standard.
 
 ### The gateway's engine
 

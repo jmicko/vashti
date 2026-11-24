@@ -1,5 +1,26 @@
 # Kuno and Vashti Coordination
 
+**Kuno image engine is Rust on every GPU; C++ removed (2026-11-24). NOT installed; small
+Vashti check below.** Branch `claude/rust-engine`. The gateway's default build is its own
+image worker with the Rust engine on Intel (Xe2 kernels) and any Vulkan GPU with
+cooperative matrices (NVIDIA RTX: the RTX 3060 was tested), and the C++ engine
+(stable-diffusion.cpp, CUDA/Vulkan/SYCL) is gone. The HTTP contract is unchanged; what a
+client can observe:
+
+- **Fast attention** is now advertised by the embedded engine for every Qwen workflow,
+  **Qwen 2512 included** (`attention: ["standard", "fast"]`). Before, 2512 offered only
+  `"standard"` and embedded 2.1 offered `"fast"` only on CUDA builds. On a GPU without the
+  int8 attention kernel a fast request runs standard attention. Vashti should show the
+  attention control per workflow from discovery (it may assume 2512 has none today).
+- The INT8 2512 collection (`qwen-image-2512-int8`) is served by the embedded engine too.
+- Images on NVIDIA differ slightly from the old CUDA build's for the same seed (another
+  engine); no seams on large images (the VAE decodes in exact strips on small cards).
+- Release packaging no longer needs a prepared native build
+  (`apps/kuno/scripts/package-release.sh`; see `apps/vashti-hub/docs/release-process.md`).
+- Measured on the RTX 3060 through the worker: Qwen 2.1 1184x1776, 20 steps, CFG 4:
+  199 s (ComfyUI 193 s); 2512 832x1248, 20 steps: 101 s. Details:
+  [Kuno Rust model engine](kuno-rust-engine.md).
+
 **Kuno video contract change (2026-11-22): no duration or size caps, no cropping; memory
 decides. NOT installed; Vashti handoff below. Requested by the user:** "Kuno should just do
 the best it can with what it's given in the API"; limits and framing (crop, letterbox,
