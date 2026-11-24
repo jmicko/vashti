@@ -41,17 +41,17 @@ const QKV_SCALES: usize = 3 * DIM * DIM + int8::SLACK;
 const GATED_SCALES: usize = 2 * HIDDEN * DIM + int8::SLACK;
 const FC2: usize = 3;
 /// Offsets (in values) into a layer's vector buffer.
-const QUERY_NORM: usize = 0;
-const KEY_NORM: usize = QUERY_NORM + HEAD;
-const SCALE_QKV: usize = KEY_NORM + HEAD;
-const SCALE_OUT: usize = SCALE_QKV + 3 * DIM;
-const SCALE_FC1: usize = SCALE_OUT + DIM;
-const SCALE_FC2: usize = SCALE_FC1 + 2 * HIDDEN;
-const VECTORS: usize = SCALE_FC2 + DIM;
+pub(super) const QUERY_NORM: usize = 0;
+pub(super) const KEY_NORM: usize = QUERY_NORM + HEAD;
+pub(super) const SCALE_QKV: usize = KEY_NORM + HEAD;
+pub(super) const SCALE_OUT: usize = SCALE_QKV + 3 * DIM;
+pub(super) const SCALE_FC1: usize = SCALE_OUT + DIM;
+pub(super) const SCALE_FC2: usize = SCALE_FC1 + 2 * HIDDEN;
+pub(super) const VECTORS: usize = SCALE_FC2 + DIM;
 /// The feed-forward activation's rotated groups that do not fit in shared memory.
-const SPILLED: usize = 20 * 256;
+pub(super) const SPILLED: usize = 20 * 256;
 /// Modulation vectors of one row: `1 + m0`, `tanh(m1)`, `1 + m2`, `tanh(m3)`.
-const MODS: usize = 4 * DIM;
+pub(super) const MODS: usize = 4 * DIM;
 
 pub struct Kernels {
     normq8: Kernel,
@@ -270,7 +270,7 @@ impl Glue {
 }
 
 /// The small float layers, run on the CPU.
-struct Small {
+pub(super) struct Small {
     linear_1: Vec<f32>,
     linear_2: Vec<f32>,
     modulation: Vec<f32>,
@@ -280,7 +280,7 @@ struct Small {
     text_out: Vec<f32>,
 }
 impl Small {
-    fn read(file: &Safetensors) -> Result<Self, &'static str> {
+    pub(super) fn read(file: &Safetensors) -> Result<Self, &'static str> {
         let t = "time_text_embed.timestep_embedder";
         Ok(Self {
             linear_1: file.floats(&format!("{t}.linear_1.weight"), &[DIM, 256])?,
@@ -298,7 +298,7 @@ impl Small {
     }
     /// For each timestep, the modulation vectors of its row and the time-zero row
     /// `[2][MODS]` and the output head's scale; one pass over the weights for all of them.
-    fn times(&self, timesteps: &[f32]) -> Vec<Times> {
+    pub(super) fn times(&self, timesteps: &[f32]) -> Vec<Times> {
         let silu = |v: &mut f32| *v /= 1.0 + (-*v).exp();
         let mut rows = Vec::with_capacity(timesteps.len() * 2 * 256);
         for &t in timesteps {
@@ -331,7 +331,7 @@ impl Small {
             })
             .collect()
     }
-    fn text(&self, context: &[f32]) -> Vec<f32> {
+    pub(super) fn text(&self, context: &[f32]) -> Vec<f32> {
         let mut x = context.to_vec();
         x.par_chunks_exact_mut(CONTEXT).for_each(|row| {
             let mean = row.iter().map(|v| v * v).sum::<f32>() / CONTEXT as f32;
@@ -348,8 +348,8 @@ impl Small {
 
 /// A step's time-dependent vectors (`QwenGpu::times`).
 pub struct Times {
-    mods: Vec<f32>,
-    scale: Vec<f32>,
+    pub(super) mods: Vec<f32>,
+    pub(super) scale: Vec<f32>,
 }
 
 /// Buffers and kernels of one pass shape: `tokens` own tokens after `earlier` cached keys.

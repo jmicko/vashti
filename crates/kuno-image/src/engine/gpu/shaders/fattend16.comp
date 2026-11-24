@@ -13,6 +13,9 @@
 // precision (below 2^8); the reference starts at the first block's largest score and is only
 // raised, rescaling O through shared memory, when a later score exceeds it by more than 8.
 // The division by the weights' sum comes at the end.
+//
+// With `causal` set, query i sees only keys 0..=i of the first `queries` keys (its own run's,
+// in order) and every key after them (earlier runs').
 #version 460
 #extension GL_KHR_cooperative_matrix : require
 #extension GL_KHR_memory_scope_semantics : require
@@ -37,6 +40,7 @@ layout(push_constant) uniform Constants {
     uint key_padded;
     uint heads;
     float scale;
+    uint causal;
 } p;
 
 #define A coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>
@@ -84,7 +88,8 @@ void main() {
         float top = -1.0 / 0.0;
         for (uint i = 0; i < 32; i++) {
             uint key = kb + half_ * 32 + i;
-            t[i] = key < p.keys ? ss[s0 + row * 64 + half_ * 32 + i] * c2 : -1.0 / 0.0;
+            bool seen = key < p.keys && (p.causal == 0 || key >= p.queries || key <= q0 + row);
+            t[i] = seen ? ss[s0 + row * 64 + half_ * 32 + i] * c2 : -1.0 / 0.0;
             top = max(top, t[i]);
         }
         top = max(top, subgroupShuffleXor(top, 1));

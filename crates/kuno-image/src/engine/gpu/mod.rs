@@ -1013,12 +1013,14 @@ mod tests {
         let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
         let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
         println!("{}", gpu.name());
-        let kernel = gpu.kernel(shaders::FATTEND16, 4, 6, Some(32)).unwrap();
+        let kernel = gpu.kernel(shaders::FATTEND16, 4, 7, Some(32)).unwrap();
         let scale = 1.0 / 128f32.sqrt();
-        for (heads, queries, keys, spread, checks) in [
-            (3usize, 100usize, 250usize, 1.0f32, 300usize),
-            (2, 64, 200, 6.0, 128),
-            (24, 4078, 4078, 1.5, 48),
+        // Causal: query i sees keys 0..=i of its own `queries` and every key after them.
+        for (heads, queries, keys, spread, checks, causal) in [
+            (3usize, 100usize, 250usize, 1.0f32, 300usize, false),
+            (2, 64, 200, 6.0, 128, false),
+            (2, 90, 150, 3.0, 180, true),
+            (24, 4078, 4078, 1.5, 48, false),
         ] {
             let (qp, kp) = (queries.next_multiple_of(32), keys.next_multiple_of(64));
             let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
@@ -1037,7 +1039,7 @@ mod tests {
             };
             let (bq, bk, bv) = (upload(&q), upload(&k), upload(&v));
             let out = gpu.buffer((queries * heads * 128 * 4) as u64).unwrap();
-            let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits()];
+            let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits(), u32::from(causal)];
             let mut best = f64::MAX;
             for _ in 0..3 {
                 let started = std::time::Instant::now();
@@ -1057,6 +1059,9 @@ mod tests {
                 let qr = &q[(head * qp + query) * 128..][..128];
                 let logits: Vec<f64> = (0..keys)
                     .map(|key| {
+                        if causal && key < queries && key > query {
+                            return f64::NEG_INFINITY;
+                        }
                         let kr = &k[(head * kp + key) * 128..][..128];
                         qr.iter().zip(kr).map(|(a, b)| f64::from(a * b)).sum::<f64>() * f64::from(scale)
                     })
@@ -1077,7 +1082,7 @@ mod tests {
             let db = 10.0 * (power / error.max(1e-30)).log10();
             let flops = 4.0 * (heads * queries * keys * 128) as f64;
             println!(
-                "{heads} heads, {queries} queries x {keys} keys, spread {spread}: {best:.2} ms ({:.1} TFLOPS), {db:.1} dB",
+                "{heads} heads, {queries} queries x {keys} keys, spread {spread}, causal {causal}: {best:.2} ms ({:.1} TFLOPS), {db:.1} dB",
                 flops / best / 1e9
             );
             assert!(db > 40.0);

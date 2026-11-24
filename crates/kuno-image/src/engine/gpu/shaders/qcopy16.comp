@@ -1,0 +1,21 @@
+// Cached prefix keys and values (`[head][capacity][128]` f16, rows 0..count) into the
+// fused attention kernel's key and value rows (`[head][stride][128]`) at `base + row`.
+// One invocation per row, head and 8 channels. Dispatch: x = rows * 16 / 64 (rounded up),
+// y = heads.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer KeyCache { uvec4 ck[]; };
+layout(set = 0, binding = 1) readonly buffer ValueCache { uvec4 cv[]; };
+layout(set = 0, binding = 2) writeonly buffer Keys { uvec4 k[]; };
+layout(set = 0, binding = 3) writeonly buffer Values { uvec4 v[]; };
+layout(push_constant) uniform Constants { uint count; uint base; uint stride; uint capacity; } p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x, head = gl_WorkGroupID.y;
+    uint row = i >> 4, part = i & 15u;
+    if (row >= p.count) return;
+    uint from = (head * p.capacity + row) * 16 + part;
+    uint to = (head * p.stride + p.base + row) * 16 + part;
+    k[to] = ck[from];
+    v[to] = cv[from];
+}

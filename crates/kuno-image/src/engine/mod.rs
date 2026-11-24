@@ -16,6 +16,7 @@ pub mod qwen_gpu;
 pub mod qwen_image;
 pub mod qwen_vae;
 pub mod qwen_vae_gpu;
+pub mod qwen_vk;
 pub mod rng;
 pub mod safetensors;
 pub mod text_encoder;
