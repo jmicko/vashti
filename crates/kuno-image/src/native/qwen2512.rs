@@ -19,6 +19,24 @@ pub(crate) fn evict() {
     drop(kept);
 }
 
+/// The text encoder, DiT and VAE: Kuno's INT8 conversion of the publisher's files
+/// (`qwen-image-2512-int8`) when installed, else ComfyUI's FP8 files.
+fn files(directory: &std::path::Path) -> [PathBuf; 3] {
+    let int8 = directory.join(INT8);
+    if int8.join("transformer").is_dir() {
+        ["text_encoder", "transformer", "vae"].map(|part| int8.join(part))
+    } else {
+        [
+            "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "qwen_image_2512_fp8_e4m3fn.safetensors",
+            "qwen_image_vae.safetensors",
+        ]
+        .map(|file| directory.join(file))
+    }
+}
+/// The directory the `qwen-image-2512-int8` collection's conversions are written to.
+pub const INT8: &str = "qwen-image-2512-int8";
+
 pub(super) fn generate(
     directory: &std::path::Path,
     pci: &str,
@@ -31,13 +49,8 @@ pub(super) fn generate(
     if kept.as_ref().is_none_or(|(path, _)| path != directory) {
         *kept = None;
         let gpu = Gpu::open(Select::Pci(pci.to_owned())).map_err(super::qwen::failure)?;
-        let models = Models::open(
-            &gpu,
-            &directory.join("qwen_2.5_vl_7b_fp8_scaled.safetensors"),
-            &directory.join("qwen_image_2512_fp8_e4m3fn.safetensors"),
-            &directory.join("qwen_image_vae.safetensors"),
-        )
-        .map_err(super::qwen::failure)?;
+        let [encoder, dit, vae] = files(directory);
+        let models = Models::open(&gpu, &encoder, &dit, &vae).map_err(super::qwen::failure)?;
         *kept = Some((directory.to_owned(), models));
     }
     let (_, models) = kept.as_ref().ok_or("image_engine_unavailable")?;
@@ -48,9 +61,7 @@ pub(super) fn generate(
         height: recipe.height as usize,
         steps: recipe.steps as usize,
         cfg: recipe.cfg as f32,
-        shift: recipe
-            .flow_shift
-            .ok_or("image_sampling_settings_invalid")? as f32,
+        shift: recipe.flow_shift.ok_or("image_sampling_settings_invalid")? as f32,
         seed,
         fast_attention: recipe.attention == kuno_protocol::ImageAttention::Fast,
     };

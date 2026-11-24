@@ -2,6 +2,7 @@
 //! is checked against the C++ engine for numbers and speed before it takes over.
 pub mod audio_vae;
 pub mod conv;
+pub mod convert;
 pub mod dit;
 pub mod dit_gpu;
 pub mod encoder_gpu;

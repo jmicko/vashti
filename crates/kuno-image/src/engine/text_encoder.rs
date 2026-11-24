@@ -182,6 +182,8 @@ pub struct TextEncoder {
     vocabulary: usize,
     /// Qwen2.5-VL (Qwen Image 2512's encoder) rather than Qwen3-VL.
     pub qwen25: bool,
+    /// Accuracy experiments: float files' products in exact f32 instead of INT8.
+    pub exact: bool,
 }
 impl TextEncoder {
     pub fn open(path: &Path) -> Result<Self, &'static str> {
@@ -216,7 +218,8 @@ impl TextEncoder {
             .shape("model.embed_tokens.weight")
             .and_then(|s| s.first())
             .ok_or("model_file_invalid")?;
-        let qwen25 = file.is_fp8("model.layers.0.self_attn.q_proj.weight");
+        // Qwen2.5-VL has query/key/value biases (Qwen3-VL has query/key norms instead).
+        let qwen25 = file.shape("model.layers.0.self_attn.q_proj.bias").is_some();
         if vocabulary < VOCABULARY {
             return Err("model_file_invalid");
         }
@@ -226,6 +229,7 @@ impl TextEncoder {
             int8_embeddings,
             vocabulary,
             qwen25,
+            exact: false,
         })
     }
     /// One token's embedding row.
@@ -296,8 +300,8 @@ impl TextEncoder {
         columns: usize,
     ) -> Result<(Vec<i8>, Vec<f32>), &'static str> {
         let base = format!("model.layers.{layer}.{name}");
-        if self.qwen25 {
-            let weight = self.fp8_matrix(layer, name, rows, columns)?;
+        if !self.is_int8(layer, name) {
+            let weight = self.float_matrix(layer, name, rows, columns)?;
             return Ok(quantize(&weight, columns));
         }
         Ok((
@@ -305,8 +309,29 @@ impl TextEncoder {
             self.file.f32(&format!("{base}.weight_scale"), &[rows, 1])?,
         ))
     }
-    /// An FP8 matrix widened and multiplied by its scale.
-    pub(super) fn fp8_matrix(
+    /// `x` times a layer's matrix: INT8 as the GPU computes it, or exact (`exact`).
+    fn product(
+        &self,
+        layer: usize,
+        x: &[f32],
+        name: &str,
+        rows: usize,
+        columns: usize,
+    ) -> Result<Vec<f32>, &'static str> {
+        if self.exact && !self.is_int8(layer, name) {
+            let weight = self.float_matrix(layer, name, rows, columns)?;
+            return Ok(super::dit::linear(x, columns, &weight, &[]));
+        }
+        let (weight, scale) = self.matrix(layer, name, rows, columns)?;
+        Ok(linear8(x, columns, &weight, &scale))
+    }
+    /// Whether a layer's matrix is stored as INT8 (in the rotated basis, with row scales).
+    pub(super) fn is_int8(&self, layer: usize, name: &str) -> bool {
+        self.file
+            .is_i8(&format!("model.layers.{layer}.{name}.weight"))
+    }
+    /// A float matrix widened (FP8 times its `scale_weight` when the file has one).
+    pub(super) fn float_matrix(
         &self,
         layer: usize,
         name: &str,
@@ -314,11 +339,13 @@ impl TextEncoder {
         columns: usize,
     ) -> Result<Vec<f32>, &'static str> {
         let base = format!("model.layers.{layer}.{name}");
-        let scale = self.file.f32(&format!("{base}.scale_weight"), &[])?[0];
         let mut weight = self
             .file
             .floats(&format!("{base}.weight"), &[rows, columns])?;
-        weight.par_iter_mut().for_each(|v| *v *= scale);
+        if self.file.shape(&format!("{base}.scale_weight")).is_some() {
+            let scale = self.file.f32(&format!("{base}.scale_weight"), &[])?[0];
+            weight.par_iter_mut().for_each(|v| *v *= scale);
+        }
         Ok(weight)
     }
     /// Qwen2.5-VL's outputs are the final norm's (Qwen3-VL's are taken before it).
@@ -368,8 +395,7 @@ impl TextEncoder {
         let n = x.len() / width;
         let h = rms_norm(x, &self.vector(layer, "input_layernorm", width)?);
         let project = |name: &str, rows: usize| -> Result<Vec<f32>, &'static str> {
-            let (weight, scale) = self.matrix(layer, name, rows, width)?;
-            Ok(linear8(&h, width, &weight, &scale))
+            self.product(layer, &h, name, rows, width)
         };
         let mut q = project("self_attn.q_proj", heads * HEAD)?;
         let mut k = project("self_attn.k_proj", kv_heads * HEAD)?;
@@ -407,20 +433,16 @@ impl TextEncoder {
                 });
         }
         let mixed = attend(&q, &k, &v, n, heads, kv_heads);
-        let (weight, scale) = self.matrix(layer, "self_attn.o_proj", width, heads * HEAD)?;
-        let out = linear8(&mixed, heads * HEAD, &weight, &scale);
+        let out = self.product(layer, &mixed, "self_attn.o_proj", width, heads * HEAD)?;
         x.iter_mut().zip(&out).for_each(|(x, o)| *x += o);
 
         let h = rms_norm(x, &self.vector(layer, "post_attention_layernorm", width)?);
-        let (weight, scale) = self.matrix(layer, "mlp.gate_proj", inner, width)?;
-        let mut gate = linear8(&h, width, &weight, &scale);
-        let (weight, scale) = self.matrix(layer, "mlp.up_proj", inner, width)?;
-        let up = linear8(&h, width, &weight, &scale);
+        let mut gate = self.product(layer, &h, "mlp.gate_proj", inner, width)?;
+        let up = self.product(layer, &h, "mlp.up_proj", inner, width)?;
         gate.iter_mut()
             .zip(&up)
             .for_each(|(g, u)| *g = *g / (1.0 + (-*g).exp()) * u);
-        let (weight, scale) = self.matrix(layer, "mlp.down_proj", width, inner)?;
-        let out = linear8(&gate, inner, &weight, &scale);
+        let out = self.product(layer, &gate, "mlp.down_proj", width, inner)?;
         x.iter_mut().zip(&out).for_each(|(x, o)| *x += o);
         Ok(())
     }

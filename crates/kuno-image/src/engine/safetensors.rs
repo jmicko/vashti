@@ -1,4 +1,6 @@
-//! Minimal safetensors reader: header index plus positioned reads of single tensors.
+//! Minimal safetensors reader: header index plus positioned reads of single tensors. A model
+//! split over several files (a directory of `*.safetensors`, as the Hugging Face layout ships
+//! them) reads as one. `write` produces a file from tensors given in order.
 use rayon::prelude::*;
 use std::{collections::HashMap, fs::File, os::unix::fs::FileExt, path::Path};
 
@@ -12,19 +14,49 @@ enum Kind {
     Other,
 }
 struct Entry {
+    /// Index into `Safetensors::files`.
+    file: usize,
     kind: Kind,
     shape: Vec<usize>,
     begin: u64,
     end: u64,
 }
 pub struct Safetensors {
-    file: File,
-    data: u64,
+    /// Each file with the offset of its data section.
+    files: Vec<(File, u64)>,
     entries: HashMap<String, Entry>,
     metadata: HashMap<String, String>,
 }
 impl Safetensors {
+    /// One file, or every `*.safetensors` file of a directory (names must not repeat).
     pub fn open(path: &Path) -> Result<Self, &'static str> {
+        let mut paths = Vec::new();
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path).map_err(|_| "model_file_unavailable")? {
+                let p = entry.map_err(|_| "model_file_unavailable")?.path();
+                if p.extension().is_some_and(|e| e == "safetensors") {
+                    paths.push(p);
+                }
+            }
+            paths.sort();
+            if paths.is_empty() {
+                return Err("model_file_unavailable");
+            }
+        } else {
+            paths.push(path.to_path_buf());
+        }
+        let mut model = Self {
+            files: Vec::new(),
+            entries: HashMap::new(),
+            metadata: HashMap::new(),
+        };
+        for p in paths {
+            model.add(&p)?;
+        }
+        Ok(model)
+    }
+    fn add(&mut self, path: &Path) -> Result<(), &'static str> {
+        let index = self.files.len();
         let file = File::open(path).map_err(|_| "model_file_unavailable")?;
         let size = file.metadata().map_err(|_| "model_file_unavailable")?.len();
         let mut n = [0; 8];
@@ -62,6 +94,7 @@ impl Safetensors {
                 let offsets = value["data_offsets"].as_array()?;
                 let (begin, end) = (offsets.first()?.as_u64()?, offsets.get(1)?.as_u64()?);
                 (begin <= end && end <= size - data).then_some(Entry {
+                    file: index,
                     kind: match value["dtype"].as_str()? {
                         "F32" => Kind::F32,
                         "F16" => Kind::F16,
@@ -76,14 +109,70 @@ impl Safetensors {
                 })
             })()
             .ok_or("model_file_invalid")?;
-            entries.insert(name, entry);
+            if entries.insert(name, entry).is_some() {
+                return Err("model_file_invalid");
+            }
         }
-        Ok(Self {
-            file,
-            data,
-            entries,
-            metadata,
+        for (name, entry) in entries {
+            if self.entries.insert(name, entry).is_some() {
+                return Err("model_file_invalid");
+            }
+        }
+        self.metadata.extend(metadata);
+        self.files.push((file, data));
+        Ok(())
+    }
+    /// Bytes of `entry` from `offset` into `to`.
+    fn read_at(&self, entry: &Entry, offset: u64, to: &mut [u8]) -> std::io::Result<()> {
+        let (file, data) = &self.files[entry.file];
+        file.read_exact_at(to, data + entry.begin + offset)
+    }
+    /// Every tensor's name.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
+    }
+    /// A tensor's stored type (as written in the header) and its raw bytes.
+    pub fn raw(&self, name: &str) -> Result<(&'static str, Vec<usize>, Vec<u8>), &'static str> {
+        let entry = self.entries.get(name).ok_or("model_tensor_missing")?;
+        let mut bytes = vec![0u8; (entry.end - entry.begin) as usize];
+        self.read_at(entry, 0, &mut bytes)
+            .map_err(|_| "model_file_invalid")?;
+        let kind = match entry.kind {
+            Kind::F32 => "F32",
+            Kind::F16 => "F16",
+            Kind::Bf16 => "BF16",
+            Kind::I8 => "I8",
+            Kind::F8e4m3 => "F8_E4M3",
+            Kind::Other => return Err("model_tensor_invalid"),
+        };
+        Ok((kind, entry.shape.clone(), bytes))
+    }
+    /// Renames tensors (`to` gives the new name, None keeps it), for files whose publisher
+    /// names a model's layers differently.
+    pub fn rename(&mut self, to: impl Fn(&str) -> Option<String>) {
+        self.entries = std::mem::take(&mut self.entries)
+            .into_iter()
+            .map(|(name, entry)| (to(&name).unwrap_or(name), entry))
+            .collect();
+    }
+    /// A tensor's stored type as the header names it.
+    pub fn kind(&self, name: &str) -> Option<&'static str> {
+        Some(match self.entries.get(name)?.kind {
+            Kind::F32 => "F32",
+            Kind::F16 => "F16",
+            Kind::Bf16 => "BF16",
+            Kind::I8 => "I8",
+            Kind::F8e4m3 => "F8_E4M3",
+            Kind::Other => return None,
         })
+    }
+    /// A tensor's size in bytes.
+    pub fn bytes(&self, name: &str) -> Option<usize> {
+        self.entries.get(name).map(|e| (e.end - e.begin) as usize)
+    }
+    /// Whether a tensor is stored as INT8.
+    pub fn is_i8(&self, name: &str) -> bool {
+        self.entries.get(name).is_some_and(|e| e.kind == Kind::I8)
     }
     pub fn metadata(&self, key: &str) -> Option<&str> {
         self.metadata.get(key).map(String::as_str)
@@ -112,11 +201,7 @@ impl Safetensors {
             return Err("model_tensor_invalid");
         }
         let mut bytes = vec![0u8; width * size];
-        self.file
-            .read_exact_at(
-                &mut bytes,
-                self.data + entry.begin + (row * width * size) as u64,
-            )
+        self.read_at(entry, (row * width * size) as u64, &mut bytes)
             .map_err(|_| "model_file_invalid")?;
         Ok(bytes)
     }
@@ -163,11 +248,7 @@ impl Safetensors {
             return Err("model_tensor_invalid");
         }
         let mut bytes = vec![0u8; count * width * 2];
-        self.file
-            .read_exact_at(
-                &mut bytes,
-                self.data + entry.begin + (first * width * 2) as u64,
-            )
+        self.read_at(entry, (first * width * 2) as u64, &mut bytes)
             .map_err(|_| "model_file_invalid")?;
         // BF16 is the upper half of the f32 bit pattern.
         Ok(bytes
@@ -189,8 +270,7 @@ impl Safetensors {
         // SAFETY: `out` owns `count * 4` initialized bytes; any bit pattern is a valid f32.
         let bytes =
             unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u8>(), count * 4) };
-        self.file
-            .read_exact_at(bytes, self.data + entry.begin)
+        self.read_at(entry, 0, bytes)
             .map_err(|_| "model_file_invalid")?;
         if cfg!(target_endian = "big") {
             for v in &mut out {
@@ -211,9 +291,7 @@ impl Safetensors {
         {
             return Err("model_tensor_invalid");
         }
-        self.file
-            .read_exact_at(to, self.data + entry.begin)
-            .map_err(|_| "model_file_invalid")
+        self.read_at(entry, 0, to).map_err(|_| "model_file_invalid")
     }
     /// Reads a float tensor of any stored precision as little-endian half floats into `to`
     /// (two bytes per value), checking its exact shape.
@@ -237,8 +315,7 @@ impl Safetensors {
                 }
                 // Converted from a copy: `to` may be memory that is slow to read back.
                 let mut bytes = vec![0u8; count * 2];
-                self.file
-                    .read_exact_at(&mut bytes, self.data + entry.begin)
+                self.read_at(entry, 0, &mut bytes)
                     .map_err(|_| "model_file_invalid")?;
                 to.par_chunks_mut(1 << 16)
                     .zip(bytes.par_chunks(1 << 16))
@@ -273,8 +350,7 @@ impl Safetensors {
             return Err("model_tensor_invalid");
         }
         let mut bytes = vec![0u8; count * 2];
-        self.file
-            .read_exact_at(&mut bytes, self.data + entry.begin)
+        self.read_at(entry, 0, &mut bytes)
             .map_err(|_| "model_file_invalid")?;
         Ok(bytes
             .chunks_exact(2)
@@ -292,9 +368,7 @@ impl Safetensors {
         {
             return Err("model_tensor_invalid");
         }
-        self.file
-            .read_exact_at(to, self.data + entry.begin)
-            .map_err(|_| "model_file_invalid")
+        self.read_at(entry, 0, to).map_err(|_| "model_file_invalid")
     }
     /// Reads `to.len()` bytes of one INT8 tensor from byte `at`, checking its exact shape.
     pub fn i8_part_into(
@@ -313,8 +387,7 @@ impl Safetensors {
         {
             return Err("model_tensor_invalid");
         }
-        self.file
-            .read_exact_at(to, self.data + entry.begin + at as u64)
+        self.read_at(entry, at as u64, to)
             .map_err(|_| "model_file_invalid")
     }
     /// Reads one INT8 tensor's bytes, checking its exact shape.
@@ -328,8 +401,7 @@ impl Safetensors {
         let mut out = vec![0i8; count];
         // SAFETY: `out` owns `count` initialized bytes; any bit pattern is a valid i8.
         let bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u8>(), count) };
-        self.file
-            .read_exact_at(bytes, self.data + entry.begin)
+        self.read_at(entry, 0, bytes)
             .map_err(|_| "model_file_invalid")?;
         Ok(out)
     }
@@ -350,8 +422,7 @@ impl Safetensors {
             return Err("model_tensor_invalid");
         }
         let mut bytes = vec![0u8; count];
-        self.file
-            .read_exact_at(&mut bytes, self.data + entry.begin)
+        self.read_at(entry, 0, &mut bytes)
             .map_err(|_| "model_file_invalid")?;
         Ok(bytes)
     }
@@ -368,8 +439,7 @@ impl Safetensors {
                     return Err("model_tensor_invalid");
                 }
                 let mut bytes = vec![0u8; count * 2];
-                self.file
-                    .read_exact_at(&mut bytes, self.data + entry.begin)
+                self.read_at(entry, 0, &mut bytes)
                     .map_err(|_| "model_file_invalid")?;
                 // BF16 is the upper half of the f32 bit pattern.
                 Ok(bytes

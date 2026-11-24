@@ -114,6 +114,15 @@ impl ImageRecipe {
             "qwen-image-2.1-int8"
         }
     }
+    /// Every collection that can run this recipe, preferred first: Qwen Image 2512 runs from
+    /// Kuno's INT8 conversion of the publisher's weights or from ComfyUI's FP8 file.
+    pub fn collection_ids(&self) -> &'static [&'static str] {
+        if self.workflow == QWEN_RECIPE {
+            &["qwen-image-2512-int8", "qwen-image-2512-fp8"]
+        } else {
+            &["qwen-image-2.1-int8"]
+        }
+    }
     pub fn validate_execution(&self) -> Result<(), &'static str> {
         self.validate()?;
         if self.workflow == QWEN21_EDIT_RECIPE && self.reference_images.is_empty() {

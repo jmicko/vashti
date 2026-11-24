@@ -1170,6 +1170,42 @@ modulation.
 The worker runs 2512 itself from ABI 6 (`QWEN2512_WORKER_ABI`): the gateway sends 2512 to
 the managed runtime when its verified worker has that ABI, and to its own engine otherwise.
 
+## Qwen Image 2512 from the publisher's weights (2026-11-24)
+
+Kuno no longer depends on ComfyUI's repackaging for 2512. The `qwen-image-2512-int8`
+collection downloads `Qwen/Qwen-Image-2512` at a pinned commit (the publisher's BF16
+files, 57.7 GB in 14 pieces) and converts each piece as it arrives (`engine/convert.rs`):
+block linears and modulation layers to INT8 in the rotated basis with a scale per row,
+everything else as published, the VAE's diffusers names renamed to the Wan layout, the
+unused `lm_head` dropped. One input file gives one output file, the original is removed
+once its output matches its pinned checksum, and the result is 28.6 GB. The conversion is
+deterministic, so its outputs are pinned like downloads: anyone converting the official
+files gets the same bytes.
+
+The installer (`collections::fetch`) overlaps downloads and conversions: a download starts
+only when the disk holds it, its output and every pending output (plus 512 MiB); otherwise
+it waits for a conversion to free its input. With ample space downloads run ahead; with
+little it alternates. Converting all 14 pieces takes about two minutes (6 to 13 s each,
+about 1.3 GB of memory); the download dominates.
+
+Every loader takes all three forms: the INT8 conversion directly (DiT 11.8 s, text encoder
+1.1 s), ComfyUI's FP8 files, and the publisher's BF16 directories (rounded at load). A
+directory of `*.safetensors` reads as one model; ComfyUI's name prefix is optional.
+
+Against the exact model (the BF16 weights computed in f32 on the CPU), the FP8 file itself
+is the largest error:
+
+| Path | DiT (4 captured calls) | Text encoder (2 prompts) |
+|---|---|---|
+| C++ engine, FP8 file | 23.2 to 26.2 dB | 24.9 to 27.4 dB |
+| Rust GPU, FP8 file | 23.0 to 26.1 dB | 23.7 to 25.8 dB |
+| Rust GPU, INT8 conversion | 34.6 to 39.1 dB (fast 34.7 to 38.5) | 30.6 to 32.4 dB |
+
+Through the worker at 832x1248, 20 steps with CFG: the first request 39.2 s (81 s when the
+FP8 file is converted at load), then 23.0 s (21.1 s fast). The image differs from the
+FP8 paths' by about 10 of 255 on average (a slightly different composition of the same
+scene), as the FP8 model differs from the model it was made from.
+
 ## The worker without C++ (2026-11-23)
 
 With 2512 in Rust, the worker's C++ engine only held a session object and the SIGTERM flag.

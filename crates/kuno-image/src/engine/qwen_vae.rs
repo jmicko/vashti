@@ -319,9 +319,13 @@ impl QwenVae {
             .ok_or("model_file_invalid")?;
         Ok(Self { file, wan21: false })
     }
-    /// Qwen Image 2512's VAE (`qwen_image_vae.safetensors`).
+    /// Qwen Image 2512's VAE: ComfyUI's `qwen_image_vae.safetensors`, the publisher's
+    /// (Hugging Face layout, renamed here) or a converted one.
     pub fn open_wan21(path: &Path) -> Result<Self, &'static str> {
-        let file = Safetensors::open(path)?;
+        let mut file = Safetensors::open(path)?;
+        if file.shape("decoder.conv_in.weight").is_some() {
+            file.rename(super::convert::wan21_name);
+        }
         file.shape("decoder.conv1.weight")
             .filter(|s| *s == [384, WAN21_LATENT, 3, 3, 3])
             .ok_or("model_file_invalid")?;

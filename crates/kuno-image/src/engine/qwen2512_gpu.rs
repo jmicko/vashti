@@ -17,7 +17,7 @@ use std::{collections::HashMap, path::Path, sync::Mutex};
 use rayon::prelude::*;
 
 use super::{
-    dit::{linear, quantize},
+    dit::{GROUP, linear, quantize, rotate},
     dit_gpu::fast_kernel,
     gpu::{Buffer, Gpu, Readback, bytes_of},
     qwen_dit::{rotary, time_embedding},
@@ -25,7 +25,7 @@ use super::{
         CHANNELS, CONTEXT, DIM, HEAD, HEADS, HIDDEN, PAIRS, Qwen2512Dit, outlier_norms, patchify,
         positions, silu, unpatchify,
     },
-    safetensors::fp8_e4m3,
+    safetensors::Safetensors,
     xe2::{
         attend, int8,
         level_zero::{self, LevelZero},
@@ -79,6 +79,7 @@ struct Glue {
     copy: level_zero::Kernel,
     final_: level_zero::Kernel,
     modulate: level_zero::Kernel,
+    modulate8: level_zero::Kernel,
 }
 impl Glue {
     fn new(fast: &LevelZero) -> Result<Self, &'static str> {
@@ -95,6 +96,7 @@ impl Glue {
             copy: k("k_copy", 256)?,
             final_: k("k_final", 256)?,
             modulate: k("k_mod", 256)?,
+            modulate8: k("k_mod8", 256)?,
         })
     }
 }
@@ -132,16 +134,51 @@ impl Shared {
     }
 }
 
-/// An FP8 matrix's rows widened, rotated and rounded to INT8 in the product's weight stream
-/// layout, with each row's scale.
+/// A matrix (its rows split over `tensors`) in the product's weight stream layout, with each
+/// row's scale: copied from an INT8 file (rows already rotated, `<base>.weight_scale` beside
+/// them), else widened from its stored float type (FP8 times its `scale_weight` if any) and
+/// rotated and rounded here.
 fn int8_stream(
-    parts: &[Vec<u8>],
+    file: &Safetensors,
+    tensors: &[String],
     rows: usize,
     columns: usize,
     to: &mut [u8],
 ) -> Result<Vec<f32>, &'static str> {
-    let per_part = rows / parts.len();
+    let per_part = rows / tensors.len();
     let tile = int8::OUTPUTS * columns;
+    if tensors.iter().all(|t| file.is_i8(t)) {
+        let mut scales = Vec::with_capacity(rows);
+        for t in tensors {
+            let base = t.strip_suffix(".weight").ok_or("model_tensor_invalid")?;
+            scales.extend(file.f32(&format!("{base}.weight_scale"), &[per_part, 1])?);
+        }
+        to[..rows * columns]
+            .par_chunks_mut(tile)
+            .enumerate()
+            .try_for_each_init(
+                || vec![0u8; tile],
+                |plain, (n, to)| {
+                    for (i, row) in plain.chunks_exact_mut(columns).enumerate() {
+                        let index = n * int8::OUTPUTS + i;
+                        let (part, within) = (index / per_part, index % per_part);
+                        file.i8_part_into(
+                            &tensors[part],
+                            &[per_part, columns],
+                            within * columns,
+                            row,
+                        )?;
+                    }
+                    int8::weight_stream(plain, int8::OUTPUTS, columns, to);
+                    Ok::<_, &'static str>(())
+                },
+            )?;
+        return Ok(scales);
+    }
+    let parts = tensors
+        .iter()
+        .map(|t| float_matrix(file, t, per_part, columns))
+        .collect::<Result<Vec<_>, _>>()?;
     let scales: Vec<Vec<f32>> = to[..rows * columns]
         .par_chunks_mut(tile)
         .enumerate()
@@ -150,10 +187,7 @@ fn int8_stream(
             for (i, row) in widened.chunks_exact_mut(columns).enumerate() {
                 let index = n * int8::OUTPUTS + i;
                 let (part, within) = (index / per_part, index % per_part);
-                let bytes = &parts[part][within * columns..][..columns];
-                for (v, b) in row.iter_mut().zip(bytes) {
-                    *v = fp8_e4m3(*b);
-                }
+                row.copy_from_slice(&parts[part][within * columns..][..columns]);
             }
             let (bytes, scales) = quantize(&widened, columns);
             // SAFETY: i8 and u8 have the same size and alignment.
@@ -166,17 +200,97 @@ fn int8_stream(
     Ok(scales.concat())
 }
 
+/// A float matrix widened to f32 (FP8 times its `scale_weight` if the file has one).
+fn float_matrix(
+    file: &Safetensors,
+    name: &str,
+    rows: usize,
+    columns: usize,
+) -> Result<Vec<f32>, &'static str> {
+    let mut weight = file.floats(name, &[rows, columns])?;
+    let base = name.strip_suffix(".weight").unwrap_or(name);
+    let scale = format!("{base}.scale_weight");
+    if file.shape(&scale).is_some() {
+        let scale = file.f32(&scale, &[])?[0];
+        weight.par_iter_mut().for_each(|v| *v *= scale);
+    }
+    Ok(weight)
+}
+
+/// Modulation rows on the device: exact FP8 bytes (ComfyUI's file), or INT8 in the rotated
+/// basis with a scale per row (converted files, or rounded at load from BF16).
+enum Modulation {
+    Fp8 {
+        weight: Shared,
+        bias: Shared,
+    },
+    Int8 {
+        weight: Shared,
+        scales: Shared,
+        bias: Shared,
+    },
+}
+impl Modulation {
+    fn load(
+        gpu: &Gpu,
+        fast: &LevelZero,
+        file: &Safetensors,
+        names: &[String],
+        rows: usize,
+    ) -> Result<Self, &'static str> {
+        let mut bias = Vec::with_capacity(rows * names.len());
+        for name in names {
+            let base = name.strip_suffix(".weight").ok_or("model_tensor_invalid")?;
+            bias.extend(file.floats(&format!("{base}.bias"), &[rows])?);
+        }
+        let bias = Shared::floats(gpu, fast, &bias)?;
+        if names.iter().all(|n| file.is_fp8(n))
+            && names.iter().all(|n| {
+                let base = n.strip_suffix(".weight").unwrap_or(n);
+                file.shape(&format!("{base}.scale_weight")).is_none()
+            })
+        {
+            let mut weight = Vec::with_capacity(rows * names.len() * DIM);
+            for name in names {
+                weight.extend(file.fp8_bytes(name, &[rows, DIM])?);
+            }
+            return Ok(Self::Fp8 {
+                weight: Shared::bytes(gpu, fast, &weight)?,
+                bias,
+            });
+        }
+        let (mut weight, mut scales) = (Vec::with_capacity(rows * names.len() * DIM), Vec::new());
+        for name in names {
+            if file.is_i8(name) {
+                let base = name.strip_suffix(".weight").ok_or("model_tensor_invalid")?;
+                weight.extend(file.i8(name, &[rows, DIM])?);
+                scales.extend(file.f32(&format!("{base}.weight_scale"), &[rows, 1])?);
+            } else {
+                let (bytes, row_scales) = quantize(&float_matrix(file, name, rows, DIM)?, DIM);
+                weight.extend(bytes);
+                scales.extend(row_scales);
+            }
+        }
+        // SAFETY: i8 and u8 have the same size and alignment.
+        let raw = unsafe { std::slice::from_raw_parts(weight.as_ptr().cast::<u8>(), weight.len()) };
+        Ok(Self::Int8 {
+            weight: Shared::bytes(gpu, fast, raw)?,
+            scales: Shared::floats(gpu, fast, &scales)?,
+            bias,
+        })
+    }
+}
+
 /// One stream's weights in one block.
 struct StreamWeights {
     matrices: [Shared; 4],
     vectors: Shared,
 }
-/// One block: the image and text streams' weights and their FP8 modulation rows
+/// One block: the image and text streams' weights and their modulation rows
 /// (`[stream][6 * DIM][DIM]`) with biases.
 struct Layer {
     streams: [StreamWeights; 2],
-    modulation: Shared,
-    modulation_bias: Shared,
+    modulation: Modulation,
     /// Its query/key norms have an outlier channel: fast mode keeps half-float attention here.
     outlier: bool,
 }
@@ -188,7 +302,7 @@ impl Layer {
         layer: usize,
     ) -> Result<Self, &'static str> {
         let file = &model.file;
-        let name = |part: &str| format!("model.diffusion_model.transformer_blocks.{layer}.{part}");
+        let name = |part: &str| model.name(&format!("transformer_blocks.{layer}.{part}"));
         let stream = |qkv: [&str; 3],
                       out: &str,
                       mlp: &str,
@@ -211,15 +325,10 @@ impl Layer {
             debug_assert_eq!(vectors.len(), VECTORS);
             let matrix = |tensors: &[String], which: usize, scaled: bool| {
                 let (rows, columns) = PRODUCTS[which];
-                let per_part = rows / tensors.len();
-                let parts = tensors
-                    .iter()
-                    .map(|t| file.fp8_bytes(t, &[per_part, columns]))
-                    .collect::<Result<Vec<_>, _>>()?;
                 let total = rows * columns + int8::SLACK + if scaled { rows * 4 } else { 0 };
                 let mut scales = Vec::new();
                 let staged = gpu.staged(total as u64, |to| {
-                    scales = int8_stream(&parts, rows, columns, to)?;
+                    scales = int8_stream(file, tensors, rows, columns, to)?;
                     let (_, rest) = to.split_at_mut(rows * columns);
                     let (slack, tail) = rest.split_at_mut(int8::SLACK);
                     slack.fill(0);
@@ -260,16 +369,16 @@ impl Layer {
             .iter()
             .map(|n| file.floats(&name(&format!("attn.{n}.weight")), &[HEAD]))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut modulation = Vec::with_capacity(BLOCK_MODS * DIM);
-        let mut bias = Vec::with_capacity(BLOCK_MODS);
-        for which in ["img_mod.1", "txt_mod.1"] {
-            modulation.extend(file.fp8_bytes(&name(&format!("{which}.weight")), &[MOD_ROWS, DIM])?);
-            bias.extend(file.floats(&name(&format!("{which}.bias")), &[MOD_ROWS])?);
-        }
+        let modulation = Modulation::load(
+            gpu,
+            fast,
+            file,
+            &[name("img_mod.1.weight"), name("txt_mod.1.weight")],
+            MOD_ROWS,
+        )?;
         Ok(Self {
             streams: [image, text],
-            modulation: Shared::bytes(gpu, fast, &modulation)?,
-            modulation_bias: Shared::floats(gpu, fast, &bias)?,
+            modulation,
             outlier: outlier_norms(&norms),
         })
     }
@@ -457,11 +566,13 @@ pub struct Qwen2512Gpu {
     small: Small,
     img_in: (Shared, Shared),
     proj_out: (Shared, Shared),
-    final_modulation: (Shared, Shared),
+    final_modulation: Modulation,
     /// This step's modulation rows `[block][stream][6 * DIM]`, and the output head's (scale,
     /// shift).
     mods: Shared,
     final_mods: Shared,
+    /// This step's `silu(time embedding)`, and rotated in groups of 256 for INT8 modulation.
+    time_rotated: Shared,
     time: Shared,
     work: Mutex<HashMap<(usize, usize, usize), Work>>,
 }
@@ -537,20 +648,17 @@ impl Qwen2512Gpu {
             "proj_out.bias",
             &[CHANNELS],
         )?;
-        let final_modulation = (
-            Shared::bytes(
-                &gpu,
-                &fast,
-                &model.file.fp8_bytes(
-                    "model.diffusion_model.norm_out.linear.weight",
-                    &[2 * DIM, DIM],
-                )?,
-            )?,
-            Shared::floats(&gpu, &fast, &f("norm_out.linear.bias", &[2 * DIM])?)?,
-        );
+        let final_modulation = Modulation::load(
+            &gpu,
+            &fast,
+            &model.file,
+            &[model.name("norm_out.linear.weight")],
+            2 * DIM,
+        )?;
         let mods = Shared::new(&gpu, &fast, ((layers.len() * BLOCK_MODS) * 4) as u64)?;
         let final_mods = Shared::new(&gpu, &fast, (2 * DIM * 4) as u64)?;
         let time = Shared::new(&gpu, &fast, (DIM * 4) as u64)?;
+        let time_rotated = Shared::new(&gpu, &fast, (DIM * 4) as u64)?;
         let glue = Glue::new(&fast)?;
         Ok(Self {
             gpu,
@@ -564,6 +672,7 @@ impl Qwen2512Gpu {
             mods,
             final_mods,
             time,
+            time_rotated,
             work: Mutex::new(HashMap::new()),
         })
     }
@@ -628,33 +737,66 @@ impl Qwen2512Gpu {
         }
         let rows = patchify(x, height, width);
         gpu.upload(&self.time.buffer, 0, bytes_of(&times.silu))?;
+        let mut rotated = times.silu.clone();
+        for group in rotated.chunks_exact_mut(GROUP) {
+            rotate(group.try_into().map_err(|_| "gpu_failed")?);
+        }
+        gpu.upload(&self.time_rotated.buffer, 0, bytes_of(&rotated))?;
         let mut batch = self.fast.batch()?;
         // This step's modulation rows, shared by the passes.
+        let modulate = |batch: &mut level_zero::Batch,
+                        m: &Modulation,
+                        out: &Shared,
+                        rows: usize,
+                        first: usize| {
+            let groups = [(rows / 16) as u32, 1, 1];
+            match m {
+                Modulation::Fp8 { weight, bias } => batch.launch(
+                    &g.modulate,
+                    &[
+                        M(&weight.memory),
+                        M(&bias.memory),
+                        M(&self.time.memory),
+                        M(&out.memory),
+                        U(rows as u32),
+                        U(first as u32),
+                    ],
+                    groups,
+                ),
+                Modulation::Int8 {
+                    weight,
+                    scales,
+                    bias,
+                } => batch.launch(
+                    &g.modulate8,
+                    &[
+                        M(&weight.memory),
+                        M(&scales.memory),
+                        M(&bias.memory),
+                        M(&self.time_rotated.memory),
+                        M(&out.memory),
+                        U(rows as u32),
+                        U(first as u32),
+                    ],
+                    groups,
+                ),
+            }
+        };
         for (index, layer) in self.layers.iter().enumerate() {
-            batch.launch(
-                &g.modulate,
-                &[
-                    M(&layer.modulation.memory),
-                    M(&layer.modulation_bias.memory),
-                    M(&self.time.memory),
-                    M(&self.mods.memory),
-                    U(BLOCK_MODS as u32),
-                    U((index * BLOCK_MODS) as u32),
-                ],
-                [(BLOCK_MODS / 16) as u32, 1, 1],
+            modulate(
+                &mut batch,
+                &layer.modulation,
+                &self.mods,
+                BLOCK_MODS,
+                index * BLOCK_MODS,
             )?;
         }
-        batch.launch(
-            &g.modulate,
-            &[
-                M(&self.final_modulation.0.memory),
-                M(&self.final_modulation.1.memory),
-                M(&self.time.memory),
-                M(&self.final_mods.memory),
-                U((2 * DIM) as u32),
-                U(0),
-            ],
-            [(2 * DIM / 16) as u32, 1, 1],
+        modulate(
+            &mut batch,
+            &self.final_modulation,
+            &self.final_mods,
+            2 * DIM,
+            0,
         )?;
         for prompt in prompts {
             let w = &works[&(height, width, prompt.tokens)];
@@ -920,6 +1062,60 @@ mod tests {
         super::{gpu::Select, qwen_dit::tests::db, qwen2512_dit::tests::Golden},
         *,
     };
+
+    /// `KUNO_QWEN2512_BF16=<publisher's transformer dir> KUNO_QWEN2512_DIT=<ComfyUI FP8 file>
+    /// KUNO_QWEN2512_DIT_INT8=<converted transformer dir> KUNO_QWEN2512_GOLDEN=<dir>`: the
+    /// exact model (the publisher's BF16 weights in f32 on the CPU) on each captured call, and
+    /// how far from it the C++ FP8 engine, the GPU from the FP8 file and the GPU from the INT8
+    /// conversion land.
+    #[test]
+    #[ignore = "needs the Intel GPU, the models and captures"]
+    fn paths_against_exact_model() {
+        use super::super::qwen2512_dit::{Qwen2512Dit, Step};
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN2512_GOLDEN").unwrap());
+        let goldens: Vec<Golden> = (0..)
+            .take_while(|s| dir.join(format!("step{s}.x.f32")).exists())
+            .map(|s| Golden::load(&dir, s))
+            .collect();
+        let exact = Qwen2512Dit::open(Path::new(&std::env::var("KUNO_QWEN2512_BF16").unwrap())).unwrap();
+        let truth: Vec<Vec<f32>> = goldens
+            .iter()
+            .map(|g| {
+                exact
+                    .forward(&Step {
+                        x: &g.x,
+                        height: g.height,
+                        width: g.width,
+                        timestep: g.timestep,
+                        context: &g.context,
+                    })
+                    .unwrap()
+            })
+            .collect();
+        drop(exact);
+        for (step, (g, t)) in goldens.iter().zip(&truth).enumerate() {
+            println!("step {step}: C++ FP8 engine {:.1} dB from exact", db(t, &g.out));
+        }
+        for (label, var) in [("FP8 file", "KUNO_QWEN2512_DIT"), ("INT8 conversion", "KUNO_QWEN2512_DIT_INT8")] {
+            let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+            let model = Qwen2512Gpu::load(gpu, Path::new(&std::env::var(var).unwrap())).unwrap();
+            for (step, (g, t)) in goldens.iter().zip(&truth).enumerate() {
+                let prompt = model.prompt(&g.context).unwrap();
+                let times = model.times(&[g.timestep]).remove(0);
+                for fast in [false, true] {
+                    let out = model
+                        .step(&[&prompt], &g.x, g.height, g.width, &times, fast)
+                        .unwrap()
+                        .remove(0);
+                    println!(
+                        "step {step}: GPU from {label}{}: {:.1} dB from exact",
+                        if fast { " (fast)" } else { "" },
+                        db(t, &out)
+                    );
+                }
+            }
+        }
+    }
 
     /// `KUNO_QWEN2512_DIT=<model> KUNO_QWEN2512_GOLDEN=<dir>`: the captured C++ calls (cond
     /// and uncond of each step), standard and fast attention.

@@ -175,7 +175,9 @@ impl Models {
         let (h, w) = (height / SCALE, width / SCALE);
         let guided = cfg != 1.0;
         let cond = self.condition(request.prompt)?;
-        let uncond = guided.then(|| self.condition(request.negative)).transpose()?;
+        let uncond = guided
+            .then(|| self.condition(request.negative))
+            .transpose()?;
         let mut x = Mt19937::new(request.seed as u64).randn(WAN21_LATENT * h * w);
         let sigmas = sigmas(steps, shift);
         let timesteps: Vec<f32> = sigmas[..steps].iter().map(|s| s * 1000.0).collect();
@@ -186,9 +188,9 @@ impl Models {
         }
         for step in 0..steps {
             let sigma = sigmas[step];
-            let mut outs = self
-                .dit
-                .step(&prompts, &x, h / 2, w / 2, &times[step], fast_attention)?;
+            let mut outs =
+                self.dit
+                    .step(&prompts, &x, h / 2, w / 2, &times[step], fast_attention)?;
             let mut out = outs.remove(0);
             if let Some(negative) = outs.first() {
                 for (o, n) in out.iter_mut().zip(negative) {

@@ -31,7 +31,8 @@ pub(super) const HIDDEN: usize = 12288;
 pub(super) const PAIRS: usize = HEAD / 2;
 const TIME: usize = 256;
 const EPS: f32 = 1e-6;
-const PREFIX: &str = "model.diffusion_model.";
+/// ComfyUI's files prefix every name with this; the publisher's do not.
+const COMFY_PREFIX: &str = "model.diffusion_model.";
 /// The prompt template of text-to-image and how many of its leading tokens are dropped.
 pub const TEMPLATE: &str = "<|im_start|>system\nDescribe the image by detailing the color, shape, size, texture, quantity, text, spatial relationships of the objects and background:<|im_end|>\n<|im_start|>user\n";
 pub const START: usize = 34;
@@ -117,6 +118,8 @@ pub struct Step<'a> {
 pub struct Qwen2512Dit {
     pub(super) file: Safetensors,
     pub(super) layers: usize,
+    /// The names' prefix in this file (`COMFY_PREFIX` or none).
+    pub(super) prefix: &'static str,
     /// Block linears as the GPU runs them: weights rotated in groups of 256 and rounded to
     /// int8 per output row, activations the same per token (accuracy experiments).
     pub(super) int8: bool,
@@ -128,19 +131,32 @@ pub struct Qwen2512Dit {
 impl Qwen2512Dit {
     pub fn open(path: &Path) -> Result<Self, &'static str> {
         let file = Safetensors::open(path)?;
-        let layers = file.count(&format!("{PREFIX}transformer_blocks."));
+        let prefix = if file
+            .shape(&format!("{COMFY_PREFIX}img_in.weight"))
+            .is_some()
+        {
+            COMFY_PREFIX
+        } else {
+            ""
+        };
+        let layers = file.count(&format!("{prefix}transformer_blocks."));
         if layers == 0 {
             return Err("model_file_invalid");
         }
         Ok(Self {
             file,
             layers,
+            prefix,
             int8: false,
             attention8: 0,
         })
     }
     pub(super) fn floats(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, &'static str> {
-        self.file.floats(&format!("{PREFIX}{name}"), shape)
+        self.file.floats(&self.name(name), shape)
+    }
+    /// A tensor's full name in this file.
+    pub(super) fn name(&self, name: &str) -> String {
+        format!("{}{name}", self.prefix)
     }
     /// `x W^T + b` with the layer's weight `[outputs][inputs]` and bias.
     fn dense(
@@ -533,6 +549,49 @@ pub(super) mod tests {
                 db(&cpu, &gpu_rows)
             );
             assert!(db(&golden, &gpu_rows) > 25.0);
+        }
+    }
+
+    /// `KUNO_QWEN2512_ENCODER_BF16=<publisher's text_encoder dir>
+    /// KUNO_QWEN2512_ENCODER=<ComfyUI FP8 file> KUNO_QWEN2512_ENCODER_INT8=<converted dir>
+    /// KUNO_QWEN2512_GOLDEN=<dir>`: the exact encoder (BF16 weights, f32) on the capture
+    /// script's prompts, and how far the C++ FP8 engine and the GPU encoder from each file are.
+    #[test]
+    #[ignore = "needs the Intel GPU, the encoders and captures"]
+    fn text_paths_against_exact_encoder() {
+        use crate::engine::{
+            gpu::{Gpu, Select},
+            text_encoder::{Prompt, TextEncoder},
+            text_gpu::GpuTextEncoder,
+            tokenizer::Tokenizer,
+        };
+        let var = |v: &str| std::env::var(v).unwrap();
+        let mut exact = TextEncoder::open(Path::new(&var("KUNO_QWEN2512_ENCODER_BF16"))).unwrap();
+        exact.exact = true;
+        let tokenizer = Tokenizer::new().unwrap();
+        let dir = std::path::PathBuf::from(var("KUNO_QWEN2512_GOLDEN"));
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let encoders: Vec<(&str, GpuTextEncoder)> = [
+            ("FP8 file", "KUNO_QWEN2512_ENCODER"),
+            ("INT8 conversion", "KUNO_QWEN2512_ENCODER_INT8"),
+        ]
+        .into_iter()
+        .map(|(l, v)| (l, GpuTextEncoder::new(&gpu, TextEncoder::open(Path::new(&var(v))).unwrap()).unwrap()))
+        .collect();
+        for (step, text) in [
+            (0, "A red fox sitting on a mossy rock in a misty forest, morning light"),
+            (1, "blurry, low quality"),
+        ] {
+            let full = format!("{TEMPLATE}{text}<|im_end|>\n<|im_start|>assistant\n");
+            let ids: Vec<i32> = tokenizer.encode(&full).unwrap().into_iter().map(|i| i as i32).collect();
+            let prompt = Prompt { ids: &ids, images: vec![] };
+            let truth = exact.forward(&prompt).unwrap()[START * CONTEXT..].to_vec();
+            let golden = read(&dir.join(format!("step{step}.context.f32")));
+            println!("prompt {step}: C++ FP8 engine {:.1} dB from exact", db(&truth, &golden));
+            for (label, encoder) in &encoders {
+                let rows = encoder.forward(&prompt).unwrap()[START * CONTEXT..].to_vec();
+                println!("prompt {step}: GPU from {label}: {:.1} dB from exact", db(&truth, &rows));
+            }
         }
     }
 

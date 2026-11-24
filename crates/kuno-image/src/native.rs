@@ -980,10 +980,11 @@ impl Session {
             // The C++ engine's own context holds its copy of its weights in video memory.
             // SAFETY: the session pointer is live; release only resets its context.
             unsafe { qwen_session_release(self.native.as_ptr()) };
-            pixels.0 = qwen2512::generate(&self.directory, &self.pci, recipe, seed, previews, || {
-                // SAFETY: a plain flag read set by the worker's SIGTERM handler.
-                unsafe { cancel_requested() }
-            })?;
+            pixels.0 =
+                qwen2512::generate(&self.directory, &self.pci, recipe, seed, previews, || {
+                    // SAFETY: a plain flag read set by the worker's SIGTERM handler.
+                    unsafe { cancel_requested() }
+                })?;
             pixels.1 = 4;
             0
         } else if rust_qwen {

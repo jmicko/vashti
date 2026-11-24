@@ -404,8 +404,8 @@ fn read_layer(
     let mut scales = Vec::new();
     for (name, rows, columns) in parts {
         let (matrix, tail) = rest.split_at_mut(rows * columns);
-        if encoder.qwen25 {
-            let weight = encoder.fp8_matrix(layer, name, rows, columns)?;
+        if !encoder.is_int8(layer, name) {
+            let weight = encoder.float_matrix(layer, name, rows, columns)?;
             let (bytes, row_scales) = crate::engine::dit::quantize(&weight, columns);
             for (to, b) in matrix.iter_mut().zip(&bytes) {
                 *to = *b as u8;
@@ -418,7 +418,7 @@ fn read_layer(
         }
         rest = tail;
     }
-    Ok(encoder.qwen25.then_some(scales))
+    Ok((!scales.is_empty()).then_some(scales))
 }
 
 /// One layer's weight scales and norm weights in the `Sizes::vectors` layout.
@@ -432,8 +432,27 @@ fn layer_vectors(
     let file = &encoder.file;
     let base = format!("model.layers.{layer}");
     let norm = |name: &str, width: usize| file.floats(&format!("{base}.{name}.weight"), &[width]);
-    if let Some(scales) = scales {
-        to[..scales.len()].copy_from_slice(scales);
+    if encoder.qwen25 {
+        // Row scales: from rounding at load, else the INT8 file's.
+        let scales = match scales {
+            Some(scales) => scales.to_vec(),
+            None => {
+                let mut all = Vec::with_capacity(s.norm1);
+                for (name, rows) in [
+                    ("self_attn.q_proj", s.heads * HEAD),
+                    ("self_attn.k_proj", s.kv_heads * HEAD),
+                    ("self_attn.v_proj", s.kv_heads * HEAD),
+                    ("self_attn.o_proj", s.width),
+                    ("mlp.gate_proj", s.inner),
+                    ("mlp.up_proj", s.inner),
+                    ("mlp.down_proj", s.width),
+                ] {
+                    all.extend(file.f32(&format!("{base}.{name}.weight_scale"), &[rows, 1])?);
+                }
+                all
+            }
+        };
+        to[..scales.len()].copy_from_slice(&scales);
         to[s.norm1..s.norm1 + s.width].copy_from_slice(&norm("input_layernorm", s.width)?);
         to[s.norm2..s.norm2 + s.width].copy_from_slice(&norm("post_attention_layernorm", s.width)?);
         let mut at = s.bias;

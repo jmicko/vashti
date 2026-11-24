@@ -312,20 +312,28 @@ fn describe(
         if collection == MINIMAX_H3_COLLECTION || collection == MINIMAX_H3_REFERENCE_COLLECTION {
             continue;
         }
+        let int8_2512 = collection == "qwen-image-2512-int8";
         let reason = if !models_ready(collection) {
             Some("image_models_unavailable")
+        } else if int8_2512 && !config.is_some_and(|c| c.uses_sycl(QWEN_RECIPE)) {
+            // Only the Rust engine (an ABI 6 managed runtime) reads the INT8 conversion.
+            Some("image_runtime_unavailable")
         } else {
             privacy
         };
-        let ids: &[&str] = if collection == "qwen-image-2512-fp8" {
+        let ids: &[&str] = if int8_2512 || collection == "qwen-image-2512-fp8" {
             &[QWEN_RECIPE]
         } else {
             &[QWEN21_RECIPE, QWEN21_EDIT_RECIPE]
         };
         for id in ids {
             let edit = *id == QWEN21_EDIT_RECIPE;
-            if images.workflows.iter().any(|w| w.id == *id) {
-                continue;
+            // A workflow two collections can serve takes the first ready one.
+            if let Some(at) = images.workflows.iter().position(|w| w.id == *id) {
+                if images.workflows[at].state == "ready" || reason.is_some() {
+                    continue;
+                }
+                images.workflows.remove(at);
             }
             images.workflows.push(ImageWorkflowCapability {
                 id: (*id).into(),

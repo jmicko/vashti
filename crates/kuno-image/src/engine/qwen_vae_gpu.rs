@@ -929,8 +929,10 @@ mod tests {
     #[test]
     #[ignore]
     fn wan21_decoder_matches_cpp_engine() {
-        let vae = QwenVae::open_wan21(std::path::Path::new(&std::env::var("KUNO_QWEN2512_VAE").unwrap()))
-            .unwrap();
+        let vae = QwenVae::open_wan21(std::path::Path::new(
+            &std::env::var("KUNO_QWEN2512_VAE").unwrap(),
+        ))
+        .unwrap();
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
         let decoder = GpuVae::new(&gpu, &vae).unwrap();
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN2512_GOLDEN").unwrap());
@@ -958,7 +960,10 @@ mod tests {
             .map(|(a, b)| (a - b).abs())
             .fold(0f32, f32::max);
         let db = db(&want, &scaled);
-        println!("{width}x{height} latent: {db:.1} dB, worst {:.0}/255", worst * 255.0);
+        println!(
+            "{width}x{height} latent: {db:.1} dB, worst {:.0}/255",
+            worst * 255.0
+        );
         if let Ok(path) = std::env::var("KUNO_QWEN2512_VAE_DUMP") {
             std::fs::write(path, bytes_of(&scaled)).unwrap();
         }

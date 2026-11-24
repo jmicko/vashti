@@ -425,7 +425,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
     if !config
         .collections
         .iter()
-        .any(|id| id == recipe.collection_id())
+        .any(|id| recipe.collection_ids().contains(&id.as_str()))
     {
         return error(StatusCode::BAD_REQUEST, "image_collection_not_enabled");
     }

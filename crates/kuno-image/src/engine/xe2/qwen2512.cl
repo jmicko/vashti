@@ -423,3 +423,26 @@ SG WG(256) kernel void k_mod(global const uchar16* w, global const float* bias, 
     sum = sub_group_reduce_add(sum);
     if (sl == 0) out[first + row] = sum + bias[row];
 }
+
+// ---- Modulation from INT8 rows in the rotated basis: `rows` outputs of `[rows][DIM]` signed
+// bytes times `t` (rotated the same way), each times its row's scale, plus bias ----
+SG WG(256) kernel void k_mod8(global const char16* w, global const float* scales,
+                             global const float* bias, global const float* t, global float* out,
+                             uint rows, uint first) {
+    local float tm[DIM];
+    uint lane = get_local_id(0);
+    for (uint i = lane; i < DIM; i += 256) tm[i] = t[i];
+    barrier(CLK_LOCAL_MEM_FENCE);
+    uint row = get_group_id(0) * 16 + get_sub_group_id();
+    uint sl = get_sub_group_local_id();
+    if (row >= rows) return;
+    float sum = 0.0f;
+    for (uint k = sl; k < DIM / 16; k += 16) {
+        float16 f = convert_float16(w[row * (DIM / 16) + k]);
+        uint c = k * 16;
+        sum += dot(f.s0123, vload4(0, tm + c)) + dot(f.s4567, vload4(0, tm + c + 4)) +
+               dot(f.s89ab, vload4(0, tm + c + 8)) + dot(f.scdef, vload4(0, tm + c + 12));
+    }
+    sum = sub_group_reduce_add(sum);
+    if (sl == 0) out[first + row] = sum * scales[row] + bias[row];
+}

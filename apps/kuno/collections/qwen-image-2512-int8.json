@@ -1,0 +1,220 @@
+{
+  "id": "qwen-image-2512-int8",
+  "repository": "Qwen/Qwen-Image-2512",
+  "revision": "25468b98e3276ca6700de15c6628e51b7de54a26",
+  "license": "apache-2.0",
+  "files": [
+    {
+      "path": "text_encoder/model-00001-of-00004.safetensors",
+      "size": 4968243304,
+      "sha256": "d725335e4ea2399be706469e4b8807716a8fa64bd03468252e9f7acf2415fee4",
+      "keep": false
+    },
+    {
+      "path": "text_encoder/model-00002-of-00004.safetensors",
+      "size": 4991495816,
+      "sha256": "b1830db6908dcc76df3a71492acbcf2b8cac130114cf1f3c2d9edae8de8c6de3",
+      "keep": false
+    },
+    {
+      "path": "text_encoder/model-00003-of-00004.safetensors",
+      "size": 4932751040,
+      "sha256": "09c1807c6d00d7cab94f7db39d4c02ebb8537225ccde383861ac48db97945aa6",
+      "keep": false
+    },
+    {
+      "path": "text_encoder/model-00004-of-00004.safetensors",
+      "size": 1691924384,
+      "sha256": "5dd068336d14d45ffb43cef374d286cc6ba9d8741b028f90a7d040d847961f4a",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00001-of-00009.safetensors",
+      "size": 4989364312,
+      "sha256": "1abb592dfb6701994f11dbbe1228d99fef1246e2cdd119a73e030da7c2b4d795",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00002-of-00009.safetensors",
+      "size": 4984214160,
+      "sha256": "f725018bd0b6b54a1529b38f20d38840b69aceefe843b443949e0e035799e88b",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00003-of-00009.safetensors",
+      "size": 4946470000,
+      "sha256": "3de6b71c7d756b4ead46c475f02bc27ff9efe64c43ce2b6790afb9fea81d821b",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00004-of-00009.safetensors",
+      "size": 4984213736,
+      "sha256": "c6877663a33e453e3e7fb73d1c6d006612a3e7b29d6a9f84d697383015e2f4b8",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00005-of-00009.safetensors",
+      "size": 4946471896,
+      "sha256": "31ce58f75ddfaa3851a95397ae5b22e8e435ded5f021dd7d903e138e12586d2e",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00006-of-00009.safetensors",
+      "size": 4946451560,
+      "sha256": "e8c1521290054c832e50086e65e50222e8e9b85cefb595667bc82ee091854772",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00007-of-00009.safetensors",
+      "size": 4908690520,
+      "sha256": "33847ad316bdc789f4b0c522cd0c388a025c6254e6e5b3f9626a6afe175655d3",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00008-of-00009.safetensors",
+      "size": 4984232856,
+      "sha256": "770716dc6e0c7007c2e8fba297f075cae23b45985a4cda3ec4dae5f7b559c03c",
+      "keep": false
+    },
+    {
+      "path": "transformer/diffusion_pytorch_model-00009-of-00009.safetensors",
+      "size": 1170918840,
+      "sha256": "3f8213dfaaf5aacba65f42c33bc77bb5926506755b1503fa6fa323750088fc0c",
+      "keep": false
+    },
+    {
+      "path": "vae/diffusion_pytorch_model.safetensors",
+      "size": 253806966,
+      "sha256": "0c8bc8b758c649abef9ea407b95408389a3b2f610d0d10fcb054fe171d0a8344",
+      "keep": false
+    }
+  ],
+  "derived": [
+    {
+      "path": "qwen-image-2512-int8/text_encoder/model-00001-of-00004.safetensors",
+      "size": 3706864360,
+      "sha256": "7a7633ff9d4a37927c522fc61b0571815431939353ed3ad14d22e9aa1c34c1b3",
+      "convert": {
+        "part": "text_encoder",
+        "input": "text_encoder/model-00001-of-00004.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/text_encoder/model-00002-of-00004.safetensors",
+      "size": 2498003208,
+      "sha256": "86f2bc025cb685f57450beb5516b4fd9b3e1e137f9e04a21ceb7500cc254f863",
+      "convert": {
+        "part": "text_encoder",
+        "input": "text_encoder/model-00002-of-00004.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/text_encoder/model-00003-of-00004.safetensors",
+      "size": 2468646800,
+      "sha256": "c48811cade5a76e38b6a3c565b98194a05ac7c9e5b9ec81fc9e4d42f0977e085",
+      "convert": {
+        "part": "text_encoder",
+        "input": "text_encoder/model-00003-of-00004.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/text_encoder/model-00004-of-00004.safetensors",
+      "size": 301202200,
+      "sha256": "023454f6adb34e4be5bfe178b8880d73a7161ccfbe8af13a55d790aea02b3aa4",
+      "convert": {
+        "part": "text_encoder",
+        "input": "text_encoder/model-00004-of-00004.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00001-of-00009.safetensors",
+      "size": 2519537752,
+      "sha256": "e8408d0bb15ab7c5ca2f87ae854f72db0f28858dd14a945c17b13b76cd82da3c",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00001-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00002-of-00009.safetensors",
+      "size": 2495501160,
+      "sha256": "a982fbca1356366a0246325679d12406268012e789207dfce9a28d3c89e5b015",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00002-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00003-of-00009.safetensors",
+      "size": 2476643192,
+      "sha256": "a1fa2404179c7966198423a7113695100d2d5d511912f45cdedd861dafa74348",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00003-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00004-of-00009.safetensors",
+      "size": 2495500496,
+      "sha256": "0b6782f1f902512c919bec837d55ffd12014795114f101f04d0aa8558279ec6c",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00004-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00005-of-00009.safetensors",
+      "size": 2476645680,
+      "sha256": "d38cf2bebfbad84af531334ab92ad17d0e72627375c6acf632d0919e08c056a2",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00005-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00006-of-00009.safetensors",
+      "size": 2476587880,
+      "sha256": "2742f80a5e091dad1dd82fd7f2a5772072ff8399f3ff5d45be2a98b348d470ce",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00006-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00007-of-00009.safetensors",
+      "size": 2457676664,
+      "sha256": "85930aad10e51193bc1028cde0f6ed5d356742a8e255164845838937f9fd0a51",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00007-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00008-of-00009.safetensors",
+      "size": 2495556856,
+      "sha256": "b7ebcfe7277133d51782e48b7b8ac72a5542333ec64421ae0b993692a95c7cb0",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00008-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/transformer/diffusion_pytorch_model-00009-of-00009.safetensors",
+      "size": 586430552,
+      "sha256": "70869a343cab2e40ec49d42b8e022181f1581682ce0cf6344d95e96ef188f140",
+      "convert": {
+        "part": "transformer",
+        "input": "transformer/diffusion_pytorch_model-00009-of-00009.safetensors"
+      }
+    },
+    {
+      "path": "qwen-image-2512-int8/vae/diffusion_pytorch_model.safetensors",
+      "size": 253806358,
+      "sha256": "a6b9985206b6b99a15589f678f2cbc27b8c943000fe7554cd113044d041624c4",
+      "convert": {
+        "part": "vae",
+        "input": "vae/diffusion_pytorch_model.safetensors"
+      }
+    }
+  ]
+}
