@@ -1224,6 +1224,57 @@ Rust's `expf`, `sinf`, `cosf`, `powf` and `tanhf` (rotary tables, time embedding
 layers) bind to Intel's versions, which round differently in the last bits. Preloading
 `libimf` into the Rust-only worker reproduces the old images bit for bit.
 
+## Any Vulkan GPU: the RTX 3060 (2026-11-24)
+
+Every image model now also runs on GPUs other than the B70 through portable Vulkan kernels,
+chosen per device (`Gpu::shapes`, `narrow`, `subgroup`, `gemm8`, `gemm16`, `matrix2`). On
+Intel the kernels and numbers are unchanged; elsewhere:
+
+- **Products.** `gemm8nv`/`gemm16nv`: 32-lane subgroups, 16 x 16 matrices, 64-column steps
+  through shared rows padded against bank conflicts, the next step fetched into registers.
+  INT8 59-62 TOPS on the 3060 (exact).
+- **Attention.** `fattend16nv` on `VK_NV_cooperative_matrix2` workgroup-scope matrices:
+  scores stay in registers (row reductions, per-element exponentials and masks, a
+  conversion to the value product's half-precision operand), 18.3 TFLOPS at 24 heads x 4078
+  tokens, 84 dB from an exact softmax. `fattend16` (subgroup scope, shared memory) is the
+  fallback for GPUs without the extension (5.7 TFLOPS). Both take causal prompt runs.
+- **Glue.** The 16-lane shaders work on groups of 16 invocations with clustered reductions
+  (bit-identical on 16-lane subgroups); `tattend32` for the text encoder.
+- **Qwen 2.1 DiT** (`qwen_vk.rs`): 38.3-45.8 dB from the captured steps (B70: 37.7-44.2).
+- **Qwen 2512 DiT** (`qwen2512_vk.rs`): 44-50 dB from the Xe2 form on the same INT8 file.
+  The modulation layers (a third of the model) run on the CPU from host memory; blocks stay
+  on the device while the budget leaves room for a CFG step (35 of 60 on 12 GB), the rest are
+  copied into one device slot per step, both CFG passes running through each block while it
+  is there.
+- Text encoder 38.6 dB, vision tower 37-68 dB, VAEs as on the B70.
+
+On a 12 GB card the pipeline also: keeps a prefix's keys and values in host memory when
+the steps' buffers would not fit beside them (each block then copies them over the bus);
+shares one set of step buffers between CFG's prompts; decodes in strips of latent rows when
+the whole image's VAE buffers do not fit (each strip with a halo of every convolution's
+reach after the attention, so the pixels are identical: no seam); and frees the DiT for the
+decode only when strips would be mostly overlap, loading it again on the next request.
+
+Through the gateway's own worker (default build) on the RTX 3060 (PCIe x4 slot):
+
+| Request | Time (warm) | Per step | Reference |
+| --- | ---: | ---: | --- |
+| Qwen 2.1 1184x1776, 20 steps, CFG 4 | 209 s | 9.0 s | ComfyUI 193 s |
+| Qwen 2512 832x1248, 20 steps, CFG 5 | 137 s | 6.5 s | B70 23 s |
+| Qwen 2.1 1248x832 edit, same-size reference, CFG 4 | about 170 s (25 steps, estimated) | 5.85 s | ComfyUI 109 s, C++ CUDA 283 s |
+
+Fast attention (int8 queries and keys) is not implemented on Vulkan yet; the embedded engine
+advertises standard attention only. Known speed work: copying streamed 2512 blocks and
+host-memory prefixes while the previous block computes (a transfer queue), and the
+products' efficiency at large token counts (44-56 TOPS in the step).
+
+### The gateway's engine
+
+`apps/kuno` builds with `rust-image` by default: the gateway executable is its own image
+worker with the Rust engine on any GPU (22.6 MB), and `native-image` (the C++ engine) is
+exclusive with it. The engine picks the Xe2 DiTs on Intel GPUs that run them and the Vulkan
+ones elsewhere; the Vulkan DiTs refuse devices without 16 x 16 x 16 half-precision matrices.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
