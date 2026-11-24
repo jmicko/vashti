@@ -46,6 +46,8 @@ struct Kernels {
     gate: Kernel,
     copy: Kernel,
     attend: Kernel,
+    /// Queries per `attend` workgroup.
+    attend_block: u32,
     embed: Kernel,
     final_: Kernel,
 }
@@ -62,7 +64,12 @@ impl Kernels {
             qkv: gpu.kernel(shaders::QKV16, 9, 9, any)?,
             gate: gpu.kernel(shaders::QGATE16, 4, 2, None)?,
             copy: gpu.kernel(shaders::QCOPY16, 4, 4, None)?,
-            attend: gpu.kernel(shaders::FATTEND16, 4, 7, Some(32))?,
+            attend: if gpu.matrix2() {
+                gpu.kernel(shaders::FATTEND16_NV, 4, 7, None)?
+            } else {
+                gpu.kernel(shaders::FATTEND16, 4, 7, Some(32))?
+            },
+            attend_block: if gpu.matrix2() { 64 } else { 32 },
             embed: gpu.kernel(shaders::QEMBED, 3, 1, None)?,
             final_: gpu.kernel(shaders::QFINAL, 4, 1, any)?,
         })
@@ -472,7 +479,7 @@ impl QwenVk {
                 (1.0 / (HEAD as f32).sqrt()).to_bits(),
                 u32::from(causal),
             ],
-            groups: [np / 32, HEADS as u32, 1],
+            groups: [np / k.attend_block, HEADS as u32, 1],
         });
         calls.push(Call::Shader {
             kernel: &k.rotate8,

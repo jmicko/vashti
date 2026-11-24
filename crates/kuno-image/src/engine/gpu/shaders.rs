@@ -11,6 +11,8 @@ pub const GEMM8_NV: &[u8] = include_bytes!("shaders/gemm8nv.spv");
 pub const GEMM16_NV: &[u8] = include_bytes!("shaders/gemm16nv.spv");
 /// Fused attention on 16 x 16 x 16 half-precision matrices, 32-lane subgroups.
 pub const FATTEND16: &[u8] = include_bytes!("shaders/fattend16.spv");
+/// `fattend16` on VK_NV_cooperative_matrix2 workgroup-scope matrices (64-query blocks).
+pub const FATTEND16_NV: &[u8] = include_bytes!("shaders/fattend16nv.spv");
 /// Qwen Image 2.1 queries, keys and values for `fattend16` from the INT8 product.
 pub const QKV16: &[u8] = include_bytes!("shaders/qkv16.spv");
 /// Qwen Image 2.1 feed-forward activation from the INT8 product, bf16 rows for `qhidq8`.

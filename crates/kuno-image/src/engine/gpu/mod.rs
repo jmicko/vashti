@@ -28,6 +28,21 @@ pub struct Shape {
     pub c: vk::ComponentTypeKHR,
     pub result: vk::ComponentTypeKHR,
 }
+/// `VkPhysicalDeviceCooperativeMatrix2FeaturesNV` (newer than the `ash` in use).
+#[repr(C)]
+struct Matrix2Features {
+    s_type: vk::StructureType,
+    p_next: *mut std::ffi::c_void,
+    workgroup_scope: vk::Bool32,
+    flexible_dimensions: vk::Bool32,
+    reductions: vk::Bool32,
+    conversions: vk::Bool32,
+    per_element_operations: vk::Bool32,
+    tensor_addressing: vk::Bool32,
+    block_loads: vk::Bool32,
+}
+const MATRIX2_FEATURES: vk::StructureType = vk::StructureType::from_raw(1_000_593_000);
+
 struct Core {
     _entry: ash::Entry,
     instance: ash::Instance,
@@ -44,6 +59,9 @@ struct Core {
     shapes: Vec<Shape>,
     /// The subgroup sizes a kernel may require.
     subgroups: (u32, u32),
+    /// Whether `VK_NV_cooperative_matrix2` is enabled with workgroup-scope matrices of
+    /// flexible sizes, reductions, conversions and per-element operations.
+    matrix2: bool,
     /// Command and descriptor pools and the queue are used by one thread at a time.
     turn: std::sync::Mutex<()>,
 }
@@ -192,6 +210,46 @@ impl Gpu {
             let sharing =
                 has(c"VK_KHR_external_memory_fd") && has(c"VK_EXT_external_memory_dma_buf");
             let mut extensions = vec![c"VK_KHR_cooperative_matrix".as_ptr()];
+            // Reductions, conversions and per-element operations on cooperative matrices
+            // (NVIDIA), for attention that keeps its scores in registers.
+            let mut matrix2 = Matrix2Features {
+                s_type: MATRIX2_FEATURES,
+                p_next: std::ptr::null_mut(),
+                workgroup_scope: 0,
+                flexible_dimensions: 0,
+                reductions: 0,
+                conversions: 0,
+                per_element_operations: 0,
+                tensor_addressing: 0,
+                block_loads: 0,
+            };
+            let matrix2_ok = has(c"VK_NV_cooperative_matrix2") && {
+                let mut query = vk::PhysicalDeviceFeatures2::default();
+                query.p_next = (&mut matrix2 as *mut Matrix2Features).cast();
+                instance.get_physical_device_features2(physical, &mut query);
+                matrix2.workgroup_scope != 0
+                    && matrix2.flexible_dimensions != 0
+                    && matrix2.reductions != 0
+                    && matrix2.conversions != 0
+                    && matrix2.per_element_operations != 0
+            };
+            // Everything the device has is enabled.
+            matrix2.p_next = std::ptr::null_mut();
+            if std::env::var_os("KUNO_GPU_DEBUG").is_some() {
+                eprintln!(
+                    "matrix2: workgroup {} flexible {} reductions {} conversions {} per-element {} tensor {} block {}",
+                    matrix2.workgroup_scope,
+                    matrix2.flexible_dimensions,
+                    matrix2.reductions,
+                    matrix2.conversions,
+                    matrix2.per_element_operations,
+                    matrix2.tensor_addressing,
+                    matrix2.block_loads
+                );
+            }
+            if matrix2_ok {
+                extensions.push(c"VK_NV_cooperative_matrix2".as_ptr());
+            }
             if sharing {
                 extensions.push(c"VK_KHR_external_memory_fd".as_ptr());
                 extensions.push(c"VK_EXT_external_memory_dma_buf".as_ptr());
@@ -208,6 +266,10 @@ impl Gpu {
                 .compute_full_subgroups(true);
             let mut matrix =
                 vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
+            if matrix2_ok {
+                // `push_next` below appends the chain that starts at `matrix`.
+                matrix.p_next = (&mut matrix2 as *mut Matrix2Features).cast();
+            }
             let features = vk::PhysicalDeviceFeatures::default().shader_float64(true);
             let created = instance.create_device(
                 physical,
@@ -284,6 +346,7 @@ impl Gpu {
                     vendor: properties.vendor_id,
                     shapes,
                     subgroups,
+                    matrix2: matrix2_ok,
                     turn: std::sync::Mutex::new(()),
                 }),
             })
@@ -955,6 +1018,10 @@ impl Gpu {
             Err("gpu_unsupported")
         }
     }
+    /// Whether `VK_NV_cooperative_matrix2` kernels can run (`FATTEND16_NV`).
+    pub fn matrix2(&self) -> bool {
+        self.core.matrix2
+    }
     /// The PCI vendor id (0x8086 Intel, 0x10de NVIDIA, 0x1002 AMD).
     pub fn vendor(&self) -> u32 {
         self.core.vendor
@@ -1013,7 +1080,17 @@ mod tests {
         let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
         let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
         println!("{}", gpu.name());
-        let kernel = gpu.kernel(shaders::FATTEND16, 4, 7, Some(32)).unwrap();
+        let nv = std::env::var_os("KUNO_ATTEND_PLAIN").is_none() && gpu.matrix2();
+        println!("cooperative matrix 2: {nv}");
+        // KUNO_ATTEND_SPV=<file> KUNO_ATTEND_BLOCK=<queries>: another kernel (experiments).
+        let custom = std::env::var("KUNO_ATTEND_SPV").ok().map(|f| std::fs::read(f).unwrap());
+        let kernel = match &custom {
+            Some(code) => gpu.kernel(code, 4, 7, None).unwrap(),
+            None if nv => gpu.kernel(shaders::FATTEND16_NV, 4, 7, None).unwrap(),
+            None => gpu.kernel(shaders::FATTEND16, 4, 7, Some(32)).unwrap(),
+        };
+        let block: usize = std::env::var("KUNO_ATTEND_BLOCK")
+            .map_or(if nv { 64 } else { 32 }, |b| b.parse().unwrap());
         let scale = 1.0 / 128f32.sqrt();
         // Causal: query i sees keys 0..=i of its own `queries` and every key after them.
         for (heads, queries, keys, spread, checks, causal) in [
@@ -1022,7 +1099,7 @@ mod tests {
             (2, 90, 150, 3.0, 180, true),
             (24, 4078, 4078, 1.5, 48, false),
         ] {
-            let (qp, kp) = (queries.next_multiple_of(32), keys.next_multiple_of(64));
+            let (qp, kp) = (queries.next_multiple_of(64), keys.next_multiple_of(64));
             let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
                 let mut values = noise(heads * padded * 128, seed);
                 for (i, v) in values.iter_mut().enumerate() {
@@ -1038,7 +1115,7 @@ mod tests {
                 b
             };
             let (bq, bk, bv) = (upload(&q), upload(&k), upload(&v));
-            let out = gpu.buffer((queries * heads * 128 * 4) as u64).unwrap();
+            let out = gpu.buffer((qp * heads * 128 * 4) as u64).unwrap();
             let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits(), u32::from(causal)];
             let mut best = f64::MAX;
             for _ in 0..3 {
@@ -1047,7 +1124,7 @@ mod tests {
                     kernel: &kernel,
                     buffers: &[&bq, &bk, &bv, &out],
                     constants: &constants,
-                    groups: [(qp / 32) as u32, heads as u32, 1],
+                    groups: [(qp / block) as u32, heads as u32, 1],
                 }])
                 .unwrap();
                 best = best.min(started.elapsed().as_secs_f64() * 1e3);
