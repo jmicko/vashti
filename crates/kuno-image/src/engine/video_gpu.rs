@@ -278,7 +278,7 @@ impl Host {
         Ok(Self {
             kernels: Kernels {
                 gemm: gpu.kernel(shaders::GEMM, 3, 8, Some(16))?,
-                gemm16: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+                gemm16: gpu.gemm16()?,
                 mix: gpu.kernel(shaders::MIX, 3, 9, Some(16))?,
                 norm: kernel(shaders::NORM, 3, 5)?,
                 heads: kernel(shaders::HEADS, 6, 3)?,
@@ -835,7 +835,7 @@ mod tests {
         use super::super::gpu::Step;
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
         let fast = LevelZero::open().unwrap();
-        let gemm16 = gpu.kernel(shaders::GEMM16, 3, 5, Some(16)).unwrap();
+        let gemm16 = gpu.gemm16().unwrap();
         let tokens = 1920;
         for (rows, columns, tiny) in [
             (INNER * 2, DIM, false),
@@ -956,7 +956,7 @@ mod tests {
         use super::super::{gpu::Step, safetensors::widen, xe2};
         let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
         let fast = LevelZero::open().unwrap();
-        let gemm16 = gpu.kernel(shaders::GEMM16, 3, 5, Some(16)).unwrap();
+        let gemm16 = gpu.gemm16().unwrap();
         let gate = gpu.kernel(shaders::GATE, 3, 3, None).unwrap();
         let (tokens, rows, columns) = (1920usize, 2 * int8::GATED, DIM);
         let mut state = 21u32;

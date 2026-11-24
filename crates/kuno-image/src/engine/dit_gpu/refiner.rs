@@ -69,7 +69,7 @@ impl Host {
             })
             .collect::<Result<_, &'static str>>()?;
         let host = Self {
-            gemm16: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+            gemm16: gpu.gemm16()?,
             norm16: gpu.kernel(shaders::NORM16, 3, 2, None)?,
             merge16s: gpu.kernel(shaders::MERGE16S, 3, 2, None)?,
             gate16: gpu.kernel(shaders::GATE16, 2, 1, None)?,

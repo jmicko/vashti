@@ -163,7 +163,7 @@ impl GpuEncoder {
             stats: gpu.kernel(shaders::ESTATS, 2, 3, None)?,
             merge: gpu.kernel(shaders::ESTATSEND, 2, 2, None)?,
             bias: gpu.kernel(shaders::EBIAS, 3, 4, None)?,
-            gemm: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+            gemm: gpu.gemm16()?,
             weights,
             vectors,
             steps: placed_steps,

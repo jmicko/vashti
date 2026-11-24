@@ -7,6 +7,8 @@ pub const GEMM8: &[u8] = include_bytes!("shaders/gemm8.spv");
 /// `gemm8` for 32-lane subgroups and 16 x 32 int8 matrices (NVIDIA).
 pub const GEMM8_NV: &[u8] = include_bytes!("shaders/gemm8nv.spv");
 /// `tattend` for subgroups wider than 16 lanes.
+/// `gemm16` for 32-lane subgroups and 16 x 16 half-precision matrices (NVIDIA).
+pub const GEMM16_NV: &[u8] = include_bytes!("shaders/gemm16nv.spv");
 pub const TATTEND32: &[u8] = include_bytes!("shaders/tattend32.spv");
 pub const MIX: &[u8] = include_bytes!("shaders/mix.spv");
 pub const NORM: &[u8] = include_bytes!("shaders/norm.spv");

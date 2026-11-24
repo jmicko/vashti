@@ -225,7 +225,7 @@ impl GpuVision {
             heads: gpu.kernel(shaders::VHEADS, 6, 4, None)?,
             soft: gpu.kernel(shaders::VSOFT, 2, 3, None)?,
             gather: gpu.kernel(shaders::VGATHER, 2, 2, None)?,
-            gemm: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+            gemm: gpu.gemm16()?,
             weights,
             vectors,
             patch,

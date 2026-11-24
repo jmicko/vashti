@@ -938,6 +938,23 @@ impl Gpu {
     pub fn subgroup(&self) -> Option<u32> {
         Some(if self.narrow() { 16 } else { self.core.subgroups.1 })
     }
+    /// The half-precision product (`gemm16`, f32 sums) in this device's form, as `gemm8`.
+    pub fn gemm16(&self) -> Result<Kernel, &'static str> {
+        let half = |m: u32| {
+            self.core.shapes.iter().any(|s| {
+                (s.m, s.n, s.k) == (m, 16, 16)
+                    && s.a == vk::ComponentTypeKHR::FLOAT16
+                    && s.result == vk::ComponentTypeKHR::FLOAT32
+            })
+        };
+        if half(8) {
+            self.kernel(shaders::GEMM16, 3, 5, Some(16))
+        } else if half(16) {
+            self.kernel(shaders::GEMM16_NV, 3, 5, Some(32))
+        } else {
+            Err("gpu_unsupported")
+        }
+    }
     /// The PCI vendor id (0x8086 Intel, 0x10de NVIDIA, 0x1002 AMD).
     pub fn vendor(&self) -> u32 {
         self.core.vendor

@@ -297,7 +297,7 @@ impl GpuVae {
             avg: gpu.kernel(shaders::QVAVG, 2, 7, None)?,
             qkv: gpu.kernel(shaders::QVQKV, 4, 4, None)?,
             soft: gpu.kernel(shaders::QVSOFT, 2, 4, None)?,
-            gemm: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+            gemm: gpu.gemm16()?,
             weights,
             vectors,
             decoder,
@@ -874,7 +874,7 @@ mod tests {
             &std::env::var("KUNO_QWEN_VAE").unwrap(),
         ))
         .unwrap();
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let gpu = Gpu::open(Select::Vendor(std::env::var("KUNO_GPU_VENDOR").map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap()))).unwrap();
         let started = std::time::Instant::now();
         let placed = GpuVae::new(&gpu, &vae).unwrap();
         println!("placed in {:.2} s", started.elapsed().as_secs_f64());
@@ -933,7 +933,7 @@ mod tests {
             &std::env::var("KUNO_QWEN2512_VAE").unwrap(),
         ))
         .unwrap();
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let gpu = Gpu::open(Select::Vendor(std::env::var("KUNO_GPU_VENDOR").map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap()))).unwrap();
         let decoder = GpuVae::new(&gpu, &vae).unwrap();
         let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN2512_GOLDEN").unwrap());
         let dims: Vec<usize> = std::fs::read_to_string(dir.join("vae.latent0.txt"))
