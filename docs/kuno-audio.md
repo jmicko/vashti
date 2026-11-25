@@ -64,9 +64,9 @@ shared guard's `image_content_type_required` (415).
 - **Worker.** `kuno audio-worker` is started on first use, enters protection before any
   other thread exists (no core dumps, not dumpable, no swap, Landlock with no writable
   path), discards stderr and writes only protocol frames. Request content is zeroed after
-  use. It stays while used and exits after five idle minutes (about 2.6 GB RSS returned to
+  use. It stays while used and exits after five idle minutes (2.4 GB RSS returned to
   language models). A client that disconnects stops it; the next request starts a new one
-  (about 1-3 s to load from cache).
+  (about 1.5 s to load from the page cache).
 - **Speed** (Ryzen 9 5900XT, 37 GB/s; the backbone's weights bound decoding): recognition
   about 0.6-0.85 s per second of audio; speech 0.6-0.8x real time, first audio after
   about 1 s (the API returns the whole file; streaming is possible later). A GPU path would
