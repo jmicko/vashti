@@ -32,9 +32,6 @@ struct Identity {
     executable: PathBuf,
     models: PathBuf,
     pci: String,
-    version21: bool,
-    attention: ImageAttention,
-    runtime_worker: Option<String>,
 }
 struct Worker {
     identity: Identity,
@@ -119,9 +116,7 @@ impl ImageRuntime {
                 if let Err(code) = config.validate().and_then(|_| video.validate()) {
                     return Finished::failure(code);
                 }
-                if !config.video_enabled()
-                    || config.engine != crate::image_engine::ImageEngine::ManagedSycl
-                {
+                if !config.video_enabled() {
                     return Finished::failure("video_generation_not_configured");
                 }
                 (video_identity_recipe(), Some((video, progress)))
@@ -134,76 +129,12 @@ impl ImageRuntime {
             return Finished::failure("image_cancelled");
         }
         let mut state = self.worker.lock().await;
-        let runtime = if config.uses_sycl(&recipe.workflow) {
-            match crate::image_engine::VerifiedRuntime::load(config.runtime.as_deref().unwrap()) {
-                Ok(runtime) => Some(runtime),
-                Err(code) => return Finished::failure(code),
-            }
-        } else {
-            None
-        };
-        if video.is_some()
-            && !runtime.as_ref().is_some_and(|runtime| {
-                runtime.manifest.worker_abi >= crate::image_engine::VIDEO_WORKER_ABI
-            })
-        {
-            return Finished::failure("image_runtime_unavailable");
-        }
-        // Legacy ABI1 remains usable during upgrade, but never receives ABI2 frames.
-        if runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.manifest.worker_abi == 1)
-        {
-            if let Some(mut worker) = state.take() {
-                let (settled, forced, _) = stop(&mut worker, false).await;
-                if !settled || forced {
-                    return Finished {
-                        output: Err("image_worker_cleanup_uncertain"),
-                        settled,
-                        forced,
-                    };
-                }
-            }
-            let result = crate::image_runtime::run_with_previews(
-                executable,
-                config,
-                recipe,
-                response,
-                Some(shutdown),
-                Some(previews),
-            )
-            .await;
-            return Finished {
-                output: result.output,
-                settled: result.reaped,
-                forced: result.forced,
-            };
-        }
+        // One worker (this executable) serves both Qwen versions, either attention mode per
+        // request, and video; it is replaced only when its models or device change.
         let identity = Identity {
             executable: executable.into(),
             models: config.models.clone(),
             pci: config.pci_address.clone(),
-            // ABI 6 workers run both Qwen versions themselves.
-            version21: recipe.workflow != kuno_protocol::QWEN_RECIPE
-                || runtime.as_ref().is_some_and(|runtime| {
-                    runtime.manifest.worker_abi >= crate::image_engine::QWEN2512_WORKER_ABI
-                }),
-            // ABI 5 workers take the attention mode per request.
-            attention: if runtime.as_ref().is_some_and(|runtime| {
-                runtime.manifest.worker_abi >= crate::image_engine::FAST_ATTENTION_WORKER_ABI
-            }) {
-                ImageAttention::Standard
-            } else {
-                recipe.attention
-            },
-            runtime_worker: runtime.as_ref().and_then(|runtime| {
-                runtime
-                    .manifest
-                    .files
-                    .iter()
-                    .find(|member| member.name == "worker")
-                    .map(|member| member.sha256.clone())
-            }),
         };
         let recipe = kuno_image::worker_protocol::TransientRecipe::from(recipe);
         let replace = state.as_mut().is_some_and(|worker| {
@@ -220,7 +151,7 @@ impl ImageRuntime {
             }
         }
         if state.is_none() {
-            match spawn(identity, config, runtime.is_some()).await {
+            match spawn(identity, config).await {
                 Ok(worker) => *state = Some(worker),
                 Err(code) => return Finished::failure(code),
             }
@@ -365,23 +296,13 @@ impl Drop for Payload {
 async fn spawn(
     identity: Identity,
     config: &ImageConfig,
-    sycl: bool,
 ) -> Result<Worker, &'static str> {
     let mut command = Command::new(&identity.executable);
-    if sycl {
-        command.args([
-            "image-worker-launch",
-            config.runtime.as_deref().unwrap(),
-            config.models.to_str().unwrap(),
-            &config.pci_address,
-        ]);
-    } else {
-        command.args([
-            "image-worker-resident",
-            config.models.to_str().unwrap(),
-            &config.pci_address,
-        ]);
-    }
+    command.args([
+        "image-worker-resident",
+        config.models.to_str().unwrap(),
+        &config.pci_address,
+    ]);
     command
         .env_clear()
         .env("PATH", "/usr/bin:/bin")

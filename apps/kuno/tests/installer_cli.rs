@@ -87,29 +87,20 @@ fn image_configuration_requires_confirmation_before_privileged_work() {
 }
 
 #[test]
-fn optional_runtime_install_requires_confirmation_and_root_before_bundle_access() {
-    let mut args = vec![
-        "install-image-runtime",
-        "--directory",
-        "/nonexistent/public-runtime-bundle",
-        "--manifest-sha256",
-    ];
+fn the_retired_runtime_install_explains_itself_without_touching_anything() {
     let digest = "0".repeat(64);
-    args.push(&digest);
     let output = Command::new(env!("CARGO_BIN_EXE_kuno"))
-        .args(&args)
+        .args([
+            "install-image-runtime",
+            "--directory",
+            "/nonexistent/public-runtime-bundle",
+            "--manifest-sha256",
+            &digest,
+        ])
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("confirmation_required"));
-    if unsafe { libc::geteuid() } != 0 {
-        args.push("--yes");
-        let output = Command::new(env!("CARGO_BIN_EXE_kuno"))
-            .args(&args)
-            .output()
-            .unwrap();
-        assert!(String::from_utf8_lossy(&output.stderr).contains("root_required"));
-    }
+    assert!(String::from_utf8_lossy(&output.stderr).contains("image_runtime_not_needed"));
 }
 
 #[test]

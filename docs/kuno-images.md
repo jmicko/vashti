@@ -6,44 +6,36 @@ an Images workspace and generation/editing chat tools, with live previews.
 GPU configuration and curated model downloads currently use the CLI; an admin
 collection picker remains future work. This is an experimental beta.
 
-## Attention and cache execution
+## Engine
 
-Requests may set `"attention": "fast"` for Qwen 2.1 (generate and edit). The default
-is `"standard"`. On the CUDA backend fast attention uses the native SageAttention
-implementation; on the managed Intel runtime (worker ABI 5 and later) the Rust engine
-scores attention with int8 queries and keys, each token scaled on its own, while values
-stay half floats. Either way it can change output pixels. Each workflow's `attention`
-list in discovery names the modes the configured backend accepts; Vulkan and older managed
-runtimes offer only `"standard"`, and Qwen 2512 offers `"fast"` only on managed runtimes
-from worker ABI 6, which run it in Rust. Unsupported choices return
-`image_attention_unsupported`. On ABI 5 runtimes one worker serves both modes, so
-switching does not reload the models. The embedded
-CUDA/Vulkan path needs no Python engine or additional runtime installation.
+Images and video run in Kuno's Rust engine. The `kuno` executable is its own GPU worker
+(`kuno image-worker-resident`, started by the gateway, sandboxed with no writable
+filesystem): there is no separate runtime to install. It runs on Intel Xe2 GPUs (the
+B70 was accepted) and on Vulkan GPUs with cooperative matrices (an RTX 3060 was tested).
+One worker serves Qwen 2512, Qwen 2.1 (generate and edit), MiniMax video, and either
+attention mode per request, so switching between them does not restart it.
 
-The [optional managed SYCL worker](kuno-managed-sycl.md) adds Qwen 2.1 execution
-on Intel hardware, accepted locally on the B70. Its libraries are
-separate from the standard executable; embedded CUDA/Vulkan remains the default,
-and Qwen 2512 retains its native route. This runtime does not change the image API.
-The selected ABI2 Intel runtime keeps model-only residency and uses guarded
-whole-RoPE/residual execution for Qwen 2.1. See the
-[managed runtime receipt](kuno-managed-sycl.md#selected-abi2-runtime-and-developer-build-2026-10-02)
-for exact artifacts, installation, measured performance and acceptance limits.
+Releases before 2026-11-24 could launch a separately installed "managed SYCL" runtime
+bundle (`"engine": "managed_sycl"` and `"runtime"` in the image configuration). Such
+configurations are still read; the next `kuno upgrade` (or any other configuration
+change) drops both fields and the old runtime files. `kuno install-image-runtime` now
+exits with `image_runtime_not_needed`.
 
-Large Qwen 2.1 edit caches can use bounded pinned host memory. On CUDA, capable
-workers stage the current and next layer through two GPU buffers, overlapping
-transfers with computation. Staging counts toward VRAM reservations, and pending
-transfers are drained before freeing buffers or leaving a request. If the
-required memory or backend capabilities are unavailable, execution retains the
-synchronous cache path. Prompts, references, and results still remain transient.
+## Attention
+
+Requests may set `"attention": "fast"` (generate and edit). The default is `"standard"`.
+Fast attention scores with int8 queries and keys, each token scaled on its own, while
+values stay half floats; it can change output pixels. Every Qwen workflow advertises
+`["standard", "fast"]`; on a GPU without the int8 attention kernel a fast request runs
+standard attention.
 
 ## Qwen Image 2512 model files
 
 Two collections serve `qwen-image-2512-text-to-image/v1`. `qwen-image-2512-int8` downloads
 the publisher's files (`Qwen/Qwen-Image-2512`, pinned commit) and converts them for the Rust
 engine as they arrive, keeping only the pinned INT8 conversion (28.6 GB; the download is
-57.7 GB, removed piece by piece, so the disk needs far less than both). It needs a managed
-runtime whose worker runs 2512 (ABI 6). `qwen-image-2512-fp8` is ComfyUI's FP8 repackaging,
-which the gateway's own engine and the Rust engine both read. The workflow is available
+57.7 GB, removed piece by piece, so the disk needs far less than both).
+`qwen-image-2512-fp8` is ComfyUI's FP8 repackaging, which the engine also reads. The workflow is available
 when either is ready; with both installed the Rust engine loads the INT8 conversion (closer
 to the original model, loaded without conversion) once every piece is installed, and the
 FP8 files until then.

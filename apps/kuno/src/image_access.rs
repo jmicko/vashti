@@ -81,45 +81,19 @@ impl ImageReadiness {
 }
 
 fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> Discovery {
-    let managed = config.is_some_and(|c| c.engine == crate::image_engine::ImageEngine::ManagedSycl);
-    let privacy = if (crate::image_engine::EMBEDDED_ENGINE || managed) && config.is_some() {
+    // This executable is the image and video worker when it was built with the engine.
+    let engine = crate::image_engine::EMBEDDED_ENGINE;
+    let privacy = if engine && config.is_some() {
         (crate::image_privacy::require_no_swap().is_err()
             || crate::image_privacy::require_landlock().is_err())
         .then_some("image_privacy_unavailable")
     } else {
         None
     };
-    let mut images = describe(
-        config,
-        crate::image_engine::EMBEDDED_ENGINE || managed,
-        fast_attention,
-        privacy,
-        |id| config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok()),
-    );
-    // Video runs only on the managed SYCL runtime, and only on one with VIDEO_WORKER_ABI.
-    let mut video_runtime = Some("image_engine_not_in_this_build");
-    if let Some(config) = config.filter(|_| managed) {
-        let runtime = config
-            .runtime
-            .as_deref()
-            .ok_or("image_managed_runtime_incompatible")
-            .and_then(crate::image_engine::VerifiedRuntime::load);
-        video_runtime = match &runtime {
-            Ok(r) if r.manifest.worker_abi >= crate::image_engine::VIDEO_WORKER_ABI => None,
-            Ok(_) => Some("image_runtime_unavailable"),
-            Err(code) => Some(*code),
-        };
-        let fast = runtime.as_ref().is_ok_and(|r| {
-            r.manifest.worker_abi >= crate::image_engine::FAST_ATTENTION_WORKER_ABI
-        });
-        apply_runtime_status(
-            &mut images,
-            config,
-            runtime.err(),
-            crate::image_engine::EMBEDDED_ENGINE,
-            fast,
-        );
-    }
+    let images = describe(config, engine, fast_attention, privacy, |id| {
+        config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok())
+    });
+    let video_runtime = (!engine).then_some("image_engine_not_in_this_build");
     let videos = describe_videos(config, privacy.or(video_runtime), |id| {
         config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok())
     });
@@ -144,11 +118,6 @@ fn describe_videos(
     let Some(config) = config.filter(|c| c.video_enabled()) else {
         return videos;
     };
-    if config.engine != crate::image_engine::ImageEngine::ManagedSycl {
-        videos.state = "unsupported".into();
-        videos.reason = Some("image_engine_not_in_this_build".into());
-        return videos;
-    }
     // Each workflow is ready when its own collection is enabled and verified.
     let workflows: [(&str, &str, &str, &str, u32, u32); 3] = [
         (
@@ -219,51 +188,6 @@ fn describe_videos(
     videos
 }
 
-fn apply_runtime_status(
-    images: &mut ImageCapabilities,
-    config: &ImageConfig,
-    runtime_error: Option<&str>,
-    native: bool,
-    fast_attention: bool,
-) {
-    for workflow in &mut images.workflows {
-        let reason = if config.uses_sycl(&workflow.id) {
-            workflow.attention = if fast_attention {
-                vec!["standard".into(), "fast".into()]
-            } else {
-                vec!["standard".into()]
-            };
-            runtime_error
-        } else if !native {
-            Some("image_engine_not_in_this_build")
-        } else {
-            None
-        };
-        if let Some(reason) = reason {
-            workflow.state = "unavailable".into();
-            workflow.reason = Some(reason.into());
-        }
-    }
-    let available = images
-        .workflows
-        .iter()
-        .filter(|w| w.state == "ready")
-        .count();
-    images.state = if available == 0 {
-        "unavailable"
-    } else if available < images.workflows.len() {
-        "partial"
-    } else {
-        "ready"
-    }
-    .into();
-    images.reason = if available == 0 {
-        images.workflows.first().and_then(|w| w.reason.clone())
-    } else {
-        None
-    };
-}
-
 /// Degraded gateway startup must not let an unsafe parent accept image content.
 pub(crate) async fn require_privacy() -> Result<(), &'static str> {
     tokio::task::spawn_blocking(|| {
@@ -315,15 +239,6 @@ fn describe(
         let int8_2512 = collection == "qwen-image-2512-int8";
         let reason = if !models_ready(collection) {
             Some("image_models_unavailable")
-        } else if int8_2512
-            && !config.is_some_and(|c| {
-                c.uses_sycl(QWEN_RECIPE)
-                    || (c.engine.is_native() && crate::image_engine::EMBEDDED_ENGINE)
-            })
-        {
-            // Only the Rust engine (embedded, or an ABI 6 managed runtime) reads the INT8
-            // conversion.
-            Some("image_runtime_unavailable")
         } else {
             privacy
         };
@@ -441,42 +356,10 @@ mod tests {
             models: "/synthetic/models".into(),
             pci_address: "0000:01:00.0".into(),
             timeout_seconds: 60,
-            engine: Default::default(),
-            runtime: None,
+            legacy_engine: None,
+            legacy_runtime: None,
             collections: vec!["qwen-image-2512-fp8".into(), "qwen-image-2.1-int8".into()],
         }
-    }
-    #[test]
-    fn managed_runtime_failure_preserves_old_collection_and_fast_is_unsupported() {
-        let mut c = config();
-        c.engine = crate::image_engine::ImageEngine::ManagedSycl;
-        // A runtime that cannot be loaded serves 2.1 only, as one older than the 2512
-        // worker ABI does. The real id would read the host's installed runtime, and on a
-        // host with a current runtime 2512 would use it too, failing this test.
-        c.runtime = Some("runtime-not-installed".into());
-        let mut images = describe(Some(&c), true, true, None, |_| true);
-        apply_runtime_status(
-            &mut images,
-            &c,
-            Some("image_managed_runtime_corrupt"),
-            true,
-            false,
-        );
-        assert_eq!(images.state, "partial");
-        assert_eq!(images.workflows[0].state, "ready");
-        assert_eq!(
-            images.workflows[1].reason.as_deref(),
-            Some("image_managed_runtime_corrupt")
-        );
-        assert_eq!(images.workflows[1].attention, ["standard"]);
-        let mut images = describe(Some(&c), true, true, None, |_| true);
-        apply_runtime_status(&mut images, &c, None, false, false);
-        assert_eq!(images.state, "partial");
-        assert_eq!(
-            images.workflows[0].reason.as_deref(),
-            Some("image_engine_not_in_this_build")
-        );
-        assert_eq!(images.workflows[1].state, "ready");
     }
     #[test]
     fn missing_collection_does_not_hide_other_workflows_and_recovers() {
@@ -554,17 +437,11 @@ mod tests {
     }
 
     #[test]
-    fn video_discovery_follows_configuration_engine_models_and_runtime() {
+    fn video_discovery_follows_configuration_and_models() {
         assert_eq!(describe_videos(None, None, |_| true).state, "disabled");
         let mut c = config();
         assert_eq!(describe_videos(Some(&c), None, |_| true).state, "disabled");
         c.collections.push(MINIMAX_H3_COLLECTION.into());
-        assert_eq!(
-            describe_videos(Some(&c), None, |_| true).state,
-            "unsupported"
-        );
-        c.engine = crate::image_engine::ImageEngine::ManagedSycl;
-        c.runtime = Some(crate::image_engine::SYCL_RUNTIME.into());
         let ready = describe_videos(Some(&c), None, |_| true);
         assert_eq!(ready.state, "ready");
         assert_eq!(ready.workflows[0].frames, kuno_protocol::VIDEO_FRAMES);

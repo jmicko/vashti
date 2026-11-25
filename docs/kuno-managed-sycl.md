@@ -1,5 +1,11 @@
 # Optional managed SYCL image worker
 
+> **Retired 2026-11-24.** Kuno no longer has a separate image runtime: the `kuno`
+> executable is the only image and video worker, `install-image-runtime` exits with
+> `image_runtime_not_needed`, and upgrades drop `"engine": "managed_sycl"`/`"runtime"`
+> from the configuration and remove the installed runtime. See
+> [Kuno images](kuno-images.md#engine). The text below is history.
+
 **2026-11-24:** the managed runtime's worker is now the Rust image engine (the same as the
 gateway's default build; no SYCL, oneAPI or C++). Assemble one with
 `apps/kuno/scripts/assemble-image-runtime.py --worker target/release/kuno --output <dir>`

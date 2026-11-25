@@ -28,8 +28,8 @@ fn config(directory: &Path) -> ImageConfig {
         pci_address: "0000:2d:00.0".into(),
         timeout_seconds: 5,
         collections: vec!["qwen-image-2512-fp8".into()],
-        engine: Default::default(),
-        runtime: None,
+        legacy_engine: None,
+        legacy_runtime: None,
     }
 }
 fn worker(directory: &Path, job: &str) -> PathBuf {
@@ -121,7 +121,7 @@ async fn repeated_jobs_keep_pid_and_idle_shutdown_reaps_it() {
 }
 
 #[tokio::test]
-async fn a_changed_context_reaps_the_old_worker_before_replacement() {
+async fn one_worker_serves_both_qwen_versions_and_a_changed_context_replaces_it() {
     let directory = tempfile::tempdir().unwrap();
     let executable = worker(directory.path(), "frame(2,png)\n frame(3)");
     let runtime = ImageRuntime::default();
@@ -133,6 +133,7 @@ async fn a_changed_context_reaps_the_old_worker_before_replacement() {
             .is_ok()
     );
     let pid = std::fs::read_to_string(directory.path().join("pid")).unwrap();
+    // Qwen 2.1 after 2512: the same worker (it runs both).
     let mut next = recipe();
     next.workflow = kuno_protocol::QWEN21_RECIPE.into();
     next.flow_shift = None;
@@ -142,9 +143,26 @@ async fn a_changed_context_reaps_the_old_worker_before_replacement() {
             .output
             .is_ok()
     );
-    assert_ne!(
+    assert_eq!(
         pid,
         std::fs::read_to_string(directory.path().join("pid")).unwrap()
+    );
+    // Another models directory: the old worker is reaped before its replacement starts
+    // (the fake worker records its pid in its models directory).
+    let other = tempfile::tempdir().unwrap();
+    let moved = ImageConfig {
+        models: other.path().into(),
+        ..config.clone()
+    };
+    assert!(
+        generate(&runtime, &executable, &moved, recipe())
+            .await
+            .output
+            .is_ok()
+    );
+    assert_ne!(
+        pid,
+        std::fs::read_to_string(other.path().join("pid")).unwrap()
     );
     assert!(!Path::new(&format!("/proc/{pid}")).exists());
     runtime.evict().await.unwrap();

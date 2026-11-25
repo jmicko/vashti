@@ -31,40 +31,35 @@ fn config(path: &std::path::Path) -> ImageConfig {
         models: path.into(),
         pci_address: "0000:2d:00.0".into(),
         timeout_seconds: 5,
-        engine: Default::default(),
-        runtime: None,
+        legacy_engine: None,
+        legacy_runtime: None,
         collections: vec!["qwen-image-2512-fp8".into()],
     }
 }
 
 #[test]
-fn image_engine_configuration_preserves_legacy_defaults_and_old_workflow() {
-    use kuno::image_engine::{ImageEngine, SYCL_RUNTIME};
-    let legacy = serde_json::json!({"models":"/models","pci_address":"0000:2d:00.0","timeout_seconds":60,
+fn configurations_naming_a_retired_runtime_are_read_and_rewritten_without_it() {
+    let current = serde_json::json!({"models":"/models","pci_address":"0000:2d:00.0","timeout_seconds":60,
         "collections":["qwen-image-2512-fp8","qwen-image-2.1-int8"]});
-    let mut image: ImageConfig = serde_json::from_value(legacy.clone()).unwrap();
-    image.validate().unwrap();
-    assert_eq!(image.engine, ImageEngine::Native);
-    assert_eq!(serde_json::to_value(&image).unwrap(), legacy);
-    image.engine = ImageEngine::ManagedSycl;
-    assert!(image.validate().is_err());
-    image.runtime = Some("../../other".into());
-    assert!(image.validate().is_err());
-    image.runtime = Some(SYCL_RUNTIME.into());
-    image.validate().unwrap();
-    // Qwen 2512 joins only when the installed runtime's worker runs it (ABI 6 and later).
-    let runs_2512 = kuno::image_engine::VerifiedRuntime::load(SYCL_RUNTIME).is_ok_and(|r| {
-        r.manifest.worker_abi >= kuno::image_engine::QWEN2512_WORKER_ABI
-    });
-    assert_eq!(image.uses_sycl(kuno_protocol::QWEN_RECIPE), runs_2512);
-    assert!(image.uses_sycl(kuno_protocol::QWEN21_RECIPE));
-    assert!(image.uses_sycl(kuno_protocol::QWEN21_EDIT_RECIPE));
+    for extra in [
+        serde_json::json!({"engine": "managed_sycl", "runtime": "qwen21-sycl-2026.1-v1"}),
+        serde_json::json!({"engine": "native"}),
+        serde_json::json!({}),
+    ] {
+        let mut old = current.clone();
+        old.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let image: ImageConfig = serde_json::from_value(old).unwrap();
+        image.validate().unwrap();
+        // Written back (as an upgrade does) without the retired fields.
+        assert_eq!(serde_json::to_value(&image).unwrap(), current);
+    }
+    let mut unknown = current.clone();
+    unknown["engine"] = "cuda".into();
+    assert!(serde_json::from_value::<ImageConfig>(unknown).is_err());
 }
 #[test]
 fn every_known_collection_can_be_enabled_together_without_duplicates() {
     let mut image = config(std::path::Path::new("/models"));
-    image.engine = kuno::image_engine::ImageEngine::ManagedSycl;
-    image.runtime = Some(kuno::image_engine::SYCL_RUNTIME.into());
     image.collections = [
         "qwen-image-2512-fp8",
         "qwen-image-2.1-int8",

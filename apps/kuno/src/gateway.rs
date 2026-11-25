@@ -311,10 +311,7 @@ async fn status(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
         .into(),
         admission,
         gpu_placement_verified: false,
-        image_generation: gateway.config.image.as_ref().is_some_and(|image| {
-            crate::image_engine::EMBEDDED_ENGINE
-                || image.engine == crate::image_engine::ImageEngine::ManagedSycl
-        }),
+        image_generation: gateway.config.image.is_some() && crate::image_engine::EMBEDDED_ENGINE,
     })
 }
 
@@ -394,8 +391,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
             "image_generation_not_configured",
         );
     };
-    if !crate::image_engine::EMBEDDED_ENGINE && config.engine == crate::image_engine::ImageEngine::Native
-    {
+    if !crate::image_engine::EMBEDDED_ENGINE {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
             "image_engine_not_in_this_build",
