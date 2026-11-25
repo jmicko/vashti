@@ -329,6 +329,7 @@ async fn capabilities(State(gateway): State<Arc<Gateway>>) -> Response {
             inference_auth: "none".into(),
             images: discovery.images,
             videos: Some(discovery.videos),
+            audio: None,
         }),
     )
         .into_response()

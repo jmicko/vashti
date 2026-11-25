@@ -2771,6 +2771,7 @@ dependencies = [
  "http-body",
  "hyper",
  "hyper-util",
+ "kuno-audio",
  "kuno-image",
  "kuno-protocol",
  "libc",

@@ -11,6 +11,9 @@ pub struct Capabilities {
     /// Absent on Kuno versions without video. Clients treat absence as unsupported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub videos: Option<VideoCapabilities>,
+    /// Absent on Kuno versions without speech. Clients treat absence as unsupported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<crate::AudioCapabilities>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -20,6 +20,8 @@ use kuno_text::{GgufFile, GgufLimits, tokenizer::{Qwen35Tokenizer, TokenizerLimi
 
 pub mod block;
 pub mod tensor;
+pub mod split;
+pub mod wav;
 
 use block::{Attention, Block, Conv, Op, State};
 use tensor::{Linear, gelu_erf, layer_norm, rms_norm, silu, vector};

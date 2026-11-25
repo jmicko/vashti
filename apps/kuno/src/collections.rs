@@ -113,7 +113,7 @@ pub fn qwen() -> Collection {
         .expect("compiled collection")
 }
 /// Number of collections `collection` knows; keep in step with its match arms.
-pub const KNOWN_COLLECTIONS: usize = 5;
+pub const KNOWN_COLLECTIONS: usize = 6;
 pub fn collection(id: &str) -> Result<Collection> {
     match id {
         "qwen-image-2512-fp8" => Ok(qwen()),
@@ -131,6 +131,10 @@ pub fn collection(id: &str) -> Result<Collection> {
         .expect("compiled collection")),
         kuno_protocol::MINIMAX_H3_REFERENCE_COLLECTION => Ok(serde_json::from_str(include_str!(
             "../collections/minimax-h3-ref2va-int8.json"
+        ))
+        .expect("compiled collection")),
+        kuno_protocol::AUDIO_COLLECTION => Ok(serde_json::from_str(include_str!(
+            "../collections/lfm3-audio-2b.json"
         ))
         .expect("compiled collection")),
         _ => Err("unknown_model_collection"),

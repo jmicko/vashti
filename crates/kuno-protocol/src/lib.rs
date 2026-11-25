@@ -36,3 +36,6 @@ pub use capabilities::*;
 
 mod video;
 pub use video::*;
+
+mod audio;
+pub use audio::*;

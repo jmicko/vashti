@@ -1,0 +1,23 @@
+{
+  "id": "lfm3-audio-2b",
+  "repository": "LiquidAI/LFM3-Audio-2B-GGUF",
+  "revision": "39670cb5c42e9c4bfe046519ba7ffbe47f9552ad",
+  "license": "lfm-open-1.0",
+  "files": [
+    {
+      "path": "LFM3-Audio-2B-Q8_0.gguf",
+      "size": 1846236704,
+      "sha256": "d4e36902ba8f0ee7b333596030a59d650f88ac76660b4d9ba5ff77c3c2258fc0"
+    },
+    {
+      "path": "mmproj-LFM3-Audio-2B-F16.gguf",
+      "size": 570846400,
+      "sha256": "bd0fce0670c96e405a753f996701dee6568bc6a1318a80091d74fb58f7510d79"
+    },
+    {
+      "path": "LICENSE",
+      "size": 10574,
+      "sha256": "4d28ca14dedc0b3d0fcc2b3339f0e79931faa33874f3d24f522183a8fc70068c"
+    }
+  ]
+}
