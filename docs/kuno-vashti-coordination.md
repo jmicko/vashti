@@ -38,8 +38,12 @@ user. Speech (LFM3 audio) is on `claude/lfm3-audio` and is not part of this rele
 - **Test suite.** `cargo test --release -p kuno -p kuno-protocol` and
   `apps/kuno/tests/release-packaging.py` pass.
 - **Rollback for the host.** `/var/backups/kuno/v8/` holds the v8 gateway (`8015480f…`), its
-  runtime directory and config: stop Kuno, restore the three, start Kuno. Older C++
-  gateways remain in `/var/backups/kuno/`.
+  runtime directory (manifest `793914e8…`) and config. Go through the installer (copying
+  files by hand would not match its record): copy the v8 gateway to a root-owned staging
+  directory and run its `kuno upgrade --yes`, then `kuno install-image-runtime --directory
+  /var/backups/kuno/v8/runtime --manifest-sha256 793914e8…` and `kuno configure-image
+  --settings` with the image section of the saved config. Older C++ gateways remain in
+  `/var/backups/kuno/`.
 
 **Kuno image engine is Rust on every GPU; C++ removed (2026-11-24). Installed (v8,
 2026-11-24) and on `main`; small Vashti check below.** Branch `claude/rust-engine`. The gateway's default build is its own
