@@ -1,0 +1,1643 @@
+//! Qwen Image 2.1's diffusion transformer on the GPU: INT8 products and attention as Xe2
+//! machine code (xe2/int8.rs, xe2/attend.rs), the glue as Vulkan shaders (`q*.comp`). Checked
+//! against the CPU reference in `qwen_dit.rs`.
+//!
+//! The prompt and reference images form a prefix whose keys and values do not depend on the
+//! step (they are modulated with the time-zero row and never attend to the target), so they
+//! are computed once per request: run by run through all blocks, each run's keys and values
+//! stored per block (`Prefix`). A step then runs only the target's tokens, whose attention
+//! reads their own keys followed by the stored prefix (attention does not depend on the
+//! keys' order, and the target's own keys are then aligned for the stream writers).
+use std::{collections::HashMap, path::Path, sync::Mutex};
+
+use rayon::prelude::*;
+
+use super::{
+    dit::linear,
+    dit_gpu::{Call, fast_kernel, run},
+    gpu::{Buffer, Gpu, Kernel, Readback, bytes_of, shaders},
+    qwen_dit::{self, CHANNELS, CONTEXT, DIM, HEAD, HEADS, HIDDEN, Layout, PAIRS, QwenDit},
+    safetensors::Safetensors,
+    xe2::{
+        attend, int8,
+        level_zero::{self, LevelZero},
+        zebin,
+    },
+};
+
+/// Tokens are padded to the products' token block.
+const PAD: usize = 256;
+/// The four integer products of a block: weight rows and columns.
+const PRODUCTS: [(usize, usize); 4] =
+    [(3 * DIM, DIM), (DIM, DIM), (2 * HIDDEN, DIM), (DIM, HIDDEN)];
+const QKV: usize = 0;
+const OUT: usize = 1;
+const FC1: usize = 2;
+/// Attention threads per group: neighbouring query tiles share a core's cache.
+const ATTEND_GROUP: u32 = 8;
+/// Byte offset of the query/key/value product's weight scales in its weight buffer.
+const QKV_SCALES: usize = 3 * DIM * DIM + int8::SLACK;
+/// Byte offset of the gated product's weight scales in its weight buffer.
+const GATED_SCALES: usize = 2 * HIDDEN * DIM + int8::SLACK;
+const FC2: usize = 3;
+/// Offsets (in values) into a layer's vector buffer.
+pub(super) const QUERY_NORM: usize = 0;
+pub(super) const KEY_NORM: usize = QUERY_NORM + HEAD;
+pub(super) const SCALE_QKV: usize = KEY_NORM + HEAD;
+pub(super) const SCALE_OUT: usize = SCALE_QKV + 3 * DIM;
+pub(super) const SCALE_FC1: usize = SCALE_OUT + DIM;
+pub(super) const SCALE_FC2: usize = SCALE_FC1 + 2 * HIDDEN;
+pub(super) const VECTORS: usize = SCALE_FC2 + DIM;
+/// The feed-forward activation's rotated groups that do not fit in shared memory.
+pub(super) const SPILLED: usize = 20 * 256;
+/// Modulation vectors of one row: `1 + m0`, `tanh(m1)`, `1 + m2`, `tanh(m3)`.
+pub(super) const MODS: usize = 4 * DIM;
+
+pub struct Kernels {
+    normq8: Kernel,
+    /// A residual update and the next norm and quantization in one pass.
+    resnorm8: Kernel,
+    mergeq8: Kernel,
+    hidq8: Kernel,
+    resid8: Kernel,
+    qk: Kernel,
+    value: Kernel,
+    prefix: Kernel,
+    mask: Kernel,
+    embed: Kernel,
+    fast: LevelZero,
+}
+impl Kernels {
+    pub fn new(gpu: &Gpu) -> Result<Self, &'static str> {
+        if !gpu.shares() {
+            return Err("gpu_unsupported");
+        }
+        Ok(Self {
+            normq8: gpu.kernel(shaders::QNORMQ8, 4, 3, Some(16))?,
+            resnorm8: gpu.kernel(shaders::QRESNORM8, 6, 5, Some(16))?,
+            mergeq8: gpu.kernel(shaders::QMERGEQ8, 4, 3, Some(16))?,
+            hidq8: gpu.kernel(shaders::QHIDQ8, 4, 2, Some(16))?,
+            resid8: gpu.kernel(shaders::QRESID8, 5, 3, None)?,
+            qk: gpu.kernel(shaders::QQK, 5, 7, Some(16))?,
+            value: gpu.kernel(shaders::QVALUE, 3, 5, None)?,
+            prefix: gpu.kernel(shaders::QPREFIX, 4, 4, None)?,
+            mask: gpu.kernel(shaders::QMASK, 4, 5, Some(16))?,
+            embed: gpu.kernel(shaders::QEMBED, 3, 1, None)?,
+            fast: LevelZero::open()?,
+        })
+    }
+}
+
+/// One block's weights on the GPU: the four INT8 matrices in the machine-code product's
+/// stream layout (query, key and value rows as one matrix), and the vectors at the offsets
+/// above.
+pub struct Layer {
+    matrices: [(Buffer, level_zero::Memory); 4],
+    vectors: Shared,
+}
+impl Layer {
+    pub fn load(
+        gpu: &Gpu,
+        kernels: &Kernels,
+        file: &Safetensors,
+        layer: usize,
+    ) -> Result<Self, &'static str> {
+        let name = |part: &str| format!("transformer_blocks.{layer}.{part}");
+        let matrix = |parts: &[&str],
+                      which: usize|
+         -> Result<(Buffer, level_zero::Memory), &'static str> {
+            let (rows, columns) = PRODUCTS[which];
+            let per_part = rows / parts.len();
+            let tile = int8::OUTPUTS * columns;
+            // The query/key/value product scales its own sums (`int8::Shape::scaled8`):
+            // its weight scales follow the stream.
+            let scales = if which == QKV {
+                let mut all = Vec::with_capacity(rows);
+                for part in parts {
+                    all.extend(file.f32(&name(&format!("{part}.weight_scale")), &[per_part, 1])?);
+                }
+                all
+            } else {
+                Vec::new()
+            };
+            let bytes = rows * columns + int8::SLACK + scales.len() * 4;
+            let staged = gpu.staged(bytes as u64, |to| {
+                let (stream, rest) = to.split_at_mut(rows * columns);
+                let (slack, tail) = rest.split_at_mut(int8::SLACK);
+                slack.fill(0);
+                for (v, scale) in tail.chunks_exact_mut(4).zip(&scales) {
+                    v.copy_from_slice(&scale.to_le_bytes());
+                }
+                stream.par_chunks_mut(tile).enumerate().try_for_each_init(
+                    || vec![0u8; tile],
+                    |plain, (n, to)| {
+                        let first = n * int8::OUTPUTS;
+                        let part = first / per_part;
+                        let tensor = name(&format!("{}.weight", parts[part]));
+                        file.i8_part_into(
+                            &tensor,
+                            &[per_part, columns],
+                            (first - part * per_part) * columns,
+                            plain,
+                        )?;
+                        int8::weight_stream(plain, int8::OUTPUTS, columns, to);
+                        Ok(())
+                    },
+                )
+            })?;
+            let buffer = gpu.place(&staged, true)?;
+            let stream = kernels.fast.import(&gpu.export(&buffer)?, staged.bytes())?;
+            Ok((buffer, stream))
+        };
+        let mut vectors = Vec::with_capacity(VECTORS);
+        vectors.extend(file.floats(&name("attn.norm_q.weight"), &[HEAD])?);
+        vectors.extend(file.floats(&name("attn.norm_k.weight"), &[HEAD])?);
+        for part in ["attn.to_q", "attn.to_k", "attn.to_v"] {
+            vectors.extend(file.f32(&name(&format!("{part}.weight_scale")), &[DIM, 1])?);
+        }
+        vectors.extend(file.f32(&name("attn.to_out.0.weight_scale"), &[DIM, 1])?);
+        vectors.extend(file.f32(&name("img_mlp.gate_up.weight_scale"), &[2 * HIDDEN, 1])?);
+        vectors.extend(file.f32(&name("img_mlp.out.weight_scale"), &[DIM, 1])?);
+        // The feed-forward input product ends in its activation (`int8::Shape::gated8`): its
+        // rows are stored in `gated_rows` order with their scales after the stream.
+        let gated = || -> Result<(Buffer, level_zero::Memory), &'static str> {
+            let (rows, columns) = PRODUCTS[FC1];
+            let tensor = name("img_mlp.gate_up.weight");
+            let scales = file.f32(&name("img_mlp.gate_up.weight_scale"), &[rows, 1])?;
+            let tile = int8::OUTPUTS * columns;
+            let staged = gpu.staged((GATED_SCALES + rows * 4) as u64, |to| {
+                let (stream, rest) = to.split_at_mut(rows * columns);
+                let (slack, tail) = rest.split_at_mut(int8::SLACK);
+                slack.fill(0);
+                for (i, v) in tail.chunks_exact_mut(4).enumerate() {
+                    v.copy_from_slice(&scales[int8::gated_rows(i, HIDDEN)].to_le_bytes());
+                }
+                stream.par_chunks_mut(tile).enumerate().try_for_each_init(
+                    || vec![0u8; tile],
+                    |plain, (n, to)| {
+                        for (i, row) in plain.chunks_exact_mut(columns).enumerate() {
+                            let source = int8::gated_rows(n * int8::OUTPUTS + i, HIDDEN);
+                            file.i8_part_into(&tensor, &[rows, columns], source * columns, row)?;
+                        }
+                        int8::weight_stream(plain, int8::OUTPUTS, columns, to);
+                        Ok(())
+                    },
+                )
+            })?;
+            let buffer = gpu.place(&staged, true)?;
+            let stream = kernels.fast.import(&gpu.export(&buffer)?, staged.bytes())?;
+            Ok((buffer, stream))
+        };
+        Ok(Self {
+            matrices: [
+                matrix(&["attn.to_q", "attn.to_k", "attn.to_v"], QKV)?,
+                matrix(&["attn.to_out.0"], OUT)?,
+                gated()?,
+                matrix(&["img_mlp.out"], FC2)?,
+            ],
+            vectors: Shared::floats(gpu, &kernels.fast, &vectors)?,
+        })
+    }
+}
+
+/// The products' token tiles in equal dispatch blocks of about 128 tiles (measured at the
+/// benchmark's 264 tiles: two blocks of 132 are about 3% faster than the default 100).
+fn balanced(shape: int8::Shape) -> int8::Shape {
+    let blocks = ((shape.tx + 64) / 128).max(1);
+    int8::Shape {
+        xc: shape.tx.div_ceil(blocks),
+        ..shape
+    }
+}
+
+/// A buffer in video memory that both Vulkan and the Level Zero kernels use.
+struct Shared {
+    buffer: Buffer,
+    memory: level_zero::Memory,
+}
+impl Shared {
+    fn new(gpu: &Gpu, fast: &LevelZero, bytes: u64) -> Result<Self, &'static str> {
+        let buffer = gpu.shared(bytes)?;
+        let memory = fast.import(&gpu.export(&buffer)?, bytes)?;
+        Ok(Self { buffer, memory })
+    }
+    fn floats(gpu: &Gpu, fast: &LevelZero, values: &[f32]) -> Result<Self, &'static str> {
+        let bytes = values.len() as u64 * 4;
+        let buffer = gpu.filled_shared(bytes, |to| {
+            to.copy_from_slice(bytes_of(values));
+            Ok(())
+        })?;
+        let memory = fast.import(&gpu.export(&buffer)?, bytes)?;
+        Ok(Self { buffer, memory })
+    }
+}
+
+/// The step's glue as OpenCL kernels (`xe2/qwen.cl`, compiled for the B70 by `ocloc` into
+/// `xe2/qwen.bin`) on the Level Zero queue.
+const GLUE: &[u8] = include_bytes!("xe2/qwen.bin");
+struct Glue {
+    norm: level_zero::Kernel,
+    resnorm: level_zero::Kernel,
+    resid: level_zero::Kernel,
+    qk: level_zero::Kernel,
+    qk8: level_zero::Kernel,
+    value: level_zero::Kernel,
+    prefix: level_zero::Kernel,
+    prefix8: level_zero::Kernel,
+    merge: level_zero::Kernel,
+    hidden: level_zero::Kernel,
+    embed: level_zero::Kernel,
+    final_: level_zero::Kernel,
+}
+impl Glue {
+    fn new(fast: &LevelZero) -> Result<Self, &'static str> {
+        let k = |name: &str, group: u32| fast.compiled_kernel(GLUE, name, [group, 1, 1]);
+        Ok(Self {
+            norm: k("q_norm", 256)?,
+            resnorm: k("q_resnorm", 256)?,
+            resid: k("q_resid", 64)?,
+            qk: k("q_qk", 256)?,
+            qk8: k("q_qk8", 256)?,
+            value: k("q_value", 256)?,
+            prefix: k("q_prefix", 64)?,
+            prefix8: k("q_prefix8", 64)?,
+            merge: k("q_merge", 256)?,
+            hidden: k("q_hidden", 256)?,
+            embed: k("q_embed", 256)?,
+            final_: k("q_final", 256)?,
+        })
+    }
+}
+
+/// The small float layers, run on the CPU.
+pub(super) struct Small {
+    linear_1: Vec<f32>,
+    linear_2: Vec<f32>,
+    modulation: Vec<f32>,
+    norm_out: Vec<f32>,
+    text_norm: Vec<f32>,
+    text_in: Vec<f32>,
+    text_out: Vec<f32>,
+}
+impl Small {
+    pub(super) fn read(file: &Safetensors) -> Result<Self, &'static str> {
+        let t = "time_text_embed.timestep_embedder";
+        Ok(Self {
+            linear_1: file.floats(&format!("{t}.linear_1.weight"), &[DIM, 256])?,
+            linear_2: file.floats(&format!("{t}.linear_2.weight"), &[DIM, DIM])?,
+            modulation: file.floats("modulation.1.weight", &[4 * DIM, DIM])?,
+            norm_out: file.floats("norm_out.linear.weight", &[DIM, DIM])?,
+            text_norm: file
+                .floats("txt_in.text_norm.weight", &[CONTEXT])?
+                .iter()
+                .map(|w| w + 1.0)
+                .collect(),
+            text_in: file.floats("txt_in.in_layer.weight", &[DIM, CONTEXT])?,
+            text_out: file.floats("txt_in.out_layer.weight", &[DIM, DIM])?,
+        })
+    }
+    /// For each timestep, the modulation vectors of its row and the time-zero row
+    /// `[2][MODS]` and the output head's scale; one pass over the weights for all of them.
+    pub(super) fn times(&self, timesteps: &[f32]) -> Vec<Times> {
+        let silu = |v: &mut f32| *v /= 1.0 + (-*v).exp();
+        let mut rows = Vec::with_capacity(timesteps.len() * 2 * 256);
+        for &t in timesteps {
+            rows.extend(qwen_dit::time_embedding(t));
+            rows.extend(qwen_dit::time_embedding(0.0));
+        }
+        let mut h = linear(&rows, 256, &self.linear_1, &[]);
+        h.iter_mut().for_each(silu);
+        let mut h = linear(&h, DIM, &self.linear_2, &[]);
+        h.iter_mut().for_each(silu);
+        let mut mods = linear(&h, DIM, &self.modulation, &[]);
+        for row in mods.chunks_exact_mut(MODS) {
+            for (part, values) in row.chunks_exact_mut(DIM).enumerate() {
+                for v in values {
+                    *v = if part % 2 == 0 { 1.0 + *v } else { v.tanh() };
+                }
+            }
+        }
+        // The head's scale comes from each step's own row.
+        let own: Vec<f32> = h
+            .chunks_exact(2 * DIM)
+            .flat_map(|pair| pair[..DIM].to_vec())
+            .collect();
+        let scales = linear(&own, DIM, &self.norm_out, &[]);
+        mods.chunks_exact(2 * MODS)
+            .zip(scales.chunks_exact(DIM))
+            .map(|(mods, scale)| Times {
+                mods: mods.to_vec(),
+                scale: scale.to_vec(),
+            })
+            .collect()
+    }
+    pub(super) fn text(&self, context: &[f32]) -> Vec<f32> {
+        let mut x = context.to_vec();
+        x.par_chunks_exact_mut(CONTEXT).for_each(|row| {
+            let mean = row.iter().map(|v| v * v).sum::<f32>() / CONTEXT as f32;
+            let scale = 1.0 / (mean + 1e-6).sqrt();
+            for (v, w) in row.iter_mut().zip(&self.text_norm) {
+                *v *= scale * w;
+            }
+        });
+        let mut h = linear(&x, CONTEXT, &self.text_in, &[]);
+        h.iter_mut().for_each(|v| *v = qwen_dit::gelu(*v));
+        linear(&h, DIM, &self.text_out, &[])
+    }
+}
+
+/// A step's time-dependent vectors (`QwenGpu::times`).
+pub struct Times {
+    pub(super) mods: Vec<f32>,
+    pub(super) scale: Vec<f32>,
+}
+
+/// Buffers and kernels of one pass shape: `tokens` own tokens after `earlier` cached keys.
+struct Work {
+    /// The prefix whose target turns `turns` holds (0: none).
+    turns_of: std::cell::Cell<u64>,
+    tokens: usize,
+    earlier: usize,
+    padded: usize,
+    /// Keys per head in the key/value stream: own then earlier, padded.
+    keys: usize,
+    stream: Buffer,
+    turns: Buffer,
+    rows: Buffer,
+    mods: Buffer,
+    final_scale: Buffer,
+    bytes: Buffer,
+    scales: Buffer,
+    sums: Buffer,
+    spill: Buffer,
+    query: Buffer,
+    kv: Buffer,
+    mixed: Buffer,
+    weights: Buffer,
+    out: Buffer,
+    readback: Readback,
+    shared: [level_zero::Memory; 6],
+    /// Level Zero views of stream, turns, rows, mods, final_scale, scales, spill and out.
+    views: [level_zero::Memory; 8],
+    products: [(level_zero::Kernel, [u32; 3]); 4],
+    attend: (level_zero::Kernel, [u32; 3]),
+    /// As `attend` with int8 queries and keys (fast attention).
+    attend8: (level_zero::Kernel, [u32; 3]),
+}
+impl Work {
+    fn new(
+        gpu: &Gpu,
+        kernels: &Kernels,
+        tokens: usize,
+        earlier: usize,
+    ) -> Result<Self, &'static str> {
+        let fast = &kernels.fast;
+        let padded = tokens.next_multiple_of(PAD);
+        let keys = (tokens + earlier).next_multiple_of(PAD);
+        let sizes = [
+            (padded * HIDDEN + int8::SLACK) as u64,
+            (padded * 2 * HIDDEN) as u64 * 4,
+            (HEADS * padded * HEAD) as u64 * 2,
+            (HEADS * keys * HEAD * 2) as u64 * 2 + attend::SLACK as u64,
+            (HEADS * padded * HEAD) as u64 * 4,
+            (HEADS * padded) as u64 * 4,
+        ];
+        let buffers = [
+            gpu.shared(sizes[0])?,
+            gpu.shared(sizes[1])?,
+            gpu.shared(sizes[2])?,
+            gpu.shared(sizes[3])?,
+            gpu.shared(sizes[4])?,
+            gpu.shared(sizes[5])?,
+        ];
+        let import = |i: usize| fast.import(&gpu.export(&buffers[i])?, sizes[i]);
+        let shared = [
+            import(0)?,
+            import(1)?,
+            import(2)?,
+            import(3)?,
+            import(4)?,
+            import(5)?,
+        ];
+        let product = |which: usize| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
+            let (rows, columns) = PRODUCTS[which];
+            let shape =
+                balanced(int8::Shape::linear(padded, rows, columns).ok_or("gpu_unsupported")?);
+            Ok((fast_kernel(fast, &shape)?, shape.groups(rows)))
+        };
+        let scaled = (|| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
+            let (rows, columns) = PRODUCTS[QKV];
+            let shape = balanced(
+                int8::Shape::scaled8(padded, rows, columns, QKV_SCALES as u32)
+                    .ok_or("gpu_unsupported")?,
+            );
+            Ok((
+                super::xe2::load(fast, &int8::kernel(&shape), 4)?,
+                shape.groups(rows),
+            ))
+        })();
+        let gated = (|| -> Result<(level_zero::Kernel, [u32; 3]), &'static str> {
+            let (rows, columns) = PRODUCTS[FC1];
+            let shape = balanced(
+                int8::Shape::gated8(padded, rows, columns, GATED_SCALES as u32)
+                    .ok_or("gpu_unsupported")?,
+            );
+            Ok((
+                super::xe2::load(fast, &int8::kernel(&shape), 4)?,
+                shape.groups(rows),
+            ))
+        })();
+        let shape = attend::Shape::new(keys, tokens + earlier, HEADS, 1.0 / (HEAD as f32).sqrt())
+            .and_then(|s| s.with_queries(padded, HEADS))
+            .map(|s| attend::Shape {
+                group: ATTEND_GROUP,
+                ..s
+            })
+            .ok_or("gpu_unsupported")?;
+        let attention = |shape: &attend::Shape| -> Result<_, &'static str> {
+            let native = zebin::write(&zebin::Kernel {
+                name: "attend",
+                code: &attend::kernel(shape),
+                grf: 256,
+                pointers: 4,
+            });
+            let kernel = fast.kernel(&native, "attend", 4)?;
+            kernel.set_group([16 * ATTEND_GROUP, 1, 1])?;
+            Ok((kernel, shape.groups(HEADS)))
+        };
+        let attend = attention(&shape)?;
+        let attend8 = attention(&attend::Shape {
+            int8: true,
+            ..shape
+        })?;
+        let [bytes, sums, query, kv, mixed, weights] = buffers;
+        let counts = [
+            padded * DIM,
+            padded * PAIRS * 2,
+            padded * CHANNELS,
+            2 * MODS,
+            DIM,
+            // The gated product reads the token scales 64 at a time.
+            padded + 64,
+            padded * SPILLED,
+            padded * CHANNELS,
+        ];
+        let mut made = Vec::with_capacity(8);
+        for count in counts {
+            let Shared { buffer, memory } = Shared::new(gpu, fast, count as u64 * 4)?;
+            made.push((buffer, memory));
+        }
+        let mut made = made.into_iter();
+        let mut next = || made.next().ok_or("gpu_failed");
+        let (stream, v0) = next()?;
+        let (turns, v1) = next()?;
+        let (rows, v2) = next()?;
+        let (mods, v3) = next()?;
+        let (final_scale, v4) = next()?;
+        let (scales, v5) = next()?;
+        let (spill, v6) = next()?;
+        let (out, v7) = next()?;
+        Ok(Self {
+            turns_of: std::cell::Cell::new(0),
+            tokens,
+            earlier,
+            padded,
+            keys,
+            stream,
+            turns,
+            rows,
+            mods,
+            final_scale,
+            bytes,
+            scales,
+            sums,
+            spill,
+            query,
+            kv,
+            mixed,
+            weights,
+            out,
+            readback: gpu.readback((padded * CHANNELS) as u64 * 4)?,
+            shared,
+            views: [v0, v1, v2, v3, v4, v5, v6, v7],
+            products: [scaled?, product(OUT)?, gated?, product(FC2)?],
+            attend,
+            attend8,
+        })
+    }
+}
+
+/// The prompt's (and reference images') keys and values for every block, for one request.
+pub struct Prefix {
+    /// Unique per prefix, so a pass knows whether its turns are this prefix's.
+    id: u64,
+    /// Per block: keys and values `[head][capacity][128]` f16, and their Level Zero views.
+    keys: Vec<Buffer>,
+    values: Vec<Buffer>,
+    key_views: Vec<level_zero::Memory>,
+    value_views: Vec<level_zero::Memory>,
+    length: usize,
+    /// The target's latent size and its tokens' rotary turns.
+    height: usize,
+    width: usize,
+    turns: Vec<f32>,
+}
+
+/// Which attention a pass uses.
+#[derive(Clone, Copy, PartialEq)]
+enum Attention {
+    /// Causal over the own tokens, plus all earlier keys (a prompt run).
+    Causal,
+    /// Every own and earlier key (an image).
+    Full,
+}
+
+pub struct QwenGpu {
+    gpu: Gpu,
+    kernels: Kernels,
+    glue: Glue,
+    layers: Vec<Layer>,
+    small: Small,
+    img_in: Shared,
+    proj_out: Shared,
+    /// Pass buffers by shape (own tokens, earlier keys); a request's target pass is reused
+    /// every step.
+    work: Mutex<HashMap<(usize, usize), Work>>,
+}
+impl QwenGpu {
+    pub fn load(gpu: Gpu, path: &Path) -> Result<Self, &'static str> {
+        let model = QwenDit::open(path)?;
+        let kernels = Kernels::new(&gpu)?;
+        // Three layers at a time, so one layer's copy to the device overlaps the next ones'
+        // reading and rearranging (each fills its staging memory on the rayon pool).
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let loaded: Vec<Vec<(usize, Result<Layer, &'static str>)>> = std::thread::scope(|scope| {
+            let loaders: Vec<_> = (0..3)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut done = Vec::new();
+                        loop {
+                            let layer = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if layer >= model.layers {
+                                return done;
+                            }
+                            let result = Layer::load(&gpu, &kernels, &model.file, layer);
+                            let failed = result.is_err();
+                            done.push((layer, result));
+                            if failed {
+                                next.store(model.layers, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    })
+                })
+                .collect();
+            loaders
+                .into_iter()
+                .map(|l| l.join().unwrap_or_default())
+                .collect()
+        });
+        let mut loaded: Vec<_> = loaded.into_iter().flatten().collect();
+        loaded.sort_by_key(|(layer, _)| *layer);
+        if loaded.len() != model.layers {
+            return Err("gpu_failed");
+        }
+        let layers = loaded
+            .into_iter()
+            .map(|(_, layer)| layer)
+            .collect::<Result<Vec<_>, _>>()?;
+        let small = Small::read(&model.file)?;
+        let fast = &kernels.fast;
+        let img_in = Shared::floats(
+            &gpu,
+            fast,
+            &model.file.floats("img_in.weight", &[DIM, CHANNELS])?,
+        )?;
+        let proj_out = Shared::floats(
+            &gpu,
+            fast,
+            &model.file.floats("proj_out.weight", &[CHANNELS, DIM])?,
+        )?;
+        let glue = Glue::new(fast)?;
+        Ok(Self {
+            gpu,
+            glue,
+            kernels,
+            layers,
+            small,
+            img_in,
+            proj_out,
+            work: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Runs the prompt and reference images through every block and keeps their keys and
+    /// values. `context`, `slots` and `references` as in `qwen_dit::Step`; `target` is the
+    /// target latent's `(height, width)`.
+    pub fn prefix(
+        &self,
+        context: &[f32],
+        slots: &[i32],
+        references: &[(&[f32], usize, usize)],
+        target: (usize, usize),
+    ) -> Result<Prefix, &'static str> {
+        let gpu = &self.gpu;
+        let text_len = context.len() / CONTEXT;
+        let mut images: Vec<(usize, usize)> = references.iter().map(|r| (r.1, r.2)).collect();
+        images.push(target);
+        let layout = Layout::new(text_len, slots, &images)?;
+        let rotary = qwen_dit::rotary(&layout.positions);
+        let length = layout.prefix;
+        let half_rows = || {
+            Shared::new(
+                gpu,
+                &self.kernels.fast,
+                (HEADS * length.max(1) * HEAD) as u64 * 2,
+            )
+        };
+        let (mut keys, mut values, mut key_views, mut value_views) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..self.layers.len() {
+            let (k, v) = (half_rows()?, half_rows()?);
+            keys.push(k.buffer);
+            key_views.push(k.memory);
+            values.push(v.buffer);
+            value_views.push(v.memory);
+        }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let prefix = Prefix {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            keys,
+            values,
+            key_views,
+            value_views,
+            length,
+            height: target.0,
+            width: target.1,
+            turns: rotary[length * PAIRS..].iter().flatten().copied().collect(),
+        };
+        let text = self.small.text(context);
+        let mods = self.small.times(&[0.0]).remove(0).mods;
+        for segment in layout.segments.iter().filter(|s| s.start < length) {
+            let tokens = segment.end - segment.start;
+            let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
+            let work = Self::work_for(&mut works, gpu, &self.kernels, tokens, segment.start)?;
+            let mut turns: Vec<f32> = rotary[segment.start * PAIRS..segment.end * PAIRS]
+                .iter()
+                .flatten()
+                .copied()
+                .collect();
+            turns.resize(work.padded * PAIRS * 2, 0.0);
+            gpu.upload(&work.turns, 0, bytes_of(&turns))?;
+            work.turns_of.set(0);
+            gpu.upload(&work.mods, 0, bytes_of(&mods))?;
+            let attention = match segment.image {
+                None => {
+                    let rows = &text[segment.context_start * DIM..][..tokens * DIM];
+                    gpu.upload(&work.stream, 0, bytes_of(rows))?;
+                    Attention::Causal
+                }
+                Some(index) => {
+                    let (latent, h, w) = references[index];
+                    self.embed(work, &qwen_dit::patchify(latent, h, w))?;
+                    Attention::Full
+                }
+            };
+            for (index, layer) in self.layers.iter().enumerate() {
+                let last = index + 1 == self.layers.len();
+                let store = (&prefix.keys[index], &prefix.values[index], length);
+                run(
+                    gpu,
+                    &self.block(layer, work, 1, attention, Some(store), &prefix, index, last),
+                )?;
+            }
+        }
+        Ok(prefix)
+    }
+
+    fn work_for<'a>(
+        works: &'a mut HashMap<(usize, usize), Work>,
+        gpu: &Gpu,
+        kernels: &Kernels,
+        tokens: usize,
+        earlier: usize,
+    ) -> Result<&'a Work, &'static str> {
+        match works.entry((tokens, earlier)) {
+            std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                Ok(entry.insert(Work::new(gpu, kernels, tokens, earlier)?))
+            }
+        }
+    }
+
+    /// Latent rows `[tokens][CHANNELS]` into the stream.
+    fn embed(&self, work: &Work, rows: &[f32]) -> Result<(), &'static str> {
+        self.gpu.upload(&work.rows, 0, bytes_of(rows))?;
+        run(
+            &self.gpu,
+            &[Call::Shader {
+                kernel: &self.kernels.embed,
+                buffers: vec![&work.rows, &self.img_in.buffer, &work.stream],
+                constants: vec![work.tokens as u32],
+                groups: [work.tokens as u32, 1, 1],
+            }],
+        )
+    }
+
+    /// The time-dependent vectors of each of `timesteps`, for `step_at`.
+    pub fn times(&self, timesteps: &[f32]) -> Vec<Times> {
+        self.small.times(timesteps)
+    }
+
+    /// One evaluation of the target `x` (`[CHANNELS][height][width]`) at `timestep` after a
+    /// prefix: the model's output in the same shape.
+    pub fn step(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        timestep: f32,
+    ) -> Result<Vec<f32>, &'static str> {
+        self.step_at(prefix, x, &self.small.times(&[timestep])[0])
+    }
+
+    /// As `step`, with the timestep's vectors computed beforehand. The whole step is one
+    /// Level Zero command list: the glue kernels (`xe2/qwen.cl`) between the machine-code
+    /// products and attention, waited for once.
+    pub fn step_at(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+    ) -> Result<Vec<f32>, &'static str> {
+        self.step_with(prefix, x, times, false)
+    }
+
+    /// As `step_at`; `fast` scores attention with int8 queries and keys (SageAttention-
+    /// style: quicker, and the output is no longer the reference's).
+    pub fn step_with(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+        fast: bool,
+    ) -> Result<Vec<f32>, &'static str> {
+        Ok(self.step_stamped(prefix, x, times, fast, None)?.0)
+    }
+
+    /// As `step_at`; with `stamps`, the GPU clock is written there before the first launch
+    /// and after each, and the launched kernels are returned (profiling).
+    fn step_stamped(
+        &self,
+        prefix: &Prefix,
+        x: &[f32],
+        times: &Times,
+        int8: bool,
+        stamps: Option<&level_zero::Memory>,
+    ) -> Result<(Vec<f32>, Vec<usize>), &'static str> {
+        use level_zero::Arg::{Memory as M, U32 as U};
+        let gpu = &self.gpu;
+        let (height, width) = (prefix.height, prefix.width);
+        let tokens = height * width;
+        let mut works = self.work.lock().map_err(|_| "gpu_failed")?;
+        let w = Self::work_for(&mut works, gpu, &self.kernels, tokens, prefix.length)?;
+        if w.turns_of.get() != prefix.id {
+            let mut turns = prefix.turns.clone();
+            turns.resize(w.padded * PAIRS * 2, 0.0);
+            gpu.upload(&w.turns, 0, bytes_of(&turns))?;
+            w.turns_of.set(prefix.id);
+        }
+        gpu.upload(&w.mods, 0, bytes_of(&times.mods))?;
+        gpu.upload(&w.final_scale, 0, bytes_of(&times.scale))?;
+        gpu.upload(&w.rows, 0, bytes_of(&qwen_dit::patchify(x, height, width)))?;
+        let fast = &self.kernels.fast;
+        let g = &self.glue;
+        let [stream, turns, rows, mods, final_scale, scales, _, out] = &w.views;
+        let [bytes, sums, query, kv, mixed, weights] = &w.shared;
+        let (n, np) = (tokens as u32, w.padded as u32);
+        let part = |p: usize| (p * DIM) as u32;
+        let mut batch = fast.batch()?;
+        if let Some(memory) = stamps {
+            batch.stamp_into(memory)?;
+        }
+        batch.launch(
+            &g.embed,
+            &[M(rows), M(&self.img_in.memory), M(stream), U(n)],
+            [n, 1, 1],
+        )?;
+        let layers = self.layers.len();
+        for (index, layer) in self.layers.iter().enumerate() {
+            let v = &layer.vectors.memory;
+            let product = |batch: &mut level_zero::Batch, which: usize| {
+                let (kernel, groups) = &w.products[which];
+                batch.launch(
+                    kernel,
+                    &[M(bytes), M(&layer.matrices[which].1), M(sums)],
+                    *groups,
+                )
+            };
+            if index == 0 {
+                batch.launch(
+                    &g.norm,
+                    &[M(stream), M(mods), M(bytes), M(scales), U(n), U(part(0))],
+                    [np, 1, 1],
+                )?;
+            }
+            let (kernel, groups) = &w.products[QKV];
+            batch.launch(
+                kernel,
+                &[M(bytes), M(&layer.matrices[QKV].1), M(sums), M(scales)],
+                *groups,
+            )?;
+            for (side, to, weight) in [(0u32, query, QUERY_NORM), (1, kv, KEY_NORM)] {
+                batch.launch(
+                    if int8 { &g.qk8 } else { &g.qk },
+                    &[
+                        M(sums),
+                        M(v),
+                        M(turns),
+                        M(to),
+                        U(n),
+                        U(if side == 0 { np } else { w.keys as u32 }),
+                        U(side),
+                        U(weight as u32),
+                    ],
+                    [HEADS as u32, np / 16, 1],
+                )?;
+            }
+            batch.launch(
+                &g.value,
+                &[M(sums), M(kv), U(n), U(w.keys as u32)],
+                [HEADS as u32, np / 32, 1],
+            )?;
+            if prefix.length > 0 {
+                batch.launch(
+                    if int8 { &g.prefix8 } else { &g.prefix },
+                    &[
+                        M(&prefix.key_views[index]),
+                        M(&prefix.value_views[index]),
+                        M(kv),
+                        M(kv),
+                        U(prefix.length as u32),
+                        U(n),
+                        U(w.keys as u32),
+                        U(prefix.length as u32),
+                    ],
+                    [(prefix.length * 16).div_ceil(64) as u32, HEADS as u32, 1],
+                )?;
+            }
+            let (attend, groups) = if int8 { &w.attend8 } else { &w.attend };
+            batch.launch(attend, &[M(query), M(kv), M(mixed), M(weights)], *groups)?;
+            batch.launch(
+                &g.merge,
+                &[M(mixed), M(weights), M(bytes), M(scales), U(n), U(np)],
+                [np, 1, 1],
+            )?;
+            product(&mut batch, OUT)?;
+            batch.launch(
+                &g.resnorm,
+                &[
+                    M(stream),
+                    M(mods),
+                    M(bytes),
+                    M(scales),
+                    M(sums),
+                    M(v),
+                    U(n),
+                    U(part(2)),
+                    U(SCALE_OUT as u32),
+                    U(part(1)),
+                ],
+                [np, 1, 1],
+            )?;
+            let (kernel, groups) = &w.products[FC1];
+            batch.launch(
+                kernel,
+                &[M(bytes), M(&layer.matrices[FC1].1), M(sums), M(scales)],
+                *groups,
+            )?;
+            batch.launch(&g.hidden, &[M(sums), M(scales), M(bytes), U(n)], [np, 1, 1])?;
+            product(&mut batch, FC2)?;
+            if index + 1 < layers {
+                batch.launch(
+                    &g.resnorm,
+                    &[
+                        M(stream),
+                        M(mods),
+                        M(bytes),
+                        M(scales),
+                        M(sums),
+                        M(v),
+                        U(n),
+                        U(part(0)),
+                        U(SCALE_FC2 as u32),
+                        U(part(3)),
+                    ],
+                    [np, 1, 1],
+                )?;
+            } else {
+                batch.launch(
+                    &g.resid,
+                    &[
+                        M(stream),
+                        M(sums),
+                        M(scales),
+                        M(v),
+                        M(mods),
+                        U(n),
+                        U(SCALE_FC2 as u32),
+                        U(part(3)),
+                    ],
+                    [(DIM / 4 / 64) as u32, np, 1],
+                )?;
+            }
+        }
+        batch.launch(
+            &g.final_,
+            &[
+                M(stream),
+                M(final_scale),
+                M(&self.proj_out.memory),
+                M(out),
+                U(n),
+            ],
+            [n, 1, 1],
+        )?;
+        let launched = batch.launched();
+        batch.run()?;
+        let mut result = vec![0f32; tokens * CHANNELS];
+        gpu.read_floats(&w.out, 0, &w.readback, &mut result)?;
+        Ok((qwen_dit::unpatchify(&result, height, width), launched))
+    }
+
+    /// The calls of one block on `work.stream` with modulation row `row` (0 the step's, 1
+    /// time zero). With `store`, the pass's keys and values are kept in the prefix cache at
+    /// rows `work.earlier..`; with `last`, only they are needed, so the block stops after
+    /// them.
+    #[allow(clippy::too_many_arguments)]
+    fn block<'a>(
+        &'a self,
+        layer: &'a Layer,
+        w: &'a Work,
+        row: usize,
+        attention: Attention,
+        store: Option<(&'a Buffer, &'a Buffer, usize)>,
+        prefix: &'a Prefix,
+        index: usize,
+        last: bool,
+    ) -> Vec<Call<'a>> {
+        let k = &self.kernels;
+        let (n, np) = (w.tokens as u32, w.padded as u32);
+        let v = &layer.vectors.buffer;
+        let mods = |part: usize| ((row * MODS) + part * DIM) as u32;
+        let product = |which: usize| {
+            let (kernel, groups) = &w.products[which];
+            Call::Product {
+                fast: &k.fast,
+                kernel,
+                memory: vec![&w.shared[0], &layer.matrices[which].1, &w.shared[1]],
+                groups: *groups,
+            }
+        };
+        let norm = |part: usize| Call::Shader {
+            kernel: &k.normq8,
+            buffers: vec![&w.stream, &w.mods, &w.bytes, &w.scales],
+            constants: vec![n, mods(part), 1],
+            groups: [np, 1, 1],
+        };
+        let residual = |scale: usize, part: usize| Call::Shader {
+            kernel: &k.resid8,
+            buffers: vec![&w.stream, &w.sums, &w.scales, v, &w.mods],
+            constants: vec![n, scale as u32, mods(part)],
+            groups: [(DIM / 4 / 64) as u32, np, 1],
+        };
+        // The residual with gate `part`, then the norm with modulation `next`.
+        let residual_norm = |scale: usize, part: usize, next: usize| Call::Shader {
+            kernel: &k.resnorm8,
+            buffers: vec![&w.stream, &w.mods, &w.bytes, &w.scales, &w.sums, v],
+            constants: vec![n, mods(next), 1, scale as u32, mods(part)],
+            groups: [np, 1, 1],
+        };
+        // Blocks after the first find their input quantized by the previous block's end.
+        let first = index == 0;
+        let fuse_out = index + 1 < self.layers.len();
+        let (cache_keys, cache_values, capacity) = store.unwrap_or((&w.kv, &w.kv, 0));
+        let stored = u32::from(store.is_some());
+        let mut calls = Vec::new();
+        if first {
+            calls.push(norm(0));
+        }
+        calls.push({
+            let (kernel, groups) = &w.products[QKV];
+            Call::Product {
+                fast: &k.fast,
+                kernel,
+                memory: vec![
+                    &w.shared[0],
+                    &layer.matrices[QKV].1,
+                    &w.shared[1],
+                    &w.views[5],
+                ],
+                groups: *groups,
+            }
+        });
+        for (side, to, weight) in [(0u32, &w.query, QUERY_NORM), (1, &w.kv, KEY_NORM)] {
+            calls.push(Call::Shader {
+                kernel: &k.qk,
+                buffers: vec![&w.sums, v, &w.turns, to, cache_keys],
+                constants: vec![
+                    n,
+                    if side == 0 { np } else { w.keys as u32 },
+                    side,
+                    weight as u32,
+                    stored * side,
+                    w.earlier as u32,
+                    capacity as u32,
+                ],
+                groups: [(HEADS / 4) as u32, np, 1],
+            });
+        }
+        calls.push(Call::Shader {
+            kernel: &k.value,
+            buffers: vec![&w.sums, &w.kv, cache_values],
+            constants: vec![n, w.keys as u32, stored, w.earlier as u32, capacity as u32],
+            groups: [HEADS as u32, np / 32, 1],
+        });
+        if w.earlier > 0 {
+            calls.push(Call::Shader {
+                kernel: &k.prefix,
+                buffers: vec![&prefix.keys[index], &prefix.values[index], &w.kv, &w.kv],
+                constants: vec![
+                    w.earlier as u32,
+                    n,
+                    w.keys as u32,
+                    prefix.length.max(1) as u32,
+                ],
+                groups: [(w.earlier * 16).div_ceil(64) as u32, HEADS as u32, 1],
+            });
+        }
+        if last {
+            return calls;
+        }
+        match attention {
+            Attention::Full => {
+                let (kernel, groups) = &w.attend;
+                calls.push(Call::Product {
+                    fast: &k.fast,
+                    kernel,
+                    memory: vec![&w.shared[2], &w.shared[3], &w.shared[4], &w.shared[5]],
+                    groups: *groups,
+                });
+            }
+            Attention::Causal => calls.push(Call::Shader {
+                kernel: &k.mask,
+                buffers: vec![&w.query, &w.kv, &w.mixed, &w.weights],
+                constants: vec![
+                    np,
+                    w.keys as u32,
+                    n,
+                    w.earlier as u32,
+                    (1.0 / (HEAD as f32).sqrt()).to_bits(),
+                ],
+                groups: [n, HEADS as u32, 1],
+            }),
+        }
+        calls.push(Call::Shader {
+            kernel: &k.mergeq8,
+            buffers: vec![&w.mixed, &w.weights, &w.bytes, &w.scales],
+            constants: vec![n, np, 1],
+            groups: [np, 1, 1],
+        });
+        calls.push(product(OUT));
+        calls.push(residual_norm(SCALE_OUT, 1, 2));
+        calls.push({
+            let (kernel, groups) = &w.products[FC1];
+            Call::Product {
+                fast: &k.fast,
+                kernel,
+                memory: vec![
+                    &w.shared[0],
+                    &layer.matrices[FC1].1,
+                    &w.shared[1],
+                    &w.views[5],
+                ],
+                groups: *groups,
+            }
+        });
+        calls.push(Call::Shader {
+            kernel: &k.hidq8,
+            buffers: vec![&w.sums, &w.scales, &w.spill, &w.bytes],
+            constants: vec![n, 1],
+            groups: [np, 1, 1],
+        });
+        calls.push(product(FC2));
+        calls.push(if fuse_out {
+            residual_norm(SCALE_FC2, 3, 0)
+        } else {
+            residual(SCALE_FC2, 3)
+        });
+        calls
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        super::{
+            gpu::Select,
+            qwen_dit::tests::{Golden, db},
+        },
+        *,
+    };
+
+    /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir>`: every captured step through the GPU
+    /// form against the C++ engine's output, with one prefix per distinct prompt.
+    #[test]
+    #[ignore]
+    fn steps_match_cpp_engine() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let started = std::time::Instant::now();
+        let model =
+            QwenGpu::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        println!("load {:.1} s", started.elapsed().as_secs_f64());
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
+        for step in 0.. {
+            if !dir.join(format!("step{step}.txt")).exists() {
+                assert!(step > 0);
+                break;
+            }
+            let golden = Golden::load(&dir, step);
+            let references: Vec<(&[f32], usize, usize)> = golden
+                .references
+                .iter()
+                .map(|(r, h, w)| (&r[..], *h, *w))
+                .collect();
+            let started = std::time::Instant::now();
+            let prefix = model
+                .prefix(
+                    &golden.context,
+                    &golden.slots,
+                    &references,
+                    (golden.height, golden.width),
+                )
+                .unwrap();
+            let prefix_time = started.elapsed().as_secs_f64();
+            let started = std::time::Instant::now();
+            let out = model.step(&prefix, &golden.x, golden.timestep).unwrap();
+            let step_time = started.elapsed().as_secs_f64();
+            let db = db(&golden.out, &out);
+            println!(
+                "step {step}: t {} {}x{} prefix {} tokens {prefix_time:.2} s, step {step_time:.3} s -> {db:.1} dB",
+                golden.timestep, golden.height, golden.width, prefix.length
+            );
+            assert!(db > 25.0, "step {step}: {db:.1} dB");
+            let times = model.small.times(&[golden.timestep]).remove(0);
+            let fast = model.step_with(&prefix, &golden.x, &times, true).unwrap();
+            let (fast_db, apart) = (
+                qwen_dit::tests::db(&golden.out, &fast),
+                qwen_dit::tests::db(&out, &fast),
+            );
+            println!("  fast attention: {fast_db:.1} dB ({apart:.1} dB from standard)");
+            assert!(fast_db > 25.0, "step {step} fast: {fast_db:.1} dB");
+        }
+    }
+
+    /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir>`: step time at the image benchmark's
+    /// size (1184 x 1776, a 74 x 111 latent) with a captured prompt.
+    #[test]
+    #[ignore]
+    fn step_speed_at_benchmark_size() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let model =
+            QwenGpu::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
+        let golden = Golden::load(&dir, 0);
+        // `KUNO_QWEN_SIZE=HxW` (latent rows and columns, default the generate benchmark's
+        // 111x74) and `KUNO_QWEN_REFERENCE=HxW` (a reference latent in the prefix, as edits
+        // have; the edit benchmark is 52x78 with a 52x78 reference).
+        let size = |name: &str| {
+            std::env::var(name).ok().map(|v| {
+                let (h, w) = v.split_once('x').unwrap();
+                (h.parse::<usize>().unwrap(), w.parse::<usize>().unwrap())
+            })
+        };
+        let (height, width) = size("KUNO_QWEN_SIZE").unwrap_or((111, 74));
+        let reference =
+            size("KUNO_QWEN_REFERENCE").map(|(h, w)| (vec![0.25f32; CHANNELS * h * w], h, w));
+        let references: Vec<(&[f32], usize, usize)> = reference
+            .iter()
+            .map(|(l, h, w)| (l.as_slice(), *h, *w))
+            .collect();
+        // A reference needs its vision rows in the context (one per four latent cells).
+        let (mut context, mut slots) = (golden.context.clone(), golden.slots.clone());
+        if let Some((_, h, w)) = reference {
+            let text = context.len() / CONTEXT;
+            if slots.is_empty() {
+                slots = vec![0; text];
+            }
+            context.resize((text + h * w / 4) * CONTEXT, 0.01);
+            slots.resize(text + h * w / 4, 1);
+        }
+        let prefix = model
+            .prefix(&context, &slots, &references, (height, width))
+            .unwrap();
+        let mut state = 1u64;
+        let x: Vec<f32> = (0..CHANNELS * height * width)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((state >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+            })
+            .collect();
+        let mut best = f64::MAX;
+        for _ in 0..4 {
+            let started = std::time::Instant::now();
+            let out = model.step(&prefix, &x, 500.0).unwrap();
+            best = best.min(started.elapsed().as_secs_f64());
+            assert!(out.iter().all(|v| v.is_finite()));
+        }
+        println!("{} tokens: best step {best:.3} s", height * width);
+    }
+
+    /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir>`: each kernel of one block at the
+    /// benchmark's size alone, and the block as one call list.
+    #[test]
+    #[ignore]
+    fn block_costs_at_benchmark_size() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let model =
+            QwenGpu::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
+        let golden = Golden::load(&dir, 0);
+        let (height, width) = (111, 74);
+        let prefix = model
+            .prefix(&golden.context, &golden.slots, &[], (height, width))
+            .unwrap();
+        let x = vec![0.5f32; CHANNELS * height * width];
+        model.step(&prefix, &x, 500.0).unwrap();
+        let mut works = model.work.lock().unwrap();
+        let work = QwenGpu::work_for(
+            &mut works,
+            &model.gpu,
+            &model.kernels,
+            height * width,
+            prefix.length,
+        )
+        .unwrap();
+        let calls = model.block(
+            &model.layers[3],
+            work,
+            0,
+            Attention::Full,
+            None,
+            &prefix,
+            3,
+            false,
+        );
+        for _ in 0..2 {
+            let started = std::time::Instant::now();
+            run(&model.gpu, &calls).unwrap();
+            println!(
+                "block as one list: {:.2} ms",
+                started.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        drop(works);
+        let started = std::time::Instant::now();
+        let _ = model.small.times(&[500.0]);
+        println!(
+            "time layers on the CPU: {:.2} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        let started = std::time::Instant::now();
+        model.step(&prefix, &x, 500.0).unwrap();
+        println!(
+            "whole step: {:.1} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        let mut works = model.work.lock().unwrap();
+        let work = QwenGpu::work_for(
+            &mut works,
+            &model.gpu,
+            &model.kernels,
+            height * width,
+            prefix.length,
+        )
+        .unwrap();
+        let calls = model.block(
+            &model.layers[3],
+            work,
+            0,
+            Attention::Full,
+            None,
+            &prefix,
+            3,
+            false,
+        );
+        let k = &model.kernels;
+        let mut totals: Vec<(String, f64)> = Vec::new();
+        for (i, call) in calls.iter().enumerate() {
+            let name = match call {
+                Call::Shader { kernel, .. } => {
+                    let names = [
+                        (&k.normq8, "norm+quantize"),
+                        (&k.resnorm8, "residual+norm+quantize"),
+                        (&k.mergeq8, "merge+quantize"),
+                        (&k.hidq8, "hidden quantize"),
+                        (&k.resid8, "residual"),
+                        (&k.qk, "queries/keys"),
+                        (&k.value, "values"),
+                        (&k.prefix, "prefix copy"),
+                        (&k.mask, "masked attention"),
+                    ];
+                    names
+                        .iter()
+                        .find(|n| std::ptr::eq(n.0, *kernel))
+                        .map_or("?", |n| n.1)
+                        .to_string()
+                }
+                Call::Product { .. } => format!("machine code #{i}"),
+            };
+            let mut best = f64::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                run(&model.gpu, std::slice::from_ref(call)).unwrap();
+                best = best.min(started.elapsed().as_secs_f64());
+            }
+            totals.push((name, best * 1e3));
+        }
+        for (name, ms) in &totals {
+            println!("{ms:8.2} ms  {name}");
+        }
+        println!("{:8.2} ms  sum", totals.iter().map(|t| t.1).sum::<f64>());
+    }
+
+    /// `KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<dir>` (`KUNO_QWEN_SIZE=<h>x<w>` latent
+    /// patches, default the generate benchmark's): one real step with the GPU clock stamped
+    /// after every launch; time per kernel kind summed over the step.
+    #[test]
+    #[ignore]
+    fn step_profile() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let model =
+            QwenGpu::load(gpu, Path::new(&std::env::var("KUNO_QWEN_DIT").unwrap())).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_QWEN_GOLDEN").unwrap());
+        let golden = Golden::load(&dir, 0);
+        let (height, width) = std::env::var("KUNO_QWEN_SIZE").map_or((111, 74), |v| {
+            let (h, w) = v.split_once('x').unwrap();
+            (h.parse().unwrap(), w.parse().unwrap())
+        });
+        let prefix = model
+            .prefix(&golden.context, &golden.slots, &[], (height, width))
+            .unwrap();
+        let x = vec![0.5f32; CHANNELS * height * width];
+        let times = model.small.times(&[500.0]).remove(0);
+        let int8 = std::env::var("KUNO_QWEN_FAST").is_ok();
+        model.step_with(&prefix, &x, &times, int8).unwrap();
+        let fast = &model.kernels.fast;
+        let stamps = Shared::new(&model.gpu, fast, 8 * 8192).unwrap();
+        let started = std::time::Instant::now();
+        let (_, launched) = model
+            .step_stamped(&prefix, &x, &times, int8, Some(&stamps.memory))
+            .unwrap();
+        let wall = started.elapsed().as_secs_f64();
+        let raw = model
+            .gpu
+            .download(&stamps.buffer, 0, 8 * (launched.len() + 1))
+            .unwrap();
+        let ticks: Vec<u64> = raw
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let span = (ticks[launched.len()] - ticks[0]) as f64;
+        let g = &model.glue;
+        let works = model.work.lock().unwrap();
+        let w = works.values().find(|w| w.tokens == height * width).unwrap();
+        let mut names: Vec<(usize, &str)> = vec![
+            (g.norm.id(), "norm+quantize"),
+            (g.resnorm.id(), "residual+norm+quantize"),
+            (g.resid.id(), "residual"),
+            (g.qk.id(), "queries/keys"),
+            (g.qk8.id(), "queries/keys int8"),
+            (g.prefix8.id(), "prefix copy int8"),
+            (g.value.id(), "values"),
+            (g.prefix.id(), "prefix copy"),
+            (g.merge.id(), "merge+quantize"),
+            (g.hidden.id(), "hidden quantize"),
+            (g.embed.id(), "embed"),
+            (g.final_.id(), "final"),
+            (w.attend.0.id(), "attention"),
+            (w.attend8.0.id(), "attention int8"),
+        ];
+        for (i, name) in ["product qkv", "product out", "product fc1", "product fc2"]
+            .iter()
+            .enumerate()
+        {
+            names.push((w.products[i].0.id(), name));
+        }
+        let mut totals: Vec<(&str, f64, usize)> = Vec::new();
+        for (i, id) in launched.iter().enumerate() {
+            let name = names.iter().find(|n| n.0 == *id).map_or("?", |n| n.1);
+            let seconds = (ticks[i + 1] - ticks[i]) as f64 / span * wall;
+            match totals.iter_mut().find(|t| t.0 == name) {
+                Some(t) => {
+                    t.1 += seconds;
+                    t.2 += 1;
+                }
+                None => totals.push((name, seconds, 1)),
+            }
+        }
+        totals.sort_by(|a, b| b.1.total_cmp(&a.1));
+        println!(
+            "step {:.1} ms wall ({} launches)",
+            wall * 1e3,
+            launched.len()
+        );
+        for (name, seconds, count) in &totals {
+            println!(
+                "{:8.1} ms {:5.1}%  {count:4} x {:7.3} ms  {name}",
+                seconds * 1e3,
+                seconds / wall * 100.0,
+                seconds * 1e3 / *count as f64
+            );
+        }
+    }
+
+    /// A glue kernel against its kept previous form (`<name>_ref` in `xe2/qwen.cl`) at the
+    /// benchmark size: identical bytes out, and the time of each.
+    fn glue_against_reference(
+        name: &str,
+        inputs: &[(usize, u64)],
+        outputs: &[usize],
+        args: &dyn Fn(&[Shared], u32) -> Vec<level_zero::Arg<'_>>,
+        // (group size, groups) of the reference, then of the new form
+        launches: [(u32, [u32; 3]); 2],
+        bytes_moved: f64,
+    ) {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let kernels = Kernels::new(&gpu).unwrap();
+        let fast = &kernels.fast;
+        let tokens = 111 * 74u32;
+        let mut seed = 0x9e3779b97f4a7c15u64;
+        let mut buffers = Vec::new();
+        for &(bytes, kind) in inputs {
+            let words: Vec<u32> = (0..bytes / 4)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    match kind {
+                        // two bf16 values in about +-4
+                        1 => {
+                            let half = |x: u64| {
+                                let f = ((x & 0xffff) as f32 / 65536.0 - 0.5) * 8.0;
+                                f.to_bits() >> 16
+                            };
+                            half(seed) | (half(seed >> 16) << 16)
+                        }
+                        _ => 0,
+                    }
+                })
+                .collect();
+            buffers.push(Shared::floats(&gpu, fast, bytemuck_floats(&words)).unwrap());
+        }
+        let mut results = Vec::new();
+        for (kernel_name, (size, groups)) in [format!("{name}_ref"), name.to_string()]
+            .into_iter()
+            .zip(launches)
+        {
+            let kernel = fast
+                .compiled_kernel(GLUE, &kernel_name, [size, 1, 1])
+                .unwrap();
+            let mut best = f64::MAX;
+            for _ in 0..5 {
+                let mut batch = fast.batch().unwrap();
+                batch
+                    .launch(&kernel, &args(&buffers, tokens), groups)
+                    .unwrap();
+                let started = std::time::Instant::now();
+                batch.run().unwrap();
+                best = best.min(started.elapsed().as_secs_f64());
+            }
+            println!(
+                "{kernel_name}: {:.3} ms, {:.0} GB/s",
+                best * 1e3,
+                bytes_moved / best / 1e9
+            );
+            let out: Vec<Vec<u8>> = outputs
+                .iter()
+                .map(|&i| gpu.download(&buffers[i].buffer, 0, inputs[i].0).unwrap())
+                .collect();
+            for &i in outputs {
+                gpu.upload(&buffers[i].buffer, 0, &vec![0u8; inputs[i].0])
+                    .unwrap();
+            }
+            results.push(out);
+        }
+        for (k, (a, b)) in results[0].iter().zip(&results[1]).enumerate() {
+            let differ = a.iter().zip(b).filter(|(x, y)| x != y).count();
+            assert_eq!(differ, 0, "output {k}: {differ} bytes differ");
+        }
+    }
+    fn bytemuck_floats(words: &[u32]) -> &[f32] {
+        // SAFETY: u32 and f32 have the same size and alignment; any bits are a valid f32.
+        unsafe { std::slice::from_raw_parts(words.as_ptr().cast(), words.len()) }
+    }
+
+    /// The feed-forward activation quantizer against its previous form.
+    #[test]
+    #[ignore]
+    fn hidden_quantizer_matches_reference() {
+        let tokens = 111 * 74usize;
+        let padded = tokens.next_multiple_of(PAD);
+        glue_against_reference(
+            "q_hidden",
+            &[
+                (padded * HIDDEN * 2, 1),
+                (padded * 4 + 256, 0),
+                (padded * HIDDEN + int8::SLACK, 0),
+            ],
+            &[1, 2],
+            &|b, n| {
+                use level_zero::Arg::{Memory as M, U32 as U};
+                vec![M(&b[0].memory), M(&b[1].memory), M(&b[2].memory), U(n)]
+            },
+            [(256, [padded as u32, 1, 1]); 2],
+            (tokens * HIDDEN * 3) as f64,
+        );
+    }
+
+    /// The query and key streams against their previous form, for both sides (keys with
+    /// a live count that leaves a partial tile).
+    #[test]
+    #[ignore]
+    fn queries_keys_match_reference() {
+        let tokens = 111 * 74usize;
+        let padded = tokens.next_multiple_of(PAD);
+        let keys = (tokens + 25).next_multiple_of(16);
+        for side in [0u32, 1] {
+            let stride = if side == 0 { padded } else { keys };
+            glue_against_reference(
+                "q_qk",
+                &[
+                    (padded * 3 * DIM * 2, 1),
+                    (VECTORS * 4, 1),
+                    (padded * PAIRS * 2 * 4, 1),
+                    (HEADS * stride * HEAD * 2 * 2 + attend::SLACK, 0),
+                ],
+                &[3],
+                &|b, n| {
+                    use level_zero::Arg::{Memory as M, U32 as U};
+                    vec![
+                        M(&b[0].memory),
+                        M(&b[1].memory),
+                        M(&b[2].memory),
+                        M(&b[3].memory),
+                        U(n),
+                        U(stride as u32),
+                        U(side),
+                        U(QUERY_NORM as u32),
+                    ]
+                },
+                [
+                    (64, [(HEADS / 4) as u32, padded as u32, 1]),
+                    (256, [HEADS as u32, (padded / 16) as u32, 1]),
+                ],
+                (tokens * DIM * 4) as f64,
+            );
+        }
+    }
+
+    /// The INT8 products at the benchmark size with different dispatch blockings.
+    #[test]
+    #[ignore]
+    fn product_blocking_sweep() {
+        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let kernels = Kernels::new(&gpu).unwrap();
+        let fast = &kernels.fast;
+        let padded = (111 * 74usize).next_multiple_of(PAD);
+        let a = Shared::new(&gpu, fast, (padded * HIDDEN + int8::SLACK) as u64).unwrap();
+        let c = Shared::new(&gpu, fast, (padded * 2 * HIDDEN * 4) as u64).unwrap();
+        for (which, name) in [(QKV, "qkv"), (OUT, "out"), (FC1, "fc1"), (FC2, "fc2")] {
+            let (rows, columns) = PRODUCTS[which];
+            let b = Shared::new(&gpu, fast, (rows * columns + int8::SLACK) as u64).unwrap();
+            for xc in [88u32, 100, 132, 150, 176] {
+                let mut shape = int8::Shape::linear(padded, rows, columns).unwrap();
+                shape.xc = xc;
+                let kernel = fast_kernel(fast, &shape).unwrap();
+                let mut best = f64::MAX;
+                for _ in 0..5 {
+                    let started = std::time::Instant::now();
+                    fast.launch(
+                        &kernel,
+                        &[&a.memory, &b.memory, &c.memory],
+                        shape.groups(rows),
+                    )
+                    .unwrap();
+                    best = best.min(started.elapsed().as_secs_f64());
+                }
+                let tops = 2.0 * (padded * rows * columns) as f64 / best / 1e12;
+                println!("{name} xc {xc}: {:.2} ms, {tops:.0} TOPS", best * 1e3);
+            }
+        }
+    }
+}

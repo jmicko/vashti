@@ -1,5 +1,11 @@
 # Kuno beta release handoff
 
+> **Retired 2026-11-24.** Kuno no longer has a separate image runtime: the `kuno`
+> executable is the only image and video worker, `install-image-runtime` exits with
+> `image_runtime_not_needed`, and upgrades drop `"engine": "managed_sycl"`/`"runtime"`
+> from the configuration and remove the installed runtime. See
+> [Kuno images](kuno-images.md#engine). The text below is history.
+
 Recorded 2026-10-01 UTC (2026-09-30 local). **The tested backend is ready for beta
 integration.** Overnight soak, ComfyUI parity and support on every Linux/GPU
 combination are not requirements for this beta and are not claimed. Publication

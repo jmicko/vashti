@@ -1,0 +1,143 @@
+// Qwen Image 2512 (`qwen2512_vk.rs`): with `add`, the gated residual update of the stream
+//   x[token][c] += (sum[token][c] * scale[token] * weight scale[c] + bias[c]) * gate[c]
+// then LayerNorm (no weights, eps 1e-6), `x * (1 + scale) + shift` from the modulation rows,
+// and the ConvRot quantizer: rotated in groups of 256, one INT8 scale per token, plain rows
+// `[token][3072]` for `gemm8` (qwen2512.cl's k_norm and k_resnorm). The activation scale is
+// read before the new one replaces it. Padded tokens are not updated and quantize to zeros.
+// One workgroup per token, groups of 16 invocations as rotate8.comp's.
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+#define SG16 (gl_LocalInvocationIndex >> 4)
+#define LANE16 (gl_LocalInvocationIndex & 15u)
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Mods { vec4 m[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { uvec4 q[]; };
+layout(set = 0, binding = 3) buffer Scales { float s[]; };
+layout(set = 0, binding = 4) readonly buffer Sums { ivec4 g[]; };
+layout(set = 0, binding = 5) readonly buffer Vectors { vec4 ws[]; };
+// Offsets are in values and multiples of 4; `mod_first` is the shift, the scale follows.
+layout(push_constant) uniform Constants {
+    uint tokens;
+    uint mod_first;
+    uint add;
+    uint scale_first;
+    uint bias_first;
+    uint gate_first;
+} p;
+const uint DIM = 3072;
+const uint DIM4 = 768;
+const uint GROUPS = 12;
+
+shared float mem[DIM];
+shared float maxima[16];
+
+float v[16];
+void quad(uint a, uint b, uint c, uint d) {
+    precise float va = v[a], vb = v[b], vc = v[c], vd = v[d];
+    precise float ra = va + vb + vc - vd;
+    precise float rb = va + vb - vc + vd;
+    precise float rc = va - vb + vc + vd;
+    precise float rd = -va + vb + vc + vd;
+    v[a] = ra;
+    v[b] = rb;
+    v[c] = rc;
+    v[d] = rd;
+}
+void stages() {
+    for (uint m = 0; m < 4; m++) quad(4 * m, 4 * m + 1, 4 * m + 2, 4 * m + 3);
+    for (uint m = 0; m < 4; m++) quad(m, m + 4, m + 8, m + 12);
+}
+float reduce(float value) {
+    float sum = subgroupClusteredAdd(value, 16);
+    memoryBarrierShared();
+    barrier();
+    if (LANE16 == 0) maxima[SG16] = sum;
+    memoryBarrierShared();
+    barrier();
+    sum = 0.0;
+    for (uint i = 0; i < 16; i++) sum += maxima[i];
+    return sum;
+}
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint slot = gl_LocalInvocationIndex;
+    uint sg = SG16, lane = LANE16;
+    bool live = token < p.tokens;
+    bool add = live && p.add != 0;
+    float row_scale = add ? s[token] : 0.0;
+    vec4 total = vec4(0.0);
+    for (uint c = slot; c < DIM4; c += 256) {
+        uint at = token * DIM4 + c;
+        vec4 d = x[at];
+        if (add) {
+            vec4 update = vec4(g[at]) * row_scale * ws[(p.scale_first >> 2) + c]
+                + ws[(p.bias_first >> 2) + c];
+            d += update * m[(p.gate_first >> 2) + c];
+            x[at] = d;
+        }
+        total += d;
+        for (uint e = 0; e < 4; e++) mem[c * 4 + e] = d[e];
+    }
+    float mean = reduce(total.x + total.y + total.z + total.w) / float(DIM);
+    vec4 squares = vec4(0.0);
+    for (uint c = slot; c < DIM4; c += 256) {
+        vec4 d = vec4(mem[c * 4], mem[c * 4 + 1], mem[c * 4 + 2], mem[c * 4 + 3]) - mean;
+        squares += d * d;
+    }
+    float inv = 1.0 / sqrt(reduce(squares.x + squares.y + squares.z + squares.w) / float(DIM) + 1e-6);
+    memoryBarrierShared();
+    barrier();
+    // Group g's values are this group's 16 lanes' own: modulate, rotate, transpose, rotate.
+    uint shift_at = p.mod_first >> 2, scale_at = (p.mod_first + DIM) >> 2;
+    bool used = sg < GROUPS;
+    float top = 0.0;
+    if (used) {
+        for (uint j = 0; j < 4; j++) {
+            uint c = sg * 64 + lane * 4 + j;
+            vec4 t = vec4(mem[c * 4], mem[c * 4 + 1], mem[c * 4 + 2], mem[c * 4 + 3]);
+            t = live ? (t - mean) * inv * (1.0 + m[scale_at + c]) + m[shift_at + c] : vec4(0.0);
+            for (uint e = 0; e < 4; e++) v[j * 4 + e] = t[e] * 0.0625;
+        }
+        stages();
+        for (uint j = 0; j < 16; j++) mem[sg * 256 + lane * 16 + j] = v[j];
+    }
+    memoryBarrierShared();
+    barrier();
+    if (used) {
+        for (uint j = 0; j < 16; j++) v[j] = mem[sg * 256 + j * 16 + lane];
+    }
+    memoryBarrierShared();
+    barrier();
+    if (used) {
+        stages();
+        for (uint j = 0; j < 16; j++) {
+            top = max(top, abs(v[j]));
+            mem[sg * 256 + j * 16 + lane] = v[j];
+        }
+    }
+    top = subgroupClusteredMax(top, 16);
+    memoryBarrierShared();
+    barrier();
+    if (lane == 0) maxima[sg] = top;
+    memoryBarrierShared();
+    barrier();
+    for (uint i = 0; i < 16; i++) top = max(top, maxima[i]);
+    // Divided in double precision and rounded once, as the reference's scale.
+    float scale = float(double(top) / 127.0lf);
+    float inverse = float(1.0lf / double(scale));
+    if (slot == 0) s[token] = scale;
+    if (!used) return;
+    uvec4 word = uvec4(0);
+    for (uint b = 0; b < 16; b++) {
+        precise float scaled = mem[sg * 256 + lane * 16 + b] * inverse;
+        int value = scale == 0.0 ? 0 : int(clamp(roundEven(scaled), -127.0, 127.0));
+        word[b >> 2] |= (uint(value) & 255u) << ((b & 3) * 8);
+    }
+    q[token * (GROUPS * 16) + sg * 16 + lane] = word;
+}

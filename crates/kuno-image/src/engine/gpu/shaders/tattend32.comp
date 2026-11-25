@@ -1,0 +1,5 @@
+// tattend.comp for subgroups wider than 16 lanes: each query is a cluster of 16.
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define REDUCE(x) subgroupClusteredAdd(x, 16)
+#include "tattend.glsl"

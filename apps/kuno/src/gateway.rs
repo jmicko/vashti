@@ -153,18 +153,9 @@ impl Gateway {
                 )
             })
             .transpose()?;
-        let image_fast_attention = kuno_image::NATIVE_CUDA_ENABLED
-            && config.image.as_ref().is_some_and(|image| {
-                config.managed.as_ref().is_some_and(|pool| {
-                    pool.workers.iter().any(|worker| {
-                        matches!(worker.device, crate::worker::DeviceSelection::Cuda { .. })
-                            && worker
-                                .device
-                                .pci_address()
-                                .eq_ignore_ascii_case(&image.pci_address)
-                    })
-                })
-            });
+        // The embedded engine takes fast attention per request (int8 queries and keys on the
+        // Intel and NVIDIA kernels; other GPUs run standard attention for it).
+        let image_fast_attention = crate::image_engine::EMBEDDED_ENGINE;
         let image_readiness =
             crate::image_access::ImageReadiness::new(config.image.as_ref(), image_fast_attention);
         Ok(Arc::new(Self {
@@ -320,10 +311,7 @@ async fn status(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
         .into(),
         admission,
         gpu_placement_verified: false,
-        image_generation: gateway.config.image.as_ref().is_some_and(|image| {
-            cfg!(feature = "native-image")
-                || image.engine == crate::image_engine::ImageEngine::ManagedSycl
-        }),
+        image_generation: gateway.config.image.is_some() && crate::image_engine::EMBEDDED_ENGINE,
     })
 }
 
@@ -403,8 +391,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
             "image_generation_not_configured",
         );
     };
-    if !cfg!(feature = "native-image") && config.engine == crate::image_engine::ImageEngine::Native
-    {
+    if !crate::image_engine::EMBEDDED_ENGINE {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
             "image_engine_not_in_this_build",
@@ -422,15 +409,10 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
     if let Err(code) = recipe.validate_execution() {
         return error(StatusCode::BAD_REQUEST, code);
     }
-    if recipe.attention == kuno_protocol::ImageAttention::Fast
-        && (!gateway.image_fast_attention || config.uses_sycl(&recipe.workflow))
-    {
-        return error(StatusCode::BAD_REQUEST, "image_attention_unsupported");
-    }
     if !config
         .collections
         .iter()
-        .any(|id| id == recipe.collection_id())
+        .any(|id| recipe.collection_ids().contains(&id.as_str()))
     {
         return error(StatusCode::BAD_REQUEST, "image_collection_not_enabled");
     }
@@ -440,14 +422,22 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
             "native_image_seed_range_unsupported",
         );
     }
+    // The workflow's advertised attention modes decide (fast needs CUDA, or an ABI 5
+    // managed runtime).
     if let Err(code) = crate::image_access::require_workflow(
         config.clone(),
         &recipe.workflow,
+        recipe.attention,
         gateway.image_fast_attention,
     )
     .await
     {
-        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+        let status = if code == "image_attention_unsupported" {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        return error(status, code);
     }
     let mut lease = match gateway.admission.acquire().await {
         Ok(lease) => lease,

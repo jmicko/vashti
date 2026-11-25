@@ -122,6 +122,7 @@ api! {
     list_close = b"zeCommandListClose\0": fn(Handle);
     list_reset = b"zeCommandListReset\0": fn(Handle);
     list_launch = b"zeCommandListAppendLaunchKernel\0": fn(Handle, Handle, *const GroupCount, Handle, u32, *mut Handle);
+    list_barrier = b"zeCommandListAppendBarrier\0": fn(Handle, Handle, u32, *mut Handle);
     mem_alloc_device = b"zeMemAllocDevice\0": fn(Handle, *const DeviceMemDesc, usize, usize, Handle, *mut *mut c_void);
     mem_free = b"zeMemFree\0": fn(Handle, *mut c_void);
     module_create = b"zeModuleCreate\0": fn(Handle, Handle, *const ModuleDesc, *mut Handle, *mut Handle);
@@ -130,6 +131,7 @@ api! {
     kernel_destroy = b"zeKernelDestroy\0": fn(Handle);
     kernel_group_size = b"zeKernelSetGroupSize\0": fn(Handle, u32, u32, u32);
     kernel_argument = b"zeKernelSetArgumentValue\0": fn(Handle, u32, usize, *const c_void);
+    list_timestamp = b"zeCommandListAppendWriteGlobalTimestamp\0": fn(Handle, *mut u64, Handle, u32, *mut Handle);
 }
 
 fn check(code: Code, error: &'static str) -> Result<(), &'static str> {
@@ -191,6 +193,22 @@ pub struct Kernel {
 // SAFETY: as for `Core`; arguments are set and the kernel launched while holding `turn`.
 unsafe impl Send for Kernel {}
 unsafe impl Sync for Kernel {}
+impl Kernel {
+    /// Identifies the kernel among `Batch::launched`.
+    pub fn id(&self) -> usize {
+        self.kernel as usize
+    }
+    /// Work items per group (16 per hardware thread for the machine-code kernels).
+    pub fn set_group(&self, group: [u32; 3]) -> Result<(), &'static str> {
+        // SAFETY: a live kernel handle; group sizes are plain values the driver validates.
+        unsafe {
+            check(
+                (self.core.api.kernel_group_size)(self.kernel, group[0], group[1], group[2]),
+                "gpu_kernel",
+            )
+        }
+    }
+}
 impl Drop for Kernel {
     fn drop(&mut self) {
         // SAFETY: as for `Memory`.
@@ -304,6 +322,80 @@ impl LevelZero {
     }
     /// Loads a native module (see `zebin`) holding the kernel `name`, which takes `pointers`
     /// memory arguments.
+    /// Kernel `name` of a native module compiled from OpenCL (by `ocloc`), run with workgroups
+    /// of `group` work-items. Its arguments are given per launch (`Arg`).
+    pub fn compiled_kernel(
+        &self,
+        native: &[u8],
+        name: &str,
+        group: [u32; 3],
+    ) -> Result<Kernel, &'static str> {
+        let core = &self.core;
+        let name = CString::new(name).map_err(|_| "gpu_kernel")?;
+        let desc = ModuleDesc {
+            stype: MODULE_DESC,
+            next: null(),
+            format: FORMAT_NATIVE,
+            size: native.len(),
+            input: native.as_ptr(),
+            flags: c"".as_ptr(),
+            constants: null(),
+        };
+        // SAFETY: as for `kernel`.
+        unsafe {
+            let mut module = null_mut();
+            check(
+                (core.api.module_create)(core.context, core.device, &desc, &mut module, null_mut()),
+                "gpu_kernel",
+            )?;
+            let desc = KernelDesc {
+                stype: KERNEL_DESC,
+                next: null(),
+                flags: 0,
+                name: name.as_ptr(),
+            };
+            let mut kernel = null_mut();
+            if (core.api.kernel_create)(module, &desc, &mut kernel) != 0 {
+                (core.api.module_destroy)(module);
+                return Err("gpu_kernel");
+            }
+            let out = Kernel {
+                core: core.clone(),
+                module,
+                kernel,
+                pointers: usize::MAX,
+            };
+            check(
+                (core.api.kernel_group_size)(kernel, group[0], group[1], group[2]),
+                "gpu_kernel",
+            )?;
+            Ok(out)
+        }
+    }
+    /// A command list to fill with launches (`Batch::launch`), run in order with one wait.
+    pub fn batch(&self) -> Result<Batch<'_>, &'static str> {
+        let core = &self.core;
+        let desc = ListDesc {
+            stype: LIST_DESC,
+            next: null(),
+            ordinal: 0,
+            flags: 0,
+        };
+        let mut list = null_mut();
+        // SAFETY: the list is destroyed by `Batch`.
+        unsafe {
+            check(
+                (core.api.list_create)(core.context, core.device, &desc, &mut list),
+                "gpu_failed",
+            )?;
+        }
+        Ok(Batch {
+            fast: self,
+            list,
+            stamps: None,
+            launched: Vec::new(),
+        })
+    }
     pub fn kernel(
         &self,
         native: &[u8],
@@ -399,6 +491,121 @@ impl LevelZero {
             );
             let reset = check((core.api.list_reset)(core.list), "gpu_failed");
             result.and(waited).and(reset)
+        }
+    }
+}
+
+/// A kernel argument.
+#[derive(Clone, Copy)]
+pub enum Arg<'a> {
+    Memory(&'a Memory),
+    U32(u32),
+    F32(f32),
+}
+/// Launches recorded into one command list, each after the previous has finished.
+pub struct Batch<'a> {
+    fast: &'a LevelZero,
+    list: Handle,
+    /// For profiling: after each launch, the GPU clock is written to the next 8 bytes here.
+    stamps: Option<(*mut c_void, usize)>,
+    launched: Vec<Handle>,
+}
+impl Batch<'_> {
+    /// Appends `kernel` with `args` over `groups` workgroups, after everything before it.
+    pub fn launch(
+        &mut self,
+        kernel: &Kernel,
+        args: &[Arg],
+        groups: [u32; 3],
+    ) -> Result<(), &'static str> {
+        let core = &self.fast.core;
+        if kernel.pointers != usize::MAX && args.len() != kernel.pointers {
+            return Err("gpu_kernel");
+        }
+        let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
+        let count = GroupCount {
+            x: groups[0],
+            y: groups[1],
+            z: groups[2],
+        };
+        // SAFETY: argument values are copied when the launch is appended.
+        unsafe {
+            for (index, arg) in args.iter().enumerate() {
+                let (size, value): (usize, *const c_void) = match arg {
+                    Arg::Memory(memory) => (8, (&raw const memory.address).cast()),
+                    Arg::U32(value) => (4, (value as *const u32).cast()),
+                    Arg::F32(value) => (4, (value as *const f32).cast()),
+                };
+                check(
+                    (core.api.kernel_argument)(kernel.kernel, index as u32, size, value),
+                    "gpu_kernel",
+                )?;
+            }
+            check(
+                (core.api.list_launch)(self.list, kernel.kernel, &count, null_mut(), 0, null_mut()),
+                "gpu_failed",
+            )?;
+            check(
+                (core.api.list_barrier)(self.list, null_mut(), 0, null_mut()),
+                "gpu_failed",
+            )?;
+        }
+        self.launched.push(kernel.kernel);
+        self.stamp()
+    }
+    /// Profiling: writes the GPU clock to `memory` (8 bytes per entry, at least one more entry
+    /// than launches) now and after each later launch. `launched` names the launches.
+    pub fn stamp_into(&mut self, memory: &Memory) -> Result<(), &'static str> {
+        self.stamps = Some((memory.address, 0));
+        self.stamp()
+    }
+    fn stamp(&mut self) -> Result<(), &'static str> {
+        let Some((address, count)) = self.stamps.as_mut() else {
+            return Ok(());
+        };
+        let core = &self.fast.core;
+        // SAFETY: the caller sized the memory for every stamp; the barrier before it orders
+        // the write after the launch.
+        unsafe {
+            let at = address.cast::<u64>().add(*count);
+            *count += 1;
+            check(
+                (core.api.list_timestamp)(self.list, at, null_mut(), 0, null_mut()),
+                "gpu_failed",
+            )
+        }
+    }
+    /// The kernels launched so far, in order (to label profiling stamps).
+    pub fn launched(&self) -> Vec<usize> {
+        self.launched.iter().map(|k| *k as usize).collect()
+    }
+    /// Runs the list and waits for it.
+    pub fn run(self) -> Result<(), &'static str> {
+        let core = &self.fast.core;
+        let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
+        // SAFETY: the list is closed, executed and waited for before `Drop` destroys it.
+        unsafe {
+            let mut list = self.list;
+            check((core.api.list_close)(self.list), "gpu_failed")?;
+            check(
+                (core.api.queue_execute)(core.queue, 1, &mut list, null_mut()),
+                "gpu_failed",
+            )?;
+            check(
+                (core.api.queue_synchronize)(core.queue, u64::MAX),
+                "gpu_failed",
+            )
+        }
+    }
+}
+impl Drop for Batch<'_> {
+    fn drop(&mut self) {
+        let core = &self.fast.core;
+        // SAFETY: a list that was executed has been waited for in `run`; on any failure the
+        // queue is drained first.
+        unsafe {
+            let _ = (core.api.queue_synchronize)(core.queue, u64::MAX);
+            (core.api.list_destroy)(self.list);
         }
     }
 }

@@ -3,6 +3,9 @@
 use kuno_protocol::ImageRecipe;
 
 mod pipeline;
+mod qwen;
+mod qwen2512;
+mod rust_shim;
 use std::{
     ffi::{CString, c_char, c_void},
     path::Path,
@@ -385,6 +388,17 @@ pub(crate) fn evict_dit() {
     let kept = RESIDENT_DIT.lock().ok().and_then(|mut kept| kept.take());
     drop(kept);
 }
+/// Frees the Rust Qwen Image models (2.1 and 2512).
+pub(crate) fn evict_qwen() {
+    qwen::evict();
+    qwen2512::evict();
+}
+unsafe extern "C" {
+    #[link_name = "kuno_qwen_session_release"]
+    fn qwen_session_release(session: *mut c_void);
+    #[link_name = "kuno_image_cancel_requested"]
+    fn cancel_requested() -> bool;
+}
 /// The kept DiT if it was placed from `model`; any other kept DiT is freed.
 fn resident_dit(model: &std::path::Path) -> Option<crate::engine::dit_gpu::GpuDit> {
     let (path, dit) = RESIDENT_DIT.lock().ok()?.take()?;
@@ -450,7 +464,12 @@ fn text_encoder(
     }
     *kept = None;
     let gpu = gpu::Gpu::open(gpu::Select::Pci(pci.to_owned()))?;
-    let encoder = std::sync::Arc::new(GpuTextEncoder::new(&gpu, TextEncoder::open(model)?)?);
+    let file = TextEncoder::open(model)?;
+    // The video pipeline's vision tower and hooks assume MiniMax H3's encoder.
+    if file.config != crate::engine::text_encoder::Config::MINIMAX_H3 {
+        return Err("model_file_invalid");
+    }
+    let encoder = std::sync::Arc::new(GpuTextEncoder::new(&gpu, file)?);
     *kept = Some((model.to_owned(), encoder.clone()));
     Ok(encoder)
 }
@@ -610,7 +629,8 @@ extern "C" fn encode_vision(
 /// Runs the text encoder's language model with the Rust GPU encoder. Returning false hands
 /// the prompt back to the C++ engine.
 extern "C" fn encode_text(text: *const TextInput, hidden: *mut f32, data: *mut c_void) -> bool {
-    use crate::engine::text_encoder::{Image, Prompt, WIDTH};
+    use crate::engine::text_encoder::{Config, Image, Prompt};
+    const WIDTH: usize = Config::MINIMAX_H3.width;
     // SAFETY: as receive_video_frame; the shim passes a live prompt whose pointers hold the
     // counts it states, and `hidden` has `count * width` values.
     let (out, text) = unsafe { (&mut *(data as *mut VideoOutput), &*text) };
@@ -666,7 +686,7 @@ extern "C" fn encode_text(text: *const TextInput, hidden: *mut f32, data: *mut c
             });
         }
         let prompt = Prompt { ids, images: list };
-        prompt.check()?;
+        prompt.check(&Config::MINIMAX_H3)?;
         let started = std::time::Instant::now();
         let encoder = text_encoder(&out.pci, &out.text_model)?;
         let loaded = started.elapsed();
@@ -938,26 +958,63 @@ impl Session {
             })
             .collect();
         let mut pixels = (Vec::<u8>::new(), 0u32, recipe.steps);
-        let code = unsafe {
-            kuno_qwen_session_generate(
+        let rust_qwen = cfg!(feature = "rust-dit") && recipe.workflow != kuno_protocol::QWEN_RECIPE;
+        let rust_2512 = cfg!(feature = "rust-dit") && recipe.workflow == kuno_protocol::QWEN_RECIPE;
+        // Each model needs the video memory the other Rust models hold.
+        if !rust_qwen {
+            qwen::evict();
+        }
+        if !rust_2512 {
+            qwen2512::evict();
+        }
+        let code = if rust_2512 {
+            drop(references);
+            // The C++ engine's own context holds its copy of its weights in video memory.
+            // SAFETY: the session pointer is live; release only resets its context.
+            unsafe { qwen_session_release(self.native.as_ptr()) };
+            pixels.0 =
+                qwen2512::generate(&self.directory, &self.pci, recipe, seed, previews, || {
+                    // SAFETY: a plain flag read set by the worker's SIGTERM handler.
+                    unsafe { cancel_requested() }
+                })?;
+            pixels.1 = 4;
+            0
+        } else if rust_qwen {
+            drop(references);
+            let rgba = qwen::generate(
                 self.native.as_ptr(),
-                prompt.as_ptr(),
-                negative.as_ptr(),
-                recipe.width as i32,
-                recipe.height as i32,
-                recipe.steps as i32,
-                recipe.cfg as f32,
-                recipe.flow_shift.unwrap_or(0.0) as f32,
+                &self.directory,
+                &self.pci,
+                recipe,
                 seed,
-                i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
-                references.as_mut_ptr(),
-                references.len() as i32,
-                crate::host_memory::available(),
-                i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
-                receive,
-                previews.then_some(preview),
-                &mut pixels as *mut _ as *mut c_void,
-            )
+                &decoded,
+                previews,
+            )?;
+            pixels.0 = rgba;
+            pixels.1 = 4;
+            0
+        } else {
+            unsafe {
+                kuno_qwen_session_generate(
+                    self.native.as_ptr(),
+                    prompt.as_ptr(),
+                    negative.as_ptr(),
+                    recipe.width as i32,
+                    recipe.height as i32,
+                    recipe.steps as i32,
+                    recipe.cfg as f32,
+                    recipe.flow_shift.unwrap_or(0.0) as f32,
+                    seed,
+                    i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
+                    references.as_mut_ptr(),
+                    references.len() as i32,
+                    0,
+                    i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
+                    receive,
+                    previews.then_some(preview),
+                    &mut pixels as *mut _ as *mut c_void,
+                )
+            }
         };
         match code {
             0 => (),
@@ -986,6 +1043,9 @@ impl Session {
                 png::ColorType::Rgb
             });
             encoder.set_depth(png::BitDepth::Eight);
+            // Lossless either way: at 1184x1776 the default level takes about 0.6 s, this
+            // about 0.02 s for a file about 13% larger.
+            encoder.set_compression(png::Compression::Fast);
             let mut writer = encoder
                 .write_header()
                 .map_err(|_| "image_encoding_failed")?;
@@ -1007,6 +1067,8 @@ impl Session {
         previews: bool,
     ) -> Result<Vec<u8>, &'static str> {
         use kuno_protocol::VideoPhase;
+        // The video models need the video memory the Rust image models hold.
+        evict_qwen();
         /// Decoded request pixels, cleared on every exit path.
         #[derive(Default)]
         struct Inputs {
@@ -1045,7 +1107,8 @@ impl Session {
                 .map_err(|_| code)?
                 .pop()
                 .ok_or(code)?;
-            let (rgb, w, h) = crate::video::keyframe_rgb(decoded, recipe.width, recipe.height, code)?;
+            let (rgb, w, h) =
+                crate::video::keyframe_rgb(decoded, recipe.width, recipe.height, code)?;
             // The engine path takes frames at the clip's size only.
             if !cfg!(feature = "rust-dit") && (w, h) != (recipe.width, recipe.height) {
                 return Err(code);
@@ -1053,7 +1116,8 @@ impl Session {
             Ok((rgb, (w, h)))
         };
         let mut inputs = Inputs::default();
-        (inputs.first, inputs.first_size) = keyframe(&recipe.first_frame, "video_first_frame_invalid")?;
+        (inputs.first, inputs.first_size) =
+            keyframe(&recipe.first_frame, "video_first_frame_invalid")?;
         (inputs.last, inputs.last_size) = keyframe(&recipe.last_frame, "video_last_frame_invalid")?;
         if !recipe.reference_images.is_empty() {
             for pixels in crate::references::decode(&recipe.reference_images)
@@ -1139,7 +1203,8 @@ impl Session {
             );
             // The vision tower (when the request has images) on a thread of its own: it is
             // needed first, and waiting for it would delay the text encoder's longer read.
-            let sees = !inputs.first.is_empty() || !inputs.last.is_empty() || !references.is_empty();
+            let sees =
+                !inputs.first.is_empty() || !inputs.last.is_empty() || !references.is_empty();
             std::thread::spawn(move || {
                 let tower = sees.then(|| {
                     let (pci, text) = (pci.clone(), text.clone());
@@ -1185,33 +1250,35 @@ impl Session {
                     }
                 }
             }
-        } else { unsafe {
-            kuno_minimax_session_generate(
-                self.native.as_ptr(),
-                i32::from(recipe.uses_reference_model()),
-                prompt.as_ptr(),
-                recipe.width as i32,
-                recipe.height as i32,
-                recipe.frames as i32,
-                kuno_protocol::VIDEO_FPS as i32,
-                steps as i32,
-                seed,
-                optional(&inputs.first),
-                optional(&inputs.last),
-                references.as_ptr(),
-                references.len() as i32,
-                receive_video_frame,
-                receive_audio_latent,
-                Some(decode_video_latent),
-                cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
-                cfg!(feature = "rust-dit").then_some(encode_text as _),
-                Some(encode_frame),
-                Some(encode_vision),
-                Some(video_preview),
-                video_phase,
-                &mut output as *mut _ as *mut c_void,
-            )
-        } };
+        } else {
+            unsafe {
+                kuno_minimax_session_generate(
+                    self.native.as_ptr(),
+                    i32::from(recipe.uses_reference_model()),
+                    prompt.as_ptr(),
+                    recipe.width as i32,
+                    recipe.height as i32,
+                    recipe.frames as i32,
+                    kuno_protocol::VIDEO_FPS as i32,
+                    steps as i32,
+                    seed,
+                    optional(&inputs.first),
+                    optional(&inputs.last),
+                    references.as_ptr(),
+                    references.len() as i32,
+                    receive_video_frame,
+                    receive_audio_latent,
+                    Some(decode_video_latent),
+                    cfg!(feature = "rust-dit").then_some(evaluate_dit as _),
+                    cfg!(feature = "rust-dit").then_some(encode_text as _),
+                    Some(encode_frame),
+                    Some(encode_vision),
+                    Some(video_preview),
+                    video_phase,
+                    &mut output as *mut _ as *mut c_void,
+                )
+            }
+        };
         drop(references);
         drop(inputs);
         output.dit = None;

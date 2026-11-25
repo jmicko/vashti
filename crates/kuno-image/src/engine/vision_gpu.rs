@@ -13,8 +13,8 @@ use super::{
     gpu::{Buffer, Gpu, Kernel, bytes_of, shaders},
     safetensors::narrow,
     vision::{
-        self, DEEPSTACK, HEAD, HEADS, HIDDEN, LAYERS, MERGED, OUT, PATCH, PATCH_VALUES, TABLE,
-        Vision, WIDTH,
+        self, DEEPSTACK, HEAD, HEADS, HIDDEN, LAYERS, MERGED, PATCH, PATCH_VALUES, TABLE, Vision,
+        WIDTH,
     },
 };
 
@@ -112,7 +112,12 @@ impl Placer<'_> {
     }
     fn linear(&mut self, name: &str, rows: usize, columns: usize) -> Result<Linear, &'static str> {
         let bias = self.vision.tensor(&format!("{name}.bias"), &[rows])?;
-        Ok(self.place(Source::File(format!("visual.{name}.weight")), rows, columns, &bias))
+        Ok(self.place(
+            Source::File(format!("{}{name}.weight", self.vision.prefix)),
+            rows,
+            columns,
+            &bias,
+        ))
     }
     fn norm(&mut self, name: &str, width: usize) -> Result<Norm, &'static str> {
         let gamma = self.vision.tensor(&format!("{name}.weight"), &[width])?;
@@ -126,7 +131,7 @@ impl Placer<'_> {
         Ok(Merger {
             norm: self.norm(&format!("{name}.norm"), width)?,
             fc1: self.linear(&format!("{name}.linear_fc1"), MERGED, MERGED)?,
-            fc2: self.linear(&format!("{name}.linear_fc2"), OUT, MERGED)?,
+            fc2: self.linear(&format!("{name}.linear_fc2"), self.vision.out, MERGED)?,
         })
     }
     /// Writes every matrix as little-endian half floats into `to`, the whole weight buffer.
@@ -170,6 +175,8 @@ pub struct GpuVision {
     merger: Merger,
     /// The learned position table `[48 * 48][1152]`, interpolated per image on the CPU.
     table: Vec<f32>,
+    /// The text encoder's width.
+    out: usize,
 }
 impl GpuVision {
     /// Reads the tower's weights (about 1.2 GB as half floats) into video memory.
@@ -182,7 +189,12 @@ impl GpuVision {
         };
         let patch_bias = vision.tensor("patch_embed.proj.bias", &[WIDTH])?;
         let patch_matrix = vision.patch_matrix()?.into_iter().map(narrow).collect();
-        let patch = p.place(Source::Values(patch_matrix), WIDTH, PATCH_VALUES, &patch_bias);
+        let patch = p.place(
+            Source::Values(patch_matrix),
+            WIDTH,
+            PATCH_VALUES,
+            &patch_bias,
+        );
         let mut blocks = Vec::with_capacity(LAYERS);
         for layer in 0..LAYERS {
             let b = format!("blocks.{layer}");
@@ -213,7 +225,7 @@ impl GpuVision {
             heads: gpu.kernel(shaders::VHEADS, 6, 4, None)?,
             soft: gpu.kernel(shaders::VSOFT, 2, 3, None)?,
             gather: gpu.kernel(shaders::VGATHER, 2, 2, None)?,
-            gemm: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+            gemm: gpu.gemm16()?,
             weights,
             vectors,
             patch,
@@ -221,6 +233,7 @@ impl GpuVision {
             deepstack,
             merger,
             table,
+            out: vision.out,
         })
     }
     /// The image's rows for the text encoder `[tokens][5120]`, then the three deep-stack
@@ -232,7 +245,9 @@ impl GpuVision {
         height: usize,
     ) -> Result<[Vec<f32>; 4], &'static str> {
         let n = (width / PATCH) * (height / PATCH);
-        if !vision::supported(width, height) || n > MAX_PATCHES || pixels.len() != 3 * width * height
+        if !vision::supported(width, height)
+            || n > MAX_PATCHES
+            || pixels.len() != 3 * width * height
         {
             return Err("invalid_input");
         }
@@ -276,7 +291,12 @@ impl GpuVision {
         let weights = half(block * tp)?;
         let o = float(HEADS * VT * tp)?;
         let rotary = float(turns.len().max(1))?;
-        let outs = [float(m * OUT)?, float(m * OUT)?, float(m * OUT)?, float(m * OUT)?];
+        let outs = [
+            float(m * self.out)?,
+            float(m * self.out)?,
+            float(m * self.out)?,
+            float(m * self.out)?,
+        ];
         gpu.upload(&h, 0, bytes_of(&patch_rows))?;
         gpu.upload(&x, 0, bytes_of(&stream))?;
         gpu.upload(&rotary, 0, bytes_of(&turns))?;
@@ -366,10 +386,10 @@ impl GpuVision {
         w.merge(c, &h, &a, &self.merger, m, mp, &outs[0]);
         run(gpu, &calls)?;
         drop(calls);
-        let through = gpu.readback((m * OUT) as u64 * 4)?;
+        let through = gpu.readback((m * self.out) as u64 * 4)?;
         let mut result: [Vec<f32>; 4] = Default::default();
         for (to, from) in result.iter_mut().zip(&outs) {
-            *to = vec![0f32; m * OUT];
+            *to = vec![0f32; m * self.out];
             gpu.read_floats(from, 0, &through, to)?;
         }
         Ok(result)
@@ -413,7 +433,11 @@ impl<'a> Work<'a> {
         rows: usize,
         out: Option<&'a Buffer>,
     ) {
-        let stream = if mode == 3 { out.unwrap_or(self.x) } else { self.x };
+        let stream = if mode == 3 {
+            out.unwrap_or(self.x)
+        } else {
+            self.x
+        };
         let half = if mode == 1 || mode == 2 {
             out.unwrap_or(self.g)
         } else {
@@ -472,14 +496,13 @@ impl<'a> Work<'a> {
         self.product(calls, h, &merger.fc1, mp);
         self.bias(calls, &merger.fc1, MERGED, 2, m, mp, Some(a));
         self.product(calls, a, &merger.fc2, mp);
-        self.bias(calls, &merger.fc2, OUT, 3, m, mp, Some(out));
+        self.bias(calls, &merger.fc2, self.v.out, 3, m, mp, Some(out));
     }
 }
 const _: () = assert!(
     WIDTH.is_multiple_of(16)
         && HIDDEN.is_multiple_of(16)
         && MERGED.is_multiple_of(256)
-        && OUT.is_multiple_of(256)
         && PATCH_VALUES.is_multiple_of(16)
         && PAIRS == 36
         && MAX_PATCHES.is_multiple_of(PATCHES)
@@ -501,7 +524,10 @@ mod tests {
     #[ignore]
     fn gpu_vision_matches_exact() {
         let Some(vision) = model() else { return };
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
         let started = std::time::Instant::now();
         let placed = GpuVision::new(&gpu, &vision).unwrap();
         println!("placed in {:.2} s", started.elapsed().as_secs_f64());

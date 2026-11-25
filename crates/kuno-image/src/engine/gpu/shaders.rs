@@ -4,6 +4,32 @@
 pub const GEMM: &[u8] = include_bytes!("shaders/gemm.spv");
 pub const GEMM16: &[u8] = include_bytes!("shaders/gemm16.spv");
 pub const GEMM8: &[u8] = include_bytes!("shaders/gemm8.spv");
+/// `gemm8` for 32-lane subgroups and 16 x 32 int8 matrices (NVIDIA).
+pub const GEMM8_NV: &[u8] = include_bytes!("shaders/gemm8nv.spv");
+/// `tattend` for subgroups wider than 16 lanes.
+/// `gemm16` for 32-lane subgroups and 16 x 16 half-precision matrices (NVIDIA).
+pub const GEMM16_NV: &[u8] = include_bytes!("shaders/gemm16nv.spv");
+/// Fused attention on 16 x 16 x 16 half-precision matrices, 32-lane subgroups.
+pub const FATTEND16: &[u8] = include_bytes!("shaders/fattend16.spv");
+/// `fattend16` on VK_NV_cooperative_matrix2 workgroup-scope matrices (64-query blocks).
+pub const FATTEND16_NV: &[u8] = include_bytes!("shaders/fattend16nv.spv");
+/// `fattend16nv` with int8 queries and keys, each row with a scale (fast attention).
+pub const FATTEND8_NV: &[u8] = include_bytes!("shaders/fattend8nv.spv");
+/// Qwen Image 2.1 queries, keys and values for `fattend16` from the INT8 product.
+pub const QKV16: &[u8] = include_bytes!("shaders/qkv16.spv");
+/// Qwen Image 2.1 feed-forward activation from the INT8 product, bf16 rows for `qhidq8`.
+pub const QGATE16: &[u8] = include_bytes!("shaders/qgate16.spv");
+/// Qwen Image 2512 glue for `qwen2512_vk.rs`: residual, norm, modulation and quantizer; the
+/// last residual; queries, keys and values; feed-forward activation; embedding; output head.
+pub const Q25NORM: &[u8] = include_bytes!("shaders/q25norm.spv");
+pub const Q25RESID: &[u8] = include_bytes!("shaders/q25resid.spv");
+pub const Q25QKV: &[u8] = include_bytes!("shaders/q25qkv.spv");
+pub const Q25GELU: &[u8] = include_bytes!("shaders/q25gelu.spv");
+pub const Q25EMBED: &[u8] = include_bytes!("shaders/q25embed.spv");
+pub const Q25FINAL: &[u8] = include_bytes!("shaders/q25final.spv");
+/// Cached prefix keys and values into `fattend16`'s rows.
+pub const QCOPY16: &[u8] = include_bytes!("shaders/qcopy16.spv");
+pub const TATTEND32: &[u8] = include_bytes!("shaders/tattend32.spv");
 pub const MIX: &[u8] = include_bytes!("shaders/mix.spv");
 pub const NORM: &[u8] = include_bytes!("shaders/norm.spv");
 pub const HEADS: &[u8] = include_bytes!("shaders/heads.spv");
@@ -45,6 +71,28 @@ pub const VBIAS: &[u8] = include_bytes!("shaders/vbias.spv");
 pub const VHEADS: &[u8] = include_bytes!("shaders/vheads.spv");
 pub const VSOFT: &[u8] = include_bytes!("shaders/vsoft.spv");
 pub const VGATHER: &[u8] = include_bytes!("shaders/vgather.spv");
+pub const QNORMQ8: &[u8] = include_bytes!("shaders/qnormq8.spv");
+pub const QMERGEQ8: &[u8] = include_bytes!("shaders/qmergeq8.spv");
+pub const QRESID8: &[u8] = include_bytes!("shaders/qresid8.spv");
+pub const QQK: &[u8] = include_bytes!("shaders/qqk.spv");
+pub const QVALUE: &[u8] = include_bytes!("shaders/qvalue.spv");
+pub const QPREFIX: &[u8] = include_bytes!("shaders/qprefix.spv");
+pub const QMASK: &[u8] = include_bytes!("shaders/qmask.spv");
+pub const QEMBED: &[u8] = include_bytes!("shaders/qembed.spv");
+pub const QFINAL: &[u8] = include_bytes!("shaders/qfinal.spv");
+
+pub const QVSOFT: &[u8] = include_bytes!("shaders/qvsoft.spv");
+pub const QVRMS: &[u8] = include_bytes!("shaders/qvrms.spv");
+pub const QVCOL: &[u8] = include_bytes!("shaders/qvcol.spv");
+pub const QVDUP: &[u8] = include_bytes!("shaders/qvdup.spv");
+pub const QVQKV: &[u8] = include_bytes!("shaders/qvqkv.spv");
+pub const QVBIAS: &[u8] = include_bytes!("shaders/qvbias.spv");
+
+pub const QVAVG: &[u8] = include_bytes!("shaders/qvavg.spv");
+
+pub const QRESNORM8: &[u8] = include_bytes!("shaders/qresnorm8.spv");
+
+pub const QHIDQ8: &[u8] = include_bytes!("shaders/qhidq8.spv");
 
 #[cfg(test)]
 mod tests {

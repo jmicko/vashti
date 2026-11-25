@@ -1,0 +1,30 @@
+// Qwen Image 2.1 VAE up block shortcut, added to its output: out[o][y][x] += in[c][y/2][x/2]
+// with c = (o * F + (ft - 1) * 4 + (y % 2) * 2 + x % 2) / repeats, F = 4 ft, repeats =
+// outputs * F / inputs (channel repetition, depth-to-space, the last of ft frames).
+// Maps are channel-major with row strides `in_stride` and `out_stride`; the output is
+// 2 w x 2 h. Dispatch x = ceil(4 w h / 256), y = outputs.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { float x[]; };
+layout(set = 0, binding = 1) buffer Out { float o[]; };
+layout(push_constant) uniform Constants {
+    uint w;
+    uint h;
+    uint in_stride;
+    uint out_stride;
+    uint inputs;
+    uint outputs;
+    uint ft;
+} p;
+
+void main() {
+    uint q = gl_GlobalInvocationID.x;
+    uint out_c = gl_WorkGroupID.y;
+    uint wo = p.w * 2;
+    if (q >= wo * p.h * 2) return;
+    uint y = q / wo, xx = q - y * wo;
+    uint factor = 4 * p.ft;
+    uint repeats = p.outputs * factor / p.inputs;
+    uint c = (out_c * factor + (p.ft - 1) * 4 + (y & 1) * 2 + (xx & 1)) / repeats;
+    o[out_c * p.out_stride + q] += x[c * p.in_stride + (y >> 1) * p.w + (xx >> 1)];
+}

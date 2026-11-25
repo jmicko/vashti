@@ -103,9 +103,8 @@ pub(super) fn steps() -> Vec<Step> {
                     channels: current,
                 },
                 conv2: Conv::new(format!("{name}.conv2"), current, current, 3, 1),
-                shortcut: (inputs != current).then(|| {
-                    Conv::new(format!("{name}.nin_shortcut"), inputs, current, 1, 1)
-                }),
+                shortcut: (inputs != current)
+                    .then(|| Conv::new(format!("{name}.nin_shortcut"), inputs, current, 1, 1)),
             });
         }
         if DOWNSAMPLES[level] {
@@ -168,7 +167,10 @@ pub(super) fn reflect(i: isize, n: usize) -> usize {
 /// Whether a frame of this size can be encoded: both sides a multiple of 16 and at least 32
 /// (the last downsample's reflection needs two rows).
 pub fn supported(width: usize, height: usize) -> bool {
-    width.is_multiple_of(SCALE) && height.is_multiple_of(SCALE) && width >= 2 * SCALE && height >= 2 * SCALE
+    width.is_multiple_of(SCALE)
+        && height.is_multiple_of(SCALE)
+        && width >= 2 * SCALE
+        && height >= 2 * SCALE
 }
 
 pub struct VideoEncoder {
@@ -306,8 +308,8 @@ fn exact_conv(
                 let weight = &weight[o * taps..(o + 1) * taps];
                 for ox in 0..ow {
                     let col = &col[ox * taps..(ox + 1) * taps];
-                    row[o * ow + ox] = bias[o] as f64
-                        + weight.iter().zip(col).map(|(a, b)| a * b).sum::<f64>();
+                    row[o * ow + ox] =
+                        bias[o] as f64 + weight.iter().zip(col).map(|(a, b)| a * b).sum::<f64>();
                 }
             }
             row

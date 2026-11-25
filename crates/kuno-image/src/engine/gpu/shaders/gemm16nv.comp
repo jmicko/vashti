@@ -1,0 +1,92 @@
+// gemm16.comp for 32-lane subgroups and 16 x 16 half-precision matrices (NVIDIA): the same
+// product (f32 sums), buffers, constants and 128-token x 256-row tiling, laid out as
+// gemm8nv.comp lays out the integer product (a half-precision step of 16 columns is the same
+// 32 bytes). Columns are a multiple of 16; offsets are in values, multiples of 8.
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// Keep half-precision subnormals (tiny weights) instead of reading them as zero.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 512) in;
+layout(set = 0, binding = 0) readonly buffer In { uvec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { uvec4 w[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { float y[]; };
+layout(push_constant) uniform Constants {
+    uint columns;
+    uint in_first;
+    uint weight_first;
+    uint out_first;
+    uint out_stride;
+} p;
+
+// Row stride in words: four 16-byte words of data, one of padding.
+#define STRIDE 5
+shared uvec4 a[128 * STRIDE];
+shared uvec4 b[256 * STRIDE];
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>
+
+void main() {
+    uint sg = gl_SubgroupID;
+    uint lane = sg * 32 + gl_SubgroupInvocationID;
+    uint am = (sg >> 3) * 64;
+    uint bn = (sg & 7) * 32;
+    uint token = gl_WorkGroupID.y * 128;
+    uint row = gl_WorkGroupID.x * 256;
+    uint cols16 = p.columns >> 3;
+    // Lane copies: one word of the token tile (row lane / 4, word lane % 4) and two of the
+    // weight tile (rows lane / 4 and 128 + lane / 4).
+    uint r4 = lane >> 2, word = lane & 3;
+    uint in16 = (p.in_first >> 3) + (token + r4) * cols16 + word;
+    uint w16 = (p.weight_first >> 3) + (row + r4) * cols16 + word;
+    uint w16b = w16 + 128 * cols16;
+    uint sa = r4 * STRIDE + word, sb2 = (128 + r4) * STRIDE + word;
+    C c[4][2];
+    for (uint i = 0; i < 4; i++) {
+        c[i][0] = C(0.0);
+        c[i][1] = C(0.0);
+    }
+    A ma[4];
+    B mb[2];
+    bool live = word < cols16;
+    uvec4 ta = live ? x[in16] : uvec4(0), tb = live ? w[w16] : uvec4(0);
+    uvec4 tc = live ? w[w16b] : uvec4(0);
+    for (uint k16 = 0; k16 < cols16; k16 += 4) {
+        a[sa] = ta;
+        b[sa] = tb;
+        b[sb2] = tc;
+        memoryBarrierShared();
+        barrier();
+        uint next = k16 + 4;
+        if (next + word < cols16) {
+            ta = x[in16 + next];
+            tb = w[w16 + next];
+            tc = w[w16b + next];
+        }
+        uint halves = min(2u, (cols16 - k16) >> 1);
+        for (uint h = 0; h < halves; h++) {
+            for (uint i = 0; i < 4; i++)
+                coopMatLoad(ma[i], a, (am + i * 16) * STRIDE + h * 2, STRIDE,
+                            gl_CooperativeMatrixLayoutRowMajor);
+            for (uint j = 0; j < 2; j++)
+                coopMatLoad(mb[j], b, (bn + j * 16) * STRIDE + h * 2, STRIDE,
+                            gl_CooperativeMatrixLayoutColumnMajor);
+            for (uint i = 0; i < 4; i++)
+                for (uint j = 0; j < 2; j++) c[i][j] = coopMatMulAdd(ma[i], mb[j], c[i][j]);
+        }
+        barrier();
+    }
+    uint first = p.out_first + (token + am) * p.out_stride + row + bn;
+    uint s = p.out_stride;
+    for (uint i = 0; i < 4; i++)
+        for (uint j = 0; j < 2; j++)
+            coopMatStore(c[i][j], y, first + i * 16 * s + j * 16, s,
+                         gl_CooperativeMatrixLayoutRowMajor);
+}

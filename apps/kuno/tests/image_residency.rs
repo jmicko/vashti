@@ -28,8 +28,8 @@ fn config(directory: &Path) -> ImageConfig {
         pci_address: "0000:2d:00.0".into(),
         timeout_seconds: 5,
         collections: vec!["qwen-image-2512-fp8".into()],
-        engine: Default::default(),
-        runtime: None,
+        legacy_engine: None,
+        legacy_runtime: None,
     }
 }
 fn worker(directory: &Path, job: &str) -> PathBuf {
@@ -121,7 +121,7 @@ async fn repeated_jobs_keep_pid_and_idle_shutdown_reaps_it() {
 }
 
 #[tokio::test]
-async fn a_changed_context_reaps_the_old_worker_before_replacement() {
+async fn one_worker_serves_both_qwen_versions_and_a_changed_context_replaces_it() {
     let directory = tempfile::tempdir().unwrap();
     let executable = worker(directory.path(), "frame(2,png)\n frame(3)");
     let runtime = ImageRuntime::default();
@@ -133,6 +133,7 @@ async fn a_changed_context_reaps_the_old_worker_before_replacement() {
             .is_ok()
     );
     let pid = std::fs::read_to_string(directory.path().join("pid")).unwrap();
+    // Qwen 2.1 after 2512: the same worker (it runs both).
     let mut next = recipe();
     next.workflow = kuno_protocol::QWEN21_RECIPE.into();
     next.flow_shift = None;
@@ -142,9 +143,26 @@ async fn a_changed_context_reaps_the_old_worker_before_replacement() {
             .output
             .is_ok()
     );
-    assert_ne!(
+    assert_eq!(
         pid,
         std::fs::read_to_string(directory.path().join("pid")).unwrap()
+    );
+    // Another models directory: the old worker is reaped before its replacement starts
+    // (the fake worker records its pid in its models directory).
+    let other = tempfile::tempdir().unwrap();
+    let moved = ImageConfig {
+        models: other.path().into(),
+        ..config.clone()
+    };
+    assert!(
+        generate(&runtime, &executable, &moved, recipe())
+            .await
+            .output
+            .is_ok()
+    );
+    assert_ne!(
+        pid,
+        std::fs::read_to_string(other.path().join("pid")).unwrap()
     );
     assert!(!Path::new(&format!("/proc/{pid}")).exists());
     runtime.evict().await.unwrap();
@@ -167,7 +185,16 @@ async fn an_idle_worker_exit_is_recovered_on_the_next_request() {
         unsafe { libc::kill(pid.parse().unwrap(), libc::SIGTERM) },
         0
     );
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait until it has exited: a zombie (its parent reaps it on the next request) or
+    // gone. A fixed pause failed under a loaded parallel test run.
+    for _ in 0..200 {
+        let exited = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map_or(true, |stat| stat.rsplit(')').next().unwrap_or("").trim_start().starts_with('Z'));
+        if exited {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
     let result = generate(&runtime, &executable, &config, recipe()).await;
     assert!(result.output.is_ok() && result.settled && !result.forced);
     assert_ne!(

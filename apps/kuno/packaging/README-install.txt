@@ -2,15 +2,15 @@ Kuno — Linux systemd inference gateway and native image engine
 
 This beta release provides the Ollama gateway, usage tracking, and
 optional managed GPU workers. Adaptive idle profiling is still pending.
-This package includes the experimental native image engine. Model weights and
-GPU configuration are separate setup steps; see docs/kuno-images.md. CUDA and
-Vulkan need working host GPU drivers. The CUDA-enabled package requires the
-NVIDIA driver library libcuda.so.1 even when using another GPU for images.
-The optional Intel SYCL worker is a separate verified runtime, installed with
-install-image-runtime and selected using configure-image. See
-docs/kuno-managed-sycl.md and docs/kuno-release-handoff.md for the exact bundle
-checksum, install commands and tested platform limits. No Python image server
-is required; Python packaging helpers are only used by release developers.
+This package includes Kuno's image and video engine; the kuno executable is
+also its own GPU worker, so there is no separate runtime to install. It runs on
+Intel Xe2 GPUs (Arc B-series) and on Vulkan GPUs with cooperative matrices
+(NVIDIA RTX), and needs working host GPU drivers (Mesa for Intel, the NVIDIA
+driver's Vulkan support for NVIDIA). Model weights and GPU configuration are
+separate setup steps; see docs/kuno-images.md. Upgrading from a release that
+used the separate Intel runtime needs no extra step: the upgrade removes the
+old runtime and its configuration entry. No Python image server is required;
+Python packaging helpers are only used by release developers.
 The VERSION file identifies the coordinated Vashti release containing this build.
 
 Installation

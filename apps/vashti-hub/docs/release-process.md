@@ -35,8 +35,8 @@ prereleases until an admin promotes or deletes them.
    ./apps/vashti/scripts/package-android-release.sh
    ```
 
-6. Build the Kuno package with `apps/kuno/scripts/package-release.sh`, pointing
-   `KUNO_SD_SOURCE_DIR` and `KUNO_SD_BUILD_DIR` at the prepared native engine build.
+6. Build the Kuno package with `apps/kuno/scripts/package-release.sh` (the Rust image
+   engine needs no prepared native build).
    APK filenames include the version (`vashti-0.13.0-beta.2.apk`); older releases
    with `vashti-android.apk` remain supported. When shipping the optional Intel
    runtime, verify its approved archive and manifest hashes from the Kuno release

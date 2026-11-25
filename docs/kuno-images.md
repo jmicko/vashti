@@ -6,29 +6,39 @@ an Images workspace and generation/editing chat tools, with live previews.
 GPU configuration and curated model downloads currently use the CLI; an admin
 collection picker remains future work. This is an experimental beta.
 
-## Attention and cache execution
+## Engine
 
-Requests may set `"attention": "fast"` for the Qwen 2.1 CUDA backend. The default
-is `"standard"`. Fast attention uses the native SageAttention implementation;
-it can change output pixels and is not supported for Qwen 2512 or Vulkan.
-Unsupported choices return `image_attention_unsupported`. The embedded
-CUDA/Vulkan path needs no Python engine or additional runtime installation.
+Images and video run in Kuno's Rust engine. The `kuno` executable is its own GPU worker
+(`kuno image-worker-resident`, started by the gateway, sandboxed with no writable
+filesystem): there is no separate runtime to install. It runs on Intel Xe2 GPUs (the
+B70 was accepted) and on Vulkan GPUs with cooperative matrices (an RTX 3060 was tested).
+One worker serves Qwen 2512, Qwen 2.1 (generate and edit), MiniMax video, and either
+attention mode per request, so switching between them does not restart it.
 
-The [optional managed SYCL worker](kuno-managed-sycl.md) adds Qwen 2.1 execution
-on Intel hardware, accepted locally on the B70. Its libraries are
-separate from the standard executable; embedded CUDA/Vulkan remains the default,
-and Qwen 2512 retains its native route. This runtime does not change the image API.
-The selected ABI2 Intel runtime keeps model-only residency and uses guarded
-whole-RoPE/residual execution for Qwen 2.1. See the
-[managed runtime receipt](kuno-managed-sycl.md#selected-abi2-runtime-and-developer-build-2026-10-02)
-for exact artifacts, installation, measured performance and acceptance limits.
+Releases before 2026-11-24 could launch a separately installed "managed SYCL" runtime
+bundle (`"engine": "managed_sycl"` and `"runtime"` in the image configuration). Such
+configurations are still read; the next `kuno upgrade` (or any other configuration
+change) drops both fields and the old runtime files. `kuno install-image-runtime` now
+exits with `image_runtime_not_needed`.
 
-Large Qwen 2.1 edit caches can use bounded pinned host memory. On CUDA, capable
-workers stage the current and next layer through two GPU buffers, overlapping
-transfers with computation. Staging counts toward VRAM reservations, and pending
-transfers are drained before freeing buffers or leaving a request. If the
-required memory or backend capabilities are unavailable, execution retains the
-synchronous cache path. Prompts, references, and results still remain transient.
+## Attention
+
+Requests may set `"attention": "fast"` (generate and edit). The default is `"standard"`.
+Fast attention scores with int8 queries and keys, each token scaled on its own, while
+values stay half floats; it can change output pixels. Every Qwen workflow advertises
+`["standard", "fast"]`; on a GPU without the int8 attention kernel a fast request runs
+standard attention.
+
+## Qwen Image 2512 model files
+
+Two collections serve `qwen-image-2512-text-to-image/v1`. `qwen-image-2512-int8` downloads
+the publisher's files (`Qwen/Qwen-Image-2512`, pinned commit) and converts them for the Rust
+engine as they arrive, keeping only the pinned INT8 conversion (28.6 GB; the download is
+57.7 GB, removed piece by piece, so the disk needs far less than both).
+`qwen-image-2512-fp8` is ComfyUI's FP8 repackaging, which the engine also reads. The workflow is available
+when either is ready; with both installed the Rust engine loads the INT8 conversion (closer
+to the original model, loaded without conversion) once every piece is installed, and the
+FP8 files until then.
 
 ## Exact supported recipe
 
@@ -87,57 +97,22 @@ reference payload to 63 MiB. Native execution remains one image at a time.
 
 ## Build and models
 
-On Linux Mint/Ubuntu, development builds need:
+Kuno's image engine is Rust (`crates/kuno-image/src/engine`, see
+[the Rust engine](kuno-rust-engine.md)); the default build carries it:
 
 ```sh
-sudo apt install build-essential cmake ninja-build glslc libvulkan-dev spirv-headers glslang-tools
-./apps/kuno/build-native-image.sh
-./target/release/kuno fetch-models qwen-image-2512-fp8 --directory /absolute/model/store
+cargo build --locked --release -p kuno
+./target/release/kuno fetch-models qwen-image-2512-int8 --directory /absolute/model/store
 ./target/release/kuno fetch-models qwen-image-2.1-int8 --directory /absolute/model/store
 ```
 
-Rust is also required for building. Qwen 2.1 INT8 also requires a shader compiler
-that supports `GL_EXT_integer_dot_product`; Mint's shaderc 2023.8 does not. The
-build probes this feature and fails with setup instructions rather than silently
-building an engine that sends those operations to the CPU. A verified local build
-uses LunarG SDK 1.4.357.1 (archive SHA-256
-`4b41e3b30e8aedaa5dac7c136561ab463eb316a25a54e2c6245f2c299ea1fb85`). Set
-`VULKAN_SDK=/absolute/sdk/1.4.357.1/x86_64` when running the build script; only the
-compiler and headers are used, without replacing installed drivers. Get the SDK
-from [LunarG](https://vulkan.lunarg.com/sdk/home).
-
-An optional NVIDIA build embeds the CUDA runtime and cuBLAS static libraries,
-alongside Vulkan. It prefers CUDA when both backends expose the selected physical
-GPU. Other GPUs retain the Vulkan path. This produces a substantially larger
-single executable and requires the NVIDIA driver (including `libcuda.so.1`) on
-the inference host. End users do not need the CUDA development toolkit.
-
-```sh
-KUNO_IMAGE_CUDA=1 KUNO_CUDA_ROOT=/absolute/cuda/toolkit \
-  KUNO_CUDA_ARCHITECTURES=86 VULKAN_SDK=/absolute/vulkan/sdk/x86_64 \
-  ./apps/kuno/build-native-image.sh
-```
-
-Architecture 86 targets the RTX 3060; use the architectures required by the
-intended host, or omit the setting for a native build. CUDA toolkit 13.0 was
-tested. Obtain development components from [NVIDIA's official redistributions](https://developer.download.nvidia.com/compute/cuda/redist/redistrib_13.0.0.json)
-and verify their manifest checksums. The toolkits are build inputs, not driver
-upgrades. Both CUDA and Vulkan shader disk caches are disabled in image workers.
-
-Installed binaries need the GPU's working
-Vulkan driver and the usual native system libraries; they do not require Python
-or a separate image server. The build pins stable-diffusion.cpp to
-`88411ef1e0688ff2df1010aeeb5d92b2d8cea2be`, retaining its matching patched GGML.
-A checked-in compatibility patch fixes quantization-scale tensor name detection
-and adds bounded INT8 embedding row lookup with inverse ConvRot rotation. It
-also preserves input scaling while packing INT8 attention projections for the
-GPU, avoiding the upstream CPU fallback for Qwen's 1/32 attention scale. The
-build checks the exact patch and runs an independent synthetic numerical test;
-it refuses unrelated local dependency changes. A runtime kernel-capability
-probe rejects unsupported INT8 GPUs before model loading with
-`image_gpu_int8_unsupported`; check the build toolchain and Vulkan driver in that
-case rather than retrying model downloads.
-The build is optional; ordinary Kuno builds do not link the image engine.
+Only Rust is needed to build: the compute shaders are checked in as SPIR-V (and the Intel
+machine-code kernels are generated by Rust code). The executable links only libc, libm and
+libgcc; at run time it loads the system's Vulkan loader (any GPU with cooperative
+matrices: Intel Xe2, NVIDIA RTX) and, on Intel, Level Zero. `--no-default-features`
+builds the gateway without an image engine. The C++ engine (stable-diffusion.cpp with its
+CUDA, Vulkan and SYCL backends) and its build were removed on 2026-11-24; its history and
+the measurements made with it remain in these documents and in git.
 
 The Qwen 2512 collection pins a Hugging Face repository revision, exact sizes,
 and SHA-256 hashes for all three artifacts (about 30.1 GB decimal). Downloads
@@ -169,8 +144,8 @@ sudo /usr/local/lib/kuno/kuno configure-image --settings /absolute/settings.json
 This asks for interruption confirmation, verifies all model checksums, and
 replaces the binary, configuration, and read-only systemd mount transactionally.
 The model files must be readable by the service. To disable images while retaining
-Ollama management, use `configure-image --disable`. Upgrades must retain the
-`native-image` feature while images are configured. The release package builder includes the native engine and its license notices.
+Ollama management, use `configure-image --disable`. Upgrades must keep the image engine
+(the default features) while images are configured; the release package builder uses them.
 
 ## API and lifecycle
 

@@ -1,0 +1,162 @@
+// Qwen Image 2.1 block input and its quantization in one pass over the stream: LayerNorm
+// (no weights, eps 1e-6) of each 4096-wide token row, times one modulation vector `1 + m`
+// for every token of the pass, then the ConvRot quantizer (rotate8.comp) on the result,
+// which is never written out. One workgroup per token; the row is read once into shared
+// memory and rotated in place there. Padded tokens quantize to zeros. With `stream` set,
+// bytes are written in the machine-code product's layout (xe2/int8.rs).
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+// Groups of 16 invocations (the subgroups on 16-lane devices, clusters of wider ones).
+#define SG16 (gl_LocalInvocationIndex >> 4)
+#define LANE16 (gl_LocalInvocationIndex & 15u)
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Stream { vec4 x[]; };
+layout(set = 0, binding = 1) readonly buffer Mods { vec4 m[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { uvec4 q[]; };
+layout(set = 0, binding = 3) writeonly buffer Scales { float s[]; };
+// `mod_first` is in values and a multiple of 4.
+layout(push_constant) uniform Constants {
+    uint tokens;
+    uint mod_first;
+    uint stream;
+} p;
+const uint DIM4 = 1024;
+const uint GROUPS = 16;
+const uint ROUNDS = 1;
+
+shared float mem[4096];
+shared float maxima[16];
+
+float mean, norm;
+uint mod_at;
+bool live;
+
+vec4 source(uint c) {
+    vec4 t = vec4(mem[c * 4], mem[c * 4 + 1], mem[c * 4 + 2], mem[c * 4 + 3]);
+    t = (t - mean) * norm * m[mod_at + c];
+    return live ? t : vec4(0.0);
+}
+
+float v[16];
+
+void quad(uint a, uint b, uint c, uint d) {
+    precise float va = v[a], vb = v[b], vc = v[c], vd = v[d];
+    precise float ra = va + vb + vc - vd;
+    precise float rb = va + vb - vc + vd;
+    precise float rc = va - vb + vc + vd;
+    precise float rd = -va + vb + vc + vd;
+    v[a] = ra;
+    v[b] = rb;
+    v[c] = rc;
+    v[d] = rd;
+}
+void stages() {
+    for (uint m = 0; m < 4; m++) quad(4 * m, 4 * m + 1, 4 * m + 2, 4 * m + 3);
+    for (uint m = 0; m < 4; m++) quad(m, m + 4, m + 8, m + 12);
+}
+
+// Rotates the row into `mem` in natural order and returns the row's largest magnitude.
+// The first stages' results pass through the group's own slots of `mem` to be transposed.
+float rotate_row() {
+    uint sg = SG16, lane = LANE16;
+    float top = 0.0;
+    for (uint r = 0; r < ROUNDS; r++) {
+        uint g = r * 16 + sg;
+        bool used = g < GROUPS;
+        if (used) {
+            for (uint j = 0; j < 4; j++) {
+                vec4 part = source(g * 64 + lane * 4 + j);
+                for (uint e = 0; e < 4; e++) v[j * 4 + e] = part[e] * 0.0625;
+            }
+            stages();
+            for (uint j = 0; j < 16; j++) mem[g * 256 + lane * 16 + j] = v[j];
+        }
+        memoryBarrierShared();
+        barrier();
+        if (used) {
+            for (uint j = 0; j < 16; j++) v[j] = mem[g * 256 + j * 16 + lane];
+        }
+        memoryBarrierShared();
+        barrier();
+        if (used) {
+            stages();
+            for (uint j = 0; j < 16; j++) {
+                top = max(top, abs(v[j]));
+                mem[g * 256 + j * 16 + lane] = v[j];
+            }
+        }
+    }
+    top = subgroupClusteredMax(top, 16);
+    if (lane == 0) maxima[sg] = top;
+    memoryBarrierShared();
+    barrier();
+    for (uint i = 0; i < 16; i++) top = max(top, maxima[i]);
+    return top;
+}
+
+// Rounds the rotated row to INT8 with one scale and writes 16 bytes per lane and group.
+void round_row(uint row, float top, uint stream) {
+    uint sg = SG16, lane = LANE16;
+    // The GPU's single-precision divide is not correctly rounded; a last-bit difference in
+    // the scale would move bytes at rounding ties. Dividing in double precision and rounding
+    // once gives the reference's values.
+    float scale = float(double(top) / 127.0lf);
+    float inverse = float(1.0lf / double(scale));
+    if (gl_LocalInvocationIndex == 0) s[row] = scale;
+    for (uint r = 0; r < ROUNDS; r++) {
+        uint g = r * 16 + sg;
+        if (g >= GROUPS) continue;
+        uvec4 word = uvec4(0);
+        for (uint b = 0; b < 16; b++) {
+            precise float scaled = mem[g * 256 + lane * 16 + b] * inverse;
+            int value = scale == 0.0 ? 0 : int(clamp(roundEven(scaled), -127.0, 127.0));
+            word[b >> 2] |= (uint(value) & 255u) << ((b & 3) * 8);
+        }
+        uint w16 = g * 16 + lane;
+        uint at = stream == 0 ? row * (GROUPS * 16) + w16
+            : (((row >> 5) * (GROUPS * 8) + (w16 >> 1)) * 32 + (row & 31)) * 2 + (w16 & 1);
+        q[at] = word;
+    }
+}
+
+float reduce(float value) {
+    uint sg = SG16, lane = LANE16;
+    float sum = subgroupClusteredAdd(value, 16);
+    memoryBarrierShared();
+    barrier();
+    if (lane == 0) maxima[sg] = sum;
+    memoryBarrierShared();
+    barrier();
+    sum = 0.0;
+    for (uint i = 0; i < 16; i++) sum += maxima[i];
+    return sum;
+}
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint slot = SG16 * 16 + LANE16;
+    live = token < p.tokens;
+    vec4 total = vec4(0.0);
+    for (uint c = slot; c < DIM4; c += 256) {
+        vec4 d = x[token * DIM4 + c];
+        total += d;
+        for (uint e = 0; e < 4; e++) mem[c * 4 + e] = d[e];
+    }
+    mean = reduce(total.x + total.y + total.z + total.w) / 4096.0;
+    vec4 squares = vec4(0.0);
+    for (uint c = slot; c < DIM4; c += 256) {
+        vec4 d = vec4(mem[c * 4], mem[c * 4 + 1], mem[c * 4 + 2], mem[c * 4 + 3]) - mean;
+        squares += d * d;
+    }
+    norm = 1.0 / sqrt(reduce(squares.x + squares.y + squares.z + squares.w) / 4096.0 + 1e-6);
+    mod_at = p.mod_first >> 2;
+    // Everyone has read the sums before the maxima reuse their slots.
+    memoryBarrierShared();
+    barrier();
+    float top = rotate_row();
+    round_row(token, top, p.stream);
+}

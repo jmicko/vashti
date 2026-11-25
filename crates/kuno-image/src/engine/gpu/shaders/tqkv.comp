@@ -1,10 +1,11 @@
 // Text encoder queries, keys and values from the INT8 query/key/value product:
-//   g[token][64 query heads, 8 key heads, 8 value heads][128] (int32 sums)
+//   g[token][query heads, key heads, value heads][128] (int32 sums)
 //   value = sum * activation scale[token] * weight scale[column]
-// Queries and keys then get unit RMS over the head (eps 1e-6) times a weight and the rotary
-// turn on channel pairs (i, i + 64). Out: f32 [head][padded][128] per kind.
+// plus, with flag 2, a bias per column (`v[bias_first + column]`). Queries and keys then get,
+// with flag 1, unit RMS over the head (eps 1e-6) times a weight, and the rotary turn on
+// channel pairs (i, i + 64). Out: f32 [head][padded][128] per kind.
 // One workgroup of 128 invocations (one per channel) per token and head; dispatch
-// x = 80 heads, y = padded tokens. Tokens from `tokens` on are zeros.
+// x = all heads (queries + 2 x keys), y = padded tokens. Tokens from `tokens` on are zeros.
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
@@ -25,6 +26,10 @@ layout(push_constant) uniform Constants {
     uint scale_first;
     uint query_norm;
     uint key_norm;
+    uint heads;
+    uint kv_heads;
+    uint bias_first;
+    uint flags;
 } p;
 
 shared float values[128];
@@ -36,19 +41,25 @@ void main() {
     uint c = gl_LocalInvocationIndex;
     bool live = token < p.tokens;
     uint column = head * 128 + c;
-    float value = live ? float(g[token * 10240 + column]) * as[token] * ws[p.scale_first + column] : 0.0;
-    if (head >= 72) {
-        vo[((head - 72) * p.padded + token) * 128 + c] = value;
+    uint columns = (p.heads + 2 * p.kv_heads) * 128;
+    float value = live ? float(g[token * columns + column]) * as[token] * ws[p.scale_first + column] : 0.0;
+    // Added only when present, so the unbiased encoders' arithmetic stays as it was.
+    if (live && (p.flags & 2u) != 0u) value += v[p.bias_first + column];
+    uint values_from = p.heads + p.kv_heads;
+    if (head >= values_from) {
+        vo[((head - values_from) * p.padded + token) * 128 + c] = value;
         return;
     }
-    float squares = subgroupAdd(value * value);
-    if (gl_SubgroupInvocationID == 0) sums[gl_SubgroupID] = squares;
-    barrier();
-    float total = 0.0;
-    for (uint i = 0; i < gl_NumSubgroups; i++) total += sums[i];
-    bool query = head < 64;
-    float weight = v[(query ? p.query_norm : p.key_norm) + c];
-    value *= live ? weight / sqrt(total / 128.0 + 1e-6) : 0.0;
+    bool query = head < p.heads;
+    if ((p.flags & 1u) != 0u) {
+        float squares = subgroupAdd(value * value);
+        if (gl_SubgroupInvocationID == 0) sums[gl_SubgroupID] = squares;
+        barrier();
+        float total = 0.0;
+        for (uint i = 0; i < gl_NumSubgroups; i++) total += sums[i];
+        float weight = v[(query ? p.query_norm : p.key_norm) + c];
+        value *= live ? weight / sqrt(total / 128.0 + 1e-6) : 0.0;
+    }
     values[c] = value;
     barrier();
     uint pair = c & 63;
@@ -56,5 +67,5 @@ void main() {
     float x0 = values[pair], x1 = values[pair + 64];
     float result = c < 64 ? x0 * t.x - x1 * t.y : x0 * t.y + x1 * t.x;
     if (query) q[(head * p.padded + token) * 128 + c] = result;
-    else k[((head - 64) * p.padded + token) * 128 + c] = result;
+    else k[((head - p.heads) * p.padded + token) * 128 + c] = result;
 }

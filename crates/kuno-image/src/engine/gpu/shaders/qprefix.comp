@@ -1,0 +1,34 @@
+// Copies cached prefix keys and values (plain `[head][capacity][128]` f16, rows 0..count)
+// into the machine-code attention kernel's key/value stream (xe2/attend.rs, `stride` keys
+// per head) at key `base + row`. One invocation per row, head and 8 channels: the keys'
+// 8 halves are one 16-byte store, the values' are 8 scattered halves.
+// Dispatch: x = rows * 16 / 64 (rounded up), y = heads.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Keys { uvec4 k[]; };
+layout(set = 0, binding = 1) readonly buffer Values { f16vec4 vs[]; };
+layout(set = 0, binding = 2) writeonly buffer KeyStream { uvec4 ks[]; };
+layout(set = 0, binding = 3) writeonly buffer ValueStream { float16_t vh[]; };
+layout(push_constant) uniform Constants { uint count; uint base; uint stride; uint capacity; } p;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint head = gl_GlobalInvocationID.y;
+    uint row = index >> 4, part = index & 15;
+    if (row >= p.count) return;
+    uint from = (head * p.capacity + row) * 16 + part;
+    uint key = p.base + row;
+    uint chunk = head * (p.stride >> 4) + (key >> 4);
+    // Keys: chunk of 512 uvec4; channel block part/2 (16 channels) at 32 uvec4, key at 2.
+    ks[chunk * 512 + (part >> 1) * 32 + (key & 15) * 2 + (part & 1)] = k[from];
+    // Values: halves at chunk * 4096 + 2048 + channel * 16 + key % 16.
+    f16vec4 a = vs[from * 2], b = vs[from * 2 + 1];
+    uint at = chunk * 4096 + 2048 + part * 8 * 16 + (key & 15);
+    for (uint e = 0; e < 4; e++) {
+        vh[at + e * 16] = a[e];
+        vh[at + (4 + e) * 16] = b[e];
+    }
+}

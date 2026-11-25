@@ -1,0 +1,114 @@
+// Qwen Image 2.1 feed-forward activation, already computed by the gated INT8 product as bf16
+// rows [token][12288]: rotated in Hadamard groups of 256 and quantized to int8 with one scale
+// per token, in the next product's token layout (the Vulkan twin of q_hidden in qwen.cl).
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+// Groups of 16 invocations (the subgroups on 16-lane devices, clusters of wider ones).
+#define SG16 (gl_LocalInvocationIndex >> 4)
+#define LANE16 (gl_LocalInvocationIndex & 15u)
+
+layout(local_size_x = 256) in;
+// bf16, four values in each uvec2.
+layout(set = 0, binding = 0) readonly buffer Hidden { uvec2 h[]; };
+layout(set = 0, binding = 1) buffer Scales { float s[]; };
+layout(set = 0, binding = 2) buffer Spill { float spill[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { uvec4 q[]; };
+layout(push_constant) uniform Constants { uint tokens; uint stream; } p;
+const uint HIDDEN4 = 3072;
+const uint GROUPS = 48;
+const uint ROUNDS = 3;
+// Groups kept in shared memory.
+const uint KEPT = 28;
+const uint SPILLED = GROUPS - KEPT;
+
+shared float mem[7168];
+shared float tile[4096];
+shared float maxima[16];
+
+float v[16];
+
+void quad(uint a, uint b, uint c, uint d) {
+    precise float va = v[a], vb = v[b], vc = v[c], vd = v[d];
+    precise float ra = va + vb + vc - vd;
+    precise float rb = va + vb - vc + vd;
+    precise float rc = va - vb + vc + vd;
+    precise float rd = -va + vb + vc + vd;
+    v[a] = ra;
+    v[b] = rb;
+    v[c] = rc;
+    v[d] = rd;
+}
+void stages() {
+    for (uint m = 0; m < 4; m++) quad(4 * m, 4 * m + 1, 4 * m + 2, 4 * m + 3);
+    for (uint m = 0; m < 4; m++) quad(m, m + 4, m + 8, m + 12);
+}
+
+void main() {
+    uint token = gl_WorkGroupID.x;
+    uint sg = SG16, lane = LANE16;
+    bool live = token < p.tokens;
+    float top = 0.0;
+    for (uint r = 0; r < ROUNDS; r++) {
+        uint group = r * 16 + sg;
+        bool used = group < GROUPS;
+        if (used) {
+            for (uint j = 0; j < 4; j++) {
+                uint c = group * 64 + lane * 4 + j;
+                uvec2 b = live ? h[token * HIDDEN4 + c] : uvec2(0);
+                vec4 part = vec4(uintBitsToFloat(b.x << 16), uintBitsToFloat(b.x & 0xffff0000u),
+                                 uintBitsToFloat(b.y << 16), uintBitsToFloat(b.y & 0xffff0000u));
+                for (uint e = 0; e < 4; e++) v[j * 4 + e] = part[e] * 0.0625;
+            }
+            stages();
+            for (uint j = 0; j < 16; j++) tile[sg * 256 + lane * 16 + j] = v[j];
+        }
+        memoryBarrierShared();
+        barrier();
+        if (used) {
+            for (uint j = 0; j < 16; j++) v[j] = tile[sg * 256 + j * 16 + lane];
+            stages();
+            for (uint j = 0; j < 16; j++) {
+                top = max(top, abs(v[j]));
+                if (group < KEPT) {
+                    mem[group * 256 + j * 16 + lane] = v[j];
+                } else {
+                    spill[(token * SPILLED + group - KEPT) * 256 + j * 16 + lane] = v[j];
+                }
+            }
+        }
+        memoryBarrierShared();
+        barrier();
+    }
+    top = subgroupClusteredMax(top, 16);
+    if (lane == 0) maxima[sg] = top;
+    memoryBarrierShared();
+    memoryBarrierBuffer();
+    barrier();
+    for (uint i = 0; i < 16; i++) top = max(top, maxima[i]);
+    // The GPU's single-precision divide is not correctly rounded; a last-bit difference in
+    // the scale would move bytes at rounding ties. Dividing in double precision and rounding
+    // once gives the reference's values.
+    float scale_out = float(double(top) / 127.0lf);
+    float inverse = float(1.0lf / double(scale_out));
+    if (gl_LocalInvocationIndex == 0) s[token] = scale_out;
+    for (uint r = 0; r < ROUNDS; r++) {
+        uint group = r * 16 + sg;
+        if (group >= GROUPS) continue;
+        uvec4 word = uvec4(0);
+        for (uint b = 0; b < 16; b++) {
+            float value = group < KEPT
+                ? mem[group * 256 + lane * 16 + b]
+                : spill[(token * SPILLED + group - KEPT) * 256 + lane * 16 + b];
+            precise float scaled = value * inverse;
+            int rounded = scale_out == 0.0 ? 0 : int(clamp(roundEven(scaled), -127.0, 127.0));
+            word[b >> 2] |= (uint(rounded) & 255u) << ((b & 3) * 8);
+        }
+        uint w16 = group * 16 + lane;
+        uint at = p.stream == 0 ? token * (GROUPS * 16) + w16
+            : (((token >> 5) * (GROUPS * 8) + (w16 >> 1)) * 32 + (token & 31)) * 2 + (w16 & 1);
+        q[at] = word;
+    }
+}

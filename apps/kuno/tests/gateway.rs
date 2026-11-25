@@ -128,10 +128,9 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn optional_managed_image_runtime_does_not_gate_ordinary_ollama_startup() {
+async fn a_legacy_image_configuration_does_not_gate_ordinary_ollama_startup() {
     use kuno::{
-        image_engine::{ImageEngine, SYCL_RUNTIME},
-        image_runtime::ImageConfig,
+        image_runtime::{ImageConfig, LegacyEngine},
         pool::PoolConfig,
         worker::{DeviceSelection, WorkerConfig},
     };
@@ -141,8 +140,8 @@ async fn optional_managed_image_runtime_does_not_gate_ordinary_ollama_startup() 
         pci_address: "0000:01:00.0".into(),
         timeout_seconds: 60,
         collections: vec!["qwen-image-2.1-int8".into()],
-        engine: ImageEngine::ManagedSycl,
-        runtime: Some(SYCL_RUNTIME.into()),
+        legacy_engine: Some(LegacyEngine::ManagedSycl),
+        legacy_runtime: Some("qwen21-sycl-2026.1-v1".into()),
     };
     let managed = PoolConfig {
         reserve_bytes: 1024 * 1024 * 1024,
@@ -339,8 +338,8 @@ async fn configured_missing_images_do_not_stop_gateway_startup() {
             models: directory.path().join("missing-private-model-directory"),
             pci_address: "0000:01:00.0".into(),
             timeout_seconds: 60,
-            engine: Default::default(),
-            runtime: None,
+            legacy_engine: None,
+            legacy_runtime: None,
             collections: vec!["qwen-image-2.1-int8".into()],
         }),
         ..Config::default()

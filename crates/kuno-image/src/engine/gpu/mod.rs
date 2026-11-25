@@ -18,9 +18,35 @@ pub enum Select {
     /// The adapter at a PCI address such as `0000:04:00.0`.
     Pci(String),
 }
+/// One cooperative matrix shape: `[m][k] x [k][n] + [m][n]` with A/B, C and result types.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shape {
+    pub m: u32,
+    pub n: u32,
+    pub k: u32,
+    pub a: vk::ComponentTypeKHR,
+    pub c: vk::ComponentTypeKHR,
+    pub result: vk::ComponentTypeKHR,
+}
+/// `VkPhysicalDeviceCooperativeMatrix2FeaturesNV` (newer than the `ash` in use).
+#[repr(C)]
+struct Matrix2Features {
+    s_type: vk::StructureType,
+    p_next: *mut std::ffi::c_void,
+    workgroup_scope: vk::Bool32,
+    flexible_dimensions: vk::Bool32,
+    reductions: vk::Bool32,
+    conversions: vk::Bool32,
+    per_element_operations: vk::Bool32,
+    tensor_addressing: vk::Bool32,
+    block_loads: vk::Bool32,
+}
+const MATRIX2_FEATURES: vk::StructureType = vk::StructureType::from_raw(1_000_593_000);
+
 struct Core {
     _entry: ash::Entry,
     instance: ash::Instance,
+    physical: vk::PhysicalDevice,
     device: ash::Device,
     queue: vk::Queue,
     pool: vk::CommandPool,
@@ -29,8 +55,21 @@ struct Core {
     /// Present when the device can hand buffers to another interface as dma-bufs.
     sharing: Option<ash::khr::external_memory_fd::Device>,
     name: String,
+    /// The device's vendor id and the matrix shapes its cooperative matrices support.
+    vendor: u32,
+    shapes: Vec<Shape>,
+    /// The subgroup sizes a kernel may require.
+    subgroups: (u32, u32),
+    /// Whether `VK_NV_cooperative_matrix2` is enabled with workgroup-scope matrices of
+    /// flexible sizes, reductions, conversions and per-element operations.
+    matrix2: bool,
     /// Command and descriptor pools and the queue are used by one thread at a time.
     turn: std::sync::Mutex<()>,
+    /// A dedicated copy queue (its family, queue and command pool, used by one thread at a
+    /// time), on GPUs other than Intel's that have one: copies there run beside compute.
+    /// Buffers are then shared by both families (`families`).
+    transfer: Option<(u32, vk::Queue, vk::CommandPool, std::sync::Mutex<()>)>,
+    families: Vec<u32>,
 }
 impl Drop for Core {
     fn drop(&mut self) {
@@ -38,6 +77,9 @@ impl Drop for Core {
         // created from these handles is still alive.
         unsafe {
             let _ = self.device.device_wait_idle();
+            if let Some((_, _, pool, _)) = &self.transfer {
+                self.device.destroy_command_pool(*pool, None);
+            }
             self.device.destroy_descriptor_pool(self.descriptors, None);
             self.device.destroy_command_pool(self.pool, None);
             self.device.destroy_device(None);
@@ -56,6 +98,42 @@ pub struct Buffer {
     bytes: u64,
 }
 /// A buffer's contents in host memory (`Gpu::staged`): no video memory is held.
+/// A copy started by `Gpu::copy_staged_begin`.
+pub struct Copying {
+    pending: Option<(Arc<Core>, vk::CommandBuffer, vk::Fence)>,
+}
+impl Copying {
+    /// Waits for the copy.
+    pub fn wait(mut self) -> Result<(), &'static str> {
+        self.finish()
+    }
+    fn finish(&mut self) -> Result<(), &'static str> {
+        let Some((core, commands, fence)) = self.pending.take() else {
+            return Ok(());
+        };
+        let Some((_, _, pool, turn)) = &core.transfer else {
+            return Err("gpu_failed");
+        };
+        // SAFETY: the fence and command buffer were made for this copy; after the wait the
+        // device no longer uses them.
+        unsafe {
+            let waited = core.device.wait_for_fences(&[fence], true, u64::MAX);
+            if waited.is_err() {
+                let _ = core.device.device_wait_idle();
+            }
+            core.device.destroy_fence(fence, None);
+            let _turn = turn.lock();
+            core.device.free_command_buffers(*pool, &[commands]);
+            waited.map_err(|_| "gpu_failed")
+        }
+    }
+}
+impl Drop for Copying {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
+}
+
 pub struct Staged {
     stage: Option<Buffer>,
 }
@@ -163,9 +241,32 @@ impl Gpu {
                 .iter()
                 .position(|q| q.queue_flags.contains(vk::QueueFlags::COMPUTE))
                 .ok_or("gpu_unavailable")? as u32;
-            let queues = [vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(family)
-                .queue_priorities(&[1.0])];
+            let copy_family = (properties.vendor_id != 0x8086)
+                .then(|| {
+                    instance
+                        .get_physical_device_queue_family_properties(physical)
+                        .iter()
+                        .position(|q| {
+                            q.queue_flags.contains(vk::QueueFlags::TRANSFER)
+                                && !q
+                                    .queue_flags
+                                    .intersects(vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS)
+                        })
+                        .map(|f| f as u32)
+                })
+                .flatten();
+            let mut queues = vec![
+                vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(family)
+                    .queue_priorities(&[1.0]),
+            ];
+            if let Some(copy) = copy_family {
+                queues.push(
+                    vk::DeviceQueueCreateInfo::default()
+                        .queue_family_index(copy)
+                        .queue_priorities(&[1.0]),
+                );
+            }
             let available = instance
                 .enumerate_device_extension_properties(physical)
                 .unwrap_or_default();
@@ -177,6 +278,48 @@ impl Gpu {
             let sharing =
                 has(c"VK_KHR_external_memory_fd") && has(c"VK_EXT_external_memory_dma_buf");
             let mut extensions = vec![c"VK_KHR_cooperative_matrix".as_ptr()];
+            // Reductions, conversions and per-element operations on cooperative matrices
+            // (NVIDIA), for attention that keeps its scores in registers.
+            let mut matrix2 = Matrix2Features {
+                s_type: MATRIX2_FEATURES,
+                p_next: std::ptr::null_mut(),
+                workgroup_scope: 0,
+                flexible_dimensions: 0,
+                reductions: 0,
+                conversions: 0,
+                per_element_operations: 0,
+                tensor_addressing: 0,
+                block_loads: 0,
+            };
+            let matrix2_ok = has(c"VK_NV_cooperative_matrix2") && {
+                let mut query = vk::PhysicalDeviceFeatures2 {
+                    p_next: (&mut matrix2 as *mut Matrix2Features).cast(),
+                    ..Default::default()
+                };
+                instance.get_physical_device_features2(physical, &mut query);
+                matrix2.workgroup_scope != 0
+                    && matrix2.flexible_dimensions != 0
+                    && matrix2.reductions != 0
+                    && matrix2.conversions != 0
+                    && matrix2.per_element_operations != 0
+            };
+            // Everything the device has is enabled.
+            matrix2.p_next = std::ptr::null_mut();
+            if std::env::var_os("KUNO_GPU_DEBUG").is_some() {
+                eprintln!(
+                    "matrix2: workgroup {} flexible {} reductions {} conversions {} per-element {} tensor {} block {}",
+                    matrix2.workgroup_scope,
+                    matrix2.flexible_dimensions,
+                    matrix2.reductions,
+                    matrix2.conversions,
+                    matrix2.per_element_operations,
+                    matrix2.tensor_addressing,
+                    matrix2.block_loads
+                );
+            }
+            if matrix2_ok {
+                extensions.push(c"VK_NV_cooperative_matrix2".as_ptr());
+            }
             if sharing {
                 extensions.push(c"VK_KHR_external_memory_fd".as_ptr());
                 extensions.push(c"VK_EXT_external_memory_dma_buf".as_ptr());
@@ -193,6 +336,10 @@ impl Gpu {
                 .compute_full_subgroups(true);
             let mut matrix =
                 vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
+            if matrix2_ok {
+                // `push_next` below appends the chain that starts at `matrix`.
+                matrix.p_next = (&mut matrix2 as *mut Matrix2Features).cast();
+            }
             let features = vk::PhysicalDeviceFeatures::default().shader_float64(true);
             let created = instance.create_device(
                 physical,
@@ -214,6 +361,26 @@ impl Gpu {
                 }
             };
             let queue = device.get_device_queue(family, 0);
+            let transfer = match copy_family {
+                Some(copy) => Some((
+                    copy,
+                    device.get_device_queue(copy, 0),
+                    device
+                        .create_command_pool(
+                            &vk::CommandPoolCreateInfo::default()
+                                .queue_family_index(copy)
+                                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
+                            None,
+                        )
+                        .map_err(|_| "gpu_unavailable")?,
+                    std::sync::Mutex::new(()),
+                )),
+                None => None,
+            };
+            let families = match copy_family {
+                Some(copy) => vec![family, copy],
+                None => vec![family],
+            };
             let pool = device
                 .create_command_pool(
                     &vk::CommandPoolCreateInfo::default()
@@ -235,12 +402,31 @@ impl Gpu {
                 )
                 .map_err(|_| "gpu_unavailable")?;
             let memory = instance.get_physical_device_memory_properties(physical);
+            let mut v13p = vk::PhysicalDeviceVulkan13Properties::default();
+            let mut all = vk::PhysicalDeviceProperties2::default().push_next(&mut v13p);
+            instance.get_physical_device_properties2(physical, &mut all);
+            let subgroups = (v13p.min_subgroup_size, v13p.max_subgroup_size);
+            let shapes = ash::khr::cooperative_matrix::Instance::new(&entry, &instance)
+                .get_physical_device_cooperative_matrix_properties(physical)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| p.scope == vk::ScopeKHR::SUBGROUP)
+                .map(|p| Shape {
+                    m: p.m_size,
+                    n: p.n_size,
+                    k: p.k_size,
+                    a: p.a_type,
+                    c: p.c_type,
+                    result: p.result_type,
+                })
+                .collect();
             let sharing =
                 sharing.then(|| ash::khr::external_memory_fd::Device::new(&instance, &device));
             Ok(Self {
                 core: Arc::new(Core {
                     _entry: entry,
                     instance,
+                    physical,
                     device,
                     queue,
                     pool,
@@ -248,6 +434,12 @@ impl Gpu {
                     memory,
                     sharing,
                     name,
+                    vendor: properties.vendor_id,
+                    shapes,
+                    subgroups,
+                    matrix2: matrix2_ok,
+                    transfer,
+                    families,
                     turn: std::sync::Mutex::new(()),
                 }),
             })
@@ -272,6 +464,11 @@ impl Gpu {
             let mut info = vk::BufferCreateInfo::default()
                 .size(bytes.max(4))
                 .usage(usage);
+            if core.families.len() > 1 {
+                info = info
+                    .sharing_mode(vk::SharingMode::CONCURRENT)
+                    .queue_family_indices(&core.families);
+            }
             if shared {
                 info = info.push_next(&mut external);
             }
@@ -329,6 +526,86 @@ impl Gpu {
             // SAFETY: the ranges were checked against both buffers above.
             device.cmd_copy_buffer(commands, from.buffer, to.buffer, &region);
         })
+    }
+    /// Starts copying host contents made by `staged` to byte `offset` of `to` on the copy
+    /// queue, beside whatever compute runs; `Copying::wait` (or dropping it) waits for it.
+    /// Without a copy queue the copy is done before this returns.
+    pub fn copy_staged_begin(
+        &self,
+        from: &Staged,
+        to: &Buffer,
+        offset: u64,
+    ) -> Result<Copying, &'static str> {
+        match &from.stage {
+            Some(stage) => self.copy_begin(stage, to, offset),
+            None => Ok(Copying { pending: None }),
+        }
+    }
+    /// `copy_staged_begin` for a whole buffer (host memory made by `host_buffer`, say).
+    pub fn copy_begin(
+        &self,
+        stage: &Buffer,
+        to: &Buffer,
+        offset: u64,
+    ) -> Result<Copying, &'static str> {
+        let core = &self.core;
+        let Some((_, queue, pool, turn)) = &core.transfer else {
+            self.copy(stage, 0, stage.bytes, to, offset)?;
+            return Ok(Copying { pending: None });
+        };
+        if offset + stage.bytes > to.bytes {
+            return Err("gpu_range");
+        }
+        let _turn = turn.lock().map_err(|_| "gpu_failed")?;
+        // SAFETY: the command buffer and fence live in the returned `Copying`, which waits
+        // for the device before freeing them; the caller keeps both buffers alive until then.
+        unsafe {
+            let commands = check(
+                core.device.allocate_command_buffers(
+                    &vk::CommandBufferAllocateInfo::default()
+                        .command_pool(*pool)
+                        .command_buffer_count(1),
+                ),
+                "gpu_failed",
+            )?[0];
+            let started = (|| {
+                core.device.begin_command_buffer(
+                    commands,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )?;
+                core.device.cmd_copy_buffer(
+                    commands,
+                    stage.buffer,
+                    to.buffer,
+                    &[vk::BufferCopy::default()
+                        .dst_offset(offset)
+                        .size(stage.bytes)],
+                );
+                core.device.end_command_buffer(commands)?;
+                let fence = core
+                    .device
+                    .create_fence(&vk::FenceCreateInfo::default(), None)?;
+                if let Err(e) = core.device.queue_submit(
+                    *queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[commands])],
+                    fence,
+                ) {
+                    core.device.destroy_fence(fence, None);
+                    return Err(e);
+                }
+                Ok(fence)
+            })();
+            match started {
+                Ok(fence) => Ok(Copying {
+                    pending: Some((core.clone(), commands, fence)),
+                }),
+                Err(_) => {
+                    core.device.free_command_buffers(*pool, &[commands]);
+                    Err("gpu_failed")
+                }
+            }
+        }
     }
     /// Whether buffers can be shared with another interface (`shared`, `export`).
     pub fn shares(&self) -> bool {
@@ -552,6 +829,43 @@ impl Gpu {
             return Ok(());
         };
         self.copy(stage, 0, stage.bytes, to, offset)
+    }
+    /// A zero-filled storage buffer in host memory that kernels read and write over the bus
+    /// (data kept for a while but used rarely, when device memory is short).
+    pub fn host_buffer(&self, bytes: u64) -> Result<Buffer, &'static str> {
+        let buffer = self.allocate(
+            bytes,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            false,
+        )?;
+        self.run(|device, commands| unsafe {
+            // SAFETY: the fill covers the whole buffer just created.
+            device.cmd_fill_buffer(commands, buffer.buffer, 0, vk::WHOLE_SIZE, 0);
+        })?;
+        Ok(buffer)
+    }
+    /// Device memory this process can still allocate by the driver's budget
+    /// (`VK_EXT_memory_budget`), or `None` where it is not reported.
+    pub fn free_memory(&self) -> Option<u64> {
+        let core = &self.core;
+        let mut budget = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+        let mut all = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut budget);
+        // SAFETY: plain query into structures owned here.
+        unsafe {
+            core.instance
+                .get_physical_device_memory_properties2(core.physical, &mut all);
+        }
+        let heaps = &core.memory.memory_heaps[..core.memory.memory_heap_count as usize];
+        let free: u64 = heaps
+            .iter()
+            .enumerate()
+            .filter(|(_, heap)| heap.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
+            .map(|(i, _)| budget.heap_budget[i].saturating_sub(budget.heap_usage[i]))
+            .sum();
+        (free > 0).then_some(free)
     }
     fn staging(&self, bytes: u64) -> Result<Buffer, &'static str> {
         self.allocate(
@@ -872,6 +1186,78 @@ impl Gpu {
     pub fn name(&self) -> &str {
         &self.core.name
     }
+    /// Whether the device multiplies `m x k` by `k x n` signed bytes into 32-bit sums.
+    fn has_int8(&self, m: u32, n: u32) -> bool {
+        self.core.shapes.iter().any(|s| {
+            (s.m, s.n, s.k) == (m, n, 32)
+                && s.a == vk::ComponentTypeKHR::SINT8
+                && s.result == vk::ComponentTypeKHR::SINT32
+        })
+    }
+    /// The integer product (`gemm8`) in the form this device's matrices and subgroups take;
+    /// all forms share buffers, constants and tiling.
+    pub fn gemm8(&self) -> Result<Kernel, &'static str> {
+        if self.has_int8(8, 16) {
+            self.kernel(shaders::GEMM8, 3, 5, Some(16))
+        } else if self.has_int8(16, 16) {
+            self.kernel(shaders::GEMM8_NV, 3, 5, Some(32))
+        } else {
+            Err("gpu_unsupported")
+        }
+    }
+    /// Whether kernels can run on 16-lane subgroups (Intel); elsewhere kernels written for
+    /// them take their 32-lane forms.
+    pub fn narrow(&self) -> bool {
+        let (min, max) = self.core.subgroups;
+        min <= 16 && 16 <= max
+    }
+    /// The subgroup size to require of a kernel that works at any size: 16 where the device
+    /// has it (the numbers checked on Intel), else its widest.
+    pub fn subgroup(&self) -> Option<u32> {
+        Some(if self.narrow() {
+            16
+        } else {
+            self.core.subgroups.1
+        })
+    }
+    /// The half-precision product (`gemm16`, f32 sums) in this device's form, as `gemm8`.
+    pub fn gemm16(&self) -> Result<Kernel, &'static str> {
+        let half = |m: u32| {
+            self.core.shapes.iter().any(|s| {
+                (s.m, s.n, s.k) == (m, 16, 16)
+                    && s.a == vk::ComponentTypeKHR::FLOAT16
+                    && s.result == vk::ComponentTypeKHR::FLOAT32
+            })
+        };
+        if half(8) {
+            self.kernel(shaders::GEMM16, 3, 5, Some(16))
+        } else if half(16) {
+            self.kernel(shaders::GEMM16_NV, 3, 5, Some(32))
+        } else {
+            Err("gpu_unsupported")
+        }
+    }
+    /// Whether the device multiplies 16 x 16 x 16 half-precision matrices with f32 sums at
+    /// subgroup scope (`fattend16`, `gemm16nv`).
+    pub fn has_half16(&self) -> bool {
+        self.core.shapes.iter().any(|s| {
+            (s.m, s.n, s.k) == (16, 16, 16)
+                && s.a == vk::ComponentTypeKHR::FLOAT16
+                && s.result == vk::ComponentTypeKHR::FLOAT32
+        })
+    }
+    /// Whether `VK_NV_cooperative_matrix2` kernels can run (`FATTEND16_NV`).
+    pub fn matrix2(&self) -> bool {
+        self.core.matrix2
+    }
+    /// The PCI vendor id (0x8086 Intel, 0x10de NVIDIA, 0x1002 AMD).
+    pub fn vendor(&self) -> u32 {
+        self.core.vendor
+    }
+    /// The cooperative matrix shapes the device multiplies at subgroup scope.
+    pub fn shapes(&self) -> &[Shape] {
+        &self.core.shapes
+    }
 }
 /// One dispatch: a kernel, its buffers in binding order, its push constants and the number
 /// of workgroups on each axis.
@@ -897,10 +1283,279 @@ pub fn floats(bytes: &[u8]) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
+    /// `KUNO_GPU_VENDOR=<hex>` (default NVIDIA): prints the device's cooperative matrix shapes.
+    #[test]
+    #[ignore = "needs the GPU"]
+    fn cooperative_shapes() {
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
+        for s in gpu.shapes() {
+            println!(
+                "  {}x{}x{} a {:?} c {:?} -> {:?}",
+                s.m, s.n, s.k, s.a, s.c, s.result
+            );
+        }
+    }
     use super::{
         super::safetensors::{narrow, widen},
         *,
     };
+
+    /// Fused attention (`fattend16`, NVIDIA-shaped matrices) against a plain softmax on the
+    /// CPU: mild scores, sharp ones (which raise the reference), and a Qwen 2512-sized head
+    /// set that is timed.
+    #[test]
+    #[ignore = "needs a GPU with 16 x 16 x 16 half-precision matrices (KUNO_GPU_VENDOR)"]
+    fn fused_attention_matches_cpu() {
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
+        let nv = std::env::var_os("KUNO_ATTEND_PLAIN").is_none() && gpu.matrix2();
+        println!("cooperative matrix 2: {nv}");
+        // KUNO_ATTEND_SPV=<file> KUNO_ATTEND_BLOCK=<queries>: another kernel (experiments).
+        let custom = std::env::var("KUNO_ATTEND_SPV")
+            .ok()
+            .map(|f| std::fs::read(f).unwrap());
+        let kernel = match &custom {
+            Some(code) => gpu.kernel(code, 4, 7, None).unwrap(),
+            None if nv => gpu.kernel(shaders::FATTEND16_NV, 4, 7, None).unwrap(),
+            None => gpu.kernel(shaders::FATTEND16, 4, 7, Some(32)).unwrap(),
+        };
+        let block: usize = std::env::var("KUNO_ATTEND_BLOCK")
+            .map_or(if nv { 64 } else { 32 }, |b| b.parse().unwrap());
+        let scale = 1.0 / 128f32.sqrt();
+        // Causal: query i sees keys 0..=i of its own `queries` and every key after them.
+        for (heads, queries, keys, spread, checks, causal) in [
+            (3usize, 100usize, 250usize, 1.0f32, 300usize, false),
+            (2, 64, 200, 6.0, 128, false),
+            (2, 90, 150, 3.0, 180, true),
+            (24, 4078, 4078, 1.5, 48, false),
+        ] {
+            let (qp, kp) = (queries.next_multiple_of(64), keys.next_multiple_of(64));
+            let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
+                let mut values = noise(heads * padded * 128, seed);
+                for (i, v) in values.iter_mut().enumerate() {
+                    *v = if (i / 128) % padded < live {
+                        widen(narrow(*v * spread))
+                    } else {
+                        0.0
+                    };
+                }
+                values
+            };
+            let (q, k, v) = (
+                make(qp, queries, 1, spread),
+                make(kp, keys, 2, spread),
+                make(kp, keys, 3, 1.0),
+            );
+            let upload = |values: &[f32]| {
+                let h = halves(values);
+                let b = gpu.buffer((h.len() * 2) as u64).unwrap();
+                gpu.upload(&b, 0, bytes_of(&h)).unwrap();
+                b
+            };
+            let (bq, bk, bv) = (upload(&q), upload(&k), upload(&v));
+            let out = gpu.buffer((qp * heads * 128 * 4) as u64).unwrap();
+            let constants = [
+                queries as u32,
+                keys as u32,
+                qp as u32,
+                kp as u32,
+                heads as u32,
+                scale.to_bits(),
+                u32::from(causal),
+            ];
+            let mut best = f64::MAX;
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                gpu.pass(&[Step {
+                    kernel: &kernel,
+                    buffers: &[&bq, &bk, &bv, &out],
+                    constants: &constants,
+                    groups: [(qp / block) as u32, heads as u32, 1],
+                }])
+                .unwrap();
+                best = best.min(started.elapsed().as_secs_f64() * 1e3);
+            }
+            let got = floats(&gpu.download(&out, 0, out.bytes() as usize).unwrap());
+            let (mut error, mut power) = (0f64, 0f64);
+            for check in 0..checks {
+                let (head, query) = ((check * 7) % heads, (check * 2731) % queries);
+                let qr = &q[(head * qp + query) * 128..][..128];
+                let logits: Vec<f64> = (0..keys)
+                    .map(|key| {
+                        if causal && key < queries && key > query {
+                            return f64::NEG_INFINITY;
+                        }
+                        let kr = &k[(head * kp + key) * 128..][..128];
+                        qr.iter()
+                            .zip(kr)
+                            .map(|(a, b)| f64::from(a * b))
+                            .sum::<f64>()
+                            * f64::from(scale)
+                    })
+                    .collect();
+                let top = logits.iter().copied().fold(f64::MIN, f64::max);
+                let weights: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();
+                let total: f64 = weights.iter().sum();
+                for c in 0..128 {
+                    let want: f64 = (0..keys)
+                        .map(|key| weights[key] * f64::from(v[(head * kp + key) * 128 + c]))
+                        .sum::<f64>()
+                        / total;
+                    let have = f64::from(got[query * heads * 128 + head * 128 + c]);
+                    error += (have - want).powi(2);
+                    power += want.powi(2);
+                }
+            }
+            let db = 10.0 * (power / error.max(1e-30)).log10();
+            let flops = 4.0 * (heads * queries * keys * 128) as f64;
+            println!(
+                "{heads} heads, {queries} queries x {keys} keys, spread {spread}, causal {causal}: {best:.2} ms ({:.1} TFLOPS), {db:.1} dB",
+                flops / best / 1e9
+            );
+            assert!(db > 40.0);
+        }
+    }
+    /// Fast attention (`fattend8nv`: int8 queries and keys with a scale per row) against an
+    /// exact softmax of the unrounded inputs, beside the half-precision kernel, and timed.
+    #[test]
+    #[ignore = "needs a GPU with VK_NV_cooperative_matrix2"]
+    fn fast_attention_matches_cpu() {
+        let gpu = Gpu::open(Select::Vendor(0x10de)).unwrap();
+        assert!(gpu.matrix2());
+        let fast = gpu.kernel(shaders::FATTEND8_NV, 6, 7, None).unwrap();
+        let plain = gpu.kernel(shaders::FATTEND16_NV, 4, 7, None).unwrap();
+        let scale = 1.0 / 128f32.sqrt();
+        for (heads, queries, keys, spread, causal) in
+            [(2usize, 90usize, 150usize, 3.0f32, true), (3, 100, 250, 1.0, false), (24, 4078, 4078, 1.5, false)]
+        {
+            let (qp, kp) = (queries.next_multiple_of(64), keys.next_multiple_of(64));
+            let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
+                let mut values = noise(heads * padded * 128, seed);
+                for (i, v) in values.iter_mut().enumerate() {
+                    *v = if (i / 128) % padded < live { widen(narrow(*v * spread)) } else { 0.0 };
+                }
+                values
+            };
+            let (q, k, v) = (make(qp, queries, 1, spread), make(kp, keys, 2, spread), make(kp, keys, 3, 1.0));
+            let quantize = |x: &[f32]| -> (Vec<u8>, Vec<f32>) {
+                let mut bytes = vec![0u8; x.len()];
+                let mut scales = Vec::with_capacity(x.len() / 128);
+                for (row, out) in x.chunks_exact(128).zip(bytes.chunks_exact_mut(128)) {
+                    let top = row.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-30) / 127.0;
+                    for (o, v) in out.iter_mut().zip(row) {
+                        *o = (v / top).round_ties_even().clamp(-127.0, 127.0) as i8 as u8;
+                    }
+                    scales.push(top);
+                }
+                (bytes, scales)
+            };
+            let ((q8, qs), (k8, ks)) = (quantize(&q), quantize(&k));
+            let up = |data: &[u8]| {
+                let b = gpu.buffer(data.len() as u64).unwrap();
+                gpu.upload(&b, 0, data).unwrap();
+                b
+            };
+            let halves16 = |x: &[f32]| up(bytes_of(&halves(x)));
+            let (bq, bk, bv) = (halves16(&q), halves16(&k), halves16(&v));
+            let (bq8, bk8) = (up(&q8), up(&k8));
+            let (bqs, bks) = (up(bytes_of(&qs)), up(bytes_of(&ks)));
+            let out = gpu.buffer((qp * heads * 128 * 4) as u64).unwrap();
+            let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits(), u32::from(causal)];
+            let mut results = Vec::new();
+            for (name, kernel, buffers) in [
+                ("half", &plain, vec![&bq, &bk, &bv, &out]),
+                ("int8", &fast, vec![&bq8, &bk8, &bv, &out, &bqs, &bks]),
+            ] {
+                let mut best = f64::MAX;
+                for _ in 0..3 {
+                    let started = std::time::Instant::now();
+                    gpu.pass(&[Step { kernel, buffers: &buffers, constants: &constants, groups: [(qp / 64) as u32, heads as u32, 1] }]).unwrap();
+                    best = best.min(started.elapsed().as_secs_f64() * 1e3);
+                }
+                results.push((name, best, floats(&gpu.download(&out, 0, out.bytes() as usize).unwrap())));
+            }
+            for (name, best, got) in &results {
+                let (mut error, mut power) = (0f64, 0f64);
+                for check in 0..64 {
+                    let (head, query) = ((check * 7) % heads, (check * 2731) % queries);
+                    let qr = &q[(head * qp + query) * 128..][..128];
+                    let logits: Vec<f64> = (0..keys)
+                        .map(|key| {
+                            if causal && key < queries && key > query {
+                                return f64::NEG_INFINITY;
+                            }
+                            let kr = &k[(head * kp + key) * 128..][..128];
+                            qr.iter().zip(kr).map(|(a, b)| f64::from(a * b)).sum::<f64>() * f64::from(scale)
+                        })
+                        .collect();
+                    let top = logits.iter().copied().fold(f64::MIN, f64::max);
+                    let weights: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();
+                    let total: f64 = weights.iter().sum();
+                    for c in 0..128 {
+                        let want: f64 = (0..keys).map(|key| weights[key] * f64::from(v[(head * kp + key) * 128 + c])).sum::<f64>() / total;
+                        let have = f64::from(got[query * heads * 128 + head * 128 + c]);
+                        error += (have - want).powi(2);
+                        power += want.powi(2);
+                    }
+                }
+                let db = 10.0 * (power / error.max(1e-30)).log10();
+                println!("{heads} heads, {queries} x {keys}, causal {causal}, {name}: {best:.2} ms, {db:.1} dB");
+                assert!(db > 30.0);
+            }
+        }
+    }
+
+    /// `KUNO_GPU_VENDOR=<hex> [KUNO_GEMM8_SPV=<file>]`: the INT8 product at Qwen 2.1's step
+    /// shapes (8448 tokens), all rows in one dispatch against blocks of rows.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn gemm8_blocking_at_qwen_shapes() {
+        let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        let custom = std::env::var("KUNO_GEMM8_SPV").ok().map(|f| std::fs::read(f).unwrap());
+        let kernel = match &custom {
+            Some(code) => gpu.kernel(code, 3, 5, Some(32)).unwrap(),
+            None => gpu.gemm8().unwrap(),
+        };
+        let tokens = 8448usize;
+        for (rows, columns) in [(12288usize, 4096usize), (4096, 4096), (24576, 4096), (4096, 12288)] {
+            let a = gpu.buffer((tokens * columns) as u64).unwrap();
+            let b = gpu.buffer((rows * columns) as u64).unwrap();
+            let out = gpu.buffer((tokens * rows) as u64 * 4).unwrap();
+            let buffers = [&a, &b, &out];
+            for block in [8usize] {
+                let tiles = rows / 256;
+                let constants: Vec<[u32; 5]> = (0..tiles)
+                    .step_by(block)
+                    .map(|first| [columns as u32, 0, (first * 256 * columns) as u32, (first * 256) as u32, rows as u32])
+                    .collect();
+                let steps: Vec<Step> = constants
+                    .iter()
+                    .enumerate()
+                    .map(|(i, constants)| Step {
+                        kernel: &kernel,
+                        buffers: &buffers,
+                        constants,
+                        groups: [block.min(tiles - i * block) as u32, (tokens / 128) as u32, 1],
+                    })
+                    .collect();
+                gpu.pass(&steps).unwrap();
+                let mut best = f64::MAX;
+                for _ in 0..3 {
+                    let started = std::time::Instant::now();
+                    gpu.pass(&steps).unwrap();
+                    best = best.min(started.elapsed().as_secs_f64());
+                }
+                let ops = 2.0 * (tokens * rows * columns) as f64;
+                println!("{rows}x{columns}, blocks of {block} tiles: {:.2} ms, {:.1} TOPS", best * 1e3, ops / best / 1e12);
+            }
+        }
+    }
 
     /// Deterministic values in -1..1.
     fn noise(count: usize, seed: u64) -> Vec<f32> {
@@ -1031,10 +1686,13 @@ mod tests {
     /// The integer kernel is exact, so it is compared bit for bit, then timed at the shapes of
     /// the DiT's four linear layers.
     #[test]
-    #[ignore = "needs the Intel GPU"]
+    #[ignore = "needs the GPU (KUNO_GPU_VENDOR, default Intel)"]
     fn gemm8_is_exact_and_reports_speed() {
-        let gpu = Gpu::open(Select::Vendor(0x8086)).unwrap();
-        let kernel = gpu.kernel(shaders::GEMM8, 3, 5, Some(16)).unwrap();
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x8086, |v| u32::from_str_radix(&v, 16).unwrap());
+        let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
+        println!("{}", gpu.name());
+        let kernel = gpu.gemm8().unwrap();
         let bytes = |count: usize, seed: u64| -> Vec<i8> {
             noise(count, seed)
                 .iter()

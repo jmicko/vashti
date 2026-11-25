@@ -292,8 +292,8 @@ verifies checksums, then runs the binary's install/upgrade transaction. It reads
 confirmation from `/dev/tty`, so piping the script does not bypass the interruption
 prompt. `KUNO_YES=1` explicitly accepts interruption for unattended installations.
 
-Package with `KUNO_SD_SOURCE_DIR` and `KUNO_SD_BUILD_DIR` pointing at the prepared
-native engine source/build, then run `apps/kuno/scripts/package-release.sh`.
+Package with `apps/kuno/scripts/package-release.sh` (the image engine is Rust and needs
+no prepared native build).
 `CHECK_ONLY=1 apps/vashti/scripts/publish-release.sh` validates signatures and
 artifacts without requesting an upload key or uploading.
 

@@ -1,0 +1,27 @@
+// Qwen Image 2512 latent rows (`[token][64]`) into the image stream: `img_in` with bias,
+// out[token][o] = rows[token] . weight[o] + bias[o] (padded tokens: zeros). One workgroup per
+// token, 12 outputs per invocation. Dispatch: x = padded tokens.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Rows { vec4 rows[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { vec4 weight[]; };
+layout(set = 0, binding = 2) readonly buffer Bias { float bias[]; };
+layout(set = 0, binding = 3) writeonly buffer Stream { float x[]; };
+layout(push_constant) uniform Constants { uint tokens; } p;
+const uint DIM = 3072;
+
+shared vec4 row[16];
+
+void main() {
+    uint token = gl_WorkGroupID.x, lane = gl_LocalInvocationIndex;
+    bool live = token < p.tokens;
+    if (lane < 16) row[lane] = live ? rows[token * 16 + lane] : vec4(0.0);
+    memoryBarrierShared();
+    barrier();
+    for (uint k = 0; k < DIM / 256; k++) {
+        uint o = lane + k * 256;
+        float sum = bias[o];
+        for (uint j = 0; j < 16; j++) sum += dot(row[j], weight[o * 16 + j]);
+        x[token * DIM + o] = live ? sum : 0.0;
+    }
+}

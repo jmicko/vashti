@@ -443,7 +443,6 @@ pub(crate) fn ollama_drop_in(upstream: SocketAddr) -> String {
 
 fn artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Vec<Artifact>> {
     let mut artifacts = base_artifacts(installation, executable)?;
-    artifacts.extend(crate::image_engine::installed_artifacts()?);
     artifacts.extend(native_text_artifacts(
         installation.config.native_text.as_ref(),
     )?);
@@ -833,19 +832,10 @@ pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Resu
     transaction.verify_installed()?;
     let mut installation = current_installation()?;
     if let Some(image) = &image {
-        if !cfg!(feature = "native-image")
-            && (image.engine == crate::image_engine::ImageEngine::Native
-                || image
-                    .collections
-                    .iter()
-                    .any(|id| id == "qwen-image-2512-fp8"))
-        {
+        if !crate::image_engine::EMBEDDED_ENGINE {
             return Err("image_engine_not_in_this_build");
         }
         image.validate()?;
-        if image.engine == crate::image_engine::ImageEngine::ManagedSycl {
-            crate::image_engine::VerifiedRuntime::load(image.runtime.as_deref().unwrap())?;
-        }
         for id in &image.collections {
             crate::collections::verify(&image.models, id)?;
         }
@@ -975,50 +965,20 @@ pub fn configure_native_text(native: Option<crate::native_text::Config>) -> Resu
         config
     });
     installation.config.validate()?;
-    if installation.config.image.as_ref().is_some_and(|image| {
-        image
-            .collections
-            .iter()
-            .any(|id| id == "qwen-image-2512-fp8")
-            || image.engine == crate::image_engine::ImageEngine::Native
-    }) && !cfg!(feature = "native-image")
-    {
-        return Err("image_engine_not_in_this_build");
-    }
+    require_image_engine(&installation.config)?;
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
     let mut artifacts = base_artifacts(&installation, executable)?;
-    artifacts.extend(crate::image_engine::installed_artifacts()?);
     artifacts.extend(native_assets);
     transaction.replace(&artifacts, &mut SystemdHost { installation })
 }
 
-/// Install a verified optional runtime through the existing reversible setup
-/// transaction. This does not enable it or change image collections/GPU choice.
-pub fn install_image_runtime(directory: &Path, manifest_sha256: &str) -> Result<()> {
-    require_root()?;
-    let runtime = crate::image_engine::bundle_artifacts(directory, manifest_sha256)?;
-    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
-    transaction.verify_installed()?;
-    let installation = current_installation()?;
-    if installation.config.image.as_ref().is_some_and(|image| {
-        image.engine == crate::image_engine::ImageEngine::Native
-            || image
-                .collections
-                .iter()
-                .any(|id| id == "qwen-image-2512-fp8")
-    }) && !cfg!(feature = "native-image")
-    {
+/// Images and video need this executable to carry the image engine (the default build).
+fn require_image_engine(config: &Config) -> Result<()> {
+    if config.image.is_some() && !crate::image_engine::EMBEDDED_ENGINE {
         return Err("image_engine_not_in_this_build");
     }
-    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
-        .map_err(|_| "executable_unavailable")?;
-    let mut artifacts = base_artifacts(&installation, executable)?;
-    artifacts.extend(native_text_artifacts(
-        installation.config.native_text.as_ref(),
-    )?);
-    artifacts.extend(runtime);
-    transaction.replace(&artifacts, &mut SystemdHost { installation })
+    Ok(())
 }
 
 fn timeout_config(
@@ -1047,16 +1007,7 @@ pub fn configure_timeouts(response_headers: Option<u64>, stream_idle: Option<u64
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_installed()?;
     let mut installation = current_installation()?;
-    if installation.config.image.as_ref().is_some_and(|image| {
-        image.engine == crate::image_engine::ImageEngine::Native
-            || image
-                .collections
-                .iter()
-                .any(|id| id == "qwen-image-2512-fp8")
-    }) && !cfg!(feature = "native-image")
-    {
-        return Err("image_engine_not_in_this_build");
-    }
+    require_image_engine(&installation.config)?;
     installation.config = timeout_config(&installation.config, response_headers, stream_idle)?;
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
@@ -1110,16 +1061,7 @@ pub fn upgrade_for_user(cli_user: Option<&str>) -> Result<()> {
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_installed()?;
     let installation = current_installation()?;
-    if installation.config.image.as_ref().is_some_and(|image| {
-        image.engine == crate::image_engine::ImageEngine::Native
-            || image
-                .collections
-                .iter()
-                .any(|id| id == "qwen-image-2512-fp8")
-    }) && !cfg!(feature = "native-image")
-    {
-        return Err("image_engine_not_in_this_build");
-    }
+    require_image_engine(&installation.config)?;
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
     let cli = crate::shell_export::prepare_for_user(installation.config.upstream, cli_user)?;
@@ -1663,8 +1605,8 @@ mod tests {
                 models: "/models/image".into(),
                 pci_address: "0000:04:00.0".into(),
                 timeout_seconds: 300,
-                engine: Default::default(),
-                runtime: None,
+                legacy_engine: None,
+                legacy_runtime: None,
                 collections: vec!["qwen-image-2512-fp8".into()],
             }),
         }

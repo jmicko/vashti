@@ -1,0 +1,63 @@
+// Qwen Image 2.1 attention values from the INT8 query/key/value product, in the machine-code
+// attention kernel's key/value stream (xe2/attend.rs): per head and chunk of 16 keys, after
+// the keys, [channel][key] (f16, from the product's scaled bf16 outputs), `stride`
+// padded keys per head. With `store` set, each value row also goes to the plain per-layer
+// cache `[head][capacity][128]` f16 at row `store_first + token` (live tokens only).
+// One workgroup moves 32 tokens of one head through shared memory, so both the read
+// (token rows) and the write (channel rows) are contiguous. Padded tokens are zeros.
+// Dispatch: x = heads, y = padded tokens / 32.
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 256) in;
+// Four bf16 values per uvec2.
+layout(set = 0, binding = 0) readonly buffer Sums { uvec2 g[]; };
+layout(set = 0, binding = 1) writeonly buffer Value { f16vec4 vt[]; };
+layout(set = 0, binding = 2) writeonly buffer Store { f16vec4 cache[]; };
+layout(push_constant) uniform Constants {
+    uint tokens;
+    uint stride;
+    uint store;
+    uint store_first;
+    uint capacity;
+} p;
+const uint DIM4 = 1024;
+
+vec4 widen(uvec2 b) {
+    return vec4(uintBitsToFloat(b.x << 16), uintBitsToFloat(b.x & 0xffff0000u),
+                uintBitsToFloat(b.y << 16), uintBitsToFloat(b.y & 0xffff0000u));
+}
+
+// [channel][token in block]
+shared float tile[4096];
+
+void main() {
+    uint head = gl_WorkGroupID.x;
+    uint first = gl_WorkGroupID.y * 32;
+    uint lane = gl_LocalInvocationIndex;
+    for (uint j = 0; j < 4; j++) {
+        uint index = lane + j * 256;
+        uint t = index >> 5, c = index & 31;
+        uint token = first + t;
+        bool live = token < p.tokens;
+        uint at = token * (3 * DIM4) + 2 * DIM4 + head * 32 + c;
+        vec4 value = live ? widen(g[at]) : vec4(0.0);
+        for (uint e = 0; e < 4; e++) tile[(c * 4 + e) * 32 + t] = value[e];
+        if (p.store != 0 && live) {
+            cache[((head * p.capacity) + p.store_first + token) * 32 + c] = f16vec4(value);
+        }
+    }
+    memoryBarrierShared();
+    barrier();
+    for (uint j = 0; j < 4; j++) {
+        uint index = lane + j * 256;
+        uint channel = index >> 3, quad = index & 7;
+        uint at = channel * 32 + quad * 4;
+        uint key = first + quad * 4;
+        vt[(head * (p.stride >> 4) + (key >> 4)) * 1024 + 512 + channel * 4 + ((key & 15) >> 2)] =
+            f16vec4(tile[at], tile[at + 1], tile[at + 2], tile[at + 3]);
+    }
+}

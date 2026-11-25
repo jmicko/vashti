@@ -24,10 +24,8 @@ rav1e = { version = "0.8", default-features = false, features = ["threading", "a
 flacenc = { version = "0.5", optional = true }
 
 [features]
-native-sd = ["dep:cc", "video-encode"]
 video-encode = ["dep:rav1e", "dep:flacenc"]
 # Sample MiniMax H3 with the Rust DiT instead of the C++ engine's. Off until it is as fast.
 rust-dit = []
-
-[build-dependencies]
-cc = { version = "1", optional = true }
+# The image worker (every model in Rust).
+rust-image = ["video-encode", "rust-dit"]

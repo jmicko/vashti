@@ -141,9 +141,7 @@ impl GpuEncoder {
                     conv1: place_conv(file, conv1, h, v)?,
                     norm2: place_norm(file, norm2, v)?,
                     conv2: place_conv(file, conv2, h, v)?,
-                    shortcut: shortcut
-                        .map(|c| place_conv(file, c, h, v))
-                        .transpose()?,
+                    shortcut: shortcut.map(|c| place_conv(file, c, h, v)).transpose()?,
                 },
                 Step::Out { norm, conv } => PlacedStep::Out {
                     norm: place_norm(file, norm, v)?,
@@ -165,7 +163,7 @@ impl GpuEncoder {
             stats: gpu.kernel(shaders::ESTATS, 2, 3, None)?,
             merge: gpu.kernel(shaders::ESTATSEND, 2, 2, None)?,
             bias: gpu.kernel(shaders::EBIAS, 3, 4, None)?,
-            gemm: gpu.kernel(shaders::GEMM16, 3, 5, Some(16))?,
+            gemm: gpu.gemm16()?,
             weights,
             vectors,
             steps: placed_steps,
@@ -209,11 +207,7 @@ impl GpuEncoder {
             }
         }
         let bytes = largest as u64 * 4;
-        let buffers = [
-            gpu.buffer(bytes)?,
-            gpu.buffer(bytes)?,
-            gpu.buffer(bytes)?,
-        ];
+        let buffers = [gpu.buffer(bytes)?, gpu.buffer(bytes)?, gpu.buffer(bytes)?];
         let product = gpu.buffer(bytes)?;
         let col = gpu.buffer(CHUNK as u64 * 2)?;
         let partial = gpu.buffer((GROUPS * SLICES * 16) as u64)?;
@@ -243,7 +237,16 @@ impl GpuEncoder {
         for step in &self.steps {
             match step {
                 PlacedStep::Conv(conv) => {
-                    work.conv(&mut calls, conv, &buffers[x], w, h, None, &buffers[t], false);
+                    work.conv(
+                        &mut calls,
+                        conv,
+                        &buffers[x],
+                        w,
+                        h,
+                        None,
+                        &buffers[t],
+                        false,
+                    );
                     std::mem::swap(&mut x, &mut t);
                     (w, h) = (conv.conv.out(w), conv.conv.out(h));
                 }
@@ -265,7 +268,16 @@ impl GpuEncoder {
                     }
                 }
                 PlacedStep::Out { norm, conv } => {
-                    work.conv(&mut calls, conv, &buffers[x], w, h, Some(norm), &buffers[t], false);
+                    work.conv(
+                        &mut calls,
+                        conv,
+                        &buffers[x],
+                        w,
+                        h,
+                        Some(norm),
+                        &buffers[t],
+                        false,
+                    );
                     std::mem::swap(&mut x, &mut t);
                 }
             }

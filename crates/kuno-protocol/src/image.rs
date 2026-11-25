@@ -62,9 +62,6 @@ impl ImageRecipe {
         ) {
             return Err("unsupported_image_workflow");
         }
-        if self.attention == ImageAttention::Fast && self.workflow == QWEN_RECIPE {
-            return Err("image_attention_unsupported");
-        }
         if self.prompt.len() > 32768
             || self.negative_prompt.len() > 32768
             || self.prompt.contains('\0')
@@ -115,6 +112,15 @@ impl ImageRecipe {
             "qwen-image-2512-fp8"
         } else {
             "qwen-image-2.1-int8"
+        }
+    }
+    /// Every collection that can run this recipe, preferred first: Qwen Image 2512 runs from
+    /// Kuno's INT8 conversion of the publisher's weights or from ComfyUI's FP8 file.
+    pub fn collection_ids(&self) -> &'static [&'static str] {
+        if self.workflow == QWEN_RECIPE {
+            &["qwen-image-2512-int8", "qwen-image-2512-fp8"]
+        } else {
+            &["qwen-image-2.1-int8"]
         }
     }
     pub fn validate_execution(&self) -> Result<(), &'static str> {

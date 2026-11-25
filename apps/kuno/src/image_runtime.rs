@@ -21,29 +21,27 @@ pub struct ImageConfig {
     pub timeout_seconds: u64,
     #[serde(default = "default_collections")]
     pub collections: Vec<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "crate::image_engine::ImageEngine::is_native"
-    )]
-    pub engine: crate::image_engine::ImageEngine,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<String>,
+    /// Read from configurations written by earlier Kuno versions, which could name a
+    /// separately installed image runtime (`"engine": "managed_sycl"`, `"runtime": id`).
+    /// Kuno's own executable is now the only image worker, so both are ignored and never
+    /// written back: the next configuration write (an upgrade) drops them.
+    #[serde(default, rename = "engine", skip_serializing)]
+    pub legacy_engine: Option<LegacyEngine>,
+    #[serde(default, rename = "runtime", skip_serializing)]
+    pub legacy_runtime: Option<String>,
+}
+/// The image engines earlier configurations could name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyEngine {
+    Native,
+    ManagedSycl,
 }
 fn default_collections() -> Vec<String> {
     vec!["qwen-image-2512-fp8".into()]
 }
 impl ImageConfig {
     pub fn validate(&self) -> Result<(), &'static str> {
-        use crate::image_engine::{ImageEngine, SYCL_RUNTIME};
-        match self.engine {
-            ImageEngine::Native if self.runtime.is_some() => {
-                return Err("image_runtime_configuration_invalid");
-            }
-            ImageEngine::ManagedSycl if self.runtime.as_deref() != Some(SYCL_RUNTIME) => {
-                return Err("image_runtime_configuration_invalid");
-            }
-            _ => {}
-        }
         // Every known collection may be enabled at once; duplicates are rejected.
         if self.collections.is_empty()
             || self.collections.len() > crate::collections::KNOWN_COLLECTIONS
@@ -71,16 +69,12 @@ impl ImageConfig {
         }
         Ok(())
     }
-    /// Whether a MiniMax video collection is enabled (it needs the managed SYCL engine).
+    /// Whether a MiniMax video collection is enabled.
     pub fn video_enabled(&self) -> bool {
         self.collections.iter().any(|id| {
             id == kuno_protocol::MINIMAX_H3_COLLECTION
                 || id == kuno_protocol::MINIMAX_H3_REFERENCE_COLLECTION
         })
-    }
-    pub fn uses_sycl(&self, workflow: &str) -> bool {
-        self.engine == crate::image_engine::ImageEngine::ManagedSycl
-            && workflow != kuno_protocol::QWEN_RECIPE
     }
 }
 pub type Output = Result<Vec<u8>, &'static str>;
@@ -217,24 +211,11 @@ pub async fn run_with_previews(
         return fail("image_cancelled");
     }
     let mut command = Command::new(executable);
-    if config.uses_sycl(&recipe.workflow) {
-        let id = config.runtime.as_deref().unwrap();
-        if let Err(code) = crate::image_engine::VerifiedRuntime::load(id) {
-            return fail(code);
-        }
-        command.args([
-            "image-worker-launch",
-            id,
-            config.models.to_str().unwrap(),
-            &config.pci_address,
-        ]);
-    } else {
-        command.args([
-            "image-worker",
-            config.models.to_str().unwrap(),
-            &config.pci_address,
-        ]);
-    }
+    command.args([
+        "image-worker",
+        config.models.to_str().unwrap(),
+        &config.pci_address,
+    ]);
     command
         .env_clear()
         .env("PATH", "/usr/bin:/bin")

@@ -1,0 +1,48 @@
+// Cached prefix keys and values (`[head][capacity][128]` f16, rows 0..count) into the
+// fused attention kernel's key and value rows (`[head][stride][128]`) at `base + row`; with
+// `int8` (fast attention) the keys go to int8 rows with a scale each instead.
+// One invocation per row, head and 8 channels. Dispatch: x = rows * 16 / 64 (rounded up),
+// y = heads.
+#version 460
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer KeyCache { uvec4 ck[]; };
+layout(set = 0, binding = 1) readonly buffer ValueCache { uvec4 cv[]; };
+layout(set = 0, binding = 2) writeonly buffer Keys { uvec4 k[]; };
+layout(set = 0, binding = 3) writeonly buffer Values { uvec4 v[]; };
+layout(set = 0, binding = 4) writeonly buffer Keys8 { uvec2 k8[]; };
+layout(set = 0, binding = 5) writeonly buffer KeyScales { float ks[]; };
+layout(push_constant) uniform Constants {
+    uint count; uint base; uint stride; uint capacity; uint int8;
+} p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x, head = gl_WorkGroupID.y;
+    uint row = i >> 4, part = i & 15u;
+    // Whole rows of 16 invocations either all return or all stay (the clustered max).
+    if (row >= p.count) return;
+    uint from = (head * p.capacity + row) * 16 + part;
+    uint to = (head * p.stride + p.base + row) * 16 + part;
+    v[to] = cv[from];
+    if (p.int8 == 0) {
+        k[to] = ck[from];
+        return;
+    }
+    uvec4 h = ck[from];
+    vec2 f[4] = vec2[4](unpackHalf2x16(h.x), unpackHalf2x16(h.y), unpackHalf2x16(h.z),
+                        unpackHalf2x16(h.w));
+    float top = 0.0;
+    for (uint i = 0; i < 4; i++) top = max(top, max(abs(f[i].x), abs(f[i].y)));
+    float scale = max(subgroupClusteredMax(top, 16), 1e-30) / 127.0;
+    uint packed[2] = uint[2](0u, 0u);
+    for (uint i = 0; i < 4; i++) {
+        ivec2 b = ivec2(clamp(roundEven(f[i] / scale), -127.0, 127.0));
+        packed[i >> 1] |= ((uint(b.x) & 255u) | ((uint(b.y) & 255u) << 8)) << ((i & 1) * 16);
+    }
+    uint row8 = head * p.stride + p.base + row;
+    k8[row8 * 16 + part] = uvec2(packed[0], packed[1]);
+    if (part == 0) ks[row8] = scale;
+}

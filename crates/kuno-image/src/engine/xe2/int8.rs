@@ -55,6 +55,15 @@ pub struct Shape {
     /// store that as half floats in the next product's token layout (see `Shape::gated`).
     /// The value is the first bias value in the vectors, a fourth argument.
     pub gate: Option<u32>,
+    /// INT8 only: instead of storing the sums, store `silu(g) * v` as bf16, `g` and `v` each
+    /// sum scaled by its token's activation scale (a fourth argument, one f32 per token) and
+    /// its weight row's scale (`weight_scales` bytes after the start of the B stream, one f32
+    /// per stored weight row). Each tile's 64 weight rows are 32 gates then their 32 values
+    /// (`gated_rows`); the output is `[token][rows / 2]` (see `Shape::gated8`).
+    pub silu8: Option<u32>,
+    /// INT8 only, without `silu8`: store each sum as bf16 after scaling it by its token's and
+    /// its weight row's scale (read as for `silu8`); the output is `[token][rows]` bf16.
+    pub scaled8: Option<u32>,
 }
 
 impl Shape {
@@ -80,6 +89,32 @@ impl Shape {
             c_row: (rows * 4) as u32,
             half: false,
             gate: None,
+            silu8: None,
+            scaled8: None,
+        })
+    }
+    /// An INT8 product whose sums leave scaled, as bf16 (`scaled8`); the weight scales sit
+    /// `weight_scales` bytes into the B stream's buffer, one f32 per weight row.
+    pub fn scaled8(
+        tokens: usize,
+        rows: usize,
+        columns: usize,
+        weight_scales: u32,
+    ) -> Option<Shape> {
+        Some(Shape {
+            c_row: (rows * 2) as u32,
+            scaled8: Some(weight_scales),
+            ..Self::linear(tokens, rows, columns)?
+        })
+    }
+    /// An INT8 feed-forward input product with its activation (`silu8`): `rows` stored weight
+    /// rows (half gates, half values) give `rows / 2` f32 outputs per token. The weight scales
+    /// sit `weight_scales` bytes into the B stream's buffer.
+    pub fn gated8(tokens: usize, rows: usize, columns: usize, weight_scales: u32) -> Option<Shape> {
+        Some(Shape {
+            c_row: (rows / 2 * 2) as u32,
+            silu8: Some(weight_scales),
+            ..Self::linear(tokens, rows, columns)?
         })
     }
     /// The same product for half-float operands: `columns` halves per token and weight row
@@ -123,6 +158,13 @@ pub fn gated_row(index: usize) -> usize {
     tile * 32 + within % 32 + (within / 32) * GATED
 }
 
+/// For `gated8`: the original row (of `[gates hidden][values hidden]`) stored at position
+/// `index`: each tile of 64 stored rows is 32 gates and then the 32 values they multiply.
+pub fn gated_rows(index: usize, hidden: usize) -> usize {
+    let (tile, within) = (index / 64, index % 64);
+    tile * 32 + within % 32 + (within / 32) * hidden
+}
+
 /// Rearranges row-major weights `[rows][columns]` into the kernel's B stream.
 pub fn weight_stream(weight: &[u8], rows: usize, columns: usize, to: &mut [u8]) {
     let tile = OUTPUTS * columns;
@@ -162,6 +204,8 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
         c_row,
         half,
         gate,
+        silu8,
+        scaled8,
     } = *s;
     let (sum, operand) = if half { (F, Hf) } else { (D, B) };
     let (a_step, b_step) = ((ma * 256) as i32, (nb * 512) as i32);
@@ -190,7 +234,15 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
     k.mov(1, r(6, 1, D), imm(b_step * ks as i32), Swsb::NONE);
     k.mov(1, r(6, 2, D), imm((8 * ma * c_row) as i32), Swsb::NONE);
     // Bytes of the output from one tile of weight rows to the next.
-    let out_step = if gate.is_some() { 4 * 512 } else { 64 * nb };
+    let out_step = if gate.is_some() {
+        4 * 512
+    } else if silu8.is_some() {
+        16 * nb
+    } else if scaled8.is_some() {
+        32 * nb
+    } else {
+        64 * nb
+    };
     k.mov(1, r(6, 3, D), imm(out_step as i32), Swsb::NONE);
     k.mov(1, r(6, 4, D), imm(xc as i32), Swsb::NONE);
     k.mul(1, r(5, 4, D), r(6, 4, D), r(0, 14, Uw), w); // token tile = z·xc + x
@@ -398,6 +450,147 @@ pub fn kernel(s: &Shape) -> Vec<u8> {
         }
         for id in 1..5 {
             k.sync(Swsb::dst(id));
+        }
+    } else if let Some(scales_at) = silu8.or(scaled8) {
+        assert!(!half && ma == 4 && nb == 4);
+        let w = Swsb::after(1);
+        // Token scales (this tile's 32, read as 64) in 60..63, weight scales (this output
+        // tile's 64: gates 0..31, values 32..63) in 64..67, scratch 68.
+        let (tokens_at, rows_at, scratch) = (60, 64, 68);
+        k.mov(1, r(6, 6, D), imm(128), w);
+        k.mul(1, r(5, 6, D), r(6, 6, D), r(5, 8, Uw), w); // token tile * 128 bytes
+        k.mov(1, r(7, 6, Uq), r(5, 6, Ud), w);
+        k.add(1, r(11, 0, Q), r(1, 3, Q), r(7, 6, Q), w);
+        k.mov(1, r(6, 7, D), imm(256), w);
+        k.mul(1, r(5, 7, D), r(6, 7, D), r(0, 12, Uw), w); // output tile * 256 bytes
+        k.add(1, r(5, 7, D), r(5, 7, D), imm(scales_at as i32), w);
+        k.mov(1, r(7, 7, Uq), r(5, 7, Ud), w);
+        k.add(1, r(12, 0, Q), r(1, 1, Q), r(7, 7, Q), w);
+        k.send(
+            SFID_UGM,
+            r(tokens_at, 0, Ud),
+            r(11, 0, Ud),
+            null(Ud),
+            0,
+            0,
+            LOAD_32X64,
+            false,
+            Swsb::after_set(1, 0),
+        );
+        k.send(
+            SFID_UGM,
+            r(rows_at, 0, Ud),
+            r(12, 0, Ud),
+            null(Ud),
+            0,
+            0,
+            LOAD_32X64,
+            false,
+            Swsb::after_set(1, 1),
+        );
+        k.sync(Swsb::dst(0));
+        k.sync(Swsb::dst(1));
+        // One address register per token (16..47).
+        let addr = |t: u32| 16 + t;
+        k.mov(1, r(addr(0), 0, Q), r(4, 0, Q), w);
+        for t in 1..8 * ma {
+            k.add(
+                1,
+                r(addr(t), 0, Q),
+                r(addr(t - 1), 0, Q),
+                imm(c_row as i32),
+                w,
+            );
+        }
+        let mut stores = 0u32;
+        // To bf16, rounded to nearest: the upper half after adding half its unit.
+        let bf16 = |k: &mut Asm, from: u32, to: Reg| {
+            k.add(16, r(from, 0, Ud), r(from, 0, Ud), imm(0x8000), w);
+            k.mov(16, to, r(from, 1, Uw).step2(), w);
+        };
+        if scaled8.is_some() {
+            for tf in 0..ma {
+                for row in 0..8 {
+                    let token = tf * 8 + row;
+                    let ts = r(tokens_at + token / 16, token % 16, F).s();
+                    for half in 0..2 {
+                        let id = (stores % 32) as u16;
+                        let packed = 72 + id as u32;
+                        if stores >= 32 {
+                            k.sync(Swsb::dst(id));
+                        }
+                        for j in 0..2 {
+                            let n = 2 * half + j;
+                            let x = c(tf * nb + n) + row;
+                            k.mov(16, r(x, 0, F), r(x, 0, D), w);
+                            k.mul(16, r(x, 0, F), r(x, 0, F), ts, w);
+                            k.mul(16, r(x, 0, F), r(x, 0, F), r(rows_at + n, 0, F), w);
+                            bf16(&mut k, x, r(packed, 16 * j, Uw));
+                        }
+                        k.send(
+                            SFID_UGM,
+                            null(Ud),
+                            r(addr(token), 0, Ud),
+                            r(packed, 0, Ud),
+                            1,
+                            (64 * half) << 12,
+                            STORE_64X8,
+                            false,
+                            Swsb::after_set(1, id),
+                        );
+                        stores += 1;
+                    }
+                }
+            }
+        }
+        for tf in 0..if silu8.is_some() { ma } else { 0 } {
+            for row in 0..8 {
+                let token = tf * 8 + row;
+                let ts = r(tokens_at + token / 16, token % 16, F).s();
+                let id = (stores % 32) as u16;
+                let packed = 72 + id as u32;
+                if stores >= 32 {
+                    k.sync(Swsb::dst(id));
+                }
+                for j in 0..2 {
+                    let (g, v) = (c(tf * nb + j) + row, c(tf * nb + 2 + j) + row);
+                    k.mov(16, r(g, 0, F), r(g, 0, D), w);
+                    k.mul(16, r(g, 0, F), r(g, 0, F), ts, w);
+                    k.mul(16, r(g, 0, F), r(g, 0, F), r(rows_at + j, 0, F), w);
+                    k.mov(16, r(v, 0, F), r(v, 0, D), w);
+                    k.mul(16, r(v, 0, F), r(v, 0, F), ts, w);
+                    k.mul(16, r(v, 0, F), r(v, 0, F), r(rows_at + 2 + j, 0, F), w);
+                    // silu(g) = g / (1 + 2^(-g log2 e))
+                    k.mul(
+                        16,
+                        r(scratch, 0, F),
+                        r(g, 0, F),
+                        immf(-std::f32::consts::LOG2_E),
+                        w,
+                    );
+                    k.math(16, Math::Exp, r(scratch, 0, F), r(scratch, 0, F), w);
+                    k.add(16, r(scratch, 0, F), r(scratch, 0, F), immf(1.0), w);
+                    k.math(16, Math::Inv, r(scratch, 0, F), r(scratch, 0, F), w);
+                    k.mul(16, r(scratch, 0, F), r(scratch, 0, F), r(g, 0, F), w);
+                    k.mul(16, r(g, 0, F), r(scratch, 0, F), r(v, 0, F), w);
+                    bf16(&mut k, g, r(packed, 16 * j, Uw));
+                }
+                k.send(
+                    SFID_UGM,
+                    null(Ud),
+                    r(addr(token), 0, Ud),
+                    r(packed, 0, Ud),
+                    1,
+                    0,
+                    STORE_64X8,
+                    false,
+                    Swsb::after_set(1, id),
+                );
+                stores += 1;
+            }
+        }
+        for id in 0..32.min(stores) {
+            k.sync(Swsb::dst(id as u16));
         }
     } else {
         // Row-major output: one address register per token (the operand registers are free now),

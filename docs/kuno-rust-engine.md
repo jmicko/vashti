@@ -37,6 +37,24 @@ paths from the environment.
 | Audio encoder, video references | C++ | not started | Kuno does not send audio or video references yet |
 | Clip encoding (AV1, FLAC, MP4) | n/a | Rust since the first video release | done |
 
+| Stage (Qwen Image 2.1) | C++ today | Rust | State |
+|---|---|---|---|
+| Diffusion transformer (32 blocks, INT8) | about 1.14 s per step at 1184x1776 (8214 tokens) | prompt and references once per request (their keys and values kept per block), then target-only steps: 1.23 s per step at 1184x1776; 38 to 43 dB from captured C++ steps (the CPU reference too) | Rust (dev build) |
+| Text encoder (Qwen3-VL 8B, 36 layers) | C++ | the MiniMax encoder with its sizes from the file; 0.77 s for 469 tokens; 38.4 dB from the CPU reference | Rust (dev build) |
+| Vision tower (references) | C++ | the MiniMax tower with its prefix and width from the file; 146 ms at 832x544 | Rust (dev build) |
+| Prompt template and emphasis | C++ | `(text:1.5)`, `[text]`, `BREAK` byte for byte (18 tricky prompts) | Rust (dev build) |
+| VAE decoder (RGBA) | 2.40 s at 1184x1776 | 1.58 s; 86 to 87 dB from the engine, worst byte 1 | Rust (dev build) |
+| VAE encoder (references, RGBA) | C++ | 20 to 42 ms; 64 to 68 dB from the engine | Rust (dev build) |
+| Pipeline (FLUX schedule, Euler, CFG, previews) | `image.cpp` | `engine/qwen_image.rs`, `native/qwen.rs` | Rust (dev build): text-to-image 40.7 dB from the engine's image of the same request; edits the same picture (CFG amplifies the encoders' small differences) |
+
+
+| Stage (Qwen Image 2512, FP8) | C++ today (Vulkan) | Rust | State |
+|---|---|---|---|
+| Diffusion transformer (60 dual-stream blocks) | about 17.8 s per pass at 832x1248 (4056 tokens) | INT8 block linears made at load from the FP8 weights (rotated, per row), FP8 modulation evaluated exactly per step: 0.53 s per pass (0.49 s fast); 37 to 48 dB from captured C++ steps | Rust (dev build) |
+| Text encoder (Qwen2.5-VL 7B, FP8) | C++ | the streamed GPU encoder with biases, no query/key norms, plain rotary and the final norm; 0.69 s per prompt; 30 to 32 dB from the engine | Rust (dev build) |
+| VAE decoder (Wan 2.1, RGB) | 2.8 s at 256x256, tiles at 832x1248 | the 2.1 decoder with the causal kernels' last time slice: 0.32 s at 832x1248; 34.5 dB from the engine's half-float decode | Rust (dev build) |
+| Pipeline (simple schedule with shift, Euler, CFG, previews) | `image.cpp` | `engine/qwen2512_image.rs`, `native/qwen2512.rs` | Rust (dev build): 20 steps at 832x1248 with CFG 23.1 s warm (C++ 755 s); the same picture, 3.5 of 255 apart on average |
+
 The audio decoder runs on CPU threads on purpose: the engine hands over the audio latent
 before it decodes video frames, so audio is decoded while the GPU is busy with video, and it
 is skipped entirely when a request turns audio off. The C++ audio VAE is no longer loaded.
@@ -959,6 +977,319 @@ Checked: all seven video modes, same-seed clips, an image job after video, cance
 (SIGTERM during sampling ends the request after the current step with `image_cancelled`).
 A warm image-to-video clip takes 38.3 s, the first 48.0 to 49.3 s, as before.
 
+## Qwen Image 2.1 in Rust (2026-11-23)
+
+Qwen Image 2.1 is a single-stream DiT (32 blocks of width 4096, 32 heads, SwiGLU 12288,
+INT8 ConvRot linears like MiniMax H3's) over the prompt's tokens, each reference's latent
+in place of its vision tokens, and the target latent. Its LayerNorms have no weights; a
+block scales them by `1 + m` and gates its residual adds by `tanh(m)`. The prefix (prompt
+and references) is modulated with the time-zero row and never attends to the target, and
+text runs attend causally, so the prefix's keys and values do not depend on the step: the
+GPU form runs the prefix once per request, run by run through all blocks (text runs with a
+small causal shader, images with the machine-code attention), keeps each block's keys and
+values, and runs only the target's tokens per step. Their attention reads the target's own
+keys first and the kept prefix after them (the softmax does not depend on the keys' order,
+and the target's keys stay aligned for the stream writers); the attention kernel takes a
+query count separate from its key stride for this.
+
+The VAE is a Wan 2.2-style RGBA image VAE (latent 64 channels at 1/16). For one image its
+temporal paths reduce to their first-chunk forms: the decoder's up blocks add a channel-
+repeating depth-to-space shortcut, the encoder's down blocks an average-pooling shortcut
+whose grouping includes the zero frame padded in front of a single image (half its channels
+read zeros). Both run as unfolded convolutions in `gemm16` with the RMS norm, SiLU, nearest
+upsampling and strided reads folded into the unfold.
+
+The text encoder and vision tower are MiniMax H3's code with their sizes read from the
+file; the 8B file's INT8 token embeddings are scaled and un-rotated in the engine's order.
+The engine parses A1111-style emphasis in the user's text (and tokenizes each piece
+separately), so `prompt.rs` ports that byte for byte.
+
+Measured (B70, 1184x1776, 50 steps unless stated):
+
+| | C++ engine | Rust |
+|---|---|---|
+| DiT step | about 1.14 s | 1.23 s |
+| VAE decode | 2.40 s | 1.58 s |
+| 512x512, 6 steps, end to end | | 1.98 s, 40.7 dB from the engine's image |
+| 512x512 edit, CFG 4, 8 steps | | 5.3 s, same picture (23.4 dB) |
+| Worker, generate 1184x1776, 50 steps (warm) | 61.5 s, 1.165 s per step | 65.4 s, 1.247 s per step; 36.4 dB from the engine's image |
+| Worker, edit 1248x832, 25 steps, CFG 4 (warm) | 37.8 s, 1.20 s per step | 40.6 s, 1.39 s per step; 30.1 dB |
+
+In the worker (`native/qwen.rs`, `rust-dit` builds) Qwen Image 2.1 requests no longer call
+the C++ engine: it releases its own context first, the models stay loaded between image
+requests, and video requests or the other image model free them. Previews are the engine's
+latent projection of each step's denoised latent; SIGTERM cancels after the current step.
+These first numbers had the Rust DiT 7% (generate) to 16% (edit) per step behind the engine;
+the next section closes that.
+
+### Qwen DiT speed work (2026-11-23)
+
+Step at 1184x1776 (`step_speed_at_benchmark_size`, best of four, includes the CPU's time
+layers) after each change, all on the same drivers:
+
+| Change | Step |
+|---|---|
+| Starting point (Vulkan glue, one submission per block) | 1.23 s |
+| Time layers for all steps at once, residual + next norm fused | 1.19 s |
+| Whole step as one Level Zero command list: glue in OpenCL C (`xe2/qwen.cl`, built by `xe2/qwen-glue.sh` into the native `xe2/qwen.bin`), `LevelZero::Batch` | 1.15 s |
+| Feed-forward activation in the INT8 product's epilogue (`int8::Shape::gated8`) | 1.133 s |
+| Product dispatch blocks balanced (about 128 token tiles each) | 1.127 s |
+| Attention query tiles in groups of 8 threads per core (`attend::Shape::group`) | 1.086 s |
+| Hidden quantizer keeps its row in local memory (no spill) | 1.078 s |
+| Feed-forward activation stored as bf16 | 1.063 s |
+| Query/key/value product scales its sums and stores bf16 (`int8::Shape::scaled8`) | 1.048 s |
+
+The C++ engine's step is about 1.165 s in the worker. Captured steps stay 36.9 to 44.6 dB
+from the engine (the mean moved by less than half a decibel over the series).
+
+In the worker (`image-bench.py`, same requests as the table above; first run includes
+opening the models):
+
+| | C++ engine | Rust (d0b26dbc) |
+|---|---|---|
+| Generate 1184x1776, 50 steps, warm | 61.5 s, 1.165 s per step | 55.4 s, 1.045 s per step; 38.5 dB from the engine's image |
+| Generate, first request | 67.4 s | 60.9 s |
+| Edit 1248x832 (1248x832 reference), 25 steps, CFG 4, warm | 37.8 s, 1.20 s per step | 33.7 s, 1.11 s per step; 28.9 dB, same picture |
+
+The edit's distance from the engine's image moves by a few decibels with any change of
+rounding (CFG 4 amplifies it over 25 steps); side by side the pictures match. The final PNG
+is now written with fast compression (lossless; 0.6 s -> 0.02 s, file about 13% larger), not
+yet in these numbers.
+
+What did not help:
+- Chaining Vulkan and Level Zero with timeline semaphores (correct only with
+  `zeCommandListAppendBarrier`, then no faster); a native OpenCL module removed the
+  cross-API hand-offs instead. Loading the glue as SPIR-V at run time failed (`gpu_kernel`);
+  the ocloc-built native binary loads.
+- Attention start chunks spread further than one chunk per tile (`tile >> s`), a group's
+  threads starting on the same chunk, or packed start chunks: all slower. The kernel is
+  bound by loads (10.5 ms loads only against 6.8 ms without loads at 32 heads x 8239 keys);
+  groups keep neighbouring tiles on one core so they reuse each other's lines.
+- bf16 outputs for the attention-out and feed-forward-out products as well: 0.8% faster,
+  but the residual increments lost about 3 dB on one captured step; kept as int32 sums.
+
+Installed 2026-11-23 (gateway bff4388d, runtime worker 61064827). After it, over HTTP:
+1024x1024 8-step image 5.0 s warm, same-seed outputs byte-identical.
+
+Where a step's time goes (`step_profile`: the real step's command list with the GPU clock
+stamped after every launch; 1184x1776, 8214 tokens, 32 blocks, 0.994 s):
+
+| Kernel | Share | Per block | Rate |
+|---|---|---|---|
+| Attention | 35% | 10.9 ms | ~102 TFLOPS half float (~56% of peak) |
+| Products FC1 / FC2 / QKV / OUT | 51% | 7.2 / 4.0 / 3.6 / 1.2 ms | 228-237 TOPS (B70 peak 367) |
+| Residual + norm + quantize (x2) | 5.7% | 0.90 ms | ~485 GB/s |
+| Hidden quantize, merge, queries/keys, values | ~7% | 0.75 / 0.59 / 0.30 x2 / 0.31 ms | 280-450 GB/s |
+
+The products alone with zero inputs run 5-9% faster than in the step (epilogues, and real data
+costs clock); best blockings reach 233-263 TOPS. At the edit size (4056 target tokens) the
+products cost per token what they cost at 8214, so running both CFG branches as one batch would
+not speed them up.
+
+Glue at bandwidth (bit-identical; `*_matches_reference` tests run the kept previous kernel
+`<name>_ref` on random input, compare bytes and time both):
+- Hidden quantizer: rotated values stay in registers, local memory only for each sub-group's
+  (bank-padded) transposes: 0.97 -> 0.76 ms, 48 KB -> 17 KB local memory per group.
+- Queries/keys: a group per head and 16-token tile; results meet in local memory and leave
+  as one contiguous 4 KB block instead of scattered 4-byte stores: queries 0.96 -> 0.31 ms,
+  keys 0.52 -> 0.30 ms.
+- Step 1.008 -> 0.994 s in `step_profile`.
+
+### Fast attention: int8 queries and keys (2026-11-23)
+
+Requests with `"attention": "fast"` (worker ABI 5) score attention with signed-byte
+queries and keys, SageAttention-style; values and mixing stay half floats. `q_qk8`
+writes each token's 128 channels scaled to its own largest magnitude, with the scale
+beside the tile (queries) or chunk (keys); `q_prefix8` does the same to the stored
+prompt/reference keys as it copies them, so a chunk shared by target and prefix keys
+needs no common scale. The kernel (`attend::Shape::int8`) converts the integer scores and
+multiplies by the key's scale (the query's is folded into the softmax constant).
+
+The f16 kernel is limited by its loads (loads alone take 92% of its time; without the
+score products it is only 4% faster). In order:
+
+| Change | Attention, 24 heads x 8214 tokens (alone) |
+|---|---|
+| Half floats (standard) | 7.3 ms |
+| int8 queries/keys (key bytes halved) | 6.66 ms |
+| + three more load buffers (values requested a phase ahead) | 6.13 ms |
+| + conversions four at a time | 5.69 ms |
+| + four running maxima (bit-identical in both forms) | 5.50 ms |
+| + four running sums | 5.40 ms |
+| + math pipe `2^x` instead of the polynomial | 4.61 ms |
+
+In the step (`step_profile`, 1184x1776): attention 10.7 -> 6.8 ms per block, step 0.991 ->
+0.867 s (-12.5%). Against the C++ captures fast steps score 35.9-43.8 dB (standard
+37.7-44.2), 34.9-44.7 dB from standard. Random operands: 47.7 dB (spread 1.5) and 39.5 dB
+(spread 3) against an exact softmax, where half floats reach 70-73 dB.
+
+Through the worker (benchmark recipes, warm): generate 53.8 -> 47.6 s, edit 32.8 -> 29.0 s
+(both -11.6%); pixels differ from standard by 1.0-1.2 on average (of 255). A neutral
+1184x1776 prompt: mean 0.45, 0.1% of pixels more than 8 apart, no visible difference.
+
+Opening the models from page cache (`open_costs`): DiT 2.3 s (layers load on three threads,
+so copies overlap the rearranging; 3.3 s before), VAE about 1.1 s (parallel rearranging;
+2.0 s), text encoder 1.3 s, vision tower 0.7 s. The worker disables Mesa's shader cache,
+which adds about 1 s.
+
+## Qwen Image 2512 in Rust (2026-11-23)
+
+Qwen Image 2512 is not a variant of 2.1: 60 blocks of two streams (text and image) with
+their own weights, 3072 wide, plain GELU MLPs, a modulation layer per block and stream, and
+the text attending to the image in every block (so nothing is computed once per prompt).
+Its file is FP8 (e4m3) without scales: 13.6 G parameters of block linears and 6.8 G of
+modulation.
+
+- `qwen2512_dit.rs`: the CPU reference from the engine's graph (`qwen_image.hpp`), 34 to 47
+  dB from captured C++ calls (the engine computes in half floats); with the block linears
+  through INT8 as on the GPU, 34 to 44 dB.
+- `qwen2512_gpu.rs`, `xe2/qwen2512.cl`: one command list per pass. Block linears become
+  the machine-code INT8 products at load (widened, rotated in groups of 256, one scale per
+  row; 21 s for the whole model); the FP8 modulation rows stay on the device and are
+  evaluated exactly once per step (`k_mod`) for both CFG passes. Queries sit in one slot
+  stream (image, then text after the image's padded rows); keys and values in one key
+  stream with the text right after the image's live keys, so `attend.rs` runs unchanged.
+- Fast attention: block 0's query and key norm weights have a 57x outlier channel (blocks
+  52 and 58 about 8x). One channel then dominates the scores and per-token int8 queries lose
+  the rest (25 dB; smoothing the keys does not help, 22 dB). Blocks whose norm weights peak
+  above three times their median keep half-float attention; the rest use int8: 38.6 to
+  46.6 dB from the captures, as standard does.
+- Text encoder: Qwen2.5-VL 7B through the streamed GPU encoder (`TextEncoder::qwen25`):
+  FP8 matrices times their scale, rotated and rounded to INT8 at load; query, key and value
+  biases (`tqkv.comp` flag 2), no query/key norms (flag 1 off), plain rotary with theta 1e6,
+  and the final norm (the engine takes the normed last layer: without it -2 dB). The
+  template's first 34 tokens are dropped; captured row counts (22, 10) match.
+- VAE: the Wan 2.1 decoder through the 2.1 GPU decoder (`QwenVae::open_wan21`): 16
+  latent channels at 1/8, 384/192/96 channels, three upsamplings without the depth-to-space
+  shortcut, RGB out; the causal 3x3x3 kernels see a single image only through their last
+  time slice.
+- Schedule: the engine's simple scheduler, `index = 999 - trunc(i * 1000 / n)`,
+  `sigma = shift t / (1 + (shift - 1) t)` with `t = (index + 1) / 1000`; Euler on the flow
+  output, CFG on the outputs.
+
+The worker runs 2512 itself from ABI 6 (`QWEN2512_WORKER_ABI`): the gateway sends 2512 to
+the managed runtime when its verified worker has that ABI, and to its own engine otherwise.
+
+## Qwen Image 2512 from the publisher's weights (2026-11-24)
+
+Kuno no longer depends on ComfyUI's repackaging for 2512. The `qwen-image-2512-int8`
+collection downloads `Qwen/Qwen-Image-2512` at a pinned commit (the publisher's BF16
+files, 57.7 GB in 14 pieces) and converts each piece as it arrives (`engine/convert.rs`):
+block linears and modulation layers to INT8 in the rotated basis with a scale per row,
+everything else as published, the VAE's diffusers names renamed to the Wan layout, the
+unused `lm_head` dropped. One input file gives one output file, the original is removed
+once its output matches its pinned checksum, and the result is 28.6 GB. The conversion is
+deterministic, so its outputs are pinned like downloads: anyone converting the official
+files gets the same bytes.
+
+The installer (`collections::fetch`) overlaps downloads and conversions: a download starts
+only when the disk holds it, its output and every pending output (plus 512 MiB); otherwise
+it waits for a conversion to free its input. With ample space downloads run ahead; with
+little it alternates. Converting all 14 pieces takes about two minutes (6 to 13 s each,
+about 1.3 GB of memory); the download dominates.
+
+Every loader takes all three forms: the INT8 conversion directly (DiT 11.8 s, text encoder
+1.1 s), ComfyUI's FP8 files, and the publisher's BF16 directories (rounded at load). A
+directory of `*.safetensors` reads as one model; ComfyUI's name prefix is optional.
+
+Against the exact model (the BF16 weights computed in f32 on the CPU), the FP8 file itself
+is the largest error:
+
+| Path | DiT (4 captured calls) | Text encoder (2 prompts) |
+|---|---|---|
+| C++ engine, FP8 file | 23.2 to 26.2 dB | 24.9 to 27.4 dB |
+| Rust GPU, FP8 file | 23.0 to 26.1 dB | 23.7 to 25.8 dB |
+| Rust GPU, INT8 conversion | 34.6 to 39.1 dB (fast 34.7 to 38.5) | 30.6 to 32.4 dB |
+
+Through the worker at 832x1248, 20 steps with CFG: the first request 39.2 s (81 s when the
+FP8 file is converted at load), then 23.0 s (21.1 s fast). The image differs from the
+FP8 paths' by about 10 of 255 on average (a slightly different composition of the same
+scene), as the FP8 model differs from the model it was made from.
+
+## The worker without C++ (2026-11-23)
+
+With 2512 in Rust, the worker's C++ engine only held a session object and the SIGTERM flag.
+`--features rust-image` builds the worker without it: `native/rust_shim.rs` provides the six
+`kuno_*` entry points (an empty session, the cancellation flag set by a Rust SIGTERM/SIGINT
+handler, and the C++ generate entries answering "unsupported", which the Rust paths never
+call). The binary is 22 MB (the C++ worker 333 MB) and links only libc, libm and libgcc;
+Vulkan and Level Zero come from the system loaders at run time, so the runtime directory
+needs no oneAPI libraries (`make-image-candidate-v7.py`: worker, license, manifest). It
+builds in seconds instead of twelve minutes.
+
+Qwen 2.1 images from this worker differ slightly from the C++-linked worker's for the same
+request (0.8 of 255 on average, the same picture; still identical run to run). The Rust code
+is the same: in the C++-linked worker Intel's `libimf` is loaded ahead of glibc's `libm`, so
+Rust's `expf`, `sinf`, `cosf`, `powf` and `tanhf` (rotary tables, time embeddings, small CPU
+layers) bind to Intel's versions, which round differently in the last bits. Preloading
+`libimf` into the Rust-only worker reproduces the old images bit for bit.
+
+## Any Vulkan GPU: the RTX 3060 (2026-11-24)
+
+Every image model now also runs on GPUs other than the B70 through portable Vulkan kernels,
+chosen per device (`Gpu::shapes`, `narrow`, `subgroup`, `gemm8`, `gemm16`, `matrix2`). On
+Intel the kernels and numbers are unchanged; elsewhere:
+
+- **Products.** `gemm8nv`/`gemm16nv`: 32-lane subgroups, 16 x 16 matrices, 64-column steps
+  through shared rows padded against bank conflicts, the next step fetched into registers.
+  INT8 59-62 TOPS on the 3060 (exact).
+- **Attention.** `fattend16nv` on `VK_NV_cooperative_matrix2` workgroup-scope matrices:
+  scores stay in registers (row reductions, per-element exponentials and masks, a
+  conversion to the value product's half-precision operand), 18.3 TFLOPS at 24 heads x 4078
+  tokens, 84 dB from an exact softmax. `fattend16` (subgroup scope, shared memory) is the
+  fallback for GPUs without the extension (5.7 TFLOPS). Both take causal prompt runs.
+- **Glue.** The 16-lane shaders work on groups of 16 invocations with clustered reductions
+  (bit-identical on 16-lane subgroups); `tattend32` for the text encoder.
+- **Qwen 2.1 DiT** (`qwen_vk.rs`): 38.3-45.8 dB from the captured steps (B70: 37.7-44.2).
+- **Qwen 2512 DiT** (`qwen2512_vk.rs`): 44-50 dB from the Xe2 form on the same INT8 file.
+  The modulation layers (a third of the model) run on the CPU from host memory; blocks stay
+  on the device while the budget leaves room for a CFG step (35 of 60 on 12 GB), the rest are
+  copied into one device slot per step, both CFG passes running through each block while it
+  is there.
+- Text encoder 38.6 dB, vision tower 37-68 dB, VAEs as on the B70.
+
+On a 12 GB card the pipeline also: keeps a prefix's keys and values in host memory when
+the steps' buffers would not fit beside them (each block then copies them over the bus);
+shares one set of step buffers between CFG's prompts; decodes in strips of latent rows when
+the whole image's VAE buffers do not fit (each strip with a halo of every convolution's
+reach after the attention, so the pixels are identical: no seam); and frees the DiT for the
+decode only when strips would be mostly overlap, loading it again on the next request.
+
+Through the gateway's own worker (default build) on the RTX 3060 (PCIe x4 slot):
+
+| Request | Time (warm) | Per step | Reference |
+| --- | ---: | ---: | --- |
+| Qwen 2.1 1184x1776, 20 steps, CFG 4 | 209 s | 9.0 s | ComfyUI 193 s |
+| Qwen 2512 832x1248, 20 steps, CFG 5 | 137 s | 6.5 s | B70 23 s |
+| Qwen 2.1 1248x832 edit, same-size reference, CFG 4 | about 170 s (25 steps, estimated) | 5.85 s | ComfyUI 109 s, C++ CUDA 283 s |
+
+Speed work since (2026-11-24, later):
+
+- **Copies beside compute.** Where a GPU has a dedicated transfer queue (not used on Intel),
+  `Gpu::copy_begin` copies there while compute runs. 2512 fills one of two device slots
+  with the next host-memory block while a block computes, and evaluates the modulation
+  rows on a CPU thread block by block ahead of the GPU: a 78x52 pass 4.26 -> 3.26 s, the
+  832x1248 request 137 -> 101 s. Qwen 2.1 prefixes of 1024+ tokens kept in host memory are
+  copied in per block the same way: the large edit's step 5.85 -> 4.67 s.
+- **Product dispatches of 2048 weight rows** (46-58 -> 54-64 TOPS at Qwen 2.1's shapes).
+  A 64x64-per-subgroup tile spills its accumulators (2.5 TOPS).
+- **Fast attention** (`fattend8nv`): int8 query and key rows with a scale each, int32
+  scores scaled per element, f16 weights and values; 30% faster than `fattend16nv`, 42-53
+  dB from an exact softmax. Qwen 2.1 steps 41-45 dB from standard attention, 2512 50-52 dB
+  (its outlier blocks keep f16, as on Intel). The embedded engine advertises fast attention
+  for every Qwen workflow; GPUs without `VK_NV_cooperative_matrix2` run standard attention
+  for it.
+
+Qwen 2.1 1184x1776, 20 steps, CFG 4 through the worker on the 3060: 199 s standard, 177 s
+fast (ComfyUI 193 s).
+
+### The gateway's engine
+
+`apps/kuno` builds with `rust-image` by default: the gateway executable is its own image
+worker with the Rust engine on any GPU (22.6 MB), and `native-image` (the C++ engine) is
+exclusive with it. The engine picks the Xe2 DiTs on Intel GPUs that run them and the Vulkan
+ones elsewhere; the Vulkan DiTs refuse devices without 16 x 16 x 16 half-precision matrices.
+
 ## Running the comparisons
 
 GPU tests (matrix kernel, tile, whole clip; they need the Intel GPU with enough free memory):
@@ -1022,4 +1353,17 @@ Audio decoder:
 KUNO_AUDIO_VAE=<models>/minimax_h3_audio_vae_fp32.safetensors \
 KUNO_AUDIO_GOLDEN=<dir with audio-latent.f32 and audio-wave.f32> \
 cargo test --release -p kuno-image engine -- --include-ignored --nocapture
+```
+
+Qwen Image 2.1 (captures from the dev CLI with temporary dumps, `kuno-video-dev/qwen-run.sh`):
+
+```
+KUNO_QWEN_DIT=<models>/qwen_image_2.1_int8_convrot.safetensors KUNO_QWEN_GOLDEN=<step dir> \
+cargo test --release -p kuno-image qwen_dit -- --include-ignored --nocapture
+KUNO_QWEN_DIT=<model> KUNO_QWEN_GOLDEN=<step dir> \
+cargo test --release -p kuno-image qwen_gpu -- --include-ignored --nocapture
+KUNO_QWEN_VAE=<models>/qwen_image_2.1_vae_bf16.safetensors KUNO_QWEN_VAE_GOLDEN=<decode dir> \
+KUNO_QWEN_ENCODE_GOLDEN=<encode dir> cargo test --release -p kuno-image qwen_vae -- --include-ignored --nocapture
+KUNO_QWEN_MODELS=<models> KUNO_QWEN_REFERENCE=<engine PNG> KUNO_QWEN_EDIT=<dir> \
+cargo test --release -p kuno-image qwen_image -- --include-ignored --nocapture --test-threads 1
 ```

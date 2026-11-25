@@ -174,8 +174,8 @@ impl Kernels {
     fn with(gpu: &Gpu, fast: Option<LevelZero>) -> Result<Self, &'static str> {
         Ok(Self {
             fast,
-            rotate8: gpu.kernel(shaders::ROTATE8, 3, 3, Some(16))?,
-            gemm8: gpu.kernel(shaders::GEMM8, 3, 5, Some(16))?,
+            rotate8: gpu.kernel(shaders::ROTATE8, 3, 4, Some(16))?,
+            gemm8: gpu.gemm8()?,
             scoremax: gpu.kernel(shaders::SCOREMAX, 4, 11, Some(16))?,
             normq8: gpu.kernel(shaders::NORMQ8, 6, 6, Some(16))?,
             qk8: gpu.kernel(shaders::QK8, 5, 5, Some(16))?,
@@ -216,6 +216,7 @@ impl Kernels {
                 width as u32,
                 (width / 256).div_ceil(16) as u32,
                 u32::from(stream),
+                0,
             ],
             groups: [rows as u32, 1, 1],
         }
@@ -775,7 +776,11 @@ impl Host {
     /// Frees the weights' host memory. A DiT placed from this host keeps running; placing
     /// another needs a fresh read.
     pub fn release(&self) {
-        let weights = self.weights.lock().ok().and_then(|mut weights| weights.take());
+        let weights = self
+            .weights
+            .lock()
+            .ok()
+            .and_then(|mut weights| weights.take());
         drop(weights);
     }
 }
