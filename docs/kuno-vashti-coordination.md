@@ -1,45 +1,45 @@
 # Kuno and Vashti Coordination
 
-**Kuno release handoff (2026-11-24): ship `main` at or after `993b9756`, which is the
-build installed on the B70 host as v8 (gateway sha256 `8015480f…`, accepted over HTTP:
-Qwen 2.1 and 2512 standard and fast, text-to-video, LLM answers, no kernel GPU events).**
-It carries every 2026-11-08 to 2026-11-24 checkpoint below (Rust engine everywhere, C++
-removed, video modes, the memory-bounded video contract, fast attention on 2512). Speech
-(LFM3 audio) is on `claude/lfm3-audio` and is not part of this release.
+**Kuno release handoff (2026-11-24, revised): ship branch `claude/single-worker` (`main`
+plus the retired runtime bundle). Installed on the B70 host as v9 (gateway sha256
+`c915721b…`) and accepted over HTTP.** The release has no Intel runtime package any more:
+the `kuno` executable is the only image and video worker on every GPU. Requested by the
+user. Speech (LFM3 audio) is on `claude/lfm3-audio` and is not part of this release.
 
-- **Compatibility.** All contract changes are additive: the current Vashti keeps working.
-  Vashti items worth doing for this release (each described below): show the attention
+- **What changed for releases.** Ship the standard Kuno package only
+  (`apps/kuno/scripts/package-release.sh`). `kuno-sycl-linux-x86_64.tar.gz`, its manifest
+  checksum and the `install-image-runtime` instructions are gone; the assembly and
+  packaging scripts were removed. Vashti-side release tooling still expects the optional
+  runtime and needs updating (Codex): `apps/vashti/scripts/publish-release.sh`
+  (`REQUIRE_KUNO_SYCL_RUNTIME`, the `kuno-sycl-linux-x86_64` target),
+  `apps/vashti/scripts/release-packaging.test.mjs`, and step 6 of
+  `apps/vashti-hub/docs/release-process.md`.
+- **Upgrades from earlier betas need no extra step.** Configurations with `"engine":
+  "managed_sycl"` and `"runtime"` are read, and `kuno upgrade` writes the image
+  configuration back without them and removes the installed runtime files (empty
+  directories under `/usr/local/lib/kuno/runtimes` remain; harmless). `kuno
+  install-image-runtime` now exits with `image_runtime_not_needed`. Release notes should
+  say: Intel GPUs no longer need the separate runtime; upgrading removes it.
+- **Video no longer needs the managed engine:** any configuration with a MiniMax collection
+  and a GPU the engine supports offers video. Discovery is otherwise unchanged.
+- **Compatibility.** All contract changes since beta.3 are additive: the current Vashti
+  keeps working. Vashti items worth doing (each described below): show the attention
   control per workflow from discovery (2512 now offers `fast`); validate video `frames`
   as `frame_base + k * frame_step` and sizes by `dimension_multiple` when `limits ==
   "memory"`, with Vashti's own duration/size limits; show `image_gpu_memory_unavailable`
   and `image_host_memory_unavailable` as "too long or too large for this server".
-- **Standard Kuno package.** `apps/kuno/scripts/package-release.sh` builds it from source;
-  no prepared native build, no oneAPI or CUDA (the script refuses GPU-library links).
-- **Optional Intel runtime.** The managed SYCL runtime is now the Kuno executable itself as
-  the worker, plus its license and a manifest (id `qwen21-sycl-2026.1-v1`, worker ABI 6;
-  the provenance fields are fixed pins kept from the C++ runtimes). The manifest pins the
-  worker's sha256, and the release build (`--target x86_64-unknown-linux-gnu`, its own
-  target directory) is not byte-identical to the host's build, so do not reuse the host's
-  manifest checksum (`793914e8…`). Assemble it from the release's own binary:
-
-  ```sh
-  python3 -I apps/kuno/scripts/assemble-image-runtime.py --worker <release kuno> --output <fresh dir>
-  # prints the manifest sha256; then
-  python3 -I apps/kuno/scripts/package-image-runtime.py --directory <dir> \
-      --manifest-sha256 <sha256> --output apps/vashti/dist/release/<version>/kuno-sycl-linux-x86_64.tar.gz
-  ```
-
-  Put that checksum and `sudo kuno install-image-runtime --directory <unpacked dir>
-  --manifest-sha256 <sha256>` in the release notes. Images on Intel need it with
-  `"engine": "managed_sycl"`; NVIDIA and other Vulkan GPUs use the embedded engine and do
-  not.
-- **Rollback for the host.** `kuno upgrade` kept no copy of the gateway it replaced; older
-  C++ gateways are in `/var/backups/kuno/`, and runtime v5 remains at
-  `/usr/local/lib/kuno-test/qwen21-image-v5`.
-- **Test suite.** `cargo test --release -p kuno -p kuno-protocol` passes on `main` after two
-  test-only fixes (2026-11-24): an image-access test read the host's installed runtime and
-  failed on hosts with a current one; an image-residency test slept a fixed 200 ms for a
-  killed worker to exit and failed under a loaded parallel run. No product code changed.
+- **Acceptance (B70, 2026-11-24):** upgrade from v8 with `managed_sycl` configured: config
+  rewritten, runtime removed, Ollama and Kuno active. Qwen 2.1 and 2512, standard and fast,
+  and a text-to-video clip are byte-identical to v8's outputs for the same seeds (two
+  runs); LLM answer correct; no kernel GPU messages. Times match v8 for fast attention
+  (14.4 s, 20.6 s) and video (64.1 s); the first standard 2512 image of a run, right after
+  the LLM test, took 27-30 s against v8's 21.7 s (the worker code is unchanged; likely the
+  page cache after the LLM, not confirmed).
+- **Test suite.** `cargo test --release -p kuno -p kuno-protocol` and
+  `apps/kuno/tests/release-packaging.py` pass.
+- **Rollback for the host.** `/var/backups/kuno/v8/` holds the v8 gateway (`8015480f…`), its
+  runtime directory and config: stop Kuno, restore the three, start Kuno. Older C++
+  gateways remain in `/var/backups/kuno/`.
 
 **Kuno image engine is Rust on every GPU; C++ removed (2026-11-24). Installed (v8,
 2026-11-24) and on `main`; small Vashti check below.** Branch `claude/rust-engine`. The gateway's default build is its own
