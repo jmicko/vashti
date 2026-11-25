@@ -1,7 +1,48 @@
 # Kuno and Vashti Coordination
 
-**Kuno image engine is Rust on every GPU; C++ removed (2026-11-24). NOT installed; small
-Vashti check below.** Branch `claude/rust-engine`. The gateway's default build is its own
+**Kuno release handoff (2026-11-24): ship `main` at or after `993b9756`, which is the
+build installed on the B70 host as v8 (gateway sha256 `8015480f…`, accepted over HTTP:
+Qwen 2.1 and 2512 standard and fast, text-to-video, LLM answers, no kernel GPU events).**
+It carries every 2026-11-08 to 2026-11-24 checkpoint below (Rust engine everywhere, C++
+removed, video modes, the memory-bounded video contract, fast attention on 2512). Speech
+(LFM3 audio) is on `claude/lfm3-audio` and is not part of this release.
+
+- **Compatibility.** All contract changes are additive: the current Vashti keeps working.
+  Vashti items worth doing for this release (each described below): show the attention
+  control per workflow from discovery (2512 now offers `fast`); validate video `frames`
+  as `frame_base + k * frame_step` and sizes by `dimension_multiple` when `limits ==
+  "memory"`, with Vashti's own duration/size limits; show `image_gpu_memory_unavailable`
+  and `image_host_memory_unavailable` as "too long or too large for this server".
+- **Standard Kuno package.** `apps/kuno/scripts/package-release.sh` builds it from source;
+  no prepared native build, no oneAPI or CUDA (the script refuses GPU-library links).
+- **Optional Intel runtime.** The managed SYCL runtime is now the Kuno executable itself as
+  the worker, plus its license and a manifest (id `qwen21-sycl-2026.1-v1`, worker ABI 6;
+  the provenance fields are fixed pins kept from the C++ runtimes). The manifest pins the
+  worker's sha256, and the release build (`--target x86_64-unknown-linux-gnu`, its own
+  target directory) is not byte-identical to the host's build, so do not reuse the host's
+  manifest checksum (`793914e8…`). Assemble it from the release's own binary:
+
+  ```sh
+  python3 -I apps/kuno/scripts/assemble-image-runtime.py --worker <release kuno> --output <fresh dir>
+  # prints the manifest sha256; then
+  python3 -I apps/kuno/scripts/package-image-runtime.py --directory <dir> \
+      --manifest-sha256 <sha256> --output apps/vashti/dist/release/<version>/kuno-sycl-linux-x86_64.tar.gz
+  ```
+
+  Put that checksum and `sudo kuno install-image-runtime --directory <unpacked dir>
+  --manifest-sha256 <sha256>` in the release notes. Images on Intel need it with
+  `"engine": "managed_sycl"`; NVIDIA and other Vulkan GPUs use the embedded engine and do
+  not.
+- **Rollback for the host.** `kuno upgrade` kept no copy of the gateway it replaced; older
+  C++ gateways are in `/var/backups/kuno/`, and runtime v5 remains at
+  `/usr/local/lib/kuno-test/qwen21-image-v5`.
+- **Test suite.** `cargo test --release -p kuno -p kuno-protocol` passes on `main` after two
+  test-only fixes (2026-11-24): an image-access test read the host's installed runtime and
+  failed on hosts with a current one; an image-residency test slept a fixed 200 ms for a
+  killed worker to exit and failed under a loaded parallel run. No product code changed.
+
+**Kuno image engine is Rust on every GPU; C++ removed (2026-11-24). Installed (v8,
+2026-11-24) and on `main`; small Vashti check below.** Branch `claude/rust-engine`. The gateway's default build is its own
 image worker with the Rust engine on Intel (Xe2 kernels) and any Vulkan GPU with
 cooperative matrices (NVIDIA RTX: the RTX 3060 was tested), and the C++ engine
 (stable-diffusion.cpp, CUDA/Vulkan/SYCL) is gone. The HTTP contract is unchanged; what a
@@ -22,7 +63,7 @@ client can observe:
   [Kuno Rust model engine](kuno-rust-engine.md).
 
 **Kuno video contract change (2026-11-22): no duration or size caps, no cropping; memory
-decides. NOT installed; Vashti handoff below. Requested by the user:** "Kuno should just do
+decides. Installed with v8 (2026-11-24); Vashti handoff below. Requested by the user:** "Kuno should just do
 the best it can with what it's given in the API"; limits and framing (crop, letterbox,
 black bars) are Vashti's choice, and failures must be graceful (no manual restarts).
 Branch `claude/rust-engine` (needs the Rust video pipeline, `0aa4f01b` and later).
@@ -65,8 +106,8 @@ Branch `claude/rust-engine` (needs the Rust video pipeline, `0aa4f01b` and later
   Vashti's own duration and size limits.
 
 **Kuno Rust engine, second model (2026-11-10): MiniMax H3 video decode in Rust on the GPU.
-Backend only, no contract change; NOT installed (the user asked to hold installs unless a
-rewrite brings a large speed gain; this one takes a warm 2.3 s clip from 59 s to 50 s).**
+Backend only, no contract change; installed with v8 (2026-11-24), which also replaced the
+C++ path described here.**
 Branch `claude/rust-engine`. The worker decodes video frames with `kuno-image`'s
 `engine::video_gpu` (Vulkan compute through `ash`, kernels in `engine/gpu/shaders`);
 stable-diffusion.cpp hands over the video latent (`sd_kuno_set_video_decoder`, patch 001)
@@ -83,7 +124,7 @@ byte-identical to earlier ones. No Vashti change is needed. Details and measurem
   install).
 
 **Kuno Rust engine, first model (2026-11-09): MiniMax H3 audio decode in Rust. Backend
-only, no contract change; NOT installed yet (awaiting user approval).** Branch
+only, no contract change; installed with v8 (2026-11-24).** Branch
 `claude/rust-engine`. See [Kuno Rust model engine](kuno-rust-engine.md) for the plan (one
 model at a time, each checked against an exact reference and the C++ engine) and status.
 The worker now decodes audio with `kuno-image`'s `engine::audio_vae` on CPU threads while

@@ -167,7 +167,16 @@ async fn an_idle_worker_exit_is_recovered_on_the_next_request() {
         unsafe { libc::kill(pid.parse().unwrap(), libc::SIGTERM) },
         0
     );
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait until it has exited: a zombie (its parent reaps it on the next request) or
+    // gone. A fixed pause failed under a loaded parallel test run.
+    for _ in 0..200 {
+        let exited = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map_or(true, |stat| stat.rsplit(')').next().unwrap_or("").trim_start().starts_with('Z'));
+        if exited {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
     let result = generate(&runtime, &executable, &config, recipe()).await;
     assert!(result.output.is_ok() && result.settled && !result.forced);
     assert_ne!(

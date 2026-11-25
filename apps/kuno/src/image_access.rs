@@ -450,7 +450,10 @@ mod tests {
     fn managed_runtime_failure_preserves_old_collection_and_fast_is_unsupported() {
         let mut c = config();
         c.engine = crate::image_engine::ImageEngine::ManagedSycl;
-        c.runtime = Some(crate::image_engine::SYCL_RUNTIME.into());
+        // A runtime that cannot be loaded serves 2.1 only, as one older than the 2512
+        // worker ABI does. The real id would read the host's installed runtime, and on a
+        // host with a current runtime 2512 would use it too, failing this test.
+        c.runtime = Some("runtime-not-installed".into());
         let mut images = describe(Some(&c), true, true, None, |_| true);
         apply_runtime_status(
             &mut images,
