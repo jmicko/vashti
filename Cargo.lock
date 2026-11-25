@@ -2785,6 +2785,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kuno-audio"
+version = "0.1.0"
+dependencies = [
+ "kuno-text",
+ "rayon",
+]
+
+[[package]]
 name = "kuno-image"
 version = "0.1.0"
 dependencies = [

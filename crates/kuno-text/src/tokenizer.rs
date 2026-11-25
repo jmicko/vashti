@@ -15,6 +15,9 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{Error, GgufFile, MetadataValue, Result};
 
+/// The pre-tokenizer of GGUF `tokenizer.ggml.pre = "lfm2"` (llama.cpp's LLAMA3 expression):
+/// digits in runs of up to three, and pieces already in the vocabulary skip the merges.
+const PATTERN_LFM2: &str = r"(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 const PATTERN: &str = r"(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
 #[derive(Clone, Debug)]
@@ -72,6 +75,8 @@ pub struct Qwen35Tokenizer {
     always_special: Option<SpecialMatcher>,
     all_special: Option<SpecialMatcher>,
     pretokenizer: Regex,
+    /// `lfm2`: whole pieces found in the vocabulary are emitted as they are (`ignore_merges`).
+    whole: Option<HashMap<Vec<u8>, u32>>,
     eos: u32,
     bos: u32,
     limits: TokenizerLimits,
@@ -86,9 +91,9 @@ impl Qwen35Tokenizer {
         metadata: &BTreeMap<String, MetadataValue>,
         limits: TokenizerLimits,
     ) -> Result<Self> {
-        if text(metadata, "tokenizer.ggml.model")? != "gpt2"
-            || text(metadata, "tokenizer.ggml.pre")? != "qwen35"
-        {
+        let pre = text(metadata, "tokenizer.ggml.pre")?;
+        let lfm2 = pre == "lfm2";
+        if text(metadata, "tokenizer.ggml.model")? != "gpt2" || (pre != "qwen35" && !lfm2) {
             return Err(Error::InvalidFormat(
                 "unsupported tokenizer model or pretokenizer",
             ));
@@ -264,7 +269,14 @@ impl Qwen35Tokenizer {
         }
         let always_special = special_matcher(&always)?;
         let all_special = special_matcher(&all)?;
-        let pretokenizer = RegexBuilder::new(PATTERN)
+        let whole = lfm2.then(|| {
+            pieces
+                .iter()
+                .enumerate()
+                .map(|(id, piece)| (piece.clone(), id as u32))
+                .collect()
+        });
+        let pretokenizer = RegexBuilder::new(if lfm2 { PATTERN_LFM2 } else { PATTERN })
             .backtrack_limit(limits.regex_backtrack_limit)
             .delegate_size_limit(8 * 1024 * 1024)
             .delegate_dfa_size_limit(2 * 1024 * 1024)
@@ -277,6 +289,7 @@ impl Qwen35Tokenizer {
             always_special,
             all_special,
             pretokenizer,
+            whole,
             eos,
             bos,
             limits,
@@ -353,6 +366,9 @@ impl Qwen35Tokenizer {
         }
         if bytes.is_empty() {
             return Ok(());
+        }
+        if let Some(id) = self.whole.as_ref().and_then(|w| w.get(bytes)) {
+            return append_token(output, *id, &self.limits);
         }
         let mut scratch = BpeScratch {
             nodes: Zeroizing::new(Vec::new()),

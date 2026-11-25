@@ -1,0 +1,8 @@
+[package]
+name = "kuno-audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+kuno-text = { path = "../kuno-text" }
+rayon = "1"
