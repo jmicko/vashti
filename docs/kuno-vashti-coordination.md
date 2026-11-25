@@ -1,5 +1,30 @@
 # Kuno and Vashti Coordination
 
+**Kuno speech recognition and synthesis (2026-11-24). NOT installed; Vashti handoff.**
+Branch `claude/lfm3-audio` (on top of the beta.5 `main`, `f9273a38`). Contract: [Kuno audio](kuno-audio.md).
+`POST /kuno/v1/audio/transcriptions` (`{audio: base64 WAV, language?}` -> `{text}`) and
+`POST /kuno/v1/audio/speech` (`{input, voice?, language?, seed?}` -> 24 kHz `audio/wav`),
+keyless server-to-server like images (an `Origin` header is refused), with an `audio`
+section in `/kuno/v1/capabilities` (absent: unsupported). CPU only (LFM3-Audio-2B in Kuno's
+Rust engine); one job at a time, four waiting. Tested through a development gateway (speech
+round trip exact; error paths; disconnect stops the worker), not the installed service.
+
+Vashti work (user-facing design to be proposed to the user before building):
+
+- Read `capabilities.audio`; offer audio only when `state` is `ready`, and use its
+  `voices`/`languages` lists rather than hard-coding them.
+- Dictation: record in the browser, send WAV (any rate/channels; Vashti may encode 16 kHz
+  mono 16-bit to keep uploads small), base64, through Vashti's server. Vashti's
+  `Permissions-Policy` sets `microphone=()` (`apps/vashti/src/main.rs`); it must allow
+  `microphone=(self)` for recording, and `getUserMedia` needs a secure context (HTTPS, or
+  localhost) on phones.
+- Read-aloud: send message text; play the returned WAV. Rendering is slower than real time
+  on this CPU (about 1.3-1.6 s per second of speech), so long replies should show progress
+  or be spoken a paragraph at a time from Vashti's side.
+- Treat audio and transcripts as private content: no logs, no persistence unless the user
+  saves them (as with images).
+- Errors are `{"error": code}`; `audio_queue_full` and `audio_worker_failed` are retryable.
+
 **Joint beta.5 preparation (2026-11-25):** Vashti merged `main` at `7e0641ad`.
 Kuno's executable runs its own workers; there is no separate Intel runtime
 artifact. The release contains Vashti Linux, Vashti Android, and Kuno Linux.
