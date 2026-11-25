@@ -1,11 +1,10 @@
 # Kuno video generation (2026-11-07, modes added 2026-11-08)
 
-Status: **backend installed and tested (2026-11-07)** from branch `claude/video-api`; see the
-backend receipt in the [coordination guide](kuno-vashti-coordination.md). The Vashti
-connector and UI are not built yet.
+Status: the embedded Rust worker serves MiniMax H3 image-to-video and text-to-video;
+no separate runtime is needed as of 2026-11-24. See the [coordination
+guide](kuno-vashti-coordination.md) and [Vashti video workflow](vashti-video.md).
 
-MiniMax H3 video with generated audio, running on the managed SYCL image runtime
-(stable-diffusion.cpp). Three workflows:
+MiniMax H3 video with generated audio has three workflows:
 
 | Workflow | Inputs | Model (collection) | Steps |
 |---|---|---|---|
@@ -17,9 +16,8 @@ MiniMax H3 video with generated audio, running on the managed SYCL image runtime
 `minimax-h3-video/v1` for all keyframe cases. Reference images cannot be combined with a
 first or last frame (a model limit). The two models are separate DiTs: switching between
 the reference workflow and the others reloads the model (the first clip after a switch is
-slower). The engine will later be rewritten in
-Rust piece by piece behind this same API, checked against the stable-diffusion.cpp
-output and speed. Development timings: [video performance](kuno-video-performance.md).
+slower). The engine was rewritten in Rust behind this same API. Historical speed
+work is recorded in [video performance](kuno-video-performance.md).
 
 ## Principles (unchanged from images)
 
@@ -213,18 +211,16 @@ ConvRot `ref2va` DiT and the 4-step turbo LoRA (v0.1), plus the same text encode
 the same way (~44 GB more on disk with the derived file).
 
 Enable them by adding `minimax-h3-int8` and/or `minimax-h3-ref2va-int8` to
-`image.collections` with the managed SYCL engine.
+`image.collections` on a supported GPU.
 
 ## Old/new compatibility
 
 - Old Kuno: no `videos` in discovery, `/kuno/v1/videos/generate` is 404. Vashti hides
   video.
 - Old Vashti: ignores `videos`; nothing else changes. The image API is unchanged.
-- Video requires a managed SYCL runtime whose manifest declares worker ABI 4 (ABI 3 added
-  video jobs and progress frames; ABI 4 adds text-only, last-frame and reference inputs).
-  An older installed runtime reports video `unavailable` with `image_runtime_unavailable`
-  and keeps serving images. Older gateways reject ABI 4 manifests, so upgrade the gateway
-  first.
+- Older video builds required a managed runtime. On upgrade to the single-worker
+  Kuno, the installer removes that bundle and its obsolete configuration fields.
+  No additional installation step is needed.
 - Requests valid before 2026-11-08 are unchanged. In `kuno_protocol::VideoRecipe`,
   `first_frame` is now `Option<String>` and `last_frame`/`reference_images` were added, so
   Rust clients that build the struct need a one-line update (JSON is compatible).

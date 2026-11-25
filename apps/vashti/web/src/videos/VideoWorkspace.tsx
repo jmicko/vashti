@@ -15,6 +15,7 @@ import {
   Save,
   SendHorizontal,
   Settings2,
+  Scan,
   Square,
   X,
 } from "lucide-react";
@@ -26,7 +27,7 @@ import { saveFile } from "../saveFile";
 import { ApiRequestError, requestJson } from "../api";
 import { usesMobileInputBehavior } from "../viewport";
 import { InferenceSettingsToggle } from "../images/controls";
-import { aspectRatios, closestAspect } from "../images/aspectRatio";
+import { aspectRatios } from "../images/aspectRatio";
 import { mediaModelGroups } from "../images/flow";
 import {
   videoRepository,
@@ -37,8 +38,21 @@ import {
 import {
   videoDefaults,
   videoActive,
-  videoSize,
+  videoGeometry,
+  videoResolution,
+  videoFrameOptions,
+  fitVideoSettings,
+  usesVideoMemoryLimits,
   nextVideoSeed,
+  VIDEO_GENERAL,
+  videoInputMode,
+  videoInputs,
+  videoModeDraft,
+  videoWorkflowName,
+  canSendVideo,
+  closestVideoAspect,
+  type VideoInputMode,
+  type VideoResolution,
   type VideoDraft,
   type VideoHost,
   type VideoRun,
@@ -122,11 +136,22 @@ function VideoFlow({
     input = useRef<HTMLTextAreaElement>(null),
     transcript = useRef<HTMLDivElement>(null),
     following = useRef(true);
+  const inputTarget = useRef<"first" | "last" | "reference">("first");
   const active = runs.find((r) => videoActive(r.status));
   const selectedHost = hosts.find((h) => h.backend.id === draft.backend_id);
   const workflow = selectedHost?.capabilities.workflows.find(
     (w) => w.id === draft.workflow,
   );
+  const inputMode = videoInputMode(draft);
+  const inputImages = videoInputs(draft);
+  const original = inputImages[0]?.id;
+  const [geometryNotice, setGeometryNotice] = useState<string | null>(null);
+  const memoryLimits = usesVideoMemoryLimits(workflow);
+  const resolution = videoResolution(draft);
+  const frameOptions = workflow ? videoFrameOptions(draft, workflow) : [];
+  const selectedAspect = workflow
+    ? closestVideoAspect(draft.width, draft.height, workflow, aspectRatios)
+    : "Custom";
   const groups = useMemo(
     () =>
       mediaModelGroups(
@@ -194,7 +219,9 @@ function VideoFlow({
       setDraft((value) => ({
         ...value,
         backend_id: hosts[0].backend.id,
-        workflow: hosts[0].capabilities.workflows[0].id,
+        workflow:
+          hosts[0].capabilities.workflows.find((w) => w.id === VIDEO_GENERAL)
+            ?.id ?? hosts[0].capabilities.workflows[0].id,
       }));
   }, [ready, hosts]);
   useEffect(() => {
@@ -272,7 +299,7 @@ function VideoFlow({
                 status: "failed",
                 progress: {
                   error:
-                    "Generation was interrupted or expired. The prompt and first frame are saved on this device.",
+                    "Generation was interrupted or expired. The prompt and input images are saved on this device.",
                 },
               });
             }
@@ -320,7 +347,65 @@ function VideoFlow({
   function change(patch: Partial<VideoDraft>) {
     requestId.current = crypto.randomUUID();
     setNotice(null);
-    setDraft((value) => ({ ...value, ...patch }));
+    setGeometryNotice(null);
+    const next = { ...draftRef.current, ...patch };
+    draftRef.current = next;
+    setDraft(next);
+  }
+  function selectGeometry(ratio: number, tier: VideoResolution = resolution) {
+    if (!workflow) return;
+    try {
+      const next = videoGeometry(draftRef.current, ratio, workflow, tier);
+      const shortened = next.frames < draftRef.current.frames;
+      change(next);
+      if (shortened) setGeometryNotice(`Clip length reduced to ${(next.frames / workflow.fps).toFixed(2)} s at this resolution.`);
+    } catch (e) {
+      setError(message(e));
+    }
+  }
+  function chooseMode(mode: VideoInputMode) {
+    try {
+      const wasReference = videoInputMode(draftRef.current) === "references";
+      change(
+        videoModeDraft(
+          draftRef.current,
+          mode,
+          selectedHost?.capabilities.workflows ?? [],
+        ),
+      );
+      if (wasReference !== (mode === "references"))
+        setNotice(
+          "The first clip after switching video models may take longer.",
+        );
+    } catch (e) {
+      setError(message(e));
+    }
+  }
+  function attach(target: "first" | "last" | "reference") {
+    inputTarget.current = target;
+    chooseMode(target === "reference" ? "references" : "keyframes");
+    if (file.current) {
+      file.current.multiple = target === "reference";
+      file.current.click();
+    }
+  }
+  async function matchOriginal() {
+    if (!original || !workflow) return;
+    const expected = draftRef.current;
+    try {
+      const bitmap = await createImageBitmap(
+        await repo.frameBlob(original, false),
+      );
+      try {
+        repo.guard();
+        if (alive.current && draftRef.current === expected)
+          selectGeometry(bitmap.width / bitmap.height);
+      } finally {
+        bitmap.close();
+      }
+    } catch (e) {
+      setError(message(e));
+    }
   }
   async function send(retry?: VideoRun) {
     if (busy || loading.current || active || !ready) return;
@@ -328,6 +413,11 @@ function VideoFlow({
     setBusy(true);
     setError(null);
     let value = retry ? readDraft(retry) : draft;
+    if (!retry && !canSendVideo(value, workflow)) {
+      loading.current = false;
+      setBusy(false);
+      return;
+    }
     if (retry && storageMode === "device") {
       const origin = runs.find((r) => r.id === retry.group_id) ?? retry;
       value = {
@@ -407,9 +497,18 @@ function VideoFlow({
       repo.guard();
       if (alive.current)
         change({
-          first_frame_id: result.id,
-          ...(workflow
-            ? videoSize(result.width / result.height, workflow)
+          ...(inputTarget.current === "reference"
+            ? {
+                reference_image_ids: [
+                  ...(draftRef.current.reference_image_ids ?? []),
+                  result.id,
+                ].slice(0, workflow?.max_reference_images ?? 4),
+              }
+            : inputTarget.current === "last"
+              ? { last_frame_id: result.id }
+              : { first_frame_id: result.id }),
+          ...(!videoInputs(draftRef.current).length && workflow
+            ? videoGeometry(draftRef.current, result.width / result.height, workflow)
             : {}),
         });
     } catch (e) {
@@ -433,13 +532,37 @@ function VideoFlow({
         value={
           draft.backend_id ? modelValue(draft.backend_id, draft.workflow) : ""
         }
-        modelLabel={() => "MiniMax H3"}
+        modelLabel={videoWorkflowName}
         emptyLabel="No video models"
         ariaLabel="Video model"
         onChange={(value) => {
+          if (busy) return;
           const model = modelParts(value);
-          if (model)
-            change({ backend_id: model.backendId, workflow: model.modelName });
+          if (model) {
+            const nextHost = hosts.find(
+              (host) => host.backend.id === model.backendId,
+            );
+            const nextMode = model.modelName.includes("reference")
+              ? "references"
+              : inputMode === "references"
+                ? "text"
+                : inputMode;
+            try {
+              change({
+                ...videoModeDraft(
+                  { ...draftRef.current, backend_id: model.backendId },
+                  model.modelName.includes("image-to-video")
+                    ? "keyframes"
+                    : nextMode,
+                  nextHost?.capabilities.workflows.filter(
+                    (w) => w.id === model.modelName,
+                  ) ?? [],
+                ),
+              });
+            } catch (e) {
+              setError(message(e));
+            }
+          }
         }}
       />
       <ActionMenu label="Video options">
@@ -459,7 +582,9 @@ function VideoFlow({
   );
   const groupIds = [...new Set(runs.map((r) => r.group_id))];
   return (
-    <div className={`video-workspace image-flow${settings ? " video-settings-open" : ""}`}>
+    <div
+      className={`video-workspace image-flow${settings ? " video-settings-open" : ""}`}
+    >
       {headerTarget ? createPortal(header, headerTarget) : header}
       {error && (
         <div className="images-error video-error" role="alert">
@@ -524,16 +649,20 @@ function VideoFlow({
                     <dt>Seed</dt>
                     <dd>{recipe.seed}</dd>
                   </dl>
-                  {recipe.first_frame_id && (
-                    <button
-                      type="button"
-                      className="video-source"
-                      aria-label="View original first frame"
-                      onClick={() => setViewFrame(recipe.first_frame_id)}
-                    >
-                      <VideoFrame repo={repo} id={recipe.first_frame_id} />
-                    </button>
-                  )}
+                  <div className="video-source-list">
+                    {videoInputs(recipe).map((source) => (
+                      <button
+                        key={`${source.label}:${source.id}`}
+                        type="button"
+                        className="video-source"
+                        aria-label={`View original ${source.label.toLowerCase()}`}
+                        onClick={() => setViewFrame(source.id)}
+                      >
+                        <VideoFrame repo={repo} id={source.id} />
+                        <span>{source.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </details>
                 <article className="video-response">
                   <header>
@@ -586,8 +715,11 @@ function VideoFlow({
                           src={`data:image/png;base64,${progress.progress.preview.png_base64}`}
                           alt="Video generation preview"
                         />
-                      ) : recipe.first_frame_id ? (
-                        <VideoFrame repo={repo} id={recipe.first_frame_id} />
+                      ) : videoInputs(recipe)[0]?.id ? (
+                        <VideoFrame
+                          repo={repo}
+                          id={videoInputs(recipe)[0].id}
+                        />
                       ) : null}
                       <div className="video-progress" role="status">
                         {progress?.progress.phase ?? run.status}
@@ -640,7 +772,9 @@ function VideoFlow({
           })}
         </div>
       </div>
-      <div className={`image-composer-dock video-composer-dock${settings ? " image-composer-dock-expanded" : ""}`}>
+      <div
+        className={`image-composer-dock video-composer-dock${settings ? " image-composer-dock-expanded" : ""}`}
+      >
         <form
           className={`image-chat-composer${!focused && !settings ? " image-chat-composer-compact" : ""}`}
           onKeyDown={(event) => {
@@ -649,7 +783,9 @@ function VideoFlow({
               event.stopPropagation();
               setSettings(false);
               setFocused(false);
-              event.currentTarget.querySelector<HTMLButtonElement>(".image-composer-expand")?.focus({ preventScroll: true });
+              event.currentTarget
+                .querySelector<HTMLButtonElement>(".image-composer-expand")
+                ?.focus({ preventScroll: true });
             }
           }}
           onSubmit={(e) => {
@@ -657,27 +793,124 @@ function VideoFlow({
             void send();
           }}
         >
-          <InferenceSettingsToggle expanded={settings} controls={settingsId} onToggle={() => {
-            setSettings((value) => !value);
-            setFocused(false);
-            input.current?.blur();
-          }} />
+          <InferenceSettingsToggle
+            expanded={settings}
+            controls={settingsId}
+            onToggle={() => {
+              setSettings((value) => !value);
+              setFocused(false);
+              input.current?.blur();
+            }}
+          />
           <div className="image-composer-body">
+            {inputImages.length > 0 && (
+              <div className="video-input-list" aria-label="Video input images">
+                {inputImages.map((source, index) => (
+                  <div
+                    className="video-input-item"
+                    key={`${source.label}:${source.id}`}
+                  >
+                    <button
+                      type="button"
+                      className="video-input-preview"
+                      aria-label={`View ${source.label.toLowerCase()}`}
+                      title={source.label}
+                      onClick={() => setViewFrame(source.id)}
+                    >
+                      <VideoFrame repo={repo} id={source.id} />
+                      <span>
+                        {source.label.startsWith("Picture")
+                          ? index + 1
+                          : source.label === "Start frame"
+                            ? "Start"
+                            : "End"}
+                      </span>
+                    </button>
+                    {(settings || focused) && (
+                      <div className="video-input-actions">
+                        {inputMode === "references" && (
+                          <>
+                            <button
+                              type="button"
+                              className="message-icon-button"
+                              title="Move reference left"
+                              aria-label={`Move ${source.label.toLowerCase()} left`}
+                              disabled={busy || index === 0}
+                              onClick={() => {
+                                const ids = [
+                                  ...(draft.reference_image_ids ?? []),
+                                ];
+                                [ids[index - 1], ids[index]] = [
+                                  ids[index],
+                                  ids[index - 1],
+                                ];
+                                change({ reference_image_ids: ids });
+                              }}
+                            >
+                              <ChevronLeft size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              className="message-icon-button"
+                              title="Move reference right"
+                              aria-label={`Move ${source.label.toLowerCase()} right`}
+                              disabled={
+                                busy || index === inputImages.length - 1
+                              }
+                              onClick={() => {
+                                const ids = [
+                                  ...(draft.reference_image_ids ?? []),
+                                ];
+                                [ids[index], ids[index + 1]] = [
+                                  ids[index + 1],
+                                  ids[index],
+                                ];
+                                change({ reference_image_ids: ids });
+                              }}
+                            >
+                              <ChevronRight size={16} />
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          className="message-icon-button"
+                          title={`Remove ${source.label.toLowerCase()}`}
+                          aria-label={`Remove ${source.label.toLowerCase()}`}
+                          disabled={busy}
+                          onClick={() =>
+                            change(
+                              source.label === "Start frame"
+                                ? { first_frame_id: null }
+                                : source.label === "End frame"
+                                  ? { last_frame_id: null }
+                                  : {
+                                      reference_image_ids: (
+                                        draft.reference_image_ids ?? []
+                                      ).filter((_, i) => i !== index),
+                                    },
+                            )
+                          }
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="video-prompt-row">
-              {draft.first_frame_id && (
-                <button
-                  type="button"
-                  className="video-input-preview"
-                  aria-label="View first frame"
-                  onClick={() => setViewFrame(draft.first_frame_id)}
-                >
-                  <VideoFrame repo={repo} id={draft.first_frame_id} />
-                </button>
-              )}
               <textarea
                 ref={input}
                 aria-label="Video prompt"
-                placeholder="Describe the motion..."
+                placeholder={
+                  inputMode === "references"
+                    ? "Describe the video with <Picture 1>..."
+                    : inputMode === "text"
+                      ? "Describe the video..."
+                      : "Describe the motion..."
+                }
                 rows={focused ? 3 : 1}
                 value={draft.prompt}
                 disabled={!ready || busy}
@@ -699,71 +932,132 @@ function VideoFlow({
               />
             </div>
             {settings && (
-              <section id={settingsId} aria-label="Video inference settings" className="image-inline-settings"
+              <section
+                id={settingsId}
+                aria-label="Video inference settings"
+                className="image-inline-settings"
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement)
+                  if (
+                    event.key === "Enter" &&
+                    !event.nativeEvent.isComposing &&
+                    event.target instanceof HTMLInputElement
+                  )
                     event.preventDefault();
-                }}>
+                }}
+              >
                 <div className="video-settings">
-                  <label>
-                    Aspect ratio
-                    <select
-                      aria-label="Video aspect ratio"
-                      value={closestAspect(draft.width, draft.height)}
-                      disabled={!workflow}
-                      onChange={(e) => {
-                        if (!workflow) return;
-                        if (e.target.value === "original") {
-                          if (!draft.first_frame_id) return;
-                          void repo
-                            .frameBlob(draft.first_frame_id, false)
-                            .then(createImageBitmap)
-                            .then((bitmap) => {
-                              try {
-                                repo.guard();
-                                if (alive.current)
-                                  change(
-                                    videoSize(bitmap.width / bitmap.height, workflow),
-                                  );
-                              } finally {
-                                bitmap.close();
-                              }
-                            })
-                            .catch((e) => setError(message(e)));
-                          return;
-                        }
-                        const [w, h] = e.target.value.split(":").map(Number);
-                        change(videoSize(w / h, workflow));
-                      }}
-                    >
-                      <option value="original" disabled={!draft.first_frame_id}>
-                        Original image
-                      </option>
-                      <option value="Custom" disabled>
-                        {draft.width} × {draft.height}
-                      </option>
-                      {aspectRatios.map((r) => (
-                        <option key={r}>{r}</option>
+                  <fieldset disabled={busy}>
+                    <legend>Input</legend>
+                    <div className="images-segments">
+                      {(
+                        [
+                          ["text", "Text only"],
+                          ["keyframes", "Keyframes"],
+                          ["references", "References"],
+                        ] as const
+                      ).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={inputMode === mode}
+                          disabled={
+                            !selectedHost?.capabilities.workflows.some(
+                              (w) =>
+                                w.state === "ready" &&
+                                (mode === "references"
+                                  ? w.max_reference_images
+                                  : mode === "text"
+                                    ? w.id === VIDEO_GENERAL
+                                    : w.first_frame !== "unsupported"),
+                            )
+                          }
+                          onClick={() => chooseMode(mode)}
+                        >
+                          {label}
+                        </button>
                       ))}
-                    </select>
-                  </label>
+                    </div>
+                  </fieldset>
+                  {inputMode === "references" && (
+                    <small className="muted">{`<Picture 1>, <Picture 2>, … · ${workflow?.steps ?? 4} steps`}</small>
+                  )}
+                  {memoryLimits && <fieldset disabled={busy}>
+                    <legend>Resolution</legend>
+                    <div className="images-segments">
+                      {(["standard", "high"] as const).map((tier) => <button
+                        type="button"
+                        key={tier}
+                        aria-pressed={resolution === tier}
+                        onClick={() => {
+                          if (resolution === tier) return;
+                          const [w, h] = selectedAspect.split(":").map(Number);
+                          selectGeometry(w && h ? w / h : draft.width / draft.height, tier);
+                        }}
+                      >{tier === "standard" ? "Standard" : "High"}</button>)}
+                    </div>
+                  </fieldset>}
                   <label>
                     Clip length
                     <select
                       aria-label="Video clip length"
                       value={draft.frames}
-                      disabled={!workflow}
-                      onChange={(e) => change({ frames: Number(e.target.value) })}
+                      disabled={!workflow || busy}
+                      onChange={(e) =>
+                        change({ frames: Number(e.target.value) })
+                      }
                     >
-                      {(workflow?.frames ?? [22, 39, 56, 73, 90, 107, 124]).map(
+                      {!frameOptions.includes(draft.frames) && (
+                        <option value={draft.frames} disabled>
+                          {(draft.frames / (workflow?.fps ?? 24)).toFixed(2)} s{workflow ? " (unavailable)" : ""}
+                        </option>
+                      )}
+                      {frameOptions.map(
                         (n) => (
                           <option key={n} value={n}>
-                            {(n / 24).toFixed(2)} s
+                            {(n / (workflow?.fps ?? 24)).toFixed(2)} s · {n}{" "}
+                            frames
                           </option>
                         ),
                       )}
                     </select>
                   </label>
+                  {geometryNotice && <small role="status">{geometryNotice}</small>}
+                  {memoryLimits && (resolution === "high" || draft.frames > 124) && (
+                    <small className="muted">Longer or larger clips can take several minutes.</small>
+                  )}
+                  <fieldset className="images-size" disabled={busy || !workflow}>
+                    <legend>
+                      Aspect ratio <span>{selectedAspect} · {draft.width} × {draft.height}</span>
+                    </legend>
+                    <div className="images-ratios">
+                      {aspectRatios.map((ratio) => {
+                        const [width, height] = ratio.split(":").map(Number);
+                        return (
+                          <button
+                            type="button"
+                            key={ratio}
+                            aria-pressed={selectedAspect === ratio}
+                            onClick={() => selectGeometry(width / height)}
+                          >
+                            <span
+                              className="images-ratio-shape"
+                              style={{
+                                width: 24 * Math.min(1, width / height),
+                                height: 24 * Math.min(1, height / width),
+                              }}
+                            />
+                            {ratio}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {original && (
+                      <button type="button" className="secondary-button" onClick={() => void matchOriginal()}>
+                        <Scan size={18} />
+                        Match original
+                      </button>
+                    )}
+                  </fieldset>
                   <label className="checkbox-row">
                     <input
                       type="checkbox"
@@ -839,13 +1133,20 @@ function VideoFlow({
                       onClick={() =>
                         change({
                           ...defaults,
+                          backend_id: draft.backend_id,
                           prompt: draft.prompt,
                           first_frame_id: draft.first_frame_id,
+                          last_frame_id: draft.last_frame_id,
+                          reference_image_ids: draft.reference_image_ids,
+                          input_mode: draft.input_mode,
+                          workflow: draft.workflow,
+                          ...(workflow ? fitVideoSettings(defaults, workflow) : { frames: draft.frames }),
+                          audio: defaults.audio && !!workflow?.audio,
                         })
                       }
                     >
                       <RotateCcw size={17} />
-                      Reset settings
+                      Reset inference settings
                     </button>
                   </div>
                   <button
@@ -864,28 +1165,44 @@ function VideoFlow({
           </div>
           <footer>
             <div className="images-actions">
-              <button
-                type="button"
-                className="icon-button primary-action"
-                title="Choose first frame"
-                aria-label="Choose first frame"
-                disabled={busy || !ready}
-                onClick={() => file.current?.click()}
+              <ActionMenu
+                label="Attach video images"
+                icon={<ImagePlus />}
+                disabled={busy || !ready || !workflow}
               >
-                <ImagePlus />
-              </button>
-              {draft.first_frame_id && (
-                <button
-                  type="button"
-                  className="message-icon-button"
-                  aria-label="Remove first frame"
-                  title="Remove first frame"
-                  disabled={busy}
-                  onClick={() => change({ first_frame_id: null })}
-                >
-                  <X size={18} />
-                </button>
-              )}
+                {selectedHost?.capabilities.workflows.some(
+                  (w) => w.first_frame !== "unsupported",
+                ) && (
+                  <button type="button" onClick={() => attach("first")}>
+                    <ImagePlus />
+                    Start frame
+                  </button>
+                )}
+                {selectedHost?.capabilities.workflows.some(
+                  (w) => w.last_frame === "optional",
+                ) && (
+                  <button type="button" onClick={() => attach("last")}>
+                    <ImagePlus />
+                    End frame
+                  </button>
+                )}
+                {selectedHost?.capabilities.workflows.some(
+                  (w) => (w.max_reference_images ?? 0) > 0,
+                ) && (
+                  <button
+                    type="button"
+                    disabled={
+                      inputMode === "references" &&
+                      inputImages.length >=
+                        (workflow?.max_reference_images ?? 4)
+                    }
+                    onClick={() => attach("reference")}
+                  >
+                    <Images />
+                    Reference images
+                  </button>
+                )}
+              </ActionMenu>
             </div>
             {active ? (
               <button
@@ -908,7 +1225,7 @@ function VideoFlow({
                 type="submit"
                 className="icon-button primary-action"
                 aria-label="Send video prompt"
-                disabled={busy || !ready || !workflow || !draft.first_frame_id}
+                disabled={busy || !ready || !canSendVideo(draft, workflow)}
               >
                 <SendHorizontal />
               </button>
@@ -918,11 +1235,39 @@ function VideoFlow({
             ref={file}
             type="file"
             accept="image/*"
+            multiple={inputMode === "references"}
             className="image-file-input"
             onChange={(e) => {
-              const value = e.target.files?.[0];
+              const values = Array.from(e.target.files ?? []);
               e.target.value = "";
-              if (value) void upload(value);
+              const remaining =
+                inputTarget.current === "reference"
+                  ? Math.max(
+                      0,
+                      (workflow?.max_reference_images ?? 4) -
+                        (draft.reference_image_ids?.length ?? 0),
+                    )
+                  : 1;
+              if (values.length > remaining) {
+                setError(
+                  `You can add ${remaining} more reference image${remaining === 1 ? "" : "s"}. No images were added.`,
+                );
+                return;
+              }
+              if (values.length)
+                void (async () => {
+                  for (const value of values.slice(
+                    0,
+                    inputTarget.current === "reference"
+                      ? Math.max(
+                          0,
+                          (workflow?.max_reference_images ?? 4) -
+                            (draft.reference_image_ids?.length ?? 0),
+                        )
+                      : 1,
+                  ))
+                    await upload(value);
+                })();
             }}
           />
         </form>
@@ -933,7 +1278,7 @@ function VideoFlow({
       {viewFrame && (
         <PhotoViewer
           id={viewFrame}
-          title="First frame"
+          title="Video input image"
           onClose={() => setViewFrame(null)}
           onStep={() => {}}
           canPrevious={false}
@@ -1004,7 +1349,7 @@ function VideoFrame({
     };
   }, [repo, id, original]);
   return image?.id === id ? (
-    <img src={image.url} alt="First frame" />
+    <img src={image.url} alt="Video input image" />
   ) : (
     <span className="video-frame-placeholder">
       <Images size={20} />

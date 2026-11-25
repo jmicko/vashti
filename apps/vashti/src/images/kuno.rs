@@ -812,6 +812,41 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn fast_2512_is_sent_only_when_the_selected_host_advertises_it() {
+        for fast_supported in [false, true] {
+            let mut discovery_value = capabilities();
+            if fast_supported {
+                discovery_value["images"]["workflows"][2]["attention"] =
+                    json!(["standard", "fast"]);
+            }
+            let app = discovery(
+                Router::new().route(
+                    GENERATE_PATH,
+                    post(|Json(request): Json<Value>| async move {
+                        assert_eq!(request["workflow"], kuno_protocol::QWEN_RECIPE);
+                        assert_eq!(request["attention"], "fast");
+                        ([("content-type", IMAGE_STREAM_MEDIA_TYPE)], events())
+                    }),
+                ),
+                discovery_value,
+            );
+            let (url, server) = host(app).await;
+            let mut recipe = recipe();
+            recipe.workflow = kuno_protocol::QWEN_RECIPE.into();
+            recipe.flow_shift = Some(3.1);
+            recipe.attention = kuno_protocol::ImageAttention::Fast;
+            recipe.validate().unwrap();
+            let output = KunoClient::default().generate(&url, &recipe, |_| ()).await;
+            if fast_supported {
+                output.unwrap();
+            } else {
+                assert_eq!(output.unwrap_err().code(), "image_attention_unsupported");
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
     async fn discovery_deadline_covers_slow_responses_and_stream_event_size_is_bounded() {
         let app = Router::new().route(
             "/kuno/v1/capabilities",

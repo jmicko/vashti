@@ -1,5 +1,44 @@
 # Kuno and Vashti Coordination
 
+**Joint beta.5 preparation (2026-11-25):** Vashti merged `main` at `7e0641ad`.
+Kuno's executable runs its own workers; there is no separate Intel runtime
+artifact. The release contains Vashti Linux, Vashti Android, and Kuno Linux.
+The installed single-worker gateway passed live Qwen 2512 Fast image and
+MiniMax text-to-video requests through packaged Vashti. The packaged web app
+played and downloaded a saved 10-second clip. An isolated upgrade from the
+published beta.4 preserved installation identity, login, and a synthetic note.
+All three signed artifacts passed a local Hub upload. The signed APK installed
+on the Pixel 6; native playback and export were not tested. No artifacts were
+uploaded to the live Hub, and the installed Kuno service was not changed.
+
+**Vashti expanded-video consumer checkpoint (2026-11-23):** merged `main` at
+`a2ab6ac1` and verified the installed gateway advertises `limits: "memory"`.
+Vashti honors that contract, retains advertised limits on older hosts, and
+offers Standard and High resolution with bounded duration and pixel budgets.
+Uncropped keyframes are sent to Kuno; GPU and RAM errors explain how to recover.
+Live high-resolution and longer outputs played and downloaded in the embedded
+web app. Read [Vashti workflow and acceptance](vashti-video.md#expanded-clip-acceptance-2026-11-23).
+No newer Kuno experiments, install, service change, or deployment are included.
+
+**Vashti video-modes consumer checkpoint (2026-11-15):**
+`codex/video-workflow-modes` merged the published `main` contract at `64e9a383`,
+not the experimental Kuno engine branch. The conversational Video workspace now
+supports discovery-gated text-only, optional start/end keyframes and 1-4 ordered
+reference images in both server/device modes. Lower composer controls use the
+Images aspect-ratio presets and original detection. Reference streams validate
+four steps; keyframe/text streams validate eight. Legacy first-frame wire
+requests remain compatible. Sources/retries stay immutable and owner scoped.
+Current installed length remains 124 frames / 24 fps (5.17 seconds); increasing
+it requires a separately tested backend/shared-contract change.
+
+203 ordinary server and 117 frontend tests, strict server lint, real installed-
+Kuno text/keyframe/reference clips, independent decoding and browser playback
+passed. A local signed APK installs/opens on the authorized Pixel 6; native
+generation/playback/export acceptance is still pending. Read [workflow and
+acceptance boundaries](vashti-video.md). Kuno source, installed services,
+configuration and engine worktrees are unchanged. No release, upload or
+deployment is authorized by this checkpoint.
+
 **Vashti personalization consumer checkpoint (2026-11-15):**
 `codex/automatic-personalization` adds an idle, source-backed user profile and
 bounded chat/Assistant context, with independent server and encrypted-device

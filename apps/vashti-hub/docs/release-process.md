@@ -35,23 +35,17 @@ prereleases until an admin promotes or deletes them.
    ./apps/vashti/scripts/package-android-release.sh
    ```
 
-6. Build the Kuno package with `apps/kuno/scripts/package-release.sh` (the Rust image
-   engine needs no prepared native build).
-   APK filenames include the version (`vashti-0.13.0-beta.2.apk`); older releases
-   with `vashti-android.apk` remain supported. When shipping the optional Intel
-   runtime, verify its approved archive and manifest hashes from the Kuno release
-   handoff, then copy `kuno-sycl-linux-x86_64.tar.gz` into the same release directory.
-   It is signed and uploaded separately from standard Kuno; installation and
-   runtime selection remain explicit. Include its exact manifest checksum and
-   installation instructions in the release notes.
+6. Build the Kuno package with `apps/kuno/scripts/package-release.sh`. The Rust
+   image and video worker ships in the Kuno executable, including for supported
+   Intel GPUs. Do not build or upload a separate runtime. Historical runtime
+   artifacts stay downloadable with their older releases.
+   APK filenames include the version (`vashti-0.13.0-beta.5.apk`); older releases
+   with `vashti-android.apk` remain supported.
    Verify every intended package is present, then run
-   `REQUIRE_COMPLETE_RELEASE=1 CHECK_ONLY=1 apps/vashti/scripts/publish-release.sh`
-   (also `REQUIRE_KUNO_SYCL_RUNTIME=1` when shipping Intel support).
+   `REQUIRE_COMPLETE_RELEASE=1 CHECK_ONLY=1 apps/vashti/scripts/publish-release.sh`.
    Only then open the Hub admin page and create a one-time upload key.
    Check the complete upload against `VASHTI_HUB_MAX_UPLOAD_BYTES` and any reverse-proxy
-   body limit. The beta.2 Linux/Android/Kuno/Intel-runtime bundle is approximately
-   644 MiB, exceeding the default 512 MiB request limit; allow at least 1 GiB
-   before attempting that upload.
+   body limit using the actual package sizes and allowing for multipart overhead.
 
    When Kuno is unchanged, skip its build and publish only Vashti instead. Build
    the matching Linux server and Android APK, then run:
@@ -61,10 +55,10 @@ prereleases until an admin promotes or deletes them.
    RELEASE_SCOPE=vashti REQUIRE_COMPLETE_RELEASE=1 apps/vashti/scripts/publish-release.sh
    ```
 
-   `RELEASE_SCOPE=vashti` explicitly excludes Kuno and its optional runtime,
+   `RELEASE_SCOPE=vashti` explicitly excludes Kuno,
    even if old files are present in the release directory. It does not rebuild,
    rename, or bump Kuno. `RELEASE_SCOPE=kuno` publishes only the inference host
-   and any optional runtime; `auto` (the default) retains the historical behavior
+   package; `auto` (the default) retains the historical behavior
    of uploading all discovered artifacts. `all` has the same discovery behavior.
    Complete-release checks apply to the selected scope. Deploy the updated Hub
    before using partial releases; older Hubs assume every component shares the
@@ -78,7 +72,7 @@ prereleases until an admin promotes or deletes them.
    The script automatically uses the versioned notes file if it exists, otherwise it falls back to
    `release-notes-latest.md`.
 
-   Linux, Android, Kuno, and any optional runtime are uploaded in one request and belong to the same staged release. A one-time
+   Linux, Android, and Kuno are uploaded in one request and belong to the same staged release. A one-time
    key cannot be reused to add a second artifact later.
 
 8. Test the staged prerelease from the Releases page using the version-specific install command and

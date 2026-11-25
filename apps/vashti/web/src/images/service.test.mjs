@@ -23,6 +23,17 @@ test("partial hosts allow only ready workflows and advertised attention", () => 
   assert.equal(canGenerate(service, { ...recipe, workflow: "unknown" }, 0), false);
 });
 
+test("2512 permits fast attention only on a host advertising it", () => {
+  const draft = { workflow: "qwen-image-2512-text-to-image/v1", attention: "fast" };
+  const workflow = { ...generate, id: draft.workflow };
+  const host = (workflow) => ({ state: "ready", capabilities: { images: { workflows: [workflow] } } });
+  const oldHost = host(workflow);
+  const newHost = host({ ...workflow, attention: ["standard", "fast"] });
+  assert.equal(canGenerate(oldHost, draft, 0), false);
+  assert.equal(canGenerate(newHost, draft, 0), true);
+  assert.equal(canGenerate(oldHost, { ...draft, attention: "standard" }, 0), true);
+});
+
 test("reference bounds and labels distinguish generation from editing", () => {
   assert.equal(canGenerate(service, recipe, 1), false);
   const editing = { ...recipe, workflow: edit.id };
@@ -34,7 +45,7 @@ test("reference bounds and labels distinguish generation from editing", () => {
   assert.equal(workflowLabel("qwen-image-2512-text-to-image/v1"), "Qwen Image 2512");
 });
 
-test("the installed Kuno standard-only discovery contract supports all image workflows", () => {
+test("older Kuno standard-only discovery supports all image workflows", () => {
   const workflows = [
     { ...generate, id: "qwen-image-2512-text-to-image/v1" },
     generate,

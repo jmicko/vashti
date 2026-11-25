@@ -28,7 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/frames/{id}", get(read_frame))
         .route(
             "/private",
-            post(private).layer(DefaultBodyLimit::max(18 * 1024 * 1024)),
+            post(private).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
         .layer(axum::middleware::map_response(
             |mut response: axum::response::Response| async move {
@@ -188,7 +188,14 @@ async fn submit(
 #[serde(deny_unknown_fields)]
 struct PrivateRequest {
     request: Request,
-    first_frame: String,
+    #[serde(default)]
+    expected_user_id: Option<String>,
+    #[serde(default)]
+    first_frame: Option<String>,
+    #[serde(default)]
+    last_frame: Option<String>,
+    #[serde(default)]
+    reference_images: Vec<String>,
 }
 async fn private(
     State(state): State<AppState>,
@@ -196,12 +203,22 @@ async fn private(
     Json(input): Json<PrivateRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let owner = user(&state, &jar).await?;
+    if input
+        .expected_user_id
+        .as_deref()
+        .is_some_and(|id| id != owner)
+    {
+        return Err(ApiError::conflict(
+            "private_identity_changed",
+            "The signed-in account changed. Private video generation was not started.",
+        ));
+    }
     state
         .rate_limiter
         .check(format!("video:{owner}"), 30, 60)
         .await?;
     Ok(Json(
-        json!({"id":service::submit(&state,&owner,None,input.request,Some(input.first_frame)).await?}),
+        json!({"id":service::submit(&state,&owner,None,input.request,Some(Inputs { first_frame: input.first_frame, last_frame: input.last_frame, reference_images: input.reference_images })).await?}),
     ))
 }
 async fn status(
@@ -254,7 +271,7 @@ async fn frame(
         .next_field()
         .await
         .map_err(|_| service::invalid("Could not read image upload"))?
-        .ok_or_else(|| service::invalid("Choose a first frame"))?;
+        .ok_or_else(|| service::invalid("Choose an input image"))?;
     let bytes = field
         .bytes()
         .await

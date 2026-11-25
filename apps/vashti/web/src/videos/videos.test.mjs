@@ -171,6 +171,164 @@ test("seeds retain integer precision and enforce the signed 64 bit boundary", ()
   const random = BigInt(app.nextVideoSeed({ ...d, seed_mode: "random" }));
   assert.ok(random >= 0n && random <= 9223372036854775807n);
 });
+
+test("memory-capable hosts expand duration and resolution without changing old host options", () => {
+  const legacy = {
+    id: app.VIDEO_GENERAL, state: "ready", first_frame: "optional", fps: 24,
+    min_dimension: 256, max_dimension: 1280, dimension_multiple: 32, max_pixels: 452608,
+    frames: [22, 39, 56, 73, 90, 107, 124], audio: true, output_mime_type: "video/mp4"
+  };
+  const memory = { ...legacy, limits: "memory", frame_base: 5, frame_step: 17 };
+  const draft = { ...app.videoDefaults, prompt: "Synthetic motion", frames: 243 };
+  assert.equal(app.videoFrameOptions(draft, memory).at(-1), 243);
+  assert.deepEqual(app.videoFrameOptions(draft, legacy), legacy.frames);
+  assert.deepEqual(app.videoFrameOptions(draft, { ...memory, frame_step: 0 }), legacy.frames);
+  assert(app.canSendVideo(draft, memory));
+  assert(!app.canSendVideo(draft, legacy));
+  assert(!app.canSendVideo({ ...draft, frames: 242 }, memory));
+  assert.equal(app.fitVideoSettings(draft, legacy).frames, 124);
+  for (const ratio of [1, 16 / 9, 9 / 16, 3, 1 / 3]) {
+    const high = app.videoGeometry(draft, ratio, memory, "high");
+    assert.equal(app.videoResolution(high), "high");
+    assert.equal(high.frames, 124);
+    assert(high.width * high.height <= 1280 * 704);
+    assert(Math.abs(Math.log(high.width / high.height / ratio)) < 0.055);
+    assert(app.canSendVideo({ ...draft, ...high }, memory));
+    assert(!app.canSendVideo({ ...draft, ...high, frames: 141 }, memory));
+    assert(!app.canSendVideo({ ...draft, ...high }, legacy));
+    const adapted = app.videoModeDraft({ ...draft, ...high }, "text", [legacy]);
+    assert(app.canSendVideo(adapted, legacy));
+    assert.equal(app.videoResolution(adapted), "standard");
+  }
+});
+
+test("input modes respect discovery, preserve old drafts and require the right images", () => {
+  const base = {
+    id: app.VIDEO_GENERAL,
+    state: "ready",
+    first_frame: "optional",
+    last_frame: "optional",
+    max_reference_images: 0,
+    fps: 24,
+    frames: [22, 56, 124],
+    dimension_multiple: 32,
+    min_dimension: 256,
+    max_dimension: 1280,
+    max_pixels: 452608,
+    audio: true,
+  };
+  const ref = {
+    ...base,
+    id: app.VIDEO_REFERENCE,
+    first_frame: "unsupported",
+    last_frame: "unsupported",
+    max_reference_images: 4,
+    steps: 4,
+  };
+  const legacy = {
+    ...base,
+    id: app.VIDEO_I2V,
+    first_frame: "required",
+    last_frame: "unsupported",
+  };
+  assert.equal(
+    app.videoInputMode({ ...app.videoDefaults, workflow: app.VIDEO_I2V }),
+    "keyframes",
+  );
+  assert(!app.canSendVideo(app.videoDefaults, base));
+  assert(
+    app.canSendVideo(
+      { ...app.videoDefaults, prompt: "A quiet landscape" },
+      base,
+    ),
+  );
+  const withEnd = {
+    ...app.videoDefaults,
+    input_mode: "keyframes",
+    last_frame_id: "end",
+  };
+  assert(app.canSendVideo(withEnd, base));
+  const references = app.videoModeDraft(withEnd, "references", [base, ref]);
+  assert.equal(references.last_frame_id, null);
+  assert.equal(references.workflow, app.VIDEO_REFERENCE);
+  assert(!app.canSendVideo(references, ref));
+  assert(
+    app.canSendVideo(
+      { ...references, reference_image_ids: ["one", "two"] },
+      ref,
+    ),
+  );
+  assert(
+    !app.canSendVideo(
+      { ...references, reference_image_ids: ["1", "2", "3", "4", "5"] },
+      ref,
+    ),
+  );
+  assert.throws(() =>
+    app.videoModeDraft(app.videoDefaults, "references", [legacy]),
+  );
+  for (const ratio of ["1:1", "16:9", "9:16", "21:9"]) {
+    const [w, h] = ratio.split(":").map(Number),
+      size = app.videoSize(w / h, base);
+    assert.equal(
+      app.closestVideoAspect(size.width, size.height, base, [ratio]),
+      ratio,
+    );
+  }
+});
+
+test("private text, end-frame and ordered references use only transient payloads", async () => {
+  login("modes");
+  const repo = app.videoRepository("device"),
+    a = await source(),
+    b = await source();
+  const modes = [
+    { ...app.videoDefaults, prompt: "Text only", input_mode: "text" },
+    { ...app.videoDefaults, last_frame_id: b, input_mode: "keyframes" },
+    {
+      ...app.videoDefaults,
+      workflow: app.VIDEO_REFERENCE,
+      reference_image_ids: [b, a],
+      input_mode: "references",
+    },
+  ];
+  calls.length = 0;
+  for (const draft of modes) {
+    const session = await repo.create(draft);
+    await repo.submit(session, draft, crypto.randomUUID());
+  }
+  const bodies = calls
+    .filter((c) => c.path === "/api/videos/private")
+    .map((c) => c.input);
+  assert.equal(bodies[0].first_frame, null);
+  assert.equal(bodies[0].last_frame, null);
+  assert.deepEqual(bodies[0].reference_images, []);
+  assert.equal(bodies[1].last_frame, png.toString("base64"));
+  assert.equal(bodies[2].reference_images.length, 2);
+  assert.deepEqual(bodies[2].request.draft.reference_image_ids, [b, a]);
+  assert.equal(bodies[2].expected_user_id, "modes");
+  await repo.defaults(modes[2]);
+  assert.deepEqual((await repo.preferences()).reference_image_ids, []);
+  app.resetPrivateStorageUser();
+});
+
+test("legacy first-frame drafts keep the old wire shape", () => {
+  const draft = {
+    ...app.videoDefaults,
+    workflow: app.VIDEO_I2V,
+    input_mode: "keyframes",
+    first_frame_id: "first",
+  };
+  const wire = app.wireVideoDraft(draft);
+  assert.equal(wire.first_frame_id, "first");
+  assert(!("input_mode" in wire));
+  assert(!("last_frame_id" in wire));
+  assert(!("reference_image_ids" in wire));
+  assert.equal(
+    app.wireVideoDraft({ ...draft, workflow: app.VIDEO_REFERENCE }).workflow,
+    app.VIDEO_REFERENCE,
+  );
+});
 test("private flows keep immutable recipes, clips and preferences encrypted and local", async () => {
   login();
   calls.length = 0;

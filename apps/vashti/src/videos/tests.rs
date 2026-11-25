@@ -1,5 +1,9 @@
 use super::models::Request;
-use super::{client, models::Draft, service};
+use super::{
+    client,
+    models::{Draft, Inputs},
+    service,
+};
 use crate::{
     app_state::AppState,
     auth::service::{register_user, unix_timestamp},
@@ -27,6 +31,12 @@ use std::{
 use uuid::Uuid;
 
 const CLIP: &[u8] = include_bytes!("fixtures/clip.mp4");
+fn first_frame(value: &str) -> Inputs {
+    Inputs {
+        first_frame: Some(value.into()),
+        ..Inputs::default()
+    }
+}
 #[derive(Clone, Default)]
 struct Mock {
     hold: Arc<AtomicBool>,
@@ -34,10 +44,123 @@ struct Mock {
     broken: Arc<AtomicBool>,
     events: Arc<Mutex<Option<Vec<Value>>>>,
 }
-fn capabilities() -> Value {
+fn legacy_capabilities() -> Value {
     json!({"service":"kuno","discovery_version":1,"version":"fixture","inference_auth":"none","images":{"api_version":1,"access":"inference","state":"ready","reason":null,"generate_path":"/kuno/v1/images/generate","response_formats":["application/x-ndjson"],"workflows":[]},"videos":{"api_version":1,"access":"inference","state":"ready","reason":null,"generate_path":"/kuno/v1/videos/generate","response_formats":["application/x-ndjson"],"workflows":[{"id":kuno_protocol::MINIMAX_H3_I2V_RECIPE,"state":"ready","reason":null,"first_frame":"required","fps":24,"frames":[22,39,56,73,90,107,124],"max_pixels":452608,"dimension_multiple":32,"min_dimension":256,"max_dimension":1280,"audio":true,"output_mime_type":"video/mp4"}]}})
 }
+fn capabilities() -> Value {
+    let mut value = legacy_capabilities();
+    let first = value["videos"]["workflows"][0].clone();
+    let mut general = first.clone();
+    general["id"] = json!(kuno_protocol::MINIMAX_H3_VIDEO_RECIPE);
+    general["first_frame"] = json!("optional");
+    general["last_frame"] = json!("optional");
+    general["steps"] = json!(8);
+    general["max_reference_images"] = json!(0);
+    let mut references = general.clone();
+    references["id"] = json!(kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE);
+    references["first_frame"] = json!("unsupported");
+    references["last_frame"] = json!("unsupported");
+    references["max_reference_images"] = json!(4);
+    references["steps"] = json!(4);
+    value["videos"]["workflows"] = json!([first, general, references]);
+    value
+}
+
+#[test]
+fn extended_clips_require_the_memory_contract_and_fit_the_resolution_tier() {
+    let mut wire = capabilities()["videos"]["workflows"][1].clone();
+    let legacy = serde_json::from_value(wire.clone()).unwrap();
+    wire["limits"] = json!("memory");
+    wire["frame_base"] = json!(5);
+    wire["frame_step"] = json!(17);
+    let memory = serde_json::from_value(wire.clone()).unwrap();
+    let standard = Draft {
+        frames: 243,
+        ..Draft::default()
+    };
+    assert!(service::validate(&standard).is_ok());
+    assert!(service::supported_clip(&standard, &memory));
+    assert!(!service::supported_clip(&standard, &legacy));
+    let high = Draft {
+        width: 1280,
+        height: 704,
+        frames: 124,
+        ..Draft::default()
+    };
+    assert!(service::validate(&high).is_ok());
+    assert!(service::supported_clip(&high, &memory));
+    assert!(!service::supported_clip(&high, &legacy));
+    assert!(!service::supported_clip(
+        &Draft {
+            frames: 141,
+            ..high.clone()
+        },
+        &memory
+    ));
+    assert!(!service::supported_clip(
+        &Draft {
+            height: 720,
+            ..high
+        },
+        &memory
+    ));
+    assert!(!service::supported_clip(
+        &Draft {
+            frames: 242,
+            ..standard.clone()
+        },
+        &memory
+    ));
+    assert!(
+        service::validate(&Draft {
+            frames: 260,
+            ..standard.clone()
+        })
+        .is_err()
+    );
+    wire["frame_step"] = json!(0);
+    assert!(!service::supported_clip(
+        &standard,
+        &serde_json::from_value(wire).unwrap()
+    ));
+}
+
+#[tokio::test]
+async fn streamed_memory_errors_give_actionable_recovery_without_provider_detail() {
+    let f = Fixture::new().await;
+    for (code, text) in [
+        ("image_gpu_memory_unavailable", "GPU memory"),
+        ("image_host_memory_unavailable", "RAM"),
+    ] {
+        *f.mock.events.lock().unwrap() = Some(vec![
+            json!({"type":"started"}),
+            json!({"type":"error","error":code}),
+        ]);
+        let error = client::generate(
+            &f.state.http_client,
+            &f.base,
+            &f.draft().recipe(first_frame("AAAA")),
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), "video_host_memory_unavailable");
+        assert!(error.message().contains(text));
+        assert!(
+            error
+                .message()
+                .contains("Shorten the clip or lower the resolution")
+        );
+        assert!(!error.message().contains(code));
+    }
+}
+
 async fn generate(State(mock): State<Mock>, Json(input): Json<Value>) -> Response<Body> {
+    let steps = if input["workflow"] == kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE {
+        4
+    } else {
+        8
+    };
     mock.requests.lock().unwrap().push(input);
     while mock.hold.load(Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -45,7 +168,7 @@ async fn generate(State(mock): State<Mock>, Json(input): Json<Value>) -> Respons
     let mut lines = vec![
         json!({"type":"started"}),
         json!({"type":"progress","phase":"conditioning"}),
-        json!({"type":"progress","phase":"sampling","step":8,"steps":8}),
+        json!({"type":"progress","phase":"sampling","step":steps,"steps":steps}),
         json!({"type":"progress","phase":"decoding"}),
         json!({"type":"progress","phase":"encoding"}),
     ];
@@ -154,6 +277,7 @@ impl Fixture {
     fn draft(&self) -> Draft {
         Draft {
             backend_id: self.backend.clone(),
+            workflow: kuno_protocol::MINIMAX_H3_I2V_RECIPE.into(),
             width: 256,
             height: 256,
             frames: 22,
@@ -190,7 +314,7 @@ impl Fixture {
 #[tokio::test]
 async fn actual_cpu_encoded_mp4_is_validated_and_incomplete_streams_fail_closed() {
     let f = Fixture::new().await;
-    let mut recipe = f.draft().recipe("synthetic".into());
+    let mut recipe = f.draft().recipe(first_frame("synthetic"));
     let mut progress = Vec::new();
     let bytes = client::generate(&reqwest::Client::new(), &f.base, &recipe, |p| {
         progress.push(p)
@@ -217,7 +341,7 @@ async fn actual_cpu_encoded_mp4_is_validated_and_incomplete_streams_fail_closed(
 #[tokio::test]
 async fn latest_only_progress_and_independent_previews_do_not_discard_valid_clips() {
     let f = Fixture::new().await;
-    let recipe = f.draft().recipe("synthetic".into());
+    let recipe = f.draft().recipe(first_frame("synthetic"));
     let result = json!({"type":"result","mime_type":"video/mp4","width":256,"height":256,"frames":22,"fps":24,"audio":true,"video_base64":STANDARD.encode(CLIP)});
     let preview = json!({"type":"preview","step":0,"steps":8,"width":64,"height":64,"png_base64":STANDARD.encode(include_bytes!("../images/fixtures/64.png"))});
     let events = vec![
@@ -370,6 +494,207 @@ async fn saved_videos_preserve_sources_retries_permissions_and_exact_request_ide
 }
 
 #[tokio::test]
+async fn all_video_input_modes_preserve_sources_and_reference_steps() {
+    let f = Fixture::new().await;
+    let source = f.saved_draft().await.first_frame_id.unwrap();
+    for (workflow, first, last, count) in [
+        (kuno_protocol::MINIMAX_H3_VIDEO_RECIPE, false, false, 0),
+        (kuno_protocol::MINIMAX_H3_VIDEO_RECIPE, true, false, 0),
+        (kuno_protocol::MINIMAX_H3_VIDEO_RECIPE, false, true, 0),
+        (kuno_protocol::MINIMAX_H3_VIDEO_RECIPE, true, true, 0),
+        (kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE, false, false, 1),
+        (kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE, false, false, 4),
+    ] {
+        let draft = Draft {
+            workflow: workflow.into(),
+            first_frame_id: first.then(|| source.clone()),
+            last_frame_id: last.then(|| source.clone()),
+            reference_image_ids: vec![source.clone(); count],
+            ..f.draft()
+        };
+        let session = service::create_session(&f.state.db, &f.owner, draft.clone())
+            .await
+            .unwrap();
+        let id = service::submit(
+            &f.state,
+            &f.owner,
+            Some(&session.id),
+            Request {
+                request_id: Uuid::new_v4().to_string(),
+                draft,
+                retry_of: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(f.wait(&id).await, "complete");
+        let requests = f.mock.requests.lock().unwrap();
+        let actual = requests.last().unwrap();
+        assert_eq!(actual["first_frame"].is_string(), first);
+        assert_eq!(actual["last_frame"].is_string(), last);
+        assert_eq!(
+            actual["reference_images"].as_array().map_or(0, Vec::len),
+            count
+        );
+    }
+    let mut defaults = f.saved_draft().await;
+    defaults.last_frame_id = Some(source.clone());
+    defaults.workflow = kuno_protocol::MINIMAX_H3_VIDEO_RECIPE.into();
+    let saved = service::save_preferences(&f.state.db, &f.owner, defaults)
+        .await
+        .unwrap();
+    assert!(saved.image_ids().next().is_none());
+    let hosts = service::hosts(&f.state).await.unwrap();
+    assert_eq!(
+        hosts[0]["capabilities"]["workflows"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn last_frames_and_references_enforce_ownership_and_shared_cleanup() {
+    let f = Fixture::new().await;
+    let own = f.saved_draft().await.first_frame_id.unwrap();
+    let foreign = service::frame(
+        &f.state,
+        &f.other,
+        include_bytes!("../images/fixtures/64.png").to_vec(),
+    )
+    .await
+    .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for reference in [false, true] {
+        let draft = Draft {
+            workflow: if reference {
+                kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE
+            } else {
+                kuno_protocol::MINIMAX_H3_VIDEO_RECIPE
+            }
+            .into(),
+            last_frame_id: (!reference).then(|| foreign.clone()),
+            reference_image_ids: if reference {
+                vec![foreign.clone()]
+            } else {
+                vec![]
+            },
+            ..f.draft()
+        };
+        let session = service::create_session(&f.state.db, &f.owner, draft.clone())
+            .await
+            .unwrap();
+        assert!(
+            service::submit(
+                &f.state,
+                &f.owner,
+                Some(&session.id),
+                Request {
+                    request_id: Uuid::new_v4().to_string(),
+                    draft,
+                    retry_of: None
+                },
+                None
+            )
+            .await
+            .is_err()
+        );
+    }
+    assert!(f.mock.requests.lock().unwrap().is_empty());
+    let reference = Draft {
+        workflow: kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE.into(),
+        reference_image_ids: vec![own.clone()],
+        ..f.draft()
+    };
+    let first = service::create_session(&f.state.db, &f.owner, reference)
+        .await
+        .unwrap();
+    let last = service::create_session(
+        &f.state.db,
+        &f.owner,
+        Draft {
+            workflow: kuno_protocol::MINIMAX_H3_VIDEO_RECIPE.into(),
+            last_frame_id: Some(own.clone()),
+            ..f.draft()
+        },
+    )
+    .await
+    .unwrap();
+    service::delete_session(&f.state, &f.owner, &first.id)
+        .await
+        .unwrap();
+    assert!(
+        service::read_frame(&f.state.db, &f.owner, &own, false)
+            .await
+            .is_ok()
+    );
+    service::delete_session(&f.state, &f.owner, &last.id)
+        .await
+        .unwrap();
+    assert!(
+        service::read_frame(&f.state.db, &f.owner, &own, false)
+            .await
+            .is_err()
+    );
+    assert!(
+        service::read_frame(&f.state.db, &f.other, &foreign, false)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn private_text_and_reference_inputs_do_not_create_server_records() {
+    let f = Fixture::new().await;
+    for reference in [false, true] {
+        let inputs = Inputs {
+            reference_images: if reference {
+                vec![STANDARD.encode(include_bytes!("../images/fixtures/64.png"))]
+            } else {
+                vec![]
+            },
+            ..Inputs::default()
+        };
+        let draft = Draft {
+            workflow: if reference {
+                kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE
+            } else {
+                kuno_protocol::MINIMAX_H3_VIDEO_RECIPE
+            }
+            .into(),
+            ..f.draft()
+        };
+        let id = service::submit(
+            &f.state,
+            &f.owner,
+            None,
+            Request {
+                request_id: Uuid::new_v4().to_string(),
+                draft,
+                retry_of: None,
+            },
+            Some(inputs),
+        )
+        .await
+        .unwrap();
+        assert_eq!(f.wait(&id).await, "complete");
+    }
+    for table in ["video_runs", "video_frames", "video_sessions"] {
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+                .fetch_one(&f.state.db)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[tokio::test]
 async fn private_videos_leave_no_saved_content_or_rows_and_are_owner_scoped() {
     let f = Fixture::new().await;
     let id = Uuid::new_v4().to_string();
@@ -383,7 +708,7 @@ async fn private_videos_leave_no_saved_content_or_rows_and_are_owner_scoped() {
             draft: f.draft(),
             retry_of: None,
         },
-        Some(frame),
+        Some(first_frame(&frame)),
     )
     .await
     .unwrap();
@@ -627,7 +952,7 @@ async fn disabled_accounts_and_private_ids_cannot_overwrite_saved_runs() {
                 draft: draft.clone(),
                 retry_of: None
             },
-            Some(frame)
+            Some(first_frame(&frame))
         )
         .await
         .is_err()
@@ -672,7 +997,7 @@ fn video_settings_validate_without_accepting_image_inference_fields() {
 #[test]
 fn blank_prompts_use_the_same_safe_motion_default() {
     assert_eq!(
-        Draft::default().recipe("frame".into()).prompt,
+        Draft::default().recipe(first_frame("frame")).prompt,
         "Animate this image with gentle natural motion."
     );
 }

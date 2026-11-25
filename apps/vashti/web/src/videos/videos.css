@@ -193,7 +193,7 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: .6rem;
+  gap: 0.6rem;
 }
 .video-settings .checkbox-row input {
   width: auto;
@@ -205,12 +205,68 @@
   padding-inline: 16px;
 }
 .video-input-preview {
+  position: relative;
   width: 44px;
   height: 44px;
   flex: 0 0 44px;
   padding: 0;
   overflow: hidden;
   border-color: var(--line-soft);
+}
+.video-input-preview > span {
+  position: absolute;
+  bottom: 0;
+  inset-inline: 0;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 0.65rem;
+  line-height: 1.2;
+  text-align: center;
+}
+.video-input-list,
+.video-source-list {
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.video-input-list {
+  margin-bottom: 6px;
+}
+.video-input-item {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.video-input-actions {
+  display: flex;
+}
+.video-input-actions .message-icon-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px;
+}
+.video-source-list {
+  margin-top: 12px;
+}
+.video-source {
+  flex-shrink: 0;
+}
+.video-source > span {
+  display: block;
+  padding: 4px;
+  font-size: 0.75rem;
+}
+.video-settings .images-size legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.video-settings .images-size legend > span {
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 .video-input-preview img {
   width: 100%;
@@ -231,6 +287,24 @@
 .video-settings {
   display: grid;
   gap: 16px;
+}
+.video-settings fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.video-settings legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.video-settings .images-segments button {
+  min-width: 0;
+  white-space: normal;
+  padding-inline: 4px;
+  font-size: 0.875rem;
 }
 @media (max-width: 600px) {
   .video-thread {

@@ -29,6 +29,20 @@ fn rejected(reason: &'static str) -> ApiError {
     tracing::warn!(reason, "video service stream validation failed");
     invalid()
 }
+
+fn memory_error(code: &str) -> Option<ApiError> {
+    let resource = match code {
+        "image_gpu_memory_unavailable" => "GPU memory",
+        "image_host_memory_unavailable" => "RAM",
+        _ => return None,
+    };
+    Some(ApiError::bad_request(
+        "video_host_memory_unavailable",
+        format!(
+            "The video host ran out of {resource}. Shorten the clip or lower the resolution and try again."
+        ),
+    ))
+}
 pub async fn generate(
     http: &reqwest::Client,
     base: &str,
@@ -53,10 +67,41 @@ pub async fn generate(
         )
     })?;
     if !response.status().is_success() {
-        return Err(ApiError::bad_request(
-            "video_host_rejected",
-            "The video host rejected the request. Refresh model availability and check the settings.",
-        ));
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(Ok(chunk)) = stream.next().await {
+            if body.len() + chunk.len() > 16 * 1024 {
+                break;
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let error = serde_json::from_slice::<Value>(&body).ok();
+        let code = error
+            .as_ref()
+            .and_then(|v| v.pointer("/error/code").or_else(|| v.get("error")))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if let Some(error) = memory_error(code) {
+            return Err(error);
+        }
+        let message = match code {
+            "video_first_frame_invalid" => {
+                "The video host could not use the start frame. Choose another still image."
+            }
+            "video_last_frame_invalid" => {
+                "The video host could not use the end frame. Choose another still image."
+            }
+            "video_reference_images_invalid" => {
+                "The video host could not use these reference images. Choose one to four still images without keyframes."
+            }
+            "video_frames_unsupported" => {
+                "This clip length is no longer available. Refresh models and choose another duration."
+            }
+            _ => {
+                "The video host rejected the request. Refresh model availability and check the settings."
+            }
+        };
+        return Err(ApiError::bad_request("video_host_rejected", message));
     }
     if response
         .headers()
@@ -77,6 +122,7 @@ pub async fn generate(
     let mut result = None;
     let mut phase = 0;
     let mut step = 0;
+    let expected_steps = recipe.steps();
     while let Some(line) = lines.next().await {
         let line = line.map_err(|_| invalid())?;
         if line.is_empty() {
@@ -102,8 +148,9 @@ pub async fn generate(
                 if next < phase
                     || (next != 2 && (s.is_some() || steps.is_some()))
                     || (next == 2
-                        && (steps != Some(8) || s.is_none_or(|n| n < step || n > 8 || n == 0)))
-                    || (next > 2 && step != 8)
+                        && (steps != Some(expected_steps)
+                            || s.is_none_or(|n| n < step || n > expected_steps || n == 0)))
+                    || (next > 2 && step != expected_steps)
                 {
                     return Err(rejected("progress_order"));
                 }
@@ -120,8 +167,8 @@ pub async fn generate(
                 height,
                 png_base64,
             } if started => {
-                if steps != 8
-                    || s > 8
+                if steps != expected_steps
+                    || s > expected_steps
                     || width == 0
                     || height == 0
                     || width > 512
@@ -190,7 +237,10 @@ pub async fn generate(
                     .map_err(|_| invalid())??,
                 );
             }
-            VideoStreamEvent::Error { .. } if started => {
+            VideoStreamEvent::Error { error } if started => {
+                if let Some(error) = memory_error(&error) {
+                    return Err(error);
+                }
                 return Err(ApiError::bad_request(
                     "video_generation_failed",
                     "Video generation failed on the inference host. Nothing was saved; retry is explicit.",

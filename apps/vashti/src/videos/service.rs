@@ -54,18 +54,81 @@ pub fn decode<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, ApiError>
     serde_json::from_str(text).map_err(|_| invalid("Invalid saved video settings"))
 }
 pub fn validate(d: &Draft) -> Result<(), ApiError> {
-    d.recipe("placeholder".into())
+    if !d.within_clip_limits() {
+        return Err(invalid(
+            "This clip is too long or too large. Shorten it or lower the resolution.",
+        ));
+    }
+    let mut check = d.clone();
+    if check.prompt.trim().is_empty() {
+        check.prompt = "Draft".into();
+    }
+    let reference = d.workflow == kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE;
+    let inputs = if reference {
+        Inputs {
+            reference_images: vec!["placeholder".into(); d.reference_image_ids.len().max(1)],
+            ..Inputs::default()
+        }
+    } else {
+        Inputs {
+            first_frame: (d.first_frame_id.is_some()
+                || d.workflow == kuno_protocol::MINIMAX_H3_I2V_RECIPE)
+                .then(|| "placeholder".into()),
+            last_frame: d.last_frame_id.as_ref().map(|_| "placeholder".into()),
+            reference_images: vec!["placeholder".into(); d.reference_image_ids.len()],
+        }
+    };
+    check
+        .recipe(inputs)
         .validate()
         .map_err(|_| invalid("Unsupported video settings"))?;
     if d.backend_id.len() > 128
         || !matches!(d.seed_mode.as_str(), "fixed" | "increment" | "random")
-        || d.first_frame_id
-            .as_ref()
-            .is_some_and(|id| Uuid::parse_str(id).is_err())
+        || d.image_ids().any(|id| Uuid::parse_str(id).is_err())
+        || d.reference_image_ids.len() > kuno_protocol::VIDEO_MAX_REFERENCE_IMAGES
+        || (reference && (d.first_frame_id.is_some() || d.last_frame_id.is_some()))
+        || d.input_mode.as_deref().is_some_and(|mode| match mode {
+            "text" => {
+                reference
+                    || d.first_frame_id.is_some()
+                    || d.last_frame_id.is_some()
+                    || d.workflow == kuno_protocol::MINIMAX_H3_I2V_RECIPE
+            }
+            "keyframes" => reference,
+            "references" => !reference,
+            _ => true,
+        })
     {
-        return Err(invalid("Invalid host, seed mode, or first frame"));
+        return Err(invalid("Invalid host, seed mode, or video input images"));
     }
     Ok(())
+}
+
+pub(super) fn supported_clip(
+    draft: &Draft,
+    workflow: &kuno_protocol::VideoWorkflowCapability,
+) -> bool {
+    if !draft.within_clip_limits()
+        || (draft.audio && !workflow.audio)
+        || workflow.dimension_multiple == 0
+        || [draft.width, draft.height]
+            .iter()
+            .any(|side| !side.is_multiple_of(workflow.dimension_multiple))
+    {
+        return false;
+    }
+    if workflow.limits == "memory" && workflow.frame_base > 0 && workflow.frame_step > 0 {
+        draft
+            .frames
+            .checked_sub(workflow.frame_base)
+            .is_some_and(|offset| offset.is_multiple_of(workflow.frame_step))
+    } else {
+        workflow.frames.contains(&draft.frames)
+            && draft.pixels() <= u64::from(workflow.max_pixels)
+            && [draft.width, draft.height]
+                .iter()
+                .all(|side| (workflow.min_dimension..=workflow.max_dimension).contains(side))
+    }
 }
 pub async fn hosts(state: &AppState) -> Result<Value, ApiError> {
     let rows = sqlx::query(
@@ -84,8 +147,12 @@ pub async fn hosts(state: &AppState) -> Result<Value, ApiError> {
         {
             c.workflows.retain(|w| {
                 w.state == "ready"
-                    && w.id == kuno_protocol::MINIMAX_H3_I2V_RECIPE
-                    && w.first_frame == "required"
+                    && matches!(
+                        w.id.as_str(),
+                        kuno_protocol::MINIMAX_H3_I2V_RECIPE
+                            | kuno_protocol::MINIMAX_H3_VIDEO_RECIPE
+                            | kuno_protocol::MINIMAX_H3_REFERENCE_RECIPE
+                    )
                     && w.fps == 24
                     && w.output_mime_type == "video/mp4"
             });
@@ -113,13 +180,15 @@ pub async fn save_preferences(
 ) -> Result<Draft, ApiError> {
     draft.prompt.clear();
     draft.first_frame_id = None;
+    draft.last_frame_id = None;
+    draft.reference_image_ids.clear();
     validate(&draft)?;
     sqlx::query("INSERT INTO video_preferences VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET value_json=excluded.value_json").bind(owner).bind(encode(&draft)?).execute(pool).await?;
     Ok(draft)
 }
 pub async fn frame(state: &AppState, owner: &str, bytes: Vec<u8>) -> Result<Value, ApiError> {
     if bytes.len() > 12 * 1024 * 1024 {
-        return Err(invalid("A first frame must be at most 12 MiB"));
+        return Err(invalid("An input image must be at most 12 MiB"));
     }
     let input = STANDARD.encode(&bytes);
     let permit = state
@@ -145,7 +214,7 @@ pub async fn frame(state: &AppState, owner: &str, bytes: Vec<u8>) -> Result<Valu
         Ok::<_, ApiError>((w, h, out.into_inner()))
     })
     .await
-    .map_err(|_| invalid("Could not decode the first frame"))??;
+    .map_err(|_| invalid("Could not decode the input image"))??;
     let mime = if bytes.starts_with(b"\x89PNG") {
         "image/png"
     } else if bytes.starts_with(b"\xff\xd8") {
@@ -259,7 +328,7 @@ pub async fn submit(
     owner: &str,
     session_id: Option<&str>,
     mut input: Request,
-    private_frame: Option<String>,
+    private_frame: Option<Inputs>,
 ) -> Result<String, ApiError> {
     Uuid::parse_str(&input.request_id).map_err(|_| invalid("Invalid request ID"))?;
     validate(&input.draft)?;
@@ -358,44 +427,79 @@ pub async fn submit(
         .iter()
         .find(|w| w.id == input.draft.workflow && w.state == "ready")
         .ok_or_else(|| invalid("This video workflow is unavailable"))?;
-    if !workflow.frames.contains(&input.draft.frames)
-        || input.draft.width as u64 * input.draft.height as u64 > workflow.max_pixels as u64
-        || (input.draft.audio && !workflow.audio)
-    {
+    if !supported_clip(&input.draft, workflow) {
         return Err(invalid(
             "These settings are not advertised by this video model",
         ));
     }
-    let first = if let Some(frame) = private_frame {
-        frame
+    let inputs = if let Some(inputs) = private_frame {
+        inputs
     } else {
-        STANDARD.encode(
-            read_frame(
-                &state.db,
-                owner,
-                input
-                    .draft
-                    .first_frame_id
-                    .as_deref()
-                    .ok_or_else(|| invalid("Choose a first frame"))?,
-                false,
-            )
-            .await?
-            .1,
-        )
+        let mut inputs = Inputs::default();
+        for (id, target) in [
+            (&input.draft.first_frame_id, &mut inputs.first_frame),
+            (&input.draft.last_frame_id, &mut inputs.last_frame),
+        ] {
+            if let Some(id) = id {
+                *target = Some(STANDARD.encode(read_frame(&state.db, owner, id, false).await?.1));
+            }
+        }
+        for id in &input.draft.reference_image_ids {
+            inputs
+                .reference_images
+                .push(STANDARD.encode(read_frame(&state.db, owner, id, false).await?.1));
+        }
+        inputs
     };
-    let recipe = input.draft.recipe(first);
-    recipe
-        .validate()
-        .map_err(|_| invalid("Invalid video recipe"))?;
-    let encoded = recipe
+    if (workflow.first_frame == "required" && inputs.first_frame.is_none())
+        || (workflow.first_frame == "unsupported" && inputs.first_frame.is_some())
+        || (workflow.last_frame != "optional" && inputs.last_frame.is_some())
+        || inputs.reference_images.len() > workflow.max_reference_images as usize
+    {
+        return Err(invalid(
+            "These input images are not supported by the selected video model",
+        ));
+    }
+    let recipe = input.draft.recipe(inputs);
+    recipe.validate().map_err(|code| match code {
+        "video_prompt_invalid" => invalid("Describe the video, or attach an input image"),
+        "video_first_frame_invalid" => invalid("Choose a valid start frame for this video model"),
+        "video_last_frame_invalid" => {
+            invalid("This video model does not accept the selected end frame")
+        }
+        "video_reference_images_invalid" => {
+            invalid("Choose between one and four reference images, without keyframes")
+        }
+        _ => invalid("Invalid video recipe"),
+    })?;
+    let encoded: Vec<_> = recipe
         .first_frame
+        .iter()
+        .chain(recipe.last_frame.iter())
+        .chain(recipe.reference_images.iter())
+        .cloned()
+        .collect();
+    if encoded.iter().map(String::len).sum::<usize>() + recipe.prompt.len() + 8192
+        > 64 * 1024 * 1024
+    {
+        return Err(invalid(
+            "The input images are too large together. Use smaller images.",
+        ));
+    }
+    let permit = state
+        .video_jobs
+        .decoders
         .clone()
-        .ok_or_else(|| invalid("Choose a first frame"))?;
-    tokio::task::spawn_blocking(move || kuno_image::references::decode(&[encoded]))
+        .acquire_owned()
         .await
-        .map_err(|_| invalid("Invalid first frame"))?
-        .map_err(|_| invalid("Invalid first frame"))?;
+        .map_err(|_| invalid("Image decoding unavailable"))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        kuno_image::references::decode(&encoded)
+    })
+    .await
+    .map_err(|_| invalid("Invalid video input image"))?
+    .map_err(|_| invalid("Invalid video input image"))?;
     if let Some(session_id) = session_id {
         let mut tx = state.db.begin().await?;
         let changed=sqlx::query("UPDATE video_sessions SET revision=revision+1 WHERE id=? AND user_id=? AND archived_at IS NULL").bind(session_id).bind(owner).execute(&mut *tx).await?;
@@ -675,14 +779,14 @@ pub async fn delete_session(state: &AppState, owner: &str, id: &str) -> Result<(
             .bind(owner)
             .fetch_all(&mut *tx)
             .await?;
-    let frames: Vec<String> = sqlx::query_scalar("SELECT json_extract(draft_json,'$.first_frame_id') FROM video_runs WHERE session_id=? AND user_id=? AND json_extract(draft_json,'$.first_frame_id') IS NOT NULL UNION SELECT json_extract(draft_json,'$.first_frame_id') FROM video_sessions WHERE id=? AND user_id=? AND json_extract(draft_json,'$.first_frame_id') IS NOT NULL").bind(id).bind(owner).bind(id).bind(owner).fetch_all(&mut *tx).await?;
+    let frames: Vec<String> = sqlx::query_scalar("WITH drafts(draft) AS (SELECT draft_json FROM video_runs WHERE session_id=? AND user_id=? UNION ALL SELECT draft_json FROM video_sessions WHERE id=? AND user_id=?) SELECT value FROM drafts,json_each(json_array(json_extract(draft,'$.first_frame_id'),json_extract(draft,'$.last_frame_id'))) WHERE value IS NOT NULL UNION SELECT value FROM drafts,json_each(draft,'$.reference_image_ids') WHERE type='text'").bind(id).bind(owner).bind(id).bind(owner).fetch_all(&mut *tx).await?;
     sqlx::query("DELETE FROM video_sessions WHERE id=? AND user_id=?")
         .bind(id)
         .bind(owner)
         .execute(&mut *tx)
         .await?;
     for frame in frames {
-        sqlx::query("DELETE FROM video_frames WHERE id=? AND user_id=? AND NOT EXISTS(SELECT 1 FROM video_runs WHERE user_id=? AND json_extract(draft_json,'$.first_frame_id')=?) AND NOT EXISTS(SELECT 1 FROM video_sessions WHERE user_id=? AND json_extract(draft_json,'$.first_frame_id')=?)").bind(&frame).bind(owner).bind(owner).bind(&frame).bind(owner).bind(&frame).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM video_frames WHERE id=? AND user_id=? AND NOT EXISTS(SELECT 1 FROM (SELECT draft_json AS draft FROM video_runs WHERE user_id=? UNION ALL SELECT draft_json FROM video_sessions WHERE user_id=?) WHERE json_extract(draft,'$.first_frame_id')=? OR json_extract(draft,'$.last_frame_id')=? OR EXISTS(SELECT 1 FROM json_each(draft,'$.reference_image_ids') WHERE value=?))").bind(&frame).bind(owner).bind(owner).bind(owner).bind(&frame).bind(&frame).bind(&frame).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     for clip in clips {
@@ -703,7 +807,7 @@ pub async fn recover(
     pool: &SqlitePool,
     data_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    sqlx::query("UPDATE video_runs SET status='failed',error='The server restarted during generation. Your prompt and first frame are retained; retry is explicit.' WHERE status IN ('queued','generating','saving')").execute(pool).await?;
+    sqlx::query("UPDATE video_runs SET status='failed',error='The server restarted during generation. Your prompt and input images are retained; retry is explicit.' WHERE status IN ('queued','generating','saving')").execute(pool).await?;
     let directory = data_dir.join("videos");
     let mut files = match tokio::fs::read_dir(directory).await {
         Ok(files) => files,

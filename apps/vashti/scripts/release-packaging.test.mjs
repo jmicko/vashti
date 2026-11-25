@@ -34,19 +34,20 @@ function fixture(t) {
         encoding: 'utf8',
         env: { ...process.env, VERSION: 'v0.13.0-beta.2', ARTIFACT: '', NOTES: '',
           RELEASE_NOTES_FILE: '', VASHTI_RELEASE_SIGNING_KEY: key, CHECK_ONLY: '1',
-          RELEASE_SCOPE: 'auto', REQUIRE_COMPLETE_RELEASE: '1', REQUIRE_KUNO_SYCL_RUNTIME: '0', ...extra },
+          RELEASE_SCOPE: 'auto', REQUIRE_COMPLETE_RELEASE: '1', ...extra },
       });
     },
   };
 }
 
-test('versioned APK and optional runtime are signed in one complete release', t => {
+test('complete publishing signs exactly three artifacts and ignores a leftover runtime', t => {
   const f = fixture(t);
   f.add('vashti-0.13.0-beta.2.apk');
   f.add('kuno-sycl-linux-x86_64.tar.gz');
-  const result = f.run({ REQUIRE_KUNO_SYCL_RUNTIME: '1' });
+  const result = f.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /4 artifacts.*No upload attempted/);
+  assert.match(result.stdout, /3 artifacts.*No upload attempted/);
+  assert.doesNotMatch(result.stdout, /targets:.*kuno-sycl/);
 });
 
 test('legacy APK filename remains accepted', t => {
@@ -66,12 +67,11 @@ test('only the versioned APK is used when a legacy copy is also present', t => {
   assert.match(result.stdout, /3 artifacts/);
 });
 
-test('required missing runtime fails before consuming an upload key', t => {
+test('an explicit retired runtime upload fails before signing', t => {
   const f = fixture(t);
-  f.add('vashti-0.13.0-beta.2.apk');
-  const result = f.run({ REQUIRE_KUNO_SYCL_RUNTIME: '1' });
+  const result = f.run({ ARTIFACT: 'kuno-sycl-linux-x86_64.tar.gz', RELEASE_TARGET: 'kuno-sycl-linux-x86_64' });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /missing required release target: kuno-sycl-linux-x86_64/);
+  assert.match(result.stderr, /standalone Kuno runtime is retired/);
 });
 
 test('Vashti-only publishing excludes unchanged Kuno and runtime artifacts', t => {

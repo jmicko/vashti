@@ -20,6 +20,10 @@ declare -a artifacts=()
 declare -a signatures=()
 
 if [[ -n "${ARTIFACT:-}" ]]; then
+    if [[ "${RELEASE_TARGET:-}" == kuno-sycl-linux-x86_64 ]]; then
+        echo 'The standalone Kuno runtime is retired; publish the Kuno package instead.' >&2
+        exit 1
+    fi
     targets+=("${RELEASE_TARGET:-linux-x86_64}")
     artifacts+=("$ARTIFACT")
 else
@@ -29,7 +33,6 @@ else
         android_artifact="apps/vashti/dist/release/$version/vashti-android.apk"
     fi
     kuno_artifact="apps/vashti/dist/release/$version/kuno-linux-x86_64.tar.gz"
-    runtime_artifact="apps/vashti/dist/release/$version/kuno-sycl-linux-x86_64.tar.gz"
     if [[ -f "$kuno_artifact" ]]; then
         targets+=("kuno-linux-x86_64")
         artifacts+=("$kuno_artifact")
@@ -41,10 +44,6 @@ else
     if [[ -f "$android_artifact" ]]; then
         targets+=("android-universal")
         artifacts+=("$android_artifact")
-    fi
-    if [[ -f "$runtime_artifact" ]]; then
-        targets+=("kuno-sycl-linux-x86_64")
-        artifacts+=("$runtime_artifact")
     fi
 fi
 
@@ -66,9 +65,6 @@ required_targets=()
 if [[ "${REQUIRE_COMPLETE_RELEASE:-0}" == 1 ]]; then
     if [[ "$scope" != kuno ]]; then required_targets+=(linux-x86_64 android-universal); fi
     if [[ "$scope" != vashti ]]; then required_targets+=(kuno-linux-x86_64); fi
-fi
-if [[ "${REQUIRE_KUNO_SYCL_RUNTIME:-0}" == 1 ]]; then
-    required_targets+=(kuno-sycl-linux-x86_64)
 fi
 for required in "${required_targets[@]}"; do
     present=0

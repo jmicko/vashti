@@ -5,11 +5,14 @@ import {
   privateImageIds,
   privateImageGuard,
   deletePrivateImage,
+  privateProfileIdentity,
 } from "../privateChatStore";
 import { imageDataUrl } from "../saveImage";
 import {
   videoDefaults,
   videoActive,
+  VIDEO_I2V,
+  wireVideoDraft,
   type VideoDraft,
   type VideoPage,
   type VideoSession,
@@ -80,11 +83,17 @@ export function videoRepository(mode: VideoStorage) {
         : ((await get<VideoDraft>("preferences")) ?? { ...videoDefaults });
     },
     async defaults(draft: VideoDraft) {
-      const value = { ...draft, prompt: "", first_frame_id: null };
+      const value = {
+        ...draft,
+        prompt: "",
+        first_frame_id: null,
+        last_frame_id: null,
+        reference_image_ids: [],
+      };
       if (mode === "server")
         await requestJson("/api/videos/preferences", {
           method: "PUT",
-          body: JSON.stringify(value),
+          body: JSON.stringify(wireVideoDraft(value)),
         });
       else await put("preferences", value);
       return value;
@@ -106,8 +115,8 @@ export function videoRepository(mode: VideoStorage) {
         .filter((v): v is VideoPage =>
           Boolean(
             v &&
-              !v.archived &&
-              v.session.title.toLowerCase().includes(q.toLowerCase()),
+            !v.archived &&
+            v.session.title.toLowerCase().includes(q.toLowerCase()),
           ),
         )
         .map((v) => v.session)
@@ -118,7 +127,7 @@ export function videoRepository(mode: VideoStorage) {
       if (mode === "server")
         return requestJson<VideoSession>("/api/videos/sessions", {
           method: "POST",
-          body: JSON.stringify({ draft }),
+          body: JSON.stringify({ draft: wireVideoDraft(draft) }),
         });
       const session = {
         id: crypto.randomUUID(),
@@ -142,7 +151,10 @@ export function videoRepository(mode: VideoStorage) {
       if (mode === "server")
         return requestJson<VideoSession>(`/api/videos/sessions/${session.id}`, {
           method: "PUT",
-          body: JSON.stringify({ draft, revision: session.revision }),
+          body: JSON.stringify({
+            draft: wireVideoDraft(draft),
+            revision: session.revision,
+          }),
         });
       return mutate(session.id, async (page) => {
         if (page.session.revision !== session.revision)
@@ -197,13 +209,13 @@ export function videoRepository(mode: VideoStorage) {
     async frame(file: File) {
       guard();
       if (file.size > 12 * 1024 * 1024)
-        throw new Error("First frames must be at most 12 MiB");
+        throw new Error("Input images must be at most 12 MiB");
       const bitmap = await createImageBitmap(file);
       let blob: Blob = file;
       try {
         guard();
         if (bitmap.width > 4096 || bitmap.height > 4096)
-          throw new Error("First frames must be at most 4096 pixels per side");
+          throw new Error("Input images must be at most 4096 pixels per side");
         if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
           const canvas = document.createElement("canvas");
           canvas.width = bitmap.width;
@@ -218,7 +230,7 @@ export function videoRepository(mode: VideoStorage) {
           );
         }
         if (blob.size > 12 * 1024 * 1024)
-          throw new Error("Converted first frame exceeds 12 MiB");
+          throw new Error("Converted input image exceeds 12 MiB");
         guard();
         if (mode === "server") {
           const form = new FormData();
@@ -256,7 +268,7 @@ export function videoRepository(mode: VideoStorage) {
         if (mode === "server")
           return requestBlob(`/api/videos/frames/${id}?thumbnail=${thumbnail}`);
         const frame = await get<{ data: string; thumb: string }>(`frame:${id}`);
-        if (!frame) throw new Error("First frame is no longer available");
+        if (!frame) throw new Error("The input image is no longer available");
         return blobFromData(thumbnail ? frame.thumb : frame.data);
       };
       let pending = thumbnail ? thumbnails.get(id) : undefined;
@@ -283,6 +295,7 @@ export function videoRepository(mode: VideoStorage) {
       retry_of?: string,
     ) {
       guard();
+      const identity = mode === "device" ? privateProfileIdentity() : null;
       if (mode === "server")
         return requestJson<{ id: string }>(
           `/api/videos/sessions/${session.id}/runs`,
@@ -290,15 +303,36 @@ export function videoRepository(mode: VideoStorage) {
             method: "POST",
             body: JSON.stringify({
               request_id,
-              draft,
+              draft: wireVideoDraft(draft),
               retry_of: retry_of ?? null,
             }),
           },
         );
-      const frame = await get<{ data: string }>(
-        `frame:${draft.first_frame_id}`,
-      );
-      if (!frame) throw new Error("Choose a first frame");
+      const loadInput = async (id: string | null | undefined) => {
+        if (!id) return null;
+        const frame = await get<{ data: string }>(`frame:${id}`);
+        if (!frame)
+          throw new Error(
+            "An input image is no longer available on this device",
+          );
+        return frame.data.split(",")[1];
+      };
+      const first_frame = await loadInput(draft.first_frame_id);
+      const last_frame = await loadInput(draft.last_frame_id);
+      const reference_images: string[] = [];
+      for (const id of draft.reference_image_ids ?? [])
+        reference_images.push((await loadInput(id))!);
+      if (
+        (first_frame?.length ?? 0) +
+          (last_frame?.length ?? 0) +
+          reference_images.reduce((total, image) => total + image.length, 0) +
+          new TextEncoder().encode(draft.prompt).length +
+          8192 >
+        64 * 1024 * 1024
+      )
+        throw new Error(
+          "The input images are too large together. Use smaller images.",
+        );
       guard();
       const complete = await mutate(session.id, async (page) => {
         const existing = page.runs.find((r) => r.id === request_id);
@@ -340,9 +374,17 @@ export function videoRepository(mode: VideoStorage) {
       guard();
       const result = await requestJson<{ id: string }>("/api/videos/private", {
         method: "POST",
+        expectedServerInstanceId: identity!.instance_id,
         body: JSON.stringify({
-          request: { request_id, draft, retry_of: null },
-          first_frame: frame.data.split(",")[1],
+          ...(draft.workflow === VIDEO_I2V
+            ? {}
+            : {
+                expected_user_id: identity!.user_id,
+                last_frame,
+                reference_images,
+              }),
+          request: { request_id, draft: wireVideoDraft(draft), retry_of: null },
+          first_frame,
         }),
       });
       notifyVideos();

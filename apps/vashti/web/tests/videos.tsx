@@ -25,6 +25,7 @@ if (import.meta.hot) import.meta.hot.data.originalFetch = fixtureFetch;
 const clip = await (await fixtureFetch(clipUrl)).blob();
 const frame = await (await fixtureFetch(frameUrl)).blob();
 const fixtureTheme = storedTheme();
+const legacyHost = new URLSearchParams(location.search).has("legacy");
 const videos = [
   {
     backend: { id: "fixture", name: "Simulated host" },
@@ -38,9 +39,13 @@ const videos = [
         {
           id: videoDefaults.workflow,
           state: "ready",
-          first_frame: "required",
+          first_frame: "optional",
+          last_frame: "optional",
+          max_reference_images: 0,
+          steps: 8,
           fps: 24,
           frames: [22, 39, 56, 73, 90, 107, 124],
+          ...(!legacyHost && { limits: "memory", frame_base: 5, frame_step: 17 }),
           max_pixels: 452608,
           dimension_multiple: 32,
           min_dimension: 256,
@@ -52,8 +57,26 @@ const videos = [
     },
   },
 ];
+const baseWorkflow = videos[0].capabilities.workflows[0];
+videos[0].capabilities.workflows.push(
+  {
+    ...baseWorkflow,
+    id: "minimax-h3-image-to-video/v1",
+    first_frame: "required",
+    last_frame: "unsupported",
+  },
+  {
+    ...baseWorkflow,
+    id: "minimax-h3-reference-video/v1",
+    first_frame: "unsupported",
+    last_frame: "unsupported",
+    max_reference_images: 4,
+    steps: 4,
+  },
+);
 const pages = new Map<string, VideoPage>();
 const statuses = new Map<string, string>();
+const samplingSteps = new Map<string, number>();
 let preferences = {
   ...videoDefaults,
   backend_id: "fixture",
@@ -75,7 +98,8 @@ window.fetch = async (input, options = {}) => {
     method = options.method ?? "GET";
   const body = typeof options.body === "string" ? JSON.parse(options.body) : {};
   if (path === "/api/videos/hosts") {
-    if (discovery === "offline") throw new TypeError("Fixture connection failure");
+    if (discovery === "offline")
+      throw new TypeError("Fixture connection failure");
     if (discovery === "unsupported") return new Response(null, { status: 404 });
     return json(videos);
   }
@@ -86,7 +110,13 @@ window.fetch = async (input, options = {}) => {
   if (path === "/api/version") return json({ version: "fixture" });
   if (path === "/api/videos/preferences") {
     if (method === "PUT") {
-      preferences = { ...body, prompt: "", first_frame_id: null };
+      preferences = {
+        ...body,
+        prompt: "",
+        first_frame_id: null,
+        last_frame_id: null,
+        reference_image_ids: [],
+      };
       writes++;
     }
     return json(preferences);
@@ -154,6 +184,10 @@ window.fetch = async (input, options = {}) => {
       page.session.title = draft.prompt.slice(0, 60) || "Animated image";
       page.session.revision++;
       statuses.set(run.id, "generating");
+      samplingSteps.set(
+        run.id,
+        draft.workflow.includes("reference-video") ? 4 : 8,
+      );
       setTimeout(() => {
         if (run.status === "generating") {
           run.status = "complete";
@@ -166,6 +200,10 @@ window.fetch = async (input, options = {}) => {
   }
   if (path === "/api/videos/private") {
     statuses.set(body.request.request_id, "generating");
+    samplingSteps.set(
+      body.request.request_id,
+      body.request.draft.workflow.includes("reference-video") ? 4 : 8,
+    );
     setTimeout(() => statuses.set(body.request.request_id, "complete"), 2200);
     return json({ id: body.request.request_id });
   }
@@ -184,7 +222,11 @@ window.fetch = async (input, options = {}) => {
     if (!statuses.has(run[1])) return new Response("Expired", { status: 404 });
     return json({
       status: statuses.get(run[1]),
-      progress: { phase: "sampling", step: 4, steps: 8 },
+      progress: {
+        phase: "sampling",
+        step: 4,
+        steps: samplingSteps.get(run[1]) ?? 8,
+      },
     });
   }
   throw new Error(`Fixture blocked ${method} ${url.origin}${path}`);
@@ -237,15 +279,21 @@ function Fixture() {
             Switch storage
           </button>
           <button onClick={() => setScreen("settings")}>Settings</button>
-          <select aria-label="Fixture video discovery" defaultValue="ready" onChange={(e) => {
-            discovery = e.target.value as typeof discovery;
-            window.dispatchEvent(new Event("focus"));
-          }}>
+          <select
+            aria-label="Fixture video discovery"
+            defaultValue="ready"
+            onChange={(e) => {
+              discovery = e.target.value as typeof discovery;
+              window.dispatchEvent(new Event("focus"));
+            }}
+          >
             <option value="ready">Ready</option>
             <option value="unsupported">Old server</option>
             <option value="offline">Offline</option>
           </select>
-          <output aria-label="Video availability">{videoAvailable ? "Available" : "Unavailable"}</output>
+          <output aria-label="Video availability">
+            {videoAvailable ? "Available" : "Unavailable"}
+          </output>
           <button
             onClick={() => {
               offline = !offline;
@@ -316,4 +364,6 @@ function Fixture() {
     </PwaProvider>
   );
 }
-createRoot(document.getElementById("root")!).render(<Fixture />);
+const root = createRoot(document.getElementById("root")!);
+root.render(<Fixture />);
+if (import.meta.hot) import.meta.hot.dispose(() => root.unmount());
