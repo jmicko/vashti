@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno [--host URL] [--config FILE] run MODEL [PROMPT] [OLLAMA_OPTIONS]\n  kuno [--host URL] [--config FILE] COMMAND [ARGS]\n    Commands: list (ls), ps, show, pull, push, stop, cp, rm, create\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service] [--cli-user USER]\n  kuno upgrade [--yes] [--cli-user USER]\n  kuno configure-cli [--user USER]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno configure-native-text (--settings FILE | --disable) [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno [--host URL] [--config FILE] run MODEL [PROMPT] [OLLAMA_OPTIONS]\n  kuno [--host URL] [--config FILE] COMMAND [ARGS]\n    Commands: list (ls), ps, show, pull, push, stop, cp, rm, create\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service] [--cli-user USER]\n  kuno upgrade [--yes] [--cli-user USER]\n  kuno configure-cli [--user USER]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno configure-audio (--models ABSOLUTE_DIRECTORY | --disable) [--yes]\n  kuno configure-native-text (--settings FILE | --disable) [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
 Inference CLI endpoint: --host, KUNO_HOST, selected/installed config.listen, then 127.0.0.1:11434.\n\
 The original Ollama client is required on PATH; its readline history starts disabled.\n\
 OLLAMA_HOST never selects Kuno's CLI endpoint.\n\
@@ -23,7 +23,9 @@ fn main() {
     }
     // Enter the private worker before creating any Tokio threads. All native
     // threads must inherit its filesystem policy from this initial thread.
-    let result = if std::env::args().nth(1).as_deref() == Some("image-worker") {
+    let result = if std::env::args().nth(1).as_deref() == Some("audio-worker") {
+        kuno::audio::run_worker()
+    } else if std::env::args().nth(1).as_deref() == Some("image-worker") {
         run_image_worker()
     } else if std::env::args().nth(1).as_deref() == Some("image-worker-resident") {
         run_resident_image_worker()
@@ -163,6 +165,29 @@ async fn run() -> Result<(), &'static str> {
             .await
             .map_err(|_| "native_configuration_task_failed")??;
         println!("native_text_configuration_active");
+        return Ok(());
+    }
+    if command == "configure-audio" {
+        let models = match args.next().as_deref() {
+            Some("--disable") => None,
+            Some("--models") => Some(std::path::PathBuf::from(
+                args.next().ok_or("missing_audio_models")?,
+            )),
+            _ => return Err("missing_audio_configuration"),
+        };
+        let yes = match args.next().as_deref() {
+            Some("--yes") => true,
+            None => false,
+            _ => return Err("unknown_argument"),
+        };
+        if args.next().is_some() {
+            return Err("unknown_argument");
+        }
+        confirm_interruption(yes)?;
+        tokio::task::spawn_blocking(move || systemd::configure_audio(models))
+            .await
+            .map_err(|_| "audio_configuration_task_failed")??;
+        println!("audio_configuration_active");
         return Ok(());
     }
     if command == "configure-image" {

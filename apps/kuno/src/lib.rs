@@ -1,4 +1,5 @@
 pub mod admission;
+pub mod audio;
 pub mod cli;
 pub mod collections;
 pub mod config;

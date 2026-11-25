@@ -90,6 +90,7 @@ pub struct Gateway {
     managed: Option<crate::pool::Pool>,
     image_shutdown: tokio::sync::watch::Sender<bool>,
     image_requests: Arc<tokio::sync::Semaphore>,
+    audio: crate::audio::AudioRuntime,
     image_readiness: Arc<crate::image_access::ImageReadiness>,
     image_fast_attention: bool,
     native_runtime: crate::native_text::Runtime,
@@ -168,6 +169,7 @@ impl Gateway {
             managed,
             image_shutdown: tokio::sync::watch::channel(false).0,
             image_requests: Arc::new(tokio::sync::Semaphore::new(2)),
+            audio: crate::audio::AudioRuntime::default(),
             image_readiness,
             image_fast_attention,
             native_runtime: Default::default(),
@@ -203,6 +205,8 @@ impl Gateway {
             .route("/kuno/v1/capabilities", get(capabilities))
             .route("/kuno/v1/images/generate", post(generate_image))
             .route("/kuno/v1/videos/generate", post(generate_video))
+            .route("/kuno/v1/audio/transcriptions", post(transcribe_audio))
+            .route("/kuno/v1/audio/speech", post(speak_audio))
             .layer(middleware::from_fn(inference_guard));
         images
             .fallback(compatibility_fallback)
@@ -329,10 +333,159 @@ async fn capabilities(State(gateway): State<Arc<Gateway>>) -> Response {
             inference_auth: "none".into(),
             images: discovery.images,
             videos: Some(discovery.videos),
-            audio: None,
+            audio: Some(audio_capabilities(&gateway).await),
         }),
     )
         .into_response()
+}
+
+/// `kuno fetch-models lfm3-audio-2b --directory D`, then `kuno configure-audio --models D`
+/// (or D the image models directory).
+fn audio_models(gateway: &Gateway) -> Option<std::path::PathBuf> {
+    gateway
+        .config
+        .audio
+        .as_ref()
+        .map(|a| a.models.clone())
+        .or_else(|| gateway.config.image.as_ref().map(|c| c.models.clone()))
+}
+
+async fn audio_capabilities(gateway: &Gateway) -> kuno_protocol::AudioCapabilities {
+    let (state, reason) = match audio_models(gateway) {
+        None => ("disabled", None),
+        Some(models) => match crate::audio::ready(models).await {
+            Ok(()) => ("ready", None),
+            Err(code) => ("unavailable", Some(code.to_owned())),
+        },
+    };
+    kuno_protocol::AudioCapabilities {
+        api_version: 1,
+        access: "trusted_lan".into(),
+        state: state.into(),
+        reason,
+        transcription_path: "/kuno/v1/audio/transcriptions".into(),
+        speech_path: "/kuno/v1/audio/speech".into(),
+        voices: kuno_protocol::SPEECH_VOICES.iter().map(|v| (*v).into()).collect(),
+        languages: kuno_protocol::SPEECH_LANGUAGES.iter().map(|(c, _)| (*c).into()).collect(),
+        max_request_bytes: kuno_protocol::MAX_AUDIO_REQUEST_BYTES,
+        max_speech_characters: kuno_protocol::MAX_SPEECH_CHARACTERS,
+        speech_sample_rate: kuno_audio::SAMPLE_RATE,
+    }
+}
+
+/// Reads a JSON audio request; content stays in memory only.
+async fn audio_request<T: serde::de::DeserializeOwned>(
+    request: Request,
+) -> Result<T, (StatusCode, &'static str)> {
+    let bytes = match tokio::time::timeout(
+        Duration::from_secs(120),
+        axum::body::to_bytes(request.into_body(), kuno_protocol::MAX_AUDIO_REQUEST_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return Err((StatusCode::PAYLOAD_TOO_LARGE, "audio_request_too_large")),
+        Err(_) => return Err((StatusCode::REQUEST_TIMEOUT, "audio_request_timeout")),
+    };
+    serde_json::from_slice(&bytes).map_err(|_| (StatusCode::BAD_REQUEST, "audio_request_invalid"))
+}
+
+fn audio_status(code: &'static str) -> StatusCode {
+    match code {
+        "audio_format_unsupported" | "audio_too_short" | "text_invalid" | "audio_request_invalid" => {
+            StatusCode::BAD_REQUEST
+        }
+        "audio_cancelled" => StatusCode::REQUEST_TIMEOUT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
+/// Runs an audio job in its own task, so that a client leaving stops the worker instead of
+/// abandoning it mid-frame.
+async fn run_audio(gateway: Arc<Gateway>, job: crate::audio::Job) -> Result<Vec<u8>, (StatusCode, &'static str)> {
+    let Some(models) = audio_models(&gateway) else {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "audio_not_configured"));
+    };
+    crate::audio::ready(models.clone())
+        .await
+        .map_err(|code| (StatusCode::SERVICE_UNAVAILABLE, code))?;
+    let executable = std::env::current_exe()
+        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "executable_unavailable"))?;
+    let (mut send, receive) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let result = {
+            let closed = send.closed();
+            gateway.audio.run(&executable, &models, job, closed).await
+        };
+        let _ = send.send(result);
+    });
+    match receive.await {
+        Ok(Ok(body)) => Ok(body),
+        Ok(Err(code)) => Err((audio_status(code), code)),
+        Err(_) => Err((StatusCode::SERVICE_UNAVAILABLE, "audio_worker_failed")),
+    }
+}
+
+async fn transcribe_audio(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    use base64::Engine;
+    let body: kuno_protocol::TranscriptionRequest = match audio_request(request).await {
+        Ok(body) => body,
+        Err((status, code)) => return error(status, code),
+    };
+    if let Err(code) = body.validate() {
+        return error(StatusCode::BAD_REQUEST, code);
+    }
+    let Ok(wav) = base64::engine::general_purpose::STANDARD.decode(body.audio.as_bytes()) else {
+        return error(StatusCode::BAD_REQUEST, "transcription_audio_invalid");
+    };
+    let language = body
+        .language
+        .as_deref()
+        .and_then(kuno_protocol::transcription_language)
+        .map(str::to_owned);
+    match run_audio(gateway, crate::audio::Job::Transcribe { wav, language }).await {
+        Ok(text) => (
+            [(header::CACHE_CONTROL, "no-store")],
+            Json(kuno_protocol::TranscriptionResponse {
+                text: String::from_utf8_lossy(&text).into_owned(),
+            }),
+        )
+            .into_response(),
+        Err((status, code)) => error(status, code),
+    }
+}
+
+async fn speak_audio(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    let body: kuno_protocol::SpeechRequest = match audio_request(request).await {
+        Ok(body) => body,
+        Err((status, code)) => return error(status, code),
+    };
+    if let Err(code) = body.validate() {
+        return error(StatusCode::BAD_REQUEST, code);
+    }
+    let language = body
+        .language
+        .as_deref()
+        .and_then(kuno_protocol::speech_language)
+        .map(str::to_owned);
+    let job = crate::audio::Job::Speak {
+        text: body.input,
+        language,
+        voice: body.voice,
+        seed: body.seed.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos() as u64)
+        }),
+    };
+    match run_audio(gateway, job).await {
+        Ok(wav) => (
+            [(header::CONTENT_TYPE, "audio/wav"), (header::CACHE_CONTROL, "no-store")],
+            wav,
+        )
+            .into_response(),
+        Err((status, code)) => error(status, code),
+    }
 }
 
 async fn inference_guard(request: Request, next: Next) -> Response {

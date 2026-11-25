@@ -50,7 +50,10 @@ impl ImageConfig {
             || self
                 .collections
                 .iter()
-                .any(|id| crate::collections::collection(id).is_err())
+                .any(|id| {
+                    id == kuno_protocol::AUDIO_COLLECTION
+                        || crate::collections::collection(id).is_err()
+                })
         {
             return Err("image_collections_invalid");
         }

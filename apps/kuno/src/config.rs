@@ -25,6 +25,16 @@ pub struct Config {
     pub managed: Option<crate::pool::PoolConfig>,
     pub image: Option<crate::image_runtime::ImageConfig>,
     pub native_text: Option<crate::native_text::Config>,
+    /// Speech (CPU). Without it, a ready audio collection in the image models directory
+    /// is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioConfig {
+    pub models: PathBuf,
 }
 
 impl Default for Config {
@@ -42,6 +52,7 @@ impl Default for Config {
             managed: None,
             image: None,
             native_text: None,
+            audio: None,
         }
     }
 }
@@ -73,6 +84,12 @@ impl Config {
             || ports[1] == ports[2]
         {
             return Err("ports_must_be_nonzero_and_distinct");
+        }
+        if let Some(audio) = &self.audio
+            && (!audio.models.is_absolute()
+                || audio.models.components().any(|c| c == std::path::Component::ParentDir))
+        {
+            return Err("audio_models_invalid");
         }
         if let Some(managed) = &self.managed {
             managed.validate(&ports)?;

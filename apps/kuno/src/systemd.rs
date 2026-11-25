@@ -850,6 +850,24 @@ pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Resu
     )
 }
 
+pub fn configure_audio(models: Option<std::path::PathBuf>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let mut installation = current_installation()?;
+    if let Some(models) = &models {
+        crate::collections::verify(models, kuno_protocol::AUDIO_COLLECTION)?;
+    }
+    installation.config.audio = models.map(|models| crate::config::AudioConfig { models });
+    installation.config.validate()?;
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    transaction.replace(
+        &artifacts(&installation, executable)?,
+        &mut SystemdHost { installation },
+    )
+}
+
 const NATIVE_TEXT_WORKER: &str = "/usr/local/lib/kuno/native-text-worker";
 const NATIVE_TEXT_SETTINGS: &str = "/etc/kuno/native-text-settings.json";
 fn native_text_artifacts(config: Option<&crate::native_text::Config>) -> Result<Vec<Artifact>> {
@@ -1582,6 +1600,7 @@ mod tests {
             state_dir: "/var/lib/kuno".into(),
             activation_file: Some(READY.into()),
             native_text: None,
+            audio: None,
             max_waiting: 17,
             queue_timeout_seconds: 57,
             response_header_timeout_seconds: 300,
