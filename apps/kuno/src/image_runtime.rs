@@ -47,13 +47,9 @@ impl ImageConfig {
             || self.collections.len() > crate::collections::KNOWN_COLLECTIONS
             || (1..self.collections.len())
                 .any(|i| self.collections[..i].contains(&self.collections[i]))
-            || self
-                .collections
-                .iter()
-                .any(|id| {
-                    id == kuno_protocol::AUDIO_COLLECTION
-                        || crate::collections::collection(id).is_err()
-                })
+            || self.collections.iter().any(|id| {
+                id == kuno_protocol::AUDIO_COLLECTION || crate::collections::collection(id).is_err()
+            })
         {
             return Err("image_collections_invalid");
         }

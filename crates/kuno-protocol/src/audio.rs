@@ -85,10 +85,18 @@ impl SpeechRequest {
         if self.input.trim().is_empty() || self.input.chars().count() > MAX_SPEECH_CHARACTERS {
             return Err("speech_input_invalid");
         }
-        if self.voice.as_deref().is_some_and(|v| !SPEECH_VOICES.contains(&v)) {
+        if self
+            .voice
+            .as_deref()
+            .is_some_and(|v| !SPEECH_VOICES.contains(&v))
+        {
             return Err("speech_voice_invalid");
         }
-        if self.language.as_deref().is_some_and(|l| speech_language(l).is_none()) {
+        if self
+            .language
+            .as_deref()
+            .is_some_and(|l| speech_language(l).is_none())
+        {
             return Err("speech_language_invalid");
         }
         Ok(())
@@ -99,7 +107,11 @@ impl TranscriptionRequest {
         if self.audio.is_empty() {
             return Err("transcription_audio_invalid");
         }
-        if self.language.as_deref().is_some_and(|l| transcription_language(l).is_none()) {
+        if self
+            .language
+            .as_deref()
+            .is_some_and(|l| transcription_language(l).is_none())
+        {
             return Err("transcription_language_invalid");
         }
         Ok(())
@@ -130,15 +142,27 @@ mod tests {
 
     #[test]
     fn requests_validate() {
-        let ok = SpeechRequest { input: "Hello".into(), voice: Some("male".into()), language: Some("EN-gb".into()), seed: None };
+        let ok = SpeechRequest {
+            input: "Hello".into(),
+            voice: Some("male".into()),
+            language: Some("EN-gb".into()),
+            seed: None,
+        };
         assert!(ok.validate().is_ok());
         assert_eq!(speech_language("EN-gb"), Some("British English"));
         assert_eq!(transcription_language("en-gb"), Some("English"));
-        let bad = SpeechRequest { voice: Some("robot".into()), ..ok.clone() };
+        let bad = SpeechRequest {
+            voice: Some("robot".into()),
+            ..ok.clone()
+        };
         assert_eq!(bad.validate(), Err("speech_voice_invalid"));
-        let empty = SpeechRequest { input: "  ".into(), ..ok };
+        let empty = SpeechRequest {
+            input: "  ".into(),
+            ..ok
+        };
         assert_eq!(empty.validate(), Err("speech_input_invalid"));
-        let t: Result<TranscriptionRequest, _> = serde_json::from_str(r#"{"audio":"AA","extra":1}"#);
+        let t: Result<TranscriptionRequest, _> =
+            serde_json::from_str(r#"{"audio":"AA","extra":1}"#);
         assert!(t.is_err());
     }
 }

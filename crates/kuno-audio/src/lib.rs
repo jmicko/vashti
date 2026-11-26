@@ -16,11 +16,14 @@
 //!   inverse STFT to 24 kHz audio.
 use std::path::Path;
 
-use kuno_text::{GgufFile, GgufLimits, tokenizer::{Qwen35Tokenizer, TokenizerLimits}};
+use kuno_text::{
+    GgufFile, GgufLimits,
+    tokenizer::{Qwen35Tokenizer, TokenizerLimits},
+};
 
 pub mod block;
-pub mod tensor;
 pub mod split;
+pub mod tensor;
 pub mod wav;
 
 use block::{Attention, Block, Conv, Op, State};
@@ -105,7 +108,13 @@ struct AttnParams {
     window: Option<usize>,
 }
 
-fn load_block(g: &GgufFile, p: &str, n: &Names, width: usize, attn: impl Fn(bool) -> AttnParams) -> Result<Block> {
+fn load_block(
+    g: &GgufFile,
+    p: &str,
+    n: &Names,
+    width: usize,
+    attn: impl Fn(bool) -> AttnParams,
+) -> Result<Block> {
     let t = |s: &str| format!("{p}{s}");
     let has = |s: &str| g.tensor(&t(s)).is_some();
     let op = if has(n.q) {
@@ -123,7 +132,11 @@ fn load_block(g: &GgufFile, p: &str, n: &Names, width: usize, attn: impl Fn(bool
             o: Linear::load(g, &t(n.o))?,
             q_norm,
             k_norm: vector(g, &t(n.k_norm))?,
-            gate: if has(n.gate) { Some(Linear::load(g, &t(n.gate))?) } else { None },
+            gate: if has(n.gate) {
+                Some(Linear::load(g, &t(n.gate))?)
+            } else {
+                None
+            },
             heads,
             kv_heads,
             head_dim,
@@ -145,8 +158,16 @@ fn load_block(g: &GgufFile, p: &str, n: &Names, width: usize, attn: impl Fn(bool
         eps: EPS,
         ln1: vector(g, &t(n.ln1))?,
         ln2: vector(g, &t(n.ln2))?,
-        post_op: if has(n.post_op) { Some(vector(g, &t(n.post_op))?) } else { None },
-        post_ffn: if has(n.post_ffn) { Some(vector(g, &t(n.post_ffn))?) } else { None },
+        post_op: if has(n.post_op) {
+            Some(vector(g, &t(n.post_op))?)
+        } else {
+            None
+        },
+        post_ffn: if has(n.post_ffn) {
+            Some(vector(g, &t(n.post_ffn))?)
+        } else {
+            None
+        },
         op,
         gate: Linear::load(g, &t("ffn_gate.weight"))?,
         up: Linear::load(g, &t("ffn_up.weight"))?,
@@ -206,7 +227,10 @@ impl Lfm3Audio {
     pub fn open(backbone: &Path, mmproj: &Path) -> Result<Self> {
         let g = open(backbone)?;
         let a = open(mmproj)?;
-        let arch = g.metadata().get("general.architecture").and_then(|v| v.as_str());
+        let arch = g
+            .metadata()
+            .get("general.architecture")
+            .and_then(|v| v.as_str());
         if arch != Some("lfm3") {
             return Err("model_file_invalid");
         }
@@ -214,8 +238,8 @@ impl Lfm3Audio {
             max_special_tokens: 4096,
             ..TokenizerLimits::default()
         };
-        let tokenizer = Qwen35Tokenizer::from_gguf(&g, limits)
-            .map_err(|_| "model_tokenizer_invalid")?;
+        let tokenizer =
+            Qwen35Tokenizer::from_gguf(&g, limits).map_err(|_| "model_tokenizer_invalid")?;
         let meta = g.metadata();
         let swa_pattern: Vec<bool> = meta
             .get("lfm3.attention.sliding_window_pattern")
@@ -240,8 +264,18 @@ impl Lfm3Audio {
             let w = vector(&a, &format!("a.conv1d.{i}.weight"))?;
             let b = vector(&a, &format!("a.conv1d.{i}.bias"))?;
             let cout = b.len();
-            let cin = if depthwise || i == 0 { 1 } else { w.len() / cout };
-            Ok(Conv2d { w, b, cin, cout, depthwise })
+            let cin = if depthwise || i == 0 {
+                1
+            } else {
+                w.len() / cout
+            };
+            Ok(Conv2d {
+                w,
+                b,
+                cin,
+                cout,
+                depthwise,
+            })
         };
         let lin = |name: &str| Linear::load(&a, name);
         let vecs = |name: &str| vector(&a, name);
@@ -256,24 +290,30 @@ impl Lfm3Audio {
             .collect::<Result<Vec<_>>>()?;
         let depth = (0..3)
             .map(|il| {
-                load_block(&a, &format!("a.gen.code.blk.{il}."), &MTMD, 1024, |_| AttnParams {
-                    rope_base: 1_000_000.0,
-                    factors: None,
-                    window: None,
+                load_block(&a, &format!("a.gen.code.blk.{il}."), &MTMD, 1024, |_| {
+                    AttnParams {
+                        rope_base: 1_000_000.0,
+                        factors: None,
+                        window: None,
+                    }
                 })
             })
             .collect::<Result<Vec<_>>>()?;
         let codec = (0..8)
             .map(|il| {
-                load_block(&a, &format!("a.gen.wav.tfm.blk.{il}."), &MTMD, 512, |_| AttnParams {
-                    rope_base: 1_000_000.0,
-                    factors: None,
-                    window: Some(30),
+                load_block(&a, &format!("a.gen.wav.tfm.blk.{il}."), &MTMD, 512, |_| {
+                    AttnParams {
+                        rope_base: 1_000_000.0,
+                        factors: None,
+                        window: Some(30),
+                    }
                 })
             })
             .collect::<Result<Vec<_>>>()?;
         let special = |text: &str| -> Result<u32> {
-            let ids = tokenizer.encode(text, true).map_err(|_| "model_tokenizer_invalid")?;
+            let ids = tokenizer
+                .encode(text, true)
+                .map_err(|_| "model_tokenizer_invalid")?;
             match ids.as_slice() {
                 [id] => Ok(*id),
                 _ => Err("model_tokenizer_invalid"),
@@ -290,7 +330,10 @@ impl Lfm3Audio {
             out_norm: vector(&g, "output_norm.weight")?,
             down: [conv2d(0, false)?, conv2d(2, true)?, conv2d(5, true)?],
             point: [conv2d(3, false)?, conv2d(6, false)?],
-            pre_out: (lin("a.pre_encode.out.weight")?, vecs("a.pre_encode.out.bias")?),
+            pre_out: (
+                lin("a.pre_encode.out.weight")?,
+                vecs("a.pre_encode.out.bias")?,
+            ),
             encoder: enc_blocks,
             post_ln: vecs("a.post_ln.weight")?,
             proj: (
@@ -303,7 +346,10 @@ impl Lfm3Audio {
             ),
             mel_filters: mel_filterbank(128, 400, 16_000),
             depth,
-            proj_in: (lin("a.gen.code.proj_in.weight")?, vecs("a.gen.code.proj_in.bias")?),
+            proj_in: (
+                lin("a.gen.code.proj_in.weight")?,
+                vecs("a.gen.code.proj_in.bias")?,
+            ),
             code_embd: lin("a.gen.code.embd.weight")?,
             mask_embd: vecs("a.gen.code.mask_embd")?,
             depth_norm: vecs("a.gen.code.output_norm.weight")?,
@@ -314,10 +360,16 @@ impl Lfm3Audio {
                 lin("a.gen.wav.quant.first.out_proj.weight")?,
                 vecs("a.gen.wav.quant.first.out_proj.bias")?,
             ),
-            codec_in: (lin("a.gen.wav.tfm.in_proj.weight")?, vecs("a.gen.wav.tfm.in_proj.bias")?),
+            codec_in: (
+                lin("a.gen.wav.tfm.in_proj.weight")?,
+                vecs("a.gen.wav.tfm.in_proj.bias")?,
+            ),
             codec,
             codec_norm: vecs("a.gen.wav.tfm.output_norm.weight")?,
-            codec_out: (lin("a.gen.wav.tfm.out_proj.weight")?, vecs("a.gen.wav.tfm.out_proj.bias")?),
+            codec_out: (
+                lin("a.gen.wav.tfm.out_proj.weight")?,
+                vecs("a.gen.wav.tfm.out_proj.bias")?,
+            ),
             tokenizer,
             tokens,
         })
@@ -365,7 +417,9 @@ impl Lfm3Audio {
     // ---- Backbone -----------------------------------------------------------------------
 
     fn embed_tokens(&self, ids: &[u32]) -> Vec<f32> {
-        ids.iter().flat_map(|id| self.embed.row(*id as usize)).collect()
+        ids.iter()
+            .flat_map(|id| self.embed.row(*id as usize))
+            .collect()
     }
     /// Runs rows through the backbone; returns the last row's normed state.
     fn backbone(&self, rows: &mut [f32], states: &mut [State]) -> Vec<f32> {
@@ -384,7 +438,12 @@ impl Lfm3Audio {
 
     /// The transcript of 16 kHz mono `samples`; `language` names it in the system prompt
     /// ("English"), or the model infers it.
-    pub fn transcribe(&self, samples: &[f32], language: Option<&str>, max_tokens: usize) -> Result<String> {
+    pub fn transcribe(
+        &self,
+        samples: &[f32],
+        language: Option<&str>,
+        max_tokens: usize,
+    ) -> Result<String> {
         let audio = self.encode_audio(samples)?;
         let system = match language {
             Some(l) => format!("Perform ASR in {l}."),
@@ -433,7 +492,11 @@ impl Lfm3Audio {
              <|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n<|audio_start|>"
         );
         let mut ids = vec![self.tokens.bos];
-        ids.extend(self.tokenizer.encode(&prompt, true).map_err(|_| "text_invalid")?);
+        ids.extend(
+            self.tokenizer
+                .encode(&prompt, true)
+                .map_err(|_| "text_invalid")?,
+        );
         debug_assert_eq!(*ids.last().unwrap(), self.tokens.audio_start);
         let mut states = vec![State::default(); self.backbone.len()];
         let mut rows = self.embed_tokens(&ids);
@@ -489,7 +552,12 @@ impl Lfm3Audio {
     /// One frame's codes from a backbone state: three depth-decoder passes, each revealing
     /// four codebooks in a shuffled order, sampled with top-k 128 at temperature 1 and a
     /// repetition penalty of 1.1 over each codebook's earlier codes.
-    fn sample_frame(&self, h: &[f32], history: &[[usize; CODEBOOKS]], rng: &mut Rng) -> [usize; CODEBOOKS] {
+    fn sample_frame(
+        &self,
+        h: &[f32],
+        history: &[[usize; CODEBOOKS]],
+        rng: &mut Rng,
+    ) -> [usize; CODEBOOKS] {
         let mut order: Vec<usize> = (0..CODEBOOKS).collect();
         rng.shuffle(&mut order);
         let mut codes: [Option<usize>; CODEBOOKS] = [None; CODEBOOKS];
@@ -516,7 +584,12 @@ impl Lfm3Audio {
     }
 
     /// The logits of codebooks `wanted` (in that order) after one depth-decoder pass.
-    fn depth_logits(&self, base: &[f32], codes: &[Option<usize>; CODEBOOKS], wanted: &[usize]) -> Vec<f32> {
+    fn depth_logits(
+        &self,
+        base: &[f32],
+        codes: &[Option<usize>; CODEBOOKS],
+        wanted: &[usize],
+    ) -> Vec<f32> {
         let w = 1024;
         let mut x = base.to_vec();
         for (cb, code) in codes.iter().enumerate() {
@@ -628,7 +701,13 @@ impl Rng {
         let lmax = sorted[0];
         let probs: Vec<f64> = l
             .iter()
-            .map(|v| if *v < lmin { 0.0 } else { (f64::from(v - lmax) / f64::from(temp)).exp() })
+            .map(|v| {
+                if *v < lmin {
+                    0.0
+                } else {
+                    (f64::from(v - lmax) / f64::from(temp)).exp()
+                }
+            })
             .collect();
         let mut r = self.uniform() * probs.iter().sum::<f64>();
         for (i, p) in probs.iter().enumerate() {
@@ -646,10 +725,18 @@ impl Rng {
 /// Slaney mel filters `[mel][bin]` (librosa's default, area-normalized).
 fn mel_filterbank(n_mel: usize, n_fft: usize, sr: usize) -> Vec<f32> {
     let hz_to_mel = |f: f64| {
-        if f < 1000.0 { f * 3.0 / 200.0 } else { 15.0 + (f / 1000.0).ln() / (6.4f64.ln() / 27.0) }
+        if f < 1000.0 {
+            f * 3.0 / 200.0
+        } else {
+            15.0 + (f / 1000.0).ln() / (6.4f64.ln() / 27.0)
+        }
     };
     let mel_to_hz = |m: f64| {
-        if m < 15.0 { m * 200.0 / 3.0 } else { 1000.0 * ((m - 15.0) * (6.4f64.ln() / 27.0)).exp() }
+        if m < 15.0 {
+            m * 200.0 / 3.0
+        } else {
+            1000.0 * ((m - 15.0) * (6.4f64.ln() / 27.0)).exp()
+        }
     };
     let (lo, hi) = (hz_to_mel(0.0), hz_to_mel(sr as f64 / 2.0));
     let hz: Vec<f64> = (0..n_mel + 2)
@@ -701,7 +788,9 @@ fn log_mel(samples: &[f32], filters: &[f32]) -> (Vec<f32>, usize) {
     let power: Vec<Vec<f64>> = (0..frames)
         .into_par_iter()
         .map(|fr| {
-            let x: Vec<f64> = (0..win).map(|i| f64::from(padded[fr * hop + i]) * hann[i]).collect();
+            let x: Vec<f64> = (0..win)
+                .map(|i| f64::from(padded[fr * hop + i]) * hann[i])
+                .collect();
             (0..bins)
                 .map(|k| {
                     let (mut re, mut im) = (0.0, 0.0);
@@ -718,7 +807,9 @@ fn log_mel(samples: &[f32], filters: &[f32]) -> (Vec<f32>, usize) {
     let mut mel = vec![0f32; n_mel * frames];
     for (fr, p) in power.iter().enumerate() {
         for m in 0..n_mel {
-            let sum: f64 = (0..bins).map(|k| p[k] * f64::from(filters[m * bins + k])).sum();
+            let sum: f64 = (0..bins)
+                .map(|k| p[k] * f64::from(filters[m * bins + k]))
+                .sum();
             mel[m * frames + fr] = ((sum.max(1e-12).log10() + 4.0) / 4.0) as f32;
         }
     }
@@ -752,24 +843,35 @@ fn conv_down(x: &[f32], ch: usize, t: usize, f: usize, c: &Conv2d) -> (Vec<f32>,
         }
     };
     let mut y = vec![0f32; c.cout * t2 * f2];
-    y.par_chunks_exact_mut(t2 * f2).enumerate().for_each(|(co, out)| {
-        for to in 0..t2 {
-            for fo in 0..f2 {
-                let mut sum = c.b[co];
-                let inputs: Vec<usize> = if c.depthwise { vec![co] } else { (0..ch).collect() };
-                for (k, ci) in inputs.into_iter().enumerate() {
-                    let wbase = if c.depthwise { co * 9 } else { (co * c.cin.max(ch) + k) * 9 };
-                    for kf in 0..3 {
-                        for kt in 0..3 {
-                            let w = c.w[wbase + kf * 3 + kt];
-                            sum += w * at(ci, (to * 2 + kt) as isize, (fo * 2 + kf) as isize - 1);
+    y.par_chunks_exact_mut(t2 * f2)
+        .enumerate()
+        .for_each(|(co, out)| {
+            for to in 0..t2 {
+                for fo in 0..f2 {
+                    let mut sum = c.b[co];
+                    let inputs: Vec<usize> = if c.depthwise {
+                        vec![co]
+                    } else {
+                        (0..ch).collect()
+                    };
+                    for (k, ci) in inputs.into_iter().enumerate() {
+                        let wbase = if c.depthwise {
+                            co * 9
+                        } else {
+                            (co * c.cin.max(ch) + k) * 9
+                        };
+                        for kf in 0..3 {
+                            for kt in 0..3 {
+                                let w = c.w[wbase + kf * 3 + kt];
+                                sum +=
+                                    w * at(ci, (to * 2 + kt) as isize, (fo * 2 + kf) as isize - 1);
+                            }
                         }
                     }
+                    out[to * f2 + fo] = sum;
                 }
-                out[to * f2 + fo] = sum;
             }
-        }
-    });
+        });
     (y, t2, f2)
 }
 
@@ -777,15 +879,17 @@ fn conv_down(x: &[f32], ch: usize, t: usize, f: usize, c: &Conv2d) -> (Vec<f32>,
 fn pointwise(x: &[f32], ch: usize, cells: usize, c: &Conv2d) -> Vec<f32> {
     use rayon::prelude::*;
     let mut y = vec![0f32; c.cout * cells];
-    y.par_chunks_exact_mut(cells).enumerate().for_each(|(co, out)| {
-        out.iter_mut().for_each(|v| *v = c.b[co]);
-        for ci in 0..ch {
-            let w = c.w[co * ch + ci];
-            for (o, v) in out.iter_mut().zip(&x[ci * cells..][..cells]) {
-                *o += w * v;
+    y.par_chunks_exact_mut(cells)
+        .enumerate()
+        .for_each(|(co, out)| {
+            out.iter_mut().for_each(|v| *v = c.b[co]);
+            for ci in 0..ch {
+                let w = c.w[co * ch + ci];
+                for (o, v) in out.iter_mut().zip(&x[ci * cells..][..cells]) {
+                    *o += w * v;
+                }
             }
-        }
-    });
+        });
     y
 }
 
@@ -806,7 +910,9 @@ struct Istft {
 impl Istft {
     fn new(n: usize, hop: usize) -> Self {
         let window = (0..n)
-            .map(|i| (0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos())) as f32)
+            .map(|i| {
+                (0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos())) as f32
+            })
             .collect();
         let (cos, sin) = (0..n)
             .map(|i| {
@@ -814,7 +920,16 @@ impl Istft {
                 (a.cos(), a.sin())
             })
             .unzip();
-        Self { n, hop, window, overlap: vec![0.0; n], weight: vec![0.0; n], skip: (n - hop) / 2, cos, sin }
+        Self {
+            n,
+            hop,
+            window,
+            overlap: vec![0.0; n],
+            weight: vec![0.0; n],
+            skip: (n - hop) / 2,
+            cos,
+            sin,
+        }
     }
     /// One frame's spectrum (`n / 2 + 1` complex bins, interleaved) to up to `hop` samples.
     fn process(&mut self, spec: &[f32]) -> Vec<f32> {
@@ -829,17 +944,32 @@ impl Istft {
                     let idx = (k * t) % n;
                     let (re, im) = (f64::from(spec[2 * k]), f64::from(spec[2 * k + 1]));
                     let term = re * self.cos[idx] - im * self.sin[idx];
-                    sum += if k == bins - 1 && n % 2 == 0 { term } else { 2.0 * term };
+                    sum += if k == bins - 1 && n % 2 == 0 {
+                        term
+                    } else {
+                        2.0 * term
+                    };
                 }
                 (sum / n as f64) as f32
             })
             .collect();
-        for ((w, o), (win, f)) in self.weight.iter_mut().zip(&mut self.overlap).zip(self.window.iter().zip(&frame)) {
+        for ((w, o), (win, f)) in self
+            .weight
+            .iter_mut()
+            .zip(&mut self.overlap)
+            .zip(self.window.iter().zip(&frame))
+        {
             *w += win * win;
             *o += f * win;
         }
         let mut out: Vec<f32> = (0..self.hop)
-            .map(|i| if self.weight[i] > 1e-8 { self.overlap[i] / self.weight[i] } else { self.overlap[i] })
+            .map(|i| {
+                if self.weight[i] > 1e-8 {
+                    self.overlap[i] / self.weight[i]
+                } else {
+                    self.overlap[i]
+                }
+            })
             .collect();
         self.overlap.copy_within(self.hop.., 0);
         self.weight.copy_within(self.hop.., 0);
@@ -855,7 +985,13 @@ impl Istft {
     fn flush(&mut self) -> Vec<f32> {
         let rest = self.n - self.hop;
         let mut out: Vec<f32> = (0..rest)
-            .map(|i| if self.weight[i] > 1e-8 { self.overlap[i] / self.weight[i] } else { self.overlap[i] })
+            .map(|i| {
+                if self.weight[i] > 1e-8 {
+                    self.overlap[i] / self.weight[i]
+                } else {
+                    self.overlap[i]
+                }
+            })
             .collect();
         let trim = (self.n - self.hop) / 2;
         out.truncate(out.len().saturating_sub(trim));

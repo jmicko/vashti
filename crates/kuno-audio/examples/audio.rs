@@ -20,7 +20,9 @@ fn read_wav(path: &str) -> (Vec<f32>, u32) {
             let s: Vec<f32> = body
                 .chunks_exact(2 * channels as usize)
                 .map(|f| {
-                    f.chunks_exact(2).map(|c| f32::from(i16::from_le_bytes([c[0], c[1]])) / 32768.0).sum::<f32>()
+                    f.chunks_exact(2)
+                        .map(|c| f32::from(i16::from_le_bytes([c[0], c[1]])) / 32768.0)
+                        .sum::<f32>()
                         / f32::from(channels)
                 })
                 .collect();
@@ -69,7 +71,11 @@ fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let dir = std::path::Path::new(&a[1]);
     let t0 = std::time::Instant::now();
-    let m = Lfm3Audio::open(&dir.join("LFM3-Audio-2B-Q8_0.gguf"), &dir.join("mmproj-LFM3-Audio-2B-F16.gguf")).unwrap();
+    let m = Lfm3Audio::open(
+        &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+        &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+    )
+    .unwrap();
     eprintln!("load {:.2} s", t0.elapsed().as_secs_f64());
     match a[0].as_str() {
         "transcribe" => {
@@ -77,7 +83,11 @@ fn main() {
             let s = to_16k(&s, rate);
             let t0 = std::time::Instant::now();
             let text = m.transcribe(&s, a.get(3).map(String::as_str), 512).unwrap();
-            eprintln!("transcribe {:.2} s for {:.2} s of audio", t0.elapsed().as_secs_f64(), s.len() as f64 / 16000.0);
+            eprintln!(
+                "transcribe {:.2} s for {:.2} s of audio",
+                t0.elapsed().as_secs_f64(),
+                s.len() as f64 / 16000.0
+            );
             println!("{text}");
         }
         "speak" => {
@@ -93,7 +103,11 @@ fn main() {
                 .unwrap();
             let secs = pcm.len() as f64 / 24000.0;
             let took = t0.elapsed().as_secs_f64();
-            eprintln!("speak {took:.2} s for {secs:.2} s of audio ({:.2}x real time), first audio {:.2} s", secs / took, first.unwrap_or(0.0));
+            eprintln!(
+                "speak {took:.2} s for {secs:.2} s of audio ({:.2}x real time), first audio {:.2} s",
+                secs / took,
+                first.unwrap_or(0.0)
+            );
             write_wav(&a[3], &pcm, 24000);
         }
         _ => panic!("transcribe or speak"),

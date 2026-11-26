@@ -188,8 +188,13 @@ async fn an_idle_worker_exit_is_recovered_on_the_next_request() {
     // Wait until it has exited: a zombie (its parent reaps it on the next request) or
     // gone. A fixed pause failed under a loaded parallel test run.
     for _ in 0..200 {
-        let exited = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            .map_or(true, |stat| stat.rsplit(')').next().unwrap_or("").trim_start().starts_with('Z'));
+        let exited = std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
+            stat.rsplit(')')
+                .next()
+                .unwrap_or("")
+                .trim_start()
+                .starts_with('Z')
+        });
         if exited {
             break;
         }

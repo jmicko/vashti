@@ -41,7 +41,9 @@ pub fn read(bytes: &[u8]) -> Result<(Vec<f32>, u32)> {
             let decode: fn(&[u8]) -> f32 = match (tag, bits) {
                 (1, 8) => |b| (f32::from(b[0]) - 128.0) / 128.0,
                 (1, 16) => |b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32768.0,
-                (1, 24) => |b| (i32::from_le_bytes([0, b[0], b[1], b[2]]) >> 8) as f32 / 8_388_608.0,
+                (1, 24) => {
+                    |b| (i32::from_le_bytes([0, b[0], b[1], b[2]]) >> 8) as f32 / 8_388_608.0
+                }
                 (1, 32) => |b| i32::from_le_bytes(b.try_into().unwrap()) as f32 / 2_147_483_648.0,
                 (3, 32) => |b| f32::from_le_bytes(b.try_into().unwrap()),
                 (3, 64) => |b| f64::from_le_bytes(b.try_into().unwrap()) as f32,
@@ -53,7 +55,11 @@ pub fn read(bytes: &[u8]) -> Result<(Vec<f32>, u32)> {
                 .map(|f| {
                     let sum: f32 = f.chunks_exact(width).map(decode).sum();
                     let v = sum / f32::from(channels);
-                    if v.is_finite() { v.clamp(-1.0, 1.0) } else { 0.0 }
+                    if v.is_finite() {
+                        v.clamp(-1.0, 1.0)
+                    } else {
+                        0.0
+                    }
                 })
                 .collect();
             return Ok((samples, rate));
@@ -80,7 +86,11 @@ pub fn write(samples: &[f32], rate: u32) -> Vec<u8> {
     b.extend(b"data");
     b.extend(data.to_le_bytes());
     for v in samples {
-        let v = if v.is_finite() { v.clamp(-1.0, 1.0) } else { 0.0 };
+        let v = if v.is_finite() {
+            v.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
         b.extend(((v * 32767.0).round() as i16).to_le_bytes());
     }
     b
@@ -112,7 +122,9 @@ pub fn resample(s: &[f32], from: u32, to: u32) -> Vec<f32> {
                 if t.abs() >= 1.0 {
                     continue;
                 }
-                let w = 0.42 + 0.5 * (std::f64::consts::PI * t).cos() + 0.08 * (2.0 * std::f64::consts::PI * t).cos();
+                let w = 0.42
+                    + 0.5 * (std::f64::consts::PI * t).cos()
+                    + 0.08 * (2.0 * std::f64::consts::PI * t).cos();
                 let a = std::f64::consts::PI * d * cutoff;
                 let sinc = if a.abs() < 1e-9 { 1.0 } else { a.sin() / a };
                 sum += f64::from(s[j as usize]) * cutoff * sinc * w;
@@ -169,7 +181,11 @@ mod tests {
         let r = resample(&s, 48_000, 16_000);
         assert_eq!(r.len(), 8000);
         let expect = tone(16_000, 1000.0, 0.5);
-        let err = r[200..7800].iter().zip(&expect[200..7800]).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+        let err = r[200..7800]
+            .iter()
+            .zip(&expect[200..7800])
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
         assert!(err < 0.01, "{err}");
         // 12 kHz is above the new Nyquist rate: it must vanish, not fold to 4 kHz.
         let high = resample(&tone(48_000, 12_000.0, 0.5), 48_000, 16_000);

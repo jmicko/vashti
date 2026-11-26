@@ -47,7 +47,9 @@ fn configurations_naming_a_retired_runtime_are_read_and_rewritten_without_it() {
         serde_json::json!({}),
     ] {
         let mut old = current.clone();
-        old.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        old.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
         let image: ImageConfig = serde_json::from_value(old).unwrap();
         image.validate().unwrap();
         // Written back (as an upgrade does) without the retired fields.

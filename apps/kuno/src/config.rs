@@ -87,7 +87,10 @@ impl Config {
         }
         if let Some(audio) = &self.audio
             && (!audio.models.is_absolute()
-                || audio.models.components().any(|c| c == std::path::Component::ParentDir))
+                || audio
+                    .models
+                    .components()
+                    .any(|c| c == std::path::Component::ParentDir))
         {
             return Err("audio_models_invalid");
         }

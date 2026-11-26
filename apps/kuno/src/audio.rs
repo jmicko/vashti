@@ -112,17 +112,24 @@ pub fn run_worker() -> Result<(), &'static str> {
 
 fn read_part(input: &mut impl Read) -> Result<Vec<u8>, &'static str> {
     let mut len = [0u8; 4];
-    input.read_exact(&mut len).map_err(|_| "audio_request_invalid")?;
+    input
+        .read_exact(&mut len)
+        .map_err(|_| "audio_request_invalid")?;
     let len = u32::from_le_bytes(len) as usize;
     if len > kuno_protocol::MAX_AUDIO_REQUEST_BYTES {
         return Err("audio_request_invalid");
     }
     let mut part = vec![0u8; len];
-    input.read_exact(&mut part).map_err(|_| "audio_request_invalid")?;
+    input
+        .read_exact(&mut part)
+        .map_err(|_| "audio_request_invalid")?;
     Ok(part)
 }
 
-fn respond(output: &mut impl Write, result: Result<Vec<u8>, &'static str>) -> Result<(), &'static str> {
+fn respond(
+    output: &mut impl Write,
+    result: Result<Vec<u8>, &'static str>,
+) -> Result<(), &'static str> {
     let (status, mut body) = match result {
         Ok(body) => (0u8, body),
         Err(code) => (1u8, code.as_bytes().to_vec()),
@@ -136,7 +143,11 @@ fn respond(output: &mut impl Write, result: Result<Vec<u8>, &'static str>) -> Re
     sent.map_err(|_| "audio_worker_output_failed")
 }
 
-fn transcribe(model: &kuno_audio::Lfm3Audio, wav: &[u8], p: &Params) -> Result<String, &'static str> {
+fn transcribe(
+    model: &kuno_audio::Lfm3Audio,
+    wav: &[u8],
+    p: &Params,
+) -> Result<String, &'static str> {
     let (samples, rate) = kuno_audio::wav::read(wav)?;
     let mut samples = kuno_audio::wav::resample(&samples, rate, 16_000);
     if samples.len() < 1_600 {
@@ -163,10 +174,20 @@ fn speak(model: &kuno_audio::Lfm3Audio, text: &str, p: &Params) -> Result<Vec<u8
     let language = p.language.as_deref().unwrap_or("American English");
     let voice = p.voice.as_deref().unwrap_or("female");
     let mut audio = Vec::new();
-    for (i, piece) in kuno_audio::split::text(text, TEXT_PIECE_CHARACTERS).iter().enumerate() {
+    for (i, piece) in kuno_audio::split::text(text, TEXT_PIECE_CHARACTERS)
+        .iter()
+        .enumerate()
+    {
         // About 15 characters a second at 12.5 frames a second, with ample room.
         let frames = 100 + piece.chars().count() * 3;
-        let pcm = model.speak(piece, language, voice, p.seed.wrapping_add(i as u64), frames, |_| true)?;
+        let pcm = model.speak(
+            piece,
+            language,
+            voice,
+            p.seed.wrapping_add(i as u64),
+            frames,
+            |_| true,
+        )?;
         audio.extend(pcm);
     }
     let wav = kuno_audio::wav::write(&audio, kuno_audio::SAMPLE_RATE);
@@ -199,8 +220,16 @@ impl Default for AudioRuntime {
 }
 
 pub enum Job {
-    Transcribe { wav: Vec<u8>, language: Option<String> },
-    Speak { text: String, language: Option<String>, voice: Option<String>, seed: u64 },
+    Transcribe {
+        wav: Vec<u8>,
+        language: Option<String>,
+    },
+    Speak {
+        text: String,
+        language: Option<String>,
+        voice: Option<String>,
+        seed: u64,
+    },
 }
 
 /// Whether `models` holds the verified collection (sizes; hashes are checked on fetch).
@@ -223,14 +252,35 @@ impl AudioRuntime {
         job: Job,
         closed: impl std::future::Future<Output = ()>,
     ) -> Result<Vec<u8>, &'static str> {
-        let _permit = self.waiting.clone().try_acquire_owned().map_err(|_| "audio_queue_full")?;
+        let _permit = self
+            .waiting
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "audio_queue_full")?;
         let (kind, params, mut payload) = match job {
-            Job::Transcribe { wav, language } => {
-                (TRANSCRIBE, Params { language, voice: None, seed: 0 }, wav)
-            }
-            Job::Speak { text, language, voice, seed } => {
-                (SPEAK, Params { language, voice, seed }, text.into_bytes())
-            }
+            Job::Transcribe { wav, language } => (
+                TRANSCRIBE,
+                Params {
+                    language,
+                    voice: None,
+                    seed: 0,
+                },
+                wav,
+            ),
+            Job::Speak {
+                text,
+                language,
+                voice,
+                seed,
+            } => (
+                SPEAK,
+                Params {
+                    language,
+                    voice,
+                    seed,
+                },
+                text.into_bytes(),
+            ),
         };
         let params = serde_json::to_vec(&params).map_err(|_| "audio_request_invalid")?;
         let mut slot = self.worker.lock().await;
@@ -292,17 +342,26 @@ async fn exchange(
 
 async fn read_response(output: &mut ChildStdout) -> Result<Vec<u8>, &'static str> {
     let status = output.read_u8().await.map_err(|_| "audio_worker_failed")?;
-    let len = output.read_u32_le().await.map_err(|_| "audio_worker_failed")? as usize;
+    let len = output
+        .read_u32_le()
+        .await
+        .map_err(|_| "audio_worker_failed")? as usize;
     if len > 512 * 1024 * 1024 {
         return Err("audio_worker_failed");
     }
     let mut body = vec![0u8; len];
-    output.read_exact(&mut body).await.map_err(|_| "audio_worker_failed")?;
+    output
+        .read_exact(&mut body)
+        .await
+        .map_err(|_| "audio_worker_failed")?;
     if status == 0 {
         return Ok(body);
     }
     let code = std::str::from_utf8(&body).unwrap_or("");
-    Err(CODES.into_iter().find(|c| *c == code).unwrap_or("audio_worker_failed"))
+    Err(CODES
+        .into_iter()
+        .find(|c| *c == code)
+        .unwrap_or("audio_worker_failed"))
 }
 
 async fn spawn(executable: &Path, models: &Path) -> Result<Worker, &'static str> {
@@ -334,7 +393,11 @@ async fn spawn(executable: &Path, models: &Path) -> Result<Worker, &'static str>
     let mut output = child.stdout.take().ok_or("audio_worker_spawn_failed")?;
     // Loading reads 2.4 GB; a cold disk may take a while.
     match tokio::time::timeout(Duration::from_secs(300), read_response(&mut output)).await {
-        Ok(Ok(_)) => Ok(Worker { _child: child, input, output }),
+        Ok(Ok(_)) => Ok(Worker {
+            _child: child,
+            input,
+            output,
+        }),
         Ok(Err(code)) => Err(code),
         Err(_) => Err("audio_worker_start_timeout"),
     }

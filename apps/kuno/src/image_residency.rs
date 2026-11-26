@@ -293,10 +293,7 @@ impl Drop for Payload {
     }
 }
 
-async fn spawn(
-    identity: Identity,
-    config: &ImageConfig,
-) -> Result<Worker, &'static str> {
+async fn spawn(identity: Identity, config: &ImageConfig) -> Result<Worker, &'static str> {
     let mut command = Command::new(&identity.executable);
     command.args([
         "image-worker-resident",

@@ -51,13 +51,20 @@ pub fn text(text: &str, max: usize) -> Vec<String> {
         piece.push_str(&s);
         while piece.chars().count() > max {
             let chars: Vec<char> = piece.chars().collect();
-            let cut = chars[..max].iter().rposition(|c| c.is_whitespace()).filter(|&i| i > 0).unwrap_or(max);
+            let cut = chars[..max]
+                .iter()
+                .rposition(|c| c.is_whitespace())
+                .filter(|&i| i > 0)
+                .unwrap_or(max);
             out.push(chars[..cut].iter().collect());
             piece = chars[cut..].iter().collect();
         }
     }
     out.push(piece);
-    out.into_iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
+    out.into_iter()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -78,7 +85,10 @@ mod tests {
     fn text_keeps_sentences_together() {
         let t = "One two. Three four five! Six?";
         assert_eq!(super::text(t, 100), vec![t]);
-        assert_eq!(super::text(t, 20), vec!["One two.", "Three four five!", "Six?"]);
+        assert_eq!(
+            super::text(t, 20),
+            vec!["One two.", "Three four five!", "Six?"]
+        );
         let long = "word ".repeat(50);
         let p = super::text(&long, 30);
         assert!(p.iter().all(|p| p.chars().count() <= 30));

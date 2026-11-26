@@ -407,11 +407,20 @@ mod tests {
     fn fast_attention_is_advertised_only_when_the_engine_takes_it() {
         let c = config();
         let without = describe(Some(&c), true, false, None, |_| true);
-        assert!(without.workflows.iter().all(|w| w.attention == ["standard"]));
+        assert!(
+            without
+                .workflows
+                .iter()
+                .all(|w| w.attention == ["standard"])
+        );
         // Every Qwen workflow, 2512 included.
         let with = describe(Some(&c), true, true, None, |_| true);
         assert!(!with.workflows.is_empty());
-        assert!(with.workflows.iter().all(|w| w.attention == ["standard", "fast"]));
+        assert!(
+            with.workflows
+                .iter()
+                .all(|w| w.attention == ["standard", "fast"])
+        );
     }
     #[tokio::test]
     async fn readiness_is_cached_and_has_no_private_paths() {

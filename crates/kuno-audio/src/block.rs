@@ -112,7 +112,14 @@ fn conv(c: &Conv, h: &[f32], w: usize, state: &mut State) -> Vec<f32> {
     c.out_proj.forward(&y)
 }
 
-fn attention(a: &Attention, h: &[f32], w: usize, state: &mut State, causal: bool, eps: f32) -> Vec<f32> {
+fn attention(
+    a: &Attention,
+    h: &[f32],
+    w: usize,
+    state: &mut State,
+    causal: bool,
+    eps: f32,
+) -> Vec<f32> {
     let n = h.len() / w;
     let (hd, heads, kvh) = (a.head_dim, a.heads, a.kv_heads);
     let mut q = a.q.forward(h);
@@ -131,7 +138,10 @@ fn attention(a: &Attention, h: &[f32], w: usize, state: &mut State, causal: bool
     }
     // Keys and values visible to this call: the cache, then this call's rows.
     let (mut keys, mut values) = if causal {
-        (std::mem::take(&mut state.keys), std::mem::take(&mut state.values))
+        (
+            std::mem::take(&mut state.keys),
+            std::mem::take(&mut state.values),
+        )
     } else {
         (Vec::new(), Vec::new())
     };
@@ -174,13 +184,17 @@ fn attention(a: &Attention, h: &[f32], w: usize, state: &mut State, causal: bool
         for t in 0..n {
             for head in 0..heads {
                 let s = sigmoid(gates[t * heads + head]);
-                mixed[(t * heads + head) * hd..][..hd].iter_mut().for_each(|v| *v *= s);
+                mixed[(t * heads + head) * hd..][..hd]
+                    .iter_mut()
+                    .for_each(|v| *v *= s);
             }
         }
     }
     if causal {
         // Keep what a later call can still see.
-        let keep = a.window.map_or(keys.len(), |win| win.saturating_sub(1).min(keys.len()));
+        let keep = a
+            .window
+            .map_or(keys.len(), |win| win.saturating_sub(1).min(keys.len()));
         let drop = keys.len() - keep;
         keys.drain(..drop);
         values.drain(..drop);

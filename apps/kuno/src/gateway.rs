@@ -365,8 +365,14 @@ async fn audio_capabilities(gateway: &Gateway) -> kuno_protocol::AudioCapabiliti
         reason,
         transcription_path: "/kuno/v1/audio/transcriptions".into(),
         speech_path: "/kuno/v1/audio/speech".into(),
-        voices: kuno_protocol::SPEECH_VOICES.iter().map(|v| (*v).into()).collect(),
-        languages: kuno_protocol::SPEECH_LANGUAGES.iter().map(|(c, _)| (*c).into()).collect(),
+        voices: kuno_protocol::SPEECH_VOICES
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
+        languages: kuno_protocol::SPEECH_LANGUAGES
+            .iter()
+            .map(|(c, _)| (*c).into())
+            .collect(),
         max_request_bytes: kuno_protocol::MAX_AUDIO_REQUEST_BYTES,
         max_speech_characters: kuno_protocol::MAX_SPEECH_CHARACTERS,
         speech_sample_rate: kuno_audio::SAMPLE_RATE,
@@ -392,9 +398,10 @@ async fn audio_request<T: serde::de::DeserializeOwned>(
 
 fn audio_status(code: &'static str) -> StatusCode {
     match code {
-        "audio_format_unsupported" | "audio_too_short" | "text_invalid" | "audio_request_invalid" => {
-            StatusCode::BAD_REQUEST
-        }
+        "audio_format_unsupported"
+        | "audio_too_short"
+        | "text_invalid"
+        | "audio_request_invalid" => StatusCode::BAD_REQUEST,
         "audio_cancelled" => StatusCode::REQUEST_TIMEOUT,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -402,7 +409,10 @@ fn audio_status(code: &'static str) -> StatusCode {
 
 /// Runs an audio job in its own task, so that a client leaving stops the worker instead of
 /// abandoning it mid-frame.
-async fn run_audio(gateway: Arc<Gateway>, job: crate::audio::Job) -> Result<Vec<u8>, (StatusCode, &'static str)> {
+async fn run_audio(
+    gateway: Arc<Gateway>,
+    job: crate::audio::Job,
+) -> Result<Vec<u8>, (StatusCode, &'static str)> {
     let Some(models) = audio_models(&gateway) else {
         return Err((StatusCode::SERVICE_UNAVAILABLE, "audio_not_configured"));
     };
@@ -480,7 +490,10 @@ async fn speak_audio(State(gateway): State<Arc<Gateway>>, request: Request) -> R
     };
     match run_audio(gateway, job).await {
         Ok(wav) => (
-            [(header::CONTENT_TYPE, "audio/wav"), (header::CACHE_CONTROL, "no-store")],
+            [
+                (header::CONTENT_TYPE, "audio/wav"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
             wav,
         )
             .into_response(),

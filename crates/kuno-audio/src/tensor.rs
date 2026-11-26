@@ -9,11 +9,23 @@ use crate::Result;
 
 /// A weight matrix: `rows` outputs over `cols` inputs.
 pub enum Linear {
-    F32 { w: Vec<f32>, rows: usize, cols: usize },
+    F32 {
+        w: Vec<f32>,
+        rows: usize,
+        cols: usize,
+    },
     /// GGML Q8_0 rows: per 32 values an f16 scale and 32 signed bytes.
-    Q8 { w: Vec<u8>, rows: usize, cols: usize },
+    Q8 {
+        w: Vec<u8>,
+        rows: usize,
+        cols: usize,
+    },
     /// Half-precision rows, widened as they are read (half the memory traffic of f32).
-    F16 { w: Vec<u16>, rows: usize, cols: usize },
+    F16 {
+        w: Vec<u16>,
+        rows: usize,
+        cols: usize,
+    },
 }
 
 impl Linear {
@@ -22,12 +34,20 @@ impl Linear {
         let info = view.info();
         let (rows, cols) = (info.row_count() as usize, info.row_len() as usize);
         let mut bytes = vec![0u8; info.byte_len() as usize];
-        view.read_range(0, &mut bytes).map_err(|_| "model_read_failed")?;
+        view.read_range(0, &mut bytes)
+            .map_err(|_| "model_read_failed")?;
         if info.dtype() == TensorType::Q8_0 {
-            return Ok(Self::Q8 { w: bytes, rows, cols });
+            return Ok(Self::Q8 {
+                w: bytes,
+                rows,
+                cols,
+            });
         }
         if info.dtype() == TensorType::F16 {
-            let w = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+            let w = bytes
+                .chunks_exact(2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .collect();
             return Ok(Self::F16 { w, rows, cols });
         }
         let mut w = vec![0f32; rows * cols];
@@ -263,7 +283,8 @@ fn erf(x: f32) -> f32 {
                         + t * (-0.186_288_06
                             + t * (0.278_868_07
                                 + t * (-1.135_203_98
-                                    + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77)))))))))
+                                    + t * (1.488_515_87
+                                        + t * (-0.822_152_23 + t * 0.170_872_77)))))))))
             .exp();
     (if x >= 0.0 { y } else { -y }) as f32
 }
@@ -320,15 +341,26 @@ mod x86 {
         let mut i = 0;
         while i + 32 <= n {
             for (j, s) in acc.iter_mut().enumerate() {
-                *s = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i + 8 * j)), _mm256_loadu_ps(pb.add(i + 8 * j)), *s);
+                *s = _mm256_fmadd_ps(
+                    _mm256_loadu_ps(pa.add(i + 8 * j)),
+                    _mm256_loadu_ps(pb.add(i + 8 * j)),
+                    *s,
+                );
             }
             i += 32;
         }
         while i + 8 <= n {
-            acc[0] = _mm256_fmadd_ps(_mm256_loadu_ps(pa.add(i)), _mm256_loadu_ps(pb.add(i)), acc[0]);
+            acc[0] = _mm256_fmadd_ps(
+                _mm256_loadu_ps(pa.add(i)),
+                _mm256_loadu_ps(pb.add(i)),
+                acc[0],
+            );
             i += 8;
         }
-        let mut total = sum(_mm256_add_ps(_mm256_add_ps(acc[0], acc[1]), _mm256_add_ps(acc[2], acc[3])));
+        let mut total = sum(_mm256_add_ps(
+            _mm256_add_ps(acc[0], acc[1]),
+            _mm256_add_ps(acc[2], acc[3]),
+        ));
         while i < n {
             total += a[i] * b[i];
             i += 1;
@@ -355,7 +387,10 @@ mod x86 {
             acc[0] = _mm256_fmadd_ps(h, _mm256_loadu_ps(px.add(i)), acc[0]);
             i += 8;
         }
-        let mut total = sum(_mm256_add_ps(_mm256_add_ps(acc[0], acc[1]), _mm256_add_ps(acc[2], acc[3])));
+        let mut total = sum(_mm256_add_ps(
+            _mm256_add_ps(acc[0], acc[1]),
+            _mm256_add_ps(acc[2], acc[3]),
+        ));
         while i < n {
             total += super::f16(w[i]) * x[i];
             i += 1;

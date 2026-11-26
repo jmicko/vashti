@@ -1438,3 +1438,93 @@ async fn learning_diagnostics_require_auth_and_do_not_start_workers() {
         }
     }
 }
+
+#[tokio::test]
+async fn audio_routes_validate_before_configuration_and_report_it() {
+    let f = Fixture::new(Router::new(), 2).await;
+    let caps: serde_json::Value = f
+        .client
+        .get(format!("{}/kuno/v1/capabilities", f.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(caps["audio"]["state"], "disabled");
+    assert_eq!(caps["audio"]["speech_path"], "/kuno/v1/audio/speech");
+    let post = |path: &str, body: serde_json::Value| {
+        f.client
+            .post(format!("{}/kuno/v1/audio/{path}", f.base))
+            .json(&body)
+            .send()
+    };
+    let check = |response: reqwest::Response, status: u16, code: &'static str| async move {
+        assert_eq!(response.status().as_u16(), status);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"], code);
+    };
+    check(
+        post(
+            "speech",
+            serde_json::json!({"input": "hi", "voice": "robot"}),
+        )
+        .await
+        .unwrap(),
+        400,
+        "speech_voice_invalid",
+    )
+    .await;
+    check(
+        post("speech", serde_json::json!({"input": " "}))
+            .await
+            .unwrap(),
+        400,
+        "speech_input_invalid",
+    )
+    .await;
+    check(
+        post("speech", serde_json::json!({"input": "hi", "speed": 2}))
+            .await
+            .unwrap(),
+        400,
+        "audio_request_invalid",
+    )
+    .await;
+    check(
+        post(
+            "transcriptions",
+            serde_json::json!({"audio": "AAAA", "language": "xx"}),
+        )
+        .await
+        .unwrap(),
+        400,
+        "transcription_language_invalid",
+    )
+    .await;
+    check(
+        post("transcriptions", serde_json::json!({"audio": "!!!"}))
+            .await
+            .unwrap(),
+        400,
+        "transcription_audio_invalid",
+    )
+    .await;
+    check(
+        post("speech", serde_json::json!({"input": "hi"}))
+            .await
+            .unwrap(),
+        503,
+        "audio_not_configured",
+    )
+    .await;
+    let browser = f
+        .client
+        .post(format!("{}/kuno/v1/audio/speech", f.base))
+        .header("Origin", "http://example.invalid")
+        .json(&serde_json::json!({"input": "hi"}))
+        .send()
+        .await
+        .unwrap();
+    check(browser, 403, "inference_origin_forbidden").await;
+}
