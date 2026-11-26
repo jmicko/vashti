@@ -68,6 +68,9 @@ fn write_wav(path: &str, s: &[f32], rate: u32) {
 }
 
 fn main() {
+    if std::env::var_os("RAYON_NUM_THREADS").is_none() {
+        kuno_audio::use_physical_cores();
+    }
     let a: Vec<String> = std::env::args().skip(1).collect();
     let dir = std::path::Path::new(&a[1]);
     let t0 = std::time::Instant::now();

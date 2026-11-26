@@ -67,9 +67,12 @@ shared guard's `image_content_type_required` (415).
   use. It stays while used and exits after five idle minutes (2.4 GB RSS returned to
   language models). A client that disconnects stops it; the next request starts a new one
   (about 1.5 s to load from the page cache).
-- **Speed** (Ryzen 9 5900XT, 37 GB/s; the backbone's weights bound decoding): recognition
-  about 0.6-0.85 s per second of audio; speech 0.6-0.8x real time, first audio after
-  about 1 s (the API returns the whole file; streaming is possible later). A GPU path would
-  beat real time; not done.
+- **Speed** (Ryzen 9 5900XT, 16 cores, 37 GB/s): the worker uses one thread per physical
+  core (two per core only add contention: speech went from 0.86x to 0.97x real time).
+  Recognition takes about 0.83 s per second of audio. Speech generates frames faster than
+  real time (about 67 ms per 80 ms frame: the backbone reading its 1.85 GB of weights
+  dominates) and the whole request, prompt included, runs at about 0.97x real time; the
+  first audio is ready after about 1.1 s, but the API returns the whole file (streaming is a
+  possible addition). A GPU path would go well past real time; not done.
 - **Fidelity** to llama.cpp (the reference): identical transcripts on the test clips, in
   both directions (Kuno's speech transcribed by llama.cpp and the reverse).

@@ -29,6 +29,42 @@ pub mod wav;
 use block::{Attention, Block, Conv, Op, State};
 use tensor::{Linear, gelu_erf, layer_norm, rms_norm, silu, vector};
 
+/// Sizes the global thread pool to one thread per physical core (once, before any work):
+/// decoding is bound by memory bandwidth and many small synchronized steps, so a second
+/// thread per core only adds contention (speech 0.86x to 0.97x real time on a 16-core
+/// Ryzen; recognition unchanged).
+pub fn use_physical_cores() {
+    let cores = physical_cores();
+    if cores > 0 {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(cores)
+            .build_global();
+    }
+}
+
+/// Distinct (package, core) pairs among the online CPUs; 0 if the topology is unreadable.
+fn physical_cores() -> usize {
+    let mut seen = std::collections::BTreeSet::new();
+    let Ok(entries) = std::fs::read_dir("/sys/devices/system/cpu") else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(id) = name.to_str().and_then(|n| n.strip_prefix("cpu")) else {
+            continue;
+        };
+        if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let topology = entry.path().join("topology");
+        let read = |f: &str| std::fs::read_to_string(topology.join(f)).ok();
+        if let (Some(package), Some(core)) = (read("physical_package_id"), read("core_id")) {
+            seen.insert((package.trim().to_owned(), core.trim().to_owned()));
+        }
+    }
+    seen.len()
+}
+
 pub type Result<T> = std::result::Result<T, &'static str>;
 
 const EPS: f32 = 1e-5;
@@ -505,12 +541,8 @@ impl Lfm3Audio {
         let mut history: Vec<[usize; CODEBOOKS]> = Vec::new();
         let mut codec = CodecState::new(self.codec.len());
         let mut audio = Vec::new();
-        let profile = std::env::var_os("KUNO_AUDIO_PROFILE").is_some();
-        let mut spent = [0f64; 2];
         for _ in 0..max_frames {
-            let t0 = std::time::Instant::now();
             let codes = self.sample_frame(&state, &history, &mut rng);
-            spent[0] += t0.elapsed().as_secs_f64();
             if codes.contains(&(CODES - 1)) {
                 break;
             }
@@ -522,26 +554,15 @@ impl Lfm3Audio {
                 }
             }
             // The frame's audio and the next backbone step are independent: run them together.
-            let t0 = std::time::Instant::now();
             let (pcm, next) = rayon::join(
                 || self.decode_frame(&codes, &mut codec),
                 || self.backbone(&mut fb, &mut states),
             );
-            spent[1] += t0.elapsed().as_secs_f64();
             state = next;
             audio.extend(&pcm);
             if !on_audio(&pcm) {
                 return Ok(audio);
             }
-        }
-        if profile {
-            let n = history.len().max(1) as f64;
-            eprintln!(
-                "per frame: depth {:.1} ms, codec and backbone {:.1} ms ({} frames)",
-                spent[0] / n * 1e3,
-                spent[1] / n * 1e3,
-                history.len()
-            );
         }
         let tail = codec.istft.flush();
         on_audio(&tail);

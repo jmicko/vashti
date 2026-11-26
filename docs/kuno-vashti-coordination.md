@@ -18,9 +18,10 @@ Vashti work (user-facing design to be proposed to the user before building):
   `Permissions-Policy` sets `microphone=()` (`apps/vashti/src/main.rs`); it must allow
   `microphone=(self)` for recording, and `getUserMedia` needs a secure context (HTTPS, or
   localhost) on phones.
-- Read-aloud: send message text; play the returned WAV. Rendering is slower than real time
-  on this CPU (about 1.3-1.6 s per second of speech), so long replies should show progress
-  or be spoken a paragraph at a time from Vashti's side.
+- Read-aloud: send message text; play the returned WAV. A request takes about as long as
+  the speech it returns (0.97x real time on this CPU, about 1 s before the first audio is
+  ready inside Kuno), so long replies should show progress or be requested a paragraph at
+  a time from Vashti's side and played back to back.
 - Treat audio and transcripts as private content: no logs, no persistence unless the user
   saves them (as with images).
 - Errors are `{"error": code}`; `audio_queue_full` and `audio_worker_failed` are retryable.

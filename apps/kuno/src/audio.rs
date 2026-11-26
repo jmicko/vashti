@@ -72,6 +72,7 @@ pub fn run_worker() -> Result<(), &'static str> {
     if args.next().is_some() {
         return Err("unknown_argument");
     }
+    kuno_audio::use_physical_cores();
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
     let model = kuno_audio::Lfm3Audio::open(

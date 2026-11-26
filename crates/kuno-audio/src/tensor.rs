@@ -103,29 +103,49 @@ impl Linear {
         let mut out_t = vec![0f32; rows * n];
         match self {
             Self::F32 { w, .. } => {
-                out_t.par_chunks_mut(n).enumerate().for_each(|(r, o)| {
-                    let wr = &w[r * cols..][..cols];
-                    for (t, o) in o.iter_mut().enumerate() {
-                        *o = dot(wr, &x[t * cols..][..cols]);
-                    }
-                });
+                out_t
+                    .par_chunks_mut(n)
+                    .with_min_len(16)
+                    .enumerate()
+                    .for_each(|(r, o)| {
+                        let wr = &w[r * cols..][..cols];
+                        for (t, o) in o.iter_mut().enumerate() {
+                            *o = dot(wr, &x[t * cols..][..cols]);
+                        }
+                    });
             }
             Self::F16 { w, .. } => {
-                out_t.par_chunks_mut(n).enumerate().for_each(|(r, o)| {
-                    let wr = &w[r * cols..][..cols];
-                    for (t, o) in o.iter_mut().enumerate() {
-                        *o = dot_f16(wr, &x[t * cols..][..cols]);
-                    }
-                });
+                // Rows in batches (small matrices otherwise cost more in scheduling than in
+                // arithmetic); each row's halves widened once for four input rows at a time.
+                out_t
+                    .par_chunks_mut(n)
+                    .with_min_len(16)
+                    .enumerate()
+                    .for_each(|(r, o)| {
+                        let wr = &w[r * cols..][..cols];
+                        let mut t = 0;
+                        while t + 4 <= n {
+                            let xs = [0, 1, 2, 3].map(|i| &x[(t + i) * cols..][..cols]);
+                            o[t..t + 4].copy_from_slice(&dot_f16_x4(wr, xs));
+                            t += 4;
+                        }
+                        for t in t..n {
+                            o[t] = dot_f16(wr, &x[t * cols..][..cols]);
+                        }
+                    });
             }
             Self::Q8 { w, .. } => {
                 let rb = cols / 32 * 34;
-                out_t.par_chunks_mut(n).enumerate().for_each(|(r, o)| {
-                    let packed = &w[r * rb..][..rb];
-                    for (t, o) in o.iter_mut().enumerate() {
-                        *o = dot_q8(packed, &x[t * cols..][..cols]);
-                    }
-                });
+                out_t
+                    .par_chunks_mut(n)
+                    .with_min_len(16)
+                    .enumerate()
+                    .for_each(|(r, o)| {
+                        let packed = &w[r * rb..][..rb];
+                        for (t, o) in o.iter_mut().enumerate() {
+                            *o = dot_q8(packed, &x[t * cols..][..cols]);
+                        }
+                    });
             }
         }
         if n == 1 {
@@ -200,6 +220,16 @@ pub fn dot_row(m: &Linear, r: usize, x: &[f32]) -> f32 {
             dot_q8(&w[r * rb..][..rb], x)
         }
     }
+}
+
+/// One half-precision row against four f32 rows.
+fn dot_f16_x4(w: &[u16], x: [&[f32]; 4]) -> [f32; 4] {
+    #[cfg(target_arch = "x86_64")]
+    if avx2() && std::is_x86_feature_detected!("f16c") {
+        // SAFETY: the CPU has AVX2, FMA and F16C.
+        return unsafe { x86::dot_f16_x4(w, x) };
+    }
+    x.map(|x| dot_f16(w, x))
 }
 
 fn dot_f16(w: &[u16], x: &[f32]) -> f32 {
@@ -366,6 +396,31 @@ mod x86 {
             i += 1;
         }
         total
+    }
+
+    /// One half-precision row widened once per eight values for four f32 rows.
+    #[target_feature(enable = "avx2,fma,f16c")]
+    pub unsafe fn dot_f16_x4(w: &[u16], x: [&[f32]; 4]) -> [f32; 4] {
+        let n = x.iter().fold(w.len(), |n, x| n.min(x.len()));
+        let pw = w.as_ptr();
+        let px = x.map(|x| x.as_ptr());
+        let mut acc = [_mm256_setzero_ps(); 4];
+        let mut i = 0;
+        while i + 8 <= n {
+            let h = _mm256_cvtph_ps(_mm_loadu_si128(pw.add(i) as *const __m128i));
+            for j in 0..4 {
+                acc[j] = _mm256_fmadd_ps(h, _mm256_loadu_ps(px[j].add(i)), acc[j]);
+            }
+            i += 8;
+        }
+        let mut out = [0f32; 4];
+        for j in 0..4 {
+            out[j] = sum(acc[j]);
+            for k in i..n {
+                out[j] += super::f16(w[k]) * x[j][k];
+            }
+        }
+        out
     }
 
     /// Half-precision values widened eight at a time (F16C) against f32 values.
