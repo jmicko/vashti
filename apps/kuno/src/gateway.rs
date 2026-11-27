@@ -379,6 +379,7 @@ async fn audio_capabilities(gateway: &Gateway) -> kuno_protocol::AudioCapabiliti
         max_request_bytes: kuno_protocol::MAX_AUDIO_REQUEST_BYTES,
         max_speech_characters: kuno_protocol::MAX_SPEECH_CHARACTERS,
         speech_sample_rate: kuno_audio::SAMPLE_RATE,
+        device: gateway.audio.device(),
     }
 }
 

@@ -68,6 +68,14 @@ impl Linear {
             Self::F32 { cols, .. } | Self::Q8 { cols, .. } | Self::F16 { cols, .. } => *cols,
         }
     }
+    /// Bytes the weights take.
+    pub fn bytes(&self) -> usize {
+        match self {
+            Self::F32 { w, .. } => w.len() * 4,
+            Self::Q8 { w, .. } => w.len(),
+            Self::F16 { w, .. } => w.len() * 2,
+        }
+    }
     /// The values of an f32 matrix (row-major), or `None` for packed rows.
     pub fn f32(&self) -> Option<&[f32]> {
         match self {

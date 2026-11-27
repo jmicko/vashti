@@ -134,6 +134,10 @@ pub struct AudioCapabilities {
     pub max_request_bytes: usize,
     pub max_speech_characters: usize,
     pub speech_sample_rate: u32,
+    /// The device the model last loaded onto ("cpu" or the GPU's name); absent until the
+    /// first request since Kuno started. A configured GPU without room falls back to "cpu".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
 }
 
 #[cfg(test)]

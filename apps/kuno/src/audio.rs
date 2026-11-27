@@ -84,7 +84,8 @@ pub fn run_worker() -> Result<(), &'static str> {
     );
     let model = match model {
         Ok(model) => {
-            respond(&mut output, Ok(b"ready".to_vec()))?;
+            // The ready message names the device (content-free), for discovery.
+            respond(&mut output, Ok(model.device().as_bytes().to_vec()))?;
             model
         }
         Err(code) => {
@@ -211,6 +212,8 @@ pub struct AudioRuntime {
     worker: Arc<Mutex<Option<Worker>>>,
     waiting: Arc<Semaphore>,
     uses: Arc<AtomicU64>,
+    /// The device the last worker loaded onto ("cpu" or the GPU's name).
+    device: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Default for AudioRuntime {
@@ -219,6 +222,7 @@ impl Default for AudioRuntime {
             worker: Arc::new(Mutex::new(None)),
             waiting: Arc::new(Semaphore::new(WAITING + 1)),
             uses: Arc::new(AtomicU64::new(0)),
+            device: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 }
@@ -291,7 +295,7 @@ impl AudioRuntime {
         let mut slot = self.worker.lock().await;
         self.uses.fetch_add(1, Ordering::SeqCst);
         let result = tokio::select! {
-            result = exchange(&mut slot, executable, models, gpu, kind, &params, &payload) => result,
+            result = exchange(&mut slot, executable, models, gpu, &self.device, kind, &params, &payload) => result,
             _ = closed => Err("audio_cancelled"),
         };
         payload.zeroize();
@@ -302,6 +306,11 @@ impl AudioRuntime {
         drop(slot);
         self.evict_when_idle();
         result
+    }
+
+    /// The device the last worker loaded onto.
+    pub fn device(&self) -> Option<String> {
+        self.device.lock().ok().and_then(|d| d.clone())
     }
 
     fn evict_when_idle(&self) {
@@ -324,12 +333,17 @@ async fn exchange(
     executable: &Path,
     models: &Path,
     gpu: Option<&str>,
+    device: &std::sync::Mutex<Option<String>>,
     kind: u8,
     params: &[u8],
     payload: &[u8],
 ) -> Result<Vec<u8>, &'static str> {
     if slot.is_none() {
-        *slot = Some(spawn(executable, models, gpu).await?);
+        let (worker, name) = spawn(executable, models, gpu).await?;
+        if let Ok(mut d) = device.lock() {
+            *d = Some(name);
+        }
+        *slot = Some(worker);
     }
     let worker = slot.as_mut().unwrap();
     let io = async {
@@ -374,7 +388,7 @@ async fn spawn(
     executable: &Path,
     models: &Path,
     gpu: Option<&str>,
-) -> Result<Worker, &'static str> {
+) -> Result<(Worker, String), &'static str> {
     use std::process::Stdio;
     let mut command = tokio::process::Command::new(executable);
     command.arg("audio-worker").arg(models);
@@ -408,11 +422,14 @@ async fn spawn(
     let mut output = child.stdout.take().ok_or("audio_worker_spawn_failed")?;
     // Loading reads 2.4 GB; a cold disk may take a while.
     match tokio::time::timeout(Duration::from_secs(300), read_response(&mut output)).await {
-        Ok(Ok(_)) => Ok(Worker {
-            _child: child,
-            input,
-            output,
-        }),
+        Ok(Ok(name)) => Ok((
+            Worker {
+                _child: child,
+                input,
+                output,
+            },
+            String::from_utf8_lossy(&name).chars().take(128).collect(),
+        )),
         Ok(Err(code)) => Err(code),
         Err(_) => Err("audio_worker_start_timeout"),
     }

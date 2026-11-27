@@ -320,6 +320,22 @@ impl Lfm3Audio {
     #[cfg(feature = "gpu")]
     fn upload(&self, pci: &str) -> Result<GpuParts> {
         let device = gpu::Device::open(pci)?;
+        // Only where everything fits in free device memory: allocations past the budget
+        // land in host memory, read over the bus (slower than the CPU path, and crowding
+        // a language model that holds the card).
+        let weights: usize = self
+            .backbone
+            .iter()
+            .chain(&self.depth)
+            .map(Block::bytes)
+            .sum::<usize>()
+            + self.proj_in.0.bytes()
+            + 2 * self.code_embd.bytes()
+            + self.embed.bytes();
+        let need = weights as u64 + (512 << 20);
+        if device.gpu.free_memory().is_some_and(|free| free < need) {
+            return Err("audio_gpu_memory_unavailable");
+        }
         let backbone =
             gpu::GpuBackbone::upload(&device, &self.backbone, &self.out_norm, GPU_POSITIONS)?;
         let depth = gpu::GpuDepth::upload(

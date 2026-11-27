@@ -60,6 +60,20 @@ pub struct State {
 }
 
 impl Block {
+    /// Bytes its matrices take.
+    pub fn bytes(&self) -> usize {
+        let op = match &self.op {
+            Op::Attention(a) => {
+                a.q.bytes()
+                    + a.k.bytes()
+                    + a.v.bytes()
+                    + a.o.bytes()
+                    + a.gate.as_ref().map_or(0, Linear::bytes)
+            }
+            Op::Conv(c) => c.in_proj.bytes() + c.out_proj.bytes(),
+        };
+        op + self.gate.bytes() + self.up.bytes() + self.down.bytes()
+    }
     /// Runs `x` (`n` rows of `width`) through the block; `causal` attention sees earlier and
     /// cached positions only, otherwise every row of `x` (no cache).
     pub fn forward(&self, x: &mut [f32], state: &mut State, causal: bool) {
