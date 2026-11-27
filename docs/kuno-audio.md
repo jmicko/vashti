@@ -83,8 +83,8 @@ shared guard's `image_content_type_required` (415).
   | Device | Speech | First audio | Recognition, 14.6 s clip |
   |---|---|---|---|
   | RTX 3060 | 3.9x real time | 0.2-0.4 s | 2.3 s |
-  | Arc B70 (idle) | 4.5x real time | 0.1 s | about 1.2 s |
-  | CPU, 16 cores | 0.97x real time | 1.1 s | 12 s |
+  | Arc B70 (idle) | 4.5x real time | 0.1 s | 0.56 s for a 5.8 s clip |
+  | CPU, 16 cores | 0.97x real time | 1.1 s | 10.1 s |
 
   (llama.cpp on the same host: 0.64x on the 3060, 1.42x on the B70.) On the GPU a frame is
   four submissions: three depth-decoder passes and one backbone step, with the codec on the
