@@ -1,0 +1,114 @@
+// mmq for Intel's 8 x 16 x 16 half-precision matrix units at 16-lane subgroups: the same
+// product of more than 16 tokens (prompt chunks), buffers, constants, flags and rounding
+// to halves, computed transposed (A = 8 weight rows x 16 columns, B = 16 columns x 16
+// tokens, C = 8 rows x 16 tokens). A workgroup takes 64 rows and 64 tokens (further tokens
+// on the grid's second dimension); per 64 columns its lanes stage the rows' weights and
+// the tokens' x as halves; each of its eight subgroups multiplies 32 rows (four A
+// fragments, row-major, the B70's fast load) by one 16-token tile.
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// Keep half-precision subnormals (tiny weights) instead of reading them as zero.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer Bias { float bias[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint n; uint kind;
+    uint x_off; uint x_stride; uint y_off; uint y_stride;
+    uint w_row0; uint b_off; uint flags;
+} p;
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
+
+const uint KS = 64, WORDS = KS / 8, PIECES = KS / 16;
+// 64 rows and 64 tokens of KS columns as halves (WORDS 16-byte words a row).
+shared uvec4 sw[64 * WORDS];
+shared uvec4 sx[64 * WORDS];
+// Per subgroup, one 8 x 16 tile of sums [row][token].
+shared float so[8 * 128];
+
+uvec4 halves(vec4 a, vec4 b) {
+    return uvec4(packHalf2x16(a.xy), packHalf2x16(a.zw), packHalf2x16(b.xy), packHalf2x16(b.zw));
+}
+vec4 q4(int v, float sc) {
+    return vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
+                bitfieldExtract(v, 16, 8), bitfieldExtract(v, 24, 8)) * sc;
+}
+
+void main() {
+    uint lane = gl_LocalInvocationIndex, sg = gl_SubgroupID, sl = gl_SubgroupInvocationID;
+    uint row0 = gl_WorkGroupID.x * 64, tok0 = gl_WorkGroupID.y * 64;
+    uint my_rows = (sg % 2) * 32, my_tok = (sg / 2) * 16;
+    C c[4];
+    for (uint i = 0; i < 4; i++) c[i] = C(0.0);
+    for (uint k0 = 0; k0 < p.cols; k0 += KS) {
+        for (uint piece = lane; piece < 64 * PIECES; piece += 128) {
+            uint who = piece / PIECES, part = piece % PIECES, col = k0 + part * 16;
+            uint t = tok0 + who;
+            uvec4 a0 = uvec4(0), a1 = uvec4(0);
+            if (t < p.n && col < p.cols) {
+                uint at = (p.x_off + t * p.x_stride + col) / 4;
+                a0 = halves(x[at], x[at + 1]);
+                a1 = halves(x[at + 2], x[at + 3]);
+            }
+            sx[who * WORDS + part * 2] = a0;
+            sx[who * WORDS + part * 2 + 1] = a1;
+            uint r = row0 + who;
+            uvec4 b0 = uvec4(0), b1 = uvec4(0);
+            if (r < p.rows && col < p.cols) {
+                uint wr = r + p.w_row0;
+                if (p.kind == 0) {
+                    uvec4 v = w[(wr * p.cols + col) / 16];
+                    uint si = (wr * p.cols + col) / 32;
+                    float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+                    b0 = halves(q4(int(v.x), sc), q4(int(v.y), sc));
+                    b1 = halves(q4(int(v.z), sc), q4(int(v.w), sc));
+                } else {
+                    uint at = (wr * p.cols + col) / 8;
+                    b0 = w[at];
+                    b1 = w[at + 1];
+                }
+            }
+            sw[who * WORDS + part * 2] = b0;
+            sw[who * WORDS + part * 2 + 1] = b1;
+        }
+        barrier();
+        for (uint ks = 0; ks < PIECES; ks++) {
+            B b;   // element (column, token) at sx[token][column]: column-major
+            coopMatLoad(b, sx, my_tok * WORDS + ks * 2, WORDS, gl_CooperativeMatrixLayoutColumnMajor);
+            for (uint i = 0; i < 4; i++) {
+                A a;
+                coopMatLoad(a, sw, (my_rows + i * 8) * WORDS + ks * 2, WORDS,
+                            gl_CooperativeMatrixLayoutRowMajor);
+                c[i] = coopMatMulAdd(a, b, c[i]);
+            }
+        }
+        barrier();
+    }
+    for (uint i = 0; i < 4; i++) {
+        coopMatStore(c[i], so, sg * 128, 16, gl_CooperativeMatrixLayoutRowMajor);
+        subgroupMemoryBarrierShared();
+        subgroupBarrier();
+        for (uint o = sl; o < 128; o += 16) {
+            uint rr = row0 + my_rows + i * 8 + o / 16, tt = tok0 + my_tok + o % 16;
+            if (tt < p.n && rr < p.rows) {
+                float v = so[sg * 128 + o];
+                if ((p.flags & 1) != 0) v += bias[p.b_off + rr];
+                uint ya = p.y_off + tt * p.y_stride + rr;
+                y[ya] = ((p.flags & 2) != 0) ? y[ya] + v : v;
+            }
+        }
+        subgroupBarrier();
+    }
+}

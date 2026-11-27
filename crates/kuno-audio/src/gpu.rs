@@ -38,6 +38,7 @@ const NORMROPE: &[u8] = include_bytes!("../shaders/normrope.spv");
 const ARGMAX: &[u8] = include_bytes!("../shaders/argmax.spv");
 const ROW: &[u8] = include_bytes!("../shaders/row.spv");
 const MMQ: &[u8] = include_bytes!("../shaders/mmq.spv");
+const MMQ8: &[u8] = include_bytes!("../shaders/mmq8.spv");
 const ROPE: &[u8] = include_bytes!("../shaders/rope.spv");
 const ATTEND: &[u8] = include_bytes!("../shaders/attend.spv");
 const CONV: &[u8] = include_bytes!("../shaders/conv.spv");
@@ -65,6 +66,8 @@ struct Kernels {
     /// `mv` for more than 16 tokens (prompt chunks) of Q8_0 or f16 rows on half-precision
     /// matrix units, where `mvc` is.
     mmq: Option<Kernel>,
+    /// Rows a workgroup of `mmq` takes (32; Intel's mmq8 64).
+    mmq_rows: usize,
     sample: Kernel,
     gather: Kernel,
     norm: Kernel,
@@ -550,8 +553,15 @@ impl Device {
             mv1s: kernel(MV1S, 5, 11)?,
             mmq: if gpu.has_half16() && lanes == 32 {
                 Some(gpu.kernel(MMQ, 5, 11, Some(32))?)
+            } else if gpu.has_half8() {
+                Some(gpu.kernel(MMQ8, 5, 11, Some(16))?)
             } else {
                 None
+            },
+            mmq_rows: if gpu.has_half16() && lanes == 32 {
+                32
+            } else {
+                64
             },
             mvc: if gpu.has_half16() && lanes == 32 {
                 Some(gpu.kernel(MVC, 5, 11, Some(32))?)
@@ -638,7 +648,7 @@ impl Device {
                 bias.map_or(&self.dummy, |b| b.0),
             ]
         };
-        // Prompt chunks: 32 rows x 64 tokens a workgroup on the matrix units (where there are
+        // Prompt chunks: 32 (Intel 64) rows x 64 tokens a workgroup on the matrix units (where there are
         // enough rows to fill the device; fewer stay on mvb).
         if let Some(k) = self.k.mmq.as_ref().filter(|_| {
             n > 16
@@ -646,13 +656,13 @@ impl Device {
                 && m.kind <= 1
                 && !m.tiled
                 && m.cols.is_multiple_of(32)
-                && rows <= 65535 * 32
+                && rows <= 65535 * self.k.mmq_rows
         }) {
             r.push_grid(
                 k,
                 buffers(m),
                 constants,
-                rows.div_ceil(32) as u32,
+                rows.div_ceil(self.k.mmq_rows) as u32,
                 n.div_ceil(64) as u32,
             );
             return;
@@ -2883,11 +2893,15 @@ mod tests {
             ];
             let scales = m.scales.as_ref().unwrap_or(&d.dummy);
             let mut runs: Vec<(&str, &Kernel, usize)> =
-                vec![("mvb", &d.k.mvb, 4), ("mmq", mmq, 64)];
+                vec![("mvb", &d.k.mvb, 4), ("mmq", mmq, d.k.mmq_rows)];
             for (name, k, per) in &variants {
                 runs.push((name, k, *per));
             }
             for (name, kernel, per) in runs {
+                // A clean output, so a kernel that misses rows cannot pass on another's.
+                d.gpu
+                    .write_floats(&y, 0, &back, &vec![f32::NAN; n * rows])
+                    .unwrap();
                 let mut r = Recording::new();
                 for _ in 0..20 {
                     if name != "mvb" {
@@ -2915,7 +2929,11 @@ mod tests {
                 let worst = got
                     .iter()
                     .zip(&want)
-                    .fold(0f64, |a, (g, w)| a.max((f64::from(*g) - w).abs()));
+                    .map(|(g, w)| (f64::from(*g) - w).abs())
+                    .fold(
+                        0f64,
+                        |a, e| if e.is_nan() { f64::INFINITY } else { a.max(e) },
+                    );
                 eprintln!(
                     "{name:9} {} {rows}x{cols} n {n:3}: {:7.1} us, {:5.2} TFLOPS, worst {:.1e} of {scale:.1}",
                     if q8 { "q8 " } else { "f16" },
@@ -3019,7 +3037,8 @@ mod tests {
         std::fs::create_dir_all(&out).unwrap();
         for name in [
             "mv", "mvb", "mv1", "mv1s", "mv1g", "mvc", "mvc8", "mvcg", "mvc8g", "sample", "gather",
-            "norm", "addnorm", "normrope", "argmax", "row", "mmq", "rope", "attend", "conv", "ew",
+            "norm", "addnorm", "normrope", "argmax", "row", "mmq", "mmq8", "rope", "attend",
+            "conv", "ew",
         ] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")
