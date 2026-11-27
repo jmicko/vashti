@@ -1,15 +1,21 @@
 # Kuno Audio: Speech Recognition and Synthesis
 
 Kuno serves LiquidAI's LFM3-Audio-2B (Q8_0 backbone, F16 encoder/decoder/codec) with its own
-Rust engine on the CPU: no GPU, no Ollama, no llama.cpp. Code: `crates/kuno-audio` (engine),
+Rust engine: the backbone and depth decoder on a configured GPU (Vulkan), everything else on
+the CPU, or all of it on the CPU. No Ollama, no llama.cpp. Code: `crates/kuno-audio` (engine),
 `apps/kuno/src/audio.rs` (worker and runtime), `crates/kuno-protocol/src/audio.rs` (types).
 
 ## Install
 
 ```sh
 sudo kuno fetch-models lfm3-audio-2b --directory /var/lib/kuno/audio-models   # 2.4 GB, pinned, sha256-checked
-sudo kuno configure-audio --models /var/lib/kuno/audio-models [--yes]
+sudo kuno configure-audio --models /var/lib/kuno/audio-models [--gpu 0000:04:00.0] [--yes]
 ```
+
+`--gpu` names the GPU by PCI address (`lspci -D`); the host's default is the RTX 3060
+(`0000:04:00.0`), leaving the B70 to images, video and large language models. The worker
+uses that GPU only when the model (about 2.3 GB) fits in its free memory at start, and
+otherwise runs on the CPU; `capabilities.audio.device` shows which.
 
 Without an `audio` config section, Kuno looks for the collection in the image models
 directory. `kuno configure-audio --disable` removes the section. The files are
@@ -41,14 +47,19 @@ the quietest 100 ms, and the pieces are joined with spaces. Numbers come back as
 {"input": "text", "voice": "female", "language": "en", "seed": 42}
 ```
 
-returns `audio/wav`, 24 kHz mono 16-bit. `voice` is `female` (default) or `male`;
+returns `audio/wav`, 24 kHz mono 16-bit. With `"stream": true` the WAV is sent as it is
+generated: its header declares an unknown length (`0xFFFFFFFF`), then samples follow every
+80 ms frame; an error after the first audio ends the stream early (before it, the request
+fails with its status as usual). `voice` is `female` (default) or `male`;
 `language` is a code from discovery (default `en`, American English); `seed` repeats a
 rendering (default: random). Up to 20 000 characters; long text is spoken about 400
 characters at a time, at sentence ends, and joined.
 
 Discovery: `/kuno/v1/capabilities` has an `audio` section: `state` (`ready`, `unavailable`
 with `reason`, or `disabled`), the two paths, `voices`, `languages`, `max_request_bytes`,
-`max_speech_characters`, `speech_sample_rate`. It is absent from older Kuno versions.
+`max_speech_characters`, `speech_sample_rate`, `speech_stream` (true when `stream` is
+accepted), and `device` (`"cpu"` or the GPU's name the model last loaded onto; absent until
+the first request). It is absent from older Kuno versions.
 
 Error codes: `audio_request_invalid`, `audio_request_too_large` (413),
 `audio_request_timeout` (body slower than 120 s), `transcription_audio_invalid` (bad
@@ -64,15 +75,21 @@ shared guard's `image_content_type_required` (415).
 - **Worker.** `kuno audio-worker` is started on first use, enters protection before any
   other thread exists (no core dumps, not dumpable, no swap, Landlock with no writable
   path), discards stderr and writes only protocol frames. Request content is zeroed after
-  use. It stays while used and exits after five idle minutes (2.4 GB RSS returned to
-  language models). A client that disconnects stops it; the next request starts a new one
+  use. It stays while used and exits after five idle minutes, returning its memory to
+  language models. A client that disconnects stops it; the next request starts a new one
   (about 1.5 s to load from the page cache).
-- **Speed** (Ryzen 9 5900XT, 16 cores, 37 GB/s): the worker uses one thread per physical
-  core (two per core only add contention: speech went from 0.86x to 0.97x real time).
-  Recognition takes about 0.83 s per second of audio. Speech generates frames faster than
-  real time (about 67 ms per 80 ms frame: the backbone reading its 1.85 GB of weights
-  dominates) and the whole request, prompt included, runs at about 0.97x real time; the
-  first audio is ready after about 1.1 s, but the API returns the whole file (streaming is a
-  possible addition). A GPU path would go well past real time; not done.
+- **Speed** (Ryzen 9 5900XT host):
+
+  | Device | Speech | First audio | Recognition, 14.6 s clip |
+  |---|---|---|---|
+  | RTX 3060 | 3.9x real time | 0.2-0.4 s | 2.3 s |
+  | Arc B70 (idle) | 4.5x real time | 0.1 s | about 1.2 s |
+  | CPU, 16 cores | 0.97x real time | 1.1 s | 12 s |
+
+  (llama.cpp on the same host: 0.64x on the 3060, 1.42x on the B70.) On the GPU a frame is
+  four submissions: three depth-decoder passes and one backbone step, with the codec on the
+  CPU at the same time. The CPU path uses one thread per physical core. The first request
+  after the worker starts also loads the model (about 4.5 s with a GPU, 1.5 s without).
+- **Memory:** 2.1 GB of VRAM and 1.2 GB of RAM with a GPU; 2.4 GB of RAM without.
 - **Fidelity** to llama.cpp (the reference): identical transcripts on the test clips, in
   both directions (Kuno's speech transcribed by llama.cpp and the reverse).

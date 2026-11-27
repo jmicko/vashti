@@ -1,27 +1,31 @@
 # Kuno and Vashti Coordination
 
-**Kuno speech recognition and synthesis (2026-11-24). NOT installed; Vashti handoff.**
-Branch `claude/lfm3-audio` (on top of the beta.5 `main`, `f9273a38`). Contract: [Kuno audio](kuno-audio.md).
-`POST /kuno/v1/audio/transcriptions` (`{audio: base64 WAV, language?}` -> `{text}`) and
-`POST /kuno/v1/audio/speech` (`{input, voice?, language?, seed?}` -> 24 kHz `audio/wav`),
-keyless server-to-server like images (an `Origin` header is refused), with an `audio`
-section in `/kuno/v1/capabilities` (absent: unsupported). CPU only (LFM3-Audio-2B in Kuno's
-Rust engine); one job at a time, four waiting. Tested through a development gateway (speech
-round trip exact; error paths; disconnect stops the worker), not the installed service.
+**Kuno speech recognition and synthesis (2026-11-26). NOT installed; Vashti handoff.**
+Branch `claude/lfm3-audio` (on top of the beta.5 `main`, `f9273a38`). Contract:
+[Kuno audio](kuno-audio.md). `POST /kuno/v1/audio/transcriptions` (`{audio: base64 WAV,
+language?}` -> `{text}`) and `POST /kuno/v1/audio/speech` (`{input, voice?, language?,
+seed?, stream?}` -> 24 kHz `audio/wav`), keyless server-to-server like images (an `Origin`
+header is refused), with an `audio` section in `/kuno/v1/capabilities` (absent:
+unsupported). LFM3-Audio-2B in Kuno's Rust engine, on a configured GPU (the host's RTX
+3060) or the CPU; one job at a time, four waiting. Tested through a development gateway
+(speech round trip exact; streaming; error paths; disconnect stops the worker), not the
+installed service.
 
 Vashti work (user-facing design to be proposed to the user before building):
 
 - Read `capabilities.audio`; offer audio only when `state` is `ready`, and use its
-  `voices`/`languages` lists rather than hard-coding them.
+  `voices`/`languages` lists rather than hard-coding them. `device` (after first use) can be
+  shown in settings or diagnostics.
 - Dictation: record in the browser, send WAV (any rate/channels; Vashti may encode 16 kHz
   mono 16-bit to keep uploads small), base64, through Vashti's server. Vashti's
   `Permissions-Policy` sets `microphone=()` (`apps/vashti/src/main.rs`); it must allow
   `microphone=(self)` for recording, and `getUserMedia` needs a secure context (HTTPS, or
-  localhost) on phones.
-- Read-aloud: send message text; play the returned WAV. A request takes about as long as
-  the speech it returns (0.97x real time on this CPU, about 1 s before the first audio is
-  ready inside Kuno), so long replies should show progress or be requested a paragraph at
-  a time from Vashti's side and played back to back.
+  localhost) on phones. On the GPU a 15 s recording transcribes in about 2 s.
+- Read-aloud: with `speech_stream`, request `"stream": true` and play as it arrives: the
+  first audio comes after 0.2-0.4 s on the GPU and generation outruns playback (about 4x
+  real time); proxy the body through Vashti without buffering it. Without a GPU (`device:
+  "cpu"`) generation is about real time, so start playback after a short buffer. A stream
+  that ends early (an error after the first audio) is shorter than the text.
 - Treat audio and transcripts as private content: no logs, no persistence unless the user
   saves them (as with images).
 - Errors are `{"error": code}`; `audio_queue_full` and `audio_worker_failed` are retryable.
