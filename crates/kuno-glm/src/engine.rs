@@ -22,6 +22,7 @@ struct Extra {
     idxstore: Kernel,
     idxscore: Kernel,
     idxselect: Kernel,
+    copyoff: Kernel,
     /// The IQ2_S and IQ3_S grids for mve.
     tables: Buffer,
 }
@@ -137,8 +138,9 @@ pub struct Engine<'m> {
     max_positions: usize,
     /// When set, the mean of the streams after each block (comparison with the reference).
     pub trace: Option<Vec<Vec<f32>>>,
-    /// How often each block's experts were chosen ([block][expert]; placement statistics).
-    pub counts: std::sync::Mutex<Vec<Vec<u32>>>,
+    /// Staged slot maps for trades, and this token's trades.
+    trade_stage: Vec<Mapped>,
+    trades: std::sync::Mutex<Vec<experts::Trade>>,
     /// With KUNO_GLM_PROFILE: device time per kernel (and product shape), ns and count.
     pub profile: std::sync::Mutex<std::collections::BTreeMap<String, (f64, u32)>>,
     /// Seconds in the CPU's sums and in waiting for the second device, this token.
@@ -204,6 +206,7 @@ impl<'m> Engine<'m> {
             idxstore: kernel(include_bytes!("../shaders/idxstore.spv"), 4, 2)?,
             idxscore: kernel(include_bytes!("../shaders/idxscore.spv"), 4, 3)?,
             idxselect: gpu.kernel(include_bytes!("../shaders/idxselect.spv"), 2, 4, None)?,
+            copyoff: kernel(include_bytes!("../shaders/copyoff.spv"), 2, 3)?,
             route: kernel(include_bytes!("../shaders/route.spv"), 5, 5)?,
             glu: kernel(include_bytes!("../shaders/glu.spv"), 2, 3)?,
             fin: kernel(include_bytes!("../shaders/final.spv"), 3, 2)?,
@@ -350,8 +353,6 @@ impl<'m> Engine<'m> {
             .and_then(|v| v.parse::<f64>().ok())
             .map(|g| (g * 1e9) as u64)
             .unwrap_or_else(|| gpu.free_memory().unwrap_or(0).saturating_sub(margin));
-        let counts =
-            std::env::var_os("KUNO_GLM_COUNTS_IN").and_then(|p| experts::read_counts(p.as_ref()));
         let second = match second {
             Some(g) => Some(crate::second::Second::new(
                 g,
@@ -378,8 +379,21 @@ impl<'m> Engine<'m> {
             &gpu,
             budget,
             second.as_ref().map(|s| (&s.gpu, budget2.unwrap_or(0))),
-            counts.as_deref(),
         )?;
+        // Trades per token (KUNO_GLM_TRADES, default one per block): each a staged slot map.
+        let trade_stage = {
+            let count = std::env::var("KUNO_GLM_TRADES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(hp.layers);
+            let mut v = Vec::new();
+            if experts.iter().flatten().any(|b| b.device.is_some()) {
+                for _ in 0..count {
+                    v.push(gpu.mapped((hp.experts * 4) as u64)?);
+                }
+            }
+            v
+        };
         Ok(Self {
             out_norm: floats(&gpu, &v("output_norm.weight")?)?,
             output,
@@ -399,7 +413,8 @@ impl<'m> Engine<'m> {
             pos: 0,
             max_positions,
             trace: None,
-            counts: std::sync::Mutex::new(vec![vec![0; hp.experts]; hp.layers]),
+            trade_stage,
+            trades: std::sync::Mutex::new(Vec::new()),
             profile: std::sync::Mutex::new(Default::default()),
             split: std::sync::Mutex::new([0.0; 2]),
         })
@@ -836,6 +851,10 @@ impl<'m> Engine<'m> {
                     let t = std::time::Instant::now();
                     this.await_route(seq(this.pos, il), routed, &mut pending)?;
                     timing[0] += t.elapsed().as_secs_f64();
+                    // Trade a recurring CPU expert onto the device while the CPU works.
+                    if let Some(p) = this.trade(il, ex)? {
+                        pending.push(p);
+                    }
                     let t = std::time::Instant::now();
                     let sum = if std::env::var_os("KUNO_GLM_SKIP_EXPERTS").is_some() {
                         vec![0f32; n]
@@ -904,6 +923,7 @@ impl<'m> Engine<'m> {
         let mut t = [0f32; 1];
         this.gpu.read_mapped(&this.token, 0, &mut t)?;
         drop(ops);
+        self.settle_trades()?;
         if let Some(tr) = &mut self.trace {
             *tr = traces;
         }
@@ -926,6 +946,95 @@ impl<'m> Engine<'m> {
         }
         self.pos += 1;
         Ok(t[0].to_bits())
+    }
+
+    /// Plans block `il`'s trade for this token's choice and submits its copies (victim down
+    /// to staging, then the expert up into its slot and the new slot map).
+    fn trade<'a>(&'a self, il: usize, ex: &'a BlockExperts) -> Result<Option<Passing>> {
+        let hp = &self.model.hp;
+        let (Some(pool), Ok(mut trades)) = (&ex.device, self.trades.lock()) else {
+            return Ok(None);
+        };
+        if trades.len() >= self.trade_stage.len() {
+            // The budget is spent: still count the choice.
+            let mut r = vec![0f32; hp.experts_used];
+            self.gpu.read_mapped(&self.route, 0, &mut r)?;
+            let ids: Vec<usize> = r.iter().map(|v| v.to_bits() as usize).collect();
+            let _ = ex.observe(il, &ids, self.pos as u64, f32::INFINITY);
+            return Ok(None);
+        }
+        let mut r = vec![0f32; hp.experts_used];
+        self.gpu.read_mapped(&self.route, 0, &mut r)?;
+        let ids: Vec<usize> = r.iter().map(|v| v.to_bits() as usize).collect();
+        let margin = std::env::var("KUNO_GLM_TRADE_MARGIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2.0f32);
+        let Some(trade) = ex.observe(il, &ids, self.pos as u64, margin) else {
+            return Ok(None);
+        };
+        let map = &self.trade_stage[trades.len()];
+        let slots = ex.slots_after(&trade);
+        self.gpu
+            .write_mapped(map, 0, &kuno_image::engine::gpu::floats(bytes_of(&slots)))?;
+        let pools = [&pool.gu_w, &pool.gu_s, &pool.down_w, &pool.down_s];
+        let mut ops: Vec<Op<'a>> = Vec::new();
+        let copy = |ops: &mut Vec<Op<'a>>,
+                    src: &'a Buffer,
+                    dst: &'a Buffer,
+                    n: usize,
+                    so: usize,
+                    d_o: usize,
+                    indep: bool| {
+            let groups = (n as u32).div_ceil(256);
+            ops.push(Op {
+                kernel: &self.e.copyoff,
+                buffers: vec![src, dst],
+                constants: vec![n as u32, so as u32, d_o as u32],
+                groups: [groups.min(65535), groups.div_ceil(65535), 1],
+                independent: indep,
+            });
+        };
+        // The victim out to the spare host slot, then the expert in from its host slot.
+        if trade.down.is_some() {
+            let (chunk, mut at) = ex.host_at(trade.spare);
+            for (b, &st) in pools.iter().zip(&pool.stride) {
+                if st > 0 {
+                    copy(&mut ops, b, chunk.buffer(), st, trade.slot * st, at, true);
+                }
+                at += st;
+            }
+            if let Some(last) = ops.last_mut() {
+                last.independent = false;
+            }
+        }
+        let (chunk, mut at) = ex.host_at(ex.host_slot[trade.up].ok_or("model_state_invalid")?);
+        for (b, &st) in pools.iter().zip(&pool.stride) {
+            if st > 0 {
+                copy(&mut ops, chunk.buffer(), b, st, at, trade.slot * st, true);
+            }
+            at += st;
+        }
+        copy(&mut ops, map.buffer(), &pool.slots, hp.experts, 0, 0, false);
+        trades.push(trade);
+        drop(trades);
+        // Runs after this block's device experts (queue order), while the CPU works.
+        Ok(Some(submit(self, &mut ops)?))
+    }
+
+    /// After the token: every trade's host side (its passes have completed).
+    fn settle_trades(&mut self) -> Result<()> {
+        let trades = std::mem::take(&mut *self.trades.lock().map_err(|_| "gpu_failed")?);
+        for t in &trades {
+            self.experts[t.block]
+                .as_mut()
+                .ok_or("model_state_invalid")?
+                .settle(t);
+        }
+        if std::env::var_os("KUNO_GLM_TIMING").is_some() && !trades.is_empty() {
+            eprintln!("traded {} experts", trades.len());
+        }
+        Ok(())
     }
 
     /// Waits until the router's choice `seq` is visible in `route`: spinning on the word
@@ -961,11 +1070,6 @@ impl<'m> Engine<'m> {
         let mut r = vec![0f32; 2 * used + n];
         self.gpu.read_mapped(&self.route, 0, &mut r)?;
         let ids: Vec<usize> = r[..used].iter().map(|v| v.to_bits() as usize).collect();
-        if let Ok(mut c) = self.counts.lock() {
-            for &e in &ids {
-                c[il][e] += 1;
-            }
-        }
         // The second device's experts run while the CPU runs its own.
         let second = match (&self.second, &ex.device2) {
             (Some(sd), Some(pool)) if ids.iter().any(|e| ex.slot2[*e].is_some()) => {

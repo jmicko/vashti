@@ -57,21 +57,6 @@ fn main() {
             }
         }
         let generated = &times[ids.len()..];
-        if let Ok(path) = std::env::var("KUNO_GLM_COUNTS") {
-            // Expert choice counts per block, one line each (no token content).
-            let c = engine.counts.lock().unwrap();
-            let text: String = c
-                .iter()
-                .map(|row| {
-                    row.iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        + "\n"
-                })
-                .collect();
-            std::fs::write(path, text).unwrap();
-        }
         if let Ok(p) = engine.profile.lock() {
             let tokens = times.len() as f64;
             let total: f64 = p.values().map(|v| v.0).sum();

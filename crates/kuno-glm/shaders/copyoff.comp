@@ -1,0 +1,11 @@
+// dst[dst_off + i] = src[src_off + i] for i < n (words): an expert moved between the device's
+// pools and a host-visible staging area (promotion up, the victim back down).
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Src { uint src[]; };
+layout(set = 0, binding = 1) writeonly buffer Dst { uint dst[]; };
+layout(push_constant) uniform Constants { uint n; uint src_off; uint dst_off; } p;
+void main() {
+    uint i = gl_GlobalInvocationID.y * 65535u * 256u + gl_GlobalInvocationID.x;
+    if (i < p.n) dst[p.dst_off + i] = src[p.src_off + i];
+}

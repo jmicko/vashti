@@ -4,7 +4,24 @@
 //! the weight bytes read per second beside a plain parallel read of the same memory.
 use std::time::Instant;
 
-use kuno_glm::{Model, cpu};
+use kuno_glm::{Matrix, Model, cpu};
+
+/// A matrix in the CPU kernels' layout: block bodies, and the f16 scales apart (IQ2_S,
+/// IQ3_S); body and scale bytes per row.
+fn split(m: &Matrix) -> (Vec<u8>, Vec<u8>, usize, usize) {
+    let bb = match m.dtype {
+        kuno_text::TensorType::Iq2S => 82,
+        kuno_text::TensorType::Iq3S => 110,
+        _ => return (m.bytes.clone(), Vec::new(), m.row_bytes, 0),
+    };
+    let (mut body, mut ds) = (Vec::new(), Vec::new());
+    for b in m.bytes.chunks_exact(bb) {
+        ds.extend_from_slice(&b[..2]);
+        body.extend_from_slice(&b[2..]);
+    }
+    let blocks = m.row_bytes / bb;
+    (body, ds, blocks * (bb - 2), blocks * 2)
+}
 use rayon::prelude::*;
 
 fn main() {
@@ -59,7 +76,9 @@ fn main() {
         .collect();
     let mut seed = 0x2545_f491_4f6c_dd1du64;
     let mut times = Vec::new();
-    let (gr, dr) = (gate.row_bytes, down.row_bytes);
+    let sg = split(&gate);
+    let su = split(&up);
+    let sd = split(&down);
     let expert_bytes = f * (gate.row_bytes + up.row_bytes) + n * down.row_bytes;
     for _ in 0..60 {
         let mut chosen = Vec::new();
@@ -80,15 +99,21 @@ fn main() {
             let row0 = task * 64;
             let (e, rest) = (row0 / (2 * f), row0 % (2 * f));
             let (m, r) = if rest < f {
-                (&gate, rest)
+                (&sg, rest)
             } else {
-                (&up, rest - f)
+                (&su, rest - f)
             };
             let first = chosen[e] * f + r;
+            let ds = if m.3 == 0 {
+                &[][..]
+            } else {
+                &m.1[first * m.3..][..out.len() * m.3]
+            };
             cpu::matvec(
-                m.dtype,
-                &m.bytes[first * gr..][..out.len() * gr],
-                gr,
+                gate.dtype,
+                &m.0[first * m.2..][..out.len() * m.2],
+                ds,
+                m.2,
                 &q,
                 out,
             );
@@ -110,10 +135,16 @@ fn main() {
             let row0 = task * 64;
             let (e, r) = (row0 / n, row0 % n);
             let first = chosen[e] * n + r;
+            let ds = if sd.3 == 0 {
+                &[][..]
+            } else {
+                &sd.1[first * sd.3..][..out.len() * sd.3]
+            };
             cpu::matvec(
                 down.dtype,
-                &down.bytes[first * dr..][..out.len() * dr],
-                dr,
+                &sd.0[first * sd.2..][..out.len() * sd.2],
+                ds,
+                sd.2,
                 &hidden[e],
                 out,
             );

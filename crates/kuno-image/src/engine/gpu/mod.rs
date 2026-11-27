@@ -245,6 +245,27 @@ impl Mapped {
     pub fn buffer(&self) -> &Buffer {
         &self.buffer
     }
+    /// The mapping's bytes, for host code that reads it directly.
+    ///
+    /// # Safety
+    ///
+    /// No pass that writes the buffer may run while the slice is in use.
+    pub unsafe fn bytes(&self) -> &[u8] {
+        // SAFETY: the mapping covers the buffer and lives as long as it; the caller excludes
+        // concurrent device writes.
+        unsafe { std::slice::from_raw_parts(self.at, self.buffer.bytes as usize) }
+    }
+    /// The mapping's bytes, for host code that fills it directly.
+    ///
+    /// # Safety
+    ///
+    /// No pass may use the buffer while the slice is in use, and no other slice of it may be
+    /// alive.
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn bytes_mut(&self) -> &mut [u8] {
+        // SAFETY: as above, and the caller guarantees exclusive use.
+        unsafe { std::slice::from_raw_parts_mut(self.at, self.buffer.bytes as usize) }
+    }
 }
 // SAFETY: the pointer is the buffer's own mapping, valid until it is dropped, and only
 // touched through `Gpu::write_mapped`/`read_mapped`, which hold the device turn.

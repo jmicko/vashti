@@ -3,6 +3,10 @@
 //! AVX2. These follow GGML's x86 kernels (`ggml_vec_dot_iq2_s_q8_K`, `iq3_s`, `iq4_xs`; MIT),
 //! so their sums match llama.cpp's CPU path. Experts are IQ2_S (gate, up) and IQ3_S (down),
 //! with IQ4_XS for three down projections and IQ3_S gate/up in block 11.
+//!
+//! Rows are in the device's layout (`experts`): for IQ2_S and IQ3_S each block's body
+//! (80 or 108 bytes, the GGUF block without its leading f16 scale) in `row`, the scales
+//! apart in `ds`; IQ4_XS blocks whole (136 bytes, `ds` empty).
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
@@ -51,11 +55,11 @@ fn half(b: &[u8]) -> f32 {
     kuno_text::quant::f16_to_f32(u16::from_le_bytes([b[0], b[1]]))
 }
 
-/// Bytes per 256 values.
+/// Bytes per 256 values in the device's layout (the body; scales apart for IQ2_S/IQ3_S).
 pub fn block_bytes(kind: TensorType) -> Option<usize> {
     match kind {
-        TensorType::Iq2S => Some(82),
-        TensorType::Iq3S => Some(110),
+        TensorType::Iq2S => Some(80),
+        TensorType::Iq3S => Some(108),
         TensorType::Iq4Xs => Some(136),
         _ => None,
     }
@@ -66,42 +70,59 @@ pub fn supported(kind: TensorType) -> bool {
 }
 
 /// One row (`row` packed bytes) dotted with the quantized input.
-pub fn dot(kind: TensorType, row: &[u8], x: &Q8K) -> f32 {
+pub fn dot(kind: TensorType, row: &[u8], ds: &[u8], x: &Q8K) -> f32 {
     #[cfg(target_arch = "x86_64")]
     if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
         // SAFETY: AVX2 and FMA were detected; the kernels read only within `row` and `x`,
         // whose lengths are checked against each other.
         unsafe {
             return match kind {
-                TensorType::Iq2S => dot_iq2_s(row, x),
-                TensorType::Iq3S => dot_iq3_s(row, x),
+                TensorType::Iq2S => dot_iq2_s(row, ds, x),
+                TensorType::Iq3S => dot_iq3_s(row, ds, x),
                 TensorType::Iq4Xs => dot_iq4_xs(row, x),
                 _ => panic!("unsupported expert type"),
             };
         }
     }
-    dot_scalar(kind, row, x)
+    dot_scalar(kind, row, ds, x)
 }
 
-/// `out[r] = row r . x` over `rows` (each `row_bytes` long).
-pub fn matvec(kind: TensorType, rows: &[u8], row_bytes: usize, x: &Q8K, out: &mut [f32]) {
-    for (o, row) in out.iter_mut().zip(rows.chunks_exact(row_bytes)) {
-        *o = dot(kind, row, x);
+/// `out[r] = row r . x` over `rows` (bodies `row_bytes` long; scales `2 * blocks` per row).
+pub fn matvec(
+    kind: TensorType,
+    rows: &[u8],
+    ds: &[u8],
+    row_bytes: usize,
+    x: &Q8K,
+    out: &mut [f32],
+) {
+    let blocks = x.q.len() / QK;
+    for (r, (o, row)) in out.iter_mut().zip(rows.chunks_exact(row_bytes)).enumerate() {
+        let d = if ds.is_empty() {
+            &[][..]
+        } else {
+            &ds[r * 2 * blocks..][..2 * blocks]
+        };
+        *o = dot(kind, row, d, x);
     }
 }
 
 /// The same sums without SIMD, from the decoded integer codes (tests and other CPUs).
-pub fn dot_scalar(kind: TensorType, row: &[u8], x: &Q8K) -> f32 {
+pub fn dot_scalar(kind: TensorType, row: &[u8], ds: &[u8], x: &Q8K) -> f32 {
     let bb = block_bytes(kind).expect("unsupported expert type");
     assert_eq!(row.len() / bb * QK, x.q.len());
     let mut total = 0f32;
     for (i, b) in row.chunks_exact(bb).enumerate() {
         let q8 = &x.q[i * QK..][..QK];
-        let d = half(b) * x.d[i];
+        let d = if kind == TensorType::Iq4Xs {
+            half(b)
+        } else {
+            half(&ds[i * 2..])
+        } * x.d[i];
         let mut sum = 0i32;
         match kind {
             TensorType::Iq2S => {
-                let (qs, signs, qh, scales) = (&b[2..34], &b[34..66], &b[66..74], &b[74..82]);
+                let (qs, signs, qh, scales) = (&b[0..32], &b[32..64], &b[64..72], &b[72..80]);
                 for ib in 0..8 {
                     let mut part = [0i32; 2];
                     for l in 0..4 {
@@ -122,7 +143,7 @@ pub fn dot_scalar(kind: TensorType, row: &[u8], x: &Q8K) -> f32 {
                 continue;
             }
             TensorType::Iq3S => {
-                let (qs, qh, signs, scales) = (&b[2..66], &b[66..74], &b[74..106], &b[106..110]);
+                let (qs, qh, signs, scales) = (&b[0..64], &b[64..72], &b[72..104], &b[104..108]);
                 for ib in 0..8 {
                     let mut part = 0i32;
                     for l in 0..8 {
@@ -205,16 +226,16 @@ unsafe fn hsum(v: __m256) -> f32 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn dot_iq2_s(row: &[u8], x: &Q8K) -> f32 {
-    let blocks = row.len() / 82;
+unsafe fn dot_iq2_s(row: &[u8], ds: &[u8], x: &Q8K) -> f32 {
+    let blocks = row.len() / 80;
     assert_eq!(blocks * QK, x.q.len());
     let shuffle = unsafe { _mm256_loadu_si256(SIGN_SHUFFLE.as_ptr().cast()) };
     let bits = unsafe { _mm256_loadu_si256(SIGN_BITS.as_ptr().cast()) };
     let mut acc = _mm256_setzero_ps();
     for i in 0..blocks {
-        let b = &row[i * 82..][..82];
-        let d = half(b) * x.d[i];
-        let (qs, signs, qh, scales) = (&b[2..34], &b[34..66], &b[66..74], &b[74..82]);
+        let b = &row[i * 80..][..80];
+        let d = half(&ds[i * 2..]) * x.d[i];
+        let (qs, signs, qh, scales) = (&b[0..32], &b[32..64], &b[64..72], &b[72..80]);
         let q8 = &x.q[i * QK..][..QK];
         let mut sums = _mm256_setzero_si256();
         for ib in (0..8).step_by(2) {
@@ -272,16 +293,16 @@ unsafe fn dot_iq2_s(row: &[u8], x: &Q8K) -> f32 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn dot_iq3_s(row: &[u8], x: &Q8K) -> f32 {
-    let blocks = row.len() / 110;
+unsafe fn dot_iq3_s(row: &[u8], ds: &[u8], x: &Q8K) -> f32 {
+    let blocks = row.len() / 108;
     assert_eq!(blocks * QK, x.q.len());
     let shuffle = unsafe { _mm256_loadu_si256(SIGN_SHUFFLE.as_ptr().cast()) };
     let bits = unsafe { _mm256_loadu_si256(SIGN_BITS.as_ptr().cast()) };
     let mut acc = _mm256_setzero_ps();
     for i in 0..blocks {
-        let b = &row[i * 110..][..110];
-        let d = half(b) * x.d[i];
-        let (qs, qh, signs, scales) = (&b[2..66], &b[66..74], &b[74..106], &b[106..110]);
+        let b = &row[i * 108..][..108];
+        let d = half(&ds[i * 2..]) * x.d[i];
+        let (qs, qh, signs, scales) = (&b[0..64], &b[64..72], &b[72..104], &b[104..108]);
         let q8 = &x.q[i * QK..][..QK];
         let mut sums = _mm256_setzero_si256();
         for ib in (0..8).step_by(2) {
@@ -411,7 +432,12 @@ mod tests {
             s ^= s << 17;
             s
         };
-        let bb = block_bytes(kind).unwrap();
+        // GGUF blocks (with the leading scale).
+        let bb = match kind {
+            TensorType::Iq2S => 82,
+            TensorType::Iq3S => 110,
+            _ => 136,
+        };
         let mut out = vec![0u8; bb * blocks];
         for b in out.chunks_exact_mut(bb) {
             for v in b.iter_mut() {
@@ -436,8 +462,21 @@ mod tests {
                 .map(|i| ((i * 7919) % 255) as f32 / 37.0 - 3.4)
                 .collect();
             let q = Q8K::new(&x);
-            let simd = dot(kind, &row, &q);
-            let scalar = dot_scalar(kind, &row, &q);
+            // The device's layout: bodies, scales apart (IQ4_XS whole).
+            let (body, ds) = if kind == TensorType::Iq4Xs {
+                (row.clone(), Vec::new())
+            } else {
+                let bb = row.len() / blocks;
+                let mut body = Vec::new();
+                let mut ds = Vec::new();
+                for b in row.chunks_exact(bb) {
+                    ds.extend_from_slice(&b[..2]);
+                    body.extend_from_slice(&b[2..]);
+                }
+                (body, ds)
+            };
+            let simd = dot(kind, &body, &ds, &q);
+            let scalar = dot_scalar(kind, &body, &ds, &q);
             // The decoded weights times the dequantized input, in f64.
             let mut w = vec![0f32; blocks * QK];
             kind.decode(&row, &mut w).unwrap();
