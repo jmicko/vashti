@@ -1,10 +1,12 @@
 // mv for 2 to 16 tokens of f16 rows on 16 x 16 x 16 half-precision matrix units (32-lane
-// subgroups; 1.2 to 1.5 times mvb on the RTX 3060 at the depth decoder's 12 tokens):
+// subgroups; about twice mvb on the RTX 3060 at the depth decoder's 12 tokens):
 // Y[t][r] = sum_c W[r][c] x[t][c] (+ bias[r]), the inputs rounded to halves, f32 sums.
 // A workgroup takes 16 rows; its eight subgroups take interleaved 16-column steps of them
 // and meet in shared memory. Each step a subgroup turns its 16 tokens x 16 columns of x
-// into halves (zeros past n). Same buffers, constants and flags as mv.comp for kind 1;
-// rows and cols are multiples of 16.
+// into halves (zeros past n). Same buffers, constants and flags as mv.comp for kind 1, but
+// the weights are tiled (Mat::tiled): per 16-row tile, per 16-column step, its rows' 16
+// values in turn, so a tile is 512 contiguous bytes (1.3 to 1.7 times faster than reading
+// 16 rows' pieces). Rows and cols are multiples of 16.
 #version 460
 #extension GL_KHR_cooperative_matrix : require
 #extension GL_KHR_memory_scope_semantics : require
@@ -51,7 +53,7 @@ void main() {
     C c = C(0.0);
     for (uint k = sg; k < steps; k += SPLIT) {
         B b;
-        coopMatLoad(b, w, wr0 * cols8 + k * 2, cols8, gl_CooperativeMatrixLayoutColumnMajor);
+        coopMatLoad(b, w, ((wr0 / 16) * steps + k) * 32, 2, gl_CooperativeMatrixLayoutColumnMajor);
         vec4 lo = live ? x[xa + k * 4] : vec4(0.0), hi = live ? x[xa + k * 4 + 1] : vec4(0.0);
         tile[sg * 32 + lane] = uvec4(packHalf2x16(lo.xy), packHalf2x16(lo.zw),
                                      packHalf2x16(hi.xy), packHalf2x16(hi.zw));

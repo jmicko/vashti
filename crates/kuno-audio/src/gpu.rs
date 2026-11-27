@@ -68,10 +68,18 @@ pub struct Mat {
     kind: u32,
     pub rows: usize,
     pub cols: usize,
+    /// f16 values in 16 x 16 tiles for `mvc` (per row tile, per column step, the tile's
+    /// rows of 16 values in turn), used only for 2 to 16 tokens.
+    tiled: bool,
 }
 
 impl Mat {
     fn upload(gpu: &Gpu, m: &Linear) -> Result<Self> {
+        Self::upload_as(gpu, m, false)
+    }
+    /// `upload`, f16 matrices of whole 16 x 16 tiles tiled when `tile` (the device has
+    /// `mvc` and the matrix only ever multiplies 2 to 16 tokens).
+    fn upload_as(gpu: &Gpu, m: &Linear, tile: bool) -> Result<Self> {
         let (rows, cols) = (m.rows(), m.cols());
         match m {
             Linear::Q8 { w, .. } => {
@@ -89,6 +97,25 @@ impl Mat {
                     kind: 0,
                     rows,
                     cols,
+                    tiled: false,
+                })
+            }
+            Linear::F16 { w, .. } if tile && rows.is_multiple_of(16) && cols.is_multiple_of(16) => {
+                let mut tiled = Vec::with_capacity(w.len());
+                for tile_row in (0..rows).step_by(16) {
+                    for step in (0..cols).step_by(16) {
+                        for r in tile_row..tile_row + 16 {
+                            tiled.extend_from_slice(&w[r * cols + step..][..16]);
+                        }
+                    }
+                }
+                Ok(Self {
+                    w: filled(gpu, bytes_of(&tiled))?,
+                    scales: None,
+                    kind: 1,
+                    rows,
+                    cols,
+                    tiled: true,
                 })
             }
             Linear::F16 { w, .. } => Ok(Self {
@@ -97,6 +124,7 @@ impl Mat {
                 kind: 1,
                 rows,
                 cols,
+                tiled: false,
             }),
             Linear::F32 { w, .. } => Ok(Self {
                 w: filled(gpu, bytes_of(w))?,
@@ -104,6 +132,7 @@ impl Mat {
                 kind: 2,
                 rows,
                 cols,
+                tiled: false,
             }),
         }
     }
@@ -209,18 +238,21 @@ pub struct GpuBlock {
 
 impl GpuBlock {
     /// `positions`: the most positions its attention ever holds (cache rows).
-    fn upload(gpu: &Gpu, b: &Block, positions: usize) -> Result<Self> {
+    /// `small`: tile what `mvc` can take (the block only ever runs 2 to 16 positions at a
+    /// time, on a device with `mvc`).
+    fn upload(gpu: &Gpu, b: &Block, positions: usize, small: bool) -> Result<Self> {
+        let mat = |m: &Linear| Mat::upload_as(gpu, m, small);
         let op = match &b.op {
             Op::Attention(a) => {
                 let kvw = a.kv_heads * a.head_dim;
                 GpuOp::Attention {
-                    q: Mat::upload(gpu, &a.q)?,
-                    k: Mat::upload(gpu, &a.k)?,
-                    v: Mat::upload(gpu, &a.v)?,
-                    o: Mat::upload(gpu, &a.o)?,
+                    q: mat(&a.q)?,
+                    k: mat(&a.k)?,
+                    v: mat(&a.v)?,
+                    o: mat(&a.o)?,
                     q_norm: floats(gpu, &a.q_norm)?,
                     k_norm: floats(gpu, &a.k_norm)?,
-                    gate: a.gate.as_ref().map(|g| Mat::upload(gpu, g)).transpose()?,
+                    gate: a.gate.as_ref().map(mat).transpose()?,
                     heads: a.heads,
                     kv_heads: a.kv_heads,
                     head_dim: a.head_dim,
@@ -232,10 +264,10 @@ impl GpuBlock {
                 }
             }
             Op::Conv(c) => GpuOp::Conv {
-                in_proj: Mat::upload(gpu, &c.in_proj)?,
+                in_proj: mat(&c.in_proj)?,
                 taps: floats(gpu, &c.taps)?,
                 kernel: c.kernel,
-                out_proj: Mat::upload(gpu, &c.out_proj)?,
+                out_proj: mat(&c.out_proj)?,
                 history: gpu.buffer((b.width * (c.kernel - 1)).max(1) as u64 * 4)?,
             },
         };
@@ -247,9 +279,9 @@ impl GpuBlock {
             post_op: b.post_op.as_deref().map(|w| floats(gpu, w)).transpose()?,
             post_ffn: b.post_ffn.as_deref().map(|w| floats(gpu, w)).transpose()?,
             op,
-            gate: Mat::upload(gpu, &b.gate)?,
-            up: Mat::upload(gpu, &b.up)?,
-            down: Mat::upload(gpu, &b.down)?,
+            gate: mat(&b.gate)?,
+            up: mat(&b.up)?,
+            down: mat(&b.down)?,
         })
     }
     fn inner(&self) -> usize {
@@ -527,12 +559,9 @@ impl Device {
         let flags = u32::from(bias.is_some()) | (u32::from(accumulate) << 1);
         // Several tokens: the register-blocked kernel (1.4 to 2.9 times faster on the RTX
         // 3060 for 12 to 64 tokens); one token, or f32 rows: mv.
-        let matrix = self.k.mvc.as_ref().filter(|_| {
-            m.kind == 1
-                && (2..=16).contains(&n)
-                && rows.is_multiple_of(16)
-                && m.cols.is_multiple_of(16)
-        });
+        // Tiled matrices (only ever 2 to 16 tokens) go to mvc.
+        debug_assert!(!m.tiled || (2..=16).contains(&n) && rows.is_multiple_of(16));
+        let matrix = self.k.mvc.as_ref().filter(|_| m.tiled);
         // One token: a subgroup per row, or for long rows (few of them: the FFN's down
         // projection) a workgroup per row (2048 x 7680: 59 to 51 us on the RTX 3060).
         let (kernel, groups) = if n == 1 && m.cols >= 4096 {
@@ -889,7 +918,7 @@ impl GpuBackbone {
     ) -> Result<Self> {
         let blocks = blocks
             .iter()
-            .map(|b| GpuBlock::upload(&d.gpu, b, positions))
+            .map(|b| GpuBlock::upload(&d.gpu, b, positions, false))
             .collect::<Result<Vec<_>>>()?;
         let scratch = Scratch::new(&d.gpu, &blocks, CHUNK, positions)?;
         Ok(Self {
@@ -1040,7 +1069,7 @@ impl GpuCodec {
         let g = &d.gpu;
         let blocks = blocks
             .iter()
-            .map(|b| GpuBlock::upload(g, b, positions))
+            .map(|b| GpuBlock::upload(g, b, positions, d.k.mvc.is_some()))
             .collect::<Result<Vec<_>>>()?;
         let scratch = Scratch::new(g, &blocks, CODEC_POSITIONS, positions)?;
         let out = Mat::upload(g, out)?;
@@ -1174,7 +1203,7 @@ impl GpuDepth {
         let g = &d.gpu;
         let blocks = blocks
             .iter()
-            .map(|b| GpuBlock::upload(g, b, POSITIONS))
+            .map(|b| GpuBlock::upload(g, b, POSITIONS, d.k.mvc.is_some()))
             .collect::<Result<Vec<_>>>()?;
         let scratch = Scratch::new(g, &blocks, POSITIONS, POSITIONS)?;
         Ok(Self {
@@ -2184,6 +2213,7 @@ mod tests {
                 kind,
                 rows,
                 cols,
+                tiled: false,
             };
             let x = d.gpu.buffer((n * cols * 4) as u64).unwrap();
             let y = d.gpu.buffer((n * rows * 4) as u64).unwrap();
@@ -2279,8 +2309,8 @@ mod tests {
         }
     }
 
-    /// The tensor-core product against mvb on the depth decoder's shapes: the same sums
-    /// (up to the inputs' rounding to halves) and their times (run by hand).
+    /// The tensor-core product (on tiled weights) against mvb on the depth decoder's shapes:
+    /// the same sums (up to the inputs' rounding to halves) and their times (run by hand).
     #[test]
     #[ignore]
     fn bench_mvc() {
@@ -2331,20 +2361,33 @@ mod tests {
                 kind: 1,
                 rows,
                 cols,
+                tiled: false,
             };
             let x = floats(&d.gpu, &xs).unwrap();
             let y = d.gpu.buffer((n * rows * 4) as u64).unwrap();
             let back = d.gpu.readback((n * rows * 4) as u64).unwrap();
-            let mut runs = vec![("mvb", &d.k.mvb, 4)];
-            if let Some(k) = &d.k.mvc {
-                runs.push(("mvc", k, 16));
+            let mut tiled_bits = Vec::with_capacity(bits.len());
+            for rt in 0..rows / 16 {
+                for ks in 0..cols / 16 {
+                    for nn in 0..16 {
+                        for kk in 0..16 {
+                            tiled_bits.push(bits[(rt * 16 + nn) * cols + ks * 16 + kk]);
+                        }
+                    }
+                }
             }
-            for (name, kernel, per) in runs {
+            let tiled_bytes: Vec<u8> = tiled_bits.iter().flat_map(|b| b.to_le_bytes()).collect();
+            let tiled_w = filled(&d.gpu, &tiled_bytes).unwrap();
+            let mut runs = vec![("mvb", &d.k.mvb, 4, &m.w)];
+            if let Some(k) = &d.k.mvc {
+                runs.push(("mvc", k, 16, &tiled_w));
+            }
+            for (name, kernel, per, weights) in runs {
                 let mut r = Recording::new();
                 for _ in 0..50 {
                     r.push(
                         kernel,
-                        vec![&m.w, &d.dummy, &x, &y, &d.dummy],
+                        vec![weights, &d.dummy, &x, &y, &d.dummy],
                         vec![
                             rows as u32,
                             cols as u32,
@@ -2362,9 +2405,8 @@ mod tests {
                     );
                 }
                 r.run(&d.gpu).unwrap();
-                let t0 = std::time::Instant::now();
-                r.run(&d.gpu).unwrap();
-                let each = t0.elapsed().as_secs_f64() / 50.0;
+                // Device time (submission excluded).
+                let each = r.profile(&d.gpu).unwrap().iter().sum::<f64>() / 50.0 / 1e9;
                 let mut got = vec![0f32; n * rows];
                 d.gpu.read_floats(&y, 0, &back, &mut got).unwrap();
                 let scale = want.iter().fold(0f64, |a, v| a.max(v.abs()));
