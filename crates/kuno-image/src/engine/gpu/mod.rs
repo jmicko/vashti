@@ -740,7 +740,7 @@ impl Gpu {
     }
     /// A reusable host-side landing area for reading results back.
     pub fn readback(&self, bytes: u64) -> Result<Readback, &'static str> {
-        let stage = self.staging(bytes)?;
+        let stage = self.staging_to_read(bytes)?;
         // SAFETY: the mapping lives as long as the staging buffer, which `Readback` owns.
         let at = unsafe {
             check(
@@ -890,18 +890,37 @@ impl Gpu {
             false,
         )
     }
+    /// Staging the host reads from: cached host memory where the device offers it (the
+    /// default write-combined memory reads at a few hundred MB/s), else `staging`.
+    fn staging_to_read(&self, bytes: u64) -> Result<Buffer, &'static str> {
+        self.allocate(
+            bytes,
+            vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT
+                | vk::MemoryPropertyFlags::HOST_CACHED,
+            false,
+        )
+        .or_else(|_| self.staging(bytes))
+    }
     /// A host-visible storage buffer kept mapped: kernels read and write it in place (over
     /// the bus), and the host through `Mapped` between passes, with no copy submissions.
     /// For small per-step inputs and outputs.
     pub fn mapped(&self, bytes: u64) -> Result<Mapped, &'static str> {
-        let buffer = self.allocate(
-            bytes,
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_SRC
-                | vk::BufferUsageFlags::TRANSFER_DST,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            false,
-        )?;
+        let usage = vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_SRC
+            | vk::BufferUsageFlags::TRANSFER_DST;
+        let coherent =
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        // Cached where offered: the host reads these back (logits) as well as writing them.
+        let buffer = self
+            .allocate(
+                bytes,
+                usage,
+                coherent | vk::MemoryPropertyFlags::HOST_CACHED,
+                false,
+            )
+            .or_else(|_| self.allocate(bytes, usage, coherent, false))?;
         // SAFETY: the mapping lives as long as the buffer, which `Mapped` owns.
         let at = unsafe {
             check(
@@ -939,7 +958,12 @@ impl Gpu {
         Ok(())
     }
     /// Reads `to.len()` floats at byte `offset` of a mapped buffer.
-    pub fn read_mapped(&self, from: &Mapped, offset: u64, to: &mut [f32]) -> Result<(), &'static str> {
+    pub fn read_mapped(
+        &self,
+        from: &Mapped,
+        offset: u64,
+        to: &mut [f32],
+    ) -> Result<(), &'static str> {
         let bytes = std::mem::size_of_val(to) as u64;
         if offset + bytes > from.buffer.bytes {
             return Err("gpu_range");
@@ -1049,7 +1073,7 @@ impl Gpu {
         if bytes == 0 {
             return Ok(out);
         }
-        let stage = self.staging(bytes as u64)?;
+        let stage = self.staging_to_read(bytes as u64)?;
         let region = [vk::BufferCopy::default()
             .src_offset(offset)
             .size(bytes as u64)];
@@ -1251,6 +1275,23 @@ impl Gpu {
                             &[],
                         );
                     }
+                }
+                // Make the pass's writes visible to the host: mapped buffers (`Gpu::mapped`)
+                // are read right after the fence, which alone does not guarantee it.
+                let host = [vk::MemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::HOST_READ)];
+                // SAFETY: a plain barrier in the command buffer being recorded.
+                unsafe {
+                    device.cmd_pipeline_barrier(
+                        commands,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::PipelineStageFlags::HOST,
+                        vk::DependencyFlags::empty(),
+                        &host,
+                        &[],
+                        &[],
+                    );
                 }
             })
         })();
@@ -1510,18 +1551,28 @@ mod tests {
         let fast = gpu.kernel(shaders::FATTEND8_NV, 6, 7, None).unwrap();
         let plain = gpu.kernel(shaders::FATTEND16_NV, 4, 7, None).unwrap();
         let scale = 1.0 / 128f32.sqrt();
-        for (heads, queries, keys, spread, causal) in
-            [(2usize, 90usize, 150usize, 3.0f32, true), (3, 100, 250, 1.0, false), (24, 4078, 4078, 1.5, false)]
-        {
+        for (heads, queries, keys, spread, causal) in [
+            (2usize, 90usize, 150usize, 3.0f32, true),
+            (3, 100, 250, 1.0, false),
+            (24, 4078, 4078, 1.5, false),
+        ] {
             let (qp, kp) = (queries.next_multiple_of(64), keys.next_multiple_of(64));
             let make = |padded: usize, live: usize, seed: u64, spread: f32| -> Vec<f32> {
                 let mut values = noise(heads * padded * 128, seed);
                 for (i, v) in values.iter_mut().enumerate() {
-                    *v = if (i / 128) % padded < live { widen(narrow(*v * spread)) } else { 0.0 };
+                    *v = if (i / 128) % padded < live {
+                        widen(narrow(*v * spread))
+                    } else {
+                        0.0
+                    };
                 }
                 values
             };
-            let (q, k, v) = (make(qp, queries, 1, spread), make(kp, keys, 2, spread), make(kp, keys, 3, 1.0));
+            let (q, k, v) = (
+                make(qp, queries, 1, spread),
+                make(kp, keys, 2, spread),
+                make(kp, keys, 3, 1.0),
+            );
             let quantize = |x: &[f32]| -> (Vec<u8>, Vec<f32>) {
                 let mut bytes = vec![0u8; x.len()];
                 let mut scales = Vec::with_capacity(x.len() / 128);
@@ -1545,7 +1596,15 @@ mod tests {
             let (bq8, bk8) = (up(&q8), up(&k8));
             let (bqs, bks) = (up(bytes_of(&qs)), up(bytes_of(&ks)));
             let out = gpu.buffer((qp * heads * 128 * 4) as u64).unwrap();
-            let constants = [queries as u32, keys as u32, qp as u32, kp as u32, heads as u32, scale.to_bits(), u32::from(causal)];
+            let constants = [
+                queries as u32,
+                keys as u32,
+                qp as u32,
+                kp as u32,
+                heads as u32,
+                scale.to_bits(),
+                u32::from(causal),
+            ];
             let mut results = Vec::new();
             for (name, kernel, buffers) in [
                 ("half", &plain, vec![&bq, &bk, &bv, &out]),
@@ -1554,10 +1613,20 @@ mod tests {
                 let mut best = f64::MAX;
                 for _ in 0..3 {
                     let started = std::time::Instant::now();
-                    gpu.pass(&[Step { kernel, buffers: &buffers, constants: &constants, groups: [(qp / 64) as u32, heads as u32, 1] }]).unwrap();
+                    gpu.pass(&[Step {
+                        kernel,
+                        buffers: &buffers,
+                        constants: &constants,
+                        groups: [(qp / 64) as u32, heads as u32, 1],
+                    }])
+                    .unwrap();
                     best = best.min(started.elapsed().as_secs_f64() * 1e3);
                 }
-                results.push((name, best, floats(&gpu.download(&out, 0, out.bytes() as usize).unwrap())));
+                results.push((
+                    name,
+                    best,
+                    floats(&gpu.download(&out, 0, out.bytes() as usize).unwrap()),
+                ));
             }
             for (name, best, got) in &results {
                 let (mut error, mut power) = (0f64, 0f64);
@@ -1570,21 +1639,30 @@ mod tests {
                                 return f64::NEG_INFINITY;
                             }
                             let kr = &k[(head * kp + key) * 128..][..128];
-                            qr.iter().zip(kr).map(|(a, b)| f64::from(a * b)).sum::<f64>() * f64::from(scale)
+                            qr.iter()
+                                .zip(kr)
+                                .map(|(a, b)| f64::from(a * b))
+                                .sum::<f64>()
+                                * f64::from(scale)
                         })
                         .collect();
                     let top = logits.iter().copied().fold(f64::MIN, f64::max);
                     let weights: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();
                     let total: f64 = weights.iter().sum();
                     for c in 0..128 {
-                        let want: f64 = (0..keys).map(|key| weights[key] * f64::from(v[(head * kp + key) * 128 + c])).sum::<f64>() / total;
+                        let want: f64 = (0..keys)
+                            .map(|key| weights[key] * f64::from(v[(head * kp + key) * 128 + c]))
+                            .sum::<f64>()
+                            / total;
                         let have = f64::from(got[query * heads * 128 + head * 128 + c]);
                         error += (have - want).powi(2);
                         power += want.powi(2);
                     }
                 }
                 let db = 10.0 * (power / error.max(1e-30)).log10();
-                println!("{heads} heads, {queries} x {keys}, causal {causal}, {name}: {best:.2} ms, {db:.1} dB");
+                println!(
+                    "{heads} heads, {queries} x {keys}, causal {causal}, {name}: {best:.2} ms, {db:.1} dB"
+                );
                 assert!(db > 30.0);
             }
         }
@@ -1595,15 +1673,23 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU"]
     fn gemm8_blocking_at_qwen_shapes() {
-        let vendor = std::env::var("KUNO_GPU_VENDOR").map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
+        let vendor = std::env::var("KUNO_GPU_VENDOR")
+            .map_or(0x10de, |v| u32::from_str_radix(&v, 16).unwrap());
         let gpu = Gpu::open(Select::Vendor(vendor)).unwrap();
-        let custom = std::env::var("KUNO_GEMM8_SPV").ok().map(|f| std::fs::read(f).unwrap());
+        let custom = std::env::var("KUNO_GEMM8_SPV")
+            .ok()
+            .map(|f| std::fs::read(f).unwrap());
         let kernel = match &custom {
             Some(code) => gpu.kernel(code, 3, 5, Some(32)).unwrap(),
             None => gpu.gemm8().unwrap(),
         };
         let tokens = 8448usize;
-        for (rows, columns) in [(12288usize, 4096usize), (4096, 4096), (24576, 4096), (4096, 12288)] {
+        for (rows, columns) in [
+            (12288usize, 4096usize),
+            (4096, 4096),
+            (24576, 4096),
+            (4096, 12288),
+        ] {
             let a = gpu.buffer((tokens * columns) as u64).unwrap();
             let b = gpu.buffer((rows * columns) as u64).unwrap();
             let out = gpu.buffer((tokens * rows) as u64 * 4).unwrap();
@@ -1612,7 +1698,15 @@ mod tests {
                 let tiles = rows / 256;
                 let constants: Vec<[u32; 5]> = (0..tiles)
                     .step_by(block)
-                    .map(|first| [columns as u32, 0, (first * 256 * columns) as u32, (first * 256) as u32, rows as u32])
+                    .map(|first| {
+                        [
+                            columns as u32,
+                            0,
+                            (first * 256 * columns) as u32,
+                            (first * 256) as u32,
+                            rows as u32,
+                        ]
+                    })
                     .collect();
                 let steps: Vec<Step> = constants
                     .iter()
@@ -1621,7 +1715,11 @@ mod tests {
                         kernel: &kernel,
                         buffers: &buffers,
                         constants,
-                        groups: [block.min(tiles - i * block) as u32, (tokens / 128) as u32, 1],
+                        groups: [
+                            block.min(tiles - i * block) as u32,
+                            (tokens / 128) as u32,
+                            1,
+                        ],
                     })
                     .collect();
                 gpu.pass(&steps).unwrap();
@@ -1632,7 +1730,11 @@ mod tests {
                     best = best.min(started.elapsed().as_secs_f64());
                 }
                 let ops = 2.0 * (tokens * rows * columns) as f64;
-                println!("{rows}x{columns}, blocks of {block} tiles: {:.2} ms, {:.1} TOPS", best * 1e3, ops / best / 1e12);
+                println!(
+                    "{rows}x{columns}, blocks of {block} tiles: {:.2} ms, {:.1} TOPS",
+                    best * 1e3,
+                    ops / best / 1e12
+                );
             }
         }
     }

@@ -358,7 +358,7 @@ impl Lfm3Audio {
         })
     }
 
-    fn load(backbone: &Path, mmproj: &Path) -> Result<Self> {
+    pub(crate) fn load(backbone: &Path, mmproj: &Path) -> Result<Self> {
         let g = open(backbone)?;
         let a = open(mmproj)?;
         let arch = g
@@ -552,10 +552,14 @@ impl Lfm3Audio {
 
     // ---- Backbone -----------------------------------------------------------------------
 
-    fn embed_tokens(&self, ids: &[u32]) -> Vec<f32> {
+    pub(crate) fn embed_tokens(&self, ids: &[u32]) -> Vec<f32> {
         ids.iter()
             .flat_map(|id| self.embed.row(*id as usize))
             .collect()
+    }
+    #[cfg(test)]
+    pub(crate) fn backbone_cpu(&self, rows: &mut [f32], states: &mut [State]) -> Vec<f32> {
+        self.backbone(rows, states)
     }
     /// Runs rows through the backbone; returns the last row's normed state.
     fn backbone(&self, rows: &mut [f32], states: &mut [State]) -> Vec<f32> {
@@ -747,7 +751,7 @@ impl Lfm3Audio {
     }
 
     /// The backbone's next input: the sum of the frame's code embeddings.
-    fn feedback_row(&self, codes: &[usize; CODEBOOKS]) -> Vec<f32> {
+    pub(crate) fn feedback_row(&self, codes: &[usize; CODEBOOKS]) -> Vec<f32> {
         let mut fb = vec![0f32; 2048];
         for (cb, &code) in codes.iter().enumerate() {
             for (f, v) in fb.iter_mut().zip(self.feedback.row(cb * CODES + code)) {
@@ -759,7 +763,7 @@ impl Lfm3Audio {
 
     /// What each depth position adds to the projected state: its code's embedding, or the
     /// mask while undecided (`[12][1024]`).
-    fn depth_inputs(&self, codes: &[Option<usize>; CODEBOOKS]) -> Vec<f32> {
+    pub(crate) fn depth_inputs(&self, codes: &[Option<usize>; CODEBOOKS]) -> Vec<f32> {
         codes
             .iter()
             .enumerate()
@@ -863,7 +867,7 @@ impl Lfm3Audio {
     }
 }
 
-fn argmax(v: &[f32]) -> usize {
+pub(crate) fn argmax(v: &[f32]) -> usize {
     let mut best = 0;
     for (i, x) in v.iter().enumerate() {
         if *x > v[best] {

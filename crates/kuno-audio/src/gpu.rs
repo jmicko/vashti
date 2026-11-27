@@ -85,13 +85,54 @@ impl Mat {
     }
 }
 
+/// A device buffer holding `bytes`, read back and compared before use. On the RTX 3060
+/// test host (driver 595.99), uploads occasionally arrived with whole 64 KiB pages wrong
+/// (no kernel errors), and every result from those weights was off; a mismatch is
+/// uploaded again, and after three tries the model stays on the CPU.
 fn filled(gpu: &Gpu, bytes: &[u8]) -> Result<Buffer> {
     // Storage buffers must not be empty; round up to whole words.
     let size = bytes.len().max(4).next_multiple_of(4);
-    gpu.filled(size as u64, |out| {
-        out[..bytes.len()].copy_from_slice(bytes);
-        out[bytes.len()..].fill(0);
-        Ok(())
+    for _ in 0..3 {
+        let buffer = gpu.filled(size as u64, |out| {
+            out[..bytes.len()].copy_from_slice(bytes);
+            out[bytes.len()..].fill(0);
+            Ok(())
+        })?;
+        if verified(gpu, &buffer, bytes, size)? {
+            return Ok(buffer);
+        }
+    }
+    Err("audio_gpu_upload_corrupt")
+}
+
+const PIECE: usize = 16 << 20;
+thread_local! {
+    /// One readback area per thread and device, reused for every check.
+    static CHECK: std::cell::RefCell<Option<(usize, Readback)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Whether `buffer` (`size` bytes, a multiple of 4) starts with exactly `bytes`, read back
+/// through a reused staging area in 16 MiB pieces.
+fn verified(gpu: &Gpu, buffer: &Buffer, bytes: &[u8], size: usize) -> Result<bool> {
+    CHECK.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let key = gpu as *const Gpu as usize;
+        if cell.as_ref().is_none_or(|(k, _)| *k != key) {
+            *cell = Some((key, gpu.readback(PIECE as u64)?));
+        }
+        let stage = &cell.as_ref().unwrap().1;
+        for start in (0..size).step_by(PIECE) {
+            let count = PIECE.min(size - start) / 4;
+            let same = gpu.floats_with(buffer, start as u64, stage, count, |got| {
+                let got = bytes_of(got);
+                let want = &bytes[start.min(bytes.len())..(start + got.len()).min(bytes.len())];
+                got[..want.len()] == *want && got[want.len()..].iter().all(|b| *b == 0)
+            })?;
+            if !same {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     })
 }
 fn floats(gpu: &Gpu, values: &[f32]) -> Result<Buffer> {
@@ -911,6 +952,379 @@ pub fn upload_head(d: &Device, embed: &Linear) -> Result<(Mat, Mapped)> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    impl GpuBackbone {
+        fn read_state(&self, d: &Device) -> Vec<f32> {
+            let mut out = vec![0f32; 2048];
+            let stage = d.gpu.readback(2048 * 4).unwrap();
+            d.gpu.read_floats(&self.state, 0, &stage, &mut out).unwrap();
+            out
+        }
+    }
+
+    /// The same prompt twenty times: the backbone state and the depth logits must repeat
+    /// bit for bit (run by hand with the model: `KUNO_AUDIO_MODELS=dir`).
+    #[test]
+    #[ignore]
+    fn repeats_exactly() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::load(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        )
+        .unwrap();
+        let d = Device::open(&pci).unwrap();
+        let mut bb = GpuBackbone::upload(&d, &m.backbone, &m.out_norm, 4096).unwrap();
+        let depth = GpuDepth::upload(
+            &d,
+            &m.depth,
+            &m.proj_in.0,
+            &m.proj_in.1,
+            &m.code_embd,
+            &m.depth_norm,
+            &m.head_norm,
+            2017,
+        )
+        .unwrap();
+        let rows = m.embed_tokens(&(0..65u32).map(|i| 1000 + i * 37).collect::<Vec<_>>());
+        let add = m.depth_inputs(&[None; 12]);
+        let (mut first_state, mut first_logits) = (None, None);
+        let (mut state_diff, mut logit_diff) = (0, 0);
+        for _ in 0..20 {
+            bb.reset(&d).unwrap();
+            bb.forward(&d, &rows).unwrap();
+            bb.forward(&d, &rows[..2048]).unwrap();
+            let state = bb.read_state(&d);
+            let mut logits = vec![0f32; 4 * 2017];
+            depth
+                .pass(&d, Some(&bb.state), &add, &[0, 1, 2, 3], 2017, &mut logits)
+                .unwrap();
+            let fs = first_state.get_or_insert_with(|| state.clone());
+            state_diff += usize::from(*fs != state);
+            let fl = first_logits.get_or_insert_with(|| logits.clone());
+            logit_diff += usize::from(*fl != logits);
+        }
+        eprintln!("runs with a different state: {state_diff}, different logits: {logit_diff}");
+        assert_eq!((state_diff, logit_diff), (0, 0));
+    }
+
+    /// The frame loop's GPU work (three depth passes and a backbone step per frame, inputs
+    /// derived from the logits as sampling would) repeats exactly over 150 frames.
+    #[test]
+    #[ignore]
+    fn frame_loop_repeats_exactly() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::load(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        )
+        .unwrap();
+        let d = Device::open(&pci).unwrap();
+        let mut bb = GpuBackbone::upload(&d, &m.backbone, &m.out_norm, 4096).unwrap();
+        let depth = GpuDepth::upload(
+            &d,
+            &m.depth,
+            &m.proj_in.0,
+            &m.proj_in.1,
+            &m.code_embd,
+            &m.depth_norm,
+            &m.head_norm,
+            2017,
+        )
+        .unwrap();
+        let rows = m.embed_tokens(&(0..65u32).map(|i| 1000 + i * 37).collect::<Vec<_>>());
+        let run = |bb: &mut GpuBackbone| -> Vec<(usize, Vec<u32>)> {
+            bb.reset(&d).unwrap();
+            bb.forward(&d, &rows).unwrap();
+            let mut trace = Vec::new();
+            for frame in 0..150 {
+                let mut codes = [None; 12];
+                let mut logits = vec![0f32; 4 * 2017];
+                for pass in 0..3 {
+                    let wanted: Vec<usize> = (pass * 4..pass * 4 + 4).collect();
+                    let project = (pass == 0).then_some(&bb.state);
+                    depth
+                        .pass(
+                            &d,
+                            project,
+                            &m.depth_inputs(&codes),
+                            &wanted,
+                            2017,
+                            &mut logits,
+                        )
+                        .unwrap();
+                    trace.push((frame, logits.iter().map(|v| v.to_bits()).collect()));
+                    for (k, &cb) in wanted.iter().enumerate() {
+                        let l = &logits[k * 2017..][..2016];
+                        codes[cb] = Some(crate::argmax(l));
+                    }
+                }
+                let fb = m.feedback_row(&codes.map(|c| c.unwrap()));
+                bb.forward(&d, &fb).unwrap();
+            }
+            trace
+        };
+        let first = run(&mut bb);
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&first, &mut h);
+        eprintln!("TRACE HASH {:016x}", std::hash::Hasher::finish(&h));
+        for attempt in 1..2 {
+            let again = run(&mut bb);
+            if let Some(i) = first.iter().zip(&again).position(|(a, b)| a != b) {
+                panic!(
+                    "attempt {attempt}: first difference at frame {} (pass {})",
+                    first[i].0,
+                    i % 3
+                );
+            }
+        }
+    }
+
+    /// Every uploaded matrix reads back byte for byte (run in several processes by hand).
+    #[test]
+    #[ignore]
+    fn uploads_read_back_exactly() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::load(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        )
+        .unwrap();
+        let d = Device::open(&pci).unwrap();
+        let mut bad = 0;
+        let mut checked = 0usize;
+        for (bi, b) in m.backbone.iter().enumerate() {
+            let mut mats = vec![&b.gate, &b.up, &b.down];
+            match &b.op {
+                crate::block::Op::Attention(a) => mats.extend([&a.q, &a.k, &a.v, &a.o]),
+                crate::block::Op::Conv(c) => mats.extend([&c.in_proj, &c.out_proj]),
+            }
+            for lin in mats {
+                let up = Mat::upload(&d.gpu, lin).unwrap();
+                let crate::tensor::Linear::Q8 { w, .. } = lin else {
+                    continue;
+                };
+                let values = d.gpu.download(&up.w, 0, up.w.bytes() as usize).unwrap();
+                let again = d.gpu.download(&up.w, 0, up.w.bytes() as usize).unwrap();
+                if again != values {
+                    eprintln!("block {bi}: two readbacks of the same buffer differ");
+                }
+                let scales = d
+                    .gpu
+                    .download(up.scales.as_ref().unwrap(), 0, (w.len() / 34) * 2)
+                    .unwrap();
+                for (k, block) in w.chunks_exact(34).enumerate() {
+                    if block[2..] != values[k * 32..][..32] || block[..2] != scales[k * 2..][..2] {
+                        bad += 1;
+                        if bad < 5 {
+                            eprintln!("block {bi}: mismatch at block {k} of {}", w.len() / 34);
+                        }
+                    }
+                }
+                checked += w.len();
+            }
+        }
+        eprintln!("UPLOAD checked {} MB, {bad} bad blocks", checked >> 20);
+        assert_eq!(bad, 0);
+    }
+
+    /// The GPU prompt state against the CPU's (run in several processes by hand).
+    #[test]
+    #[ignore]
+    fn prompt_state_matches_cpu() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::load(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        )
+        .unwrap();
+        let d = Device::open(&pci).unwrap();
+        let mut bb = GpuBackbone::upload(&d, &m.backbone, &m.out_norm, 4096).unwrap();
+        let ids: Vec<u32> = (0..64u32).map(|i| 1000 + i * 37).collect();
+        bb.reset(&d).unwrap();
+        bb.forward(&d, &m.embed_tokens(&ids)).unwrap();
+        let gpu = bb.read_state(&d);
+        let mut rows = m.embed_tokens(&ids);
+        let mut states = vec![crate::block::State::default(); m.backbone.len()];
+        let cpu = m.backbone_cpu(&mut rows, &mut states);
+        let worst = cpu
+            .iter()
+            .zip(&gpu)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        let scale = cpu.iter().map(|v| v.abs()).fold(0f32, f32::max);
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&gpu.iter().map(|v| v.to_bits()).collect::<Vec<_>>(), &mut h);
+        eprintln!(
+            "STATE {:016x} worst {worst:e} of {scale:e}",
+            std::hash::Hasher::finish(&h)
+        );
+        assert!(
+            worst < 1e-4 * scale.max(1.0),
+            "the GPU state is off by {worst}"
+        );
+    }
+
+    /// Poisoning each scratch buffer between runs must not change the result (a kernel
+    /// that reads what no step wrote would pick the poison up).
+    #[test]
+    #[ignore]
+    fn scratch_is_written_before_read() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::load(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        )
+        .unwrap();
+        let d = Device::open(&pci).unwrap();
+        let mut bb = GpuBackbone::upload(&d, &m.backbone, &m.out_norm, 4096).unwrap();
+        let rows = m.embed_tokens(&(0..100u32).map(|i| 1000 + i * 37).collect::<Vec<_>>());
+        let run = |bb: &mut GpuBackbone| {
+            bb.reset(&d).unwrap();
+            bb.forward(&d, &rows).unwrap();
+            bb.read_state(&d)
+        };
+        let clean = run(&mut bb);
+        let poison = |b: &Buffer| {
+            let n = (b.bytes() / 4) as usize;
+            let stage = d.gpu.readback(4 * 65536).unwrap();
+            let junk: Vec<f32> = (0..65536).map(|i| (i as f32 * 0.37).sin() * 1e3).collect();
+            for start in (0..n).step_by(65536) {
+                let k = 65536.min(n - start);
+                d.gpu
+                    .write_floats(b, (start * 4) as u64, &stage, &junk[..k])
+                    .unwrap();
+            }
+        };
+        let names = [
+            "h", "op", "q", "att", "bcx", "gates", "ga", "ua", "scores", "x",
+        ];
+        let mut bad = Vec::new();
+        for (k, name) in names.iter().enumerate() {
+            {
+                let s = &bb.scratch;
+                let b = [
+                    &s.h, &s.op, &s.q, &s.att, &s.bcx, &s.gates, &s.ga, &s.ua, &s.scores, &bb.x,
+                ][k];
+                poison(b);
+            }
+            if run(&mut bb) != clean {
+                bad.push(name.to_string());
+            }
+        }
+        for i in 0..bb.blocks.len() {
+            let attention = if let GpuOp::Attention { keys, values, .. } = &bb.blocks[i].op {
+                poison(keys);
+                poison(values);
+                true
+            } else {
+                false
+            };
+            if attention && run(&mut bb) != clean {
+                bad.push(format!("kv cache of block {i}"));
+            }
+        }
+        eprintln!("POISONED AND CHANGED: {bad:?}");
+        assert!(bad.is_empty());
+    }
+
+    /// Speech through the public path repeats exactly for a seed.
+    #[test]
+    #[ignore]
+    fn speech_repeats_exactly() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::open_on(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+            Some(&pci),
+        )
+        .unwrap();
+        assert_ne!(m.device(), "cpu");
+        let text = "Kuno now speaks on the graphics card. The backbone and the depth decoder run \
+                    on the GPU, while the codec turns each frame into sound on the processor.";
+        for _ in 0..3 {
+            let pcm = m
+                .speak(text, "American English", "female", 5, 2000, |_| true)
+                .unwrap();
+            let bits: Vec<u32> = pcm.iter().map(|v| v.to_bits()).collect();
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&bits, &mut h);
+            eprintln!(
+                "SPEECH HASH {:016x} ({} samples)",
+                std::hash::Hasher::finish(&h),
+                pcm.len()
+            );
+        }
+    }
+
+    /// Matrix kernels on the model's shapes (run by hand on a GPU):
+    /// `KUNO_AUDIO_BENCH_GPU=0000:04:00.0 cargo test --release -p kuno-audio --features gpu
+    /// bench_mv -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_mv() {
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let d = Device::open(&pci).unwrap();
+        for (kind, rows, cols, n) in [
+            (0u32, 7680usize, 2048usize, 1usize),
+            (0, 2048, 2048, 1),
+            (1, 2816, 1024, 12),
+            (1, 1024, 1024, 12),
+            (1, 1024, 2816, 12),
+            (0, 7680, 2048, 64),
+        ] {
+            let bytes = rows * cols * if kind == 0 { 1 } else { 2 };
+            let m = Mat {
+                w: d.gpu.buffer(bytes as u64).unwrap(),
+                scales: Some(d.gpu.buffer((rows * cols / 16).max(16) as u64).unwrap()),
+                kind,
+                rows,
+                cols,
+            };
+            let x = d.gpu.buffer((n * cols * 4) as u64).unwrap();
+            let y = d.gpu.buffer((n * rows * 4) as u64).unwrap();
+            for (name, kernel, per) in [("mv", &d.k.mv, 1)] {
+                let mut r = Recording::new();
+                for _ in 0..50 {
+                    r.push(
+                        kernel,
+                        vec![&m.w, m.scales.as_ref().unwrap(), &x, &y, &d.dummy],
+                        vec![
+                            rows as u32,
+                            cols as u32,
+                            n as u32,
+                            kind,
+                            0,
+                            cols as u32,
+                            0,
+                            rows as u32,
+                            0,
+                            0,
+                            0,
+                        ],
+                        rows.div_ceil(per) as u32,
+                    );
+                }
+                r.run(&d.gpu).unwrap();
+                let t0 = std::time::Instant::now();
+                r.run(&d.gpu).unwrap();
+                let each = t0.elapsed().as_secs_f64() / 50.0;
+                eprintln!(
+                    "{name:3} kind {kind} {rows}x{cols} n {n:2}: {:6.1} us, {:4.0} GB/s",
+                    each * 1e6,
+                    bytes as f64 / each / 1e9
+                );
+            }
+        }
+    }
+
     /// The checked-in SPIR-V matches its source (recompiled with `glslangValidator` when
     /// installed; the binaries are checked in so builds need no shader compiler).
     #[test]
