@@ -91,6 +91,18 @@ fn main() {
     eprintln!("device {}", m.device());
     eprintln!("load {:.2} s", t0.elapsed().as_secs_f64());
     match a[0].as_str() {
+        "encode" => {
+            let (s, rate) = read_wav(&a[2]);
+            let s = to_16k(&s, rate);
+            let t0 = std::time::Instant::now();
+            let rows = m.encode_audio(&s).unwrap();
+            eprintln!(
+                "encode {:.2} s for {:.2} s of audio ({} rows)",
+                t0.elapsed().as_secs_f64(),
+                s.len() as f64 / 16000.0,
+                rows.len() / 2048
+            );
+        }
         "transcribe" => {
             let (s, rate) = read_wav(&a[2]);
             let s = to_16k(&s, rate);
