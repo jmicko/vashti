@@ -22,6 +22,7 @@ use kuno_text::{
 };
 
 pub mod block;
+mod fft;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 pub mod split;
@@ -558,6 +559,7 @@ impl Lfm3Audio {
             .collect()
     }
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn backbone_cpu(&self, rows: &mut [f32], states: &mut [State]) -> Vec<f32> {
         self.backbone(rows, states)
     }
@@ -1123,8 +1125,6 @@ struct Istft {
     overlap: Vec<f32>,
     weight: Vec<f32>,
     skip: usize,
-    cos: Vec<f64>,
-    sin: Vec<f64>,
 }
 impl Istft {
     fn new(n: usize, hop: usize) -> Self {
@@ -1133,12 +1133,6 @@ impl Istft {
                 (0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos())) as f32
             })
             .collect();
-        let (cos, sin) = (0..n)
-            .map(|i| {
-                let a = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
-                (a.cos(), a.sin())
-            })
-            .unzip();
         Self {
             n,
             hop,
@@ -1146,31 +1140,25 @@ impl Istft {
             overlap: vec![0.0; n],
             weight: vec![0.0; n],
             skip: (n - hop) / 2,
-            cos,
-            sin,
         }
     }
     /// One frame's spectrum (`n / 2 + 1` complex bins, interleaved) to up to `hop` samples.
     fn process(&mut self, spec: &[f32]) -> Vec<f32> {
-        use rayon::prelude::*;
         let (n, bins) = (self.n, self.n / 2 + 1);
-        // Real inverse DFT of a Hermitian spectrum: x[t] = (1/n) sum_k X_k e^{+2 pi i k t / n}.
-        let frame: Vec<f32> = (0..n)
-            .into_par_iter()
-            .map(|t| {
-                let mut sum = f64::from(spec[0]);
-                for k in 1..bins {
-                    let idx = (k * t) % n;
-                    let (re, im) = (f64::from(spec[2 * k]), f64::from(spec[2 * k + 1]));
-                    let term = re * self.cos[idx] - im * self.sin[idx];
-                    sum += if k == bins - 1 && n % 2 == 0 {
-                        term
-                    } else {
-                        2.0 * term
-                    };
-                }
-                (sum / n as f64) as f32
-            })
+        // Real inverse DFT of a Hermitian spectrum: x[t] = (1/n) sum_k X_k e^{+2 pi i k t / n},
+        // the upper half mirrored (imaginary parts of the first and middle bins dropped).
+        let mut full = vec![(0.0f64, 0.0f64); n];
+        for k in 0..bins {
+            let (re, im) = (f64::from(spec[2 * k]), f64::from(spec[2 * k + 1]));
+            let edge = k == 0 || (k == bins - 1 && n % 2 == 0);
+            full[k] = (re, if edge { 0.0 } else { im });
+            if !edge {
+                full[n - k] = (re, -im);
+            }
+        }
+        let frame: Vec<f32> = fft::inverse(&full)
+            .into_iter()
+            .map(|(re, _)| (re / n as f64) as f32)
             .collect();
         for ((w, o), (win, f)) in self
             .weight
