@@ -84,7 +84,7 @@ shared guard's `image_content_type_required` (415).
   |---|---|---|---|
   | RTX 3060 | 5.8x real time | 0.14 s | 1.4 s |
   | Arc B70 (idle) | 4.5x real time (before the latest changes) | 0.1 s | 0.56 s for 5.8 s |
-  | CPU, 16 cores | 0.97x real time | 1.1 s | about 8 s |
+  | CPU, 16 cores | 0.97x real time | 1.1 s | 8.4 s |
 
   (llama.cpp on the same host: 0.64x on the 3060, 1.42x on the B70.) On a GPU a whole
   frame is one submission: three depth-decoder passes, each followed by sampling on the
