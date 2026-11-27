@@ -379,6 +379,7 @@ async fn audio_capabilities(gateway: &Gateway) -> kuno_protocol::AudioCapabiliti
         max_request_bytes: kuno_protocol::MAX_AUDIO_REQUEST_BYTES,
         max_speech_characters: kuno_protocol::MAX_SPEECH_CHARACTERS,
         speech_sample_rate: kuno_audio::SAMPLE_RATE,
+        speech_stream: true,
         device: gateway.audio.device(),
     }
 }
@@ -413,35 +414,76 @@ fn audio_status(code: &'static str) -> StatusCode {
 
 /// Runs an audio job in its own task, so that a client leaving stops the worker instead of
 /// abandoning it mid-frame.
+/// What an audio job reports: speech chunks (16-bit PCM) as they are decoded, then its end
+/// (the transcript, empty for speech, or an error).
+enum AudioEvent {
+    Chunk(Vec<u8>),
+    End(Result<Vec<u8>, (StatusCode, &'static str)>),
+}
+
+/// Starts an audio job in its own task. Dropping the receiver (a client that went away)
+/// stops the worker instead of leaving it mid-frame.
 async fn run_audio(
     gateway: Arc<Gateway>,
     job: crate::audio::Job,
-) -> Result<Vec<u8>, (StatusCode, &'static str)> {
+) -> tokio::sync::mpsc::UnboundedReceiver<AudioEvent> {
+    let (send, receive) = tokio::sync::mpsc::unbounded_channel();
     let Some(models) = audio_models(&gateway) else {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, "audio_not_configured"));
+        let _ = send.send(AudioEvent::End(Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "audio_not_configured",
+        ))));
+        return receive;
     };
-    crate::audio::ready(models.clone())
-        .await
-        .map_err(|code| (StatusCode::SERVICE_UNAVAILABLE, code))?;
-    let executable = std::env::current_exe()
-        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "executable_unavailable"))?;
-    let (mut send, receive) = tokio::sync::oneshot::channel();
+    if let Err(code) = crate::audio::ready(models.clone()).await {
+        let _ = send.send(AudioEvent::End(Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            code,
+        ))));
+        return receive;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        let _ = send.send(AudioEvent::End(Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "executable_unavailable",
+        ))));
+        return receive;
+    };
     tokio::spawn(async move {
         let result = {
-            let closed = send.closed();
+            let chunks = send.clone();
             let gpu = audio_gpu(&gateway);
             gateway
                 .audio
-                .run(&executable, &models, gpu.as_deref(), job, closed)
+                .run(
+                    &executable,
+                    &models,
+                    gpu.as_deref(),
+                    job,
+                    send.closed(),
+                    move |bytes| chunks.send(AudioEvent::Chunk(bytes)).is_ok(),
+                )
                 .await
         };
-        let _ = send.send(result);
+        let _ = send.send(AudioEvent::End(
+            result.map_err(|code| (audio_status(code), code)),
+        ));
     });
-    match receive.await {
-        Ok(Ok(body)) => Ok(body),
-        Ok(Err(code)) => Err((audio_status(code), code)),
-        Err(_) => Err((StatusCode::SERVICE_UNAVAILABLE, "audio_worker_failed")),
+    receive
+}
+
+/// Waits for a job's end, gathering its chunks.
+async fn finish_audio(
+    mut events: tokio::sync::mpsc::UnboundedReceiver<AudioEvent>,
+) -> Result<(Vec<u8>, Vec<u8>), (StatusCode, &'static str)> {
+    let mut chunks = Vec::new();
+    while let Some(event) = events.recv().await {
+        match event {
+            AudioEvent::Chunk(bytes) => chunks.extend(bytes),
+            AudioEvent::End(result) => return result.map(|body| (body, chunks)),
+        }
     }
+    Err((StatusCode::SERVICE_UNAVAILABLE, "audio_worker_failed"))
 }
 
 async fn transcribe_audio(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
@@ -461,7 +503,8 @@ async fn transcribe_audio(State(gateway): State<Arc<Gateway>>, request: Request)
         .as_deref()
         .and_then(kuno_protocol::transcription_language)
         .map(str::to_owned);
-    match run_audio(gateway, crate::audio::Job::Transcribe { wav, language }).await {
+    let events = run_audio(gateway, crate::audio::Job::Transcribe { wav, language }).await;
+    match finish_audio(events).await.map(|(text, _)| text) {
         Ok(text) => (
             [(header::CACHE_CONTROL, "no-store")],
             Json(kuno_protocol::TranscriptionResponse {
@@ -496,17 +539,59 @@ async fn speak_audio(State(gateway): State<Arc<Gateway>>, request: Request) -> R
                 .map_or(0, |d| d.as_nanos() as u64)
         }),
     };
-    match run_audio(gateway, job).await {
-        Ok(wav) => (
-            [
-                (header::CONTENT_TYPE, "audio/wav"),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            wav,
-        )
-            .into_response(),
-        Err((status, code)) => error(status, code),
+    let stream = body.stream;
+    let mut events = run_audio(gateway, job).await;
+    let rate = kuno_audio::SAMPLE_RATE;
+    if !stream {
+        return match finish_audio(events).await {
+            Ok((_, pcm)) => {
+                let mut wav = kuno_audio::wav::header(rate, pcm.len() as u32);
+                wav.extend(pcm);
+                (
+                    [
+                        (header::CONTENT_TYPE, "audio/wav"),
+                        (header::CACHE_CONTROL, "no-store"),
+                    ],
+                    wav,
+                )
+                    .into_response()
+            }
+            Err((status, code)) => error(status, code),
+        };
     }
+    // Streaming: errors before the first audio keep their status; after it the stream
+    // just ends. The header declares an unknown length.
+    let first = match events.recv().await {
+        Some(AudioEvent::Chunk(bytes)) => bytes,
+        Some(AudioEvent::End(Ok(_))) => Vec::new(),
+        Some(AudioEvent::End(Err((status, code)))) => return error(status, code),
+        None => return error(StatusCode::SERVICE_UNAVAILABLE, "audio_worker_failed"),
+    };
+    let mut opening = kuno_audio::wav::header(rate, u32::MAX);
+    opening.extend(first);
+    let rest = futures_util::stream::unfold(events, |mut events| async move {
+        match events.recv().await {
+            Some(AudioEvent::Chunk(bytes)) => Some((
+                Ok::<_, std::convert::Infallible>(Bytes::from(bytes)),
+                events,
+            )),
+            _ => None,
+        }
+    });
+    let body = futures_util::StreamExt::chain(
+        futures_util::stream::once(async move {
+            Ok::<_, std::convert::Infallible>(Bytes::from(opening))
+        }),
+        rest,
+    );
+    (
+        [
+            (header::CONTENT_TYPE, "audio/wav"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Body::from_stream(body),
+    )
+        .into_response()
 }
 
 async fn inference_guard(request: Request, next: Next) -> Response {

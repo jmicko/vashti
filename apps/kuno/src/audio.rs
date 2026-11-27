@@ -8,9 +8,10 @@
 //! stops the worker (the next request starts a fresh one).
 //!
 //! Frames: a request is `kind: u8`, then `len: u32` and that many bytes, twice (JSON
-//! parameters, then the payload); a response is `status: u8` (0 ok, 1 error) and one
-//! `len: u32`-prefixed body (the transcript, the WAV file, or the error code). The worker
-//! announces itself with a response after loading.
+//! parameters, then the payload); a response is any number of chunk frames (status 2, a
+//! `len: u32`-prefixed piece of 16-bit PCM speech as it is decoded) and one final frame,
+//! status 0 (the transcript; empty for speech) or 1 (an error code). The worker announces
+//! itself with a final frame naming its device after loading.
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -106,7 +107,7 @@ pub fn run_worker() -> Result<(), &'static str> {
                 TRANSCRIBE => transcribe(&model, &payload, &p).map(String::into_bytes),
                 SPEAK => {
                     let text = std::str::from_utf8(&payload).map_err(|_| "text_invalid")?;
-                    speak(&model, text, &p)
+                    speak(&model, text, &p, &mut output)
                 }
                 _ => Err("audio_request_invalid"),
             });
@@ -175,29 +176,51 @@ fn transcribe(
     Ok(parts.join(" "))
 }
 
-fn speak(model: &kuno_audio::Lfm3Audio, text: &str, p: &Params) -> Result<Vec<u8>, &'static str> {
+/// Speaks `text`, sending each decoded frame's samples as a chunk (16-bit PCM) as it comes.
+fn speak(
+    model: &kuno_audio::Lfm3Audio,
+    text: &str,
+    p: &Params,
+    output: &mut impl Write,
+) -> Result<Vec<u8>, &'static str> {
     let language = p.language.as_deref().unwrap_or("American English");
     let voice = p.voice.as_deref().unwrap_or("female");
-    let mut audio = Vec::new();
+    let mut failed = false;
     for (i, piece) in kuno_audio::split::text(text, TEXT_PIECE_CHARACTERS)
         .iter()
         .enumerate()
     {
         // About 15 characters a second at 12.5 frames a second, with ample room.
         let frames = 100 + piece.chars().count() * 3;
-        let pcm = model.speak(
+        model.speak(
             piece,
             language,
             voice,
             p.seed.wrapping_add(i as u64),
             frames,
-            |_| true,
+            |pcm| {
+                let mut bytes = kuno_audio::wav::pcm16(pcm);
+                failed |= send_chunk(output, &bytes).is_err();
+                bytes.zeroize();
+                !failed
+            },
         )?;
-        audio.extend(pcm);
+        if failed {
+            return Err("audio_worker_output_failed");
+        }
     }
-    let wav = kuno_audio::wav::write(&audio, kuno_audio::SAMPLE_RATE);
-    audio.zeroize();
-    Ok(wav)
+    Ok(Vec::new())
+}
+
+/// A chunk frame (status 2) of a response still in progress.
+fn send_chunk(output: &mut impl Write, bytes: &[u8]) -> std::io::Result<()> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    output.write_all(&[2])?;
+    output.write_all(&(bytes.len() as u32).to_le_bytes())?;
+    output.write_all(bytes)?;
+    output.flush()
 }
 
 // ---- Gateway side -----------------------------------------------------------------------
@@ -260,6 +283,7 @@ impl AudioRuntime {
         gpu: Option<&str>,
         job: Job,
         closed: impl std::future::Future<Output = ()>,
+        on_chunk: impl FnMut(Vec<u8>) -> bool,
     ) -> Result<Vec<u8>, &'static str> {
         let _permit = self
             .waiting
@@ -295,7 +319,7 @@ impl AudioRuntime {
         let mut slot = self.worker.lock().await;
         self.uses.fetch_add(1, Ordering::SeqCst);
         let result = tokio::select! {
-            result = exchange(&mut slot, executable, models, gpu, &self.device, kind, &params, &payload) => result,
+            result = exchange(&mut slot, executable, models, gpu, &self.device, kind, &params, &payload, on_chunk) => result,
             _ = closed => Err("audio_cancelled"),
         };
         payload.zeroize();
@@ -338,6 +362,7 @@ async fn exchange(
     kind: u8,
     params: &[u8],
     payload: &[u8],
+    mut on_chunk: impl FnMut(Vec<u8>) -> bool,
 ) -> Result<Vec<u8>, &'static str> {
     if slot.is_none() {
         let (worker, name) = spawn(executable, models, gpu).await?;
@@ -358,11 +383,53 @@ async fn exchange(
         Ok::<_, std::io::Error>(())
     };
     io.await.map_err(|_| "audio_worker_failed")?;
-    read_response(&mut worker.output).await
+    loop {
+        match read_frame(&mut worker.output).await? {
+            Frame::Chunk(bytes) => {
+                if !on_chunk(bytes) {
+                    return Err("audio_cancelled");
+                }
+            }
+            Frame::Done(body) => return body,
+        }
+    }
+}
+
+enum Frame {
+    Chunk(Vec<u8>),
+    Done(Result<Vec<u8>, &'static str>),
+}
+
+async fn read_frame(output: &mut ChildStdout) -> Result<Frame, &'static str> {
+    let status = output.read_u8().await.map_err(|_| "audio_worker_failed")?;
+    if status == 2 {
+        let len = output
+            .read_u32_le()
+            .await
+            .map_err(|_| "audio_worker_failed")? as usize;
+        if len > 16 * 1024 * 1024 {
+            return Err("audio_worker_failed");
+        }
+        let mut body = vec![0u8; len];
+        output
+            .read_exact(&mut body)
+            .await
+            .map_err(|_| "audio_worker_failed")?;
+        return Ok(Frame::Chunk(body));
+    }
+    Ok(Frame::Done(read_body(output, status).await?))
 }
 
 async fn read_response(output: &mut ChildStdout) -> Result<Vec<u8>, &'static str> {
     let status = output.read_u8().await.map_err(|_| "audio_worker_failed")?;
+    read_body(output, status).await?
+}
+
+/// A final frame's body after its status: Ok for status 0, the worker's code otherwise.
+async fn read_body(
+    output: &mut ChildStdout,
+    status: u8,
+) -> Result<Result<Vec<u8>, &'static str>, &'static str> {
     let len = output
         .read_u32_le()
         .await
@@ -376,13 +443,16 @@ async fn read_response(output: &mut ChildStdout) -> Result<Vec<u8>, &'static str
         .await
         .map_err(|_| "audio_worker_failed")?;
     if status == 0 {
-        return Ok(body);
+        return Ok(Ok(body));
+    }
+    if status != 1 {
+        return Err("audio_worker_failed");
     }
     let code = std::str::from_utf8(&body).unwrap_or("");
-    Err(CODES
+    Ok(Err(CODES
         .into_iter()
         .find(|c| *c == code)
-        .unwrap_or("audio_worker_failed"))
+        .unwrap_or("audio_worker_failed")))
 }
 
 async fn spawn(

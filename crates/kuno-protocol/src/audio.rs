@@ -67,7 +67,7 @@ pub struct TranscriptionResponse {
 
 /// `POST /kuno/v1/audio/speech`: `input` spoken in `language` (default `en`) with `voice`
 /// (default `female`); `seed` repeats a rendering. The response body is a 24 kHz mono 16-bit
-/// WAV file (`audio/wav`).
+/// WAV file (`audio/wav`), sent as it is generated with `stream`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpeechRequest {
@@ -78,6 +78,10 @@ pub struct SpeechRequest {
     pub language: Option<String>,
     #[serde(default)]
     pub seed: Option<u64>,
+    /// Send the WAV as it is generated (its header declares an unknown length); an error
+    /// after the first audio ends the stream early.
+    #[serde(default)]
+    pub stream: bool,
 }
 
 impl SpeechRequest {
@@ -134,6 +138,9 @@ pub struct AudioCapabilities {
     pub max_request_bytes: usize,
     pub max_speech_characters: usize,
     pub speech_sample_rate: u32,
+    /// Whether `stream` is accepted (absent on older Kuno: treat as false).
+    #[serde(default)]
+    pub speech_stream: bool,
     /// The device the model last loaded onto ("cpu" or the GPU's name); absent until the
     /// first request since Kuno started. A configured GPU without room falls back to "cpu".
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,6 +158,7 @@ mod tests {
             voice: Some("male".into()),
             language: Some("EN-gb".into()),
             seed: None,
+            stream: false,
         };
         assert!(ok.validate().is_ok());
         assert_eq!(speech_language("EN-gb"), Some("British English"));

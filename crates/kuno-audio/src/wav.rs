@@ -71,10 +71,17 @@ pub fn read(bytes: &[u8]) -> Result<(Vec<f32>, u32)> {
 
 /// Mono 16-bit PCM WAV.
 pub fn write(samples: &[f32], rate: u32) -> Vec<u8> {
-    let data = (samples.len() * 2) as u32;
-    let mut b = Vec::with_capacity(44 + samples.len() * 2);
+    let mut b = header(rate, (samples.len() * 2) as u32);
+    b.extend(pcm16(samples));
+    b
+}
+
+/// The 44-byte header of a mono 16-bit PCM WAV file with `data` bytes of samples; a stream
+/// of unknown length uses `u32::MAX` (sizes as large as the format allows).
+pub fn header(rate: u32, data: u32) -> Vec<u8> {
+    let mut b = Vec::with_capacity(44);
     b.extend(b"RIFF");
-    b.extend((36 + data).to_le_bytes());
+    b.extend(data.saturating_add(36).to_le_bytes());
     b.extend(b"WAVEfmt ");
     b.extend(16u32.to_le_bytes());
     b.extend(1u16.to_le_bytes());
@@ -85,6 +92,12 @@ pub fn write(samples: &[f32], rate: u32) -> Vec<u8> {
     b.extend(16u16.to_le_bytes());
     b.extend(b"data");
     b.extend(data.to_le_bytes());
+    b
+}
+
+/// Samples as little-endian 16-bit PCM (clamped; non-finite values silent).
+pub fn pcm16(samples: &[f32]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(samples.len() * 2);
     for v in samples {
         let v = if v.is_finite() {
             v.clamp(-1.0, 1.0)
