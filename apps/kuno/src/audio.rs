@@ -328,6 +328,7 @@ impl AudioRuntime {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn exchange(
     slot: &mut Option<Worker>,
     executable: &Path,
