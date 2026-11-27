@@ -1,0 +1,81 @@
+// SwiGLU's two one-token products in one: y[r] = silu(gate[r] . x) * (up[r] . x), the gate
+// rows as mv1's weights (bindings 0, 1) and the up rows' (4, 5), each sum as mv1 makes it
+// and the product as ew.comp's mode 0. Same constants as mv1.comp (no bias or flags).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer UpWeights { uvec4 wu[]; };
+layout(set = 0, binding = 5) readonly buffer UpScales { uint su[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint n; uint kind;
+    uint x_off; uint x_stride; uint y_off; uint y_stride;
+    uint w_row0; uint b_off; uint flags;
+} p;
+
+vec4 q4(int v, float sc) {
+    return vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
+                bitfieldExtract(v, 16, 8), bitfieldExtract(v, 24, 8)) * sc;
+}
+
+// One 16-byte load `i` of row `wr` against the input.
+float part(uint wr, uint i, uint loads, uint xo) {
+    uvec4 v = w[wr * loads + i];
+    if (p.kind == 0) {
+        uint c4 = xo + i * 4;
+        uint si = wr * (p.cols / 32) + i / 2;
+        float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+        return dot(q4(int(v.x), sc), x[c4]) + dot(q4(int(v.y), sc), x[c4 + 1])
+             + dot(q4(int(v.z), sc), x[c4 + 2]) + dot(q4(int(v.w), sc), x[c4 + 3]);
+    } else if (p.kind == 1) {
+        uint c4 = xo + i * 2;
+        return dot(vec4(unpackHalf2x16(v.x), unpackHalf2x16(v.y)), x[c4])
+             + dot(vec4(unpackHalf2x16(v.z), unpackHalf2x16(v.w)), x[c4 + 1]);
+    }
+    return dot(uintBitsToFloat(v), x[xo + i]);
+}
+
+// The same for the up projection.
+float part_up(uint wr, uint i, uint loads, uint xo) {
+    uvec4 v = wu[wr * loads + i];
+    if (p.kind == 0) {
+        uint c4 = xo + i * 4;
+        uint si = wr * (p.cols / 32) + i / 2;
+        float sc = unpackHalf2x16(su[si >> 1])[si & 1];
+        return dot(q4(int(v.x), sc), x[c4]) + dot(q4(int(v.y), sc), x[c4 + 1])
+             + dot(q4(int(v.z), sc), x[c4 + 2]) + dot(q4(int(v.w), sc), x[c4 + 3]);
+    } else if (p.kind == 1) {
+        uint c4 = xo + i * 2;
+        return dot(vec4(unpackHalf2x16(v.x), unpackHalf2x16(v.y)), x[c4])
+             + dot(vec4(unpackHalf2x16(v.z), unpackHalf2x16(v.w)), x[c4 + 1]);
+    }
+    return dot(uintBitsToFloat(v), x[xo + i]);
+}
+
+void main() {
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint r = group * gl_NumSubgroups + gl_SubgroupID;
+    if (r >= p.rows) return;
+    uint lane = gl_SubgroupInvocationID, width = gl_SubgroupSize;
+    uint wr = r + p.w_row0;
+    uint per = p.kind == 0 ? 16 : (p.kind == 1 ? 8 : 4);
+    uint loads = p.cols / per;
+    uint xo = p.x_off / 4;
+    float acc = 0.0, acc2 = 0.0, up = 0.0, up2 = 0.0;
+    uint i = lane;
+    for (; i + width < loads; i += 2 * width) {
+        acc += part(wr, i, loads, xo);
+        acc2 += part(wr, i + width, loads, xo);
+        up += part_up(wr, i, loads, xo);
+        up2 += part_up(wr, i + width, loads, xo);
+    }
+    if (i < loads) {
+        acc += part(wr, i, loads, xo);
+        up += part_up(wr, i, loads, xo);
+    }
+    float g = subgroupAdd(acc + acc2), u = subgroupAdd(up + up2);
+    if (lane == 0) y[p.y_off + r] = g / (1.0 + exp(-g)) * u;
+}

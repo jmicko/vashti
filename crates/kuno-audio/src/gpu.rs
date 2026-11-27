@@ -25,6 +25,10 @@ const MV: &[u8] = include_bytes!("../shaders/mv.spv");
 const MVB: &[u8] = include_bytes!("../shaders/mvb.spv");
 const MV1: &[u8] = include_bytes!("../shaders/mv1.spv");
 const MVC: &[u8] = include_bytes!("../shaders/mvc.spv");
+const MVC8: &[u8] = include_bytes!("../shaders/mvc8.spv");
+const MV1G: &[u8] = include_bytes!("../shaders/mv1g.spv");
+const MVCG: &[u8] = include_bytes!("../shaders/mvcg.spv");
+const MVC8G: &[u8] = include_bytes!("../shaders/mvc8g.spv");
 const MV1S: &[u8] = include_bytes!("../shaders/mv1s.spv");
 const SAMPLE: &[u8] = include_bytes!("../shaders/sample.spv");
 const GATHER: &[u8] = include_bytes!("../shaders/gather.spv");
@@ -50,8 +54,12 @@ struct Kernels {
     mv1: Kernel,
     mv1_rows: usize,
     /// `mv` for 2 to 16 tokens of f16 rows on half-precision matrix units, where the
-    /// device has 16 x 16 x 16 ones for 32-lane subgroups.
+    /// device has 16 x 16 x 16 ones for 32-lane subgroups (mvc) or 8 x 16 x 16 ones for
+    /// 16-lane subgroups (mvc8); both take the same tiled weights, 16 rows a workgroup.
     mvc: Option<Kernel>,
+    /// SwiGLU's gate and up products in one (`mv1g` for one token, and the `mvc` kind's).
+    mv1g: Kernel,
+    mvcg: Option<Kernel>,
     /// `mv1` for long rows: a workgroup per row, its subgroups splitting the row.
     mv1s: Kernel,
     /// `mv` for more than 16 tokens (prompt chunks) of Q8_0 or f16 rows on half-precision
@@ -547,6 +555,17 @@ impl Device {
             },
             mvc: if gpu.has_half16() && lanes == 32 {
                 Some(gpu.kernel(MVC, 5, 11, Some(32))?)
+            } else if gpu.has_half8() {
+                // Intel's 8 x 16 x 16 units: the transposed kernel at 16-lane subgroups.
+                Some(gpu.kernel(MVC8, 5, 11, Some(16))?)
+            } else {
+                None
+            },
+            mv1g: gpu.kernel(MV1G, 6, 11, Some(lanes))?,
+            mvcg: if gpu.has_half16() && lanes == 32 {
+                Some(gpu.kernel(MVCG, 5, 11, Some(32))?)
+            } else if gpu.has_half8() {
+                Some(gpu.kernel(MVC8G, 5, 11, Some(16))?)
             } else {
                 None
             },
@@ -558,7 +577,7 @@ impl Device {
             argmax: kernel(ARGMAX, 2, 2)?,
             row: kernel(ROW, 4, 3)?,
             rope: kernel(ROPE, 2, 8)?,
-            attend: kernel(ATTEND, 5, 14)?,
+            attend: kernel(ATTEND, 6, 15)?,
             conv: kernel(CONV, 4, 4)?,
             ew: kernel(EW, 3, 6)?,
         };
@@ -681,6 +700,73 @@ impl Device {
                 mode,
             ],
             rows as u32,
+        );
+    }
+    /// SwiGLU's first half: `out = silu(gate x) * (up x)` for `n` tokens of `x` (`inner`
+    /// values a token in `out`, `ua` the up products' scratch): one step where a fused
+    /// kernel takes the shapes, else the two products side by side and the product.
+    #[allow(clippy::too_many_arguments)]
+    fn glu<'a>(
+        &'a self,
+        r: &mut Recording<'a>,
+        gate: &'a Mat,
+        up: &'a Mat,
+        x: At<'a>,
+        out: &'a Buffer,
+        ua: &'a Buffer,
+        n: usize,
+    ) {
+        let inner = gate.rows;
+        let constants = vec![
+            inner as u32,
+            gate.cols as u32,
+            n as u32,
+            gate.kind,
+            x.off as u32,
+            x.stride as u32,
+            0,
+            inner as u32,
+            0,
+            0,
+            0,
+        ];
+        let same = gate.kind == up.kind && gate.tiled == up.tiled && gate.cols == up.cols;
+        if same && n == 1 && gate.cols < 4096 && !gate.tiled {
+            r.push(
+                &self.k.mv1g,
+                vec![
+                    &gate.w,
+                    gate.scales.as_ref().unwrap_or(&self.dummy),
+                    x.buffer,
+                    out,
+                    &up.w,
+                    up.scales.as_ref().unwrap_or(&self.dummy),
+                ],
+                constants,
+                inner.div_ceil(self.k.mv1_rows) as u32,
+            );
+            return;
+        }
+        if let Some(k) = self.k.mvcg.as_ref().filter(|_| same && gate.tiled) {
+            r.push(
+                k,
+                vec![&gate.w, &self.dummy, x.buffer, out, &up.w],
+                constants,
+                (inner / 16) as u32,
+            );
+            return;
+        }
+        self.mv(r, gate, x, at(out, 0, inner), n);
+        r.together();
+        self.mv(r, up, x, at(ua, 0, inner), n);
+        self.ew(
+            r,
+            0,
+            at(out, 0, 0),
+            at(ua, 0, 0),
+            at(out, 0, 0),
+            n * inner,
+            1,
         );
     }
     /// `x += op` (op first normed with `post`), then `h` the new `x` normed with `next`:
@@ -920,7 +1006,18 @@ impl Device {
                     let total = if causal { start + n } else { n };
                     r.push(
                         &self.k.attend,
-                        vec![&s.q, keys, values, &s.scores, &s.att],
+                        vec![
+                            &s.q,
+                            keys,
+                            values,
+                            &s.scores,
+                            &s.att,
+                            if gate.is_some() {
+                                &s.gates
+                            } else {
+                                &self.dummy
+                            },
+                        ],
                         vec![
                             n as u32,
                             *heads as u32,
@@ -936,37 +1033,16 @@ impl Device {
                             *window as u32,
                             (1.0 / (hd as f32).sqrt()).to_bits(),
                             s.score_cap as u32,
+                            u32::from(gate.is_some()),
                         ],
                         (n * heads) as u32,
                     );
-                    if gate.is_some() {
-                        self.ew(
-                            r,
-                            1,
-                            at(&s.gates, 0, 0),
-                            at(&self.dummy, 0, 0),
-                            at(&s.att, 0, 0),
-                            n * qw,
-                            hd,
-                        );
-                    }
                     self.mv(r, o, at(&s.att, 0, qw), at(&s.op, 0, w), n);
                 }
             }
             self.residual(r, s, x, b, b.post_op.as_ref(), Some(&b.ln2), n);
             let inner = b.inner();
-            self.mv(r, &b.gate, at(&s.h, 0, w), at(&s.ga, 0, inner), n);
-            r.together();
-            self.mv(r, &b.up, at(&s.h, 0, w), at(&s.ua, 0, inner), n);
-            self.ew(
-                r,
-                0,
-                at(&s.ga, 0, 0),
-                at(&s.ua, 0, 0),
-                at(&s.ga, 0, 0),
-                n * inner,
-                1,
-            );
+            self.glu(r, &b.gate, &b.up, at(&s.h, 0, w), &s.ga, &s.ua, n);
             self.mv(r, &b.down, at(&s.ga, 0, inner), at(&s.op, 0, w), n);
             let next = blocks.get(index + 1).filter(|next| next.width == w);
             self.residual(r, s, x, b, b.post_ffn.as_ref(), next.map(|nb| &nb.ln1), n);
@@ -2345,6 +2421,7 @@ mod tests {
             (&k.mvb, "mvb"),
             (&k.mv1, "mv1"),
             (&k.mv1s, "mv1s"),
+            (&k.mv1g, "mv1g"),
             (&k.sample, "sample"),
             (&k.gather, "gather"),
             (&k.norm, "norm"),
@@ -2357,6 +2434,12 @@ mod tests {
         ];
         if let Some(c) = &k.mvc {
             names.push((c, "mvc"));
+        }
+        if let Some(c) = &k.mvcg {
+            names.push((c, "mvcg"));
+        }
+        if let Some(c) = &k.mmq {
+            names.push((c, "mmq"));
         }
         let mut totals: std::collections::BTreeMap<String, (f64, usize)> = Default::default();
         let mut frame_times = Vec::new();
@@ -2862,8 +2945,8 @@ mod tests {
         let out = std::env::temp_dir().join(format!("kuno-audio-spv-{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
         for name in [
-            "mv", "mvb", "mv1", "mv1s", "mvc", "sample", "gather", "norm", "addnorm", "normrope",
-            "argmax", "row", "mmq", "rope", "attend", "conv", "ew",
+            "mv", "mvb", "mv1", "mv1s", "mv1g", "mvc", "mvc8", "mvcg", "mvc8g", "sample", "gather",
+            "norm", "addnorm", "normrope", "argmax", "row", "mmq", "rope", "attend", "conv", "ew",
         ] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")

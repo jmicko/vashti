@@ -1500,6 +1500,15 @@ impl Gpu {
                 && s.result == vk::ComponentTypeKHR::FLOAT32
         })
     }
+    /// Whether the device multiplies 8 x 16 by 16 x 16 half-precision matrices with f32 sums
+    /// at subgroup scope (Intel Xe2, at 16-lane subgroups).
+    pub fn has_half8(&self) -> bool {
+        self.core.shapes.iter().any(|s| {
+            (s.m, s.n, s.k) == (8, 16, 16)
+                && s.a == vk::ComponentTypeKHR::FLOAT16
+                && s.result == vk::ComponentTypeKHR::FLOAT32
+        })
+    }
     /// Whether `VK_NV_cooperative_matrix2` kernels can run (`FATTEND16_NV`).
     pub fn matrix2(&self) -> bool {
         self.core.matrix2

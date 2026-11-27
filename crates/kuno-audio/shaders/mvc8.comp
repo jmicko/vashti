@@ -1,0 +1,87 @@
+// mvc for devices whose half-precision matrix units are 8 x 16 x 16 at 16-lane subgroups
+// (Intel Xe2): the same product, buffers, constants, flags and tiled weights (Mat::tiled),
+// computed transposed: per 16-column step, A = 8 weight rows x 16 columns (row-major in
+// the tile, half of a 16-row tile), B = the step's x as halves (columns x tokens), C = 8
+// rows x 16 tokens. A workgroup takes 16 rows; its SPLIT subgroups take interleaved steps
+// and meet in shared memory. 2 to 16 tokens; rows and cols are multiples of 16.
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// Keep half-precision subnormals (tiny weights) instead of reading them as zero.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+#ifndef SPLIT
+#define SPLIT 8
+#endif
+layout(local_size_x = 16 * SPLIT) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer Bias { float bias[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint n; uint kind;
+    uint x_off; uint x_stride; uint y_off; uint y_stride;
+    uint w_row0; uint b_off; uint flags;
+} p;
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
+
+// Per subgroup, its x tile as halves [token][column]: 16 tokens x 2 words of 8.
+shared uvec4 tile[SPLIT * 32];
+// Per subgroup, its sums [row][token] for 16 rows.
+shared float sums[SPLIT * 256];
+
+void main() {
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint row0 = group * 16;
+    if (row0 >= p.rows) return;
+    uint steps = p.cols / 16;
+    uint wr0 = row0 + p.w_row0;
+    // This lane's part of the x tile: token lane, all 16 columns (two words).
+    bool live = lane < p.n;
+    uint xa = (p.x_off + lane * p.x_stride) / 4;
+    C c0 = C(0.0), c1 = C(0.0);
+    for (uint k = sg; k < steps; k += SPLIT) {
+        uint base = ((wr0 / 16) * steps + k) * 32;
+        A a0, a1;
+        coopMatLoad(a0, w, base, 2, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a1, w, base + 16, 2, gl_CooperativeMatrixLayoutRowMajor);
+        vec4 v0 = vec4(0.0), v1 = vec4(0.0), v2 = vec4(0.0), v3 = vec4(0.0);
+        if (live) {
+            uint at = xa + k * 4;
+            v0 = x[at]; v1 = x[at + 1]; v2 = x[at + 2]; v3 = x[at + 3];
+        }
+        tile[(sg * 16 + lane) * 2] = uvec4(packHalf2x16(v0.xy), packHalf2x16(v0.zw),
+                                           packHalf2x16(v1.xy), packHalf2x16(v1.zw));
+        tile[(sg * 16 + lane) * 2 + 1] = uvec4(packHalf2x16(v2.xy), packHalf2x16(v2.zw),
+                                               packHalf2x16(v3.xy), packHalf2x16(v3.zw));
+        subgroupMemoryBarrierShared();
+        subgroupBarrier();
+        B b;   // element (column, token) at tile[token][column]: column-major
+        coopMatLoad(b, tile, sg * 32, 2, gl_CooperativeMatrixLayoutColumnMajor);
+        c0 = coopMatMulAdd(a0, b, c0);
+        c1 = coopMatMulAdd(a1, b, c1);
+        subgroupBarrier();
+    }
+    coopMatStore(c0, sums, sg * 256, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c1, sums, sg * 256 + 128, 16, gl_CooperativeMatrixLayoutRowMajor);
+    barrier();
+    for (uint o = gl_LocalInvocationIndex; o < 256; o += 16 * SPLIT) {
+        uint rr = o / 16, tt = o % 16;
+        if (tt >= p.n) continue;
+        float v = 0.0;
+        for (uint g = 0; g < SPLIT; g++) v += sums[g * 256 + o];
+        uint r = row0 + rr;
+        if ((p.flags & 1) != 0) v += bias[p.b_off + r];
+        uint ya = p.y_off + tt * p.y_stride + r;
+        y[ya] = ((p.flags & 2) != 0) ? y[ya] + v : v;
+    }
+}

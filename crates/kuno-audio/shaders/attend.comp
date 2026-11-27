@@ -2,10 +2,10 @@
 // [key][kv_heads][dim] at k_off/v_off, key j at position j. Query t sits at position
 // pos0 + t; causal queries see keys up to their own position, within `window` positions
 // (0: all); bidirectional queries see keys 0..keys. Scores go through `scratch`, one row of
-// `cap` floats per (query, head). Output [n][heads][dim] at o_off. One workgroup per
-// (query, head); each subgroup takes whole keys (its lanes over the dimensions, the query
-// in registers; dim at most 8 per lane), then the lanes take keys for the softmax and
-// dimensions for the sum.
+// `cap` floats per (query, head). Output [n][heads][dim] at o_off, times the sigmoid of
+// the head's gate ([n][heads]) when `gated`. One workgroup per (query, head); each
+// subgroup takes whole keys (its lanes over the dimensions, the query in registers; dim at
+// most 8 per lane), then the lanes take keys for the softmax and dimensions for the sum.
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 128) in;
@@ -14,11 +14,12 @@ layout(set = 0, binding = 1) readonly buffer K { float k[]; };
 layout(set = 0, binding = 2) readonly buffer V { float v[]; };
 layout(set = 0, binding = 3) buffer Scratch { float sc[]; };
 layout(set = 0, binding = 4) buffer O { float o[]; };
+layout(set = 0, binding = 5) readonly buffer Gates { float gates[]; };
 layout(push_constant) uniform Constants {
     uint n; uint heads; uint kv_heads; uint dim;
     uint q_off; uint k_off; uint v_off; uint o_off;
     uint pos0; uint keys; uint causal; uint window;
-    float scale; uint cap;
+    float scale; uint cap; uint gated;
 } p;
 
 shared float part[128];
@@ -90,6 +91,9 @@ void main() {
     for (uint i = lane; i < p.dim; i += 128) {
         float acc = 0.0;
         for (uint j = first; j < last; j++) acc += sc[row + j] * v[p.v_off + j * kvw + g * p.dim + i];
-        o[p.o_off + (t * p.heads + head) * p.dim + i] = acc / sum;
+        float v = acc / sum;
+        // A gated head: times the sigmoid of its gate ([n][heads]).
+        if (p.gated != 0) v *= 1.0 / (1.0 + exp(-gates[t * p.heads + head]));
+        o[p.o_off + (t * p.heads + head) * p.dim + i] = v;
     }
 }
