@@ -2928,6 +2928,79 @@ mod tests {
         }
     }
 
+    /// One-token product variants (`mv1v_<loads in flight>.spv` in KUNO_AUDIO_MV1_DIR) at
+    /// 16- and 32-lane subgroups on the backbone's shapes, device time (run by hand).
+    #[test]
+    #[ignore]
+    fn bench_mv1_variants() {
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MV1_DIR").unwrap());
+        let d = Device::open(&pci).unwrap();
+        let mut kernels = vec![("mv1".to_string(), &d.k.mv1, d.k.mv1_rows)];
+        let mut owned = Vec::new();
+        for u in [1, 2, 4, 8] {
+            let spirv = std::fs::read(dir.join(format!("mv1v_{u}.spv"))).unwrap();
+            for lanes in [16u32, 32] {
+                // Sizes the device lacks fail to build and are left out.
+                if let Ok(k) = d.gpu.kernel(&spirv, 5, 11, Some(lanes)) {
+                    owned.push((format!("u{u} x{lanes}"), k, 128 / lanes as usize));
+                }
+            }
+        }
+        for (name, k, rows) in &owned {
+            kernels.push((name.clone(), k, *rows));
+        }
+        for (rows, cols) in [
+            (7680usize, 2048usize),
+            (6144, 2048),
+            (2048, 2048),
+            (512, 2048),
+        ] {
+            let m = Mat {
+                w: d.gpu.buffer((rows * cols) as u64).unwrap(),
+                scales: Some(d.gpu.buffer((rows * cols / 16) as u64).unwrap()),
+                kind: 0,
+                rows,
+                cols,
+                tiled: false,
+            };
+            let x = d.gpu.buffer((cols * 4) as u64).unwrap();
+            let y = d.gpu.buffer((rows * 4) as u64).unwrap();
+            for (name, kernel, per) in &kernels {
+                let mut r = Recording::new();
+                for _ in 0..100 {
+                    r.push(
+                        kernel,
+                        vec![&m.w, m.scales.as_ref().unwrap(), &x, &y, &d.dummy],
+                        vec![
+                            rows as u32,
+                            cols as u32,
+                            1,
+                            0,
+                            0,
+                            cols as u32,
+                            0,
+                            rows as u32,
+                            0,
+                            0,
+                            0,
+                        ],
+                        rows.div_ceil(*per) as u32,
+                    );
+                }
+                r.run(&d.gpu).unwrap();
+                let mut t: Vec<f64> = r.profile(&d.gpu).unwrap();
+                t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let each = t[50] / 1e9;
+                eprintln!(
+                    "MV1 {name:8} {rows}x{cols}: {:6.1} us, {:4.0} GB/s",
+                    each * 1e6,
+                    (rows * cols) as f64 * 1.0625 / each / 1e9
+                );
+            }
+        }
+    }
+
     /// The checked-in SPIR-V matches its source (recompiled with `glslangValidator` when
     /// installed; the binaries are checked in so builds need no shader compiler).
     #[test]

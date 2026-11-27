@@ -5,7 +5,8 @@
 // `cap` floats per (query, head). Output [n][heads][dim] at o_off, times the sigmoid of
 // the head's gate ([n][heads]) when `gated`. One workgroup per (query, head); each
 // subgroup takes whole keys (its lanes over the dimensions, the query in registers; dim at
-// most 8 per lane), then the lanes take keys for the softmax and dimensions for the sum.
+// most 8 per lane), then the lanes take keys for the softmax, and for the sum lane groups
+// of `dim` lanes split the keys.
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 128) in;
@@ -88,9 +89,37 @@ void main() {
     sum = reduce_sum(sum, lane);
     memoryBarrierBuffer();
     barrier();
+    uint va = p.v_off + g * p.dim;
+    if (p.dim <= 128) {
+        // Lane groups of `dim` lanes split the keys (128 / dim groups), four running sums a
+        // lane; the groups meet in `part`.
+        uint groups = 128 / p.dim, i = lane % p.dim, grp = lane / p.dim;
+        float a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0;
+        if (grp < groups) {
+            uint j = first + grp;
+            for (; j + 3 * groups < last; j += 4 * groups) {
+                a0 += sc[row + j] * v[va + j * kvw + i];
+                a1 += sc[row + j + groups] * v[va + (j + groups) * kvw + i];
+                a2 += sc[row + j + 2 * groups] * v[va + (j + 2 * groups) * kvw + i];
+                a3 += sc[row + j + 3 * groups] * v[va + (j + 3 * groups) * kvw + i];
+            }
+            for (; j < last; j += groups) a0 += sc[row + j] * v[va + j * kvw + i];
+        }
+        part[lane] = (a0 + a1) + (a2 + a3);
+        barrier();
+        if (lane < p.dim) {
+            float acc = 0.0;
+            for (uint q = 0; q < groups; q++) acc += part[q * p.dim + lane];
+            float out_v = acc / sum;
+            // A gated head: times the sigmoid of its gate ([n][heads]).
+            if (p.gated != 0) out_v *= 1.0 / (1.0 + exp(-gates[t * p.heads + head]));
+            o[p.o_off + (t * p.heads + head) * p.dim + lane] = out_v;
+        }
+        return;
+    }
     for (uint i = lane; i < p.dim; i += 128) {
         float acc = 0.0;
-        for (uint j = first; j < last; j++) acc += sc[row + j] * v[p.v_off + j * kvw + g * p.dim + i];
+        for (uint j = first; j < last; j++) acc += sc[row + j] * v[va + j * kvw + i];
         float v = acc / sum;
         // A gated head: times the sigmoid of its gate ([n][heads]).
         if (p.gated != 0) v *= 1.0 / (1.0 + exp(-gates[t * p.heads + head]));
