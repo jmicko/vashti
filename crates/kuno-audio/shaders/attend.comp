@@ -3,8 +3,11 @@
 // pos0 + t; causal queries see keys up to their own position, within `window` positions
 // (0: all); bidirectional queries see keys 0..keys. Scores go through `scratch`, one row of
 // `cap` floats per (query, head). Output [n][heads][dim] at o_off. One workgroup per
-// (query, head).
+// (query, head); each subgroup takes whole keys (its lanes over the dimensions, the query
+// in registers; dim at most 8 per lane), then the lanes take keys for the softmax and
+// dimensions for the sum.
 #version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 128) in;
 layout(set = 0, binding = 0) readonly buffer Q { float q[]; };
 layout(set = 0, binding = 1) readonly buffer K { float k[]; };
@@ -20,25 +23,22 @@ layout(push_constant) uniform Constants {
 
 shared float part[128];
 
+// Across the workgroup: subgroup reductions, then one value per subgroup through `part`.
 float reduce_max(float mine, uint lane) {
-    part[lane] = mine;
+    mine = subgroupMax(mine);
+    if (gl_SubgroupInvocationID == 0) part[gl_SubgroupID] = mine;
     barrier();
-    for (uint h = 64; h > 0; h >>= 1) {
-        if (lane < h) part[lane] = max(part[lane], part[lane + h]);
-        barrier();
-    }
     float r = part[0];
+    for (uint s = 1; s < gl_NumSubgroups; s++) r = max(r, part[s]);
     barrier();
     return r;
 }
 float reduce_sum(float mine, uint lane) {
-    part[lane] = mine;
+    mine = subgroupAdd(mine);
+    if (gl_SubgroupInvocationID == 0) part[gl_SubgroupID] = mine;
     barrier();
-    for (uint h = 64; h > 0; h >>= 1) {
-        if (lane < h) part[lane] += part[lane + h];
-        barrier();
-    }
-    float r = part[0];
+    float r = 0.0;
+    for (uint s = 0; s < gl_NumSubgroups; s++) r += part[s];
     barrier();
     return r;
 }
@@ -57,15 +57,26 @@ void main() {
         if (p.window != 0 && pos + 1 > p.window) first = pos + 1 - p.window;
     }
     uint row = gl_WorkGroupID.x * p.cap;
+    uint width = gl_SubgroupSize, sl = gl_SubgroupInvocationID;
+    // This lane's dimensions of the query (dim up to 8 per lane).
+    float qv[8];
+    for (uint u = 0; u < 8; u++) {
+        uint i = sl + u * width;
+        qv[u] = i < p.dim ? q[qa + i] : 0.0;
+    }
     float top = -3.4e38;
-    for (uint j = first + lane; j < last; j += 128) {
+    for (uint j = first + gl_SubgroupID; j < last; j += gl_NumSubgroups) {
         uint ka = p.k_off + j * kvw + g * p.dim;
         float d = 0.0;
-        for (uint i = 0; i < p.dim; i++) d += q[qa + i] * k[ka + i];
-        d *= p.scale;
-        sc[row + j] = d;
+        for (uint u = 0; u < 8; u++) {
+            uint i = sl + u * width;
+            if (i < p.dim) d += qv[u] * k[ka + i];
+        }
+        d = subgroupAdd(d) * p.scale;
+        if (sl == 0) sc[row + j] = d;
         top = max(top, d);
     }
+    memoryBarrierBuffer();
     top = reduce_max(top, lane);
     float sum = 0.0;
     for (uint j = first + lane; j < last; j += 128) {

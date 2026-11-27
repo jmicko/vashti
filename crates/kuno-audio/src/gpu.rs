@@ -25,6 +25,7 @@ const MV: &[u8] = include_bytes!("../shaders/mv.spv");
 const MVB: &[u8] = include_bytes!("../shaders/mvb.spv");
 const MV1: &[u8] = include_bytes!("../shaders/mv1.spv");
 const MVC: &[u8] = include_bytes!("../shaders/mvc.spv");
+const MV1S: &[u8] = include_bytes!("../shaders/mv1s.spv");
 const SAMPLE: &[u8] = include_bytes!("../shaders/sample.spv");
 const GATHER: &[u8] = include_bytes!("../shaders/gather.spv");
 const NORM: &[u8] = include_bytes!("../shaders/norm.spv");
@@ -47,6 +48,8 @@ struct Kernels {
     /// `mv` for 2 to 16 tokens of f16 rows on half-precision matrix units, where the
     /// device has 16 x 16 x 16 ones for 32-lane subgroups.
     mvc: Option<Kernel>,
+    /// `mv1` for long rows: a workgroup per row, its subgroups splitting the row.
+    mv1s: Kernel,
     sample: Kernel,
     gather: Kernel,
     norm: Kernel,
@@ -479,6 +482,7 @@ impl Device {
             mvb: kernel(MVB, 5, 11)?,
             mv1: gpu.kernel(MV1, 5, 11, Some(lanes))?,
             mv1_rows: 128 / lanes as usize,
+            mv1s: kernel(MV1S, 5, 11)?,
             mvc: if gpu.has_half16() && lanes == 32 {
                 Some(gpu.kernel(MVC, 5, 11, Some(32))?)
             } else {
@@ -529,7 +533,11 @@ impl Device {
                 && rows.is_multiple_of(16)
                 && m.cols.is_multiple_of(16)
         });
-        let (kernel, groups) = if n == 1 {
+        // One token: a subgroup per row, or for long rows (few of them: the FFN's down
+        // projection) a workgroup per row (2048 x 7680: 59 to 51 us on the RTX 3060).
+        let (kernel, groups) = if n == 1 && m.cols >= 4096 {
+            (&self.k.mv1s, rows)
+        } else if n == 1 {
             (&self.k.mv1, rows.div_ceil(self.k.mv1_rows))
         } else if let Some(k) = matrix {
             (k, rows / 16)
@@ -2029,6 +2037,7 @@ mod tests {
             (&k.mv, "mv"),
             (&k.mvb, "mvb"),
             (&k.mv1, "mv1"),
+            (&k.mv1s, "mv1s"),
             (&k.sample, "sample"),
             (&k.gather, "gather"),
             (&k.norm, "norm"),
@@ -2182,6 +2191,7 @@ mod tests {
                 ("mv", &d.k.mv, 1),
                 ("mvb", &d.k.mvb, 4),
                 ("mv1", &d.k.mv1, d.k.mv1_rows),
+                ("mv1s", &d.k.mv1s, 1),
             ] {
                 if name.starts_with("mv1") && n > 1 {
                     continue;
@@ -2212,9 +2222,8 @@ mod tests {
                         }
                     }
                     r.run(&d.gpu).unwrap();
-                    let t0 = std::time::Instant::now();
-                    r.run(&d.gpu).unwrap();
-                    let each = t0.elapsed().as_secs_f64() / 50.0;
+                    // Device time (submission excluded).
+                    let each = r.profile(&d.gpu).unwrap().iter().sum::<f64>() / 50.0 / 1e9;
                     eprintln!(
                         "{name:4} {} kind {kind} {rows}x{cols} n {n:2}: {:6.1} us, {:4.0} GB/s",
                         if together {
@@ -2391,8 +2400,8 @@ mod tests {
         let out = std::env::temp_dir().join(format!("kuno-audio-spv-{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
         for name in [
-            "mv", "mvb", "mv1", "mvc", "sample", "gather", "norm", "addnorm", "rope", "attend",
-            "conv", "ew",
+            "mv", "mvb", "mv1", "mv1s", "mvc", "sample", "gather", "norm", "addnorm", "rope",
+            "attend", "conv", "ew",
         ] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")

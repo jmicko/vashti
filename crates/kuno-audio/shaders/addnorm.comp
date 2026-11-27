@@ -32,29 +32,30 @@ float mean_square(float v[KEEP], uint slot) {
 void main() {
     uint base = gl_WorkGroupID.x * p.width;
     uint lane = gl_LocalInvocationIndex;
-    float a[KEEP];
+    bool post = (p.flags & 1) != 0, next = (p.flags & 2) != 0;
+    // Every load up front (none depends on a sum), so the row costs one trip to memory.
+    float a[KEEP], r[KEEP], wp[KEEP], wn[KEEP];
     for (uint j = 0; j < KEEP; j++) {
         uint i = lane + j * LANES;
-        a[j] = i < p.width ? op[base + i] : 0.0;
+        bool in_row = i < p.width;
+        a[j] = in_row ? op[base + i] : 0.0;
+        r[j] = in_row ? x[base + i] : 0.0;
+        wp[j] = in_row && post ? w_post[i] : 0.0;
+        wn[j] = in_row && next ? w_next[i] : 0.0;
     }
-    if ((p.flags & 1) != 0) {
+    if (post) {
         float scale = 1.0 / sqrt(mean_square(a, 0) + p.eps);
-        for (uint j = 0; j < KEEP; j++) {
-            uint i = lane + j * LANES;
-            a[j] = i < p.width ? a[j] * scale * w_post[i] : 0.0;
-        }
+        for (uint j = 0; j < KEEP; j++) a[j] = a[j] * scale * wp[j];
     }
     for (uint j = 0; j < KEEP; j++) {
         uint i = lane + j * LANES;
-        if (i < p.width) {
-            a[j] += x[base + i];
-            x[base + i] = a[j];
-        }
+        a[j] += r[j];
+        if (i < p.width) x[base + i] = a[j];
     }
-    if ((p.flags & 2) == 0) return;
+    if (!next) return;
     float scale = 1.0 / sqrt(mean_square(a, 1) + p.eps);
     for (uint j = 0; j < KEEP; j++) {
         uint i = lane + j * LANES;
-        if (i < p.width) h[base + i] = a[j] * scale * w_next[i];
+        if (i < p.width) h[base + i] = a[j] * scale * wn[j];
     }
 }
