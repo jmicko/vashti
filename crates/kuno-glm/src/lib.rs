@@ -16,6 +16,8 @@ pub mod cpu;
 #[cfg(feature = "gpu")]
 pub mod engine;
 #[cfg(feature = "gpu")]
+pub mod experts;
+#[cfg(feature = "gpu")]
 pub mod gpu;
 pub mod reference;
 
@@ -181,6 +183,23 @@ impl Model {
             row_bytes,
             bytes,
         })
+    }
+    /// Rows `first..first + count` of a weight's packed bytes into `out` (its exact size).
+    pub fn read_rows(&self, name: &str, first: usize, out: &mut [u8]) -> Result<()> {
+        let view = self.gguf.tensor(name).ok_or("model_tensor_missing")?;
+        let row_bytes = view.info().row_bytes() as usize;
+        view.read_range((first * row_bytes) as u64, out)
+            .map_err(|_| "model_read_failed")
+    }
+    /// A weight's type and packed bytes per row.
+    pub fn layout(&self, name: &str) -> Result<(TensorType, usize, usize)> {
+        let view = self.gguf.tensor(name).ok_or("model_tensor_missing")?;
+        let info = view.info();
+        Ok((
+            info.dtype(),
+            info.row_bytes() as usize,
+            info.row_len() as usize,
+        ))
     }
     /// A small weight decoded to f32 (norms, biases, scales).
     pub fn vector(&self, name: &str) -> Result<Vec<f32>> {

@@ -47,6 +47,46 @@ fn main() {
         }
         return;
     }
+    if let Some(extra) = std::env::var("KUNO_GLM_BENCH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        // The engine alone: the prompt, then `extra` greedy tokens (ids only).
+        let mut next = 0;
+        let mut times = Vec::new();
+        for (i, &id) in ids.iter().chain(std::iter::repeat_n(&0, extra)).enumerate() {
+            let id = if i < ids.len() { id } else { next };
+            let t = std::time::Instant::now();
+            next = engine.step(id).unwrap();
+            times.push(t.elapsed().as_secs_f64());
+        }
+        let generated = &times[ids.len()..];
+        if let Ok(path) = std::env::var("KUNO_GLM_COUNTS") {
+            // Expert choice counts per block, one line each (no token content).
+            let c = engine.counts.lock().unwrap();
+            let text: String = c
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        + "\n"
+                })
+                .collect();
+            std::fs::write(path, text).unwrap();
+        }
+        let mean = generated.iter().sum::<f64>() / generated.len().max(1) as f64;
+        println!(
+            "prompt {} tokens {:.2} s; {} generated: {:.1} ms each ({:.2} tokens/s)",
+            ids.len(),
+            times[..ids.len()].iter().sum::<f64>(),
+            generated.len(),
+            mean * 1e3,
+            1.0 / mean
+        );
+        return;
+    }
     engine.trace = Some(Vec::new());
     let mut reference = Reference::new(&model).unwrap();
     for (i, &id) in ids.iter().take(count).enumerate() {

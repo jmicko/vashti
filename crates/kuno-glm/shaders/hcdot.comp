@@ -6,8 +6,8 @@
 // mode 1 first applies the previous sublayer's mixer (hcmix's post and comb in coef) with
 // its output `o` [n]: X[dst][i] = o[i] * post[dst] + sum_src X[src][i] * comb[src][dst],
 // written to Xn (X is only read: other workgroups read every stream at their columns).
-// mode 2 is mode 1 with o2[i] + o[i] as the output (the routed experts' sum from the CPU,
-// then the shared expert, the reference's order). mode 3 copies X to Xn unchanged (the first
+// mode 2 is mode 1 with (o2[i] + o3[i]) + o[i] as the output (the routed experts' sums from
+// the CPU and the device, then the shared expert). mode 3 copies X to Xn unchanged (the first
 // block: X is then the host's embedding).
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
@@ -21,6 +21,7 @@ layout(set = 0, binding = 4) readonly buffer Coef { float coef[]; };
 layout(set = 0, binding = 5) readonly buffer Out { float o[]; };
 layout(set = 0, binding = 6) writeonly buffer Xn { float xn[]; };
 layout(set = 0, binding = 7) readonly buffer Out2 { float o2[]; };
+layout(set = 0, binding = 8) readonly buffer Out3 { float o3[]; };
 layout(push_constant) uniform Constants { uint n; uint mode; uint o_off; } p;
 
 const uint CHUNK = 512, ROWS = 24, COLS = 16384;
@@ -38,7 +39,7 @@ void main() {
         if (p.mode == 1 || p.mode == 2) {
             uint dst = c / p.n, i = c % p.n;
             // coef: [0..4) post, [4..20) comb[src][dst]
-            float res = p.mode == 2 ? o2[i] + o[p.o_off + i] : o[p.o_off + i];
+            float res = p.mode == 2 ? (o2[i] + o3[i]) + o[p.o_off + i] : o[p.o_off + i];
             v = res * coef[dst];
             for (uint src = 0; src < 4; src++) v += x[src * p.n + i] * coef[4 + src * 4 + dst];
         }

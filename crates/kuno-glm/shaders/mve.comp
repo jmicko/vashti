@@ -1,0 +1,121 @@
+// The routed experts kept on the device, one token: one subgroup per row.
+// route: ids [used], weights [used] (as written by route.comp); slot [experts]: the expert's
+// slot in this block's pools, or 0xffffffff when it runs on the CPU.
+// mode 0 (gate and up): workgroup column y = chosen expert k; row r of its 2*ff gate|up rows
+//   (cols = embd) dotted with x, into y[k * 2ff + r]; non-resident experts write nothing.
+// mode 1 (down): row r (of embd, cols = ff): sum over the chosen experts in order, resident
+//   ones only, of weight_k * (down row r . x[k * ff ..]), into y[r].
+// Weights per slot: rows of blocks of 256 values, repacked to whole words with the f16 block
+// scale apart (scales [slot][rows][blocks]):
+//   kind 0 IQ2_S: 20 words: qs (grid low bytes) 0..7, signs 8..15, qh 16..17, scales 18..19;
+//   kind 1 IQ3_S: 27 words: qs 0..15, qh 16..17, signs 18..25, scales 26;
+//   kind 2 IQ4_XS: 34 words as stored (its scale inside: words 0..33, scales unused).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uint w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer Route { uint route[]; };
+layout(set = 0, binding = 5) readonly buffer Slot { uint slot[]; };
+layout(set = 0, binding = 6) readonly buffer Tables { uint grid2[2048]; uint grid3[512]; };
+layout(push_constant) uniform Constants {
+    uint mode; uint kind; uint rows; uint cols; uint used; uint x_off;
+} p;
+
+const float IQ4NL[16] = float[16](-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113);
+
+uint byte_of(uint word, uint i) { return (word >> (8 * i)) & 255u; }
+
+// Sub-block `ib` (32 values) of block `b` (words at wb, f16 scale index si) against x from
+// vec4 index c4.
+float sub(uint wb, uint si, uint ib, uint c4) {
+    float sum = 0.0;
+    if (p.kind == 0) {
+        float d = unpackHalf2x16(s[si >> 1])[si & 1];
+        uint qs = w[wb + ib], signs = w[wb + 8 + ib];
+        uint qh = byte_of(w[wb + 16 + ib / 4], ib % 4);
+        uint sc = byte_of(w[wb + 18 + ib / 4], ib % 4);
+        for (uint l = 0; l < 4; l++) {
+            uint idx = byte_of(qs, l) | (((qh >> (2 * l)) & 3u) << 8);
+            uint g0 = grid2[2 * idx], g1 = grid2[2 * idx + 1];
+            uint sg = byte_of(signs, l);
+            float part = 0.0;
+            vec4 a = vec4(byte_of(g0, 0), byte_of(g0, 1), byte_of(g0, 2), byte_of(g0, 3));
+            vec4 b = vec4(byte_of(g1, 0), byte_of(g1, 1), byte_of(g1, 2), byte_of(g1, 3));
+            a *= vec4((sg & 1u) != 0 ? -1.0 : 1.0, (sg & 2u) != 0 ? -1.0 : 1.0,
+                      (sg & 4u) != 0 ? -1.0 : 1.0, (sg & 8u) != 0 ? -1.0 : 1.0);
+            b *= vec4((sg & 16u) != 0 ? -1.0 : 1.0, (sg & 32u) != 0 ? -1.0 : 1.0,
+                      (sg & 64u) != 0 ? -1.0 : 1.0, (sg & 128u) != 0 ? -1.0 : 1.0);
+            part = dot(a, x[c4 + 2 * l]) + dot(b, x[c4 + 2 * l + 1]);
+            float scale = float(l < 2 ? (sc & 15u) : (sc >> 4)) * 0.25 + 0.125;
+            sum += part * scale;
+        }
+        return sum * d;
+    } else if (p.kind == 1) {
+        float d = unpackHalf2x16(s[si >> 1])[si & 1];
+        uint q0 = w[wb + 2 * ib], q1 = w[wb + 2 * ib + 1];
+        uint qh = byte_of(w[wb + 16 + ib / 4], ib % 4);
+        uint signs = w[wb + 18 + ib];
+        uint sc = (byte_of(w[wb + 26], ib / 2) >> (4 * (ib % 2))) & 15u;
+        for (uint l = 0; l < 8; l++) {
+            uint idx = byte_of(l < 4 ? q0 : q1, l % 4) | (((qh >> l) & 1u) << 8);
+            uint g = grid3[idx];
+            uint sg = byte_of(signs, l / 2) >> (4 * (l % 2));
+            vec4 a = vec4(byte_of(g, 0), byte_of(g, 1), byte_of(g, 2), byte_of(g, 3));
+            a *= vec4((sg & 1u) != 0 ? -1.0 : 1.0, (sg & 2u) != 0 ? -1.0 : 1.0,
+                      (sg & 4u) != 0 ? -1.0 : 1.0, (sg & 8u) != 0 ? -1.0 : 1.0);
+            sum += dot(a, x[c4 + l]);
+        }
+        return sum * d * float(1 + 2 * sc);
+    }
+    // IQ4_XS
+    uint h0 = w[wb];
+    float d = unpackHalf2x16(h0).x;
+    uint sh = h0 >> 16;
+    uint sl = byte_of(w[wb + 1 + ib / 8], (ib / 2) % 4);
+    int ls = int(((sl >> (4 * (ib % 2))) & 15u) | (((sh >> (2 * ib)) & 3u) << 4)) - 32;
+    for (uint q = 0; q < 4; q++) {
+        uint v = w[wb + 2 + ib * 4 + q];
+        vec4 lo = vec4(IQ4NL[v & 15u], IQ4NL[(v >> 8) & 15u], IQ4NL[(v >> 16) & 15u], IQ4NL[(v >> 24) & 15u]);
+        vec4 hi = vec4(IQ4NL[(v >> 4) & 15u], IQ4NL[(v >> 12) & 15u], IQ4NL[(v >> 20) & 15u], IQ4NL[v >> 28]);
+        sum += dot(lo, x[c4 + q]) + dot(hi, x[c4 + 4 + q]);
+    }
+    return sum * d * float(ls);
+}
+
+// Row `row` of slot `sl` (rows `p.rows` of `p.cols`) dotted with x from float offset xo.
+float row_dot(uint sl, uint row, uint xo) {
+    uint words = p.kind == 0 ? 20 : (p.kind == 1 ? 27 : 34);
+    uint blocks = p.cols / 256;
+    uint lane = gl_SubgroupInvocationID, width = gl_SubgroupSize;
+    float acc = 0.0;
+    for (uint t = lane; t < blocks * 8; t += width) {
+        uint b = t / 8, ib = t % 8;
+        uint rb = (sl * p.rows + row) * blocks + b;
+        acc += sub(rb * words, rb, ib, (xo + b * 256 + ib * 32) / 4);
+    }
+    return subgroupAdd(acc);
+}
+
+void main() {
+    uint group = gl_WorkGroupID.x;
+    uint r = group * gl_NumSubgroups + gl_SubgroupID;
+    if (r >= p.rows) return;
+    if (p.mode == 0) {
+        uint k = gl_WorkGroupID.y;
+        uint sl = slot[route[k]];
+        if (sl == 0xffffffffu) return;
+        float v = row_dot(sl, r, p.x_off);
+        if (gl_SubgroupInvocationID == 0) y[k * p.rows + r] = v;
+    } else {
+        float total = 0.0;
+        for (uint k = 0; k < p.used; k++) {
+            uint sl = slot[route[k]];
+            if (sl == 0xffffffffu) continue;
+            total += uintBitsToFloat(route[p.used + k]) * row_dot(sl, r, p.x_off + k * p.cols);
+        }
+        if (gl_SubgroupInvocationID == 0) y[r] = total;
+    }
+}
