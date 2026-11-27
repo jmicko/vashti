@@ -2789,6 +2789,7 @@ dependencies = [
 name = "kuno-audio"
 version = "0.1.0"
 dependencies = [
+ "kuno-image",
  "kuno-text",
  "rayon",
 ]

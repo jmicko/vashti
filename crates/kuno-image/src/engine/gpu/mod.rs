@@ -152,6 +152,21 @@ impl Drop for Buffer {
     }
 }
 /// Host-visible memory kept mapped for reading results back and sending inputs.
+/// A mapped host-visible storage buffer (`Gpu::mapped`).
+pub struct Mapped {
+    buffer: Buffer,
+    at: *mut u8,
+}
+impl Mapped {
+    /// The buffer, for binding in a pass.
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+}
+// SAFETY: the pointer is the buffer's own mapping, valid until it is dropped, and only
+// touched through `Gpu::write_mapped`/`read_mapped`, which hold the device turn.
+unsafe impl Send for Mapped {}
+unsafe impl Sync for Mapped {}
 pub struct Readback {
     stage: Buffer,
     at: *mut u8,
@@ -874,6 +889,71 @@ impl Gpu {
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             false,
         )
+    }
+    /// A host-visible storage buffer kept mapped: kernels read and write it in place (over
+    /// the bus), and the host through `Mapped` between passes, with no copy submissions.
+    /// For small per-step inputs and outputs.
+    pub fn mapped(&self, bytes: u64) -> Result<Mapped, &'static str> {
+        let buffer = self.allocate(
+            bytes,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            false,
+        )?;
+        // SAFETY: the mapping lives as long as the buffer, which `Mapped` owns.
+        let at = unsafe {
+            check(
+                self.core.device.map_memory(
+                    buffer.memory,
+                    0,
+                    vk::WHOLE_SIZE,
+                    vk::MemoryMapFlags::empty(),
+                ),
+                "gpu_memory",
+            )?
+        };
+        // SAFETY: the mapping covers the buffer, which was just created and is unused.
+        unsafe { std::ptr::write_bytes(at.cast::<u8>(), 0, bytes as usize) };
+        Ok(Mapped {
+            buffer,
+            at: at.cast::<u8>(),
+        })
+    }
+    /// Writes `data` at byte `offset` of a mapped buffer (no pass may be using it).
+    pub fn write_mapped(&self, to: &Mapped, offset: u64, data: &[f32]) -> Result<(), &'static str> {
+        let bytes = std::mem::size_of_val(data) as u64;
+        if offset + bytes > to.buffer.bytes {
+            return Err("gpu_range");
+        }
+        let _turn = self.core.turn.lock().map_err(|_| "gpu_failed")?;
+        // SAFETY: in range, and the turn keeps passes from running meanwhile.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr().cast::<u8>(),
+                to.at.add(offset as usize),
+                bytes as usize,
+            );
+        }
+        Ok(())
+    }
+    /// Reads `to.len()` floats at byte `offset` of a mapped buffer.
+    pub fn read_mapped(&self, from: &Mapped, offset: u64, to: &mut [f32]) -> Result<(), &'static str> {
+        let bytes = std::mem::size_of_val(to) as u64;
+        if offset + bytes > from.buffer.bytes {
+            return Err("gpu_range");
+        }
+        let _turn = self.core.turn.lock().map_err(|_| "gpu_failed")?;
+        // SAFETY: in range; f32 has no invalid bit patterns; the turn keeps passes out.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                from.at.add(offset as usize),
+                to.as_mut_ptr().cast::<u8>(),
+                bytes as usize,
+            );
+        }
+        Ok(())
     }
     /// Records commands with `record`, submits them and waits for completion.
     fn run(

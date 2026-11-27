@@ -349,6 +349,9 @@ fn audio_models(gateway: &Gateway) -> Option<std::path::PathBuf> {
         .map(|a| a.models.clone())
         .or_else(|| gateway.config.image.as_ref().map(|c| c.models.clone()))
 }
+fn audio_gpu(gateway: &Gateway) -> Option<String> {
+    gateway.config.audio.as_ref().and_then(|a| a.gpu.clone())
+}
 
 async fn audio_capabilities(gateway: &Gateway) -> kuno_protocol::AudioCapabilities {
     let (state, reason) = match audio_models(gateway) {
@@ -425,7 +428,11 @@ async fn run_audio(
     tokio::spawn(async move {
         let result = {
             let closed = send.closed();
-            gateway.audio.run(&executable, &models, job, closed).await
+            let gpu = audio_gpu(&gateway);
+            gateway
+                .audio
+                .run(&executable, &models, gpu.as_deref(), job, closed)
+                .await
         };
         let _ = send.send(result);
     });

@@ -1,0 +1,28 @@
+// The LFM short convolution over n tokens: from in_proj's rows [n][b | c | x] (3 * width),
+// per channel bx = b * x, y = c * (taps[K-1] * bx + sum_j taps[j] * history[j]), and the
+// history (the last K-1 values of bx, oldest first, [channel][K-1]) moves on. One thread
+// per channel; tokens in order.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer In { float bcx[]; };
+layout(set = 0, binding = 1) readonly buffer Taps { float taps[]; };
+layout(set = 0, binding = 2) buffer History { float hist[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { float y[]; };
+layout(push_constant) uniform Constants { uint n; uint width; uint kernel; uint h_off; } p;
+
+void main() {
+    uint ch = gl_GlobalInvocationID.x;
+    if (ch >= p.width) return;
+    uint km = p.kernel - 1;
+    uint ha = p.h_off + ch * km;
+    uint ta = ch * p.kernel;
+    for (uint t = 0; t < p.n; t++) {
+        uint row = t * 3 * p.width;
+        float bx = bcx[row + ch] * bcx[row + 2 * p.width + ch];
+        float sum = taps[ta + km] * bx;
+        for (uint j = 0; j < km; j++) sum += taps[ta + j] * hist[ha + j];
+        y[t * p.width + ch] = bcx[row + p.width + ch] * sum;
+        for (uint j = 0; j + 1 < km; j++) hist[ha + j] = hist[ha + j + 1];
+        if (km > 0) hist[ha + km - 1] = bx;
+    }
+}

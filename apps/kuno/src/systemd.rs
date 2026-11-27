@@ -850,15 +850,15 @@ pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Resu
     )
 }
 
-pub fn configure_audio(models: Option<std::path::PathBuf>) -> Result<()> {
+pub fn configure_audio(audio: Option<crate::config::AudioConfig>) -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_installed()?;
     let mut installation = current_installation()?;
-    if let Some(models) = &models {
-        crate::collections::verify(models, kuno_protocol::AUDIO_COLLECTION)?;
+    if let Some(audio) = &audio {
+        crate::collections::verify(&audio.models, kuno_protocol::AUDIO_COLLECTION)?;
     }
-    installation.config.audio = models.map(|models| crate::config::AudioConfig { models });
+    installation.config.audio = audio;
     installation.config.validate()?;
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;

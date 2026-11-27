@@ -1,0 +1,84 @@
+// y[t][r] = sum_c W[r][c] x[t][c] (+ bias[r]) for n tokens: one workgroup per output row,
+// eight tokens at a time. Each lane loads 16 bytes of the row per step (16 int8 values, 8
+// halves or 4 floats), so many loads are in flight; sums meet through subgroup adds.
+// Rows past 65535 workgroups continue on the grid's second dimension.
+// kind 0: Q8_0 as separate arrays, the int8 values [rows][cols] and one f16 scale per 32
+// values [rows][cols / 32]; kind 1: f16 values [rows][cols]; kind 2: f32 values. cols is a
+// multiple of 32; x offsets and strides are multiples of 4.
+// flags: 1 adds the bias, 2 adds into y instead of writing it.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer Bias { float bias[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint n; uint kind;
+    uint x_off; uint x_stride; uint y_off; uint y_stride;
+    uint w_row0; uint b_off; uint flags;
+} p;
+
+const uint LANES = 64;
+const uint NT = 8;
+shared float part[NT * 8];   // per token, one partial sum per subgroup (at least 8 lanes)
+
+vec4 q4(int v, float sc) {
+    return vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
+                bitfieldExtract(v, 16, 8), bitfieldExtract(v, 24, 8)) * sc;
+}
+
+void main() {
+    uint r = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (r >= p.rows) return;
+    uint lane = gl_LocalInvocationIndex;
+    uint wr = r + p.w_row0;
+    // Values per 16-byte load, loads per row.
+    uint per = p.kind == 0 ? 16 : (p.kind == 1 ? 8 : 4);
+    uint loads = p.cols / per;
+    uint row_at = wr * loads;
+    uint xo = p.x_off / 4, xs = p.x_stride / 4;
+    for (uint t0 = 0; t0 < p.n; t0 += NT) {
+        uint nt = min(NT, p.n - t0);
+        float acc[NT];
+        for (uint t = 0; t < NT; t++) acc[t] = 0.0;
+        for (uint i = lane; i < loads; i += LANES) {
+            uvec4 v = w[row_at + i];
+            uint c4 = i * per / 4;   // first vec4 of x
+            if (p.kind == 0) {
+                uint si = wr * (p.cols / 32) + i / 2;
+                float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+                vec4 a = q4(int(v.x), sc), b = q4(int(v.y), sc), c = q4(int(v.z), sc), d = q4(int(v.w), sc);
+                for (uint t = 0; t < nt; t++) {
+                    uint xa = xo + (t0 + t) * xs + c4;
+                    acc[t] += dot(a, x[xa]) + dot(b, x[xa + 1]) + dot(c, x[xa + 2]) + dot(d, x[xa + 3]);
+                }
+            } else if (p.kind == 1) {
+                vec4 a = vec4(unpackHalf2x16(v.x), unpackHalf2x16(v.y));
+                vec4 b = vec4(unpackHalf2x16(v.z), unpackHalf2x16(v.w));
+                for (uint t = 0; t < nt; t++) {
+                    uint xa = xo + (t0 + t) * xs + c4;
+                    acc[t] += dot(a, x[xa]) + dot(b, x[xa + 1]);
+                }
+            } else {
+                vec4 a = uintBitsToFloat(v);
+                for (uint t = 0; t < nt; t++) acc[t] += dot(a, x[xo + (t0 + t) * xs + c4]);
+            }
+        }
+        uint groups = LANES / gl_SubgroupSize;
+        for (uint t = 0; t < nt; t++) {
+            float sum = subgroupAdd(acc[t]);
+            if (gl_SubgroupInvocationID == 0) part[t * 8 + gl_SubgroupID] = sum;
+        }
+        barrier();
+        if (lane < nt) {
+            float v = 0.0;
+            for (uint g = 0; g < groups; g++) v += part[lane * 8 + g];
+            if ((p.flags & 1) != 0) v += bias[p.b_off + r];
+            uint ya = p.y_off + (t0 + lane) * p.y_stride + r;
+            y[ya] = ((p.flags & 2) != 0) ? y[ya] + v : v;
+        }
+        barrier();
+    }
+}

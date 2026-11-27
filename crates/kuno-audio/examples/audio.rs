@@ -71,14 +71,24 @@ fn main() {
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
         kuno_audio::use_physical_cores();
     }
-    let a: Vec<String> = std::env::args().skip(1).collect();
+    let mut a: Vec<String> = std::env::args().skip(1).collect();
+    // `--gpu PCI` first puts the backbone and depth decoder on that GPU.
+    let gpu = if a.first().map(String::as_str) == Some("--gpu") {
+        let pci = a.remove(1);
+        a.remove(0);
+        Some(pci)
+    } else {
+        None
+    };
     let dir = std::path::Path::new(&a[1]);
     let t0 = std::time::Instant::now();
-    let m = Lfm3Audio::open(
+    let m = Lfm3Audio::open_on(
         &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
         &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        gpu.as_deref(),
     )
     .unwrap();
+    eprintln!("device {}", m.device());
     eprintln!("load {:.2} s", t0.elapsed().as_secs_f64());
     match a[0].as_str() {
         "transcribe" => {

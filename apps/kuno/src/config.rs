@@ -35,6 +35,21 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct AudioConfig {
     pub models: PathBuf,
+    /// The GPU (PCI address such as `0000:04:00.0`) for the backbone and depth decoder;
+    /// absent, or unusable at start (busy, too little memory), means the CPU.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<String>,
+}
+
+/// A PCI address in the `dddd:bb:dd.f` form.
+pub fn pci_address_valid(address: &str) -> bool {
+    let b = address.as_bytes();
+    b.len() == 12
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b':',
+            10 => *c == b'.',
+            _ => c.is_ascii_hexdigit(),
+        })
 }
 
 impl Default for Config {
@@ -90,7 +105,8 @@ impl Config {
                 || audio
                     .models
                     .components()
-                    .any(|c| c == std::path::Component::ParentDir))
+                    .any(|c| c == std::path::Component::ParentDir)
+                || audio.gpu.as_deref().is_some_and(|g| !pci_address_valid(g)))
         {
             return Err("audio_models_invalid");
         }

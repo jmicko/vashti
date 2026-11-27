@@ -8,7 +8,7 @@ edition = "2024"
 default = ["rust-image"]
 rust-dit = ["kuno-image/rust-dit"]
 # The private image worker with every model in Rust (no C++ engine): the managed runtime's.
-rust-image = ["kuno-image/rust-image"]
+rust-image = ["kuno-image/rust-image", "kuno-audio/gpu"]
 
 [dependencies]
 kuno-image = { path = "../../crates/kuno-image" }

@@ -22,6 +22,8 @@ use kuno_text::{
 };
 
 pub mod block;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod split;
 pub mod tensor;
 pub mod wav;
@@ -249,7 +251,23 @@ pub struct Lfm3Audio {
     codec_norm: Vec<f32>,
     codec_out: (Linear, Vec<f32>),
     tokens: Tokens,
+    /// The backbone, depth decoder and text head on a GPU, when one was opened.
+    #[cfg(feature = "gpu")]
+    gpu: Option<GpuParts>,
 }
+
+#[cfg(feature = "gpu")]
+struct GpuParts {
+    device: gpu::Device,
+    backbone: std::sync::Mutex<gpu::GpuBackbone>,
+    depth: gpu::GpuDepth,
+    head: gpu::Mat,
+    head_logits: kuno_image::engine::gpu::Mapped,
+}
+
+#[cfg(feature = "gpu")]
+/// Positions the GPU backbone holds per request (prompt and generated tokens or frames).
+const GPU_POSITIONS: usize = 4096;
 
 /// Control tokens of the prompts and the generation loop.
 struct Tokens {
@@ -261,6 +279,70 @@ struct Tokens {
 impl Lfm3Audio {
     /// The backbone GGUF and the `mmproj` GGUF (encoder, depth decoder, codec).
     pub fn open(backbone: &Path, mmproj: &Path) -> Result<Self> {
+        Self::open_on(backbone, mmproj, None)
+    }
+
+    /// As `open`, with the backbone and depth decoder on the GPU at PCI address `gpu` when
+    /// given. A GPU that cannot be opened or lacks memory leaves the model on the CPU;
+    /// `device` tells which.
+    pub fn open_on(backbone: &Path, mmproj: &Path, gpu: Option<&str>) -> Result<Self> {
+        #[allow(unused_mut)]
+        let mut model = Self::load(backbone, mmproj)?;
+        #[cfg(feature = "gpu")]
+        if let Some(pci) = gpu {
+            model.gpu = model.upload(pci).ok();
+            if model.gpu.is_some() {
+                // The device holds these now; their host copies (about 1.6 GB) go back to
+                // the system. Embeddings, the feedback table, the codec and the encoder stay.
+                model.backbone = Vec::new();
+                model.depth = Vec::new();
+                model.proj_in.0 = Linear::F32 {
+                    w: Vec::new(),
+                    rows: 0,
+                    cols: 0,
+                };
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        let _ = gpu;
+        Ok(model)
+    }
+
+    /// The device the backbone runs on: the GPU's name, or "cpu".
+    pub fn device(&self) -> &str {
+        #[cfg(feature = "gpu")]
+        if let Some(g) = &self.gpu {
+            return g.device.gpu.name();
+        }
+        "cpu"
+    }
+
+    #[cfg(feature = "gpu")]
+    fn upload(&self, pci: &str) -> Result<GpuParts> {
+        let device = gpu::Device::open(pci)?;
+        let backbone =
+            gpu::GpuBackbone::upload(&device, &self.backbone, &self.out_norm, GPU_POSITIONS)?;
+        let depth = gpu::GpuDepth::upload(
+            &device,
+            &self.depth,
+            &self.proj_in.0,
+            &self.proj_in.1,
+            &self.code_embd,
+            &self.depth_norm,
+            &self.head_norm,
+            CODES,
+        )?;
+        let (head, head_logits) = gpu::upload_head(&device, &self.embed)?;
+        Ok(GpuParts {
+            device,
+            backbone: std::sync::Mutex::new(backbone),
+            depth,
+            head,
+            head_logits,
+        })
+    }
+
+    fn load(backbone: &Path, mmproj: &Path) -> Result<Self> {
         let g = open(backbone)?;
         let a = open(mmproj)?;
         let arch = g
@@ -361,6 +443,8 @@ impl Lfm3Audio {
             audio_start: special("<|audio_start|>")?,
         };
         Ok(Self {
+            #[cfg(feature = "gpu")]
+            gpu: None,
             embed: Linear::load(&g, "token_embd.weight")?,
             backbone,
             out_norm: vector(&g, "output_norm.weight")?,
@@ -493,6 +577,24 @@ impl Lfm3Audio {
         let mut rows = self.embed_tokens(&ids);
         rows.extend(&audio);
         rows.extend(self.embed_tokens(&enc(after)?));
+        #[cfg(feature = "gpu")]
+        if let Some(g) = &self.gpu {
+            let mut backbone = g.backbone.lock().map_err(|_| "audio_gpu_failed")?;
+            backbone.reset(&g.device)?;
+            backbone.forward(&g.device, &rows)?;
+            let mut logits = vec![0f32; g.head.rows];
+            let mut out = Vec::new();
+            for _ in 0..max_tokens {
+                backbone.logits(&g.device, &g.head, &mut logits, &g.head_logits)?;
+                let next = argmax(&logits) as u32;
+                if next == self.tokens.im_end || next == self.tokenizer.eos_token_id() {
+                    break;
+                }
+                out.push(next);
+                backbone.forward(&g.device, &self.embed_tokens(&[next]))?;
+            }
+            return self.tokenizer.decode(&out).map_err(|_| "text_invalid");
+        }
         let mut states = vec![State::default(); self.backbone.len()];
         let mut state = self.backbone(&mut rows, &mut states);
         let mut out = Vec::new();
@@ -534,6 +636,10 @@ impl Lfm3Audio {
                 .map_err(|_| "text_invalid")?,
         );
         debug_assert_eq!(*ids.last().unwrap(), self.tokens.audio_start);
+        #[cfg(feature = "gpu")]
+        if let Some(g) = &self.gpu {
+            return self.speak_gpu(g, &ids, seed, max_frames, on_audio);
+        }
         let mut states = vec![State::default(); self.backbone.len()];
         let mut rows = self.embed_tokens(&ids);
         let mut state = self.backbone(&mut rows, &mut states);
@@ -542,17 +648,15 @@ impl Lfm3Audio {
         let mut codec = CodecState::new(self.codec.len());
         let mut audio = Vec::new();
         for _ in 0..max_frames {
-            let codes = self.sample_frame(&state, &history, &mut rng);
+            let base = self.proj_in.0.forward_bias(&state, &self.proj_in.1);
+            let codes = self.sample_frame(&history, &mut rng, |codes, wanted| {
+                Ok(self.depth_logits(&base, codes, wanted))
+            })?;
             if codes.contains(&(CODES - 1)) {
                 break;
             }
             history.push(codes);
-            let mut fb = vec![0f32; 2048];
-            for (cb, &code) in codes.iter().enumerate() {
-                for (f, v) in fb.iter_mut().zip(self.feedback.row(cb * CODES + code)) {
-                    *f += v;
-                }
-            }
+            let mut fb = self.feedback_row(&codes);
             // The frame's audio and the next backbone step are independent: run them together.
             let (pcm, next) = rayon::join(
                 || self.decode_frame(&codes, &mut codec),
@@ -570,23 +674,103 @@ impl Lfm3Audio {
         Ok(audio)
     }
 
-    /// One frame's codes from a backbone state: three depth-decoder passes, each revealing
-    /// four codebooks in a shuffled order, sampled with top-k 128 at temperature 1 and a
-    /// repetition penalty of 1.1 over each codebook's earlier codes.
+    #[cfg(feature = "gpu")]
+    /// Speech with the backbone and depth decoder on the GPU; the codec runs on the CPU
+    /// while the GPU takes the next backbone step.
+    fn speak_gpu(
+        &self,
+        g: &GpuParts,
+        ids: &[u32],
+        seed: u64,
+        max_frames: usize,
+        mut on_audio: impl FnMut(&[f32]) -> bool,
+    ) -> Result<Vec<f32>> {
+        let d = &g.device;
+        let mut backbone = g.backbone.lock().map_err(|_| "audio_gpu_failed")?;
+        backbone.reset(d)?;
+        backbone.forward(d, &self.embed_tokens(ids))?;
+        let mut rng = Rng::new(seed);
+        let mut history: Vec<[usize; CODEBOOKS]> = Vec::new();
+        let mut codec = CodecState::new(self.codec.len());
+        let mut audio = Vec::new();
+        let mut logits = vec![0f32; CODEBOOKS * CODES];
+        for _ in 0..max_frames {
+            let mut first = true;
+            let codes = self.sample_frame(&history, &mut rng, |codes, wanted| {
+                let project = std::mem::take(&mut first).then_some(&backbone.state);
+                g.depth.pass(
+                    d,
+                    project,
+                    &self.depth_inputs(codes),
+                    wanted,
+                    CODES,
+                    &mut logits,
+                )?;
+                Ok(logits[..wanted.len() * CODES].to_vec())
+            })?;
+            if codes.contains(&(CODES - 1)) {
+                break;
+            }
+            history.push(codes);
+            let fb = self.feedback_row(&codes);
+            let backbone = &mut *backbone;
+            let (pcm, stepped) = rayon::join(
+                || self.decode_frame(&codes, &mut codec),
+                || backbone.forward(d, &fb),
+            );
+            stepped?;
+            audio.extend(&pcm);
+            if !on_audio(&pcm) {
+                return Ok(audio);
+            }
+        }
+        let tail = codec.istft.flush();
+        on_audio(&tail);
+        audio.extend(tail);
+        Ok(audio)
+    }
+
+    /// The backbone's next input: the sum of the frame's code embeddings.
+    fn feedback_row(&self, codes: &[usize; CODEBOOKS]) -> Vec<f32> {
+        let mut fb = vec![0f32; 2048];
+        for (cb, &code) in codes.iter().enumerate() {
+            for (f, v) in fb.iter_mut().zip(self.feedback.row(cb * CODES + code)) {
+                *f += v;
+            }
+        }
+        fb
+    }
+
+    /// What each depth position adds to the projected state: its code's embedding, or the
+    /// mask while undecided (`[12][1024]`).
+    fn depth_inputs(&self, codes: &[Option<usize>; CODEBOOKS]) -> Vec<f32> {
+        codes
+            .iter()
+            .enumerate()
+            .flat_map(|(cb, code)| match code {
+                Some(c) => self.code_embd.row(cb * CODES + c),
+                None => self.mask_embd.clone(),
+            })
+            .collect()
+    }
+
+    /// One frame's codes: three depth-decoder passes (`logits` gives the chosen codebooks'
+    /// logits for the codes so far), each revealing four codebooks in a shuffled order,
+    /// sampled with top-k 128 at temperature 1 and a repetition penalty of 1.1 over each
+    /// codebook's earlier codes.
     fn sample_frame(
         &self,
-        h: &[f32],
         history: &[[usize; CODEBOOKS]],
         rng: &mut Rng,
-    ) -> [usize; CODEBOOKS] {
+        mut logits: impl FnMut(&[Option<usize>; CODEBOOKS], &[usize]) -> Result<Vec<f32>>,
+    ) -> Result<[usize; CODEBOOKS]> {
         let mut order: Vec<usize> = (0..CODEBOOKS).collect();
         rng.shuffle(&mut order);
         let mut codes: [Option<usize>; CODEBOOKS] = [None; CODEBOOKS];
-        let base = self.proj_in.0.forward_bias(h, &self.proj_in.1);
         let mut k = 0;
         for &pick in &SCHEDULE {
             let chosen = order[k..k + pick].to_vec();
-            let logits = self.depth_logits(&base, &codes, &chosen);
+            let logits = logits(&codes, &chosen)?;
             for (n, &cb) in chosen.iter().enumerate() {
                 k += 1;
                 let mut l = logits[n * CODES..][..CODES].to_vec();
@@ -601,7 +785,7 @@ impl Lfm3Audio {
                 codes[cb] = Some(rng.sample_top_k(&l, 128, 1.0));
             }
         }
-        codes.map(|c| c.unwrap_or(0))
+        Ok(codes.map(|c| c.unwrap_or(0)))
     }
 
     /// The logits of codebooks `wanted` (in that order) after one depth-decoder pass.
@@ -613,14 +797,8 @@ impl Lfm3Audio {
     ) -> Vec<f32> {
         let w = 1024;
         let mut x = base.to_vec();
-        for (cb, code) in codes.iter().enumerate() {
-            let add = match code {
-                Some(c) => self.code_embd.row(cb * CODES + c),
-                None => self.mask_embd.clone(),
-            };
-            for (v, a) in x[cb * w..][..w].iter_mut().zip(add) {
-                *v += a;
-            }
+        for (v, a) in x.iter_mut().zip(self.depth_inputs(codes)) {
+            *v += a;
         }
         for b in &self.depth {
             b.forward(&mut x, &mut State::default(), false);

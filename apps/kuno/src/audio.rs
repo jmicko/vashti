@@ -69,15 +69,18 @@ pub fn run_worker() -> Result<(), &'static str> {
     crate::image_privacy::restrict_filesystem()?;
     let mut args = std::env::args().skip(2);
     let models = PathBuf::from(args.next().ok_or("missing_audio_models")?);
+    let gpu = args.next();
     if args.next().is_some() {
         return Err("unknown_argument");
     }
     kuno_audio::use_physical_cores();
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
-    let model = kuno_audio::Lfm3Audio::open(
+    // A GPU that cannot be used (busy, too little memory) leaves the model on the CPU.
+    let model = kuno_audio::Lfm3Audio::open_on(
         &models.join("LFM3-Audio-2B-Q8_0.gguf"),
         &models.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        gpu.as_deref(),
     );
     let model = match model {
         Ok(model) => {
@@ -250,6 +253,7 @@ impl AudioRuntime {
         &self,
         executable: &Path,
         models: &Path,
+        gpu: Option<&str>,
         job: Job,
         closed: impl std::future::Future<Output = ()>,
     ) -> Result<Vec<u8>, &'static str> {
@@ -287,7 +291,7 @@ impl AudioRuntime {
         let mut slot = self.worker.lock().await;
         self.uses.fetch_add(1, Ordering::SeqCst);
         let result = tokio::select! {
-            result = exchange(&mut slot, executable, models, kind, &params, &payload) => result,
+            result = exchange(&mut slot, executable, models, gpu, kind, &params, &payload) => result,
             _ = closed => Err("audio_cancelled"),
         };
         payload.zeroize();
@@ -319,12 +323,13 @@ async fn exchange(
     slot: &mut Option<Worker>,
     executable: &Path,
     models: &Path,
+    gpu: Option<&str>,
     kind: u8,
     params: &[u8],
     payload: &[u8],
 ) -> Result<Vec<u8>, &'static str> {
     if slot.is_none() {
-        *slot = Some(spawn(executable, models).await?);
+        *slot = Some(spawn(executable, models, gpu).await?);
     }
     let worker = slot.as_mut().unwrap();
     let io = async {
@@ -365,15 +370,24 @@ async fn read_response(output: &mut ChildStdout) -> Result<Vec<u8>, &'static str
         .unwrap_or("audio_worker_failed"))
 }
 
-async fn spawn(executable: &Path, models: &Path) -> Result<Worker, &'static str> {
+async fn spawn(
+    executable: &Path,
+    models: &Path,
+    gpu: Option<&str>,
+) -> Result<Worker, &'static str> {
     use std::process::Stdio;
     let mut command = tokio::process::Command::new(executable);
+    command.arg("audio-worker").arg(models);
+    if let Some(gpu) = gpu {
+        command.arg(gpu);
+    }
     command
-        .arg("audio-worker")
-        .arg(models)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", "/nonexistent")
+        // No driver shader caches on disk (the sandbox has no writable path anyway).
+        .env("MESA_SHADER_CACHE_DISABLE", "true")
+        .env("__GL_SHADER_DISK_CACHE", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

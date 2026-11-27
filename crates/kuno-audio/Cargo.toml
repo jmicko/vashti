@@ -4,5 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+kuno-image = { path = "../kuno-image", optional = true }
 kuno-text = { path = "../kuno-text" }
 rayon = "1"
+
+[features]
+# The backbone and depth decoder on a GPU (Vulkan, through the image engine's device layer).
+gpu = ["dep:kuno-image", "kuno-image/rust-image"]
+
+[[example]]
+name = "audio"

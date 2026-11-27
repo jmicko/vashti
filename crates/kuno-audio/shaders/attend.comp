@@ -1,0 +1,84 @@
+// Grouped-query attention for n queries. Queries [n][heads][dim] at q_off; keys and values
+// [key][kv_heads][dim] at k_off/v_off, key j at position j. Query t sits at position
+// pos0 + t; causal queries see keys up to their own position, within `window` positions
+// (0: all); bidirectional queries see keys 0..keys. Scores go through `scratch`, one row of
+// `cap` floats per (query, head). Output [n][heads][dim] at o_off. One workgroup per
+// (query, head).
+#version 460
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Q { float q[]; };
+layout(set = 0, binding = 1) readonly buffer K { float k[]; };
+layout(set = 0, binding = 2) readonly buffer V { float v[]; };
+layout(set = 0, binding = 3) buffer Scratch { float sc[]; };
+layout(set = 0, binding = 4) buffer O { float o[]; };
+layout(push_constant) uniform Constants {
+    uint n; uint heads; uint kv_heads; uint dim;
+    uint q_off; uint k_off; uint v_off; uint o_off;
+    uint pos0; uint keys; uint causal; uint window;
+    float scale; uint cap;
+} p;
+
+shared float part[128];
+
+float reduce_max(float mine, uint lane) {
+    part[lane] = mine;
+    barrier();
+    for (uint h = 64; h > 0; h >>= 1) {
+        if (lane < h) part[lane] = max(part[lane], part[lane + h]);
+        barrier();
+    }
+    float r = part[0];
+    barrier();
+    return r;
+}
+float reduce_sum(float mine, uint lane) {
+    part[lane] = mine;
+    barrier();
+    for (uint h = 64; h > 0; h >>= 1) {
+        if (lane < h) part[lane] += part[lane + h];
+        barrier();
+    }
+    float r = part[0];
+    barrier();
+    return r;
+}
+
+void main() {
+    uint head = gl_WorkGroupID.x % p.heads;
+    uint t = gl_WorkGroupID.x / p.heads;
+    uint lane = gl_LocalInvocationIndex;
+    uint g = head / (p.heads / p.kv_heads);
+    uint kvw = p.kv_heads * p.dim;
+    uint qa = p.q_off + (t * p.heads + head) * p.dim;
+    uint first = 0, last = p.keys;   // [first, last)
+    if (p.causal != 0) {
+        uint pos = p.pos0 + t;
+        last = pos + 1;
+        if (p.window != 0 && pos + 1 > p.window) first = pos + 1 - p.window;
+    }
+    uint row = gl_WorkGroupID.x * p.cap;
+    float top = -3.4e38;
+    for (uint j = first + lane; j < last; j += 128) {
+        uint ka = p.k_off + j * kvw + g * p.dim;
+        float d = 0.0;
+        for (uint i = 0; i < p.dim; i++) d += q[qa + i] * k[ka + i];
+        d *= p.scale;
+        sc[row + j] = d;
+        top = max(top, d);
+    }
+    top = reduce_max(top, lane);
+    float sum = 0.0;
+    for (uint j = first + lane; j < last; j += 128) {
+        float e = exp(sc[row + j] - top);
+        sc[row + j] = e;
+        sum += e;
+    }
+    sum = reduce_sum(sum, lane);
+    memoryBarrierBuffer();
+    barrier();
+    for (uint i = lane; i < p.dim; i += 128) {
+        float acc = 0.0;
+        for (uint j = first; j < last; j++) acc += sc[row + j] * v[p.v_off + j * kvw + g * p.dim + i];
+        o[p.o_off + (t * p.heads + head) * p.dim + i] = acc / sum;
+    }
+}

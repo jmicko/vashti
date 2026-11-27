@@ -1,0 +1,42 @@
+// RMS norm of `rows` rows of `width` values: v = x / sqrt(mean(x^2) + eps) * w.
+// mode 0 writes v, 1 adds v into out (a post-norm on the residual stream), 2 adds x into
+// out without a norm (a plain residual). In place when x and out are the same rows.
+// The weight of row i starts at w_off + i * w_stride (w_stride 0: one shared weight).
+// One workgroup per row.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer X { float x[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { float w[]; };
+layout(set = 0, binding = 2) buffer Out { float o[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint width; uint x_off; uint x_stride;
+    uint o_off; uint o_stride; uint w_off; uint w_stride;
+    float eps; uint mode;
+} p;
+
+shared float part[64];
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint lane = gl_LocalInvocationIndex;
+    uint xa = p.x_off + row * p.x_stride;
+    uint oa = p.o_off + row * p.o_stride;
+    uint wa = p.w_off + row * p.w_stride;
+    if (p.mode == 2) {
+        for (uint i = lane; i < p.width; i += 64) o[oa + i] += x[xa + i];
+        return;
+    }
+    float sum = 0.0;
+    for (uint i = lane; i < p.width; i += 64) sum += x[xa + i] * x[xa + i];
+    part[lane] = sum;
+    barrier();
+    for (uint h = 32; h > 0; h >>= 1) {
+        if (lane < h) part[lane] += part[lane + h];
+        barrier();
+    }
+    float scale = 1.0 / sqrt(part[0] / float(p.width) + p.eps);
+    for (uint i = lane; i < p.width; i += 64) {
+        float v = x[xa + i] * scale * w[wa + i];
+        if (p.mode == 1) o[oa + i] += v; else o[oa + i] = v;
+    }
+}
