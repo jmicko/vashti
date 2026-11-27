@@ -5,16 +5,25 @@ use std::time::Instant;
 use kuno_image::engine::gpu::{Gpu, Select, Step};
 
 fn main() {
-    let pci = std::env::args().nth(1).unwrap_or_else(|| "0000:2d:00.0".into());
+    let pci = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "0000:2d:00.0".into());
     let gpu = Gpu::open(Select::Pci(pci)).unwrap();
     println!("{}", gpu.name());
-    let k = gpu.kernel(include_bytes!("../shaders/bump.spv"), 2, 1, None).unwrap();
+    let k = gpu
+        .kernel(include_bytes!("../shaders/bump.spv"), 2, 1, None)
+        .unwrap();
     let x = gpu.mapped(4096 * 4).unwrap();
     let y = gpu.mapped(4096 * 4).unwrap();
     let n = 4096u32;
     let constants = [n];
     let buffers = [x.buffer(), y.buffer()];
-    let step = [Step { kernel: &k, buffers: &buffers, constants: &constants, groups: [n / 64, 1, 1] }];
+    let step = [Step {
+        kernel: &k,
+        buffers: &buffers,
+        constants: &constants,
+        groups: [n / 64, 1, 1],
+    }];
     let mut out = [0f32; 1];
     for spin in [false, true] {
         let mut times = Vec::new();
@@ -46,10 +55,19 @@ fn main() {
         times.drain(..200);
         submit.drain(..200);
         submit.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        println!("  pass_begin returns after {:.1} us (median)", submit[submit.len() / 2] * 1e6);
+        println!(
+            "  pass_begin returns after {:.1} us (median)",
+            submit[submit.len() / 2] * 1e6
+        );
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let q = |f: f64| times[(times.len() as f64 * f) as usize] * 1e6;
-        println!("{}: median {:.1} us, p10 {:.1}, p90 {:.1}, p99 {:.1}",
-                 if spin { "spin on result" } else { "fence wait" }, q(0.5), q(0.1), q(0.9), q(0.99));
+        println!(
+            "{}: median {:.1} us, p10 {:.1}, p90 {:.1}, p99 {:.1}",
+            if spin { "spin on result" } else { "fence wait" },
+            q(0.5),
+            q(0.1),
+            q(0.9),
+            q(0.99)
+        );
     }
 }

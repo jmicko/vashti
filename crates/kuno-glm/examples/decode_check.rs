@@ -3,8 +3,11 @@
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let raw = std::fs::read(&a[0]).unwrap();
-    let want: Vec<f32> = std::fs::read(&a[1]).unwrap().chunks_exact(4)
-        .map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+    let want: Vec<f32> = std::fs::read(&a[1])
+        .unwrap()
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
     let kind = kuno_text::TensorType::from_gguf_id(a[2].parse().unwrap()).unwrap();
     let n: usize = a[3].parse().unwrap();
     let row_bytes = raw.len() / (want.len() / n);
@@ -16,5 +19,8 @@ fn main() {
             worst = worst.max((g - w).abs());
         }
     }
-    println!("{kind:?}: worst difference {worst:e} over {} values", want.len());
+    println!(
+        "{kind:?}: worst difference {worst:e} over {} values",
+        want.len()
+    );
 }

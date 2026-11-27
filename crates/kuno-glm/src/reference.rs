@@ -201,7 +201,9 @@ impl<'m> Reference<'m> {
         let states = (0..hp.layers)
             .map(|il| {
                 if hp.dsa[il] {
-                    State::Dsa { latents: Vec::new() }
+                    State::Dsa {
+                        latents: Vec::new(),
+                    }
                 } else {
                     let d = hp.kda_head * hp.heads;
                     State::Kda {
@@ -310,7 +312,11 @@ impl<'m> Reference<'m> {
                     .zip(o.par_chunks_exact_mut(dh))
                     .enumerate()
                     .for_each(|(h, (s, o))| {
-                        let (q, k, v) = (&qh[h * dh..][..dh], &kh[h * dh..][..dh], &vh[h * dh..][..dh]);
+                        let (q, k, v) = (
+                            &qh[h * dh..][..dh],
+                            &kh[h * dh..][..dh],
+                            &vh[h * dh..][..dh],
+                        );
                         let g = &g[h * dh..][..dh];
                         // s[key][value]: decay each key row, the delta rule, read out with q.
                         for (i, row) in s.chunks_exact_mut(dh).enumerate() {
@@ -385,7 +391,11 @@ impl<'m> Reference<'m> {
                         let scores: Vec<f64> = latents
                             .iter()
                             .map(|l| {
-                                absorbed.iter().zip(l).map(|(a, b)| f64::from(a * b)).sum::<f64>()
+                                absorbed
+                                    .iter()
+                                    .zip(l)
+                                    .map(|(a, b)| f64::from(a * b))
+                                    .sum::<f64>()
                                     * f64::from(scale)
                             })
                             .collect();
@@ -401,8 +411,10 @@ impl<'m> Reference<'m> {
                         (0..vd)
                             .map(|j| {
                                 let w = &vb[(h * vd + j) * lora..][..lora];
-                                w.iter().zip(&mixed).map(|(a, b)| f64::from(*a) * b).sum::<f64>()
-                                    as f32
+                                w.iter()
+                                    .zip(&mixed)
+                                    .map(|(a, b)| f64::from(*a) * b)
+                                    .sum::<f64>() as f32
                             })
                             .collect()
                     })
@@ -451,7 +463,9 @@ impl<'m> Reference<'m> {
                     let g = m.rows(&b("ffn_gate_exps.weight"), e * f, f)?.matvec(x);
                     let u = m.rows(&b("ffn_up_exps.weight"), e * f, f)?.matvec(x);
                     let h = swiglu(&g, &u, hp.clamp_expert[il]);
-                    let d = m.rows(&b("ffn_down_exps.weight"), e * hp.embd, hp.embd)?.matvec(&h);
+                    let d = m
+                        .rows(&b("ffn_down_exps.weight"), e * hp.embd, hp.embd)?
+                        .matvec(&h);
                     for (o, v) in out.iter_mut().zip(&d) {
                         *o += w * v;
                     }
@@ -490,7 +504,8 @@ fn mix_pre(m: &Mixer, x: &[f32], hp: &Hparams) -> (Vec<f32>, Vec<f32>, Vec<f32>)
     for row in comb.chunks_exact_mut(hc) {
         let top = row.iter().copied().fold(f32::MIN, f32::max);
         let sum: f32 = row.iter().map(|v| (v - top).exp()).sum();
-        row.iter_mut().for_each(|v| *v = (*v - top).exp() / sum + eps);
+        row.iter_mut()
+            .for_each(|v| *v = (*v - top).exp() / sum + eps);
     }
     let cols = |c: &mut Vec<f32>| {
         for dst in 0..hc {

@@ -21,7 +21,11 @@ fn main() {
     let started = std::time::Instant::now();
     let model = Model::open(&shards).unwrap();
     let mut r = Reference::new(&model).unwrap();
-    eprintln!("loaded in {:.1} s; {:?}", started.elapsed().as_secs_f64(), model.hp.dsa);
+    eprintln!(
+        "loaded in {:.1} s; {:?}",
+        started.elapsed().as_secs_f64(),
+        model.hp.dsa
+    );
     let mut logits = None;
     for (i, id) in ids.iter().enumerate() {
         let started = std::time::Instant::now();
@@ -31,7 +35,11 @@ fn main() {
     for (il, t) in r.trace.iter().enumerate() {
         let sum: f64 = t.iter().map(|v| f64::from(*v)).sum();
         let sq: f64 = t.iter().map(|v| f64::from(*v) * f64::from(*v)).sum();
-        println!("block {il}: sum {sum:.5} rms {:.5} first {:?}", (sq / t.len() as f64).sqrt(), &t[..4]);
+        println!(
+            "block {il}: sum {sum:.5} rms {:.5} first {:?}",
+            (sq / t.len() as f64).sqrt(),
+            &t[..4]
+        );
     }
     let logits = logits.unwrap();
     let mut order: Vec<usize> = (0..logits.len()).collect();

@@ -12,6 +12,7 @@ use std::path::Path;
 
 use kuno_text::{GgufFile, GgufLimits, MetadataValue, TensorType};
 
+pub mod cpu;
 pub mod reference;
 
 pub type Result<T> = std::result::Result<T, &'static str>;
@@ -151,7 +152,8 @@ impl Model {
         let view = self.gguf.tensor(name).ok_or("model_tensor_missing")?;
         let info = view.info();
         let mut bytes = vec![0u8; info.byte_len() as usize];
-        view.read_range(0, &mut bytes).map_err(|_| "model_read_failed")?;
+        view.read_range(0, &mut bytes)
+            .map_err(|_| "model_read_failed")?;
         Ok(Matrix {
             dtype: info.dtype(),
             rows: info.row_count() as usize,
