@@ -2,16 +2,20 @@
 // each of `heads` heads of `dim` (at most 128) values is normed with w (shared by the
 // heads), then the pair (i, i + dim/2) is rotated by pos * base^(-2i/dim) (divided by
 // factor[i] when factors are used). Token rows are `stride` values apart. One workgroup
-// per (token, head), a lane per pair.
+// per (token, head), a lane per pair; the keys' heads (k_heads a token, their own weight,
+// offset and stride) follow the queries' in the same dispatch.
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0) buffer X { float x[]; };
 layout(set = 0, binding = 1) readonly buffer Weight { float w[]; };
 layout(set = 0, binding = 2) readonly buffer Factors { float f[]; };
+// The keys: workgroups past n * heads take them, as the queries with these.
+layout(set = 0, binding = 3) buffer K { float kx[]; };
+layout(set = 0, binding = 4) readonly buffer KWeight { float kw[]; };
 layout(push_constant) uniform Constants {
     uint n; uint heads; uint dim; uint off; uint stride; uint pos0; float base; uint factors;
-    float eps;
+    float eps; uint k_heads; uint k_off; uint k_stride;
 } p;
 
 shared float part[64];
@@ -19,11 +23,19 @@ shared float part[64];
 void main() {
     uint half_ = p.dim / 2;
     uint i = gl_LocalInvocationIndex;
-    uint head = gl_WorkGroupID.x % p.heads, t = gl_WorkGroupID.x / p.heads;
-    uint at = p.off + t * p.stride + head * p.dim + i;
+    bool keys = gl_WorkGroupID.x >= p.n * p.heads;
+    uint id = keys ? gl_WorkGroupID.x - p.n * p.heads : gl_WorkGroupID.x;
+    uint count = keys ? p.k_heads : p.heads;
+    uint head = id % count, t = id / count;
+    uint at = (keys ? p.k_off + t * p.k_stride : p.off + t * p.stride) + head * p.dim + i;
     bool live = i < half_;
-    float a = live ? x[at] : 0.0, b = live ? x[at + half_] : 0.0;
-    float wa = live ? w[i] : 0.0, wb = live ? w[i + half_] : 0.0;
+    float a = 0.0, b = 0.0, wa = 0.0, wb = 0.0;
+    if (live) {
+        a = keys ? kx[at] : x[at];
+        b = keys ? kx[at + half_] : x[at + half_];
+        wa = keys ? kw[i] : w[i];
+        wb = keys ? kw[i + half_] : w[i + half_];
+    }
     float fi = live && p.factors != 0 ? f[i] : 1.0;
     float sum = subgroupAdd(a * a + b * b);
     if (gl_SubgroupInvocationID == 0) part[gl_SubgroupID] = sum;
@@ -37,6 +49,11 @@ void main() {
     float theta = float(p.pos0 + t) * pow(p.base, -2.0 * float(i) / float(p.dim));
     if (p.factors != 0) theta /= fi;
     float s = sin(theta), c = cos(theta);
-    x[at] = a * c - b * s;
-    x[at + half_] = a * s + b * c;
+    if (keys) {
+        kx[at] = a * c - b * s;
+        kx[at + half_] = a * s + b * c;
+    } else {
+        x[at] = a * c - b * s;
+        x[at + half_] = a * s + b * c;
+    }
 }

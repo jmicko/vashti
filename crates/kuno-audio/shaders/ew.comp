@@ -1,7 +1,7 @@
 // Element-wise steps on `count` values. mode 0: out[i] = silu(a[i]) * b[i] (SwiGLU, a and b
 // of the same layout); mode 1: out[i] *= sigmoid(a[gate row]) per head (a: [n][heads]
 // gates, out: [n][heads][dim]); mode 2: out[i] = a[i] + b[i]; mode 3: out[i] += a[i];
-// mode 4: out[i] = a[i].
+// mode 4: out[i] = a[i]; mode 5: out[i] = a[i % dim] (a row repeated).
 #version 460
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0) readonly buffer A { float a[]; };
@@ -24,7 +24,9 @@ void main() {
         o[p.o_off + i] = a[p.a_off + i] + b[p.b_off + i];
     } else if (p.mode == 3) {
         o[p.o_off + i] += a[p.a_off + i];
-    } else {
+    } else if (p.mode == 4) {
         o[p.o_off + i] = a[p.a_off + i];
+    } else {
+        o[p.o_off + i] = a[p.a_off + i % p.dim];
     }
 }

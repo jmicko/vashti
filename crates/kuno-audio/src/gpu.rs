@@ -583,7 +583,7 @@ impl Device {
             gather: kernel(GATHER, 5, 3)?,
             norm: kernel(NORM, 3, 10)?,
             addnorm: kernel(ADDNORM, 5, 4)?,
-            normrope: kernel(NORMROPE, 3, 9)?,
+            normrope: kernel(NORMROPE, 5, 12)?,
             argmax: kernel(ARGMAX, 2, 2)?,
             row: kernel(ROW, 4, 3)?,
             rope: kernel(ROPE, 2, 8)?,
@@ -938,34 +938,33 @@ impl Device {
                         self.mv(r, g, at(&s.h, 0, w), at(&s.gates, 0, *heads), n);
                     }
                     let pos0 = if causal { start } else { 0 };
-                    let heads_of = [
-                        (&s.q, q_norm, 0, *heads, qw),
-                        (keys, k_norm, first * kvw, *kv_heads, kvw),
-                    ];
                     if hd <= 128 {
-                        for (i, (buffer, weight, off, count, stride)) in
-                            heads_of.into_iter().enumerate()
-                        {
-                            if i > 0 {
-                                r.together();
-                            }
-                            r.push(
-                                &self.k.normrope,
-                                vec![buffer, weight, factors.as_ref().unwrap_or(&self.dummy)],
-                                vec![
-                                    n as u32,
-                                    count as u32,
-                                    hd as u32,
-                                    off as u32,
-                                    stride as u32,
-                                    pos0 as u32,
-                                    rope_base.to_bits(),
-                                    u32::from(factors.is_some()),
-                                    b.eps.to_bits(),
-                                ],
-                                (n * count) as u32,
-                            );
-                        }
+                        // Queries and keys in one step.
+                        r.push(
+                            &self.k.normrope,
+                            vec![
+                                &s.q,
+                                q_norm,
+                                factors.as_ref().unwrap_or(&self.dummy),
+                                keys,
+                                k_norm,
+                            ],
+                            vec![
+                                n as u32,
+                                *heads as u32,
+                                hd as u32,
+                                0,
+                                qw as u32,
+                                pos0 as u32,
+                                rope_base.to_bits(),
+                                u32::from(factors.is_some()),
+                                b.eps.to_bits(),
+                                *kv_heads as u32,
+                                (first * kvw) as u32,
+                                kvw as u32,
+                            ],
+                            (n * (heads + kv_heads)) as u32,
+                        );
                     } else {
                         self.norm(
                             r,
@@ -1343,20 +1342,15 @@ impl GpuCodec {
         slot: usize,
     ) {
         let w = CODEC_WIDTH;
-        for t in 0..CODEC_POSITIONS {
-            if t > 0 {
-                r.together();
-            }
-            d.ew(
-                r,
-                4,
-                at(src, 0, 0),
-                at(src, 0, 0),
-                at(&self.x, t * w, 0),
-                w,
-                1,
-            );
-        }
+        d.ew(
+            r,
+            5,
+            at(src, 0, 0),
+            at(src, 0, 0),
+            at(&self.x, 0, 0),
+            CODEC_POSITIONS * w,
+            w,
+        );
         self.record_blocks(d, r, slot);
     }
     fn record_blocks<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>, slot: usize) {
