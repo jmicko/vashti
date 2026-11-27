@@ -265,6 +265,7 @@ struct GpuParts {
     head: gpu::Mat,
     head_logits: kuno_image::engine::gpu::Mapped,
     codec: std::sync::Mutex<gpu::GpuCodec>,
+    frame: gpu::FrameGpu,
 }
 
 #[cfg(feature = "gpu")]
@@ -363,7 +364,17 @@ impl Lfm3Audio {
             &self.codec_out.1,
             gpu::CODEC_POSITIONS * GPU_FRAMES,
         )?;
+        let frame = gpu::FrameGpu::upload(
+            &device,
+            &self.mask_embd,
+            &self.feedback,
+            &self.fsq,
+            (&self.fsq_out.0, &self.fsq_out.1),
+            (&self.codec_in.0, &self.codec_in.1),
+            CODES,
+        )?;
         Ok(GpuParts {
+            frame,
             codec: std::sync::Mutex::new(codec),
             device,
             backbone: std::sync::Mutex::new(backbone),
@@ -732,29 +743,33 @@ impl Lfm3Audio {
         let mut history: Vec<[usize; CODEBOOKS]> = Vec::new();
         let mut codec = CodecState::new(self.codec.len());
         let mut audio = Vec::new();
-        let mut logits = vec![0f32; CODEBOOKS * CODES];
+        g.frame.reset(d)?;
+        let mut codes = [0usize; CODEBOOKS];
         for _ in 0..max_frames {
-            let mut first = true;
-            let codes = self.sample_frame(&history, &mut rng, |codes, wanted| {
-                let project = std::mem::take(&mut first).then_some(&backbone.state);
-                g.depth.pass(
-                    d,
-                    project,
-                    &self.depth_inputs(codes),
-                    wanted,
-                    CODES,
-                    &mut logits,
-                )?;
-                Ok(logits[..wanted.len() * CODES].to_vec())
-            })?;
+            // The draws the host sampler would make, in its order: the codebook order, then
+            // one uniform per codebook as it is sampled. Sampling itself runs on the device,
+            // with the whole frame in one submission.
+            let mut order = [0usize; CODEBOOKS];
+            order.iter_mut().enumerate().for_each(|(i, o)| *o = i);
+            rng.shuffle(&mut order);
+            let mut uniforms = [0f32; CODEBOOKS];
+            for &cb in &order {
+                uniforms[cb] = rng.uniform() as f32;
+            }
+            g.frame.run(
+                d,
+                &g.depth,
+                &mut backbone,
+                &mut gcodec,
+                &order,
+                &uniforms,
+                &mut codes,
+                &mut polar,
+            )?;
             if codes.contains(&(CODES - 1)) {
                 break;
             }
             history.push(codes);
-            let fb = self.feedback_row(&codes);
-            // The backbone's next step and this frame's codec in one submission.
-            backbone.forward_with_codec(d, &fb, &mut gcodec, &self.codec_input(&codes))?;
-            gcodec.read(d, &mut polar)?;
             let pcm = self.spectra_to_pcm(&polar, &mut codec.istft);
             audio.extend(&pcm);
             if !on_audio(&pcm) {
@@ -919,7 +934,17 @@ impl CodecState {
 }
 
 /// A small deterministic generator (SplitMix64) for the codebook order and sampling.
-struct Rng(u64);
+pub(crate) struct Rng(u64);
+
+/// `Rng::sample_top_k` with a chosen uniform (sampler tests).
+#[cfg(test)]
+pub(crate) struct FixedUniform(f64);
+#[cfg(test)]
+impl FixedUniform {
+    pub(crate) fn sample_top_k(&mut self, l: &[f32], k: usize, temp: f32) -> usize {
+        top_k_pick(l, k, temp, self.0)
+    }
+}
 impl Rng {
     fn new(seed: u64) -> Self {
         Self(seed ^ 0x9e37_79b9_7f4a_7c15)
@@ -930,6 +955,11 @@ impl Rng {
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
         z ^ (z >> 31)
+    }
+    /// A generator whose `uniform` returns `u` (sampler tests).
+    #[cfg(test)]
+    pub(crate) fn fixed(u: f64) -> FixedUniform {
+        FixedUniform(u)
     }
     fn uniform(&mut self) -> f64 {
         (self.next() >> 11) as f64 / (1u64 << 53) as f64
@@ -942,29 +972,36 @@ impl Rng {
     }
     /// Codes scoring at least the k-th best (ties kept), softmax at `temp`.
     fn sample_top_k(&mut self, l: &[f32], k: usize, temp: f32) -> usize {
-        let mut sorted = l.to_vec();
-        sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
-        let lmin = sorted[k.min(sorted.len()) - 1];
-        let lmax = sorted[0];
-        let probs: Vec<f64> = l
-            .iter()
-            .map(|v| {
-                if *v < lmin {
-                    0.0
-                } else {
-                    (f64::from(v - lmax) / f64::from(temp)).exp()
-                }
-            })
-            .collect();
-        let mut r = self.uniform() * probs.iter().sum::<f64>();
-        for (i, p) in probs.iter().enumerate() {
-            r -= p;
-            if r <= 0.0 {
-                return i;
-            }
-        }
-        l.len() - 1
+        let u = self.uniform();
+        top_k_pick(l, k, temp, u)
     }
+}
+
+/// The code where `u` times the sum of the probabilities runs out, in index order, over
+/// codes scoring at least the k-th best (ties kept), softmax at `temp`.
+fn top_k_pick(l: &[f32], k: usize, temp: f32, u: f64) -> usize {
+    let mut sorted = l.to_vec();
+    sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    let lmin = sorted[k.min(sorted.len()) - 1];
+    let lmax = sorted[0];
+    let probs: Vec<f64> = l
+        .iter()
+        .map(|v| {
+            if *v < lmin {
+                0.0
+            } else {
+                (f64::from(v - lmax) / f64::from(temp)).exp()
+            }
+        })
+        .collect();
+    let mut r = u * probs.iter().sum::<f64>();
+    for (i, p) in probs.iter().enumerate() {
+        r -= p;
+        if r <= 0.0 {
+            return i;
+        }
+    }
+    l.len() - 1
 }
 
 // ---- Audio frontend ---------------------------------------------------------------------

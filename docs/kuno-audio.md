@@ -80,16 +80,21 @@ shared guard's `image_content_type_required` (415).
   (about 1.5 s to load from the page cache).
 - **Speed** (Ryzen 9 5900XT host):
 
-  | Device | Speech | First audio | Recognition, 14.6 s clip |
+  | Device | Speech | First audio | Recognition, 11.2 s clip |
   |---|---|---|---|
-  | RTX 3060 | 4.7x real time | 0.17 s | 1.9 s |
-  | Arc B70 (idle) | 4.5x real time | 0.1 s | 0.56 s for a 5.8 s clip |
-  | CPU, 16 cores | 0.97x real time | 1.1 s | 10.1 s |
+  | RTX 3060 | 5.8x real time | 0.14 s | 1.4 s |
+  | Arc B70 (idle) | 4.5x real time (before the latest changes) | 0.1 s | 0.56 s for 5.8 s |
+  | CPU, 16 cores | 0.97x real time | 1.1 s | about 8 s |
 
-  (llama.cpp on the same host: 0.64x on the 3060, 1.42x on the B70.) On the GPU a frame is
-  four submissions: three depth-decoder passes and one backbone step, with the codec on the
-  CPU at the same time. The CPU path uses one thread per physical core. The first request
-  after the worker starts also loads the model (about 4.5 s with a GPU, 1.5 s without).
+  (llama.cpp on the same host: 0.64x on the 3060, 1.42x on the B70.) On a GPU a whole
+  frame is one submission: three depth-decoder passes, each followed by sampling on the
+  device (the host draws the codebook order and the uniforms from the seed beforehand, in
+  the order its own sampler uses them; the device sampler picked what the host sampler
+  picks in 400 of 400 test cases), the backbone step and the codec's transformer. The host
+  does the inverse STFT (an FFT) and little else: about 0.3 s of CPU time for 11.2 s of
+  speech (7.7 s when the codec ran on the CPU). The CPU path uses one thread per physical
+  core. The first request after the worker starts also loads the model (about 5.5 s with a
+  GPU, every upload read back and compared; 1.5 s without).
 - **Memory:** 2.1 GB of VRAM and 1.2 GB of RAM with a GPU; 2.4 GB of RAM without.
 - **Fidelity** to llama.cpp (the reference): identical transcripts on the test clips, in
   both directions (Kuno's speech transcribed by llama.cpp and the reverse).

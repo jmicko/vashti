@@ -1,0 +1,36 @@
+// Gathers rows of a half-precision table by the frame's codes.
+// mode 0 (depth input): out[cb][i] = base[cb][i] + (codes[cb] decided ? table[cb * per +
+//   code][i] : mask[i]) for 12 codebooks of `width` values; codes[cb] >= per means undecided.
+// mode 1 (backbone feedback): out[i] = sum over the 12 codebooks of table[cb * per + code][i].
+// mode 2 (codec input): out[cb * 4 + j] = fsq[code * 4 + j] (`base` is the FSQ table).
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Table { uint table[]; };
+layout(set = 0, binding = 1) readonly buffer Codes { uint codes[]; };
+layout(set = 0, binding = 2) readonly buffer Base { float base[]; };
+layout(set = 0, binding = 3) readonly buffer Mask { float mask[]; };
+layout(set = 0, binding = 4) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint mode; uint width; uint per; } p;
+
+float half_at(uint index) {
+    return unpackHalf2x16(table[index >> 1])[index & 1];
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (p.mode == 0) {
+        if (id >= 12 * p.width) return;
+        uint cb = id / p.width, i = id % p.width;
+        uint code = codes[cb];
+        float add = code < p.per ? half_at((cb * p.per + code) * p.width + i) : mask[i];
+        o[id] = base[id] + add;
+    } else if (p.mode == 1) {
+        if (id >= p.width) return;
+        float sum = 0.0;
+        for (uint cb = 0; cb < 12; cb++) sum += half_at((cb * p.per + codes[cb]) * p.width + id);
+        o[id] = sum;
+    } else {
+        if (id >= 48) return;
+        o[id] = base[codes[id / 4] * 4 + id % 4];
+    }
+}

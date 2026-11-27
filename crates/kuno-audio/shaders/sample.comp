@@ -1,0 +1,92 @@
+// Samples one code for each of `count` codebooks from the depth decoder's logits, as the
+// host sampler does: codes seen earlier in the request scaled by the repetition penalty
+// (l > 0 ? l / 1.1 : l * 1.1), only codes scoring at least the 128th best kept (ties kept),
+// probabilities exp(l - max) (temperature 1), and the code where `u * sum` runs out in
+// index order. One workgroup per codebook; the chosen code is written to codes[cb] and
+// marked seen for later frames.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Logits { float logits[]; };
+layout(set = 0, binding = 1) buffer Seen { uint seen[]; };
+layout(set = 0, binding = 2) buffer Codes { uint codes[]; };
+layout(set = 0, binding = 3) readonly buffer Draws { float draws[]; };
+layout(push_constant) uniform Constants {
+    uint codes_per;   // 2017
+    uint top_k;       // 128
+    uint cb0; uint cb1; uint cb2; uint cb3;   // the codebooks, in logits order
+    uint u_off;       // draws: [order 12 as uint bits][uniform per codebook 12]
+} p;
+
+const uint SIZE = 2048;
+shared float sorted[SIZE];
+shared float part[256];
+
+void main() {
+    uint i = gl_WorkGroupID.x;
+    uint cb = i == 0 ? p.cb0 : (i == 1 ? p.cb1 : (i == 2 ? p.cb2 : p.cb3));
+    uint lane = gl_LocalInvocationIndex;
+    uint n = p.codes_per;
+    float mine[SIZE / 256];
+    for (uint k = 0; k < SIZE / 256; k++) {
+        uint j = lane + k * 256;
+        float l = -3.4e38;
+        if (j < n) {
+            l = logits[i * n + j];
+            if (seen[cb * n + j] != 0) l = l > 0.0 ? l / 1.1 : l * 1.1;
+        }
+        mine[k] = l;
+        sorted[j] = l;
+    }
+    barrier();
+    // Bitonic sort, descending.
+    for (uint size = 2; size <= SIZE; size <<= 1) {
+        for (uint stride = size >> 1; stride > 0; stride >>= 1) {
+            for (uint k = 0; k < SIZE / 256; k++) {
+                uint j = lane + k * 256;
+                uint other = j ^ stride;
+                if (other > j) {
+                    bool descending = (j & size) == 0;
+                    float a = sorted[j], b = sorted[other];
+                    if ((a < b) == descending) {
+                        sorted[j] = b;
+                        sorted[other] = a;
+                    }
+                }
+            }
+            barrier();
+        }
+    }
+    float top = sorted[0];
+    float floor_ = sorted[min(p.top_k, n) - 1];
+    float sum = 0.0;
+    for (uint k = 0; k < SIZE / 256; k++) {
+        float l = mine[k];
+        float q = l >= floor_ ? exp(l - top) : 0.0;
+        mine[k] = q;
+        sum += q;
+    }
+    part[lane] = sum;
+    barrier();
+    for (uint h = 128; h > 0; h >>= 1) {
+        if (lane < h) part[lane] += part[lane + h];
+        barrier();
+    }
+    float total = part[0];
+    barrier();
+    // The probabilities in index order for the scan.
+    for (uint k = 0; k < SIZE / 256; k++) sorted[lane + k * 256] = mine[k];
+    barrier();
+    if (lane == 0) {
+        float r = draws[p.u_off + cb] * total;
+        uint pick = n - 1;
+        for (uint j = 0; j < n; j++) {
+            r -= sorted[j];
+            if (r <= 0.0) {
+                pick = j;
+                break;
+            }
+        }
+        codes[cb] = pick;
+        seen[cb * n + pick] = 1;
+    }
+}

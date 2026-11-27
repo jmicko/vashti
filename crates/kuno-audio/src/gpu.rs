@@ -21,6 +21,8 @@ use crate::{
 const MV: &[u8] = include_bytes!("../shaders/mv.spv");
 const MVB: &[u8] = include_bytes!("../shaders/mvb.spv");
 const MV1: &[u8] = include_bytes!("../shaders/mv1.spv");
+const SAMPLE: &[u8] = include_bytes!("../shaders/sample.spv");
+const GATHER: &[u8] = include_bytes!("../shaders/gather.spv");
 const NORM: &[u8] = include_bytes!("../shaders/norm.spv");
 const ROPE: &[u8] = include_bytes!("../shaders/rope.spv");
 const ATTEND: &[u8] = include_bytes!("../shaders/attend.spv");
@@ -37,6 +39,8 @@ struct Kernels {
     /// `mv` for one token: a subgroup per row, `mv1_rows` rows per workgroup.
     mv1: Kernel,
     mv1_rows: usize,
+    sample: Kernel,
+    gather: Kernel,
     norm: Kernel,
     rope: Kernel,
     attend: Kernel,
@@ -403,6 +407,8 @@ impl Device {
             mvb: kernel(MVB, 5, 11)?,
             mv1: gpu.kernel(MV1, 5, 11, Some(lanes))?,
             mv1_rows: 128 / lanes as usize,
+            sample: kernel(SAMPLE, 4, 7)?,
+            gather: kernel(GATHER, 5, 3)?,
             norm: kernel(NORM, 3, 10)?,
             rope: kernel(ROPE, 2, 8)?,
             attend: kernel(ATTEND, 5, 14)?,
@@ -832,42 +838,20 @@ impl GpuBackbone {
         }
         Ok(())
     }
-    /// One step for `row` (the frame's feedback) with the codec's frame (`codec_input`,
-    /// `[6][512]`) in the same submission; the codec's output is then ready to `read`.
-    pub fn forward_with_codec(
-        &mut self,
-        d: &Device,
-        row: &[f32],
-        codec: &mut GpuCodec,
-        codec_input: &[f32],
-    ) -> Result<()> {
-        if self.next + 1 > self.positions || codec.next + CODEC_POSITIONS > codec.positions {
-            return Err("audio_context_exhausted");
-        }
-        d.gpu.write_mapped(&self.input, 0, row)?;
-        d.gpu.write_mapped(&codec.input, 0, codec_input)?;
-        let mut r = Recording::new();
-        let input = self.input.buffer();
+    /// Records one step whose input row is in `src` (on the device).
+    fn record_step<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>, src: &'a Buffer) {
         d.ew(
-            &mut r,
+            r,
             4,
-            at(input, 0, 0),
-            at(input, 0, 0),
+            at(src, 0, 0),
+            at(src, 0, 0),
             at(&self.x, 0, 0),
             2048,
             1,
         );
-        d.record(
-            &mut r,
-            &self.blocks,
-            &self.scratch,
-            &self.x,
-            1,
-            self.next,
-            true,
-        );
+        d.record(r, &self.blocks, &self.scratch, &self.x, 1, self.next, true);
         d.norm(
-            &mut r,
+            r,
             at(&self.x, 0, 2048),
             Some((&self.out_norm, 0, 0)),
             at(&self.state, 0, 2048),
@@ -876,11 +860,6 @@ impl GpuBackbone {
             self.eps,
             0,
         );
-        codec.record(d, &mut r);
-        r.run(&d.gpu)?;
-        self.next += 1;
-        codec.next += CODEC_POSITIONS;
-        Ok(())
     }
     /// The text head over `state`: logits through the tied embeddings.
     pub fn logits(&self, d: &Device, head: &Mat, out: &mut [f32], logits: &Mapped) -> Result<()> {
@@ -908,7 +887,6 @@ pub struct GpuCodec {
     out: Mat,
     out_bias: Buffer,
     x: Buffer,
-    input: Mapped,
     output: Mapped,
     positions: usize,
     next: usize,
@@ -942,7 +920,6 @@ impl GpuCodec {
             norm: floats(g, norm)?,
             out_bias: floats(g, out_bias)?,
             x: g.buffer((CODEC_POSITIONS * CODEC_WIDTH * 4) as u64)?,
-            input: g.mapped((CODEC_POSITIONS * CODEC_WIDTH * 4) as u64)?,
             output: g.mapped((CODEC_POSITIONS * out.rows * 4) as u64)?,
             out,
             positions,
@@ -961,18 +938,28 @@ impl GpuCodec {
     pub fn output_width(&self) -> usize {
         self.out.rows
     }
-    fn record<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>) {
+    /// Records a frame whose input (one row, `[512]`) is in `src` on the device, repeated
+    /// for the six positions.
+    fn record_from<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>, src: &'a Buffer) {
+        let w = CODEC_WIDTH;
+        for t in 0..CODEC_POSITIONS {
+            if t > 0 {
+                r.together();
+            }
+            d.ew(
+                r,
+                4,
+                at(src, 0, 0),
+                at(src, 0, 0),
+                at(&self.x, t * w, 0),
+                w,
+                1,
+            );
+        }
+        self.record_blocks(d, r);
+    }
+    fn record_blocks<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>) {
         let (n, w) = (CODEC_POSITIONS, CODEC_WIDTH);
-        let input = self.input.buffer();
-        d.ew(
-            r,
-            4,
-            at(input, 0, 0),
-            at(input, 0, 0),
-            at(&self.x, 0, 0),
-            n * w,
-            1,
-        );
         d.record(r, &self.blocks, &self.scratch, &self.x, n, self.next, true);
         let x = &self.x;
         d.norm(
@@ -1147,6 +1134,247 @@ impl GpuDepth {
         r.run(&d.gpu)?;
         d.gpu
             .read_mapped(&self.logits, 0, &mut out[..wanted.len() * codes])
+    }
+}
+
+impl GpuDepth {
+    /// Records a pass whose positions take the frame's codes from `codes` on the device
+    /// (undecided ones the mask), with its logits for `wanted` into `logits`.
+    #[allow(clippy::too_many_arguments)]
+    fn record_pass<'a>(
+        &'a self,
+        d: &'a Device,
+        r: &mut Recording<'a>,
+        project: Option<&'a Buffer>,
+        codes: &'a Buffer,
+        mask: &'a Buffer,
+        wanted: &[usize],
+        codes_per: usize,
+        logits: &'a Buffer,
+    ) {
+        if let Some(state) = project {
+            d.mv_full(
+                r,
+                &self.proj_in,
+                at(state, 0, 2048),
+                at(&self.base, 0, self.proj_in.rows),
+                1,
+                0,
+                self.proj_in.rows,
+                Some((&self.proj_bias, 0)),
+                false,
+            );
+        }
+        r.push(
+            &d.k.gather,
+            vec![&self.code_embd.w, codes, &self.base, mask, &self.x],
+            vec![0, WIDTH as u32, codes_per as u32],
+            (POSITIONS * WIDTH).div_ceil(64) as u32,
+        );
+        d.record(r, &self.blocks, &self.scratch, &self.x, POSITIONS, 0, false);
+        let (x, eps) = (&self.x, self.eps);
+        d.norm(
+            r,
+            at(x, 0, WIDTH),
+            Some((&self.norm, 0, 0)),
+            at(x, 0, WIDTH),
+            POSITIONS,
+            WIDTH,
+            eps,
+            0,
+        );
+        d.norm(
+            r,
+            at(x, 0, WIDTH),
+            Some((&self.head_norm, 0, WIDTH)),
+            at(x, 0, WIDTH),
+            POSITIONS,
+            WIDTH,
+            eps,
+            0,
+        );
+        for (i, &cb) in wanted.iter().enumerate() {
+            if i > 0 {
+                r.together();
+            }
+            d.mv_full(
+                r,
+                &self.code_embd,
+                at(x, cb * WIDTH, WIDTH),
+                at(logits, i * codes_per, codes_per),
+                1,
+                cb * codes_per,
+                codes_per,
+                None,
+                false,
+            );
+        }
+    }
+}
+
+/// A whole frame on the device in one submission: three depth passes, each followed by
+/// sampling on the device (the host draws the codebook order and the uniforms beforehand,
+/// in the order its own sampler uses them), the backbone's feedback and next step, and the
+/// frame's codec. The host reads the twelve codes and the codec's output.
+pub struct FrameGpu {
+    /// The frame's codes (u32 bits; undecided: all ones) and the uniforms per codebook.
+    codes: Mapped,
+    draws: Mapped,
+    /// Codes chosen earlier in the request, `[12][2017]`.
+    seen: Buffer,
+    logits: Buffer,
+    mask: Buffer,
+    feedback: Mat,
+    fsq: Buffer,
+    fsq_out: Mat,
+    fsq_bias: Buffer,
+    codec_in: Mat,
+    codec_bias: Buffer,
+    fb: Buffer,
+    q: Buffer,
+    z: Buffer,
+    zz: Buffer,
+    codes_per: usize,
+}
+
+impl FrameGpu {
+    #[allow(clippy::too_many_arguments)]
+    pub fn upload(
+        d: &Device,
+        mask: &[f32],
+        feedback: &Linear,
+        fsq: &[f32],
+        fsq_out: (&Linear, &[f32]),
+        codec_in: (&Linear, &[f32]),
+        codes_per: usize,
+    ) -> Result<Self> {
+        let g = &d.gpu;
+        Ok(Self {
+            codes: g.mapped(12 * 4)?,
+            draws: g.mapped(12 * 4)?,
+            seen: g.buffer((12 * codes_per * 4) as u64)?,
+            logits: g.buffer((4 * codes_per * 4) as u64)?,
+            mask: floats(g, mask)?,
+            feedback: Mat::upload(g, feedback)?,
+            fsq: floats(g, fsq)?,
+            fsq_out: Mat::upload(g, fsq_out.0)?,
+            fsq_bias: floats(g, fsq_out.1)?,
+            codec_in: Mat::upload(g, codec_in.0)?,
+            codec_bias: floats(g, codec_in.1)?,
+            fb: g.buffer(2048 * 4)?,
+            q: g.buffer(48 * 4)?,
+            z: g.buffer((fsq_out.0.rows() * 4) as u64)?,
+            zz: g.buffer((codec_in.0.rows() * 4) as u64)?,
+            codes_per,
+        })
+    }
+    /// A new request: no codes seen.
+    pub fn reset(&self, d: &Device) -> Result<()> {
+        let count = 12 * self.codes_per;
+        for start in (0..count).step_by(ZERO_FLOATS) {
+            let n = ZERO_FLOATS.min(count - start);
+            d.gpu
+                .write_floats(&self.seen, (start * 4) as u64, &d.staging, &ZEROS[..n])?;
+        }
+        Ok(())
+    }
+    /// One frame: `order` the codebooks in sampling order (four per pass), `uniforms` per
+    /// codebook. Writes the codes and the codec's output (`[6][1282]`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run(
+        &self,
+        d: &Device,
+        depth: &GpuDepth,
+        backbone: &mut GpuBackbone,
+        codec: &mut GpuCodec,
+        order: &[usize; 12],
+        uniforms: &[f32; 12],
+        codes: &mut [usize; 12],
+        polar: &mut [f32],
+    ) -> Result<()> {
+        if backbone.next + 1 > backbone.positions || codec.next + CODEC_POSITIONS > codec.positions
+        {
+            return Err("audio_context_exhausted");
+        }
+        d.gpu
+            .write_mapped(&self.codes, 0, &[f32::from_bits(u32::MAX); 12])?;
+        d.gpu.write_mapped(&self.draws, 0, uniforms)?;
+        let per = self.codes_per;
+        let mut r = Recording::new();
+        let codes_buf = self.codes.buffer();
+        for pass in 0..3 {
+            let wanted = &order[pass * 4..pass * 4 + 4];
+            let project = (pass == 0).then_some(&backbone.state);
+            depth.record_pass(
+                d,
+                &mut r,
+                project,
+                codes_buf,
+                &self.mask,
+                wanted,
+                per,
+                &self.logits,
+            );
+            let mut constants = vec![per as u32, 128];
+            constants.extend(wanted.iter().map(|&cb| cb as u32));
+            constants.push(0);
+            r.push(
+                &d.k.sample,
+                vec![&self.logits, &self.seen, codes_buf, self.draws.buffer()],
+                constants,
+                4,
+            );
+        }
+        // The backbone's input (the sum of the codes' feedback embeddings) and the codec's
+        // (the codes' FSQ values), both from the codes.
+        r.push(
+            &d.k.gather,
+            vec![&self.feedback.w, codes_buf, &d.dummy, &d.dummy, &self.fb],
+            vec![1, 2048, per as u32],
+            2048u32.div_ceil(64),
+        );
+        r.together();
+        r.push(
+            &d.k.gather,
+            vec![&self.feedback.w, codes_buf, &self.fsq, &d.dummy, &self.q],
+            vec![2, 0, per as u32],
+            1,
+        );
+        backbone.record_step(d, &mut r, &self.fb);
+        let rows = self.fsq_out.rows;
+        d.mv_full(
+            &mut r,
+            &self.fsq_out,
+            at(&self.q, 0, 48),
+            at(&self.z, 0, rows),
+            1,
+            0,
+            rows,
+            Some((&self.fsq_bias, 0)),
+            false,
+        );
+        let rows2 = self.codec_in.rows;
+        d.mv_full(
+            &mut r,
+            &self.codec_in,
+            at(&self.z, 0, rows),
+            at(&self.zz, 0, rows2),
+            1,
+            0,
+            rows2,
+            Some((&self.codec_bias, 0)),
+            false,
+        );
+        codec.record_from(d, &mut r, &self.zz);
+        r.run(&d.gpu)?;
+        backbone.next += 1;
+        codec.next += CODEC_POSITIONS;
+        let mut bits = [0f32; 12];
+        d.gpu.read_mapped(&self.codes, 0, &mut bits)?;
+        for (c, b) in codes.iter_mut().zip(bits) {
+            *c = b.to_bits() as usize;
+        }
+        codec.read(d, polar)
     }
 }
 
@@ -1512,12 +1740,11 @@ mod tests {
             );
         }
         codec.reset(&d).unwrap();
-        let input = vec![0.1f32; 6 * 512];
+        let input = floats(&d.gpu, &[0.1f32; 512]).unwrap();
         let mut times = Vec::new();
         for _ in 0..60 {
-            d.gpu.write_mapped(&codec.input, 0, &input).unwrap();
             let mut r = Recording::new();
-            codec.record(&d, &mut r);
+            codec.record_from(&d, &mut r, &input);
             let t0 = std::time::Instant::now();
             r.run(&d.gpu).unwrap();
             times.push(t0.elapsed().as_secs_f64());
@@ -1526,9 +1753,68 @@ mod tests {
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         eprintln!("CODEC pass median {:.2} ms ({} steps)", times[30] * 1e3, {
             let mut r = Recording::new();
-            codec.record(&d, &mut r);
+            codec.record_from(&d, &mut r, &input);
             r.steps.len()
         });
+    }
+
+    /// The device sampler picks what the host sampler picks: random logits, some codes
+    /// seen, random uniforms (run by hand; f32 against f64 may differ in rare ties).
+    #[test]
+    #[ignore]
+    fn sampler_matches_the_host() {
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let d = Device::open(&pci).unwrap();
+        let per = 2017;
+        let logits = d.gpu.buffer((4 * per * 4) as u64).unwrap();
+        let seen = d.gpu.buffer((12 * per * 4) as u64).unwrap();
+        let codes = d.gpu.mapped(12 * 4).unwrap();
+        let draws = d.gpu.mapped(12 * 4).unwrap();
+        let stage = d.gpu.readback((12 * per * 4) as u64).unwrap();
+        let mut rng = crate::Rng::new(7);
+        let (mut same, mut total) = (0, 0);
+        for case in 0..100 {
+            let l: Vec<f32> = (0..4 * per)
+                .map(|_| {
+                    (rng.uniform() as f32 - 0.5) * 12.0 + if case % 3 == 0 { 3.0 } else { 0.0 }
+                })
+                .collect();
+            let s: Vec<f32> = (0..12 * per)
+                .map(|_| f32::from_bits(u32::from(rng.uniform() < 0.05)))
+                .collect();
+            let u: Vec<f32> = (0..12).map(|_| rng.uniform() as f32).collect();
+            d.gpu.write_floats(&logits, 0, &stage, &l).unwrap();
+            d.gpu.write_floats(&seen, 0, &stage, &s).unwrap();
+            d.gpu.write_mapped(&draws, 0, &u).unwrap();
+            let wanted = [3usize, 7, 0, 11];
+            let mut r = Recording::new();
+            let mut c = vec![per as u32, 128];
+            c.extend(wanted.iter().map(|&w| w as u32));
+            c.push(0);
+            r.push(
+                &d.k.sample,
+                vec![&logits, &seen, codes.buffer(), draws.buffer()],
+                c,
+                4,
+            );
+            r.run(&d.gpu).unwrap();
+            let mut got = [0f32; 12];
+            d.gpu.read_mapped(&codes, 0, &mut got).unwrap();
+            for (i, &cb) in wanted.iter().enumerate() {
+                let mut lv = l[i * per..][..per].to_vec();
+                for (j, v) in lv.iter_mut().enumerate() {
+                    if s[cb * per + j].to_bits() != 0 {
+                        *v = if *v > 0.0 { *v / 1.1 } else { *v * 1.1 };
+                    }
+                }
+                let mut host = crate::Rng::fixed(f64::from(u[cb]));
+                let want = host.sample_top_k(&lv, 128, 1.0);
+                total += 1;
+                same += usize::from(got[cb].to_bits() as usize == want);
+            }
+        }
+        eprintln!("SAMPLER {same} of {total} picks match the host");
+        assert!(same * 100 >= total * 98);
     }
 
     /// Matrix kernels on the model's shapes (run by hand on a GPU):
@@ -1615,7 +1901,9 @@ mod tests {
         }
         let out = std::env::temp_dir().join(format!("kuno-audio-spv-{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
-        for name in ["mv", "mvb", "mv1", "norm", "rope", "attend", "conv", "ew"] {
+        for name in [
+            "mv", "mvb", "mv1", "sample", "gather", "norm", "rope", "attend", "conv", "ew",
+        ] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")
                 .args(["-V", "--target-env", "vulkan1.3", "--quiet", "-o"])
