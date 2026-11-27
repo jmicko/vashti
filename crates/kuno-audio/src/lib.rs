@@ -248,9 +248,9 @@ pub struct Lfm3Audio {
     fsq: Vec<f32>,
     fsq_out: (Linear, Vec<f32>),
     codec_in: (Linear, Vec<f32>),
-    codec: Vec<Block>,
-    codec_norm: Vec<f32>,
-    codec_out: (Linear, Vec<f32>),
+    pub(crate) codec: Vec<Block>,
+    pub(crate) codec_norm: Vec<f32>,
+    pub(crate) codec_out: (Linear, Vec<f32>),
     tokens: Tokens,
     /// The backbone, depth decoder and text head on a GPU, when one was opened.
     #[cfg(feature = "gpu")]
@@ -264,11 +264,16 @@ struct GpuParts {
     depth: gpu::GpuDepth,
     head: gpu::Mat,
     head_logits: kuno_image::engine::gpu::Mapped,
+    codec: std::sync::Mutex<gpu::GpuCodec>,
 }
 
 #[cfg(feature = "gpu")]
 /// Positions the GPU backbone holds per request (prompt and generated tokens or frames).
 const GPU_POSITIONS: usize = 4096;
+#[cfg(feature = "gpu")]
+/// Frames the GPU codec holds per request (a piece of speech: the worker's pieces of up to
+/// 400 characters stay under 1300).
+const GPU_FRAMES: usize = 2048;
 
 /// Control tokens of the prompts and the generation loop.
 struct Tokens {
@@ -350,7 +355,16 @@ impl Lfm3Audio {
             CODES,
         )?;
         let (head, head_logits) = gpu::upload_head(&device, &self.embed)?;
+        let codec = gpu::GpuCodec::upload(
+            &device,
+            &self.codec,
+            &self.codec_norm,
+            &self.codec_out.0,
+            &self.codec_out.1,
+            gpu::CODEC_POSITIONS * GPU_FRAMES,
+        )?;
         Ok(GpuParts {
+            codec: std::sync::Mutex::new(codec),
             device,
             backbone: std::sync::Mutex::new(backbone),
             depth,
@@ -709,8 +723,11 @@ impl Lfm3Audio {
     ) -> Result<Vec<f32>> {
         let d = &g.device;
         let mut backbone = g.backbone.lock().map_err(|_| "audio_gpu_failed")?;
+        let mut gcodec = g.codec.lock().map_err(|_| "audio_gpu_failed")?;
         backbone.reset(d)?;
+        gcodec.reset(d)?;
         backbone.forward(d, &self.embed_tokens(ids))?;
+        let mut polar = vec![0f32; gpu::CODEC_POSITIONS * gcodec.output_width()];
         let mut rng = Rng::new(seed);
         let mut history: Vec<[usize; CODEBOOKS]> = Vec::new();
         let mut codec = CodecState::new(self.codec.len());
@@ -735,12 +752,10 @@ impl Lfm3Audio {
             }
             history.push(codes);
             let fb = self.feedback_row(&codes);
-            let backbone = &mut *backbone;
-            let (pcm, stepped) = rayon::join(
-                || self.decode_frame(&codes, &mut codec),
-                || backbone.forward(d, &fb),
-            );
-            stepped?;
+            // The backbone's next step and this frame's codec in one submission.
+            backbone.forward_with_codec(d, &fb, &mut gcodec, &self.codec_input(&codes))?;
+            gcodec.read(d, &mut polar)?;
+            let pcm = self.spectra_to_pcm(&polar, &mut codec.istft);
             audio.extend(&pcm);
             if !on_audio(&pcm) {
                 return Ok(audio);
@@ -840,20 +855,20 @@ impl Lfm3Audio {
             .collect()
     }
 
-    /// One frame's codes to audio samples through the codec (streaming state kept).
-    fn decode_frame(&self, codes: &[usize; CODEBOOKS], s: &mut CodecState) -> Vec<f32> {
+    /// The codec transformer's input for a frame: the codes' FSQ values through the two
+    /// small projections, repeated for the six positions (`[6][512]`).
+    fn codec_input(&self, codes: &[usize; CODEBOOKS]) -> Vec<f32> {
         let mut q = Vec::with_capacity(CODEBOOKS * 4);
         for &c in codes {
             q.extend(&self.fsq[c * 4..][..4]);
         }
         let z = self.fsq_out.0.forward_bias(&q, &self.fsq_out.1);
         let z = self.codec_in.0.forward_bias(&z, &self.codec_in.1);
-        let mut x: Vec<f32> = (0..FRAME_STACK).flat_map(|_| z.iter().copied()).collect();
-        for (b, st) in self.codec.iter().zip(&mut s.blocks) {
-            b.forward(&mut x, st, true);
-        }
-        rms_norm(&mut x, Some(&self.codec_norm), 512, EPS);
-        let polar = self.codec_out.0.forward_bias(&x, &self.codec_out.1);
+        (0..FRAME_STACK).flat_map(|_| z.iter().copied()).collect()
+    }
+
+    /// The codec's output (`[6][1282]`: log magnitudes, then phases) to audio samples.
+    fn spectra_to_pcm(&self, polar: &[f32], istft: &mut Istft) -> Vec<f32> {
         let bins = N_FFT / 2 + 1;
         let mut pcm = Vec::new();
         for frame in polar.chunks_exact(2 * bins) {
@@ -863,9 +878,20 @@ impl Lfm3Audio {
                 spec[2 * j] = mag * frame[bins + j].cos();
                 spec[2 * j + 1] = mag * frame[bins + j].sin();
             }
-            pcm.extend(s.istft.process(&spec));
+            pcm.extend(istft.process(&spec));
         }
         pcm
+    }
+
+    /// One frame's codes to audio samples through the codec on the CPU (state kept).
+    fn decode_frame(&self, codes: &[usize; CODEBOOKS], s: &mut CodecState) -> Vec<f32> {
+        let mut x = self.codec_input(codes);
+        for (b, st) in self.codec.iter().zip(&mut s.blocks) {
+            b.forward(&mut x, st, true);
+        }
+        rms_norm(&mut x, Some(&self.codec_norm), 512, EPS);
+        let polar = self.codec_out.0.forward_bias(&x, &self.codec_out.1);
+        self.spectra_to_pcm(&polar, &mut s.istft)
     }
 }
 

@@ -1175,6 +1175,12 @@ impl Gpu {
     }
     /// Runs a batch of dispatches in order in one submission and waits for it.
     pub fn pass(&self, steps: &[Step]) -> Result<(), &'static str> {
+        self.pass_with(steps, &[])
+    }
+    /// `pass`, where `independent[i]` true lets step `i + 1` start without waiting for step
+    /// `i` (the caller guarantees it neither reads what step `i` writes nor writes what it
+    /// reads or writes). Missing entries mean a barrier, as in `pass`.
+    pub fn pass_with(&self, steps: &[Step], independent: &[bool]) -> Result<(), &'static str> {
         let core = &self.core;
         let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
         let mut sets = Vec::with_capacity(steps.len());
@@ -1220,7 +1226,7 @@ impl Gpu {
                 unsafe { core.device.update_descriptor_sets(&writes, &[]) };
             }
             self.run_locked(|device, commands| {
-                for (step, set) in steps.iter().zip(&sets) {
+                for (index, (step, set)) in steps.iter().zip(&sets).enumerate() {
                     // SAFETY: bindings and constants were checked against the kernel; each
                     // dispatch is separated from the next by a full compute barrier.
                     unsafe {
@@ -1257,6 +1263,9 @@ impl Gpu {
                             step.groups[1],
                             step.groups[2],
                         );
+                        if independent.get(index).copied().unwrap_or(false) {
+                            continue;
+                        }
                         let barrier = [vk::MemoryBarrier::default()
                             .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                             .dst_access_mask(

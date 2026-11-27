@@ -116,6 +116,7 @@ fn main() {
             println!("{text}");
         }
         "speak" => {
+            let (u0, s0) = cpu_seconds();
             let t0 = std::time::Instant::now();
             let mut first = None;
             let voice = a.get(4).map_or("female", String::as_str);
@@ -126,6 +127,12 @@ fn main() {
                     true
                 })
                 .unwrap();
+            let (u1, s1) = cpu_seconds();
+            eprintln!(
+                "cpu during speech: user {:.2} s, system {:.2} s",
+                u1 - u0,
+                s1 - s0
+            );
             let secs = pcm.len() as f64 / 24000.0;
             let took = t0.elapsed().as_secs_f64();
             eprintln!(
@@ -137,4 +144,16 @@ fn main() {
         }
         _ => panic!("transcribe or speak"),
     }
+}
+
+/// This process's user and system CPU seconds so far.
+fn cpu_seconds() -> (f64, f64) {
+    let mut u = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    // SAFETY: getrusage fills the struct.
+    let u = unsafe {
+        libc::getrusage(libc::RUSAGE_SELF, u.as_mut_ptr());
+        u.assume_init()
+    };
+    let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+    (t(u.ru_utime), t(u.ru_stime))
 }

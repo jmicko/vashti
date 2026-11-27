@@ -7,7 +7,7 @@ pub fn inverse(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
     if n <= 1 {
         return x.to_vec();
     }
-    let p = [2, 5, 3].into_iter().find(|p| n % p == 0).unwrap_or(n);
+    let p = [2, 5, 3].into_iter().find(|p| n.is_multiple_of(*p)).unwrap_or(n);
     if p == n {
         return (0..n)
             .map(|t| {

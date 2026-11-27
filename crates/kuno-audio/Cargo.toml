@@ -8,6 +8,9 @@ kuno-image = { path = "../kuno-image", optional = true }
 kuno-text = { path = "../kuno-text" }
 rayon = "1"
 
+[dev-dependencies]
+libc = "0.2"
+
 [features]
 # The backbone and depth decoder on a GPU (Vulkan, through the image engine's device layer).
 gpu = ["dep:kuno-image", "kuno-image/rust-image"]
