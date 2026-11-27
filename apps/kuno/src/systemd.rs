@@ -780,12 +780,14 @@ fn validate_installed_config(original: &Config, current: &Config) -> Result<()> 
     expected.managed = None;
     expected.image = None;
     expected.native_text = None;
+    expected.audio = None;
     expected.response_header_timeout_seconds = current.response_header_timeout_seconds;
     expected.stream_idle_timeout_seconds = current.stream_idle_timeout_seconds;
     let mut actual = current.clone();
     actual.managed = None;
     actual.image = None;
     actual.native_text = None;
+    actual.audio = None;
     if serde_json::to_value(expected).map_err(|_| "config_encoding_failed")?
         != serde_json::to_value(actual).map_err(|_| "config_encoding_failed")?
     {
@@ -1676,6 +1678,20 @@ mod tests {
             executable: NATIVE_TEXT_WORKER.into(),
             settings: NATIVE_TEXT_SETTINGS.into(),
             pci_address: "0000:2d:00.0".into(),
+        });
+        current.validate().unwrap();
+        validate_installed_config(&original, &current).unwrap();
+        current.upstream = "127.0.0.1:11999".parse().unwrap();
+        assert!(validate_installed_config(&original, &current).is_err());
+    }
+
+    #[test]
+    fn audio_configuration_is_mutable_without_relaxing_listener_identity() {
+        let original = configured_installation();
+        let mut current = original.clone();
+        current.audio = Some(crate::config::AudioConfig {
+            models: "/srv/kuno-audio-models".into(),
+            gpu: Some("0000:04:00.0".into()),
         });
         current.validate().unwrap();
         validate_installed_config(&original, &current).unwrap();

@@ -162,6 +162,19 @@ pub(crate) fn configured_gateway_unit(
             "\n[Unit]\nRequiresMountsFor=\"{source}\"\n\n[Service]\nBindReadOnlyPaths=\"{source}\":/var/lib/kuno/image-models\nTimeoutStopSec=150\n"
         ));
     }
+    if let Some(audio) = &config.audio {
+        let source = audio.models.to_str().ok_or("audio_model_path_invalid")?;
+        if !source.starts_with('/') || source.chars().any(|c| c.is_control() || c == ':') {
+            return Err("audio_model_path_invalid");
+        }
+        let source = source
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('%', "%%");
+        unit.push_str(&format!(
+            "\n[Unit]\nRequiresMountsFor=\"{source}\"\n\n[Service]\nBindReadOnlyPaths=\"{source}\":/var/lib/kuno/audio-models\n"
+        ));
+    }
     Ok(unit)
 }
 
@@ -366,6 +379,28 @@ mod tests {
         for bad in ["/tmp/x:y", "/tmp/x\nExecStart=bad"] {
             config.image.as_mut().unwrap().models = bad.into();
             assert!(configured_gateway_unit("ollama.service", &config).is_err());
+        }
+    }
+
+    #[test]
+    fn audio_model_mount_is_read_only_and_escaped() {
+        let mut config = Config {
+            audio: Some(crate::config::AudioConfig {
+                models: "/media/private/audio models %n".into(),
+                gpu: None,
+            }),
+            ..Config::default()
+        };
+        let unit = configured_gateway_unit("ollama.service", &config).unwrap();
+        assert!(unit.contains(
+            "BindReadOnlyPaths=\"/media/private/audio models %%n\":/var/lib/kuno/audio-models"
+        ));
+        for bad in ["/tmp/x:y", "/tmp/x\nExecStart=bad"] {
+            config.audio.as_mut().unwrap().models = bad.into();
+            assert_eq!(
+                configured_gateway_unit("ollama.service", &config),
+                Err("audio_model_path_invalid")
+            );
         }
     }
 

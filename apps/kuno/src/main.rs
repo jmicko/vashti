@@ -504,6 +504,9 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
         if let Some(image) = &mut config.image {
             image.models = config.state_dir.join("image-models");
         }
+        if let Some(audio) = &mut config.audio {
+            audio.models = config.state_dir.join("audio-models");
+        }
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())

@@ -8,9 +8,13 @@ the CPU, or all of it on the CPU. No Ollama, no llama.cpp. Code: `crates/kuno-au
 ## Install
 
 ```sh
-sudo kuno fetch-models lfm3-audio-2b --directory /var/lib/kuno/audio-models   # 2.4 GB, pinned, sha256-checked
-sudo kuno configure-audio --models /var/lib/kuno/audio-models [--gpu 0000:04:00.0] [--yes]
+sudo kuno fetch-models lfm3-audio-2b --directory /srv/kuno-audio-models   # 2.4 GB, pinned, sha256-checked
+sudo kuno configure-audio --models /srv/kuno-audio-models [--gpu 0000:04:00.0] [--yes]
 ```
+
+The service sees the directory read-only at `/var/lib/kuno/audio-models` (a bind mount in
+its unit, like the image models), so any absolute directory the service may read works; keep
+it outside `/var/lib/kuno` itself.
 
 `--gpu` names the GPU by PCI address (`lspci -D`); the host's default is the RTX 3060
 (`0000:04:00.0`), leaving the B70 to images, video and large language models. The worker
@@ -83,7 +87,7 @@ shared guard's `image_content_type_required` (415).
   | Device | Speech | First audio | Recognition |
   |---|---|---|---|
   | RTX 3060 | 9.7x real time | 0.09 s | 0.43 s for 8.0 s, 0.78 s for 15.4 s |
-  | Arc B70 (no language model loaded) | 12.8x real time | 0.04 s | 0.30 s for 8.0 s, 0.54 s for 15.4 s |
+  | Arc B70 (no language model loaded) | 12.9x real time | 0.03 s | 0.30 s for 8.0 s, 0.54 s for 15.4 s |
   | CPU, 16 cores | 0.97x real time | 1.1 s | 8.4 s for 11.2 s |
 
   (llama.cpp on the same host: 0.64x on the 3060, 1.42x on the B70.) On a GPU a whole
@@ -98,7 +102,7 @@ shared guard's `image_content_type_required` (415).
   (about 320 and 450 GB/s). Where the device has half-precision matrix units (16 x 16 x 16
   on NVIDIA, 8 x 16 x 16 on Intel) products of 2 to 16 positions (the depth decoder, the
   codec) and of prompt chunks use them; SwiGLU's two products and each attention gate are
-  fused, so a frame is 446 steps (a step costs about 2.5 us on the 3060 and 5 us on the
+  fused, so a frame is 418 steps (a step costs about 2.5 us on the 3060 and 5 us on the
   B70). The host does the
   inverse STFT (an FFT) and little else: about 0.3 s of CPU time for 8 s of speech.
   Recognition runs the encoder's blocks and greedy decoding on the device too (decoding a
