@@ -30,6 +30,7 @@ const SAMPLE: &[u8] = include_bytes!("../shaders/sample.spv");
 const GATHER: &[u8] = include_bytes!("../shaders/gather.spv");
 const NORM: &[u8] = include_bytes!("../shaders/norm.spv");
 const ADDNORM: &[u8] = include_bytes!("../shaders/addnorm.spv");
+const NORMROPE: &[u8] = include_bytes!("../shaders/normrope.spv");
 const ROPE: &[u8] = include_bytes!("../shaders/rope.spv");
 const ATTEND: &[u8] = include_bytes!("../shaders/attend.spv");
 const CONV: &[u8] = include_bytes!("../shaders/conv.spv");
@@ -55,6 +56,8 @@ struct Kernels {
     norm: Kernel,
     /// A residual step and the next norm in one (rows of up to 2048).
     addnorm: Kernel,
+    /// Per-head norm and rotary embedding in one (heads of up to 128).
+    normrope: Kernel,
     rope: Kernel,
     attend: Kernel,
     conv: Kernel,
@@ -524,6 +527,7 @@ impl Device {
             gather: kernel(GATHER, 5, 3)?,
             norm: kernel(NORM, 3, 10)?,
             addnorm: kernel(ADDNORM, 5, 4)?,
+            normrope: kernel(NORMROPE, 3, 9)?,
             rope: kernel(ROPE, 2, 8)?,
             attend: kernel(ATTEND, 5, 14)?,
             conv: kernel(CONV, 4, 4)?,
@@ -790,51 +794,81 @@ impl Device {
                         r.together();
                         self.mv(r, g, at(&s.h, 0, w), at(&s.gates, 0, *heads), n);
                     }
-                    self.norm(
-                        r,
-                        at(&s.q, 0, hd),
-                        Some((q_norm, 0, 0)),
-                        at(&s.q, 0, hd),
-                        n * heads,
-                        hd,
-                        b.eps,
-                        0,
-                    );
-                    r.together();
-                    self.norm(
-                        r,
-                        at(keys, first * kvw, hd),
-                        Some((k_norm, 0, 0)),
-                        at(keys, first * kvw, hd),
-                        n * kv_heads,
-                        hd,
-                        b.eps,
-                        0,
-                    );
                     let pos0 = if causal { start } else { 0 };
-                    for (i, (buffer, off, count, stride)) in
-                        [(&s.q, 0, *heads, qw), (keys, first * kvw, *kv_heads, kvw)]
-                            .into_iter()
-                            .enumerate()
-                    {
-                        if i > 0 {
-                            r.together();
+                    let heads_of = [
+                        (&s.q, q_norm, 0, *heads, qw),
+                        (keys, k_norm, first * kvw, *kv_heads, kvw),
+                    ];
+                    if hd <= 128 {
+                        for (i, (buffer, weight, off, count, stride)) in
+                            heads_of.into_iter().enumerate()
+                        {
+                            if i > 0 {
+                                r.together();
+                            }
+                            r.push(
+                                &self.k.normrope,
+                                vec![buffer, weight, factors.as_ref().unwrap_or(&self.dummy)],
+                                vec![
+                                    n as u32,
+                                    count as u32,
+                                    hd as u32,
+                                    off as u32,
+                                    stride as u32,
+                                    pos0 as u32,
+                                    rope_base.to_bits(),
+                                    u32::from(factors.is_some()),
+                                    b.eps.to_bits(),
+                                ],
+                                (n * count) as u32,
+                            );
                         }
-                        r.push(
-                            &self.k.rope,
-                            vec![buffer, factors.as_ref().unwrap_or(&self.dummy)],
-                            vec![
-                                n as u32,
-                                count as u32,
-                                hd as u32,
-                                off as u32,
-                                stride as u32,
-                                pos0 as u32,
-                                rope_base.to_bits(),
-                                u32::from(factors.is_some()),
-                            ],
-                            (n * count * hd / 2).div_ceil(64) as u32,
+                    } else {
+                        self.norm(
+                            r,
+                            at(&s.q, 0, hd),
+                            Some((q_norm, 0, 0)),
+                            at(&s.q, 0, hd),
+                            n * heads,
+                            hd,
+                            b.eps,
+                            0,
                         );
+                        r.together();
+                        self.norm(
+                            r,
+                            at(keys, first * kvw, hd),
+                            Some((k_norm, 0, 0)),
+                            at(keys, first * kvw, hd),
+                            n * kv_heads,
+                            hd,
+                            b.eps,
+                            0,
+                        );
+                        for (i, (buffer, off, count, stride)) in
+                            [(&s.q, 0, *heads, qw), (keys, first * kvw, *kv_heads, kvw)]
+                                .into_iter()
+                                .enumerate()
+                        {
+                            if i > 0 {
+                                r.together();
+                            }
+                            r.push(
+                                &self.k.rope,
+                                vec![buffer, factors.as_ref().unwrap_or(&self.dummy)],
+                                vec![
+                                    n as u32,
+                                    count as u32,
+                                    hd as u32,
+                                    off as u32,
+                                    stride as u32,
+                                    pos0 as u32,
+                                    rope_base.to_bits(),
+                                    u32::from(factors.is_some()),
+                                ],
+                                (n * count * hd / 2).div_ceil(64) as u32,
+                            );
+                        }
                     }
                     let total = if causal { start + n } else { n };
                     r.push(
@@ -2071,6 +2105,7 @@ mod tests {
             (&k.gather, "gather"),
             (&k.norm, "norm"),
             (&k.addnorm, "addnorm"),
+            (&k.normrope, "normrope"),
             (&k.rope, "rope"),
             (&k.attend, "attend"),
             (&k.conv, "conv"),
@@ -2442,8 +2477,8 @@ mod tests {
         let out = std::env::temp_dir().join(format!("kuno-audio-spv-{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
         for name in [
-            "mv", "mvb", "mv1", "mv1s", "mvc", "sample", "gather", "norm", "addnorm", "rope",
-            "attend", "conv", "ew",
+            "mv", "mvb", "mv1", "mv1s", "mvc", "sample", "gather", "norm", "addnorm", "normrope",
+            "rope", "attend", "conv", "ew",
         ] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")

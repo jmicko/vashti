@@ -1,0 +1,42 @@
+// Per-head RMS norm, then NEOX rotary embedding, in place: for token t (position pos0 + t),
+// each of `heads` heads of `dim` (at most 128) values is normed with w (shared by the
+// heads), then the pair (i, i + dim/2) is rotated by pos * base^(-2i/dim) (divided by
+// factor[i] when factors are used). Token rows are `stride` values apart. One workgroup
+// per (token, head), a lane per pair.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer X { float x[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { float w[]; };
+layout(set = 0, binding = 2) readonly buffer Factors { float f[]; };
+layout(push_constant) uniform Constants {
+    uint n; uint heads; uint dim; uint off; uint stride; uint pos0; float base; uint factors;
+    float eps;
+} p;
+
+shared float part[64];
+
+void main() {
+    uint half_ = p.dim / 2;
+    uint i = gl_LocalInvocationIndex;
+    uint head = gl_WorkGroupID.x % p.heads, t = gl_WorkGroupID.x / p.heads;
+    uint at = p.off + t * p.stride + head * p.dim + i;
+    bool live = i < half_;
+    float a = live ? x[at] : 0.0, b = live ? x[at + half_] : 0.0;
+    float wa = live ? w[i] : 0.0, wb = live ? w[i + half_] : 0.0;
+    float fi = live && p.factors != 0 ? f[i] : 1.0;
+    float sum = subgroupAdd(a * a + b * b);
+    if (gl_SubgroupInvocationID == 0) part[gl_SubgroupID] = sum;
+    barrier();
+    float total = 0.0;
+    for (uint g = 0; g < gl_NumSubgroups; g++) total += part[g];
+    if (!live) return;
+    float scale = 1.0 / sqrt(total / float(p.dim) + p.eps);
+    a *= scale * wa;
+    b *= scale * wb;
+    float theta = float(p.pos0 + t) * pow(p.base, -2.0 * float(i) / float(p.dim));
+    if (p.factors != 0) theta /= fi;
+    float s = sin(theta), c = cos(theta);
+    x[at] = a * c - b * s;
+    x[at + half_] = a * s + b * c;
+}
