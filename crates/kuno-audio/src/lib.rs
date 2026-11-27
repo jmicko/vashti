@@ -1151,6 +1151,7 @@ struct Istft {
     overlap: Vec<f32>,
     weight: Vec<f32>,
     skip: usize,
+    fft: fft::Inverse,
 }
 impl Istft {
     fn new(n: usize, hop: usize) -> Self {
@@ -1166,6 +1167,7 @@ impl Istft {
             overlap: vec![0.0; n],
             weight: vec![0.0; n],
             skip: (n - hop) / 2,
+            fft: fft::Inverse::new(n),
         }
     }
     /// One frame's spectrum (`n / 2 + 1` complex bins, interleaved) to up to `hop` samples.
@@ -1182,7 +1184,9 @@ impl Istft {
                 full[n - k] = (re, -im);
             }
         }
-        let frame: Vec<f32> = fft::inverse(&full)
+        let frame: Vec<f32> = self
+            .fft
+            .run(&full)
             .into_iter()
             .map(|(re, _)| (re / n as f64) as f32)
             .collect();
