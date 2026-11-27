@@ -82,8 +82,8 @@ shared guard's `image_content_type_required` (415).
 
   | Device | Speech | First audio | Recognition |
   |---|---|---|---|
-  | RTX 3060 | 9.6x real time | 0.09 s | 0.45 s for 7.8 s, 0.85 s for 15.4 s |
-  | Arc B70 (idle) | 4.5x real time (measured before the two speed rounds) | 0.1 s | 0.56 s for 5.8 s |
+  | RTX 3060 | 9.7x real time | 0.09 s | 0.43 s for 8.0 s, 0.78 s for 15.4 s |
+  | Arc B70 (no language model loaded) | 12.8x real time | 0.04 s | 0.30 s for 8.0 s, 0.54 s for 15.4 s |
   | CPU, 16 cores | 0.97x real time | 1.1 s | 8.4 s for 11.2 s |
 
   (llama.cpp on the same host: 0.64x on the 3060, 1.42x on the B70.) On a GPU a whole
@@ -93,10 +93,13 @@ shared guard's `image_content_type_required` (415).
   picks in 400 of 400 test cases), the backbone step and the codec's transformer (the
   last two side by side). Frames are pipelined: what a frame needs from the last one stays
   on the device, so the next frame is submitted before the last is read, and the device
-  does not wait for the host. On the RTX 3060 a frame (80 ms of audio) takes about 7.6 ms
-  of device time, most of it reading the backbone's 1.5 GB of weights at about 300 GB/s.
-  Where the device has 16 x 16 x 16 half-precision matrix units, products of 2 to 16
-  positions (the depth decoder, the codec) and of prompt chunks use them. The host does the
+  does not wait for the host. A frame (80 ms of audio) takes about 7.3 ms of device time on
+  the RTX 3060 and 7.2 ms on the B70, most of it reading the backbone's 1.5 GB of weights
+  (about 320 and 450 GB/s). Where the device has half-precision matrix units (16 x 16 x 16
+  on NVIDIA, 8 x 16 x 16 on Intel) products of 2 to 16 positions (the depth decoder, the
+  codec) and of prompt chunks use them; SwiGLU's two products and each attention gate are
+  fused, so a frame is 446 steps (a step costs about 2.5 us on the 3060 and 5 us on the
+  B70). The host does the
   inverse STFT (an FFT) and little else: about 0.3 s of CPU time for 8 s of speech.
   Recognition runs the encoder's blocks and greedy decoding on the device too (decoding a
   token ahead, the argmax on the device); the mel spectrogram and the encoder's
