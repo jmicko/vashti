@@ -33,6 +33,7 @@ struct Mixer {
     norm: Buffer,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Attention {
     Kda {
         qkv: Mat,
