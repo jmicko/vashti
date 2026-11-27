@@ -1,14 +1,18 @@
 // Absorbed latent attention for one token, workgroup h = head h: the head's latent-width
 // query absorbed [heads][lora] (already through k_b) scores each of the `count` cached
 // latents [positions][lora] (scaled by `scale`), a softmax over them, and the latents mixed
-// by those weights into mixed [heads][lora] (then v_b's per-head product).
+// by those weights into mixed [heads][lora] (then v_b's per-head product). With indexed set,
+// the latents are those at the positions idx[0..count) (the indexer's choice).
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer Absorbed { vec4 q[]; };
 layout(set = 0, binding = 1) readonly buffer Latents { vec4 lat[]; };
 layout(set = 0, binding = 2) writeonly buffer Mixed { float mixed[]; };
-layout(push_constant) uniform Constants { uint lora; uint count; float scale; } p;
+layout(set = 0, binding = 3) readonly buffer Idx { uint idx[]; };
+layout(push_constant) uniform Constants { uint lora; uint count; float scale; uint indexed; } p;
+
+uint at(uint t) { return p.indexed != 0 ? idx[t] : t; }
 
 const uint MAX = 4096;
 shared float score[MAX];
@@ -41,7 +45,8 @@ void main() {
     float top = -1.0 / 0.0;
     for (uint t = lane; t < p.count; t += 256) {
         float s = 0.0;
-        for (uint c = 0; c < l4; c++) s += dot(q[qo + c], lat[t * l4 + c]);
+        uint pt = at(t);
+        for (uint c = 0; c < l4; c++) s += dot(q[qo + c], lat[pt * l4 + c]);
         s *= p.scale;
         score[t] = s;
         top = max(top, s);
@@ -59,7 +64,7 @@ void main() {
     float inv = 1.0 / sum;
     for (uint c = lane; c < p.lora; c += 256) {
         float m = 0.0;
-        for (uint t = 0; t < p.count; t++) m += score[t] * inv * lat[t * l4 + c / 4][c % 4];
+        for (uint t = 0; t < p.count; t++) m += score[t] * inv * lat[at(t) * l4 + c / 4][c % 4];
         mixed[h * p.lora + c] = m;
     }
 }

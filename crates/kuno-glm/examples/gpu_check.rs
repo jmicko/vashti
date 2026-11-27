@@ -33,7 +33,11 @@ fn main() {
     let second = std::env::var("KUNO_GLM_SECOND").ok().map(|p| {
         kuno_image::engine::gpu::Gpu::open(kuno_image::engine::gpu::Select::Pci(p)).unwrap()
     });
-    let mut engine = Engine::new(&model, gpu, second, 2048).unwrap();
+    let ctx = std::env::var("KUNO_GLM_CTX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2048);
+    let mut engine = Engine::new(&model, gpu, second, ctx).unwrap();
     eprintln!("engine ready in {:.1} s", t.elapsed().as_secs_f64());
     if let Some(extra) = std::env::var("KUNO_GLM_BENCH")
         .ok()
@@ -42,11 +46,15 @@ fn main() {
         // The engine alone: the prompt, then `extra` greedy tokens (ids only).
         let mut next = 0;
         let mut times = Vec::new();
+        let mut out = Vec::new();
         for (i, &id) in ids.iter().chain(std::iter::repeat_n(&0, extra)).enumerate() {
             let id = if i < ids.len() { id } else { next };
             let t = std::time::Instant::now();
             next = engine.step(id).unwrap();
             times.push(t.elapsed().as_secs_f64());
+            if i + 1 >= ids.len() {
+                out.push(next);
+            }
         }
         let generated = &times[ids.len()..];
         if let Ok(path) = std::env::var("KUNO_GLM_COUNTS") {
@@ -79,6 +87,7 @@ fn main() {
                 println!("device total {:.2} ms/token", total / tokens / 1e6);
             }
         }
+        println!("generated ids: {:?}", &out[..out.len().min(12)]);
         let mean = generated.iter().sum::<f64>() / generated.len().max(1) as f64;
         println!(
             "prompt {} tokens {:.2} s; {} generated: {:.1} ms each ({:.2} tokens/s)",

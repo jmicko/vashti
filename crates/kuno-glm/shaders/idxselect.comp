@@ -1,0 +1,96 @@
+// The DSA indexer's choice (one workgroup of 1024 lanes): the `keep` pools of `pools` with
+// the largest scores (ties: the lower pool first), as the positions their four cells cover in
+// ascending pool order, then the tail positions [tail, tail + ntail) (the incomplete pool),
+// into idx. A radix select over the scores' order-preserving bits finds the keep-th largest.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+layout(local_size_x = 1024) in;
+layout(set = 0, binding = 0) readonly buffer Score { float score[]; };
+layout(set = 0, binding = 1) writeonly buffer Idx { uint idx[]; };
+layout(push_constant) uniform Constants { uint pools; uint keep; uint tail; uint ntail; } p;
+
+shared uint hist[256];
+shared uint prefix_sel, need_sel;
+shared uint lane_sum[2][1024];
+
+// Larger float, larger key (no NaNs expected; -0 and +0 differ by one, harmless).
+uint key_of(float f) {
+    uint u = floatBitsToUint(f);
+    return (u & 0x80000000u) != 0 ? ~u : (u | 0x80000000u);
+}
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    if (lane == 0) {
+        prefix_sel = 0;
+        need_sel = p.keep;
+    }
+    barrier();
+    // Four passes of 8 bits, most significant first: the threshold key's digits.
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        if (lane < 256) hist[lane] = 0;
+        barrier();
+        uint mask_hi = shift == 24 ? 0u : (0xffffffffu << uint(shift + 8));
+        uint pre = prefix_sel;
+        for (uint i = lane; i < p.pools; i += 1024) {
+            uint k = key_of(score[i]);
+            if ((k & mask_hi) == (pre & mask_hi)) atomicAdd(hist[(k >> uint(shift)) & 255u], 1u);
+        }
+        barrier();
+        if (lane == 0) {
+            uint need = need_sel;
+            uint digit = 255;
+            for (int dgt = 255; dgt >= 0; dgt--) {
+                uint c = hist[dgt];
+                if (c >= need) { digit = uint(dgt); break; }
+                need -= c;
+            }
+            need_sel = need;   // how many with exactly the prefix so far, at this digit, to take
+            prefix_sel = pre | (digit << uint(shift));
+        }
+        barrier();
+    }
+    uint thr = prefix_sel;     // the keep-th largest key
+    uint ties = need_sel;      // how many keys equal to thr to take (the lowest pools first)
+    // Each lane owns a contiguous run of pools: counts of greater and of equal keys.
+    uint per = (p.pools + 1023) / 1024;
+    uint lo = lane * per, hi = min(lo + per, p.pools);
+    uint gt = 0, eq = 0;
+    for (uint i = lo; i < hi; i++) {
+        uint k = key_of(score[i]);
+        gt += k > thr ? 1u : 0u;
+        eq += k == thr ? 1u : 0u;
+    }
+    lane_sum[0][lane] = gt;
+    lane_sum[1][lane] = eq;
+    barrier();
+    // Exclusive prefix sums over lanes (lane 0 serially: 1024 adds).
+    if (lane == 0) {
+        uint a = 0, b = 0;
+        for (uint i = 0; i < 1024; i++) {
+            uint ta = lane_sum[0][i], tb = lane_sum[1][i];
+            lane_sum[0][i] = a;
+            lane_sum[1][i] = b;
+            a += ta;
+            b += tb;
+        }
+    }
+    barrier();
+    uint eq_before = lane_sum[1][lane];
+    // A pool is kept when greater, or equal and among the first `ties` equal ones; its rank
+    // among kept pools = kept greater before + kept equal before, in pool order.
+    uint g_before = lane_sum[0][lane];
+    for (uint i = lo; i < hi; i++) {
+        uint k = key_of(score[i]);
+        bool keepit = k > thr || (k == thr && eq_before < ties);
+        uint taken_eq = min(eq_before, ties);
+        if (keepit) {
+            uint rank = g_before + taken_eq;
+            for (uint s = 0; s < 4; s++) idx[rank * 4 + s] = i * 4 + s;
+        }
+        if (k > thr) g_before++;
+        if (k == thr) eq_before++;
+    }
+    if (lane < p.ntail) idx[p.keep * 4 + lane] = p.tail + lane;
+}

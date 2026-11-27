@@ -1,0 +1,32 @@
+// The DSA indexer's pool scores for one token: for each of `pools` complete pools b,
+// score[b] = sum_h relu(iq[h] . pooled[b]) * w[h] * wscale (32 heads of 128); one lane per
+// pool, the query and head weights in shared memory.
+#version 460
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Iq { float iq[]; };     // [32][128]
+layout(set = 0, binding = 1) readonly buffer W { float w[]; };       // [32] (at w_off)
+layout(set = 0, binding = 2) readonly buffer Pooled { vec4 pooled[]; };
+layout(set = 0, binding = 3) writeonly buffer Score { float score[]; };
+layout(push_constant) uniform Constants { uint pools; float wscale; uint w_off; } p;
+
+shared vec4 q[32 * 32];
+shared float hw[32];
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    for (uint i = lane; i < 32 * 32; i += 128)
+        q[i] = vec4(iq[4 * i], iq[4 * i + 1], iq[4 * i + 2], iq[4 * i + 3]);
+    if (lane < 32) hw[lane] = w[p.w_off + lane] * p.wscale;
+    barrier();
+    uint b = gl_WorkGroupID.x * 128 + lane;
+    if (b >= p.pools) return;
+    vec4 k[32];
+    for (uint c = 0; c < 32; c++) k[c] = pooled[b * 32 + c];
+    float s = 0.0;
+    for (uint h = 0; h < 32; h++) {
+        float d = 0.0;
+        for (uint c = 0; c < 32; c++) d += dot(q[h * 32 + c], k[c]);
+        s += max(d, 0.0) * hw[h];
+    }
+    score[b] = s;
+}

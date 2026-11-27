@@ -1,0 +1,54 @@
+// The DSA indexer's cache for one token at position `pos` (one workgroup, lane d of 128):
+// the key LayerNorm(raw[0..128]) (weight, bias, eps) and the gate raw[128..256] stored at
+// keys[pos] = [key 128 | gate 128]; when pos completes a pool of 4 (pos % 4 == 3), the pool's
+// key pooled[pos / 4][d] = sum_slot softmax_slot(gate[slot][d] + ape[slot][d]) key[slot][d]
+// over its four positions.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Raw { float raw[]; };
+layout(set = 0, binding = 1) readonly buffer Params { float w[128]; float b[128]; float ape[512]; };
+layout(set = 0, binding = 2) buffer Keys { float keys[]; };
+layout(set = 0, binding = 3) writeonly buffer Pooled { float pooled[]; };
+layout(push_constant) uniform Constants { uint pos; float eps; } p;
+
+shared float red[2][32];
+
+void main() {
+    uint d = gl_LocalInvocationIndex;
+    float v = raw[d];
+    float s = subgroupAdd(v);
+    if (gl_SubgroupInvocationID == 0) red[0][gl_SubgroupID] = s;
+    barrier();
+    float mean = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) mean += red[0][i];
+    mean /= 128.0;
+    float c = v - mean;
+    float s2 = subgroupAdd(c * c);
+    if (gl_SubgroupInvocationID == 0) red[1][gl_SubgroupID] = s2;
+    barrier();
+    float var = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) var += red[1][i];
+    var /= 128.0;
+    float key = c / sqrt(var + p.eps) * w[d] + b[d];
+    keys[p.pos * 256 + d] = key;
+    keys[p.pos * 256 + 128 + d] = raw[128 + d];
+    if (p.pos % 4 == 3) {
+        uint first = p.pos - 3;
+        float g[4], k[4];
+        for (uint slot = 0; slot < 4; slot++) {
+            uint at = (first + slot) * 256;
+            k[slot] = slot == 3 ? key : keys[at + d];
+            g[slot] = (slot == 3 ? raw[128 + d] : keys[at + 128 + d]) + ape[slot * 128 + d];
+        }
+        float top = max(max(g[0], g[1]), max(g[2], g[3]));
+        float e[4], sum = 0.0;
+        for (uint slot = 0; slot < 4; slot++) {
+            e[slot] = exp(g[slot] - top);
+            sum += e[slot];
+        }
+        float acc = 0.0;
+        for (uint slot = 0; slot < 4; slot++) acc += e[slot] / sum * k[slot];
+        pooled[(p.pos / 4) * 128 + d] = acc;
+    }
+}

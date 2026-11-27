@@ -19,6 +19,9 @@ struct Extra {
     fin: Kernel,
     argmax: Kernel,
     mve: Kernel,
+    idxstore: Kernel,
+    idxscore: Kernel,
+    idxselect: Kernel,
     /// The IQ2_S and IQ3_S grids for mve.
     tables: Buffer,
 }
@@ -53,6 +56,14 @@ enum Attention {
         v_b: Mat,
         out: Mat,
         latents: Buffer,
+        /// The indexer: key|gate rows, head weights (f32), query rows; LayerNorm weight,
+        /// bias and the pooling's position bias; the key|gate cache and pooled keys.
+        idx_kg: Mat,
+        idx_proj: Mat,
+        idx_qb: Mat,
+        idx_params: Buffer,
+        idx_keys: Buffer,
+        idx_pooled: Buffer,
     },
 }
 
@@ -96,6 +107,11 @@ struct Scratch {
     zeros: Buffer,
     /// The router's choice in device memory (ids, weights).
     routed: Buffer,
+    /// The indexer: key|gate and head weights; its query; pool scores; chosen positions.
+    ia: Buffer,
+    ib: Buffer,
+    iscore: Buffer,
+    iidx: Buffer,
 }
 
 pub struct Engine<'m> {
@@ -183,7 +199,10 @@ impl<'m> Engine<'m> {
             hcmix: kernel(include_bytes!("../shaders/hcmix.spv"), 6, 5)?,
             kda: kernel(include_bytes!("../shaders/kda.spv"), 8, 4)?,
             dsanorm: kernel(include_bytes!("../shaders/dsanorm.spv"), 4, 4)?,
-            mla: kernel(include_bytes!("../shaders/mla.spv"), 3, 3)?,
+            mla: kernel(include_bytes!("../shaders/mla.spv"), 4, 4)?,
+            idxstore: kernel(include_bytes!("../shaders/idxstore.spv"), 4, 2)?,
+            idxscore: kernel(include_bytes!("../shaders/idxscore.spv"), 4, 3)?,
+            idxselect: gpu.kernel(include_bytes!("../shaders/idxselect.spv"), 2, 4, None)?,
             route: kernel(include_bytes!("../shaders/route.spv"), 5, 5)?,
             glu: kernel(include_bytes!("../shaders/glu.spv"), 2, 3)?,
             fin: kernel(include_bytes!("../shaders/final.spv"), 3, 2)?,
@@ -226,6 +245,20 @@ impl<'m> Engine<'m> {
                     v_b: up(&m(&b("attn_v_b.weight"))?)?,
                     out: up(&m(&b("attn_output.weight"))?)?,
                     latents: gpu.buffer((max_positions * hp.kv_lora * 4) as u64)?,
+                    idx_kg: up(&concat(&[
+                        m(&b("indexer.attn_k.weight"))?,
+                        m(&b("indexer_compressor_gate.weight"))?,
+                    ]))?,
+                    idx_proj: up(&m(&b("indexer.proj.weight"))?)?,
+                    idx_qb: up(&m(&b("indexer.attn_q_b.weight"))?)?,
+                    idx_params: {
+                        let mut p = v(&b("indexer.k_norm.weight"))?;
+                        p.extend(v(&b("indexer.k_norm.bias"))?);
+                        p.extend(v(&b("indexer_compressor_ape.weight"))?);
+                        floats(&gpu, &p)?
+                    },
+                    idx_keys: gpu.buffer((max_positions * 256 * 4) as u64)?,
+                    idx_pooled: gpu.buffer((max_positions / 4 * 128 * 4).max(16) as u64)?,
                 }
             } else {
                 let d = hp.kda_head * hp.heads;
@@ -303,6 +336,10 @@ impl<'m> Engine<'m> {
             gd: buf(n)?,
             zeros: floats(&gpu, &vec![0f32; n])?,
             routed: buf(2 * hp.experts_used)?,
+            ia: buf(256 + 32)?,
+            ib: buf(32 * 128)?,
+            iscore: buf((max_positions / 4).max(4))?,
+            iidx: buf(hp.indexer_top_k + hp.indexer_kpool)?,
         };
         let output = up(&m("output.weight")?)?;
         // The experts: the device's free memory less a margin (or KUNO_GLM_DEVICE_GB).
@@ -371,7 +408,7 @@ impl<'m> Engine<'m> {
     pub fn step(&mut self, token: u32) -> Result<u32> {
         let hp = self.model.hp.clone();
         let n = hp.embd;
-        if self.pos >= self.max_positions || self.pos >= hp.indexer_top_k + hp.indexer_kpool - 1 {
+        if self.pos >= self.max_positions {
             return Err("context_full");
         }
         let mut row = vec![0f32; n];
@@ -484,8 +521,29 @@ impl<'m> Engine<'m> {
                     v_b,
                     out,
                     latents,
+                    idx_kg,
+                    idx_proj,
+                    idx_qb,
+                    idx_params,
+                    idx_keys,
+                    idx_pooled,
                 } => {
                     let (ql, lora) = (hp.q_lora, hp.kv_lora);
+                    // The indexer's key|gate and head weights, from the block's input.
+                    mv(
+                        this,
+                        &mut ops,
+                        idx_kg,
+                        &s.normed,
+                        0,
+                        &s.ia,
+                        0,
+                        idx_kg.constants(0, 0, false),
+                        true,
+                    );
+                    let mut pc = idx_proj.constants(0, 256, false);
+                    pc[6] |= 4;
+                    mv(this, &mut ops, idx_proj, &s.normed, 0, &s.ia, 256, pc, true);
                     mv(
                         this,
                         &mut ops,
@@ -515,6 +573,56 @@ impl<'m> Engine<'m> {
                         groups: [1, 1, 1],
                         independent: false,
                     });
+                    ops.push(Op {
+                        kernel: &this.e.idxstore,
+                        buffers: vec![&s.ia, idx_params, idx_keys, idx_pooled],
+                        constants: vec![this.pos as u32, f(1e-6)],
+                        groups: [1, 1, 1],
+                        independent: false,
+                    });
+                    // Past top_k + kpool - 1 positions the indexer chooses the pools attended.
+                    let kpool = hp.indexer_kpool;
+                    let pools = (this.pos + 1) / kpool;
+                    let keep = hp.indexer_top_k / kpool;
+                    let indexed = pools > keep;
+                    let ntail = this.pos + 1 - pools * kpool;
+                    if indexed {
+                        mv(
+                            this,
+                            &mut ops,
+                            idx_qb,
+                            &s.out,
+                            0,
+                            &s.ib,
+                            0,
+                            idx_qb.constants(0, 0, false),
+                            false,
+                        );
+                        ops.push(Op {
+                            kernel: &this.e.idxscore,
+                            buffers: vec![&s.ib, &s.ia, idx_pooled, &s.iscore],
+                            constants: vec![pools as u32, f(1.0 / ((128 * 32) as f32).sqrt()), 256],
+                            groups: [(pools as u32).div_ceil(128), 1, 1],
+                            independent: false,
+                        });
+                        ops.push(Op {
+                            kernel: &this.e.idxselect,
+                            buffers: vec![&s.iscore, &s.iidx],
+                            constants: vec![
+                                pools as u32,
+                                keep as u32,
+                                (pools * kpool) as u32,
+                                ntail as u32,
+                            ],
+                            groups: [1, 1, 1],
+                            independent: false,
+                        });
+                    }
+                    let count = if indexed {
+                        keep * kpool + ntail
+                    } else {
+                        this.pos + 1
+                    };
                     // q [heads][qk] in a; absorbed [heads][lora] in b; mixed in c; heads' values in out.
                     mv(
                         this,
@@ -540,11 +648,12 @@ impl<'m> Engine<'m> {
                     );
                     ops.push(Op {
                         kernel: &this.e.mla,
-                        buffers: vec![&s.b, latents, &s.c],
+                        buffers: vec![&s.b, latents, &s.c, &s.iidx],
                         constants: vec![
                             lora as u32,
-                            (this.pos + 1) as u32,
+                            count as u32,
                             f(1.0 / (hp.qk_head as f32).sqrt()),
+                            indexed as u32,
                         ],
                         groups: [hp.heads as u32, 1, 1],
                         independent: false,
