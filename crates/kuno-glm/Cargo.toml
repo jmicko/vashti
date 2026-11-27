@@ -6,3 +6,12 @@ edition = "2024"
 [dependencies]
 kuno-text = { path = "../kuno-text" }
 rayon = "1"
+kuno-image = { path = "../kuno-image", optional = true }
+
+[features]
+# The GPU engine (Vulkan, through the image engine's device layer).
+gpu = ["dep:kuno-image", "kuno-image/rust-image"]
+
+[[example]]
+name = "roundtrip"
+required-features = ["gpu"]
