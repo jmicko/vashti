@@ -35,8 +35,8 @@ enum Attention {
         qkv: Mat,
         /// f_a, g_a, beta rows
         small: Mat,
-        f_b: Mat,
-        g_b: Mat,
+        /// f_b then g_b rows (per-group inputs: f_a's 128, g_a's 128)
+        fg_b: Mat,
         conv: Buffer,
         /// a [64], out norm [128], dt bias [d]
         params: Buffer,
@@ -94,6 +94,8 @@ struct Scratch {
     gh: Buffer,
     gd: Buffer,
     zeros: Buffer,
+    /// The router's choice in device memory (ids, weights).
+    routed: Buffer,
 }
 
 pub struct Engine<'m> {
@@ -103,6 +105,7 @@ pub struct Engine<'m> {
     e: Extra,
     blocks: Vec<Block>,
     experts: Vec<Option<BlockExperts>>,
+    second: Option<crate::second::Second>,
     out_norm: Buffer,
     output: Mat,
     embed: Matrix,
@@ -119,6 +122,10 @@ pub struct Engine<'m> {
     pub trace: Option<Vec<Vec<f32>>>,
     /// How often each block's experts were chosen ([block][expert]; placement statistics).
     pub counts: std::sync::Mutex<Vec<Vec<u32>>>,
+    /// With KUNO_GLM_PROFILE: device time per kernel (and product shape), ns and count.
+    pub profile: std::sync::Mutex<std::collections::BTreeMap<String, (f64, u32)>>,
+    /// Seconds in the CPU's sums and in waiting for the second device, this token.
+    split: std::sync::Mutex<[f64; 2]>,
 }
 
 fn concat(ms: &[Matrix]) -> Matrix {
@@ -154,8 +161,19 @@ fn f(v: f32) -> u32 {
     v.to_bits()
 }
 
+/// The router's sequence word for block `il` at position `pos` (never 0, the buffer's start).
+fn seq(pos: usize, il: usize) -> u32 {
+    (pos as u32).wrapping_mul(64).wrapping_add(il as u32 + 1) | 1 << 31
+}
+
 impl<'m> Engine<'m> {
-    pub fn new(model: &'m Model, gpu: Gpu, max_positions: usize) -> Result<Self> {
+    /// `second`: a further GPU for the next tier of experts.
+    pub fn new(
+        model: &'m Model,
+        gpu: Gpu,
+        second: Option<Gpu>,
+        max_positions: usize,
+    ) -> Result<Self> {
         let hp = &model.hp;
         let k = Kernels::new(&gpu)?;
         let lanes = Some(k.lanes);
@@ -166,7 +184,7 @@ impl<'m> Engine<'m> {
             kda: kernel(include_bytes!("../shaders/kda.spv"), 8, 4)?,
             dsanorm: kernel(include_bytes!("../shaders/dsanorm.spv"), 4, 4)?,
             mla: kernel(include_bytes!("../shaders/mla.spv"), 3, 3)?,
-            route: kernel(include_bytes!("../shaders/route.spv"), 4, 4)?,
+            route: kernel(include_bytes!("../shaders/route.spv"), 5, 5)?,
             glu: kernel(include_bytes!("../shaders/glu.spv"), 2, 3)?,
             fin: kernel(include_bytes!("../shaders/final.spv"), 3, 2)?,
             argmax: gpu.kernel(include_bytes!("../shaders/argmax.spv"), 2, 2, None)?,
@@ -230,8 +248,10 @@ impl<'m> Engine<'m> {
                         m(&b("ssm_g_a.weight"))?,
                         m(&b("ssm_beta.weight"))?,
                     ]))?,
-                    f_b: up(&m(&b("ssm_f_b.weight"))?)?,
-                    g_b: up(&m(&b("ssm_g_b.weight"))?)?,
+                    fg_b: up(&concat(&[
+                        m(&b("ssm_f_b.weight"))?,
+                        m(&b("ssm_g_b.weight"))?,
+                    ]))?,
                     conv: floats(&gpu, &conv)?,
                     params: floats(&gpu, &params)?,
                     out: up(&m(&b("attn_output.weight"))?)?,
@@ -282,6 +302,7 @@ impl<'m> Engine<'m> {
             gh: buf(hp.experts_used * hp.ff_expert)?,
             gd: buf(n)?,
             zeros: floats(&gpu, &vec![0f32; n])?,
+            routed: buf(2 * hp.experts_used)?,
         };
         let output = up(&m("output.weight")?)?;
         // The experts: the device's free memory less a margin (or KUNO_GLM_DEVICE_GB).
@@ -293,14 +314,42 @@ impl<'m> Engine<'m> {
             .unwrap_or_else(|| gpu.free_memory().unwrap_or(0).saturating_sub(margin));
         let counts =
             std::env::var_os("KUNO_GLM_COUNTS_IN").and_then(|p| experts::read_counts(p.as_ref()));
-        let experts = experts::place(model, &gpu, budget, counts.as_deref())?;
+        let second = match second {
+            Some(g) => Some(crate::second::Second::new(
+                g,
+                hp.experts_used,
+                n,
+                hp.ff_expert,
+            )?),
+            None => None,
+        };
+        let budget2 = second.as_ref().map(|s| {
+            std::env::var("KUNO_GLM_SECOND_GB")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .map(|g| (g * 1e9) as u64)
+                .unwrap_or_else(|| {
+                    s.gpu
+                        .free_memory()
+                        .unwrap_or(0)
+                        .saturating_sub(3 * margin / 2)
+                })
+        });
+        let experts = experts::place(
+            model,
+            &gpu,
+            budget,
+            second.as_ref().map(|s| (&s.gpu, budget2.unwrap_or(0))),
+            counts.as_deref(),
+        )?;
         Ok(Self {
             out_norm: floats(&gpu, &v("output_norm.weight")?)?,
             output,
             experts,
+            second,
             embed: m("token_embd.weight")?,
             host_x: gpu.mapped((4 * n * 4) as u64)?,
-            route: gpu.mapped(((2 * hp.experts_used + n) * 4) as u64)?,
+            route: gpu.mapped(((2 * hp.experts_used + n + 4) * 4) as u64)?,
             cpu_out: gpu.mapped((n * 4) as u64)?,
             token: gpu.mapped(16)?,
             s,
@@ -313,6 +362,8 @@ impl<'m> Engine<'m> {
             max_positions,
             trace: None,
             counts: std::sync::Mutex::new(vec![vec![0; hp.experts]; hp.layers]),
+            profile: std::sync::Mutex::new(Default::default()),
+            split: std::sync::Mutex::new([0.0; 2]),
         })
     }
 
@@ -339,7 +390,7 @@ impl<'m> Engine<'m> {
         let hpr = &hp;
         let mut traces = Vec::new();
         // Seconds waiting for the router, in the CPU's experts.
-        let mut timing = [0f64; 2];
+        let mut timing = [0f64; 3];
         let started = std::time::Instant::now();
         let mut next_mode = 0u32;
         let mut next_o: &Buffer = &s.out;
@@ -362,8 +413,7 @@ impl<'m> Engine<'m> {
                 Attention::Kda {
                     qkv,
                     small,
-                    f_b,
-                    g_b,
+                    fg_b,
                     conv,
                     params,
                     out,
@@ -393,27 +443,17 @@ impl<'m> Engine<'m> {
                         small.constants(0, 0, false),
                         false,
                     );
-                    // f_b on f_a's 128, g_b on g_a's 128: fg [f | gate] in b.
+                    // f_b on f_a's 128, g_b on g_a's 128 (one product, two input groups):
+                    // fg [f | gate] in b.
                     mv(
                         this,
                         &mut ops,
-                        f_b,
+                        fg_b,
                         &s.c,
                         0,
                         &s.b,
                         0,
-                        f_b.constants(0, 0, false),
-                        true,
-                    );
-                    mv(
-                        this,
-                        &mut ops,
-                        g_b,
-                        &s.c,
-                        128,
-                        &s.b,
-                        d,
-                        g_b.constants(128, d, false),
+                        fg_b.grouped(0, 0, d, 128),
                         false,
                     );
                     ops.push(Op {
@@ -585,17 +625,23 @@ impl<'m> Engine<'m> {
                         0,
                         &s.c,
                         0,
-                        router.constants(0, 0, false),
+                        {
+                            // Few rows: a whole workgroup per row.
+                            let mut c = router.constants(0, 0, false);
+                            c[6] |= 4;
+                            c
+                        },
                         false,
                     );
                     ops.push(Op {
                         kernel: &this.e.route,
-                        buffers: vec![&s.c, bias, &s.normed, this.route.buffer()],
+                        buffers: vec![&s.c, bias, &s.normed, this.route.buffer(), &s.routed],
                         constants: vec![
                             hp.experts as u32,
                             hp.experts_used as u32,
                             f(hp.expert_scale),
                             n as u32,
+                            seq(this.pos, il),
                         ],
                         groups: [1, 1, 1],
                         independent: false,
@@ -645,7 +691,7 @@ impl<'m> Engine<'m> {
                                 &pool.gu_s,
                                 &s.normed,
                                 &s.ge,
-                                this.route.buffer(),
+                                &s.routed,
                                 &pool.slots,
                                 &this.e.tables,
                             ],
@@ -667,7 +713,7 @@ impl<'m> Engine<'m> {
                                 &pool.down_s,
                                 &s.gh,
                                 &s.gd,
-                                this.route.buffer(),
+                                &s.routed,
                                 &pool.slots,
                                 &this.e.tables,
                             ],
@@ -678,7 +724,7 @@ impl<'m> Engine<'m> {
                     }
                     pending.push(submit(this, &mut ops)?);
                     let t = std::time::Instant::now();
-                    routed.wait()?;
+                    this.await_route(seq(this.pos, il), routed, &mut pending)?;
                     timing[0] += t.elapsed().as_secs_f64();
                     let t = std::time::Instant::now();
                     let sum = if std::env::var_os("KUNO_GLM_SKIP_EXPERTS").is_some() {
@@ -687,6 +733,17 @@ impl<'m> Engine<'m> {
                         this.cpu_experts(il, ex)?
                     };
                     timing[1] += t.elapsed().as_secs_f64();
+                    if let Some(ex) = &this.experts[il] {
+                        let mut r = vec![0f32; hp.experts_used];
+                        this.gpu.read_mapped(&this.route, 0, &mut r)?;
+                        timing[2] += r
+                            .iter()
+                            .filter(|v| {
+                                let e = v.to_bits() as usize;
+                                ex.slot[e].is_none() && ex.slot2[e].is_none()
+                            })
+                            .count() as f64;
+                    }
                     this.gpu.write_mapped(&this.cpu_out, 0, &sum)?;
                     next_mode = 2;
                     next_o3 = if ex.device.is_some() { &s.gd } else { &s.zeros };
@@ -740,129 +797,50 @@ impl<'m> Engine<'m> {
         if let Some(tr) = &mut self.trace {
             *tr = traces;
         }
+        let split = self
+            .split
+            .lock()
+            .map(|mut p| std::mem::take(&mut *p))
+            .unwrap_or_default();
         if std::env::var_os("KUNO_GLM_TIMING").is_some() {
             eprintln!(
-                "token: {:.1} ms; router waits {:.1} ms, CPU experts {:.1} ms",
+                "token: {:.1} ms; router waits {:.1} ms, CPU experts {:.1} ms ({} experts, {:.1} GB/s: sums {:.1} ms, second device waits {:.1} ms)",
                 started.elapsed().as_secs_f64() * 1e3,
                 timing[0] * 1e3,
-                timing[1] * 1e3
+                timing[1] * 1e3,
+                timing[2],
+                timing[2] * 8.97e6 / timing[1] / 1e9,
+                split[0] * 1e3,
+                split[1] * 1e3
             );
         }
         self.pos += 1;
         Ok(t[0].to_bits())
     }
 
-    /// Block 0's attention one piece at a time: (name, values) after each (debugging).
-    pub fn probe(&mut self, token: u32) -> Result<Vec<(&'static str, Vec<f32>)>> {
-        let hp = self.model.hp.clone();
-        let n = hp.embd;
-        let mut row = vec![0f32; n];
-        self.embed.decode_row(token as usize, &mut row)?;
-        let x4: Vec<f32> = (0..4).flat_map(|_| row.iter().copied()).collect();
-        self.gpu.write_mapped(&self.host_x, 0, &x4)?;
-        let this = &*self;
-        let s = &this.s;
-        let mut out = Vec::new();
-        let read = |b: &Buffer, count: usize| -> Result<Vec<f32>> {
-            let stage = this.gpu.readback((count * 4) as u64)?;
-            let mut v = vec![0f32; count];
-            this.gpu.read_floats(b, 0, &stage, &mut v)?;
-            Ok(v)
-        };
-        let mut ops = Vec::new();
-        let blk = &this.blocks[0];
-        mix(this, &hp, &mut ops, &s.zeros, None, &blk.attn, 0, &s.out);
-        submit(this, &mut ops)?.wait()?;
-        out.push(("part", read(&s.part, 32 * 32)?));
-        out.push(("coef", read(&s.coef, 24)?));
-        out.push(("x0", read(&s.x[0], 4 * n)?));
-        out.push(("normed", read(&s.normed, n)?));
-        if let Attention::Kda {
-            qkv,
-            small,
-            f_b,
-            g_b,
-            conv,
-            params,
-            out: o,
-            hist,
-            state,
-        } = &blk.attention
-        {
-            let d = hp.kda_head * hp.heads;
-            mv(
-                this,
-                &mut ops,
-                qkv,
-                &s.normed,
-                0,
-                &s.a,
-                0,
-                qkv.constants(0, 0, false),
-                true,
-            );
-            mv(
-                this,
-                &mut ops,
-                small,
-                &s.normed,
-                0,
-                &s.c,
-                0,
-                small.constants(0, 0, false),
-                false,
-            );
-            submit(this, &mut ops)?.wait()?;
-            out.push(("qkv", read(&s.a, 3 * d)?));
-            out.push(("small", read(&s.c, 320)?));
-            mv(
-                this,
-                &mut ops,
-                f_b,
-                &s.c,
-                0,
-                &s.b,
-                0,
-                f_b.constants(0, 0, false),
-                true,
-            );
-            mv(
-                this,
-                &mut ops,
-                g_b,
-                &s.c,
-                128,
-                &s.b,
-                d,
-                g_b.constants(128, d, false),
-                false,
-            );
-            submit(this, &mut ops)?.wait()?;
-            out.push(("fg", read(&s.b, 2 * d)?));
-            ops.push(Op {
-                kernel: &this.e.kda,
-                buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
-                constants: vec![d as u32, f(hp.gate_lower_bound), f(hp.rms_eps), 256],
-                groups: [hp.heads as u32, 1, 1],
-                independent: false,
-            });
-            submit(this, &mut ops)?.wait()?;
-            out.push(("kda", read(&s.out, d)?));
-            mv(
-                this,
-                &mut ops,
-                o,
-                &s.out,
-                0,
-                &s.a,
-                0,
-                o.constants(0, 0, false),
-                false,
-            );
-            submit(this, &mut ops)?.wait()?;
-            out.push(("attn_out", read(&s.a, n)?));
+    /// Waits until the router's choice `seq` is visible in `route`: spinning on the word
+    /// route.comp writes last (cheaper than the fence's wake-up), the fence after 2 s.
+    fn await_route(&self, seq: u32, routed: Passing, pending: &mut Vec<Passing>) -> Result<()> {
+        let at = ((2 * self.model.hp.experts_used + self.model.hp.embd) * 4) as u64;
+        let started = std::time::Instant::now();
+        let mut word = [0f32; 1];
+        loop {
+            self.gpu.read_mapped(&self.route, at, &mut word)?;
+            if word[0].to_bits() == seq {
+                pending.push(routed);
+                return Ok(());
+            }
+            if started.elapsed().as_secs() >= 2 {
+                routed.wait()?;
+                self.gpu.read_mapped(&self.route, at, &mut word)?;
+                return if word[0].to_bits() == seq {
+                    Ok(())
+                } else {
+                    Err("gpu_failed")
+                };
+            }
+            std::hint::spin_loop();
         }
-        Ok(out)
     }
 
     /// The routed experts of block `il` kept in memory, on the CPU, for the router's
@@ -878,13 +856,31 @@ impl<'m> Engine<'m> {
                 c[il][e] += 1;
             }
         }
-        Ok(ex.cpu_sum(
+        // The second device's experts run while the CPU runs its own.
+        let second = match (&self.second, &ex.device2) {
+            (Some(sd), Some(pool)) if ids.iter().any(|e| ex.slot2[*e].is_some()) => {
+                Some(sd.begin(pool, ex.gate_kind, ex.down_kind, &r, hp.clamp_expert[il])?)
+            }
+            _ => None,
+        };
+        let t = std::time::Instant::now();
+        let mut sum = ex.cpu_sum(
             &ids,
             &r[used..2 * used],
             &r[2 * used..],
             hp.ff_expert,
             hp.clamp_expert[il],
-        ))
+        );
+        let cpu = t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
+        if let (Some(passing), Some(sd)) = (second, &self.second) {
+            sd.finish(passing, &mut sum)?;
+        }
+        if let Ok(mut p) = self.split.lock() {
+            p[0] += cpu;
+            p[1] += t.elapsed().as_secs_f64();
+        }
+        Ok(sum)
     }
 }
 
@@ -901,7 +897,11 @@ fn mv<'a>(
     c: [u32; 9],
     independent: bool,
 ) {
-    let groups = c[0].div_ceil(128 / this.k.lanes);
+    let groups = if c[6] & 4 != 0 {
+        c[0]
+    } else {
+        c[0].div_ceil(128 / this.k.lanes)
+    };
     ops.push(Op {
         kernel: &this.k.mv,
         buffers: vec![&m.w, &m.s, x, y],
@@ -986,6 +986,42 @@ fn submit<'a>(this: &'a Engine, ops: &mut Vec<Op<'a>>) -> Result<Passing> {
         })
         .collect();
     let independent: Vec<bool> = ops.iter().map(|o| o.independent).collect();
+    if std::env::var_os("KUNO_GLM_PROFILE").is_some() && !steps.is_empty() {
+        // Each step timed (with barriers after every step: device time, not overlap).
+        let times = this.gpu.pass_profiled(&steps, &vec![false; steps.len()])?;
+        let e = &this.e;
+        let names: [(&Kernel, &str); 11] = [
+            (&e.hcdot, "hcdot"),
+            (&e.hcmix, "hcmix"),
+            (&e.kda, "kda"),
+            (&e.dsanorm, "dsanorm"),
+            (&e.mla, "mla"),
+            (&e.route, "route"),
+            (&e.glu, "glu"),
+            (&e.fin, "final"),
+            (&e.argmax, "argmax"),
+            (&e.mve, "mve"),
+            (&this.k.mv, "mv"),
+        ];
+        let mut p = this.profile.lock().map_err(|_| "gpu_failed")?;
+        for (o, t) in ops.iter().zip(&times) {
+            let name = names
+                .iter()
+                .find(|(k, _)| std::ptr::eq(*k, o.kernel))
+                .map_or("?", |n| n.1);
+            let label = match name {
+                "mv" => format!(
+                    "mv {}x{} kind {}",
+                    o.constants[0], o.constants[1], o.constants[2]
+                ),
+                "mve" => format!("mve mode {} kind {}", o.constants[0], o.constants[1]),
+                n => n.to_string(),
+            };
+            let entry = p.entry(label).or_insert((0.0, 0));
+            entry.0 += t;
+            entry.1 += 1;
+        }
+    }
     // SAFETY: every buffer belongs to the engine, which outlives the pass (waited for before
     // `step` returns).
     let passing = unsafe { this.gpu.pass_begin(&steps, &independent)? };

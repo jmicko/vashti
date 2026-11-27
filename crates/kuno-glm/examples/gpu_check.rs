@@ -29,24 +29,12 @@ fn main() {
     let t = std::time::Instant::now();
     let gpu =
         kuno_image::engine::gpu::Gpu::open(kuno_image::engine::gpu::Select::Pci(pci)).unwrap();
-    let mut engine = Engine::new(&model, gpu, 2048).unwrap();
+    // KUNO_GLM_SECOND: a second GPU (PCI address) for the next tier of experts.
+    let second = std::env::var("KUNO_GLM_SECOND").ok().map(|p| {
+        kuno_image::engine::gpu::Gpu::open(kuno_image::engine::gpu::Select::Pci(p)).unwrap()
+    });
+    let mut engine = Engine::new(&model, gpu, second, 2048).unwrap();
     eprintln!("engine ready in {:.1} s", t.elapsed().as_secs_f64());
-    if std::env::var_os("KUNO_GLM_PROBE").is_some() {
-        for (name, v) in engine.probe(ids[0]).unwrap() {
-            let bad = v.iter().filter(|x| !x.is_finite()).count();
-            let max = v
-                .iter()
-                .filter(|x| x.is_finite())
-                .map(|x| x.abs())
-                .fold(0f32, f32::max);
-            println!(
-                "{name}: {} values, {bad} non-finite, max |v| {max:.3e}, first {:?}",
-                v.len(),
-                &v[..4.min(v.len())]
-            );
-        }
-        return;
-    }
     if let Some(extra) = std::env::var("KUNO_GLM_BENCH")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -75,6 +63,21 @@ fn main() {
                 })
                 .collect();
             std::fs::write(path, text).unwrap();
+        }
+        if let Ok(p) = engine.profile.lock() {
+            let tokens = times.len() as f64;
+            let total: f64 = p.values().map(|v| v.0).sum();
+            for (label, (ns, count)) in p.iter() {
+                println!(
+                    "{label:32} {:7.3} ms/token  {:5.1} us each  x{}",
+                    ns / tokens / 1e6,
+                    ns / *count as f64 / 1e3,
+                    *count as f64 / tokens
+                );
+            }
+            if total > 0.0 {
+                println!("device total {:.2} ms/token", total / tokens / 1e6);
+            }
         }
         let mean = generated.iter().sum::<f64>() / generated.len().max(1) as f64;
         println!(
@@ -125,8 +128,8 @@ fn main() {
             }
         }
         println!(
-            "token {i}: gpu next {next}, reference next {} (logit {:.3}); worst block {} {:.2e}; gpu {:.2} s",
-            best.0, best.1, worst.0, worst.1, gpu_s
+            "token {i}: gpu next {next} (reference logit {:.3}), reference next {} (logit {:.3}); worst block {} {:.2e}; gpu {:.2} s",
+            logits[next as usize], best.0, best.1, worst.0, worst.1, gpu_s
         );
     }
 }

@@ -5,7 +5,8 @@
 // kind 3: Q6_K repacked per 256 values into 13 uvec4: 8 of low nibbles (value u of each 32 at
 //   bits 4u of its uint), 4 of the 2-bit highs (value u of each 16 at bits 2u), 1 of the 16
 //   int8 scales (one per 16 values); the block's f32 scale in Scales [rows][cols/256].
-// cols is a multiple of 32 (256 for kind 3). flags: 2 adds into y instead of writing it.
+// cols is a multiple of 32 (256 for kind 3). flags: 2 adds into y instead of writing it;
+// 4 gives each row the whole workgroup (few rows: the router), one row per workgroup.
 // x_off is in floats (a multiple of 4). With group > 0, row r reads x from
 // x_off + (r / group) * gstride (per-head products: the absorbed attention's k_b and v_b).
 // Rows past 65535 workgroups continue on the grid's second dimension.
@@ -70,11 +71,15 @@ float part(uint wr, uint i, uint xo) {
     return dot(uintBitsToFloat(v), x[xo + i]);
 }
 
+shared float wide_part[32];
+
 void main() {
     uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
-    uint r = group * gl_NumSubgroups + gl_SubgroupID;
+    bool wide = (p.flags & 4) != 0;
+    uint r = wide ? group : group * gl_NumSubgroups + gl_SubgroupID;
     if (r >= p.rows) return;
-    uint lane = gl_SubgroupInvocationID, width = gl_SubgroupSize;
+    uint lane = wide ? gl_LocalInvocationIndex : gl_SubgroupInvocationID;
+    uint width = wide ? gl_WorkGroupSize.x : gl_SubgroupSize;
     uint wr = r + p.w_row0;
     uint tasks = p.kind == 3 ? p.cols / 32 : (p.kind == 0 ? p.cols / 16 : p.cols / 4);
     uint xo = (p.x_off + (p.group > 0 ? (r / p.group) * p.gstride : 0)) / 4;
@@ -88,6 +93,12 @@ void main() {
     }
     for (; i < tasks; i += width) acc += part(wr, i, xo);
     float v = subgroupAdd((acc + acc2) + (acc3 + acc4));
+    if (wide) {
+        if (gl_SubgroupInvocationID == 0) wide_part[gl_SubgroupID] = v;
+        barrier();
+        v = 0.0;
+        for (uint g = 0; g < gl_NumSubgroups; g++) v += wide_part[g];
+    }
     if (lane == 0) {
         uint ya = p.y_off + r;
         y[ya] = ((p.flags & 2) != 0) ? y[ya] + v : v;

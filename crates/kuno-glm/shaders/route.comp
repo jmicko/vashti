@@ -1,19 +1,24 @@
 // The MoE router's choice (one workgroup of 512 lanes, one expert per lane): probs =
 // sigmoid(logits); the `used` experts with the largest probs + bias (ties: the lower index),
 // in that order; their weights the unbiased probs, normalized to sum 1 (at least 6.1e-5)
-// and times `scale`. Writes the chosen ids and weights (and, for the CPU, a copy of the
-// block's normed input x [n]) to `route`: ids [used] as uints, weights [used], x [n].
+// and times `scale`. Writes, to the host-visible `route` (uvec4 units): the ids [used] as
+// uints, the weights [used], the block's normed input x [n] (for the CPU), and last, after
+// the rest is visible, `seq` at word 2*used + n (the host spins on it instead of a fence).
+// The ids and weights also go to `dev` (device memory, for the device's experts).
+// used is a multiple of 4.
 #version 460
 layout(local_size_x = 512) in;
 layout(set = 0, binding = 0) readonly buffer Logits { float logits[]; };
 layout(set = 0, binding = 1) readonly buffer Bias { float bias[]; };
-layout(set = 0, binding = 2) readonly buffer X { float x[]; };
-layout(set = 0, binding = 3) buffer Route { uint route[]; };
-layout(push_constant) uniform Constants { uint experts; uint used; float scale; uint n; } p;
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) coherent buffer Route { uvec4 route[]; };
+layout(set = 0, binding = 4) writeonly buffer Dev { uint dev[]; };
+layout(push_constant) uniform Constants { uint experts; uint used; float scale; uint n; uint seq; } p;
 
 shared float key[512];
 shared float prob[512];
 shared uint chosen[16];
+shared uint words[32];
 
 void main() {
     uint e = gl_LocalInvocationIndex;
@@ -29,7 +34,7 @@ void main() {
         uint rank = 0;
         for (uint o = 0; o < p.experts; o++) {
             float ko = key[o];
-            if (ko > k || (ko == k && o < e)) rank++;
+            rank += (ko > k || (ko == k && o < e)) ? 1u : 0u;
         }
         if (rank < p.used) chosen[rank] = e;
     }
@@ -39,9 +44,21 @@ void main() {
         for (uint i = 0; i < p.used; i++) sum += prob[chosen[i]];
         sum = max(sum, 6.1035156e-5);
         for (uint i = 0; i < p.used; i++) {
-            route[i] = chosen[i];
-            route[p.used + i] = floatBitsToUint(prob[chosen[i]] / sum * p.scale);
+            uint wv = floatBitsToUint(prob[chosen[i]] / sum * p.scale);
+            words[i] = chosen[i];
+            words[p.used + i] = wv;
+            dev[i] = chosen[i];
+            dev[p.used + i] = wv;
         }
     }
-    for (uint i = e; i < p.n; i += 512) route[2 * p.used + i] = floatBitsToUint(x[i]);
+    barrier();
+    uint head = 2 * p.used / 4;   // uvec4s of ids and weights
+    if (e < head) route[e] = uvec4(words[4 * e], words[4 * e + 1], words[4 * e + 2], words[4 * e + 3]);
+    for (uint i = e; i < p.n / 4; i += 512) route[head + i] = floatBitsToUint(x[i]);
+    memoryBarrierBuffer();
+    barrier();
+    if (e == 0) {
+        memoryBarrierBuffer();
+        route[head + p.n / 4] = uvec4(p.seq, 0, 0, 0);
+    }
 }

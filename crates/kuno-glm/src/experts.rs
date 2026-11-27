@@ -13,10 +13,13 @@ use crate::{Model, Result, cpu};
 pub struct BlockExperts {
     pub gate_kind: TensorType,
     pub down_kind: TensorType,
-    /// Per expert: its device slot, if any.
+    /// Per expert: its slot on the main device, if any.
     pub slot: Vec<Option<u32>>,
     /// Device pools (when any expert is on the device): gate|up rows and down rows.
     pub device: Option<DevicePool>,
+    /// The same on the second device.
+    pub slot2: Vec<Option<u32>>,
+    pub device2: Option<DevicePool>,
     /// Host copies, per expert not on the device: gate rows, up rows, down rows (raw).
     pub host: Vec<Option<Vec<u8>>>,
     pub gate_row: usize,
@@ -70,11 +73,52 @@ pub fn read_counts(path: &std::path::Path) -> Option<Vec<Vec<u32>>> {
     )
 }
 
-/// Places every MoE block's experts: up to `device_bytes` on `gpu`, the rest in memory.
+/// One block's experts `ids` as a pool on `gpu`, with the slot map.
+fn pool(
+    model: &Model,
+    gpu: &Gpu,
+    il: usize,
+    ids: &[usize],
+    slot: &mut [Option<u32>],
+) -> Result<Option<DevicePool>> {
+    if ids.is_empty() {
+        return Ok(None);
+    }
+    let hp = &model.hp;
+    let (n, ff) = (hp.embd, hp.ff_expert);
+    let name = |p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
+    let (gk, gr, _) = model.layout(&name("gate"))?;
+    let (dk, dr, _) = model.layout(&name("down"))?;
+    let (mut gw, mut gs, mut dw, mut ds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut raw = Vec::new();
+    for (k, &e) in ids.iter().enumerate() {
+        slot[e] = Some(k as u32);
+        for part in ["gate", "up"] {
+            raw.resize(ff * gr, 0);
+            model.read_rows(&name(part), e * ff, &mut raw)?;
+            repack(gk, &raw, &mut gw, &mut gs);
+        }
+        raw.resize(n * dr, 0);
+        model.read_rows(&name("down"), e * n, &mut raw)?;
+        repack(dk, &raw, &mut dw, &mut ds);
+    }
+    let slots: Vec<u32> = slot.iter().map(|s| s.unwrap_or(u32::MAX)).collect();
+    Ok(Some(DevicePool {
+        gu_w: filled(gpu, &gw)?,
+        gu_s: filled(gpu, &gs)?,
+        down_w: filled(gpu, &dw)?,
+        down_s: filled(gpu, &ds)?,
+        slots: filled(gpu, kuno_image::engine::gpu::bytes_of(&slots))?,
+    }))
+}
+
+/// Places every MoE block's experts: up to `device_bytes` on `gpu` (the hottest), then up
+/// to the second device's budget there, the rest in memory.
 pub fn place(
     model: &Model,
     gpu: &Gpu,
     device_bytes: u64,
+    second: Option<(&Gpu, u64)>,
     counts: Option<&[Vec<u32>]>,
 ) -> Result<Vec<Option<BlockExperts>>> {
     let hp = &model.hp;
@@ -96,14 +140,18 @@ pub fn place(
         }
     }
     ranking.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-    let mut on_device = vec![vec![false; hp.experts]; hp.layers];
-    let mut used = 0u64;
+    // 0: memory, 1: the main device, 2: the second.
+    let mut on_device = vec![vec![0u8; hp.experts]; hp.layers];
+    let (mut used, mut used2) = (0u64, 0u64);
+    let budget2 = second.map_or(0, |s| s.1);
     for &(_, il, e) in &ranking {
-        if used + sizes[il] > device_bytes {
-            continue;
+        if used + sizes[il] <= device_bytes {
+            used += sizes[il];
+            on_device[il][e] = 1;
+        } else if used2 + sizes[il] <= budget2 {
+            used2 += sizes[il];
+            on_device[il][e] = 2;
         }
-        used += sizes[il];
-        on_device[il][e] = true;
     }
     let mut out = Vec::with_capacity(hp.layers);
     for (il, on_device) in on_device.iter().enumerate() {
@@ -116,37 +164,23 @@ pub fn place(
         cpu::check(gk)?;
         cpu::check(dk)?;
         let mut slot = vec![None; hp.experts];
-        let device_ids: Vec<usize> = (0..hp.experts).filter(|e| on_device[*e]).collect();
-        let device = if device_ids.is_empty() {
-            None
-        } else {
-            let (mut gw, mut gs, mut dw, mut ds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-            let mut raw = Vec::new();
-            for (k, &e) in device_ids.iter().enumerate() {
-                slot[e] = Some(k as u32);
-                for part in ["gate", "up"] {
-                    raw.resize(ff * gr, 0);
-                    model.read_rows(&name(il, part), e * ff, &mut raw)?;
-                    repack(gk, &raw, &mut gw, &mut gs);
-                }
-                raw.resize(n * dr, 0);
-                model.read_rows(&name(il, "down"), e * n, &mut raw)?;
-                repack(dk, &raw, &mut dw, &mut ds);
-            }
-            let slots: Vec<u32> = slot.iter().map(|s| s.unwrap_or(u32::MAX)).collect();
-            Some(DevicePool {
-                gu_w: filled(gpu, &gw)?,
-                gu_s: filled(gpu, &gs)?,
-                down_w: filled(gpu, &dw)?,
-                down_s: filled(gpu, &ds)?,
-                slots: filled(gpu, kuno_image::engine::gpu::bytes_of(&slots))?,
-            })
+        let mut slot2 = vec![None; hp.experts];
+        let ids1: Vec<usize> = (0..hp.experts).filter(|e| on_device[*e] == 1).collect();
+        let ids2: Vec<usize> = (0..hp.experts).filter(|e| on_device[*e] == 2).collect();
+        let device = pool(model, gpu, il, &ids1, &mut slot)?;
+        let device2 = match second {
+            Some((g, _)) => pool(model, g, il, &ids2, &mut slot2)?,
+            None => None,
         };
         // The rest into memory, read in parallel.
         let host: Vec<Option<Vec<u8>>> = (0..hp.experts)
             .into_par_iter()
             .map(|e| -> Result<Option<Vec<u8>>> {
-                if slot[e].is_some() {
+                // KUNO_GLM_NO_HOST (device profiling, with KUNO_GLM_SKIP_EXPERTS): none in memory.
+                if slot[e].is_some()
+                    || slot2[e].is_some()
+                    || std::env::var_os("KUNO_GLM_NO_HOST").is_some()
+                {
                     return Ok(None);
                 }
                 let mut v = vec![0u8; 2 * ff * gr + n * dr];
@@ -159,21 +193,28 @@ pub fn place(
             })
             .collect::<Result<_>>()?;
         eprintln!(
-            "block {il}: {} experts on the device, {} in memory",
-            device_ids.len(),
-            hp.experts - device_ids.len()
+            "block {il}: {} experts on the device, {} on the second, {} in memory",
+            ids1.len(),
+            ids2.len(),
+            hp.experts - ids1.len() - ids2.len()
         );
         out.push(Some(BlockExperts {
             gate_kind: gk,
             down_kind: dk,
             slot,
             device,
+            slot2,
+            device2,
             host,
             gate_row: gr,
             down_row: dr,
         }));
     }
-    eprintln!("experts: {:.1} GB on the device", used as f64 / 1e9);
+    eprintln!(
+        "experts: {:.1} GB on the device, {:.1} GB on the second",
+        used as f64 / 1e9,
+        used2 as f64 / 1e9
+    );
     Ok(out)
 }
 
@@ -185,7 +226,7 @@ impl BlockExperts {
         let mine: Vec<(usize, f32)> = ids
             .iter()
             .zip(w)
-            .filter(|(e, _)| self.slot[**e].is_none())
+            .filter(|(e, _)| self.slot[**e].is_none() && self.slot2[**e].is_none())
             .map(|(e, w)| (*e, *w))
             .collect();
         let mut sum = vec![0f32; n];

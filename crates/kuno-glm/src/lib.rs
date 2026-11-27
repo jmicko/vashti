@@ -20,6 +20,8 @@ pub mod experts;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 pub mod reference;
+#[cfg(feature = "gpu")]
+pub mod second;
 
 pub type Result<T> = std::result::Result<T, &'static str>;
 
