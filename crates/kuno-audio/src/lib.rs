@@ -1164,62 +1164,76 @@ fn conv_down(x: &[f32], ch: usize, t: usize, f: usize, c: &Conv2d) -> (Vec<f32>,
     let tp = t + 2;
     let t2 = (tp - 3) / 2 + 1;
     let f2 = (f + 2 - 3) / 2 + 1;
-    let at = |ci: usize, ti: isize, fi: isize| -> f32 {
-        // Padded time index ti: 0 is the state column, 1..=t the clip, t+1 the right pad.
-        if ti < 1 || ti as usize > t || fi < 0 || fi as usize >= f {
-            0.0
-        } else {
-            x[(ci * t + ti as usize - 1) * f + fi as usize]
-        }
-    };
     let mut y = vec![0f32; c.cout * t2 * f2];
     y.par_chunks_exact_mut(t2 * f2)
         .enumerate()
         .for_each(|(co, out)| {
-            for to in 0..t2 {
-                for fo in 0..f2 {
-                    let mut sum = c.b[co];
-                    let inputs: Vec<usize> = if c.depthwise {
-                        vec![co]
-                    } else {
-                        (0..ch).collect()
-                    };
-                    for (k, ci) in inputs.into_iter().enumerate() {
-                        let wbase = if c.depthwise {
-                            co * 9
-                        } else {
-                            (co * c.cin.max(ch) + k) * 9
-                        };
-                        for kf in 0..3 {
-                            for kt in 0..3 {
-                                let w = c.w[wbase + kf * 3 + kt];
-                                sum +=
-                                    w * at(ci, (to * 2 + kt) as isize, (fo * 2 + kf) as isize - 1);
+            out.iter_mut().for_each(|v| *v = c.b[co]);
+            let inputs = if c.depthwise { co..co + 1 } else { 0..ch };
+            for (k, ci) in inputs.enumerate() {
+                let wbase = if c.depthwise {
+                    co * 9
+                } else {
+                    (co * c.cin.max(ch) + k) * 9
+                };
+                let plane = &x[ci * t * f..][..t * f];
+                // Each output adds its taps in the order frequency, then time.
+                for to in 0..t2 {
+                    let row = &mut out[to * f2..][..f2];
+                    for kf in 0..3 {
+                        for kt in 0..3 {
+                            // Padded time index: 0 is the state column, 1..=t the clip, t+1
+                            // the right pad.
+                            let ti = to * 2 + kt;
+                            if ti < 1 || ti > t {
+                                continue;
+                            }
+                            let src = &plane[(ti - 1) * f..][..f];
+                            let w = c.w[wbase + kf * 3 + kt];
+                            // Frequency index fo * 2 + kf - 1, inside 0..f.
+                            for (fo, o) in row.iter_mut().enumerate() {
+                                let fi = fo * 2 + kf;
+                                if fi >= 1 && fi - 1 < f {
+                                    *o += w * src[fi - 1];
+                                }
                             }
                         }
                     }
-                    out[to * f2 + fo] = sum;
                 }
             }
         });
     (y, t2, f2)
 }
 
-/// A 1x1 convolution over `[ch][cells]`.
+/// A 1x1 convolution over `[ch][cells]`, a block of cells at a time (the block's inputs
+/// stay in cache for every output channel).
 fn pointwise(x: &[f32], ch: usize, cells: usize, c: &Conv2d) -> Vec<f32> {
     use rayon::prelude::*;
-    let mut y = vec![0f32; c.cout * cells];
-    y.par_chunks_exact_mut(cells)
-        .enumerate()
-        .for_each(|(co, out)| {
-            out.iter_mut().for_each(|v| *v = c.b[co]);
-            for ci in 0..ch {
-                let w = c.w[co * ch + ci];
-                for (o, v) in out.iter_mut().zip(&x[ci * cells..][..cells]) {
-                    *o += w * v;
+    const BLOCK: usize = 128;
+    let blocks: Vec<(usize, Vec<f32>)> = (0..cells.div_ceil(BLOCK))
+        .into_par_iter()
+        .map(|b| {
+            let (start, len) = (b * BLOCK, BLOCK.min(cells - b * BLOCK));
+            let mut out = vec![0f32; c.cout * len];
+            for (co, o) in out.chunks_exact_mut(len).enumerate() {
+                o.iter_mut().for_each(|v| *v = c.b[co]);
+                for ci in 0..ch {
+                    let w = c.w[co * ch + ci];
+                    for (v, xv) in o.iter_mut().zip(&x[ci * cells + start..][..len]) {
+                        *v += w * xv;
+                    }
                 }
             }
-        });
+            (start, out)
+        })
+        .collect();
+    let mut y = vec![0f32; c.cout * cells];
+    for (start, out) in blocks {
+        let len = out.len() / c.cout;
+        for co in 0..c.cout {
+            y[co * cells + start..][..len].copy_from_slice(&out[co * len..][..len]);
+        }
+    }
     y
 }
 
@@ -1316,5 +1330,89 @@ impl Istft {
         let trim = (self.n - self.hop) / 2;
         out.truncate(out.len().saturating_sub(trim));
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The encoder front's convolutions against direct sums in the same order.
+    #[test]
+    fn front_convolutions_match_direct_sums() {
+        let mut seed = 0x5851_f42d_4c95_7f2du64;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 40) as f32 / (1u64 << 24) as f32) - 0.5
+        };
+        for (depthwise, ch, cout, t, f) in [(false, 1, 8, 13, 10), (true, 6, 6, 9, 7)] {
+            let cin = if depthwise { 1 } else { ch };
+            let c = Conv2d {
+                w: (0..cout * cin * 9).map(|_| next()).collect(),
+                b: (0..cout).map(|_| next()).collect(),
+                cin,
+                cout,
+                depthwise,
+            };
+            let x: Vec<f32> = (0..ch * t * f).map(|_| next()).collect();
+            let (y, t2, f2) = conv_down(&x, ch, t, f, &c);
+            let at = |ci: usize, ti: isize, fi: isize| -> f32 {
+                if ti < 1 || ti as usize > t || fi < 0 || fi as usize >= f {
+                    0.0
+                } else {
+                    x[(ci * t + ti as usize - 1) * f + fi as usize]
+                }
+            };
+            for co in 0..cout {
+                for to in 0..t2 {
+                    for fo in 0..f2 {
+                        let mut sum = c.b[co];
+                        let inputs: Vec<usize> = if depthwise {
+                            vec![co]
+                        } else {
+                            (0..ch).collect()
+                        };
+                        for (k, ci) in inputs.into_iter().enumerate() {
+                            let wbase = if depthwise {
+                                co * 9
+                            } else {
+                                (co * cin + k) * 9
+                            };
+                            for kf in 0..3 {
+                                for kt in 0..3 {
+                                    let (ti, fi) =
+                                        ((to * 2 + kt) as isize, (fo * 2 + kf) as isize - 1);
+                                    if ti >= 1 && ti as usize <= t && fi >= 0 && (fi as usize) < f {
+                                        sum += c.w[wbase + kf * 3 + kt] * at(ci, ti, fi);
+                                    }
+                                }
+                            }
+                        }
+                        assert_eq!(y[(co * t2 + to) * f2 + fo], sum);
+                    }
+                }
+            }
+        }
+        let (ch, cout, cells) = (5, 7, 300);
+        let c = Conv2d {
+            w: (0..cout * ch).map(|_| next()).collect(),
+            b: (0..cout).map(|_| next()).collect(),
+            cin: ch,
+            cout,
+            depthwise: false,
+        };
+        let x: Vec<f32> = (0..ch * cells).map(|_| next()).collect();
+        let y = pointwise(&x, ch, cells, &c);
+        for co in 0..cout {
+            for cell in 0..cells {
+                let mut sum = c.b[co];
+                for ci in 0..ch {
+                    sum += c.w[co * ch + ci] * x[ci * cells + cell];
+                }
+                assert_eq!(y[co * cells + cell], sum);
+            }
+        }
     }
 }
