@@ -20,10 +20,10 @@ Vashti work (user-facing design to be proposed to the user before building):
   mono 16-bit to keep uploads small), base64, through Vashti's server. Vashti's
   `Permissions-Policy` sets `microphone=()` (`apps/vashti/src/main.rs`); it must allow
   `microphone=(self)` for recording, and `getUserMedia` needs a secure context (HTTPS, or
-  localhost) on phones. On the GPU a 15 s recording transcribes in under 2 s.
+  localhost) on phones. On the GPU a 15 s recording transcribes in under 1 s.
 - Read-aloud: with `speech_stream`, request `"stream": true` and play as it arrives: the
-  first audio comes after about 0.12 s on the GPU and generation outruns playback (about
-  8x real time on the RTX 3060); proxy the body through Vashti without buffering it.
+  first audio comes after about 0.1 s on the GPU and generation outruns playback (about
+  9x real time on the RTX 3060); proxy the body through Vashti without buffering it.
   Without a GPU (`device: "cpu"`) generation is about real time, so start playback after a
   short buffer. A stream
   that ends early (an error after the first audio) is shorter than the text.

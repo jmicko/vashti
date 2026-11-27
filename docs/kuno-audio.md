@@ -14,7 +14,7 @@ sudo kuno configure-audio --models /var/lib/kuno/audio-models [--gpu 0000:04:00.
 
 `--gpu` names the GPU by PCI address (`lspci -D`); the host's default is the RTX 3060
 (`0000:04:00.0`), leaving the B70 to images, video and large language models. The worker
-uses that GPU only when the model (about 2.3 GB) fits in its free memory at start, and
+uses that GPU only when the model (about 2.6 GB) fits in its free memory at start, and
 otherwise runs on the CPU; `capabilities.audio.device` shows which.
 
 Without an `audio` config section, Kuno looks for the collection in the image models
@@ -82,7 +82,7 @@ shared guard's `image_content_type_required` (415).
 
   | Device | Speech | First audio | Recognition |
   |---|---|---|---|
-  | RTX 3060 | 8.7x real time | 0.12 s | 0.74 s for 8.0 s |
+  | RTX 3060 | 9.6x real time | 0.09 s | 0.45 s for 7.8 s, 0.85 s for 15.4 s |
   | Arc B70 (idle) | 4.5x real time (measured before the two speed rounds) | 0.1 s | 0.56 s for 5.8 s |
   | CPU, 16 cores | 0.97x real time | 1.1 s | 8.4 s for 11.2 s |
 
@@ -93,13 +93,15 @@ shared guard's `image_content_type_required` (415).
   picks in 400 of 400 test cases), the backbone step and the codec's transformer (the
   last two side by side). Frames are pipelined: what a frame needs from the last one stays
   on the device, so the next frame is submitted before the last is read, and the device
-  does not wait for the host. On the RTX 3060 a frame (80 ms of audio) takes about 8.1 ms
-  of device time, most of it reading the backbone's 1.5 GB of weights at about 300 GB/s;
-  products of 2 to 16 positions (the depth decoder, the codec) use the half-precision
-  matrix units where the device has 16 x 16 x 16 ones. The host does the inverse STFT (an
-  FFT) and little else: about 0.3 s of CPU time for 8 s of speech. The CPU path uses one
-  thread per physical core. The first request after the worker starts also loads the model (about 5.5 s with a
+  does not wait for the host. On the RTX 3060 a frame (80 ms of audio) takes about 7.6 ms
+  of device time, most of it reading the backbone's 1.5 GB of weights at about 300 GB/s.
+  Where the device has 16 x 16 x 16 half-precision matrix units, products of 2 to 16
+  positions (the depth decoder, the codec) and of prompt chunks use them. The host does the
+  inverse STFT (an FFT) and little else: about 0.3 s of CPU time for 8 s of speech.
+  Recognition runs the encoder's blocks and greedy decoding on the device too (decoding a
+  token ahead, the argmax on the device); the mel spectrogram and the encoder's
+  convolutional front stay on the host. The CPU path uses one thread per physical core. The first request after the worker starts also loads the model (about 5.5 s with a
   GPU, every upload read back and compared; 1.5 s without).
-- **Memory:** 2.1 GB of VRAM and 1.2 GB of RAM with a GPU; 2.4 GB of RAM without.
+- **Memory:** 2.5 GB of VRAM and 1.3 GB of RAM with a GPU; 2.4 GB of RAM without.
 - **Fidelity** to llama.cpp (the reference): identical transcripts on the test clips, in
   both directions (Kuno's speech transcribed by llama.cpp and the reverse).
