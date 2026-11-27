@@ -31,6 +31,9 @@ const GATHER: &[u8] = include_bytes!("../shaders/gather.spv");
 const NORM: &[u8] = include_bytes!("../shaders/norm.spv");
 const ADDNORM: &[u8] = include_bytes!("../shaders/addnorm.spv");
 const NORMROPE: &[u8] = include_bytes!("../shaders/normrope.spv");
+const ARGMAX: &[u8] = include_bytes!("../shaders/argmax.spv");
+const ROW: &[u8] = include_bytes!("../shaders/row.spv");
+const MMQ: &[u8] = include_bytes!("../shaders/mmq.spv");
 const ROPE: &[u8] = include_bytes!("../shaders/rope.spv");
 const ATTEND: &[u8] = include_bytes!("../shaders/attend.spv");
 const CONV: &[u8] = include_bytes!("../shaders/conv.spv");
@@ -51,6 +54,9 @@ struct Kernels {
     mvc: Option<Kernel>,
     /// `mv1` for long rows: a workgroup per row, its subgroups splitting the row.
     mv1s: Kernel,
+    /// `mv` for more than 16 tokens (prompt chunks) of Q8_0 or f16 rows on half-precision
+    /// matrix units, where `mvc` is.
+    mmq: Option<Kernel>,
     sample: Kernel,
     gather: Kernel,
     norm: Kernel,
@@ -58,6 +64,10 @@ struct Kernels {
     addnorm: Kernel,
     /// Per-head norm and rotary embedding in one (heads of up to 128).
     normrope: Kernel,
+    /// The first largest value's index, into an id buffer.
+    argmax: Kernel,
+    /// A matrix row by an id from a buffer, as floats.
+    row: Kernel,
     rope: Kernel,
     attend: Kernel,
     conv: Kernel,
@@ -394,6 +404,18 @@ impl<'a> Recording<'a> {
             *last = true;
         }
     }
+    /// `push` with a grid of `rows` x `columns` workgroups (rows at most 65535).
+    fn push_grid(
+        &mut self,
+        k: &'a Kernel,
+        b: Vec<&'a Buffer>,
+        c: Vec<u32>,
+        rows: u32,
+        columns: u32,
+    ) {
+        self.steps.push((k, b, c, [rows.max(1), columns.max(1), 1]));
+        self.independent.push(false);
+    }
     fn push(&mut self, k: &'a Kernel, b: Vec<&'a Buffer>, c: Vec<u32>, groups: u32) {
         // Grids wider than 65535 workgroups (the portable limit) wrap onto a second row.
         let groups = groups.max(1);
@@ -518,6 +540,11 @@ impl Device {
             mv1: gpu.kernel(MV1, 5, 11, Some(lanes))?,
             mv1_rows: 128 / lanes as usize,
             mv1s: kernel(MV1S, 5, 11)?,
+            mmq: if gpu.has_half16() && lanes == 32 {
+                Some(gpu.kernel(MMQ, 5, 11, Some(32))?)
+            } else {
+                None
+            },
             mvc: if gpu.has_half16() && lanes == 32 {
                 Some(gpu.kernel(MVC, 5, 11, Some(32))?)
             } else {
@@ -528,6 +555,8 @@ impl Device {
             norm: kernel(NORM, 3, 10)?,
             addnorm: kernel(ADDNORM, 5, 4)?,
             normrope: kernel(NORMROPE, 3, 9)?,
+            argmax: kernel(ARGMAX, 2, 2)?,
+            row: kernel(ROW, 4, 3)?,
             rope: kernel(ROPE, 2, 8)?,
             attend: kernel(ATTEND, 5, 14)?,
             conv: kernel(CONV, 4, 4)?,
@@ -568,6 +597,47 @@ impl Device {
         let matrix = self.k.mvc.as_ref().filter(|_| m.tiled);
         // One token: a subgroup per row, or for long rows (few of them: the FFN's down
         // projection) a workgroup per row (2048 x 7680: 59 to 51 us on the RTX 3060).
+        let constants = vec![
+            rows as u32,
+            m.cols as u32,
+            n as u32,
+            m.kind,
+            x.off as u32,
+            x.stride as u32,
+            y.off as u32,
+            y.stride as u32,
+            row0 as u32,
+            bias.map_or(0, |b| b.1) as u32,
+            flags,
+        ];
+        let buffers = |m: &'a Mat| {
+            vec![
+                &m.w,
+                m.scales.as_ref().unwrap_or(&self.dummy),
+                x.buffer,
+                y.buffer,
+                bias.map_or(&self.dummy, |b| b.0),
+            ]
+        };
+        // Prompt chunks: 32 rows x 64 tokens a workgroup on the matrix units (where there are
+        // enough rows to fill the device; fewer stay on mvb).
+        if let Some(k) = self.k.mmq.as_ref().filter(|_| {
+            n > 16
+                && rows >= 1024
+                && m.kind <= 1
+                && !m.tiled
+                && m.cols.is_multiple_of(32)
+                && rows <= 65535 * 32
+        }) {
+            r.push_grid(
+                k,
+                buffers(m),
+                constants,
+                rows.div_ceil(32) as u32,
+                n.div_ceil(64) as u32,
+            );
+            return;
+        }
         let (kernel, groups) = if n == 1 && m.cols >= 4096 {
             (&self.k.mv1s, rows)
         } else if n == 1 {
@@ -579,30 +649,7 @@ impl Device {
         } else {
             (&self.k.mv, rows)
         };
-        r.push(
-            kernel,
-            vec![
-                &m.w,
-                m.scales.as_ref().unwrap_or(&self.dummy),
-                x.buffer,
-                y.buffer,
-                bias.map_or(&self.dummy, |b| b.0),
-            ],
-            vec![
-                rows as u32,
-                m.cols as u32,
-                n as u32,
-                m.kind,
-                x.off as u32,
-                x.stride as u32,
-                y.off as u32,
-                y.stride as u32,
-                row0 as u32,
-                bias.map_or(0, |b| b.1) as u32,
-                flags,
-            ],
-            groups as u32,
-        );
+        r.push(kernel, buffers(m), constants, groups as u32);
     }
     /// `mode` as in `norm.comp`: 0 write, 1 add the normed rows, 2 add without a norm.
     #[allow(clippy::too_many_arguments)]
@@ -1054,19 +1101,6 @@ impl GpuBackbone {
             0,
         );
     }
-    /// The text head over `state`: logits through the tied embeddings.
-    pub fn logits(&self, d: &Device, head: &Mat, out: &mut [f32], logits: &Mapped) -> Result<()> {
-        let mut r = Recording::new();
-        d.mv(
-            &mut r,
-            head,
-            at(&self.state, 0, 2048),
-            at(logits.buffer(), 0, head.rows),
-            1,
-        );
-        r.run(&d.gpu)?;
-        d.gpu.read_mapped(logits, 0, out)
-    }
 }
 
 /// The codec's transformer on the device: 8 blocks over six positions a frame (causal,
@@ -1085,6 +1119,84 @@ pub struct GpuCodec {
     positions: usize,
     next: Cell<usize>,
     eps: f32,
+}
+
+/// The audio encoder's 17 blocks on the device (width 768, causal), a whole piece of audio
+/// in one submission, `CHUNK` rows at a time.
+pub struct GpuEncoder {
+    blocks: Vec<GpuBlock>,
+    scratch: Scratch,
+    x: Buffer,
+    /// The piece's rows in and out, `[positions][768]`.
+    input: Mapped,
+    output: Mapped,
+    positions: usize,
+}
+
+const ENCODER_WIDTH: usize = 768;
+
+impl GpuEncoder {
+    pub fn upload(d: &Device, blocks: &[Block], positions: usize) -> Result<Self> {
+        let g = &d.gpu;
+        let blocks = blocks
+            .iter()
+            .map(|b| GpuBlock::upload(g, b, positions, false))
+            .collect::<Result<Vec<_>>>()?;
+        if blocks.iter().any(|b| b.width != ENCODER_WIDTH) {
+            return Err("model_file_invalid");
+        }
+        let bytes = (positions * ENCODER_WIDTH * 4) as u64;
+        Ok(Self {
+            scratch: Scratch::new(g, &blocks, CHUNK, positions)?,
+            blocks,
+            x: g.buffer((CHUNK * ENCODER_WIDTH * 4) as u64)?,
+            input: g.mapped(bytes)?,
+            output: g.mapped(bytes)?,
+            positions,
+        })
+    }
+    /// The most rows a piece may have.
+    pub fn positions(&self) -> usize {
+        self.positions
+    }
+    /// Runs `rows` (`[n][768]`, n at most `positions`) through the blocks in place.
+    pub fn forward(&self, d: &Device, rows: &mut [f32]) -> Result<()> {
+        let n_all = rows.len() / ENCODER_WIDTH;
+        if n_all > self.positions {
+            return Err("audio_context_exhausted");
+        }
+        for b in &self.blocks {
+            b.reset(&d.gpu, &d.staging, self.positions)?;
+        }
+        d.gpu.write_mapped(&self.input, 0, rows)?;
+        let (input, output) = (self.input.buffer(), self.output.buffer());
+        let mut r = Recording::new();
+        let w = ENCODER_WIDTH;
+        for start in (0..n_all).step_by(CHUNK) {
+            let n = CHUNK.min(n_all - start);
+            d.ew(
+                &mut r,
+                4,
+                at(input, start * w, 0),
+                at(input, start * w, 0),
+                at(&self.x, 0, 0),
+                n * w,
+                1,
+            );
+            d.record(&mut r, &self.blocks, &self.scratch, &self.x, n, start, true);
+            d.ew(
+                &mut r,
+                4,
+                at(&self.x, 0, 0),
+                at(&self.x, 0, 0),
+                at(output, start * w, 0),
+                n * w,
+                1,
+            );
+        }
+        r.run(&d.gpu)?;
+        d.gpu.read_mapped(&self.output, 0, rows)
+    }
 }
 
 /// Positions per codec frame, and its width.
@@ -1640,10 +1752,93 @@ pub struct InFlight<'a> {
 }
 
 /// The text head (tied embeddings) on the device, for recognition.
-pub fn upload_head(d: &Device, embed: &Linear) -> Result<(Mat, Mapped)> {
-    let m = Mat::upload(&d.gpu, embed)?;
-    let logits = d.gpu.mapped((m.rows * 4) as u64)?;
-    Ok((m, logits))
+/// Greedy text decoding on the device: each step takes the head's logits of the backbone
+/// state, their argmax as the token (into `ids`), its embedding (the head's row) and a
+/// backbone step on it, with no host work between steps; steps are pipelined.
+pub struct GpuDecoder {
+    /// The tied embeddings and output head, `[vocabulary][2048]`.
+    pub head: Mat,
+    logits: Buffer,
+    /// The tokens chosen, one per step.
+    ids: Mapped,
+    row: Buffer,
+    pub capacity: usize,
+}
+
+impl GpuDecoder {
+    pub fn upload(d: &Device, embed: &Linear, capacity: usize) -> Result<Self> {
+        let head = Mat::upload(&d.gpu, embed)?;
+        Ok(Self {
+            logits: d.gpu.buffer((head.rows * 4) as u64)?,
+            ids: d.gpu.mapped((capacity * 4) as u64)?,
+            row: d.gpu.buffer(2048 * 4)?,
+            head,
+            capacity,
+        })
+    }
+    /// Starts step `k`: token `k` from the backbone's state, then the backbone on it.
+    pub fn begin<'a>(
+        &'a self,
+        d: &'a Device,
+        backbone: &'a GpuBackbone,
+        k: usize,
+    ) -> Result<Decoding<'a>> {
+        if k >= self.capacity || backbone.next.get() + 1 > backbone.positions {
+            return Err("audio_context_exhausted");
+        }
+        let mut r = Recording::new();
+        let head = &self.head;
+        d.mv(
+            &mut r,
+            head,
+            at(&backbone.state, 0, 2048),
+            at(&self.logits, 0, head.rows),
+            1,
+        );
+        let ids = self.ids.buffer();
+        r.push(
+            &d.k.argmax,
+            vec![&self.logits, ids],
+            vec![head.rows as u32, k as u32],
+            1,
+        );
+        r.push(
+            &d.k.row,
+            vec![
+                &head.w,
+                head.scales.as_ref().unwrap_or(&d.dummy),
+                ids,
+                &self.row,
+            ],
+            vec![head.cols as u32, head.kind, k as u32],
+            head.cols.div_ceil(64) as u32,
+        );
+        backbone.record_step(d, &mut r, &self.row);
+        // SAFETY: every buffer recorded belongs to `self`, `d` or `backbone`, which the
+        // returned `Decoding` borrows; it waits for the pass when dropped.
+        let passing = unsafe { r.begin(&d.gpu)? };
+        backbone.next.set(backbone.next.get() + 1);
+        Ok(Decoding {
+            passing,
+            k,
+            _uses: std::marker::PhantomData,
+        })
+    }
+    /// Waits for a step and returns its token.
+    pub fn finish(&self, d: &Device, step: Decoding) -> Result<u32> {
+        let k = step.k;
+        step.passing.wait()?;
+        let mut bits = [0f32; 1];
+        d.gpu.read_mapped(&self.ids, (k * 4) as u64, &mut bits)?;
+        Ok(bits[0].to_bits())
+    }
+}
+
+/// A decoding step started by `GpuDecoder::begin` (dropping it waits for it).
+pub struct Decoding<'a> {
+    passing: Passing,
+    k: usize,
+    _uses: std::marker::PhantomData<&'a ()>,
 }
 
 #[cfg(test)]
@@ -1829,6 +2024,7 @@ mod tests {
     }
 
     /// The GPU prompt state against the CPU's (run in several processes by hand).
+    /// `bench_mmq` checks the prompt products themselves against an f64 reference.
     #[test]
     #[ignore]
     fn prompt_state_matches_cpu() {
@@ -1860,9 +2056,57 @@ mod tests {
             "STATE {:016x} worst {worst:e} of {scale:e}",
             std::hash::Hasher::finish(&h)
         );
+        // Where the device has matrix units the prompt's products round both sides to
+        // halves (mmq), about 2e-4 of the scale here; f32 products stay under 1e-4.
+        let bound = if d.k.mmq.is_some() { 1e-3 } else { 1e-4 };
         assert!(
-            worst < 1e-4 * scale.max(1.0),
+            worst < bound * scale.max(1.0),
             "the GPU state is off by {worst}"
+        );
+    }
+
+    /// The GPU encoder against the CPU's on 150 rows (three chunks), twice (run by hand).
+    #[test]
+    #[ignore]
+    fn encoder_matches_cpu() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::load(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+        )
+        .unwrap();
+        let d = Device::open(&pci).unwrap();
+        let enc = GpuEncoder::upload(&d, &m.encoder, 1024).unwrap();
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let input: Vec<f32> = (0..150 * ENCODER_WIDTH)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                ((seed >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+            })
+            .collect();
+        let mut gpu = input.clone();
+        enc.forward(&d, &mut gpu).unwrap();
+        let mut again = input.clone();
+        enc.forward(&d, &mut again).unwrap();
+        assert!(gpu == again, "the GPU encoder does not repeat");
+        let mut cpu = input;
+        let mut states = vec![crate::block::State::default(); m.encoder.len()];
+        for (b, s) in m.encoder.iter().zip(&mut states) {
+            b.forward(&mut cpu, s, true);
+        }
+        let worst = cpu
+            .iter()
+            .zip(&gpu)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        let scale = cpu.iter().map(|v| v.abs()).fold(0f32, f32::max);
+        eprintln!("ENCODER worst {worst:e} of {scale:e}");
+        assert!(
+            worst < 1e-3 * scale.max(1.0),
+            "the GPU encoder is off by {worst}"
         );
     }
 
@@ -2460,6 +2704,147 @@ mod tests {
         }
     }
 
+    /// The prompt-chunk product against an f64 reference and mvb on the backbone's and the
+    /// encoder's shapes, Q8_0 and f16 (run by hand).
+    #[test]
+    #[ignore]
+    fn bench_mmq() {
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let d = Device::open(&pci).unwrap();
+        let Some(mmq) = &d.k.mmq else {
+            eprintln!("no matrix units for mmq");
+            return;
+        };
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        // Variants to compare: `mmq_<row tiles>_<columns>.spv` in KUNO_AUDIO_MMQ_DIR.
+        let mut variants: Vec<(String, Kernel, usize)> = vec![];
+        if let Ok(dir) = std::env::var("KUNO_AUDIO_MMQ_DIR") {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+                if !name.starts_with("mmq_") || path.extension().is_none_or(|e| e != "spv") {
+                    continue;
+                }
+                let tiles: usize = name.split('_').nth(1).unwrap().parse().unwrap();
+                let k = d
+                    .gpu
+                    .kernel(&std::fs::read(&path).unwrap(), 5, 11, Some(32))
+                    .unwrap();
+                variants.push((name, k, tiles * 16));
+            }
+        }
+        variants.sort_by(|a, b| a.0.cmp(&b.0));
+        for (q8, rows, cols, n) in [
+            (true, 7680usize, 2048usize, 64usize),
+            (true, 2048, 7680, 64),
+            (true, 512, 2048, 37),
+            (true, 2048, 2048, 100),
+            (false, 2048, 768, 64),
+            (false, 768, 2048, 50),
+        ] {
+            let linear = if q8 {
+                let mut w = Vec::with_capacity(rows * cols / 32 * 34);
+                for _ in 0..rows * cols / 32 {
+                    let scale = 0x2000u16 | (next() as u16 & 0x3ff);
+                    w.extend_from_slice(&scale.to_le_bytes());
+                    w.extend((0..32).map(|_| next() as u8));
+                }
+                Linear::Q8 { w, rows, cols }
+            } else {
+                let w = (0..rows * cols)
+                    .map(|_| {
+                        let v = next();
+                        ((v & 0x8000) as u16)
+                            | (((10 + (v >> 16) % 6) as u16) << 10)
+                            | ((v >> 32) as u16 & 0x3ff)
+                    })
+                    .collect();
+                Linear::F16 { w, rows, cols }
+            };
+            let xs: Vec<f32> = (0..n * cols)
+                .map(|_| ((next() >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0)
+                .collect();
+            let mut want = vec![0f64; n * rows];
+            for r in 0..rows {
+                let row = linear.row(r);
+                for t in 0..n {
+                    want[t * rows + r] = row
+                        .iter()
+                        .zip(&xs[t * cols..][..cols])
+                        .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                        .sum();
+                }
+            }
+            let m = Mat::upload(&d.gpu, &linear).unwrap();
+            let x = floats(&d.gpu, &xs).unwrap();
+            let y = d.gpu.buffer((n * rows * 4) as u64).unwrap();
+            let back = d.gpu.readback((n * rows * 4) as u64).unwrap();
+            let constants = vec![
+                rows as u32,
+                cols as u32,
+                n as u32,
+                m.kind,
+                0,
+                cols as u32,
+                0,
+                rows as u32,
+                0,
+                0,
+                0,
+            ];
+            let scales = m.scales.as_ref().unwrap_or(&d.dummy);
+            let mut runs: Vec<(&str, &Kernel, usize)> =
+                vec![("mvb", &d.k.mvb, 4), ("mmq", mmq, 64)];
+            for (name, k, per) in &variants {
+                runs.push((name, k, *per));
+            }
+            for (name, kernel, per) in runs {
+                let mut r = Recording::new();
+                for _ in 0..20 {
+                    if name != "mvb" {
+                        r.push_grid(
+                            kernel,
+                            vec![&m.w, scales, &x, &y, &d.dummy],
+                            constants.clone(),
+                            rows.div_ceil(per) as u32,
+                            n.div_ceil(64) as u32,
+                        );
+                    } else {
+                        r.push(
+                            &d.k.mvb,
+                            vec![&m.w, scales, &x, &y, &d.dummy],
+                            constants.clone(),
+                            rows.div_ceil(4) as u32,
+                        );
+                    }
+                }
+                r.run(&d.gpu).unwrap();
+                let each = r.profile(&d.gpu).unwrap().iter().sum::<f64>() / 20.0 / 1e9;
+                let mut got = vec![0f32; n * rows];
+                d.gpu.read_floats(&y, 0, &back, &mut got).unwrap();
+                let scale = want.iter().fold(0f64, |a, v| a.max(v.abs()));
+                let worst = got
+                    .iter()
+                    .zip(&want)
+                    .fold(0f64, |a, (g, w)| a.max((f64::from(*g) - w).abs()));
+                eprintln!(
+                    "{name:9} {} {rows}x{cols} n {n:3}: {:7.1} us, {:5.2} TFLOPS, worst {:.1e} of {scale:.1}",
+                    if q8 { "q8 " } else { "f16" },
+                    each * 1e6,
+                    2.0 * (rows * cols * n) as f64 / each / 1e12,
+                    worst
+                );
+                assert!(worst < 2e-3 * scale, "{name} differs");
+            }
+        }
+    }
+
     /// The checked-in SPIR-V matches its source (recompiled with `glslangValidator` when
     /// installed; the binaries are checked in so builds need no shader compiler).
     #[test]
@@ -2478,7 +2863,7 @@ mod tests {
         std::fs::create_dir_all(&out).unwrap();
         for name in [
             "mv", "mvb", "mv1", "mv1s", "mvc", "sample", "gather", "norm", "addnorm", "normrope",
-            "rope", "attend", "conv", "ew",
+            "argmax", "row", "mmq", "rope", "attend", "conv", "ew",
         ] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")

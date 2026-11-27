@@ -1,0 +1,39 @@
+// The index of the largest of `count` values (the first on ties, NaN never), written to
+// ids[slot]. One workgroup.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 1024) in;
+layout(set = 0, binding = 0) readonly buffer Values { float v[]; };
+layout(set = 0, binding = 1) buffer Ids { uint ids[]; };
+layout(push_constant) uniform Constants { uint count; uint slot; } p;
+
+shared float best_value[32];
+shared uint best_index[32];
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    float best = -1.0 / 0.0;
+    uint at = 0xffffffffu;
+    for (uint i = lane; i < p.count; i += 1024) {
+        float x = v[i];
+        if (x > best) { best = x; at = i; }   // NaN compares false; later lanes' i are larger
+    }
+    // Within the subgroup, then across subgroups: the largest value, then its first index.
+    float m = subgroupMax(best);
+    uint first = subgroupMin(best == m ? at : 0xffffffffu);
+    if (gl_SubgroupInvocationID == 0) {
+        best_value[gl_SubgroupID] = m;
+        best_index[gl_SubgroupID] = first;
+    }
+    barrier();
+    if (lane == 0) {
+        float bv = best_value[0];
+        uint bi = best_index[0];
+        for (uint g = 1; g < gl_NumSubgroups; g++) {
+            float x = best_value[g];
+            uint i = best_index[g];
+            if (x > bv || (x == bv && i < bi)) { bv = x; bi = i; }
+        }
+        ids[p.slot] = bi == 0xffffffffu ? 0 : bi;
+    }
+}

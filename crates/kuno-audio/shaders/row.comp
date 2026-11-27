@@ -1,0 +1,27 @@
+// One row of a matrix as floats: out[c] = W[ids[slot]][c] for `cols` values (kind 0 Q8_0:
+// int8 values times their block's f16 scale; 1 f16; 2 f32), as the host's Linear::row.
+#version 460
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uint w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer Ids { uint ids[]; };
+layout(set = 0, binding = 3) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint cols; uint kind; uint slot; } p;
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    if (c >= p.cols) return;
+    uint i = ids[p.slot] * p.cols + c;
+    float v;
+    if (p.kind == 0) {
+        int q = bitfieldExtract(int(w[i >> 2]), int(i & 3) * 8, 8);
+        uint si = i / 32;
+        float d = unpackHalf2x16(s[si >> 1])[si & 1];
+        v = d * float(q);
+    } else if (p.kind == 1) {
+        v = unpackHalf2x16(w[i >> 1])[i & 1];
+    } else {
+        v = uintBitsToFloat(w[i]);
+    }
+    o[c] = v;
+}

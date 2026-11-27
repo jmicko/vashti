@@ -262,10 +262,10 @@ struct GpuParts {
     device: gpu::Device,
     backbone: std::sync::Mutex<gpu::GpuBackbone>,
     depth: gpu::GpuDepth,
-    head: gpu::Mat,
-    head_logits: kuno_image::engine::gpu::Mapped,
+    decoder: gpu::GpuDecoder,
     codec: std::sync::Mutex<gpu::GpuCodec>,
     frame: gpu::FrameGpu,
+    encoder: std::sync::Mutex<gpu::GpuEncoder>,
 }
 
 #[cfg(feature = "gpu")]
@@ -275,6 +275,10 @@ const GPU_POSITIONS: usize = 4096;
 /// Frames the GPU codec holds per request (a piece of speech: the worker's pieces of up to
 /// 400 characters stay under 1300).
 const GPU_FRAMES: usize = 2048;
+#[cfg(feature = "gpu")]
+/// Encoder rows the GPU holds per piece of audio (12.5 a second: the worker's pieces of up
+/// to a minute stay under 760; longer ones are encoded on the CPU).
+const GPU_ENCODER_ROWS: usize = 1024;
 
 /// Control tokens of the prompts and the generation loop.
 struct Tokens {
@@ -334,6 +338,7 @@ impl Lfm3Audio {
             .backbone
             .iter()
             .chain(&self.depth)
+            .chain(&self.encoder)
             .map(Block::bytes)
             .sum::<usize>()
             + self.proj_in.0.bytes()
@@ -355,7 +360,7 @@ impl Lfm3Audio {
             &self.head_norm,
             CODES,
         )?;
-        let (head, head_logits) = gpu::upload_head(&device, &self.embed)?;
+        let decoder = gpu::GpuDecoder::upload(&device, &self.embed, GPU_POSITIONS)?;
         let codec = gpu::GpuCodec::upload(
             &device,
             &self.codec,
@@ -373,14 +378,15 @@ impl Lfm3Audio {
             (&self.codec_in.0, &self.codec_in.1),
             CODES,
         )?;
+        let encoder = gpu::GpuEncoder::upload(&device, &self.encoder, GPU_ENCODER_ROWS)?;
         Ok(GpuParts {
+            encoder: std::sync::Mutex::new(encoder),
             frame,
             codec: std::sync::Mutex::new(codec),
             device,
             backbone: std::sync::Mutex::new(backbone),
             depth,
-            head,
-            head_logits,
+            decoder,
         })
     }
 
@@ -564,9 +570,26 @@ impl Lfm3Audio {
             }
         }
         let mut h = self.pre_out.0.forward_bias(&rows, &self.pre_out.1);
-        let mut states = vec![State::default(); self.encoder.len()];
-        for (b, s) in self.encoder.iter().zip(&mut states) {
-            b.forward(&mut h, s, true);
+        // The blocks on the GPU when there is one and the piece fits its cache.
+        #[cfg(feature = "gpu")]
+        let on_gpu = match &self.gpu {
+            Some(g) => {
+                let encoder = g.encoder.lock().map_err(|_| "audio_gpu_failed")?;
+                let fits = h.len() / 768 <= encoder.positions();
+                if fits {
+                    encoder.forward(&g.device, &mut h)?;
+                }
+                fits
+            }
+            None => false,
+        };
+        #[cfg(not(feature = "gpu"))]
+        let on_gpu = false;
+        if !on_gpu {
+            let mut states = vec![State::default(); self.encoder.len()];
+            for (b, s) in self.encoder.iter().zip(&mut states) {
+                b.forward(&mut h, s, true);
+            }
         }
         rms_norm(&mut h, Some(&self.post_ln), 768, EPS);
         let (w0, b0, l1, b1, l3, b3) = &self.proj;
@@ -629,16 +652,26 @@ impl Lfm3Audio {
             let mut backbone = g.backbone.lock().map_err(|_| "audio_gpu_failed")?;
             backbone.reset(&g.device)?;
             backbone.forward(&g.device, &rows)?;
-            let mut logits = vec![0f32; g.head.rows];
+            // Greedy decoding on the device, a step in flight while the last is read (a
+            // step started after the end is discarded).
+            let (d, decoder, backbone) = (&g.device, &g.decoder, &*backbone);
+            let limit = max_tokens.min(decoder.capacity);
             let mut out = Vec::new();
-            for _ in 0..max_tokens {
-                backbone.logits(&g.device, &g.head, &mut logits, &g.head_logits)?;
-                let next = argmax(&logits) as u32;
-                if next == self.tokens.im_end || next == self.tokenizer.eos_token_id() {
-                    break;
+            let mut running = None;
+            for k in 0..=limit {
+                let next = if k < limit {
+                    Some(decoder.begin(d, backbone, k)?)
+                } else {
+                    None
+                };
+                if let Some(step) = running.take() {
+                    let id = decoder.finish(d, step)?;
+                    if id == self.tokens.im_end || id == self.tokenizer.eos_token_id() {
+                        break;
+                    }
+                    out.push(id);
                 }
-                out.push(next);
-                backbone.forward(&g.device, &self.embed_tokens(&[next]))?;
+                running = next;
             }
             return self.tokenizer.decode(&out).map_err(|_| "text_invalid");
         }
