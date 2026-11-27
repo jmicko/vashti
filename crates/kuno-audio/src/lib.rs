@@ -738,6 +738,7 @@ impl Lfm3Audio {
         backbone.reset(d)?;
         gcodec.reset(d)?;
         backbone.forward(d, &self.embed_tokens(ids))?;
+        let (backbone, gcodec) = (&*backbone, &*gcodec);
         let mut polar = vec![0f32; gpu::CODEC_POSITIONS * gcodec.output_width()];
         let mut rng = Rng::new(seed);
         let mut history: Vec<[usize; CODEBOOKS]> = Vec::new();
@@ -745,36 +746,48 @@ impl Lfm3Audio {
         let mut audio = Vec::new();
         g.frame.reset(d)?;
         let mut codes = [0usize; CODEBOOKS];
-        for _ in 0..max_frames {
-            // The draws the host sampler would make, in its order: the codebook order, then
-            // one uniform per codebook as it is sampled. Sampling itself runs on the device,
-            // with the whole frame in one submission.
-            let mut order = [0usize; CODEBOOKS];
-            order.iter_mut().enumerate().for_each(|(i, o)| *o = i);
-            rng.shuffle(&mut order);
-            let mut uniforms = [0f32; CODEBOOKS];
-            for &cb in &order {
-                uniforms[cb] = rng.uniform() as f32;
+        // Frames are pipelined: every input a frame needs from the last one stays on the
+        // device, so the next frame is started before the last one is read and turned into
+        // audio (the host's part then overlaps the device's). A frame started after the end
+        // is discarded.
+        let mut running: Option<gpu::InFlight> = None;
+        for started in 0..=max_frames {
+            let next = if started < max_frames {
+                // The draws the host sampler would make, in its order: the codebook order,
+                // then one uniform per codebook as it is sampled. Sampling itself runs on the
+                // device, with the whole frame in one submission.
+                let mut order = [0usize; CODEBOOKS];
+                order.iter_mut().enumerate().for_each(|(i, o)| *o = i);
+                rng.shuffle(&mut order);
+                let mut uniforms = [0f32; CODEBOOKS];
+                for &cb in &order {
+                    uniforms[cb] = rng.uniform() as f32;
+                }
+                Some(g.frame.begin(
+                    d,
+                    &g.depth,
+                    backbone,
+                    gcodec,
+                    &order,
+                    &uniforms,
+                    started % 2,
+                )?)
+            } else {
+                None
+            };
+            if let Some(frame) = running.take() {
+                g.frame.finish(d, gcodec, frame, &mut codes, &mut polar)?;
+                if codes.contains(&(CODES - 1)) {
+                    break;
+                }
+                history.push(codes);
+                let pcm = self.spectra_to_pcm(&polar, &mut codec.istft);
+                audio.extend(&pcm);
+                if !on_audio(&pcm) {
+                    return Ok(audio);
+                }
             }
-            g.frame.run(
-                d,
-                &g.depth,
-                &mut backbone,
-                &mut gcodec,
-                &order,
-                &uniforms,
-                &mut codes,
-                &mut polar,
-            )?;
-            if codes.contains(&(CODES - 1)) {
-                break;
-            }
-            history.push(codes);
-            let pcm = self.spectra_to_pcm(&polar, &mut codec.istft);
-            audio.extend(&pcm);
-            if !on_audio(&pcm) {
-                return Ok(audio);
-            }
+            running = next;
         }
         let tail = codec.istft.flush();
         on_audio(&tail);

@@ -133,6 +133,46 @@ impl Drop for Copying {
         let _ = self.finish();
     }
 }
+/// A pass started by `Gpu::pass_begin`, which the device may still be running.
+pub struct Passing {
+    pending: Option<(
+        Arc<Core>,
+        vk::CommandBuffer,
+        vk::Fence,
+        Vec<vk::DescriptorSet>,
+    )>,
+}
+impl Passing {
+    /// Waits for the pass.
+    pub fn wait(mut self) -> Result<(), &'static str> {
+        self.finish()
+    }
+    fn finish(&mut self) -> Result<(), &'static str> {
+        let Some((core, commands, fence, sets)) = self.pending.take() else {
+            return Ok(());
+        };
+        // SAFETY: the fence, command buffer and sets were made for this pass; after the
+        // wait the device no longer uses them. The pools are used under `turn`.
+        unsafe {
+            let waited = core.device.wait_for_fences(&[fence], true, u64::MAX);
+            if waited.is_err() {
+                let _ = core.device.device_wait_idle();
+            }
+            core.device.destroy_fence(fence, None);
+            let _turn = core.turn.lock();
+            core.device.free_command_buffers(core.pool, &[commands]);
+            if !sets.is_empty() {
+                let _ = core.device.free_descriptor_sets(core.descriptors, &sets);
+            }
+            waited.map_err(|_| "gpu_failed")
+        }
+    }
+}
+impl Drop for Passing {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
+}
 
 pub struct Staged {
     stage: Option<Buffer>,
@@ -1184,126 +1224,12 @@ impl Gpu {
         let core = &self.core;
         let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
         let mut sets = Vec::with_capacity(steps.len());
-        let result = (|| {
-            for step in steps {
-                if step.buffers.len() != step.kernel.bindings
-                    || step.constants.len() != step.kernel.constants
-                {
-                    return Err("gpu_kernel");
-                }
-                let layouts = [step.kernel.set_layout];
-                // SAFETY: sets are freed below after the pass has completed.
-                let set = unsafe {
-                    core.device.allocate_descriptor_sets(
-                        &vk::DescriptorSetAllocateInfo::default()
-                            .descriptor_pool(core.descriptors)
-                            .set_layouts(&layouts),
-                    )
-                }
-                .map_err(|_| "gpu_failed")?[0];
-                sets.push(set);
-                let infos: Vec<_> = step
-                    .buffers
-                    .iter()
-                    .map(|buffer| {
-                        [vk::DescriptorBufferInfo::default()
-                            .buffer(buffer.buffer)
-                            .range(vk::WHOLE_SIZE)]
-                    })
-                    .collect();
-                let writes: Vec<_> = infos
-                    .iter()
-                    .enumerate()
-                    .map(|(binding, info)| {
-                        vk::WriteDescriptorSet::default()
-                            .dst_set(set)
-                            .dst_binding(binding as u32)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .buffer_info(info)
-                    })
-                    .collect();
-                // SAFETY: the set and every buffer are alive.
-                unsafe { core.device.update_descriptor_sets(&writes, &[]) };
-            }
+        let result = self.sets_for(steps, &mut sets).and_then(|()| {
             self.run_locked(|device, commands| {
-                for (index, (step, set)) in steps.iter().zip(&sets).enumerate() {
-                    // SAFETY: bindings and constants were checked against the kernel; each
-                    // dispatch is separated from the next by a full compute barrier.
-                    unsafe {
-                        device.cmd_bind_pipeline(
-                            commands,
-                            vk::PipelineBindPoint::COMPUTE,
-                            step.kernel.pipeline,
-                        );
-                        device.cmd_bind_descriptor_sets(
-                            commands,
-                            vk::PipelineBindPoint::COMPUTE,
-                            step.kernel.layout,
-                            0,
-                            &[*set],
-                            &[],
-                        );
-                        if !step.constants.is_empty() {
-                            let bytes: Vec<u8> = step
-                                .constants
-                                .iter()
-                                .flat_map(|c| c.to_le_bytes())
-                                .collect();
-                            device.cmd_push_constants(
-                                commands,
-                                step.kernel.layout,
-                                vk::ShaderStageFlags::COMPUTE,
-                                0,
-                                &bytes,
-                            );
-                        }
-                        device.cmd_dispatch(
-                            commands,
-                            step.groups[0],
-                            step.groups[1],
-                            step.groups[2],
-                        );
-                        if independent.get(index).copied().unwrap_or(false) {
-                            continue;
-                        }
-                        let barrier = [vk::MemoryBarrier::default()
-                            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                            .dst_access_mask(
-                                vk::AccessFlags::SHADER_READ
-                                    | vk::AccessFlags::SHADER_WRITE
-                                    | vk::AccessFlags::TRANSFER_READ,
-                            )];
-                        device.cmd_pipeline_barrier(
-                            commands,
-                            vk::PipelineStageFlags::COMPUTE_SHADER,
-                            vk::PipelineStageFlags::COMPUTE_SHADER
-                                | vk::PipelineStageFlags::TRANSFER,
-                            vk::DependencyFlags::empty(),
-                            &barrier,
-                            &[],
-                            &[],
-                        );
-                    }
-                }
-                // Make the pass's writes visible to the host: mapped buffers (`Gpu::mapped`)
-                // are read right after the fence, which alone does not guarantee it.
-                let host = [vk::MemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::HOST_READ)];
-                // SAFETY: a plain barrier in the command buffer being recorded.
-                unsafe {
-                    device.cmd_pipeline_barrier(
-                        commands,
-                        vk::PipelineStageFlags::COMPUTE_SHADER,
-                        vk::PipelineStageFlags::HOST,
-                        vk::DependencyFlags::empty(),
-                        &host,
-                        &[],
-                        &[],
-                    );
-                }
+                // SAFETY: the sets were made for these steps, whose buffers are alive.
+                unsafe { record_steps(device, commands, steps, &sets, independent, false) }
             })
-        })();
+        });
         if !sets.is_empty() {
             // SAFETY: the pass has finished (or never started), so the sets are unused.
             unsafe {
@@ -1311,6 +1237,204 @@ impl Gpu {
             }
         }
         result
+    }
+    /// `pass_with`, timed on the device: per step, the nanoseconds from the end of the step
+    /// before it (or the start) to its own end. Steps that overlap share their time. For
+    /// benchmarks.
+    pub fn pass_profiled(
+        &self,
+        steps: &[Step],
+        independent: &[bool],
+    ) -> Result<Vec<f64>, &'static str> {
+        let core = &self.core;
+        let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
+        // SAFETY: plain queries of the device this core owns.
+        let period = unsafe {
+            core.instance
+                .get_physical_device_properties(core.physical)
+                .limits
+                .timestamp_period
+        };
+        let count = steps.len() as u32 + 1;
+        // SAFETY: the pool is destroyed below, after the pass has completed.
+        let pool = unsafe {
+            core.device.create_query_pool(
+                &vk::QueryPoolCreateInfo::default()
+                    .query_type(vk::QueryType::TIMESTAMP)
+                    .query_count(count),
+                None,
+            )
+        }
+        .map_err(|_| "gpu_failed")?;
+        let mut sets = Vec::with_capacity(steps.len());
+        let result = self.sets_for(steps, &mut sets).and_then(|()| {
+            self.run_locked(|device, commands| {
+                // SAFETY: the sets were made for these steps, whose buffers are alive.
+                unsafe {
+                    record_steps_timed(
+                        device,
+                        commands,
+                        steps,
+                        &sets,
+                        independent,
+                        false,
+                        Some(pool),
+                    )
+                }
+            })
+        });
+        let mut ticks = vec![0u64; count as usize];
+        let read = result.and_then(|()| {
+            // SAFETY: the pass has completed, so every query is written.
+            unsafe {
+                core.device.get_query_pool_results(
+                    pool,
+                    0,
+                    &mut ticks,
+                    vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
+                )
+            }
+            .map_err(|_| "gpu_failed")
+        });
+        // SAFETY: the pass has finished (or never started), so the sets and pool are unused.
+        unsafe {
+            if !sets.is_empty() {
+                let _ = core.device.free_descriptor_sets(core.descriptors, &sets);
+            }
+            core.device.destroy_query_pool(pool, None);
+        }
+        read?;
+        Ok(ticks
+            .windows(2)
+            .map(|w| w[1].saturating_sub(w[0]) as f64 * f64::from(period))
+            .collect())
+    }
+    /// `pass_with` without waiting for the device: the pass is submitted and `Passing`
+    /// waits for it (`wait`, or when dropped). Passes run in submission order, each after
+    /// the writes of those before it; writes the host makes to mapped buffers before this
+    /// call are seen by the pass.
+    ///
+    /// # Safety
+    ///
+    /// Every buffer the steps bind must stay alive until the returned `Passing` has been
+    /// waited for or dropped.
+    pub unsafe fn pass_begin(
+        &self,
+        steps: &[Step],
+        independent: &[bool],
+    ) -> Result<Passing, &'static str> {
+        let core = &self.core;
+        let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
+        let mut sets = Vec::with_capacity(steps.len());
+        let free = |sets: &[vk::DescriptorSet]| {
+            if !sets.is_empty() {
+                // SAFETY: nothing was submitted with these sets.
+                unsafe {
+                    let _ = core.device.free_descriptor_sets(core.descriptors, sets);
+                }
+            }
+        };
+        if let Err(e) = self.sets_for(steps, &mut sets) {
+            free(&sets);
+            return Err(e);
+        }
+        // SAFETY: the command buffer is recorded and submitted here; `Passing` waits for it
+        // before freeing it, the fence and the sets.
+        unsafe {
+            let commands = match core.device.allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::default()
+                    .command_pool(core.pool)
+                    .command_buffer_count(1),
+            ) {
+                Ok(c) => c[0],
+                Err(_) => {
+                    free(&sets);
+                    return Err("gpu_failed");
+                }
+            };
+            let submitted = (|| {
+                core.device.begin_command_buffer(
+                    commands,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )?;
+                record_steps(&core.device, commands, steps, &sets, independent, true);
+                core.device.end_command_buffer(commands)?;
+                let fence = core
+                    .device
+                    .create_fence(&vk::FenceCreateInfo::default(), None)?;
+                let one = [commands];
+                if let Err(e) = core.device.queue_submit(
+                    core.queue,
+                    &[vk::SubmitInfo::default().command_buffers(&one)],
+                    fence,
+                ) {
+                    core.device.destroy_fence(fence, None);
+                    return Err(e);
+                }
+                Ok(fence)
+            })();
+            match submitted {
+                Ok(fence) => Ok(Passing {
+                    pending: Some((core.clone(), commands, fence, sets)),
+                }),
+                Err(_) => {
+                    core.device.free_command_buffers(core.pool, &[commands]);
+                    free(&sets);
+                    Err("gpu_failed")
+                }
+            }
+        }
+    }
+    /// Descriptor sets for `steps`, pushed onto `sets` (the caller frees them, also on
+    /// failure). Called under `turn`.
+    fn sets_for(
+        &self,
+        steps: &[Step],
+        sets: &mut Vec<vk::DescriptorSet>,
+    ) -> Result<(), &'static str> {
+        let core = &self.core;
+        for step in steps {
+            if step.buffers.len() != step.kernel.bindings
+                || step.constants.len() != step.kernel.constants
+            {
+                return Err("gpu_kernel");
+            }
+            let layouts = [step.kernel.set_layout];
+            // SAFETY: the caller frees the sets once the device is done with them.
+            let set = unsafe {
+                core.device.allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::default()
+                        .descriptor_pool(core.descriptors)
+                        .set_layouts(&layouts),
+                )
+            }
+            .map_err(|_| "gpu_failed")?[0];
+            sets.push(set);
+            let infos: Vec<_> = step
+                .buffers
+                .iter()
+                .map(|buffer| {
+                    [vk::DescriptorBufferInfo::default()
+                        .buffer(buffer.buffer)
+                        .range(vk::WHOLE_SIZE)]
+                })
+                .collect();
+            let writes: Vec<_> = infos
+                .iter()
+                .enumerate()
+                .map(|(binding, info)| {
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(set)
+                        .dst_binding(binding as u32)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(info)
+                })
+                .collect();
+            // SAFETY: the set and every buffer are alive.
+            unsafe { core.device.update_descriptor_sets(&writes, &[]) };
+        }
+        Ok(())
     }
     /// The adapter name, for logs and test output.
     pub fn name(&self) -> &str {
@@ -1396,6 +1520,142 @@ pub struct Step<'a> {
     pub buffers: &'a [&'a Buffer],
     pub constants: &'a [u32],
     pub groups: [u32; 3],
+}
+/// Records `steps` with their `sets`, each followed by a compute barrier unless
+/// `independent` says otherwise, and a final barrier making the writes visible to the host;
+/// `after_earlier` first waits for the writes of earlier submissions.
+///
+/// # Safety
+///
+/// `commands` is being recorded; the sets were made for these steps and their buffers.
+unsafe fn record_steps(
+    device: &ash::Device,
+    commands: vk::CommandBuffer,
+    steps: &[Step],
+    sets: &[vk::DescriptorSet],
+    independent: &[bool],
+    after_earlier: bool,
+) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        record_steps_timed(
+            device,
+            commands,
+            steps,
+            sets,
+            independent,
+            after_earlier,
+            None,
+        )
+    }
+}
+/// `record_steps`, with a timestamp before the first step and after each (in `times`,
+/// which holds one more query than there are steps).
+///
+/// # Safety
+///
+/// As `record_steps`.
+unsafe fn record_steps_timed(
+    device: &ash::Device,
+    commands: vk::CommandBuffer,
+    steps: &[Step],
+    sets: &[vk::DescriptorSet],
+    independent: &[bool],
+    after_earlier: bool,
+    times: Option<vk::QueryPool>,
+) {
+    let compute = [vk::MemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(
+            vk::AccessFlags::SHADER_READ
+                | vk::AccessFlags::SHADER_WRITE
+                | vk::AccessFlags::TRANSFER_READ,
+        )];
+    // SAFETY: plain commands into the buffer being recorded (the caller's contract).
+    unsafe {
+        if after_earlier {
+            let earlier = [vk::MemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)];
+            device.cmd_pipeline_barrier(
+                commands,
+                vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &earlier,
+                &[],
+                &[],
+            );
+        }
+        if let Some(pool) = times {
+            device.cmd_reset_query_pool(commands, pool, 0, steps.len() as u32 + 1);
+            device.cmd_write_timestamp(commands, vk::PipelineStageFlags::COMPUTE_SHADER, pool, 0);
+        }
+        for (index, (step, set)) in steps.iter().zip(sets).enumerate() {
+            device.cmd_bind_pipeline(
+                commands,
+                vk::PipelineBindPoint::COMPUTE,
+                step.kernel.pipeline,
+            );
+            device.cmd_bind_descriptor_sets(
+                commands,
+                vk::PipelineBindPoint::COMPUTE,
+                step.kernel.layout,
+                0,
+                &[*set],
+                &[],
+            );
+            if !step.constants.is_empty() {
+                let bytes: Vec<u8> = step
+                    .constants
+                    .iter()
+                    .flat_map(|c| c.to_le_bytes())
+                    .collect();
+                device.cmd_push_constants(
+                    commands,
+                    step.kernel.layout,
+                    vk::ShaderStageFlags::COMPUTE,
+                    0,
+                    &bytes,
+                );
+            }
+            device.cmd_dispatch(commands, step.groups[0], step.groups[1], step.groups[2]);
+            if let Some(pool) = times {
+                device.cmd_write_timestamp(
+                    commands,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    pool,
+                    index as u32 + 1,
+                );
+            }
+            if independent.get(index).copied().unwrap_or(false) {
+                continue;
+            }
+            device.cmd_pipeline_barrier(
+                commands,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &compute,
+                &[],
+                &[],
+            );
+        }
+        // Make the pass's writes visible to the host: mapped buffers (`Gpu::mapped`) are
+        // read right after the fence, which alone does not guarantee it.
+        let host = [vk::MemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::HOST_READ)];
+        device.cmd_pipeline_barrier(
+            commands,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::HOST,
+            vk::DependencyFlags::empty(),
+            &host,
+            &[],
+            &[],
+        );
+    }
 }
 /// Views plain numbers as bytes for upload.
 pub fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {

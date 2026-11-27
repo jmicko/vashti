@@ -10,7 +10,10 @@
 //! and residual adds), `rope`, `attend` (grouped-query attention over cached keys),
 //! `conv` (the short convolution) and `ew` (SwiGLU, per-head gates, adds). Activations are
 //! f32. The codec and the audio encoder stay on the CPU (the codec overlaps the GPU).
-use kuno_image::engine::gpu::{Buffer, Gpu, Kernel, Mapped, Readback, Select, Step, bytes_of};
+use kuno_image::engine::gpu::{
+    Buffer, Gpu, Kernel, Mapped, Passing, Readback, Select, Step, bytes_of,
+};
+use std::cell::Cell;
 
 use crate::{
     Result,
@@ -21,9 +24,11 @@ use crate::{
 const MV: &[u8] = include_bytes!("../shaders/mv.spv");
 const MVB: &[u8] = include_bytes!("../shaders/mvb.spv");
 const MV1: &[u8] = include_bytes!("../shaders/mv1.spv");
+const MVC: &[u8] = include_bytes!("../shaders/mvc.spv");
 const SAMPLE: &[u8] = include_bytes!("../shaders/sample.spv");
 const GATHER: &[u8] = include_bytes!("../shaders/gather.spv");
 const NORM: &[u8] = include_bytes!("../shaders/norm.spv");
+const ADDNORM: &[u8] = include_bytes!("../shaders/addnorm.spv");
 const ROPE: &[u8] = include_bytes!("../shaders/rope.spv");
 const ATTEND: &[u8] = include_bytes!("../shaders/attend.spv");
 const CONV: &[u8] = include_bytes!("../shaders/conv.spv");
@@ -39,9 +44,14 @@ struct Kernels {
     /// `mv` for one token: a subgroup per row, `mv1_rows` rows per workgroup.
     mv1: Kernel,
     mv1_rows: usize,
+    /// `mv` for 2 to 16 tokens of f16 rows on half-precision matrix units, where the
+    /// device has 16 x 16 x 16 ones for 32-lane subgroups.
+    mvc: Option<Kernel>,
     sample: Kernel,
     gather: Kernel,
     norm: Kernel,
+    /// A residual step and the next norm in one (rows of up to 2048).
+    addnorm: Kernel,
     rope: Kernel,
     attend: Kernel,
     conv: Kernel,
@@ -370,6 +380,68 @@ impl<'a> Recording<'a> {
             .collect();
         gpu.pass_with(&steps, &self.independent)
     }
+    /// Appends two recordings that touch none of the same buffers (but read-only ones) side
+    /// by side: their steps between barriers are grouped, the groups of both run together and
+    /// share each barrier, so the shorter chain's latency hides in the longer one's.
+    fn interleave(&mut self, a: Recording<'a>, b: Recording<'a>) {
+        fn groups(r: Recording) -> Vec<Vec<Recorded>> {
+            let mut out = vec![Vec::new()];
+            for (step, independent) in r.steps.into_iter().zip(r.independent) {
+                out.last_mut().unwrap().push(step);
+                if !independent {
+                    out.push(Vec::new());
+                }
+            }
+            out.retain(|g| !g.is_empty());
+            out
+        }
+        let (mut a, mut b) = (groups(a).into_iter(), groups(b).into_iter());
+        loop {
+            let group: Vec<_> = a.next().into_iter().chain(b.next()).flatten().collect();
+            if group.is_empty() {
+                break;
+            }
+            let last = group.len() - 1;
+            for (i, step) in group.into_iter().enumerate() {
+                self.steps.push(step);
+                self.independent.push(i < last);
+            }
+        }
+    }
+    /// `run`, timed on the device per step (nanoseconds; for benchmarks).
+    #[cfg(test)]
+    fn profile(&self, gpu: &Gpu) -> Result<Vec<f64>> {
+        let steps: Vec<Step> = self
+            .steps
+            .iter()
+            .map(|(kernel, buffers, constants, groups)| Step {
+                kernel,
+                buffers,
+                constants,
+                groups: *groups,
+            })
+            .collect();
+        gpu.pass_profiled(&steps, &self.independent)
+    }
+    /// `run` without waiting for the device.
+    ///
+    /// # Safety
+    ///
+    /// The recording's buffers must outlive the returned `Passing`.
+    unsafe fn begin(&self, gpu: &Gpu) -> Result<Passing> {
+        let steps: Vec<Step> = self
+            .steps
+            .iter()
+            .map(|(kernel, buffers, constants, groups)| Step {
+                kernel,
+                buffers,
+                constants,
+                groups: *groups,
+            })
+            .collect();
+        // SAFETY: the caller's contract.
+        unsafe { gpu.pass_begin(&steps, &self.independent) }
+    }
 }
 
 /// Places for `mv`'s input and output.
@@ -407,9 +479,15 @@ impl Device {
             mvb: kernel(MVB, 5, 11)?,
             mv1: gpu.kernel(MV1, 5, 11, Some(lanes))?,
             mv1_rows: 128 / lanes as usize,
+            mvc: if gpu.has_half16() && lanes == 32 {
+                Some(gpu.kernel(MVC, 5, 11, Some(32))?)
+            } else {
+                None
+            },
             sample: kernel(SAMPLE, 4, 7)?,
             gather: kernel(GATHER, 5, 3)?,
             norm: kernel(NORM, 3, 10)?,
+            addnorm: kernel(ADDNORM, 5, 4)?,
             rope: kernel(ROPE, 2, 8)?,
             attend: kernel(ATTEND, 5, 14)?,
             conv: kernel(CONV, 4, 4)?,
@@ -445,8 +523,16 @@ impl Device {
         let flags = u32::from(bias.is_some()) | (u32::from(accumulate) << 1);
         // Several tokens: the register-blocked kernel (1.4 to 2.9 times faster on the RTX
         // 3060 for 12 to 64 tokens); one token, or f32 rows: mv.
+        let matrix = self.k.mvc.as_ref().filter(|_| {
+            m.kind == 1
+                && (2..=16).contains(&n)
+                && rows.is_multiple_of(16)
+                && m.cols.is_multiple_of(16)
+        });
         let (kernel, groups) = if n == 1 {
             (&self.k.mv1, rows.div_ceil(self.k.mv1_rows))
+        } else if let Some(k) = matrix {
+            (k, rows / 16)
         } else if m.kind != 2 {
             (&self.k.mvb, rows.div_ceil(4))
         } else {
@@ -509,6 +595,62 @@ impl Device {
             rows as u32,
         );
     }
+    /// `x += op` (op first normed with `post`), then `h` the new `x` normed with `next`:
+    /// one step for rows of up to 2048, else separate ones.
+    #[allow(clippy::too_many_arguments)]
+    fn residual<'a>(
+        &'a self,
+        r: &mut Recording<'a>,
+        s: &'a Scratch,
+        x: &'a Buffer,
+        b: &'a GpuBlock,
+        post: Option<&'a Buffer>,
+        next: Option<&'a Buffer>,
+        n: usize,
+    ) {
+        let w = b.width;
+        if w <= 2048 {
+            let flags = u32::from(post.is_some()) | (u32::from(next.is_some()) << 1);
+            r.push(
+                &self.k.addnorm,
+                vec![
+                    &s.op,
+                    post.unwrap_or(&self.dummy),
+                    x,
+                    next.unwrap_or(&self.dummy),
+                    &s.h,
+                ],
+                vec![n as u32, w as u32, b.eps.to_bits(), flags],
+                n as u32,
+            );
+            return;
+        }
+        match post {
+            Some(pw) => self.norm(
+                r,
+                at(&s.op, 0, w),
+                Some((pw, 0, 0)),
+                at(x, 0, w),
+                n,
+                w,
+                b.eps,
+                1,
+            ),
+            None => self.norm(r, at(&s.op, 0, w), None, at(x, 0, w), n, w, b.eps, 2),
+        }
+        if let Some(nw) = next {
+            self.norm(
+                r,
+                at(x, 0, w),
+                Some((nw, 0, 0)),
+                at(&s.h, 0, w),
+                n,
+                w,
+                b.eps,
+                0,
+            );
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     fn ew<'a>(
         &'a self,
@@ -549,18 +691,22 @@ impl Device {
         start: usize,
         causal: bool,
     ) {
-        for b in blocks {
+        // Whether `h` already holds this block's normed input (from the last block's step).
+        let mut normed = false;
+        for (index, b) in blocks.iter().enumerate() {
             let w = b.width;
-            self.norm(
-                r,
-                at(x, 0, w),
-                Some((&b.ln1, 0, 0)),
-                at(&s.h, 0, w),
-                n,
-                w,
-                b.eps,
-                0,
-            );
+            if !normed {
+                self.norm(
+                    r,
+                    at(x, 0, w),
+                    Some((&b.ln1, 0, 0)),
+                    at(&s.h, 0, w),
+                    n,
+                    w,
+                    b.eps,
+                    0,
+                );
+            }
             match &b.op {
                 GpuOp::Conv {
                     in_proj,
@@ -689,29 +835,7 @@ impl Device {
                     self.mv(r, o, at(&s.att, 0, qw), at(&s.op, 0, w), n);
                 }
             }
-            match &b.post_op {
-                Some(pw) => self.norm(
-                    r,
-                    at(&s.op, 0, w),
-                    Some((pw, 0, 0)),
-                    at(x, 0, w),
-                    n,
-                    w,
-                    b.eps,
-                    1,
-                ),
-                None => self.norm(r, at(&s.op, 0, w), None, at(x, 0, w), n, w, b.eps, 2),
-            }
-            self.norm(
-                r,
-                at(x, 0, w),
-                Some((&b.ln2, 0, 0)),
-                at(&s.h, 0, w),
-                n,
-                w,
-                b.eps,
-                0,
-            );
+            self.residual(r, s, x, b, b.post_op.as_ref(), Some(&b.ln2), n);
             let inner = b.inner();
             self.mv(r, &b.gate, at(&s.h, 0, w), at(&s.ga, 0, inner), n);
             r.together();
@@ -726,19 +850,9 @@ impl Device {
                 1,
             );
             self.mv(r, &b.down, at(&s.ga, 0, inner), at(&s.op, 0, w), n);
-            match &b.post_ffn {
-                Some(pw) => self.norm(
-                    r,
-                    at(&s.op, 0, w),
-                    Some((pw, 0, 0)),
-                    at(x, 0, w),
-                    n,
-                    w,
-                    b.eps,
-                    1,
-                ),
-                None => self.norm(r, at(&s.op, 0, w), None, at(x, 0, w), n, w, b.eps, 2),
-            }
+            let next = blocks.get(index + 1).filter(|next| next.width == w);
+            self.residual(r, s, x, b, b.post_ffn.as_ref(), next.map(|nb| &nb.ln1), n);
+            normed = next.is_some();
         }
     }
 }
@@ -754,7 +868,7 @@ pub struct GpuBackbone {
     /// The last row's normed state (the depth decoder's input), `[2048]`.
     pub state: Buffer,
     positions: usize,
-    next: usize,
+    next: Cell<usize>,
     eps: f32,
 }
 
@@ -779,7 +893,7 @@ impl GpuBackbone {
             input: d.gpu.mapped((CHUNK * 2048 * 4) as u64)?,
             state: d.gpu.buffer(2048 * 4)?,
             positions,
-            next: 0,
+            next: Cell::new(0),
         })
     }
     /// A new request: positions from zero, convolution histories cleared.
@@ -787,17 +901,17 @@ impl GpuBackbone {
         for b in &self.blocks {
             b.reset(&d.gpu, &d.staging, self.positions)?;
         }
-        self.next = 0;
+        self.next.set(0);
         Ok(())
     }
     pub fn position(&self) -> usize {
-        self.next
+        self.next.get()
     }
     /// Runs `rows` (`[n][2048]`) through the backbone; the last row's normed state ends up in
     /// `state`.
     pub fn forward(&mut self, d: &Device, rows: &[f32]) -> Result<()> {
         let n_all = rows.len() / 2048;
-        if self.next + n_all > self.positions {
+        if self.next.get() + n_all > self.positions {
             return Err("audio_context_exhausted");
         }
         for chunk in rows.chunks(CHUNK * 2048) {
@@ -820,7 +934,7 @@ impl GpuBackbone {
                 &self.scratch,
                 &self.x,
                 n,
-                self.next,
+                self.next.get(),
                 true,
             );
             d.norm(
@@ -834,7 +948,7 @@ impl GpuBackbone {
                 0,
             );
             r.run(&d.gpu)?;
-            self.next += n;
+            self.next.set(self.next.get() + n);
         }
         Ok(())
     }
@@ -849,7 +963,15 @@ impl GpuBackbone {
             2048,
             1,
         );
-        d.record(r, &self.blocks, &self.scratch, &self.x, 1, self.next, true);
+        d.record(
+            r,
+            &self.blocks,
+            &self.scratch,
+            &self.x,
+            1,
+            self.next.get(),
+            true,
+        );
         d.norm(
             r,
             at(&self.x, 0, 2048),
@@ -887,9 +1009,10 @@ pub struct GpuCodec {
     out: Mat,
     out_bias: Buffer,
     x: Buffer,
-    output: Mapped,
+    /// Per frame slot (frames alternate, so one is read while the next runs).
+    output: [Mapped; 2],
     positions: usize,
-    next: usize,
+    next: Cell<usize>,
     eps: f32,
 }
 
@@ -920,10 +1043,13 @@ impl GpuCodec {
             norm: floats(g, norm)?,
             out_bias: floats(g, out_bias)?,
             x: g.buffer((CODEC_POSITIONS * CODEC_WIDTH * 4) as u64)?,
-            output: g.mapped((CODEC_POSITIONS * out.rows * 4) as u64)?,
+            output: [
+                g.mapped((CODEC_POSITIONS * out.rows * 4) as u64)?,
+                g.mapped((CODEC_POSITIONS * out.rows * 4) as u64)?,
+            ],
             out,
             positions,
-            next: 0,
+            next: Cell::new(0),
         })
     }
     /// A new request: positions from zero, convolution histories cleared.
@@ -931,7 +1057,7 @@ impl GpuCodec {
         for b in &self.blocks {
             b.reset(&d.gpu, &d.staging, self.positions)?;
         }
-        self.next = 0;
+        self.next.set(0);
         Ok(())
     }
     /// Values per position of the output (1282).
@@ -939,8 +1065,14 @@ impl GpuCodec {
         self.out.rows
     }
     /// Records a frame whose input (one row, `[512]`) is in `src` on the device, repeated
-    /// for the six positions.
-    fn record_from<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>, src: &'a Buffer) {
+    /// for the six positions, its output into `slot`.
+    fn record_from<'a>(
+        &'a self,
+        d: &'a Device,
+        r: &mut Recording<'a>,
+        src: &'a Buffer,
+        slot: usize,
+    ) {
         let w = CODEC_WIDTH;
         for t in 0..CODEC_POSITIONS {
             if t > 0 {
@@ -956,11 +1088,19 @@ impl GpuCodec {
                 1,
             );
         }
-        self.record_blocks(d, r);
+        self.record_blocks(d, r, slot);
     }
-    fn record_blocks<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>) {
+    fn record_blocks<'a>(&'a self, d: &'a Device, r: &mut Recording<'a>, slot: usize) {
         let (n, w) = (CODEC_POSITIONS, CODEC_WIDTH);
-        d.record(r, &self.blocks, &self.scratch, &self.x, n, self.next, true);
+        d.record(
+            r,
+            &self.blocks,
+            &self.scratch,
+            &self.x,
+            n,
+            self.next.get(),
+            true,
+        );
         let x = &self.x;
         d.norm(
             r,
@@ -977,7 +1117,7 @@ impl GpuCodec {
             r,
             &self.out,
             at(x, 0, w),
-            at(self.output.buffer(), 0, rows),
+            at(self.output[slot].buffer(), 0, rows),
             n,
             0,
             rows,
@@ -985,9 +1125,9 @@ impl GpuCodec {
             false,
         );
     }
-    /// The last frame's output, `[6][1282]`.
-    pub fn read(&self, d: &Device, out: &mut [f32]) -> Result<()> {
-        d.gpu.read_mapped(&self.output, 0, out)
+    /// The output of the last frame recorded into `slot`, `[6][1282]`.
+    pub fn read(&self, d: &Device, slot: usize, out: &mut [f32]) -> Result<()> {
+        d.gpu.read_mapped(&self.output[slot], 0, out)
     }
 }
 
@@ -1217,9 +1357,10 @@ impl GpuDepth {
 /// in the order its own sampler uses them), the backbone's feedback and next step, and the
 /// frame's codec. The host reads the twelve codes and the codec's output.
 pub struct FrameGpu {
-    /// The frame's codes (u32 bits; undecided: all ones) and the uniforms per codebook.
-    codes: Mapped,
-    draws: Mapped,
+    /// Per frame slot, the frame's codes (u32 bits; undecided: all ones) and the uniforms
+    /// per codebook (frames alternate slots, so one is read while the next runs).
+    codes: [Mapped; 2],
+    draws: [Mapped; 2],
     /// Codes chosen earlier in the request, `[12][2017]`.
     seen: Buffer,
     logits: Buffer,
@@ -1250,8 +1391,8 @@ impl FrameGpu {
     ) -> Result<Self> {
         let g = &d.gpu;
         Ok(Self {
-            codes: g.mapped(12 * 4)?,
-            draws: g.mapped(12 * 4)?,
+            codes: [g.mapped(12 * 4)?, g.mapped(12 * 4)?],
+            draws: [g.mapped(12 * 4)?, g.mapped(12 * 4)?],
             seen: g.buffer((12 * codes_per * 4) as u64)?,
             logits: g.buffer((4 * codes_per * 4) as u64)?,
             mask: floats(g, mask)?,
@@ -1278,30 +1419,56 @@ impl FrameGpu {
         }
         Ok(())
     }
-    /// One frame: `order` the codebooks in sampling order (four per pass), `uniforms` per
-    /// codebook. Writes the codes and the codec's output (`[6][1282]`).
+    /// Starts a frame on the device without waiting for it: `order` the codebooks in
+    /// sampling order (four per pass), `uniforms` per codebook, `slot` alternating between
+    /// frames (the previous frame's slot may still be in use). It runs after the frames
+    /// started before it; `finish` waits for it and reads its codes and codec output.
     #[allow(clippy::too_many_arguments)]
-    pub fn run(
-        &self,
-        d: &Device,
-        depth: &GpuDepth,
-        backbone: &mut GpuBackbone,
-        codec: &mut GpuCodec,
+    pub fn begin<'a>(
+        &'a self,
+        d: &'a Device,
+        depth: &'a GpuDepth,
+        backbone: &'a GpuBackbone,
+        codec: &'a GpuCodec,
         order: &[usize; 12],
         uniforms: &[f32; 12],
-        codes: &mut [usize; 12],
-        polar: &mut [f32],
-    ) -> Result<()> {
-        if backbone.next + 1 > backbone.positions || codec.next + CODEC_POSITIONS > codec.positions
+        slot: usize,
+    ) -> Result<InFlight<'a>> {
+        if backbone.next.get() + 1 > backbone.positions
+            || codec.next.get() + CODEC_POSITIONS > codec.positions
         {
             return Err("audio_context_exhausted");
         }
+        let (codes, draws) = (&self.codes[slot], &self.draws[slot]);
         d.gpu
-            .write_mapped(&self.codes, 0, &[f32::from_bits(u32::MAX); 12])?;
-        d.gpu.write_mapped(&self.draws, 0, uniforms)?;
+            .write_mapped(codes, 0, &[f32::from_bits(u32::MAX); 12])?;
+        d.gpu.write_mapped(draws, 0, uniforms)?;
+        let r = self.record(d, depth, backbone, codec, order, slot);
+        // SAFETY: every buffer recorded belongs to `self`, `d`, `depth`, `backbone` or
+        // `codec`, which the returned `InFlight` borrows; it waits for the pass when dropped.
+        let passing = unsafe { r.begin(&d.gpu)? };
+        backbone.next.set(backbone.next.get() + 1);
+        codec.next.set(codec.next.get() + CODEC_POSITIONS);
+        Ok(InFlight {
+            passing,
+            slot,
+            _uses: std::marker::PhantomData,
+        })
+    }
+    /// The frame's steps (`begin`).
+    fn record<'a>(
+        &'a self,
+        d: &'a Device,
+        depth: &'a GpuDepth,
+        backbone: &'a GpuBackbone,
+        codec: &'a GpuCodec,
+        order: &[usize; 12],
+        slot: usize,
+    ) -> Recording<'a> {
+        let (codes, draws) = (&self.codes[slot], &self.draws[slot]);
         let per = self.codes_per;
         let mut r = Recording::new();
-        let codes_buf = self.codes.buffer();
+        let codes_buf = codes.buffer();
         for pass in 0..3 {
             let wanted = &order[pass * 4..pass * 4 + 4];
             let project = (pass == 0).then_some(&backbone.state);
@@ -1320,7 +1487,7 @@ impl FrameGpu {
             constants.push(0);
             r.push(
                 &d.k.sample,
-                vec![&self.logits, &self.seen, codes_buf, self.draws.buffer()],
+                vec![&self.logits, &self.seen, codes_buf, draws.buffer()],
                 constants,
                 4,
             );
@@ -1340,10 +1507,14 @@ impl FrameGpu {
             vec![2, 0, per as u32],
             1,
         );
-        backbone.record_step(d, &mut r, &self.fb);
+        // The backbone step and the codec read the codes' values and nothing of each other's:
+        // they run side by side.
+        let mut step = Recording::new();
+        backbone.record_step(d, &mut step, &self.fb);
+        let mut c = Recording::new();
         let rows = self.fsq_out.rows;
         d.mv_full(
-            &mut r,
+            &mut c,
             &self.fsq_out,
             at(&self.q, 0, 48),
             at(&self.z, 0, rows),
@@ -1355,7 +1526,7 @@ impl FrameGpu {
         );
         let rows2 = self.codec_in.rows;
         d.mv_full(
-            &mut r,
+            &mut c,
             &self.codec_in,
             at(&self.z, 0, rows),
             at(&self.zz, 0, rows2),
@@ -1365,17 +1536,36 @@ impl FrameGpu {
             Some((&self.codec_bias, 0)),
             false,
         );
-        codec.record_from(d, &mut r, &self.zz);
-        r.run(&d.gpu)?;
-        backbone.next += 1;
-        codec.next += CODEC_POSITIONS;
+        codec.record_from(d, &mut c, &self.zz, slot);
+        r.interleave(step, c);
+        r
+    }
+    /// Waits for a frame from `begin` and reads its codes and codec output (`[6][1282]`).
+    pub fn finish(
+        &self,
+        d: &Device,
+        codec: &GpuCodec,
+        frame: InFlight,
+        codes: &mut [usize; 12],
+        polar: &mut [f32],
+    ) -> Result<()> {
+        let slot = frame.slot;
+        frame.passing.wait()?;
         let mut bits = [0f32; 12];
-        d.gpu.read_mapped(&self.codes, 0, &mut bits)?;
+        d.gpu.read_mapped(&self.codes[slot], 0, &mut bits)?;
         for (c, b) in codes.iter_mut().zip(bits) {
             *c = b.to_bits() as usize;
         }
-        codec.read(d, polar)
+        codec.read(d, slot, polar)
     }
+}
+
+/// A frame started by `FrameGpu::begin`, running on the device until `finish` (dropping
+/// it waits too).
+pub struct InFlight<'a> {
+    passing: Passing,
+    slot: usize,
+    _uses: std::marker::PhantomData<&'a ()>,
 }
 
 /// The text head (tied embeddings) on the device, for recognition.
@@ -1744,11 +1934,11 @@ mod tests {
         let mut times = Vec::new();
         for _ in 0..60 {
             let mut r = Recording::new();
-            codec.record_from(&d, &mut r, &input);
+            codec.record_from(&d, &mut r, &input, 0);
             let t0 = std::time::Instant::now();
             r.run(&d.gpu).unwrap();
             times.push(t0.elapsed().as_secs_f64());
-            codec.next += 6;
+            codec.next.set(codec.next.get() + 6);
         }
         let mut bb = GpuBackbone::upload(&d, &m.backbone, &m.out_norm, 4096).unwrap();
         bb.reset(&d).unwrap();
@@ -1760,7 +1950,7 @@ mod tests {
             let t0 = std::time::Instant::now();
             r.run(&d.gpu).unwrap();
             steps.push(t0.elapsed().as_secs_f64());
-            bb.next += 1;
+            bb.next.set(bb.next.get() + 1);
         }
         steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let weights: usize = m.backbone.iter().map(crate::block::Block::bytes).sum();
@@ -1776,12 +1966,128 @@ mod tests {
             count.0,
             count.1
         );
+        let depth = GpuDepth::upload(
+            &d,
+            &m.depth,
+            &m.proj_in.0,
+            &m.proj_in.1,
+            &m.code_embd,
+            &m.depth_norm,
+            &m.head_norm,
+            2017,
+        )
+        .unwrap();
+        let inputs = m.depth_inputs(&[None; 12]);
+        let mut out = vec![0f32; 4 * 2017];
+        let mut passes = Vec::new();
+        for _ in 0..30 {
+            let t0 = std::time::Instant::now();
+            depth
+                .pass(&d, None, &inputs, &[0, 1, 2, 3], 2017, &mut out)
+                .unwrap();
+            passes.push(t0.elapsed().as_secs_f64());
+        }
+        passes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let depth_bytes: usize = m.depth.iter().map(crate::block::Block::bytes).sum();
+        eprintln!(
+            "DEPTH pass median {:.2} ms for {} MB of block weights",
+            passes[15] * 1e3,
+            depth_bytes >> 20
+        );
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         eprintln!("CODEC pass median {:.2} ms ({} steps)", times[30] * 1e3, {
             let mut r = Recording::new();
-            codec.record_from(&d, &mut r, &input);
+            codec.record_from(&d, &mut r, &input, 0);
             r.steps.len()
         });
+    }
+
+    /// Where a frame's device time goes: each step timed, summed per kernel and shape (run by
+    /// hand, `KUNO_AUDIO_MODELS` the model directory).
+    #[test]
+    #[ignore]
+    fn profile_frame() {
+        let dir = std::path::PathBuf::from(std::env::var("KUNO_AUDIO_MODELS").unwrap());
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let m = crate::Lfm3Audio::open_on(
+            &dir.join("LFM3-Audio-2B-Q8_0.gguf"),
+            &dir.join("mmproj-LFM3-Audio-2B-F16.gguf"),
+            Some(&pci),
+        )
+        .unwrap();
+        let g = m.gpu.as_ref().expect("on the GPU");
+        let d = &g.device;
+        let mut backbone = g.backbone.lock().unwrap();
+        let mut codec = g.codec.lock().unwrap();
+        backbone.reset(d).unwrap();
+        codec.reset(d).unwrap();
+        backbone.forward(d, &m.embed_tokens(&[1, 2, 3, 4])).unwrap();
+        g.frame.reset(d).unwrap();
+        let order = [3, 7, 1, 0, 11, 5, 9, 2, 4, 8, 6, 10];
+        let k = &d.k;
+        let mut names: Vec<(&Kernel, &str)> = vec![
+            (&k.mv, "mv"),
+            (&k.mvb, "mvb"),
+            (&k.mv1, "mv1"),
+            (&k.sample, "sample"),
+            (&k.gather, "gather"),
+            (&k.norm, "norm"),
+            (&k.addnorm, "addnorm"),
+            (&k.rope, "rope"),
+            (&k.attend, "attend"),
+            (&k.conv, "conv"),
+            (&k.ew, "ew"),
+        ];
+        if let Some(c) = &k.mvc {
+            names.push((c, "mvc"));
+        }
+        let mut totals: std::collections::BTreeMap<String, (f64, usize)> = Default::default();
+        let mut frame_times = Vec::new();
+        for frame in 0..20 {
+            let r = g
+                .frame
+                .record(d, &g.depth, &backbone, &codec, &order, frame % 2);
+            let times = r.profile(&d.gpu).unwrap();
+            backbone.next.set(backbone.next.get() + 1);
+            codec.next.set(codec.next.get() + CODEC_POSITIONS);
+            frame_times.push(times.iter().sum::<f64>());
+            if frame < 10 {
+                continue;
+            }
+            for ((kernel, _, constants, _), t) in r.steps.iter().zip(&times) {
+                let name = names
+                    .iter()
+                    .find(|(k, _)| std::ptr::eq(*k, *kernel))
+                    .map_or("?", |n| n.1);
+                let label = if name.starts_with("mv") {
+                    format!("{name} {}x{} n{}", constants[0], constants[1], constants[2])
+                } else {
+                    name.to_string()
+                };
+                let e = totals.entry(label).or_default();
+                e.0 += t / 10.0;
+                e.1 += 1;
+            }
+        }
+        let mut rows: Vec<_> = totals.into_iter().collect();
+        rows.sort_by(|a, b| b.1.0.partial_cmp(&a.1.0).unwrap());
+        frame_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        eprintln!(
+            "PROFILE frame {:.2} ms on the device (median of 20), {} steps",
+            frame_times[10] / 1e6,
+            g.frame
+                .record(d, &g.depth, &backbone, &codec, &order, 0)
+                .steps
+                .len()
+        );
+        for (label, (ns, count)) in rows {
+            eprintln!(
+                "PROFILE {label:28} {:7.1} us a frame, {:4} steps, {:5.1} us each",
+                ns / 1e3,
+                count / 10,
+                ns / 1e3 / (count / 10) as f64
+            );
+        }
     }
 
     /// The device sampler picks what the host sampler picks: random logits, some codes
@@ -1880,16 +2186,161 @@ mod tests {
                 if name.starts_with("mv1") && n > 1 {
                     continue;
                 }
+                for together in [false, true] {
+                    let mut r = Recording::new();
+                    for _ in 0..50 {
+                        r.push(
+                            kernel,
+                            vec![&m.w, m.scales.as_ref().unwrap(), &x, &y, &d.dummy],
+                            vec![
+                                rows as u32,
+                                cols as u32,
+                                n as u32,
+                                kind,
+                                0,
+                                cols as u32,
+                                0,
+                                rows as u32,
+                                0,
+                                0,
+                                0,
+                            ],
+                            rows.div_ceil(per) as u32,
+                        );
+                        if together {
+                            r.together();
+                        }
+                    }
+                    r.run(&d.gpu).unwrap();
+                    let t0 = std::time::Instant::now();
+                    r.run(&d.gpu).unwrap();
+                    let each = t0.elapsed().as_secs_f64() / 50.0;
+                    eprintln!(
+                        "{name:4} {} kind {kind} {rows}x{cols} n {n:2}: {:6.1} us, {:4.0} GB/s",
+                        if together {
+                            "overlapped"
+                        } else {
+                            "in turn    "
+                        },
+                        each * 1e6,
+                        bytes as f64 / each / 1e9
+                    );
+                }
+            }
+        }
+    }
+
+    /// The cost of a dependent step: a trivial product many times in one submission, each
+    /// waiting for the last or not (run by hand).
+    #[test]
+    #[ignore]
+    fn bench_floor() {
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let d = Device::open(&pci).unwrap();
+        let w = d.gpu.buffer(4096).unwrap();
+        let x = d.gpu.buffer(4096).unwrap();
+        let y = d.gpu.buffer(4096).unwrap();
+        for count in [10usize, 100, 1000] {
+            for together in [false, true] {
+                let mut r = Recording::new();
+                for _ in 0..count {
+                    r.push(
+                        &d.k.mv1,
+                        vec![&w, &d.dummy, &x, &y, &d.dummy],
+                        vec![16, 32, 1, 2, 0, 32, 0, 16, 0, 0, 0],
+                        4,
+                    );
+                    if together {
+                        r.together();
+                    }
+                }
+                let mut best = f64::MAX;
+                for _ in 0..5 {
+                    let t0 = std::time::Instant::now();
+                    r.run(&d.gpu).unwrap();
+                    best = best.min(t0.elapsed().as_secs_f64());
+                }
+                eprintln!(
+                    "FLOOR {count:4} steps {}: {:7.1} us in all, {:5.2} us each",
+                    if together { "overlapped" } else { "in turn   " },
+                    best * 1e6,
+                    best * 1e6 / count as f64
+                );
+            }
+        }
+    }
+
+    /// The tensor-core product against mvb on the depth decoder's shapes: the same sums
+    /// (up to the inputs' rounding to halves) and their times (run by hand).
+    #[test]
+    #[ignore]
+    fn bench_mvc() {
+        let pci = std::env::var("KUNO_AUDIO_BENCH_GPU").unwrap_or("0000:04:00.0".into());
+        let d = Device::open(&pci).unwrap();
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for (rows, cols, n) in [
+            (2816usize, 1024usize, 12usize),
+            (1024, 1024, 12),
+            (256, 1024, 12),
+            (1024, 2816, 12),
+            (1024, 1024, 5),
+            (16, 32, 12),
+            (16, 32, 1),
+        ] {
+            let bits: Vec<u16> = (0..rows * cols)
+                .map(|_| {
+                    let v = next();
+                    ((v & 0x8000) as u16)
+                        | (((10 + (v >> 16) % 6) as u16) << 10)
+                        | ((v >> 32) as u16 & 0x3ff)
+                })
+                .collect();
+            let xs: Vec<f32> = (0..n * cols)
+                .map(|_| ((next() >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0)
+                .collect();
+            let mut want = vec![0f64; n * rows];
+            for t in 0..n {
+                for r in 0..rows {
+                    want[t * rows + r] = (0..cols)
+                        .map(|c| {
+                            f64::from(crate::tensor::f16(bits[r * cols + c]))
+                                * f64::from(xs[t * cols + c])
+                        })
+                        .sum();
+                }
+            }
+            let bytes: Vec<u8> = bits.iter().flat_map(|b| b.to_le_bytes()).collect();
+            let m = Mat {
+                w: filled(&d.gpu, &bytes).unwrap(),
+                scales: None,
+                kind: 1,
+                rows,
+                cols,
+            };
+            let x = floats(&d.gpu, &xs).unwrap();
+            let y = d.gpu.buffer((n * rows * 4) as u64).unwrap();
+            let back = d.gpu.readback((n * rows * 4) as u64).unwrap();
+            let mut runs = vec![("mvb", &d.k.mvb, 4)];
+            if let Some(k) = &d.k.mvc {
+                runs.push(("mvc", k, 16));
+            }
+            for (name, kernel, per) in runs {
                 let mut r = Recording::new();
                 for _ in 0..50 {
                     r.push(
                         kernel,
-                        vec![&m.w, m.scales.as_ref().unwrap(), &x, &y, &d.dummy],
+                        vec![&m.w, &d.dummy, &x, &y, &d.dummy],
                         vec![
                             rows as u32,
                             cols as u32,
                             n as u32,
-                            kind,
+                            1,
                             0,
                             cols as u32,
                             0,
@@ -1905,11 +2356,20 @@ mod tests {
                 let t0 = std::time::Instant::now();
                 r.run(&d.gpu).unwrap();
                 let each = t0.elapsed().as_secs_f64() / 50.0;
+                let mut got = vec![0f32; n * rows];
+                d.gpu.read_floats(&y, 0, &back, &mut got).unwrap();
+                let scale = want.iter().fold(0f64, |a, v| a.max(v.abs()));
+                let worst = got
+                    .iter()
+                    .zip(&want)
+                    .fold(0f64, |a, (g, w)| a.max((f64::from(*g) - w).abs()));
                 eprintln!(
-                    "{name:3} kind {kind} {rows}x{cols} n {n:2}: {:6.1} us, {:4.0} GB/s",
+                    "{name:8} {rows}x{cols} n {n:2}: {:6.1} us, {:4.0} GB/s, worst {:.1e} of {scale:.1}",
                     each * 1e6,
-                    bytes as f64 / each / 1e9
+                    (rows * cols * 2) as f64 / each / 1e9,
+                    worst
                 );
+                assert!(worst < 1e-3 * scale, "{name} differs");
             }
         }
     }
@@ -1931,7 +2391,8 @@ mod tests {
         let out = std::env::temp_dir().join(format!("kuno-audio-spv-{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
         for name in [
-            "mv", "mvb", "mv1", "sample", "gather", "norm", "rope", "attend", "conv", "ew",
+            "mv", "mvb", "mv1", "mvc", "sample", "gather", "norm", "addnorm", "rope", "attend",
+            "conv", "ew",
         ] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")

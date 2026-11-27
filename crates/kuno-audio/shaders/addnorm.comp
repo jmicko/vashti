@@ -1,0 +1,60 @@
+// A residual step and the next RMS norm in one: per row, a = op (flag 1: RMS-normed with
+// w_post, a post-norm), x += a, then (flag 2) h = RMS norm of the new x with w_next.
+// `rows` rows of `width` (at most 2048) values, op, x and h each `width` apart.
+// One workgroup per row; each lane keeps its values.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Op { float op[]; };
+layout(set = 0, binding = 1) readonly buffer Post { float w_post[]; };
+layout(set = 0, binding = 2) buffer X { float x[]; };
+layout(set = 0, binding = 3) readonly buffer Next { float w_next[]; };
+layout(set = 0, binding = 4) writeonly buffer H { float h[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint width; float eps; uint flags;
+} p;
+
+const uint LANES = 256, KEEP = 8;
+shared float part[2][LANES];
+
+// The mean square of the row whose lane values are `v`, through `part[slot]`.
+float mean_square(float v[KEEP], uint slot) {
+    float sum = 0.0;
+    for (uint j = 0; j < KEEP; j++) sum += v[j] * v[j];
+    sum = subgroupAdd(sum);
+    if (gl_SubgroupInvocationID == 0) part[slot][gl_SubgroupID] = sum;
+    barrier();
+    float total = 0.0;
+    for (uint g = 0; g < gl_NumSubgroups; g++) total += part[slot][g];
+    return total / float(p.width);
+}
+
+void main() {
+    uint base = gl_WorkGroupID.x * p.width;
+    uint lane = gl_LocalInvocationIndex;
+    float a[KEEP];
+    for (uint j = 0; j < KEEP; j++) {
+        uint i = lane + j * LANES;
+        a[j] = i < p.width ? op[base + i] : 0.0;
+    }
+    if ((p.flags & 1) != 0) {
+        float scale = 1.0 / sqrt(mean_square(a, 0) + p.eps);
+        for (uint j = 0; j < KEEP; j++) {
+            uint i = lane + j * LANES;
+            a[j] = i < p.width ? a[j] * scale * w_post[i] : 0.0;
+        }
+    }
+    for (uint j = 0; j < KEEP; j++) {
+        uint i = lane + j * LANES;
+        if (i < p.width) {
+            a[j] += x[base + i];
+            x[base + i] = a[j];
+        }
+    }
+    if ((p.flags & 2) == 0) return;
+    float scale = 1.0 / sqrt(mean_square(a, 1) + p.eps);
+    for (uint j = 0; j < KEEP; j++) {
+        uint i = lane + j * LANES;
+        if (i < p.width) h[base + i] = a[j] * scale * w_next[i];
+    }
+}

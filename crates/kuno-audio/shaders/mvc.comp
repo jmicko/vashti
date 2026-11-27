@@ -1,0 +1,76 @@
+// mv for 2 to 16 tokens of f16 rows on 16 x 16 x 16 half-precision matrix units (32-lane
+// subgroups; 1.2 to 1.5 times mvb on the RTX 3060 at the depth decoder's 12 tokens):
+// Y[t][r] = sum_c W[r][c] x[t][c] (+ bias[r]), the inputs rounded to halves, f32 sums.
+// A workgroup takes 16 rows; its eight subgroups take interleaved 16-column steps of them
+// and meet in shared memory. Each step a subgroup turns its 16 tokens x 16 columns of x
+// into halves (zeros past n). Same buffers, constants and flags as mv.comp for kind 1;
+// rows and cols are multiples of 16.
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// Keep half-precision subnormals (tiny weights) instead of reading them as zero.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+const uint SPLIT = 8;
+layout(local_size_x = 32 * SPLIT) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer Bias { float bias[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint n; uint kind;
+    uint x_off; uint x_stride; uint y_off; uint y_stride;
+    uint w_row0; uint b_off; uint flags;
+} p;
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>
+
+// Per subgroup, its x tile as halves: 16 tokens x 2 words of 8.
+shared uvec4 tile[SPLIT * 32];
+// Per subgroup, its sums [token][row].
+shared float sums[SPLIT * 256];
+
+void main() {
+    uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint row0 = group * 16;
+    if (row0 >= p.rows) return;
+    uint cols8 = p.cols / 8, steps = p.cols / 16;
+    uint wr0 = row0 + p.w_row0;
+    // This lane's part of the x tile: token lane / 2, eight columns from (lane % 2) * 8.
+    uint t = lane >> 1;
+    bool live = t < p.n;
+    uint xa = (p.x_off + t * p.x_stride) / 4 + (lane & 1) * 2;
+    C c = C(0.0);
+    for (uint k = sg; k < steps; k += SPLIT) {
+        B b;
+        coopMatLoad(b, w, wr0 * cols8 + k * 2, cols8, gl_CooperativeMatrixLayoutColumnMajor);
+        vec4 lo = live ? x[xa + k * 4] : vec4(0.0), hi = live ? x[xa + k * 4 + 1] : vec4(0.0);
+        tile[sg * 32 + lane] = uvec4(packHalf2x16(lo.xy), packHalf2x16(lo.zw),
+                                     packHalf2x16(hi.xy), packHalf2x16(hi.zw));
+        subgroupMemoryBarrierShared();
+        subgroupBarrier();
+        A a;
+        coopMatLoad(a, tile, sg * 32, 2, gl_CooperativeMatrixLayoutRowMajor);
+        c = coopMatMulAdd(a, b, c);
+        subgroupBarrier();
+    }
+    coopMatStore(c, sums, sg * 256, 16, gl_CooperativeMatrixLayoutRowMajor);
+    barrier();
+    uint o = gl_LocalInvocationIndex;   // 256 lanes, one per output of the tile
+    uint tt = o / 16, rr = o % 16;
+    if (tt >= p.n) return;
+    float v = 0.0;
+    for (uint g = 0; g < SPLIT; g++) v += sums[g * 256 + o];
+    uint r = row0 + rr;
+    if ((p.flags & 1) != 0) v += bias[p.b_off + r];
+    uint ya = p.y_off + tt * p.y_stride + r;
+    y[ya] = ((p.flags & 2) != 0) ? y[ya] + v : v;
+}

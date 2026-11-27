@@ -2,9 +2,10 @@
 // mode 0 writes v, 1 adds v into out (a post-norm on the residual stream), 2 adds x into
 // out without a norm (a plain residual). In place when x and out are the same rows.
 // The weight of row i starts at w_off + i * w_stride (w_stride 0: one shared weight).
-// One workgroup per row.
+// One workgroup per row; each lane keeps its values (up to 8; wider rows read again).
 #version 460
-layout(local_size_x = 64) in;
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer X { float x[]; };
 layout(set = 0, binding = 1) readonly buffer Weight { float w[]; };
 layout(set = 0, binding = 2) buffer Out { float o[]; };
@@ -14,7 +15,8 @@ layout(push_constant) uniform Constants {
     float eps; uint mode;
 } p;
 
-shared float part[64];
+const uint LANES = 256, KEEP = 8;
+shared float part[LANES];
 
 void main() {
     uint row = gl_WorkGroupID.x;
@@ -23,19 +25,30 @@ void main() {
     uint oa = p.o_off + row * p.o_stride;
     uint wa = p.w_off + row * p.w_stride;
     if (p.mode == 2) {
-        for (uint i = lane; i < p.width; i += 64) o[oa + i] += x[xa + i];
+        for (uint i = lane; i < p.width; i += LANES) o[oa + i] += x[xa + i];
         return;
     }
+    float kept[KEEP];
     float sum = 0.0;
-    for (uint i = lane; i < p.width; i += 64) sum += x[xa + i] * x[xa + i];
-    part[lane] = sum;
-    barrier();
-    for (uint h = 32; h > 0; h >>= 1) {
-        if (lane < h) part[lane] += part[lane + h];
-        barrier();
+    for (uint j = 0; j < KEEP; j++) {
+        uint i = lane + j * LANES;
+        kept[j] = i < p.width ? x[xa + i] : 0.0;
+        sum += kept[j] * kept[j];
     }
-    float scale = 1.0 / sqrt(part[0] / float(p.width) + p.eps);
-    for (uint i = lane; i < p.width; i += 64) {
+    for (uint i = lane + KEEP * LANES; i < p.width; i += LANES) sum += x[xa + i] * x[xa + i];
+    sum = subgroupAdd(sum);
+    if (gl_SubgroupInvocationID == 0) part[gl_SubgroupID] = sum;
+    barrier();
+    float total = 0.0;
+    for (uint g = 0; g < gl_NumSubgroups; g++) total += part[g];
+    float scale = 1.0 / sqrt(total / float(p.width) + p.eps);
+    for (uint j = 0; j < KEEP; j++) {
+        uint i = lane + j * LANES;
+        if (i >= p.width) break;
+        float v = kept[j] * scale * w[wa + i];
+        if (p.mode == 1) o[oa + i] += v; else o[oa + i] = v;
+    }
+    for (uint i = lane + KEEP * LANES; i < p.width; i += LANES) {
         float v = x[xa + i] * scale * w[wa + i];
         if (p.mode == 1) o[oa + i] += v; else o[oa + i] = v;
     }
