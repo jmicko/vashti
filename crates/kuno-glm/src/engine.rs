@@ -1,0 +1,934 @@
+//! Decoding one token at a time on the GPU, the routed experts on the CPU: each MoE block's
+//! work up to the router is one submission; the host reads the chosen experts, runs them
+//! (`cpu`), and the next submission adds their sum while it applies the block's mixer.
+use kuno_image::engine::gpu::{Buffer, Gpu, Kernel, Mapped, Passing, Step, bytes_of};
+use rayon::prelude::*;
+
+use crate::gpu::{Kernels, Mat, filled};
+use crate::{Matrix, Model, Result, cpu};
+
+/// The engine's kernels besides the products.
+struct Extra {
+    hcdot: Kernel,
+    hcmix: Kernel,
+    kda: Kernel,
+    dsanorm: Kernel,
+    mla: Kernel,
+    route: Kernel,
+    glu: Kernel,
+    fin: Kernel,
+    argmax: Kernel,
+}
+
+struct Mixer {
+    function: Mat,
+    /// base [24], scale [3]
+    params: Buffer,
+    norm: Buffer,
+}
+
+enum Attention {
+    Kda {
+        qkv: Mat,
+        /// f_a, g_a, beta rows
+        small: Mat,
+        f_b: Mat,
+        g_b: Mat,
+        conv: Buffer,
+        /// a [64], out norm [128], dt bias [d]
+        params: Buffer,
+        out: Mat,
+        hist: Buffer,
+        state: Buffer,
+    },
+    Dsa {
+        q_a: Mat,
+        kv_a: Mat,
+        norms: Buffer,
+        q_b: Mat,
+        k_b: Mat,
+        v_b: Mat,
+        out: Mat,
+        latents: Buffer,
+    },
+}
+
+enum Ffn {
+    Dense {
+        gu: Mat,
+        down: Mat,
+    },
+    Moe {
+        router: Mat,
+        bias: Buffer,
+        gu: Mat,
+        down: Mat,
+    },
+}
+
+struct Block {
+    attn: Mixer,
+    ffn_mixer: Mixer,
+    attention: Attention,
+    ffn: Ffn,
+}
+
+/// Device scratch for one token.
+struct Scratch {
+    /// The four streams, alternating between the two.
+    x: [Buffer; 2],
+    part: Buffer,
+    coef: Buffer,
+    normed: Buffer,
+    /// Projections (the largest is DSA's q_b, 16384, or KDA's qkv, 24576).
+    a: Buffer,
+    b: Buffer,
+    c: Buffer,
+    out: Buffer,
+    logits: Buffer,
+}
+
+pub struct Engine<'m> {
+    model: &'m Model,
+    gpu: Gpu,
+    k: Kernels,
+    e: Extra,
+    blocks: Vec<Block>,
+    out_norm: Buffer,
+    output: Mat,
+    embed: Matrix,
+    s: Scratch,
+    /// Host-visible: the embedding x4, the router's choice (+ normed input), the CPU's
+    /// expert sum, the next token.
+    host_x: Mapped,
+    route: Mapped,
+    cpu_out: Mapped,
+    token: Mapped,
+    pos: usize,
+    max_positions: usize,
+    /// When set, the mean of the streams after each block (comparison with the reference).
+    pub trace: Option<Vec<Vec<f32>>>,
+}
+
+fn concat(ms: &[Matrix]) -> Matrix {
+    let mut bytes = Vec::new();
+    for m in ms {
+        assert_eq!((m.dtype, m.cols), (ms[0].dtype, ms[0].cols));
+        bytes.extend_from_slice(&m.bytes);
+    }
+    Matrix {
+        dtype: ms[0].dtype,
+        rows: ms.iter().map(|m| m.rows).sum(),
+        cols: ms[0].cols,
+        row_bytes: ms[0].row_bytes,
+        bytes,
+    }
+}
+
+fn floats(gpu: &Gpu, v: &[f32]) -> Result<Buffer> {
+    filled(gpu, bytes_of(v))
+}
+
+/// One recorded step: owned buffers list and constants, borrowed by `Step` at submission.
+struct Op<'a> {
+    kernel: &'a Kernel,
+    buffers: Vec<&'a Buffer>,
+    constants: Vec<u32>,
+    groups: [u32; 3],
+    /// No barrier after this step (the next one does not read its output).
+    independent: bool,
+}
+
+fn f(v: f32) -> u32 {
+    v.to_bits()
+}
+
+impl<'m> Engine<'m> {
+    pub fn new(model: &'m Model, gpu: Gpu, max_positions: usize) -> Result<Self> {
+        let hp = &model.hp;
+        let k = Kernels::new(&gpu)?;
+        let lanes = Some(k.lanes);
+        let kernel = |spirv: &[u8], b, c| gpu.kernel(spirv, b, c, lanes);
+        let e = Extra {
+            hcdot: kernel(include_bytes!("../shaders/hcdot.spv"), 8, 3)?,
+            hcmix: kernel(include_bytes!("../shaders/hcmix.spv"), 6, 5)?,
+            kda: kernel(include_bytes!("../shaders/kda.spv"), 8, 4)?,
+            dsanorm: kernel(include_bytes!("../shaders/dsanorm.spv"), 4, 4)?,
+            mla: kernel(include_bytes!("../shaders/mla.spv"), 3, 3)?,
+            route: kernel(include_bytes!("../shaders/route.spv"), 4, 4)?,
+            glu: kernel(include_bytes!("../shaders/glu.spv"), 2, 2)?,
+            fin: kernel(include_bytes!("../shaders/final.spv"), 3, 2)?,
+            argmax: gpu.kernel(include_bytes!("../shaders/argmax.spv"), 2, 2, None)?,
+        };
+        let m = |n: &str| model.matrix(n);
+        let v = |n: &str| model.vector(n);
+        let up = |mx: &Matrix| Mat::upload(&gpu, mx);
+        let mut blocks = Vec::with_capacity(hp.layers);
+        for il in 0..hp.layers {
+            let b = |n: &str| format!("blk.{il}.{n}");
+            let mixer = |part: &str, norm: &str| -> Result<Mixer> {
+                let mut params = v(&b(&format!("hc_{part}_base.weight")))?;
+                params.extend(v(&b(&format!("hc_{part}_scale.weight")))?);
+                Ok(Mixer {
+                    function: up(&m(&b(&format!("hc_{part}_fn.weight")))?)?,
+                    params: floats(&gpu, &params)?,
+                    norm: floats(&gpu, &v(&b(norm))?)?,
+                })
+            };
+            let attention = if hp.dsa[il] {
+                let mut norms = v(&b("attn_q_a_norm.weight"))?;
+                norms.extend(v(&b("attn_kv_a_norm.weight"))?);
+                Attention::Dsa {
+                    q_a: up(&m(&b("attn_q_a.weight"))?)?,
+                    kv_a: up(&m(&b("attn_kv_a_mqa.weight"))?)?,
+                    norms: floats(&gpu, &norms)?,
+                    q_b: up(&m(&b("attn_q_b.weight"))?)?,
+                    k_b: up(&m(&b("attn_k_b.weight"))?)?,
+                    v_b: up(&m(&b("attn_v_b.weight"))?)?,
+                    out: up(&m(&b("attn_output.weight"))?)?,
+                    latents: gpu.buffer((max_positions * hp.kv_lora * 4) as u64)?,
+                }
+            } else {
+                let d = hp.kda_head * hp.heads;
+                let mut conv = Vec::with_capacity(3 * d * 4);
+                for part in ["q", "k", "v"] {
+                    conv.extend(v(&b(&format!("ssm_conv1d_{part}.weight")))?);
+                }
+                let mut params = v(&b("ssm_a"))?;
+                params.extend(v(&b("ssm_norm.weight"))?);
+                params.extend(v(&b("ssm_dt.bias"))?);
+                let zeros = |n: usize| floats(&gpu, &vec![0f32; n]);
+                Attention::Kda {
+                    qkv: up(&concat(&[
+                        m(&b("attn_q.weight"))?,
+                        m(&b("attn_k.weight"))?,
+                        m(&b("attn_v.weight"))?,
+                    ]))?,
+                    small: up(&concat(&[
+                        m(&b("ssm_f_a.weight"))?,
+                        m(&b("ssm_g_a.weight"))?,
+                        m(&b("ssm_beta.weight"))?,
+                    ]))?,
+                    f_b: up(&m(&b("ssm_f_b.weight"))?)?,
+                    g_b: up(&m(&b("ssm_g_b.weight"))?)?,
+                    conv: floats(&gpu, &conv)?,
+                    params: floats(&gpu, &params)?,
+                    out: up(&m(&b("attn_output.weight"))?)?,
+                    hist: zeros(3 * 3 * d)?,
+                    state: zeros(hp.heads * hp.kda_head * hp.kda_head)?,
+                }
+            };
+            let ffn = if il < hp.dense_lead {
+                Ffn::Dense {
+                    gu: up(&concat(&[
+                        m(&b("ffn_gate.weight"))?,
+                        m(&b("ffn_up.weight"))?,
+                    ]))?,
+                    down: up(&m(&b("ffn_down.weight"))?)?,
+                }
+            } else {
+                Ffn::Moe {
+                    router: up(&m(&b("ffn_gate_inp.weight"))?)?,
+                    bias: floats(&gpu, &v(&b("exp_probs_b.bias"))?)?,
+                    gu: up(&concat(&[
+                        m(&b("ffn_gate_shexp.weight"))?,
+                        m(&b("ffn_up_shexp.weight"))?,
+                    ]))?,
+                    down: up(&m(&b("ffn_down_shexp.weight"))?)?,
+                }
+            };
+            blocks.push(Block {
+                attn: mixer("attn", "attn_norm.weight")?,
+                ffn_mixer: mixer("ffn", "ffn_norm.weight")?,
+                attention,
+                ffn,
+            });
+            eprintln!("block {il} on the device");
+        }
+        let n = hp.embd;
+        let buf = |floats: usize| gpu.buffer((floats * 4) as u64);
+        let s = Scratch {
+            x: [buf(4 * n)?, buf(4 * n)?],
+            part: buf(32 * 32)?,
+            coef: buf(32)?,
+            normed: buf(n)?,
+            a: buf(3 * hp.kda_head * hp.heads)?,
+            b: buf(hp.heads * hp.kv_lora.max(2 * hp.kda_head))?,
+            c: buf(hp.heads * hp.kv_lora)?,
+            out: buf(hp.ff.max(2 * hp.ff_shared) * 2)?,
+            logits: buf(hp.vocab)?,
+        };
+        Ok(Self {
+            out_norm: floats(&gpu, &v("output_norm.weight")?)?,
+            output: up(&m("output.weight")?)?,
+            embed: m("token_embd.weight")?,
+            host_x: gpu.mapped((4 * n * 4) as u64)?,
+            route: gpu.mapped(((2 * hp.experts_used + n) * 4) as u64)?,
+            cpu_out: gpu.mapped((n * 4) as u64)?,
+            token: gpu.mapped(16)?,
+            s,
+            blocks,
+            model,
+            gpu,
+            k,
+            e,
+            pos: 0,
+            max_positions,
+            trace: None,
+        })
+    }
+
+    /// Runs `token` at the next position; returns the most likely next token.
+    pub fn step(&mut self, token: u32) -> Result<u32> {
+        let hp = self.model.hp.clone();
+        let n = hp.embd;
+        if self.pos >= self.max_positions || self.pos >= hp.indexer_top_k + hp.indexer_kpool - 1 {
+            return Err("context_full");
+        }
+        let mut row = vec![0f32; n];
+        self.embed.decode_row(token as usize, &mut row)?;
+        let x4: Vec<f32> = (0..4).flat_map(|_| row.iter().copied()).collect();
+        self.gpu.write_mapped(&self.host_x, 0, &x4)?;
+        if let Some(t) = &mut self.trace {
+            t.clear();
+        }
+        // The streams: cur is the buffer holding them (None: the host's embedding).
+        let mut cur: Option<usize> = None;
+        let mut ops: Vec<Op> = Vec::new();
+        let mut pending: Vec<Passing> = Vec::new();
+        let this = &*self;
+        let s = &this.s;
+        let hpr = &hp;
+        let mut traces = Vec::new();
+        let mut next_mode = 0u32;
+        let mut next_o: &Buffer = &s.out;
+        for (il, blk) in this.blocks.iter().enumerate() {
+            // The attention mixer (applying the previous block's FFN mixer first).
+            let c = mix(this, hpr, &mut ops, cur, &blk.attn, next_mode, next_o);
+            cur = Some(c);
+            if this.trace.is_some() && il > 0 {
+                // The previous block's result is now the streams.
+                pending.push(submit(this, &mut ops)?);
+                for p in pending.drain(..) {
+                    p.wait()?;
+                }
+                traces.push(self_mean(&this.gpu, &s.x[c], n)?);
+            }
+            match &blk.attention {
+                Attention::Kda {
+                    qkv,
+                    small,
+                    f_b,
+                    g_b,
+                    conv,
+                    params,
+                    out,
+                    hist,
+                    state,
+                } => {
+                    let d = hp.kda_head * hp.heads;
+                    mv(
+                        this,
+                        &mut ops,
+                        qkv,
+                        &s.normed,
+                        0,
+                        &s.a,
+                        0,
+                        qkv.constants(0, 0, false),
+                        true,
+                    );
+                    mv(
+                        this,
+                        &mut ops,
+                        small,
+                        &s.normed,
+                        0,
+                        &s.c,
+                        0,
+                        small.constants(0, 0, false),
+                        false,
+                    );
+                    // f_b on f_a's 128, g_b on g_a's 128: fg [f | gate] in b.
+                    mv(
+                        this,
+                        &mut ops,
+                        f_b,
+                        &s.c,
+                        0,
+                        &s.b,
+                        0,
+                        f_b.constants(0, 0, false),
+                        true,
+                    );
+                    mv(
+                        this,
+                        &mut ops,
+                        g_b,
+                        &s.c,
+                        128,
+                        &s.b,
+                        d,
+                        g_b.constants(128, d, false),
+                        false,
+                    );
+                    ops.push(Op {
+                        kernel: &this.e.kda,
+                        buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
+                        constants: vec![d as u32, f(hp.gate_lower_bound), f(hp.rms_eps), 256],
+                        groups: [hp.heads as u32, 1, 1],
+                        independent: false,
+                    });
+                    mv(
+                        this,
+                        &mut ops,
+                        out,
+                        &s.out,
+                        0,
+                        &s.a,
+                        0,
+                        out.constants(0, 0, false),
+                        false,
+                    );
+                }
+                Attention::Dsa {
+                    q_a,
+                    kv_a,
+                    norms,
+                    q_b,
+                    k_b,
+                    v_b,
+                    out,
+                    latents,
+                } => {
+                    let (ql, lora) = (hp.q_lora, hp.kv_lora);
+                    mv(
+                        this,
+                        &mut ops,
+                        q_a,
+                        &s.normed,
+                        0,
+                        &s.c,
+                        0,
+                        q_a.constants(0, 0, false),
+                        true,
+                    );
+                    mv(
+                        this,
+                        &mut ops,
+                        kv_a,
+                        &s.normed,
+                        0,
+                        &s.c,
+                        ql,
+                        kv_a.constants(0, ql, false),
+                        false,
+                    );
+                    ops.push(Op {
+                        kernel: &this.e.dsanorm,
+                        buffers: vec![&s.c, norms, &s.out, latents],
+                        constants: vec![ql as u32, lora as u32, this.pos as u32, f(hp.rms_eps)],
+                        groups: [1, 1, 1],
+                        independent: false,
+                    });
+                    // q [heads][qk] in a; absorbed [heads][lora] in b; mixed in c; heads' values in out.
+                    mv(
+                        this,
+                        &mut ops,
+                        q_b,
+                        &s.out,
+                        0,
+                        &s.a,
+                        0,
+                        q_b.constants(0, 0, false),
+                        false,
+                    );
+                    mv(
+                        this,
+                        &mut ops,
+                        k_b,
+                        &s.a,
+                        0,
+                        &s.b,
+                        0,
+                        k_b.grouped(0, 0, lora, hp.qk_head),
+                        false,
+                    );
+                    ops.push(Op {
+                        kernel: &this.e.mla,
+                        buffers: vec![&s.b, latents, &s.c],
+                        constants: vec![
+                            lora as u32,
+                            (this.pos + 1) as u32,
+                            f(1.0 / (hp.qk_head as f32).sqrt()),
+                        ],
+                        groups: [hp.heads as u32, 1, 1],
+                        independent: false,
+                    });
+                    mv(
+                        this,
+                        &mut ops,
+                        v_b,
+                        &s.c,
+                        0,
+                        &s.out,
+                        0,
+                        v_b.grouped(0, 0, hp.v_head, lora),
+                        false,
+                    );
+                    mv(
+                        this,
+                        &mut ops,
+                        out,
+                        &s.out,
+                        0,
+                        &s.a,
+                        0,
+                        out.constants(0, 0, false),
+                        false,
+                    );
+                }
+            }
+            // The FFN mixer, applying the attention's (output in a).
+            let c = mix(this, hpr, &mut ops, cur, &blk.ffn_mixer, 1, &s.a);
+            cur = Some(c);
+            match &blk.ffn {
+                Ffn::Dense { gu, down } => {
+                    let ff = gu.rows / 2;
+                    mv(
+                        this,
+                        &mut ops,
+                        gu,
+                        &s.normed,
+                        0,
+                        &s.out,
+                        0,
+                        gu.constants(0, 0, false),
+                        false,
+                    );
+                    ops.push(Op {
+                        kernel: &this.e.glu,
+                        buffers: vec![&s.out, &s.b],
+                        constants: vec![ff as u32, f(hp.clamp_shared[il])],
+                        groups: [(ff as u32).div_ceil(256), 1, 1],
+                        independent: false,
+                    });
+                    mv(
+                        this,
+                        &mut ops,
+                        down,
+                        &s.b,
+                        0,
+                        &s.a,
+                        0,
+                        down.constants(0, 0, false),
+                        false,
+                    );
+                    next_mode = 1;
+                    next_o = &s.a;
+                }
+                Ffn::Moe {
+                    router,
+                    bias,
+                    gu,
+                    down,
+                } => {
+                    mv(
+                        this,
+                        &mut ops,
+                        router,
+                        &s.normed,
+                        0,
+                        &s.c,
+                        0,
+                        router.constants(0, 0, false),
+                        false,
+                    );
+                    ops.push(Op {
+                        kernel: &this.e.route,
+                        buffers: vec![&s.c, bias, &s.normed, this.route.buffer()],
+                        constants: vec![
+                            hp.experts as u32,
+                            hp.experts_used as u32,
+                            f(hp.expert_scale),
+                            n as u32,
+                        ],
+                        groups: [1, 1, 1],
+                        independent: false,
+                    });
+                    let routed = submit(this, &mut ops)?;
+                    // The shared expert, queued behind the router while the CPU works.
+                    let ff = gu.rows / 2;
+                    mv(
+                        this,
+                        &mut ops,
+                        gu,
+                        &s.normed,
+                        0,
+                        &s.out,
+                        0,
+                        gu.constants(0, 0, false),
+                        false,
+                    );
+                    ops.push(Op {
+                        kernel: &this.e.glu,
+                        buffers: vec![&s.out, &s.b],
+                        constants: vec![ff as u32, f(hp.clamp_shared[il])],
+                        groups: [(ff as u32).div_ceil(256), 1, 1],
+                        independent: false,
+                    });
+                    mv(
+                        this,
+                        &mut ops,
+                        down,
+                        &s.b,
+                        0,
+                        &s.a,
+                        0,
+                        down.constants(0, 0, false),
+                        false,
+                    );
+                    pending.push(submit(this, &mut ops)?);
+                    routed.wait()?;
+                    let sum = this.cpu_experts(il)?;
+                    this.gpu.write_mapped(&this.cpu_out, 0, &sum)?;
+                    next_mode = 2;
+                    next_o = &s.a;
+                }
+            }
+        }
+        // The last block's FFN mixer (with any block's product, unused), the norm, the head.
+        let last = &this.blocks[0].attn;
+        let c = mix(this, hpr, &mut ops, cur, last, next_mode, next_o);
+        if this.trace.is_some() {
+            pending.push(submit(this, &mut ops)?);
+            for p in pending.drain(..) {
+                p.wait()?;
+            }
+            traces.push(self_mean(&this.gpu, &s.x[c], n)?);
+        }
+        ops.push(Op {
+            kernel: &this.e.fin,
+            buffers: vec![&s.x[c], &this.out_norm, &s.normed],
+            constants: vec![n as u32, f(hp.rms_eps)],
+            groups: [1, 1, 1],
+            independent: false,
+        });
+        mv(
+            this,
+            &mut ops,
+            &this.output,
+            &s.normed,
+            0,
+            &s.logits,
+            0,
+            this.output.constants(0, 0, false),
+            false,
+        );
+        ops.push(Op {
+            kernel: &this.e.argmax,
+            buffers: vec![&s.logits, this.token.buffer()],
+            constants: vec![hp.vocab as u32, 0],
+            groups: [1, 1, 1],
+            independent: false,
+        });
+        let last = submit(this, &mut ops)?;
+        for p in pending.drain(..) {
+            p.wait()?;
+        }
+        last.wait()?;
+        let mut t = [0f32; 1];
+        this.gpu.read_mapped(&this.token, 0, &mut t)?;
+        drop(ops);
+        if let Some(tr) = &mut self.trace {
+            *tr = traces;
+        }
+        self.pos += 1;
+        Ok(t[0].to_bits())
+    }
+
+    /// Block 0's attention one piece at a time: (name, values) after each (debugging).
+    pub fn probe(&mut self, token: u32) -> Result<Vec<(&'static str, Vec<f32>)>> {
+        let hp = self.model.hp.clone();
+        let n = hp.embd;
+        let mut row = vec![0f32; n];
+        self.embed.decode_row(token as usize, &mut row)?;
+        let x4: Vec<f32> = (0..4).flat_map(|_| row.iter().copied()).collect();
+        self.gpu.write_mapped(&self.host_x, 0, &x4)?;
+        let this = &*self;
+        let s = &this.s;
+        let mut out = Vec::new();
+        let read = |b: &Buffer, count: usize| -> Result<Vec<f32>> {
+            let stage = this.gpu.readback((count * 4) as u64)?;
+            let mut v = vec![0f32; count];
+            this.gpu.read_floats(b, 0, &stage, &mut v)?;
+            Ok(v)
+        };
+        let mut ops = Vec::new();
+        let blk = &this.blocks[0];
+        mix(this, &hp, &mut ops, None, &blk.attn, 0, &s.out);
+        submit(this, &mut ops)?.wait()?;
+        out.push(("part", read(&s.part, 32 * 32)?));
+        out.push(("coef", read(&s.coef, 24)?));
+        out.push(("x0", read(&s.x[0], 4 * n)?));
+        out.push(("normed", read(&s.normed, n)?));
+        if let Attention::Kda {
+            qkv,
+            small,
+            f_b,
+            g_b,
+            conv,
+            params,
+            out: o,
+            hist,
+            state,
+        } = &blk.attention
+        {
+            let d = hp.kda_head * hp.heads;
+            mv(
+                this,
+                &mut ops,
+                qkv,
+                &s.normed,
+                0,
+                &s.a,
+                0,
+                qkv.constants(0, 0, false),
+                true,
+            );
+            mv(
+                this,
+                &mut ops,
+                small,
+                &s.normed,
+                0,
+                &s.c,
+                0,
+                small.constants(0, 0, false),
+                false,
+            );
+            submit(this, &mut ops)?.wait()?;
+            out.push(("qkv", read(&s.a, 3 * d)?));
+            out.push(("small", read(&s.c, 320)?));
+            mv(
+                this,
+                &mut ops,
+                f_b,
+                &s.c,
+                0,
+                &s.b,
+                0,
+                f_b.constants(0, 0, false),
+                true,
+            );
+            mv(
+                this,
+                &mut ops,
+                g_b,
+                &s.c,
+                128,
+                &s.b,
+                d,
+                g_b.constants(128, d, false),
+                false,
+            );
+            submit(this, &mut ops)?.wait()?;
+            out.push(("fg", read(&s.b, 2 * d)?));
+            ops.push(Op {
+                kernel: &this.e.kda,
+                buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
+                constants: vec![d as u32, f(hp.gate_lower_bound), f(hp.rms_eps), 256],
+                groups: [hp.heads as u32, 1, 1],
+                independent: false,
+            });
+            submit(this, &mut ops)?.wait()?;
+            out.push(("kda", read(&s.out, d)?));
+            mv(
+                this,
+                &mut ops,
+                o,
+                &s.out,
+                0,
+                &s.a,
+                0,
+                o.constants(0, 0, false),
+                false,
+            );
+            submit(this, &mut ops)?.wait()?;
+            out.push(("attn_out", read(&s.a, n)?));
+        }
+        Ok(out)
+    }
+
+    /// The routed experts of block `il` on the CPU for the router's choice in `route`:
+    /// sum_e w_e down_e(swiglu(gate_e x, up_e x)), in the chosen order.
+    fn cpu_experts(&self, il: usize) -> Result<Vec<f32>> {
+        let hp = &self.model.hp;
+        let (n, ff, used) = (hp.embd, hp.ff_expert, hp.experts_used);
+        let mut r = vec![0f32; 2 * used + n];
+        self.gpu.read_mapped(&self.route, 0, &mut r)?;
+        let ids: Vec<usize> = r[..used].iter().map(|v| v.to_bits() as usize).collect();
+        let weights = &r[used..2 * used];
+        let x = cpu::Q8K::new(&r[2 * used..]);
+        let b = |p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
+        let outs: Vec<Vec<f32>> = ids
+            .par_iter()
+            .map(|&e| -> Result<Vec<f32>> {
+                let g = self.model.rows(&b("gate"), e * ff, ff)?;
+                let u = self.model.rows(&b("up"), e * ff, ff)?;
+                let d = self.model.rows(&b("down"), e * n, n)?;
+                for m in [&g, &u, &d] {
+                    cpu::check(m.dtype)?;
+                }
+                let exact = std::env::var_os("KUNO_GLM_EXACT_EXPERTS").is_some();
+                let mut gv = vec![0f32; ff];
+                let mut uv = vec![0f32; ff];
+                if exact {
+                    gv = g.matvec(&r[2 * used..]);
+                    uv = u.matvec(&r[2 * used..]);
+                } else {
+                    cpu::matvec(g.dtype, &g.bytes, g.row_bytes, &x, &mut gv);
+                    cpu::matvec(u.dtype, &u.bytes, u.row_bytes, &x, &mut uv);
+                }
+                let lim = hp.clamp_expert[il];
+                let h: Vec<f32> = gv
+                    .iter()
+                    .zip(&uv)
+                    .map(|(g, u)| {
+                        let (g, u) = if lim > 1e-6 {
+                            (g.min(lim), u.clamp(-lim, lim))
+                        } else {
+                            (*g, *u)
+                        };
+                        g / (1.0 + (-g).exp()) * u
+                    })
+                    .collect();
+                if exact {
+                    return Ok(d.matvec(&h));
+                }
+                let hq = cpu::Q8K::new(&h);
+                let mut out = vec![0f32; n];
+                cpu::matvec(d.dtype, &d.bytes, d.row_bytes, &hq, &mut out);
+                Ok(out)
+            })
+            .collect::<Result<_>>()?;
+        let mut sum = vec![0f32; n];
+        for (o, w) in outs.iter().zip(weights) {
+            for (s, v) in sum.iter_mut().zip(o) {
+                *s += w * v;
+            }
+        }
+        Ok(sum)
+    }
+}
+
+/// Records `m x` (constants `c`) into `y`.
+#[allow(clippy::too_many_arguments)]
+fn mv<'a>(
+    this: &'a Engine,
+    ops: &mut Vec<Op<'a>>,
+    m: &'a Mat,
+    x: &'a Buffer,
+    _x_off: usize,
+    y: &'a Buffer,
+    _y_off: usize,
+    c: [u32; 9],
+    independent: bool,
+) {
+    let groups = c[0].div_ceil(128 / this.k.lanes);
+    ops.push(Op {
+        kernel: &this.k.mv,
+        buffers: vec![&m.w, &m.s, x, y],
+        constants: c.to_vec(),
+        groups: [groups.min(65535), groups.div_ceil(65535), 1],
+        independent,
+    });
+}
+
+/// hcdot (mode 0 on cur; 1 or 2 applying the previous mixer, the output `o`, into the other
+/// buffer; 3 copying the host's embedding) then hcmix with `mixer`; returns the new cur.
+fn mix<'a>(
+    this: &'a Engine,
+    hp: &crate::Hparams,
+    ops: &mut Vec<Op<'a>>,
+    cur: Option<usize>,
+    mixer: &'a Mixer,
+    mode: u32,
+    o: &'a Buffer,
+) -> usize {
+    let s = &this.s;
+    let n = hp.embd;
+    let (src, dst) = match cur {
+        None => (this.host_x.buffer(), 0),
+        Some(i) => (&s.x[i], 1 - i),
+    };
+    let mode = if cur.is_none() { 3 } else { mode };
+    let target = if mode == 0 { cur.unwrap_or(0) } else { dst };
+    let xn = &s.x[dst];
+    ops.push(Op {
+        kernel: &this.e.hcdot,
+        buffers: vec![
+            &mixer.function.w,
+            &mixer.function.s,
+            src,
+            &s.part,
+            &s.coef,
+            o,
+            xn,
+            this.cpu_out.buffer(),
+        ],
+        constants: vec![n as u32, mode, 0],
+        groups: [32, 1, 1],
+        independent: false,
+    });
+    let xcur: &Buffer = if mode == 0 { src } else { xn };
+    ops.push(Op {
+        kernel: &this.e.hcmix,
+        buffers: vec![
+            &s.part,
+            xcur,
+            &mixer.params,
+            &mixer.norm,
+            &s.coef,
+            &s.normed,
+        ],
+        constants: vec![
+            n as u32,
+            hp.sinkhorn as u32,
+            f(hp.rms_eps),
+            f(hp.hc_eps),
+            32,
+        ],
+        groups: [1, 1, 1],
+        independent: false,
+    });
+    target
+}
+
+/// Submits the recorded steps.
+fn submit<'a>(this: &'a Engine, ops: &mut Vec<Op<'a>>) -> Result<Passing> {
+    let steps: Vec<Step> = ops
+        .iter()
+        .map(|o| Step {
+            kernel: o.kernel,
+            buffers: &o.buffers,
+            constants: &o.constants,
+            groups: o.groups,
+        })
+        .collect();
+    let independent: Vec<bool> = ops.iter().map(|o| o.independent).collect();
+    // SAFETY: every buffer belongs to the engine, which outlives the pass (waited for before
+    // `step` returns).
+    let passing = unsafe { this.gpu.pass_begin(&steps, &independent)? };
+    ops.clear();
+    Ok(passing)
+}
+
+fn self_mean(gpu: &Gpu, x: &Buffer, n: usize) -> Result<Vec<f32>> {
+    let stage = gpu.readback((4 * n * 4) as u64)?;
+    let mut v = vec![0f32; 4 * n];
+    gpu.read_floats(x, 0, &stage, &mut v)?;
+    Ok((0..n)
+        .map(|i| (0..4).map(|h| v[h * n + i]).sum::<f32>() / 4.0)
+        .collect())
+}

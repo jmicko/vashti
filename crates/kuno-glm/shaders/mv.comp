@@ -1,0 +1,95 @@
+// y[r] = sum_c W[r][c] x[c] for one token: one subgroup per row, several rows per workgroup,
+// the row's sum within the subgroup.
+// kind 0: Q8_0 as the int8 values [rows][cols] and one f16 scale per 32 values [rows][cols/32];
+// kind 2: f32 [rows][cols];
+// kind 3: Q6_K repacked per 256 values into 13 uvec4: 8 of low nibbles (value u of each 32 at
+//   bits 4u of its uint), 4 of the 2-bit highs (value u of each 16 at bits 2u), 1 of the 16
+//   int8 scales (one per 16 values); the block's f32 scale in Scales [rows][cols/256].
+// cols is a multiple of 32 (256 for kind 3). flags: 2 adds into y instead of writing it.
+// x_off is in floats (a multiple of 4). With group > 0, row r reads x from
+// x_off + (r / group) * gstride (per-head products: the absorbed attention's k_b and v_b).
+// Rows past 65535 workgroups continue on the grid's second dimension.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint kind; uint x_off; uint y_off; uint w_row0; uint flags;
+    uint group; uint gstride;
+} p;
+
+vec4 q4(int v, float sc) {
+    return vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
+                bitfieldExtract(v, 16, 8), bitfieldExtract(v, 24, 8)) * sc;
+}
+
+// Eight 6-bit values (nibbles of `lo`, 2-bit highs of `hi` from bit `hb`) against 8 inputs.
+float six(uint lo, uint hi, uint hb, uint c4) {
+    vec4 a = vec4(
+        float(int((lo & 15u) | (((hi >> hb) & 3u) << 4)) - 32),
+        float(int(((lo >> 4) & 15u) | (((hi >> (hb + 2)) & 3u) << 4)) - 32),
+        float(int(((lo >> 8) & 15u) | (((hi >> (hb + 4)) & 3u) << 4)) - 32),
+        float(int(((lo >> 12) & 15u) | (((hi >> (hb + 6)) & 3u) << 4)) - 32));
+    vec4 b = vec4(
+        float(int(((lo >> 16) & 15u) | (((hi >> (hb + 8)) & 3u) << 4)) - 32),
+        float(int(((lo >> 20) & 15u) | (((hi >> (hb + 10)) & 3u) << 4)) - 32),
+        float(int(((lo >> 24) & 15u) | (((hi >> (hb + 12)) & 3u) << 4)) - 32),
+        float(int((lo >> 28) | (((hi >> (hb + 14)) & 3u) << 4)) - 32));
+    return dot(a, x[c4]) + dot(b, x[c4 + 1]);
+}
+
+// Task `i` of row `wr`: 16 values (kinds 0, 2: one uvec4) or 32 (kind 3).
+float part(uint wr, uint i, uint xo) {
+    if (p.kind == 3) {
+        uint blocks = p.cols / 256;
+        uint block = i / 8, k = i % 8;
+        uint base = (wr * blocks + block) * 13;
+        uvec4 lo = w[base + k];
+        uvec4 hw = w[base + 8 + k / 2];
+        uvec2 hi = (k & 1) == 0 ? hw.xy : hw.zw;
+        uint sc = w[base + 12][k / 2];
+        float s0 = float(bitfieldExtract(int(sc), int((k & 1) * 16), 8));
+        float s1 = float(bitfieldExtract(int(sc), int((k & 1) * 16 + 8), 8));
+        uint c4 = xo + (block * 256 + k * 32) / 4;
+        float a = six(lo.x, hi.x, 0, c4) + six(lo.y, hi.x, 16, c4 + 2);
+        float b = six(lo.z, hi.y, 0, c4 + 4) + six(lo.w, hi.y, 16, c4 + 6);
+        return (a * s0 + b * s1) * uintBitsToFloat(s[wr * blocks + block]);
+    }
+    uint loads = p.kind == 0 ? p.cols / 16 : p.cols / 4;
+    uvec4 v = w[wr * loads + i];
+    if (p.kind == 0) {
+        uint c4 = xo + i * 4;
+        uint si = wr * (p.cols / 32) + i / 2;
+        float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+        return dot(q4(int(v.x), sc), x[c4]) + dot(q4(int(v.y), sc), x[c4 + 1])
+             + dot(q4(int(v.z), sc), x[c4 + 2]) + dot(q4(int(v.w), sc), x[c4 + 3]);
+    }
+    return dot(uintBitsToFloat(v), x[xo + i]);
+}
+
+void main() {
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint r = group * gl_NumSubgroups + gl_SubgroupID;
+    if (r >= p.rows) return;
+    uint lane = gl_SubgroupInvocationID, width = gl_SubgroupSize;
+    uint wr = r + p.w_row0;
+    uint tasks = p.kind == 3 ? p.cols / 32 : (p.kind == 0 ? p.cols / 16 : p.cols / 4);
+    uint xo = (p.x_off + (p.group > 0 ? (r / p.group) * p.gstride : 0)) / 4;
+    float acc = 0.0, acc2 = 0.0, acc3 = 0.0, acc4 = 0.0;
+    uint i = lane;
+    for (; i + 3 * width < tasks; i += 4 * width) {
+        acc += part(wr, i, xo);
+        acc2 += part(wr, i + width, xo);
+        acc3 += part(wr, i + 2 * width, xo);
+        acc4 += part(wr, i + 3 * width, xo);
+    }
+    for (; i < tasks; i += width) acc += part(wr, i, xo);
+    float v = subgroupAdd((acc + acc2) + (acc3 + acc4));
+    if (lane == 0) {
+        uint ya = p.y_off + r;
+        y[ya] = ((p.flags & 2) != 0) ? y[ya] + v : v;
+    }
+}

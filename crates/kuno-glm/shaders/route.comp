@@ -1,0 +1,47 @@
+// The MoE router's choice (one workgroup of 512 lanes, one expert per lane): probs =
+// sigmoid(logits); the `used` experts with the largest probs + bias (ties: the lower index),
+// in that order; their weights the unbiased probs, normalized to sum 1 (at least 6.1e-5)
+// and times `scale`. Writes the chosen ids and weights (and, for the CPU, a copy of the
+// block's normed input x [n]) to `route`: ids [used] as uints, weights [used], x [n].
+#version 460
+layout(local_size_x = 512) in;
+layout(set = 0, binding = 0) readonly buffer Logits { float logits[]; };
+layout(set = 0, binding = 1) readonly buffer Bias { float bias[]; };
+layout(set = 0, binding = 2) readonly buffer X { float x[]; };
+layout(set = 0, binding = 3) buffer Route { uint route[]; };
+layout(push_constant) uniform Constants { uint experts; uint used; float scale; uint n; } p;
+
+shared float key[512];
+shared float prob[512];
+shared uint chosen[16];
+
+void main() {
+    uint e = gl_LocalInvocationIndex;
+    float pr = 0.0, k = -1.0 / 0.0;
+    if (e < p.experts) {
+        pr = 1.0 / (1.0 + exp(-logits[e]));
+        k = pr + bias[e];
+    }
+    key[e] = k;
+    prob[e] = pr;
+    barrier();
+    if (e < p.experts) {
+        uint rank = 0;
+        for (uint o = 0; o < p.experts; o++) {
+            float ko = key[o];
+            if (ko > k || (ko == k && o < e)) rank++;
+        }
+        if (rank < p.used) chosen[rank] = e;
+    }
+    barrier();
+    if (e == 0) {
+        float sum = 0.0;
+        for (uint i = 0; i < p.used; i++) sum += prob[chosen[i]];
+        sum = max(sum, 6.1035156e-5);
+        for (uint i = 0; i < p.used; i++) {
+            route[i] = chosen[i];
+            route[p.used + i] = floatBitsToUint(prob[chosen[i]] / sum * p.scale);
+        }
+    }
+    for (uint i = e; i < p.n; i += 512) route[2 * p.used + i] = floatBitsToUint(x[i]);
+}

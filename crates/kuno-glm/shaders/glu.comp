@@ -1,0 +1,18 @@
+// Clamped SwiGLU: out[i] = silu(min(gu[i], limit)) * clamp(gu[n + i], -limit, limit)
+// (gate then up, as one product's rows); limit <= 1e-6 means no clamp.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Gu { float gu[]; };
+layout(set = 0, binding = 1) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint n; float limit; } p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    float g = gu[i], u = gu[p.n + i];
+    if (p.limit > 1e-6) {
+        g = min(g, p.limit);
+        u = clamp(u, -p.limit, p.limit);
+    }
+    o[i] = g / (1.0 + exp(-g)) * u;
+}

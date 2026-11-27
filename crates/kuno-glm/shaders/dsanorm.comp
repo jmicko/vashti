@@ -1,0 +1,37 @@
+// DSA's two RMS norms (one workgroup): the query's low-rank projection qa [qlora] times
+// qnorm into qr, and the key/value latent kva [lora] times kvnorm, appended to the latent
+// cache at position `pos` (latents [positions][lora]).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In { float v[]; };       // qa [qlora], kva [lora]
+layout(set = 0, binding = 1) readonly buffer Norms { float w[]; };    // qnorm, kvnorm
+layout(set = 0, binding = 2) writeonly buffer Qr { float qr[]; };
+layout(set = 0, binding = 3) writeonly buffer Latents { float latents[]; };
+layout(push_constant) uniform Constants { uint qlora; uint lora; uint pos; float eps; } p;
+
+shared float red[2][32];
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    float a = 0.0, b = 0.0;
+    for (uint i = lane; i < p.qlora; i += 256) a += v[i] * v[i];
+    for (uint i = lane; i < p.lora; i += 256) b += v[p.qlora + i] * v[p.qlora + i];
+    a = subgroupAdd(a);
+    b = subgroupAdd(b);
+    if (gl_SubgroupInvocationID == 0) {
+        red[0][gl_SubgroupID] = a;
+        red[1][gl_SubgroupID] = b;
+    }
+    barrier();
+    float ta = 0.0, tb = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) {
+        ta += red[0][i];
+        tb += red[1][i];
+    }
+    float ra = 1.0 / sqrt(ta / float(p.qlora) + p.eps);
+    float rb = 1.0 / sqrt(tb / float(p.lora) + p.eps);
+    for (uint i = lane; i < p.qlora; i += 256) qr[i] = v[i] * ra * w[i];
+    for (uint i = lane; i < p.lora; i += 256)
+        latents[p.pos * p.lora + i] = v[p.qlora + i] * rb * w[p.qlora + i];
+}

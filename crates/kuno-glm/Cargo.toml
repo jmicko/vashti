@@ -15,3 +15,7 @@ gpu = ["dep:kuno-image", "kuno-image/rust-image"]
 [[example]]
 name = "roundtrip"
 required-features = ["gpu"]
+
+[[example]]
+name = "gpu_check"
+required-features = ["gpu"]

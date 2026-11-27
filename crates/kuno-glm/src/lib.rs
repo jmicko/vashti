@@ -13,6 +13,10 @@ use std::path::Path;
 use kuno_text::{GgufFile, GgufLimits, MetadataValue, TensorType};
 
 pub mod cpu;
+#[cfg(feature = "gpu")]
+pub mod engine;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod reference;
 
 pub type Result<T> = std::result::Result<T, &'static str>;

@@ -1,0 +1,82 @@
+// One KDA (Kimi delta attention) step for one token: workgroup h is head h (128 lanes, lane j
+// a key/value channel). qkv [3][heads*128] are the q, k, v projections; the causal conv
+// (weights conv [3*heads*128][4], the last three projections in hist [3][3*heads*128],
+// oldest first) and SiLU, then l2 norms of q and k (eps 1e-6). The decay of key channel i
+// is exp(g), g = sigmoid(-(f[i] + dt_bias[i]) a[h]) * lower; beta = sigmoid(braw[h]).
+// The state S [heads][key][value] decays per key row, takes the delta rule
+// S += k (v - S^T k) beta, and is read out with q / sqrt(128); the output, RMS-normed per
+// head (weight onorm [128]) times sigmoid(gate), goes to out [heads*128].
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Qkv { float qkv[]; };
+layout(set = 0, binding = 1) readonly buffer Conv { vec4 conv[]; };
+layout(set = 0, binding = 2) buffer Hist { float hist[]; };
+layout(set = 0, binding = 3) readonly buffer Fg { float fg[]; };       // f [d], gate [d]
+layout(set = 0, binding = 4) readonly buffer Braw { float braw[]; };
+layout(set = 0, binding = 5) readonly buffer Params { float a[64]; float onorm[128]; float dt[]; };
+layout(set = 0, binding = 6) buffer State { float S[]; };
+layout(set = 0, binding = 7) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint d; float lower; float eps; uint braw_off; } p;
+
+shared float qs[128], ks[128], decay[128];
+shared float red[3][32];
+
+float sigmoid(float v) { return 1.0 / (1.0 + exp(-v)); }
+float silu(float v) { return v / (1.0 + exp(-v)); }
+
+// Sum over the workgroup's 128 lanes (slot: which shared row to use).
+float total(float v, uint slot) {
+    v = subgroupAdd(v);
+    if (gl_SubgroupInvocationID == 0) red[slot][gl_SubgroupID] = v;
+    barrier();
+    float t = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) t += red[slot][i];
+    return t;
+}
+
+void main() {
+    uint h = gl_WorkGroupID.x, j = gl_LocalInvocationIndex;
+    uint c = h * 128 + j;
+    float qkvj[3];
+    for (uint part = 0; part < 3; part++) {
+        uint ch = part * p.d + c;
+        vec4 w = conv[ch];
+        float now = qkv[ch];
+        float h0 = hist[ch], h1 = hist[3 * p.d + ch], h2 = hist[6 * p.d + ch];
+        float sum = 0.0;
+        sum += w.x * h0;
+        sum += w.y * h1;
+        sum += w.z * h2;
+        sum += w.w * now;
+        qkvj[part] = silu(sum);
+        hist[ch] = h1;
+        hist[3 * p.d + ch] = h2;
+        hist[6 * p.d + ch] = now;
+    }
+    float qn = total(qkvj[0] * qkvj[0], 0);
+    float kn = total(qkvj[1] * qkvj[1], 1);
+    float q = qkvj[0] / max(sqrt(qn), 1e-6);
+    float k = qkvj[1] / max(sqrt(kn), 1e-6);
+    float v = qkvj[2];
+    qs[j] = q * (1.0 / sqrt(128.0));
+    ks[j] = k;
+    float t = (fg[c] + dt[c]) * a[h];
+    decay[j] = exp(sigmoid(-t) * p.lower);
+    float beta = sigmoid(braw[p.braw_off + h]);
+    barrier();
+    // Lane j owns column j of the head's state: S[i][j] at base + i * 128 + j.
+    uint base = h * 128 * 128 + j;
+    float pred = 0.0;
+    for (uint i = 0; i < 128; i++) pred += S[base + i * 128] * decay[i] * ks[i];
+    float delta = (v - pred) * beta;
+    float acc = 0.0;
+    for (uint i = 0; i < 128; i++) {
+        float e = S[base + i * 128] * decay[i] + ks[i] * delta;
+        S[base + i * 128] = e;
+        acc += e * qs[i];
+    }
+    float on = total(acc * acc, 2);
+    float normed = acc / sqrt(on / 128.0 + p.eps) * onorm[j];
+    o[c] = normed * sigmoid(fg[p.d + c]);
+}

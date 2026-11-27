@@ -1,0 +1,35 @@
+// The model's output norm (one workgroup): the mean of the four streams X [4][n], RMS-normed
+// times weight, into out [n].
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer X { float x[]; };
+layout(set = 0, binding = 1) readonly buffer Weight { float weight[]; };
+layout(set = 0, binding = 2) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint n; float eps; } p;
+
+shared float red[32];
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    float v[16];
+    float s2 = 0.0;
+    for (uint k = 0; k < 16; k++) {
+        uint i = lane + k * 256;
+        float t = 0.0;
+        for (uint h = 0; h < 4; h++) t += x[h * p.n + i];
+        t /= 4.0;
+        v[k] = t;
+        s2 += t * t;
+    }
+    s2 = subgroupAdd(s2);
+    if (gl_SubgroupInvocationID == 0) red[gl_SubgroupID] = s2;
+    barrier();
+    float total = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) total += red[i];
+    float rs = 1.0 / sqrt(total / float(p.n) + p.eps);
+    for (uint k = 0; k < 16; k++) {
+        uint i = lane + k * 256;
+        o[i] = v[k] * rs * weight[i];
+    }
+}

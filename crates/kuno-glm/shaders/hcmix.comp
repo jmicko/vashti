@@ -1,0 +1,91 @@
+// The hyper-connection mixer before a sublayer (one workgroup), from hcdot's 32 chunk
+// partials: mixes = (hc_fn . X) / rms(X); pre[h] = sigmoid(mixes[h] scale0 + base[h]) + eps,
+// post[h] = 2 sigmoid(mixes[4+h] scale1 + base[4+h]), comb[src][dst] = a softmax over dst
+// of mixes[8 + 4 src + dst] scale2 + base[..], then Sinkhorn (columns, then rows and columns
+// sinkhorn-1 times); the sublayer's input sum_h X[h] pre[h], RMS-normed and times `weight`,
+// into `normed`. coef gets post [0..4), comb [4..20), pre [20..24).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Part { float part[]; };
+layout(set = 0, binding = 1) readonly buffer X { float x[]; };
+layout(set = 0, binding = 2) readonly buffer Params { float base[24]; float scale[3]; };
+layout(set = 0, binding = 3) readonly buffer Weight { float weight[]; };
+layout(set = 0, binding = 4) buffer Coef { float coef[]; };
+layout(set = 0, binding = 5) writeonly buffer Normed { float normed[]; };
+layout(push_constant) uniform Constants {
+    uint n; uint sinkhorn; float rms_eps; float hc_eps; uint chunks;
+} p;
+
+shared float mixes[25];
+shared float c[24];
+shared float red[32];
+
+float sigmoid(float v) { return 1.0 / (1.0 + exp(-v)); }
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    if (lane < 25) {
+        float t = 0.0;
+        for (uint g = 0; g < p.chunks; g++) t += part[g * 32 + lane];
+        mixes[lane] = t;
+    }
+    barrier();
+    if (lane == 0) {
+        float rs = 1.0 / sqrt(mixes[24] / float(4 * p.n) + p.rms_eps);
+        float m[24];
+        for (uint i = 0; i < 24; i++) m[i] = mixes[i] * rs;
+        for (uint h = 0; h < 4; h++) {
+            c[20 + h] = sigmoid(m[h] * scale[0] + base[h]) + p.hc_eps;
+            c[h] = 2.0 * sigmoid(m[4 + h] * scale[1] + base[4 + h]);
+        }
+        float comb[16];
+        for (uint i = 0; i < 16; i++) comb[i] = m[8 + i] * scale[2] + base[8 + i];
+        for (uint src = 0; src < 4; src++) {
+            float top = comb[src * 4];
+            for (uint d = 1; d < 4; d++) top = max(top, comb[src * 4 + d]);
+            float sum = 0.0;
+            for (uint d = 0; d < 4; d++) sum += exp(comb[src * 4 + d] - top);
+            for (uint d = 0; d < 4; d++) comb[src * 4 + d] = exp(comb[src * 4 + d] - top) / sum + p.hc_eps;
+        }
+        for (uint it = 0; it < p.sinkhorn; it++) {
+            if (it > 0) {
+                for (uint src = 0; src < 4; src++) {
+                    float sum = 0.0;
+                    for (uint d = 0; d < 4; d++) sum += comb[src * 4 + d];
+                    sum += p.hc_eps;
+                    for (uint d = 0; d < 4; d++) comb[src * 4 + d] /= sum;
+                }
+            }
+            for (uint d = 0; d < 4; d++) {
+                float sum = 0.0;
+                for (uint src = 0; src < 4; src++) sum += comb[src * 4 + d];
+                sum += p.hc_eps;
+                for (uint src = 0; src < 4; src++) comb[src * 4 + d] /= sum;
+            }
+        }
+        for (uint i = 0; i < 16; i++) c[4 + i] = comb[i];
+    }
+    barrier();
+    if (lane < 24) coef[lane] = c[lane];
+    // The input and its norm: 16 values per lane.
+    float v[16];
+    float s2 = 0.0;
+    for (uint k = 0; k < 16; k++) {
+        uint i = lane + k * 256;
+        float t = 0.0;
+        for (uint h = 0; h < 4; h++) t += x[h * p.n + i] * c[20 + h];
+        v[k] = t;
+        s2 += t * t;
+    }
+    s2 = subgroupAdd(s2);
+    if (gl_SubgroupInvocationID == 0) red[gl_SubgroupID] = s2;
+    barrier();
+    float total = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) total += red[i];
+    float rs = 1.0 / sqrt(total / float(p.n) + p.rms_eps);
+    for (uint k = 0; k < 16; k++) {
+        uint i = lane + k * 256;
+        normed[i] = v[k] * rs * weight[i];
+    }
+}

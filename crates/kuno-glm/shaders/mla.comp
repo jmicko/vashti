@@ -1,0 +1,65 @@
+// Absorbed latent attention for one token, workgroup h = head h: the head's latent-width
+// query absorbed [heads][lora] (already through k_b) scores each of the `count` cached
+// latents [positions][lora] (scaled by `scale`), a softmax over them, and the latents mixed
+// by those weights into mixed [heads][lora] (then v_b's per-head product).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Absorbed { vec4 q[]; };
+layout(set = 0, binding = 1) readonly buffer Latents { vec4 lat[]; };
+layout(set = 0, binding = 2) writeonly buffer Mixed { float mixed[]; };
+layout(push_constant) uniform Constants { uint lora; uint count; float scale; } p;
+
+const uint MAX = 4096;
+shared float score[MAX];
+shared float red[32];
+
+float wg_max(float v) {
+    v = subgroupMax(v);
+    if (gl_SubgroupInvocationID == 0) red[gl_SubgroupID] = v;
+    barrier();
+    float t = red[0];
+    for (uint i = 1; i < gl_NumSubgroups; i++) t = max(t, red[i]);
+    barrier();
+    return t;
+}
+float wg_sum(float v) {
+    v = subgroupAdd(v);
+    if (gl_SubgroupInvocationID == 0) red[gl_SubgroupID] = v;
+    barrier();
+    float t = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) t += red[i];
+    barrier();
+    return t;
+}
+
+void main() {
+    uint h = gl_WorkGroupID.x, lane = gl_LocalInvocationIndex;
+    uint l4 = p.lora / 4;
+    uint qo = h * l4;
+    // Scores: one position per lane at a time.
+    float top = -1.0 / 0.0;
+    for (uint t = lane; t < p.count; t += 256) {
+        float s = 0.0;
+        for (uint c = 0; c < l4; c++) s += dot(q[qo + c], lat[t * l4 + c]);
+        s *= p.scale;
+        score[t] = s;
+        top = max(top, s);
+    }
+    top = wg_max(top);
+    float sum = 0.0;
+    for (uint t = lane; t < p.count; t += 256) {
+        float e = exp(score[t] - top);
+        score[t] = e;
+        sum += e;
+    }
+    sum = wg_sum(sum);
+    barrier();
+    // Mixed latent: lane takes channels lane, lane + 256, ... (coalesced over positions).
+    float inv = 1.0 / sum;
+    for (uint c = lane; c < p.lora; c += 256) {
+        float m = 0.0;
+        for (uint t = 0; t < p.count; t++) m += score[t] * inv * lat[t * l4 + c / 4][c % 4];
+        mixed[h * p.lora + c] = m;
+    }
+}

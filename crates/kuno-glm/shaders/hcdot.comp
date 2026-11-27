@@ -1,0 +1,93 @@
+// The hyper-connection mixer's product, over column chunks of the four streams X [4][n]
+// (16384 values): workgroup g takes columns [g*512, g*512+512) and writes, at
+// part[g*32 ..], the 24 rows of hc_fn (Q8_0: int8 [24][16384], f16 scales [24][512])
+// dotted with those columns, and at part[g*32 + 24] their sum of squares (for the norm, a
+// scalar, applied by hcmix).
+// mode 1 first applies the previous sublayer's mixer (hcmix's post and comb in coef) with
+// its output `o` [n]: X[dst][i] = o[i] * post[dst] + sum_src X[src][i] * comb[src][dst],
+// written to Xn (X is only read: other workgroups read every stream at their columns).
+// mode 2 is mode 1 with o2[i] + o[i] as the output (the routed experts' sum from the CPU,
+// then the shared expert, the reference's order). mode 3 copies X to Xn unchanged (the first
+// block: X is then the host's embedding).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uint w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { float x[]; };
+layout(set = 0, binding = 3) buffer Part { float part[]; };
+layout(set = 0, binding = 4) readonly buffer Coef { float coef[]; };
+layout(set = 0, binding = 5) readonly buffer Out { float o[]; };
+layout(set = 0, binding = 6) writeonly buffer Xn { float xn[]; };
+layout(set = 0, binding = 7) readonly buffer Out2 { float o2[]; };
+layout(push_constant) uniform Constants { uint n; uint mode; uint o_off; } p;
+
+const uint CHUNK = 512, ROWS = 24, COLS = 16384;
+shared float xs[CHUNK];
+shared float rowsum[ROWS][8];
+shared float sq[32];
+
+void main() {
+    uint g = gl_WorkGroupID.x, lane = gl_LocalInvocationIndex;
+    uint c0 = g * CHUNK;
+    // Columns c0 .. c0+512 of the flattened streams: stream (c0 / n), values (c0 % n)...
+    for (uint j = lane; j < CHUNK; j += 256) {
+        uint c = c0 + j;
+        float v = x[c];
+        if (p.mode == 1 || p.mode == 2) {
+            uint dst = c / p.n, i = c % p.n;
+            // coef: [0..4) post, [4..20) comb[src][dst]
+            float res = p.mode == 2 ? o2[i] + o[p.o_off + i] : o[p.o_off + i];
+            v = res * coef[dst];
+            for (uint src = 0; src < 4; src++) v += x[src * p.n + i] * coef[4 + src * 4 + dst];
+        }
+        xs[j] = v;
+    }
+    barrier();
+    if (p.mode >= 1) {
+        for (uint j = lane; j < CHUNK; j += 256) xn[c0 + j] = xs[j];
+    }
+    // 24 rows x 16 blocks of 32 = 384 tasks; lane t takes tasks t and t + 256.
+    float acc[2] = float[2](0.0, 0.0);
+    for (uint k = 0; k < 2; k++) {
+        uint t = lane + k * 256;
+        if (t >= ROWS * 16) break;
+        uint r = t / 16, b = t % 16;
+        uint col = c0 + b * 32;                       // first column of the block
+        uint wi = (r * COLS + col) / 4;               // first int8 word
+        uint si = r * (COLS / 32) + col / 32;
+        float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+        float sum = 0.0;
+        for (uint q = 0; q < 8; q++) {
+            int v = int(w[wi + q]);
+            vec4 wv = vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
+                           bitfieldExtract(v, 16, 8), bitfieldExtract(v, 24, 8));
+            uint xo = b * 32 + q * 4;
+            sum += dot(wv, vec4(xs[xo], xs[xo + 1], xs[xo + 2], xs[xo + 3]));
+        }
+        acc[k] = sum * sc;
+    }
+    // Each row's 16 blocks are 16 consecutive tasks, within one subgroup of 16 or 32 lanes.
+    for (uint k = 0; k < 2; k++) {
+        uint t = lane + k * 256;
+        float v = t < ROWS * 16 ? acc[k] : 0.0;
+        // Sum the 16 lanes of each row: clustered by 16.
+        v += subgroupShuffleXor(v, 1);
+        v += subgroupShuffleXor(v, 2);
+        v += subgroupShuffleXor(v, 4);
+        v += subgroupShuffleXor(v, 8);
+        if (t < ROWS * 16 && (t % 16) == 0) rowsum[t / 16][0] = v;
+    }
+    float s2 = 0.0;
+    for (uint j = lane; j < CHUNK; j += 256) s2 += xs[j] * xs[j];
+    s2 = subgroupAdd(s2);
+    if (gl_SubgroupInvocationID == 0) sq[gl_SubgroupID] = s2;
+    barrier();
+    if (lane < ROWS) part[g * 32 + lane] = rowsum[lane][0];
+    if (lane == 0) {
+        float t = 0.0;
+        for (uint i = 0; i < gl_NumSubgroups; i++) t += sq[i];
+        part[g * 32 + 24] = t;
+    }
+}
