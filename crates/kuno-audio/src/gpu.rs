@@ -1750,6 +1750,32 @@ mod tests {
             times.push(t0.elapsed().as_secs_f64());
             codec.next += 6;
         }
+        let mut bb = GpuBackbone::upload(&d, &m.backbone, &m.out_norm, 4096).unwrap();
+        bb.reset(&d).unwrap();
+        let row = floats(&d.gpu, &vec![0.01f32; 2048]).unwrap();
+        let mut steps = Vec::new();
+        for _ in 0..40 {
+            let mut r = Recording::new();
+            bb.record_step(&d, &mut r, &row);
+            let t0 = std::time::Instant::now();
+            r.run(&d.gpu).unwrap();
+            steps.push(t0.elapsed().as_secs_f64());
+            bb.next += 1;
+        }
+        steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let weights: usize = m.backbone.iter().map(crate::block::Block::bytes).sum();
+        let count = {
+            let mut r = Recording::new();
+            bb.record_step(&d, &mut r, &row);
+            (r.steps.len(), r.independent.iter().filter(|i| !**i).count())
+        };
+        eprintln!(
+            "BACKBONE step median {:.2} ms for {} MB of weights ({} steps, {} barriers)",
+            steps[20] * 1e3,
+            weights >> 20,
+            count.0,
+            count.1
+        );
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         eprintln!("CODEC pass median {:.2} ms ({} steps)", times[30] * 1e3, {
             let mut r = Recording::new();
@@ -1828,6 +1854,9 @@ mod tests {
         for (kind, rows, cols, n) in [
             (0u32, 7680usize, 2048usize, 1usize),
             (0, 2048, 2048, 1),
+            (0, 6144, 2048, 1),
+            (0, 512, 2048, 1),
+            (0, 2048, 7680, 1),
             (1, 2816, 1024, 12),
             (1, 1024, 1024, 12),
             (1, 1024, 2816, 12),
@@ -1848,7 +1877,7 @@ mod tests {
                 ("mvb", &d.k.mvb, 4),
                 ("mv1", &d.k.mv1, d.k.mv1_rows),
             ] {
-                if name == "mv1" && n > 1 {
+                if name.starts_with("mv1") && n > 1 {
                     continue;
                 }
                 let mut r = Recording::new();
