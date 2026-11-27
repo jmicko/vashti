@@ -70,6 +70,36 @@ struct Core {
     /// Buffers are then shared by both families (`families`).
     transfer: Option<(u32, vk::Queue, vk::CommandPool, std::sync::Mutex<()>)>,
     families: Vec<u32>,
+    /// Unsignaled fences for reuse: creating one costs about 250 us on NVIDIA's driver,
+    /// far more than the submission it guards.
+    fences: std::sync::Mutex<Vec<vk::Fence>>,
+}
+impl Core {
+    /// An unsignaled fence, from the pool when it has one.
+    fn fence(&self) -> ash::prelude::VkResult<vk::Fence> {
+        if let Some(fence) = self.fences.lock().ok().and_then(|mut f| f.pop()) {
+            return Ok(fence);
+        }
+        // SAFETY: the device is alive; `recycle` returns the fence to the pool.
+        unsafe {
+            self.device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+        }
+    }
+    /// Returns a fence no submission still uses to the pool, unsignaled.
+    fn recycle(&self, fence: vk::Fence) {
+        // SAFETY: no pending submission uses the fence (the caller waited for it, or its
+        // submission failed).
+        unsafe {
+            if self.device.reset_fences(&[fence]).is_ok()
+                && let Ok(mut pool) = self.fences.lock()
+            {
+                pool.push(fence);
+                return;
+            }
+            self.device.destroy_fence(fence, None);
+        }
+    }
 }
 impl Drop for Core {
     fn drop(&mut self) {
@@ -77,6 +107,11 @@ impl Drop for Core {
         // created from these handles is still alive.
         unsafe {
             let _ = self.device.device_wait_idle();
+            if let Ok(fences) = self.fences.get_mut() {
+                for fence in fences.drain(..) {
+                    self.device.destroy_fence(fence, None);
+                }
+            }
             if let Some((_, _, pool, _)) = &self.transfer {
                 self.device.destroy_command_pool(*pool, None);
             }
@@ -121,7 +156,11 @@ impl Copying {
             if waited.is_err() {
                 let _ = core.device.device_wait_idle();
             }
-            core.device.destroy_fence(fence, None);
+            if waited.is_ok() {
+                core.recycle(fence);
+            } else {
+                core.device.destroy_fence(fence, None);
+            }
             let _turn = turn.lock();
             core.device.free_command_buffers(*pool, &[commands]);
             waited.map_err(|_| "gpu_failed")
@@ -158,7 +197,11 @@ impl Passing {
             if waited.is_err() {
                 let _ = core.device.device_wait_idle();
             }
-            core.device.destroy_fence(fence, None);
+            if waited.is_ok() {
+                core.recycle(fence);
+            } else {
+                core.device.destroy_fence(fence, None);
+            }
             let _turn = core.turn.lock();
             core.device.free_command_buffers(core.pool, &[commands]);
             if !sets.is_empty() {
@@ -496,6 +539,7 @@ impl Gpu {
                     transfer,
                     families,
                     turn: std::sync::Mutex::new(()),
+                    fences: std::sync::Mutex::new(Vec::new()),
                 }),
             })
         }
@@ -638,15 +682,13 @@ impl Gpu {
                         .size(stage.bytes)],
                 );
                 core.device.end_command_buffer(commands)?;
-                let fence = core
-                    .device
-                    .create_fence(&vk::FenceCreateInfo::default(), None)?;
+                let fence = core.fence()?;
                 if let Err(e) = core.device.queue_submit(
                     *queue,
                     &[vk::SubmitInfo::default().command_buffers(&[commands])],
                     fence,
                 ) {
-                    core.device.destroy_fence(fence, None);
+                    core.recycle(fence);
                     return Err(e);
                 }
                 Ok(fence)
@@ -1052,9 +1094,7 @@ impl Gpu {
                 )?;
                 record(&core.device, commands[0]);
                 core.device.end_command_buffer(commands[0])?;
-                let fence = core
-                    .device
-                    .create_fence(&vk::FenceCreateInfo::default(), None)?;
+                let fence = core.fence()?;
                 let submitted = core.device.queue_submit(
                     core.queue,
                     &[vk::SubmitInfo::default().command_buffers(&commands)],
@@ -1064,8 +1104,10 @@ impl Gpu {
                     submitted.and_then(|()| core.device.wait_for_fences(&[fence], true, u64::MAX));
                 if waited.is_err() {
                     let _ = core.device.device_wait_idle();
+                    core.device.destroy_fence(fence, None);
+                } else {
+                    core.recycle(fence);
                 }
-                core.device.destroy_fence(fence, None);
                 waited
             })();
             core.device.free_command_buffers(core.pool, &commands);
@@ -1360,16 +1402,14 @@ impl Gpu {
                 )?;
                 record_steps(&core.device, commands, steps, &sets, independent, true);
                 core.device.end_command_buffer(commands)?;
-                let fence = core
-                    .device
-                    .create_fence(&vk::FenceCreateInfo::default(), None)?;
+                let fence = core.fence()?;
                 let one = [commands];
                 if let Err(e) = core.device.queue_submit(
                     core.queue,
                     &[vk::SubmitInfo::default().command_buffers(&one)],
                     fence,
                 ) {
-                    core.device.destroy_fence(fence, None);
+                    core.recycle(fence);
                     return Err(e);
                 }
                 Ok(fence)
