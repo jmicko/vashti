@@ -1,0 +1,82 @@
+// mv for several tokens, register-blocked: each lane holds 4 rows x 4 tokens of sums and,
+// per step, 8 values of each of the 4 rows and of the 4 tokens (128 products for 16 vector
+// loads; mv does 2 per load). One workgroup per 4 rows; tokens 4 at a time. kind 1 (f16)
+// and 0 (Q8_0, read 8 values at a time); same buffers, constants and flags as mv.comp.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec2 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer Bias { float bias[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint n; uint kind;
+    uint x_off; uint x_stride; uint y_off; uint y_stride;
+    uint w_row0; uint b_off; uint flags;
+} p;
+
+shared float part[16 * 8];
+
+// Eight values of row `wr` from column `c` (a multiple of 8).
+void row8(uint wr, uint c, out vec4 lo, out vec4 hi) {
+    if (p.kind == 1) {
+        uvec2 v0 = w[(wr * p.cols + c) / 4];
+        uvec2 v1 = w[(wr * p.cols + c) / 4 + 1];
+        lo = vec4(unpackHalf2x16(v0.x), unpackHalf2x16(v0.y));
+        hi = vec4(unpackHalf2x16(v1.x), unpackHalf2x16(v1.y));
+    } else {
+        uvec2 v = w[(wr * p.cols + c) / 8];
+        uint si = wr * (p.cols / 32) + c / 32;
+        float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+        int a = int(v.x), b = int(v.y);
+        lo = vec4(bitfieldExtract(a, 0, 8), bitfieldExtract(a, 8, 8), bitfieldExtract(a, 16, 8), bitfieldExtract(a, 24, 8)) * sc;
+        hi = vec4(bitfieldExtract(b, 0, 8), bitfieldExtract(b, 8, 8), bitfieldExtract(b, 16, 8), bitfieldExtract(b, 24, 8)) * sc;
+    }
+}
+
+void main() {
+    uint r0 = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * 4;
+    if (r0 >= p.rows) return;
+    uint lane = gl_LocalInvocationIndex;
+    uint xo = p.x_off / 4, xs = p.x_stride / 4;
+    uint groups = 64 / gl_SubgroupSize;
+    for (uint t0 = 0; t0 < p.n; t0 += 4) {
+        vec4 acc[4] = vec4[4](vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));   // acc[row][token]
+        for (uint c = lane * 8; c < p.cols; c += 64 * 8) {
+            vec4 xl[4], xh[4];
+            [[unroll]] for (uint t = 0; t < 4; t++) {
+                uint tt = min(t0 + t, p.n - 1);
+                uint xa = xo + tt * xs + c / 4;
+                xl[t] = x[xa];
+                xh[t] = x[xa + 1];
+            }
+            [[unroll]] for (uint r = 0; r < 4; r++) {
+                uint wr = min(r0 + r, p.rows - 1) + p.w_row0;
+                vec4 lo, hi;
+                row8(wr, c, lo, hi);
+                acc[r] += vec4(dot(lo, xl[0]) + dot(hi, xh[0]), dot(lo, xl[1]) + dot(hi, xh[1]),
+                               dot(lo, xl[2]) + dot(hi, xh[2]), dot(lo, xl[3]) + dot(hi, xh[3]));
+            }
+        }
+        [[unroll]] for (uint r = 0; r < 4; r++) {
+            vec4 sum = subgroupAdd(acc[r]);
+            if (gl_SubgroupInvocationID == 0) {
+                [[unroll]] for (uint t = 0; t < 4; t++) part[(r * 4 + t) * 8 + gl_SubgroupID] = sum[t];
+            }
+        }
+        barrier();
+        if (lane < 16) {
+            uint r = lane / 4, t = lane % 4;
+            if (r0 + r < p.rows && t0 + t < p.n) {
+                float v = 0.0;
+                for (uint g = 0; g < groups; g++) v += part[lane * 8 + g];
+                if ((p.flags & 1) != 0) v += bias[p.b_off + r0 + r];
+                uint ya = p.y_off + (t0 + t) * p.y_stride + r0 + r;
+                y[ya] = ((p.flags & 2) != 0) ? y[ya] + v : v;
+            }
+        }
+        barrier();
+    }
+}

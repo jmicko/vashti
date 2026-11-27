@@ -82,7 +82,7 @@ shared guard's `image_content_type_required` (415).
 
   | Device | Speech | First audio | Recognition, 14.6 s clip |
   |---|---|---|---|
-  | RTX 3060 | 3.9x real time | 0.2-0.4 s | 2.3 s |
+  | RTX 3060 | 4.7x real time | 0.17 s | 1.9 s |
   | Arc B70 (idle) | 4.5x real time | 0.1 s | 0.56 s for a 5.8 s clip |
   | CPU, 16 cores | 0.97x real time | 1.1 s | 10.1 s |
 

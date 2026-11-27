@@ -19,6 +19,7 @@ use crate::{
 };
 
 const MV: &[u8] = include_bytes!("../shaders/mv.spv");
+const MVB: &[u8] = include_bytes!("../shaders/mvb.spv");
 const NORM: &[u8] = include_bytes!("../shaders/norm.spv");
 const ROPE: &[u8] = include_bytes!("../shaders/rope.spv");
 const ATTEND: &[u8] = include_bytes!("../shaders/attend.spv");
@@ -30,6 +31,8 @@ pub const CHUNK: usize = 64;
 
 struct Kernels {
     mv: Kernel,
+    /// `mv` for several tokens: 4 rows x 4 tokens per lane (f16 and Q8_0).
+    mvb: Kernel,
     norm: Kernel,
     rope: Kernel,
     attend: Kernel,
@@ -379,6 +382,7 @@ impl Device {
             |spirv: &[u8], bindings, constants| gpu.kernel(spirv, bindings, constants, None);
         let k = Kernels {
             mv: kernel(MV, 5, 11)?,
+            mvb: kernel(MVB, 5, 11)?,
             norm: kernel(NORM, 3, 10)?,
             rope: kernel(ROPE, 2, 8)?,
             attend: kernel(ATTEND, 5, 14)?,
@@ -413,8 +417,15 @@ impl Device {
         accumulate: bool,
     ) {
         let flags = u32::from(bias.is_some()) | (u32::from(accumulate) << 1);
+        // Several tokens: the register-blocked kernel (1.4 to 2.9 times faster on the RTX
+        // 3060 for 12 to 64 tokens); one token, or f32 rows: mv.
+        let (kernel, groups) = if n > 1 && m.kind != 2 {
+            (&self.k.mvb, rows.div_ceil(4))
+        } else {
+            (&self.k.mv, rows)
+        };
         r.push(
-            &self.k.mv,
+            kernel,
             vec![
                 &m.w,
                 m.scales.as_ref().unwrap_or(&self.dummy),
@@ -435,7 +446,7 @@ impl Device {
                 bias.map_or(0, |b| b.1) as u32,
                 flags,
             ],
-            rows as u32,
+            groups as u32,
         );
     }
     /// `mode` as in `norm.comp`: 0 write, 1 add the normed rows, 2 add without a norm.
@@ -1290,7 +1301,7 @@ mod tests {
             };
             let x = d.gpu.buffer((n * cols * 4) as u64).unwrap();
             let y = d.gpu.buffer((n * rows * 4) as u64).unwrap();
-            for (name, kernel, per) in [("mv", &d.k.mv, 1)] {
+            for (name, kernel, per) in [("mv", &d.k.mv, 1), ("mvb", &d.k.mvb, 4)] {
                 let mut r = Recording::new();
                 for _ in 0..50 {
                     r.push(
@@ -1341,7 +1352,7 @@ mod tests {
         }
         let out = std::env::temp_dir().join(format!("kuno-audio-spv-{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
-        for name in ["mv", "norm", "rope", "attend", "conv", "ew"] {
+        for name in ["mv", "mvb", "norm", "rope", "attend", "conv", "ew"] {
             let built = out.join(format!("{name}.spv"));
             let status = Command::new("glslangValidator")
                 .args(["-V", "--target-env", "vulkan1.3", "--quiet", "-o"])
