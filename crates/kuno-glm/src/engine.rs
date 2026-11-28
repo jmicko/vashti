@@ -8,6 +8,8 @@ use crate::gpu::{Kernels, Mat, filled};
 use crate::{Matrix, Model, Result};
 
 mod batch;
+mod spec;
+pub use spec::SpecStats;
 
 /// The engine's kernels besides the products.
 struct Extra {
@@ -49,6 +51,9 @@ struct Batched {
     group: Kernel,
     combine: Kernel,
     copy4: Kernel,
+    rmsb: Kernel,
+    sum3: Kernel,
+    mlac: Kernel,
 }
 
 struct Mixer {
@@ -176,6 +181,28 @@ pub struct Engine<'m> {
     /// each; empty without batching).
     stage: Vec<Buffer>,
     piece: usize,
+    /// Per block (KDA blocks, with speculation): its state and conv history after each of
+    /// a verification's first tokens (`attention_ops`' snapshots).
+    snap: Vec<Option<Buffer>>,
+    /// Products in f32 only (no half-precision cooperative matrices): a verification's
+    /// sums then agree with `step`'s.
+    exact: std::sync::atomic::AtomicBool,
+    /// Speculation (KUNO_GLM_SPEC drafts per step): the NextN block; the main model's h at
+    /// every position of the last batch [batch][n]; a small batch's logits, routing and
+    /// inputs for the CPU, and the CPU's sums; drafts per step at most (snapshots).
+    mtp: Option<spec::Mtp>,
+    /// Attention's partial results for small batches (mlab.comp's runs).
+    mpart: Buffer,
+    hall: Buffer,
+    logits_t: Buffer,
+    vin: Mapped,
+    cpu_t: Mapped,
+    snaps: usize,
+    /// Per MoE block (with speculation): the slot in its staging buffer of each expert the
+    /// device takes from a verification's host experts.
+    gslots: Vec<Mapped>,
+    /// The block the next speculative trade round starts from.
+    trade_turn: std::sync::atomic::AtomicUsize,
     /// With a side queue: the staging buffers are a ring the side queue fills ahead of the
     /// main queue; `copied` counts pieces copied, `consumed` pieces used, `streamed` pieces
     /// so far (the timelines' next values).
@@ -258,7 +285,7 @@ impl<'m> Engine<'m> {
             glu: kernel(include_bytes!("../shaders/glu.spv"), 2, 3)?,
             fin: kernel(include_bytes!("../shaders/final.spv"), 3, 2)?,
             argmax: gpu.kernel(include_bytes!("../shaders/argmax.spv"), 2, 2, None)?,
-            mve: kernel(include_bytes!("../shaders/mve.spv"), 7, 6)?,
+            mve: kernel(include_bytes!("../shaders/mve.spv"), 7, 10)?,
             tables: {
                 let mut t: Vec<u32> = Vec::with_capacity(2560);
                 for g in kuno_text::quant::IQ2_S_GRID {
@@ -271,12 +298,13 @@ impl<'m> Engine<'m> {
             b: Batched {
                 hcdot: kernel(include_bytes!("../shaders/hcdot_b.spv"), 9, 6)?,
                 hcmix: kernel(include_bytes!("../shaders/hcmix_b.spv"), 6, 5)?,
-                kda: kernel(include_bytes!("../shaders/kdab.spv"), 8, 9)?,
+                kda: kernel(include_bytes!("../shaders/kdab.spv"), 9, 10)?,
                 dsanorm: kernel(include_bytes!("../shaders/dsanorm_b.spv"), 4, 6)?,
                 idxstore: kernel(include_bytes!("../shaders/idxstore_b.spv"), 4, 4)?,
                 idxscore: kernel(include_bytes!("../shaders/idxscore_b.spv"), 4, 8)?,
                 idxselect: gpu.kernel(include_bytes!("../shaders/idxselect_b.spv"), 2, 5, None)?,
-                mla: kernel(include_bytes!("../shaders/mlab.spv"), 4, 8)?,
+                mla: kernel(include_bytes!("../shaders/mlab.spv"), 5, 8)?,
+                mlac: kernel(include_bytes!("../shaders/mlac.spv"), 2, 4)?,
                 route: kernel(include_bytes!("../shaders/route_b.spv"), 5, 3)?,
                 mm: kernel(include_bytes!("../shaders/mm.spv"), 4, 12)?,
                 mmc: if gpu.has_half8() && k.lanes == 16 {
@@ -290,8 +318,10 @@ impl<'m> Engine<'m> {
                     None
                 },
                 group: gpu.kernel(include_bytes!("../shaders/group.spv"), 3, 5, None)?,
-                combine: kernel(include_bytes!("../shaders/combine.spv"), 4, 5)?,
+                combine: kernel(include_bytes!("../shaders/combine.spv"), 5, 6)?,
                 copy4: kernel(include_bytes!("../shaders/copy4.spv"), 2, 3)?,
+                rmsb: kernel(include_bytes!("../shaders/rmsb.spv"), 3, 6)?,
+                sum3: kernel(include_bytes!("../shaders/sum3.spv"), 4, 6)?,
             },
         };
 
@@ -322,6 +352,37 @@ impl<'m> Engine<'m> {
         };
         let v = |n: &str| m(n)?.decode_all();
         let up = |mx: &Matrix| Mat::upload(&gpu, mx);
+        // A DSA block's attention (also the NextN block's).
+        let dsa = |il: usize| -> Result<Attention> {
+            let b = |n: &str| format!("blk.{il}.{n}");
+            let mut norms = v(&b("attn_q_a_norm.weight"))?;
+            norms.extend(v(&b("attn_kv_a_norm.weight"))?);
+            let attention = Attention::Dsa {
+                q_a: up(&m(&b("attn_q_a.weight"))?)?,
+                kv_a: up(&m(&b("attn_kv_a_mqa.weight"))?)?,
+                norms: floats(&gpu, &norms)?,
+                q_b: up(&m(&b("attn_q_b.weight"))?)?,
+                k_b: up(&m(&b("attn_k_b.weight"))?)?,
+                v_b: up(&m(&b("attn_v_b.weight"))?)?,
+                out: up(&m(&b("attn_output.weight"))?)?,
+                latents: gpu.buffer((max_positions * hp.kv_lora * 4) as u64)?,
+                idx_kg: up(&concat(&[
+                    m(&b("indexer.attn_k.weight"))?,
+                    m(&b("indexer_compressor_gate.weight"))?,
+                ]))?,
+                idx_proj: up(&m(&b("indexer.proj.weight"))?)?,
+                idx_qb: up(&m(&b("indexer.attn_q_b.weight"))?)?,
+                idx_params: {
+                    let mut p = v(&b("indexer.k_norm.weight"))?;
+                    p.extend(v(&b("indexer.k_norm.bias"))?);
+                    p.extend(v(&b("indexer_compressor_ape.weight"))?);
+                    floats(&gpu, &p)?
+                },
+                idx_keys: gpu.buffer((max_positions * 256 * 4) as u64)?,
+                idx_pooled: gpu.buffer((max_positions / 4 * 128 * 4).max(16) as u64)?,
+            };
+            Ok(attention)
+        };
         let mut blocks = Vec::with_capacity(hp.layers);
         for il in 0..hp.layers {
             let b = |n: &str| format!("blk.{il}.{n}");
@@ -335,32 +396,7 @@ impl<'m> Engine<'m> {
                 })
             };
             let attention = if hp.dsa[il] {
-                let mut norms = v(&b("attn_q_a_norm.weight"))?;
-                norms.extend(v(&b("attn_kv_a_norm.weight"))?);
-                Attention::Dsa {
-                    q_a: up(&m(&b("attn_q_a.weight"))?)?,
-                    kv_a: up(&m(&b("attn_kv_a_mqa.weight"))?)?,
-                    norms: floats(&gpu, &norms)?,
-                    q_b: up(&m(&b("attn_q_b.weight"))?)?,
-                    k_b: up(&m(&b("attn_k_b.weight"))?)?,
-                    v_b: up(&m(&b("attn_v_b.weight"))?)?,
-                    out: up(&m(&b("attn_output.weight"))?)?,
-                    latents: gpu.buffer((max_positions * hp.kv_lora * 4) as u64)?,
-                    idx_kg: up(&concat(&[
-                        m(&b("indexer.attn_k.weight"))?,
-                        m(&b("indexer_compressor_gate.weight"))?,
-                    ]))?,
-                    idx_proj: up(&m(&b("indexer.proj.weight"))?)?,
-                    idx_qb: up(&m(&b("indexer.attn_q_b.weight"))?)?,
-                    idx_params: {
-                        let mut p = v(&b("indexer.k_norm.weight"))?;
-                        p.extend(v(&b("indexer.k_norm.bias"))?);
-                        p.extend(v(&b("indexer_compressor_ape.weight"))?);
-                        floats(&gpu, &p)?
-                    },
-                    idx_keys: gpu.buffer((max_positions * 256 * 4) as u64)?,
-                    idx_pooled: gpu.buffer((max_positions / 4 * 128 * 4).max(16) as u64)?,
-                }
+                dsa(il)?
             } else {
                 let d = hp.kda_head * hp.heads;
                 let mut conv = Vec::with_capacity(3 * d * 4);
@@ -458,6 +494,73 @@ impl<'m> Engine<'m> {
             lists: gpu.buffer(((2 * hp.experts + 2 * lp) * 4) as u64)?,
         };
         let output = up(&m("output.weight")?)?;
+        // Speculation: KUNO_GLM_SPEC drafts per step (default 2; 0 for none) with the NextN
+        // block, when the file has it; per KDA block snapshots for that many tokens.
+        let drafts: usize = std::env::var("KUNO_GLM_SPEC")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2usize)
+            .min(spec::SMALL - 1);
+        let il = hp.layers;
+        let has_mtp = model
+            .gguf
+            .tensor(&format!("blk.{il}.nextn.eh_proj.weight"))
+            .is_some();
+        // (The staging buffers exist with batching on cooperative matrices; see below.)
+        let stage_empty = !(batch > 1 && e.b.mec.is_some());
+        let mtp = if drafts > 0 && has_mtp && batch > 1 && second.is_none() {
+            let b = |n: &str| format!("blk.{il}.{n}");
+            let mut norms = v(&b("nextn.enorm.weight"))?;
+            for name in [
+                "nextn.hnorm.weight",
+                "attn_norm.weight",
+                "ffn_norm.weight",
+                "nextn.shared_head_norm.weight",
+            ] {
+                norms.extend(v(&b(name))?);
+            }
+            let (gk, gr, _) = model.layout(&b("ffn_gate_exps.weight"))?;
+            let (dk, dr, _) = model.layout(&b("ffn_down_exps.weight"))?;
+            Some(spec::Mtp {
+                eh: up(&m(&b("nextn.eh_proj.weight"))?)?,
+                norms: floats(&gpu, &norms)?,
+                attention: dsa(il)?,
+                router: up(&m(&b("ffn_gate_inp.weight"))?)?,
+                bias: floats(&gpu, &v(&b("exp_probs_b.bias"))?)?,
+                gu: up(&concat(&[
+                    m(&b("ffn_gate_shexp.weight"))?,
+                    m(&b("ffn_up_shexp.weight"))?,
+                ]))?,
+                down: up(&m(&b("ffn_down_shexp.weight"))?)?,
+                kinds: (gk, dk),
+                row_bytes: (gr, dr),
+                experts: std::sync::OnceLock::new(),
+                cat: buf(2 * n)?,
+                res: buf(n)?,
+                inp: buf(n)?,
+                post: buf(n)?,
+                h: buf(n)?,
+                last: floats(&gpu, &vec![0f32; n])?,
+                emb: gpu.mapped((batch * n * 4) as u64)?,
+                vin: gpu.mapped(((2 * hp.experts_used + n) * 4) as u64)?,
+                cpu: gpu.mapped((n * 4) as u64)?,
+            })
+        } else {
+            None
+        };
+        let drafts = if mtp.is_some() { drafts } else { 0 };
+        let mut snap = Vec::with_capacity(hp.layers);
+        for il in 0..hp.layers {
+            snap.push(if drafts > 0 && !hp.dsa[il] {
+                let d = hp.kda_head * hp.heads;
+                Some(gpu.buffer((drafts * (hp.heads * 128 * 128 + 9 * d) * 4) as u64)?)
+            } else {
+                None
+            });
+        }
+        if mtp.is_some() {
+            eprintln!("speculation: {drafts} drafts per step with the NextN block");
+        }
         // The experts: the device's free memory less a margin (or KUNO_GLM_DEVICE_GB).
         let margin = 1u64 << 30;
         // The staging pair for batches: KUNO_GLM_PIECE slots each (default 24, ~0.2 GB).
@@ -583,9 +686,26 @@ impl<'m> Engine<'m> {
             streamed: std::sync::atomic::AtomicU64::new(0),
             stage,
             piece,
+            snap,
+            exact: std::sync::atomic::AtomicBool::new(false),
+            mtp,
+            hall: gpu.buffer((batch * n * 4) as u64)?,
+            mpart: gpu.buffer((16 * hp.heads * 514 * 4) as u64)?,
+            logits_t: gpu.buffer((spec::SMALL * hp.vocab * 4) as u64)?,
+            vin: gpu.mapped((spec::SMALL * (2 * hp.experts_used + n) * 4) as u64)?,
+            cpu_t: gpu.mapped((spec::SMALL * n * 4) as u64)?,
+            snaps: drafts,
+            trade_turn: std::sync::atomic::AtomicUsize::new(0),
+            gslots: if drafts > 0 && !stage_empty {
+                (0..hp.layers)
+                    .map(|_| gpu.mapped((hp.experts * 4) as u64))
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+            } else {
+                Vec::new()
+            },
             route: gpu.mapped(((2 * hp.experts_used + n + 4) * 4) as u64)?,
             cpu_out: gpu.mapped((n * 4) as u64)?,
-            token: gpu.mapped(16)?,
+            token: gpu.mapped((spec::SMALL * 4) as u64)?,
             s,
             blocks,
             model,
@@ -1003,7 +1123,18 @@ impl<'m> Engine<'m> {
                                 &pool.slots,
                                 &this.e.tables,
                             ],
-                            constants: vec![0, gk, (2 * ff) as u32, n as u32, used as u32, 0],
+                            constants: vec![
+                                0,
+                                gk,
+                                (2 * ff) as u32,
+                                n as u32,
+                                used as u32,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                            ],
                             groups: [((2 * ff) as u32).div_ceil(rpg), used as u32, 1],
                             independent: false,
                         });
@@ -1025,7 +1156,7 @@ impl<'m> Engine<'m> {
                                 &pool.slots,
                                 &this.e.tables,
                             ],
-                            constants: vec![1, dk, n as u32, ff as u32, used as u32, 0],
+                            constants: vec![1, dk, n as u32, ff as u32, used as u32, 0, 0, 0, 0, 0],
                             groups: [(n as u32).div_ceil(rpg), 1, 1],
                             independent: false,
                         });

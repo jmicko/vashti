@@ -1,0 +1,25 @@
+// RMS norm for a batch: out[t*o_st + o_off + i] = x[t*x_st + i] / rms(x[t]) * w[w_off + i],
+// i < n, one workgroup per token (z). The NextN block's norms.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer X { float x[]; };
+layout(set = 0, binding = 1) readonly buffer W { float w[]; };
+layout(set = 0, binding = 2) writeonly buffer O { float o[]; };
+layout(push_constant) uniform Constants { uint n; float eps; uint x_st; uint o_st; uint o_off; uint w_off; } p;
+
+shared float red[32];
+
+void main() {
+    uint lane = gl_LocalInvocationIndex, t = gl_WorkGroupID.z;
+    uint xb = t * p.x_st, ob = t * p.o_st + p.o_off;
+    float s2 = 0.0;
+    for (uint i = lane; i < p.n; i += 256) s2 += x[xb + i] * x[xb + i];
+    s2 = subgroupAdd(s2);
+    if (gl_SubgroupInvocationID == 0) red[gl_SubgroupID] = s2;
+    barrier();
+    float total = 0.0;
+    for (uint i = 0; i < gl_NumSubgroups; i++) total += red[i];
+    float rs = 1.0 / sqrt(total / float(p.n) + p.eps);
+    for (uint i = lane; i < p.n; i += 256) o[ob + i] = x[xb + i] * rs * w[p.w_off + i];
+}

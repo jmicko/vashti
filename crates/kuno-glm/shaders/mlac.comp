@@ -1,0 +1,25 @@
+// Merges mlab.comp's S partial results per (token t = workgroup y, head h = workgroup x):
+// with M the largest partial max, mixed[t*m_st + h*lora + c] = sum_s e^(m_s - M) acc_s[c] /
+// sum_s e^(m_s - M) l_s (an empty run has max -inf, sum 0). lora 512.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Part { float part[]; };
+layout(set = 0, binding = 1) writeonly buffer Mixed { vec2 mixed[]; };
+layout(push_constant) uniform Constants { uint lora; uint splits; uint m_st; uint heads; } p;
+
+void main() {
+    uint h = gl_WorkGroupID.x, t = gl_WorkGroupID.y, lane = gl_LocalInvocationIndex;
+    uint base = (t * p.heads + h) * p.splits * 514;
+    float M = -1.0 / 0.0;
+    for (uint s = 0; s < p.splits; s++) M = max(M, part[base + s * 514]);
+    float L = 0.0;
+    vec2 acc = vec2(0.0);
+    for (uint s = 0; s < p.splits; s++) {
+        uint b = base + s * 514;
+        float ms = part[b];
+        float w = ms == -1.0 / 0.0 ? 0.0 : exp(ms - M);
+        L += w * part[b + 1];
+        acc += w * vec2(part[b + 2 + 2 * lane], part[b + 3 + 2 * lane]);
+    }
+    mixed[(t * p.m_st + h * p.lora) / 2 + lane] = acc / L;
+}

@@ -1,12 +1,15 @@
 // The routed experts' sum per token: out[t*n + i] = sum over k < used, in order, of token
 // t's k-th weight times gd[pos*n + i], pos the assignment's position (group.comp's lists).
+// With `masked`, only the experts with a slot in `slots` (the device's bank; the CPU sums
+// the others).
 #version 460
 layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer Gd { float gd[]; };
 layout(set = 0, binding = 1) writeonly buffer Out { float o[]; };
 layout(set = 0, binding = 2) readonly buffer Routed { uint routed[]; };
 layout(set = 0, binding = 3) readonly buffer Lists { uint lists[]; };
-layout(push_constant) uniform Constants { uint n; uint used; uint total; uint experts; uint lp; } p;
+layout(set = 0, binding = 4) readonly buffer Slots { uint slots[]; };
+layout(push_constant) uniform Constants { uint n; uint used; uint total; uint experts; uint lp; uint masked; } p;
 
 void main() {
     uint g = gl_GlobalInvocationID.y * 65535u * 256u + gl_GlobalInvocationID.x;
@@ -14,6 +17,7 @@ void main() {
     uint t = g / p.n, i = g % p.n;
     float sum = 0.0;
     for (uint k = 0; k < p.used; k++) {
+        if (p.masked != 0 && slots[routed[t * 2 * p.used + k]] == 0xffffffffu) continue;
         uint pos = lists[2 * p.experts + p.lp + t * p.used + k];
         sum += uintBitsToFloat(routed[t * 2 * p.used + p.used + k]) * gd[pos * p.n + i];
     }

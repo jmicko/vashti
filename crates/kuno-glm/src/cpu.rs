@@ -411,6 +411,99 @@ unsafe fn dot_iq4_xs(row: &[u8], x: &Q8K) -> f32 {
     unsafe { hsum(acc) }
 }
 
+/// A raw GGUF Q2_K or Q3_K row (the NextN block's experts, kept as stored) dotted with the
+/// quantized input: GGML's `ggml_vec_dot_q2_K_q8_K` / `q3_K` sums, without SIMD (the inner
+/// loops of 16 vectorize).
+pub fn dot_k(kind: TensorType, row: &[u8], x: &Q8K) -> f32 {
+    let bb = match kind {
+        TensorType::Q2K => 84,
+        TensorType::Q3K => 110,
+        _ => panic!("dot_k: unsupported type"),
+    };
+    assert_eq!(row.len() / bb * QK, x.q.len());
+    let mut total = 0f32;
+    for (i, b) in row.chunks_exact(bb).enumerate() {
+        let q8 = &x.q[i * QK..][..QK];
+        if kind == TensorType::Q2K {
+            let (scales, packed) = (&b[..16], &b[16..80]);
+            let (d, dmin) = (half(&b[80..]), half(&b[82..]));
+            let (mut isum, mut msum) = (0i32, 0i32);
+            let mut is = 0;
+            for h in 0..2 {
+                let q = &packed[h * 32..][..32];
+                for j in 0..4 {
+                    let shift = 2 * j;
+                    for part in 0..2 {
+                        let sc = scales[is];
+                        is += 1;
+                        let at = h * 128 + j * 32 + part * 16;
+                        let (mut dot, mut sum) = (0i32, 0i32);
+                        for l in 0..16 {
+                            let x8 = i32::from(q8[at + l]);
+                            dot += i32::from((q[part * 16 + l] >> shift) & 3) * x8;
+                            sum += x8;
+                        }
+                        isum += i32::from(sc & 15) * dot;
+                        msum += i32::from(sc >> 4) * sum;
+                    }
+                }
+            }
+            total += x.d[i] * (d * isum as f32 - dmin * msum as f32);
+        } else {
+            let (hmask, packed, raw) = (&b[..32], &b[32..96], &b[96..108]);
+            let d = half(&b[108..]);
+            let word = |k: usize| {
+                u32::from_le_bytes([raw[4 * k], raw[4 * k + 1], raw[4 * k + 2], raw[4 * k + 3]])
+            };
+            let (k1, k2) = (0x0303_0303u32, 0x0f0f_0f0fu32);
+            let (a0, a1, tmp) = (word(0), word(1), word(2));
+            let aux = [
+                (a0 & k2) | ((tmp & k1) << 4),
+                (a1 & k2) | (((tmp >> 2) & k1) << 4),
+                ((a0 >> 4) & k2) | (((tmp >> 4) & k1) << 4),
+                ((a1 >> 4) & k2) | (((tmp >> 6) & k1) << 4),
+            ];
+            let mut scales = [0i8; 16];
+            for (k, w) in aux.iter().enumerate() {
+                for (j, byte) in w.to_le_bytes().iter().enumerate() {
+                    scales[k * 4 + j] = *byte as i8;
+                }
+            }
+            let mut isum = 0i32;
+            let mut is = 0;
+            let mut m = 1u8;
+            for h in 0..2 {
+                let q = &packed[h * 32..][..32];
+                for j in 0..4 {
+                    let shift = 2 * j;
+                    for part in 0..2 {
+                        let sc = i32::from(scales[is]) - 32;
+                        is += 1;
+                        let at = h * 128 + j * 32 + part * 16;
+                        let mut dot = 0i32;
+                        for l in 0..16 {
+                            let low = i32::from((q[part * 16 + l] >> shift) & 3);
+                            let high = if hmask[part * 16 + l] & m != 0 { 0 } else { 4 };
+                            dot += (low - high) * i32::from(q8[at + l]);
+                        }
+                        isum += sc * dot;
+                    }
+                    m <<= 1;
+                }
+            }
+            total += x.d[i] * d * isum as f32;
+        }
+    }
+    total
+}
+
+/// `dot_k` for every row of `rows` (raw rows of `row_bytes`).
+pub fn matvec_k(kind: TensorType, rows: &[u8], row_bytes: usize, x: &Q8K, out: &mut [f32]) {
+    for (o, row) in out.iter_mut().zip(rows.chunks_exact(row_bytes)) {
+        *o = dot_k(kind, row, x);
+    }
+}
+
 /// Checks a tensor type before it is routed here.
 pub fn check(kind: TensorType) -> Result<()> {
     if supported(kind) {
@@ -423,6 +516,46 @@ pub fn check(kind: TensorType) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Q2_K and Q3_K rows against their decoded values times the quantized input.
+    #[test]
+    fn k_quant_dots_match_decoding() {
+        for (kind, bb) in [(TensorType::Q2K, 84usize), (TensorType::Q3K, 110)] {
+            let blocks = 8;
+            let mut s = 0x9e3779b97f4a7c15u64;
+            let mut row: Vec<u8> = (0..blocks * bb)
+                .map(|_| {
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    s as u8
+                })
+                .collect();
+            // Sane f16 scales (a random bit pattern may be inf or NaN).
+            for b in 0..blocks {
+                let at = b * bb + if kind == TensorType::Q2K { 80 } else { 108 };
+                row[at..at + 2].copy_from_slice(&0x2c00u16.to_le_bytes());
+                if kind == TensorType::Q2K {
+                    row[at + 2..at + 4].copy_from_slice(&0x2400u16.to_le_bytes());
+                }
+            }
+            let x: Vec<f32> = (0..blocks * QK)
+                .map(|i| ((i * 37) % 101) as f32 / 50.0 - 1.0)
+                .collect();
+            let q = Q8K::new(&x);
+            let mut w = vec![0f32; blocks * QK];
+            kind.decode(&row, &mut w).unwrap();
+            let xq: Vec<f32> = (0..x.len())
+                .map(|i| q.d[i / QK] * f32::from(q.q[i]))
+                .collect();
+            let want: f32 = w.iter().zip(&xq).map(|(a, b)| a * b).sum();
+            let got = dot_k(kind, &row, &q);
+            assert!(
+                (got - want).abs() <= 1e-3 * want.abs().max(1.0),
+                "{kind:?}: {got} vs {want}"
+            );
+        }
+    }
 
     fn random_blocks(kind: TensorType, blocks: usize, seed: u64) -> Vec<u8> {
         let mut s = seed;

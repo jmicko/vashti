@@ -36,7 +36,7 @@ impl Second {
         }
         t.extend(kuno_text::quant::IQ3_S_GRID);
         Ok(Self {
-            mve: gpu.kernel(include_bytes!("../shaders/mve.spv"), 7, 6, Some(lanes))?,
+            mve: gpu.kernel(include_bytes!("../shaders/mve.spv"), 7, 10, Some(lanes))?,
             glu: gpu.kernel(include_bytes!("../shaders/glu.spv"), 2, 3, Some(lanes))?,
             copy: gpu.kernel(include_bytes!("../shaders/copy.spv"), 2, 1, Some(lanes))?,
             local: gpu.buffer(((2 * used + n) * 4) as u64)?,
@@ -67,9 +67,20 @@ impl Second {
         let (used, n, ff) = (self.used as u32, self.n as u32, self.ff as u32);
         let rpg = 128 / self.lanes;
         let x_off = (2 * self.used) as u32;
-        let c0 = [0, experts::kind(gate_kind)?, 2 * ff, n, used, x_off];
+        let c0 = [
+            0,
+            experts::kind(gate_kind)?,
+            2 * ff,
+            n,
+            used,
+            x_off,
+            0,
+            0,
+            0,
+            0,
+        ];
         let cg = [ff, limit.to_bits(), used];
-        let c1 = [1, experts::kind(down_kind)?, n, ff, used, 0];
+        let c1 = [1, experts::kind(down_kind)?, n, ff, used, 0, 0, 0, 0, 0];
         let total = (2 * self.used + self.n) as u32;
         let cc = [total];
         let bc = [self.input.buffer(), &self.local];

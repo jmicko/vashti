@@ -5,6 +5,8 @@
 //   (cols = embd) dotted with x, into y[k * 2ff + r]; non-resident experts write nothing.
 // mode 1 (down): row r (of embd, cols = ff): sum over the chosen experts in order, resident
 //   ones only, of weight_k * (down row r . x[k * ff ..]), into y[r].
+// Workgroup z is token z of a small batch (its route at z*2*used, its x and y after the
+// tokens before it: mode 0 x at z*cols, y at z*used*rows; mode 1 x at z*used*cols, y at z*rows).
 // Weights per slot: rows of blocks of 256 values, repacked to whole words with the f16 block
 // scale apart (scales [slot][rows][blocks]):
 //   kind 0 IQ2_S: 20 words: qs (grid low bytes) 0..7, signs 8..15, qh 16..17, scales 18..19;
@@ -20,8 +22,12 @@ layout(set = 0, binding = 3) buffer Y { float y[]; };
 layout(set = 0, binding = 4) readonly buffer Route { uint route[]; };
 layout(set = 0, binding = 5) readonly buffer Slot { uint slot[]; };
 layout(set = 0, binding = 6) readonly buffer Tables { uint grid2[2048]; uint grid3[512]; };
+// With w_stride > 0 a slot's weights are at words w_base + slot*w_stride and its scales at
+// words s_base + slot*s_stride (experts streamed in whole records, gate|up and down together);
+// else each pool holds its slots back to back. mode 2 is mode 1 adding into y.
 layout(push_constant) uniform Constants {
     uint mode; uint kind; uint rows; uint cols; uint used; uint x_off;
+    uint w_stride; uint w_base; uint s_stride; uint s_base;
 } p;
 
 const float IQ4NL[16] = float[16](-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113);
@@ -93,8 +99,14 @@ float row_dot(uint sl, uint row, uint xo) {
     float acc = 0.0;
     for (uint t = lane; t < blocks * 8; t += width) {
         uint b = t / 8, ib = t % 8;
-        uint rb = (sl * p.rows + row) * blocks + b;
-        acc += sub(rb * words, rb, ib, (xo + b * 256 + ib * 32) / 4);
+        uint c4 = (xo + b * 256 + ib * 32) / 4;
+        if (p.w_stride > 0) {
+            uint rb = row * blocks + b;
+            acc += sub(p.w_base + sl * p.w_stride + rb * words, 2 * (p.s_base + sl * p.s_stride) + rb, ib, c4);
+        } else {
+            uint rb = (sl * p.rows + row) * blocks + b;
+            acc += sub(rb * words, rb, ib, c4);
+        }
     }
     return subgroupAdd(acc);
 }
@@ -103,19 +115,24 @@ void main() {
     uint group = gl_WorkGroupID.x;
     uint r = group * gl_NumSubgroups + gl_SubgroupID;
     if (r >= p.rows) return;
+    uint z = gl_WorkGroupID.z, rb = z * 2 * p.used;
     if (p.mode == 0) {
         uint k = gl_WorkGroupID.y;
-        uint sl = slot[route[k]];
+        uint sl = slot[route[rb + k]];
         if (sl == 0xffffffffu) return;
-        float v = row_dot(sl, r, p.x_off);
-        if (gl_SubgroupInvocationID == 0) y[k * p.rows + r] = v;
+        float v = row_dot(sl, r, p.x_off + z * p.cols);
+        if (gl_SubgroupInvocationID == 0) y[(z * p.used + k) * p.rows + r] = v;
     } else {
         float total = 0.0;
         for (uint k = 0; k < p.used; k++) {
-            uint sl = slot[route[k]];
+            uint sl = slot[route[rb + k]];
             if (sl == 0xffffffffu) continue;
-            total += uintBitsToFloat(route[p.used + k]) * row_dot(sl, r, p.x_off + k * p.cols);
+            total += uintBitsToFloat(route[rb + p.used + k])
+                * row_dot(sl, r, p.x_off + (z * p.used + k) * p.cols);
         }
-        if (gl_SubgroupInvocationID == 0) y[r] = total;
+        if (gl_SubgroupInvocationID == 0) {
+            uint ya = z * p.rows + r;
+            y[ya] = p.mode == 2 ? y[ya] + total : total;
+        }
     }
 }

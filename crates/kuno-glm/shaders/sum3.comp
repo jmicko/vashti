@@ -1,0 +1,16 @@
+// o[t*o_st + i] = (a[t*a_st + i] + b[t*b_st + i]) + c[t*c_st + i] for i < n, t < tokens (a
+// stride of 0 repeats one row: zeros for an absent term). The NextN block's residuals.
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer A { float a[]; };
+layout(set = 0, binding = 1) readonly buffer B { float b[]; };
+layout(set = 0, binding = 2) readonly buffer C { float c[]; };
+layout(set = 0, binding = 3) writeonly buffer O { float o[]; };
+layout(push_constant) uniform Constants { uint n; uint tokens; uint a_st; uint b_st; uint c_st; uint o_st; } p;
+
+void main() {
+    uint g = gl_GlobalInvocationID.y * 65535u * 256u + gl_GlobalInvocationID.x;
+    if (g >= p.n * p.tokens) return;
+    uint t = g / p.n, i = g % p.n;
+    o[t * p.o_st + i] = (a[t * p.a_st + i] + b[t * p.b_st + i]) + c[t * p.c_st + i];
+}

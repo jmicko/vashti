@@ -45,6 +45,58 @@ fn main() {
         .unwrap_or(2048);
     let mut engine = Engine::new(&model, gpu, second, ctx).unwrap();
     eprintln!("engine ready in {:.1} s", t.elapsed().as_secs_f64());
+    if let Some(count) = std::env::var("KUNO_GLM_GENERATE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        // `count` greedy tokens with speculation (KUNO_GLM_SPEC drafts per step).
+        let t = std::time::Instant::now();
+        let mut out = Vec::new();
+        let mut first = None;
+        let stats = engine
+            .generate(&ids, count, usize::MAX, &mut |tok| {
+                if first.is_none() {
+                    first = Some(t.elapsed().as_secs_f64());
+                }
+                out.push(tok);
+            })
+            .unwrap();
+        let total = t.elapsed().as_secs_f64();
+        let first = first.unwrap_or(total);
+        if let Ok(p) = engine.profile.lock() {
+            let mut rows: Vec<_> = p.iter().collect();
+            rows.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+            for (label, (ns, count)) in rows.iter().take(24) {
+                println!(
+                    "{label:40} {:8.1} ms total  {:7.1} us each  x{count}",
+                    ns / 1e6,
+                    ns / *count as f64 / 1e3
+                );
+            }
+        }
+        let rest = (total - first) / (out.len().max(2) - 1) as f64;
+        println!("generated ids: {:?}", &out[..out.len().min(24)]);
+        let hash = out.iter().fold(0xcbf29ce484222325u64, |h, t| {
+            (h ^ u64::from(*t)).wrapping_mul(0x100000001b3)
+        });
+        println!("output hash {hash:016x} over {} tokens", out.len());
+        println!(
+            "prompt {} tokens {:.2} s; {} generated: {:.1} ms each ({:.2} tokens/s); {} steps, {} of {} drafts accepted ({:.0}%), drafting {:.2} s, verifying {:.2} s, {} trades",
+            ids.len(),
+            first,
+            out.len(),
+            rest * 1e3,
+            1.0 / rest,
+            stats.steps,
+            stats.accepted,
+            stats.drafted,
+            100.0 * stats.accepted as f64 / stats.drafted.max(1) as f64,
+            stats.draft_s,
+            stats.verify_s,
+            stats.trades
+        );
+        return;
+    }
     if std::env::var_os("KUNO_GLM_PREFILL_REF").is_some() {
         // The prompt in batches against the CPU reference (exact experts): per block the last
         // token's streams (mean), and both next tokens.

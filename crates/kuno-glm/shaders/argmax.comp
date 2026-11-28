@@ -1,5 +1,6 @@
 // The index of the largest of `count` values (the first on ties, NaN never), written to
-// ids[slot]. One workgroup.
+// ids[slot]. One workgroup per row: workgroup z takes values [z*count, +count) into
+// ids[slot + z].
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 1024) in;
@@ -12,10 +13,11 @@ shared uint best_index[32];
 
 void main() {
     uint lane = gl_LocalInvocationIndex;
+    uint vb = gl_WorkGroupID.z * p.count;
     float best = -1.0 / 0.0;
     uint at = 0xffffffffu;
     for (uint i = lane; i < p.count; i += 1024) {
-        float x = v[i];
+        float x = v[vb + i];
         if (x > best) { best = x; at = i; }   // NaN compares false; later lanes' i are larger
     }
     // Within the subgroup, then across subgroups: the largest value, then its first index.
@@ -34,6 +36,6 @@ void main() {
             uint i = best_index[g];
             if (x > bv || (x == bv && i < bi)) { bv = x; bi = i; }
         }
-        ids[p.slot] = bi == 0xffffffffu ? 0 : bi;
+        ids[p.slot + gl_WorkGroupID.z] = bi == 0xffffffffu ? 0 : bi;
     }
 }

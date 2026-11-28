@@ -692,6 +692,150 @@ impl BlockExperts {
         s
     }
 
+    /// `cpu_sum` for several tokens at once (`choices`: each token's ids and weights, `xs`
+    /// its input): each expert's rows are read once for every token that chose it. The
+    /// sums are `cpu_sum`'s exactly (the same products, added in the same order).
+    pub fn cpu_sums(
+        &self,
+        choices: &[(&[usize], &[f32])],
+        xs: &[&[f32]],
+        ff: usize,
+        limit: f32,
+    ) -> Vec<Vec<f32>> {
+        let n = xs.first().map_or(0, |x| x.len());
+        // (token, expert, weight) for every expert here, in each token's chosen order.
+        let mut pairs: Vec<(usize, usize, f32)> = Vec::new();
+        for (t, (ids, w)) in choices.iter().enumerate() {
+            for (e, wk) in ids.iter().zip(w.iter()) {
+                if self.host_slot[*e].is_some() {
+                    pairs.push((t, *e, *wk));
+                }
+            }
+        }
+        let mut sums = vec![vec![0f32; n]; choices.len()];
+        if pairs.is_empty() {
+            return sums;
+        }
+        let mut unique: Vec<usize> = pairs.iter().map(|p| p.1).collect();
+        unique.sort_unstable();
+        unique.dedup();
+        let users: Vec<Vec<usize>> = unique
+            .iter()
+            .map(|e| (0..pairs.len()).filter(|&i| pairs[i].1 == *e).collect())
+            .collect();
+        let parts: Vec<[&[u8]; 4]> = unique
+            .iter()
+            .map(|e| {
+                let (chunk, at) = self.host_at(self.host_slot[*e].unwrap());
+                // SAFETY: as in `cpu_sum`.
+                let bytes = unsafe { chunk.bytes() };
+                let mut out: [&[u8]; 4] = [&[]; 4];
+                let mut o = at * 4;
+                for (k, st) in self.stride.iter().enumerate() {
+                    out[k] = &bytes[o..o + st * 4];
+                    o += st * 4;
+                }
+                out
+            })
+            .collect();
+        let qs: Vec<cpu::Q8K> = xs.iter().map(|x| cpu::Q8K::new(x)).collect();
+        let (gb, gd) = (self.stride[0] * 4 / (2 * ff), self.stride[1] * 4 / (2 * ff));
+        let (db, dd) = (self.stride[2] * 4 / n, self.stride[3] * 4 / n);
+        // Gate and up: tasks of 64 rows of one expert, for each of its users.
+        let chunks = (2 * ff).div_ceil(64);
+        let gu_parts: Vec<Vec<f32>> = (0..unique.len() * chunks)
+            .into_par_iter()
+            .map(|task| {
+                let (u, c) = (task / chunks, task % chunks);
+                let (r, len) = (c * 64, 64.min(2 * ff - c * 64));
+                let p = &parts[u];
+                let rows = &p[0][r * gb..][..len * gb];
+                let ds = if gd == 0 {
+                    &[][..]
+                } else {
+                    &p[1][r * gd..][..len * gd]
+                };
+                let mut out = vec![0f32; users[u].len() * len];
+                for (j, &pi) in users[u].iter().enumerate() {
+                    cpu::matvec(
+                        self.gate_kind,
+                        rows,
+                        ds,
+                        gb,
+                        &qs[pairs[pi].0],
+                        &mut out[j * len..][..len],
+                    );
+                }
+                out
+            })
+            .collect();
+        let mut gu = vec![0f32; pairs.len() * 2 * ff];
+        for (task, out) in gu_parts.iter().enumerate() {
+            let (u, c) = (task / chunks, task % chunks);
+            let (r, len) = (c * 64, 64.min(2 * ff - c * 64));
+            for (j, &pi) in users[u].iter().enumerate() {
+                gu[pi * 2 * ff + r..][..len].copy_from_slice(&out[j * len..][..len]);
+            }
+        }
+        let hidden: Vec<cpu::Q8K> = gu
+            .par_chunks_exact(2 * ff)
+            .map(|g| {
+                let h: Vec<f32> = (0..ff)
+                    .map(|i| {
+                        let (a, b) = if limit > 1e-6 {
+                            (g[i].min(limit), g[ff + i].clamp(-limit, limit))
+                        } else {
+                            (g[i], g[ff + i])
+                        };
+                        a / (1.0 + (-a).exp()) * b
+                    })
+                    .collect();
+                cpu::Q8K::new(&h)
+            })
+            .collect();
+        let chunks = n.div_ceil(64);
+        let d_parts: Vec<Vec<f32>> = (0..unique.len() * chunks)
+            .into_par_iter()
+            .map(|task| {
+                let (u, c) = (task / chunks, task % chunks);
+                let (r, len) = (c * 64, 64.min(n - c * 64));
+                let p = &parts[u];
+                let rows = &p[2][r * db..][..len * db];
+                let ds = if dd == 0 {
+                    &[][..]
+                } else {
+                    &p[3][r * dd..][..len * dd]
+                };
+                let mut out = vec![0f32; users[u].len() * len];
+                for (j, &pi) in users[u].iter().enumerate() {
+                    cpu::matvec(
+                        self.down_kind,
+                        rows,
+                        ds,
+                        db,
+                        &hidden[pi],
+                        &mut out[j * len..][..len],
+                    );
+                }
+                out
+            })
+            .collect();
+        let mut d = vec![0f32; pairs.len() * n];
+        for (task, out) in d_parts.iter().enumerate() {
+            let (u, c) = (task / chunks, task % chunks);
+            let (r, len) = (c * 64, 64.min(n - c * 64));
+            for (j, &pi) in users[u].iter().enumerate() {
+                d[pi * n + r..][..len].copy_from_slice(&out[j * len..][..len]);
+            }
+        }
+        for (pi, &(t, _, w)) in pairs.iter().enumerate() {
+            for (s, v) in sums[t].iter_mut().zip(&d[pi * n..][..n]) {
+                *s += w * v;
+            }
+        }
+        sums
+    }
+
     /// The CPU's experts among `ids` (weights `w`) for input `x`: their weighted sum in the
     /// chosen order; zero when all are on the device.
     pub fn cpu_sum(&self, ids: &[usize], w: &[f32], x: &[f32], ff: usize, limit: f32) -> Vec<f32> {

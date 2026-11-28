@@ -13,7 +13,7 @@ use super::*;
 use kuno_image::engine::gpu::Timeline;
 
 /// The second dimension of a large one-dimensional grid (as copyoff.comp, glu.comp).
-fn grid(groups: usize) -> [u32; 3] {
+pub(super) fn grid(groups: usize) -> [u32; 3] {
     let g = groups as u32;
     [g.min(65535), g.div_ceil(65535), 1]
 }
@@ -21,17 +21,17 @@ fn grid(groups: usize) -> [u32; 3] {
 /// One source of a block's experts for mec: weights and scales of gate|up and down, words
 /// per slot, slot count, the first entry of its order; for host experts, the run of words
 /// to copy into its staging buffer first.
-struct Source<'a> {
-    gu: (&'a Buffer, &'a Buffer, u32, u32, u32, u32),
-    down: (&'a Buffer, &'a Buffer, u32, u32, u32, u32),
-    slots: u32,
-    order_off: u32,
-    copy: Option<(&'a Buffer, &'a Buffer, u32, u32)>,
+pub(super) struct Source<'a> {
+    pub(super) gu: (&'a Buffer, &'a Buffer, u32, u32, u32, u32),
+    pub(super) down: (&'a Buffer, &'a Buffer, u32, u32, u32, u32),
+    pub(super) slots: u32,
+    pub(super) order_off: u32,
+    pub(super) copy: Option<(&'a Buffer, &'a Buffer, u32, u32)>,
 }
 
 /// Submits the recorded steps on the main queue (or the side queue), after `waits` and
 /// signalling `signals` (the timelines' values).
-fn submit_sync<'a>(
+pub(super) fn submit_sync<'a>(
     this: &'a Engine,
     ops: &mut Vec<Op<'a>>,
     side: bool,
@@ -59,7 +59,7 @@ fn submit_sync<'a>(
 }
 
 /// The shortest prompt worth a batch.
-const MIN_BATCH: usize = 32;
+pub(super) const MIN_BATCH: usize = 32;
 
 impl<'m> Engine<'m> {
     /// Runs `tokens` at the next positions, a batch at a time (or one at a time when the
@@ -85,7 +85,11 @@ impl<'m> Engine<'m> {
         let count = tokens.len().div_ceil(self.batch);
         let size = tokens.len().div_ceil(count.max(1)).max(1);
         for chunk in tokens.chunks(size) {
-            if chunk.len() < MIN_BATCH {
+            if chunk.len() < MIN_BATCH && self.mtp.is_some() {
+                // A small batch (the NextN block follows it).
+                next = self.run_small(chunk, 0).map(|z| z[z.len() - 1]);
+                next?;
+            } else if chunk.len() < MIN_BATCH {
                 for &t in chunk {
                     next = self.step(t);
                     next?;
@@ -149,6 +153,60 @@ impl<'m> Engine<'m> {
         Ok(())
     }
 
+    /// One round of trades (at most one per block, where a host expert is used clearly more
+    /// than the coldest resident), submitted without waiting: the caller waits for the pass,
+    /// then settles the trades.
+    pub(super) fn trade_round(&self) -> Result<Option<(Passing, Vec<experts::Trade>)>> {
+        let margin = std::env::var("KUNO_GLM_TRADE_MARGIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2.0f32);
+        // KUNO_GLM_SPEC_TRADES per round at most (default 8: each costs ~1.3 ms of copies
+        // the drafts wait behind), from the blocks after the last round's (in turn).
+        let cap: usize = std::env::var("KUNO_GLM_SPEC_TRADES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8usize)
+            .min(self.trade_stage.len());
+        let layers = self.experts.len();
+        let first = self.trade_turn.load(std::sync::atomic::Ordering::Relaxed);
+        let mut ops: Vec<Op> = Vec::new();
+        let mut planned = Vec::new();
+        let mut last = first;
+        for k in 0..layers {
+            let il = (first + k) % layers;
+            let Some(ex) = self.experts[il].get() else {
+                continue;
+            };
+            if planned.len() >= cap {
+                break;
+            }
+            if let Some(t) = ex.best_trade(il, margin) {
+                self.trade_ops(ex, &t, &self.trade_stage[planned.len()], &mut ops)?;
+                planned.push(t);
+                last = il + 1;
+            }
+        }
+        self.trade_turn
+            .store(last % layers.max(1), std::sync::atomic::Ordering::Relaxed);
+        if planned.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((submit(self, &mut ops)?, planned)))
+    }
+
+    /// Settles trades whose pass completed.
+    pub(super) fn settle_round(&mut self, trades: &[experts::Trade]) -> Result<()> {
+        for t in trades {
+            self.experts[t.block]
+                .get_mut()
+                .ok_or("model_state_invalid")?
+                .settle(t);
+            self.write_order_block(t.block)?;
+        }
+        Ok(())
+    }
+
     /// Clears the recurrent state and the position (a new sequence).
     pub fn reset(&mut self) -> Result<()> {
         for blk in &self.blocks {
@@ -157,6 +215,10 @@ impl<'m> Engine<'m> {
                     self.gpu.upload(b, 0, &vec![0u8; b.bytes() as usize])?;
                 }
             }
+        }
+        if let Some(mtp) = &self.mtp {
+            self.gpu
+                .upload(&mtp.last, 0, &vec![0u8; mtp.last.bytes() as usize])?;
         }
         self.pos = 0;
         Ok(())
@@ -247,6 +309,13 @@ impl<'m> Engine<'m> {
             }
         }
         self.gpu.write_mapped(&self.host_x, 0, &x4)?;
+        if let Some(mtp) = &self.mtp {
+            // The NextN block's embeddings: the first of each token's four streams.
+            let emb: Vec<f32> = (0..t)
+                .flat_map(|i| x4[i * 4 * n..][..n].iter().copied())
+                .collect();
+            self.gpu.write_mapped(&mtp.emb, 0, &emb)?;
+        }
         self.write_order()?;
         let this = &*self;
         let s = &this.s;
@@ -282,255 +351,7 @@ impl<'m> Engine<'m> {
                     }
                     traces.push(self_mean_at(&this.gpu, &s.x[c], n, t - 1)?);
                 }
-                match &blk.attention {
-                    Attention::Kda {
-                        qkv,
-                        small,
-                        fg_b,
-                        conv,
-                        params,
-                        out,
-                        hist,
-                        state,
-                    } => {
-                        let d = hp.kda_head * hp.heads;
-                        let sr = small.rows;
-                        mm(
-                            this,
-                            &mut ops,
-                            qkv,
-                            &s.normed,
-                            0,
-                            n,
-                            &s.a,
-                            0,
-                            3 * d,
-                            t,
-                            (0, 0),
-                        );
-                        mm(
-                            this,
-                            &mut ops,
-                            small,
-                            &s.normed,
-                            0,
-                            n,
-                            &s.c,
-                            0,
-                            sr,
-                            t,
-                            (0, 0),
-                        );
-                        mm(
-                            this,
-                            &mut ops,
-                            fg_b,
-                            &s.c,
-                            0,
-                            sr,
-                            &s.b,
-                            0,
-                            2 * d,
-                            t,
-                            (d, 128),
-                        );
-                        ops.push(Op {
-                            kernel: &this.e.b.kda,
-                            buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
-                            constants: vec![
-                                d as u32,
-                                f(hp.gate_lower_bound),
-                                f(hp.rms_eps),
-                                256,
-                                tu,
-                                (3 * d) as u32,
-                                (2 * d) as u32,
-                                sr as u32,
-                                d as u32,
-                            ],
-                            groups: [hp.heads as u32, 1, 1],
-                            independent: false,
-                        });
-                        mm(this, &mut ops, out, &s.out, 0, d, &s.a, 0, n, t, (0, 0));
-                    }
-                    Attention::Dsa {
-                        q_a,
-                        kv_a,
-                        norms,
-                        q_b,
-                        k_b,
-                        v_b,
-                        out,
-                        latents,
-                        idx_kg,
-                        idx_proj,
-                        idx_qb,
-                        idx_params,
-                        idx_keys,
-                        idx_pooled,
-                    } => {
-                        let (ql, lora) = (hp.q_lora, hp.kv_lora);
-                        let qa = ql + lora;
-                        mm(
-                            this,
-                            &mut ops,
-                            idx_kg,
-                            &s.normed,
-                            0,
-                            n,
-                            &s.ia,
-                            0,
-                            288,
-                            t,
-                            (0, 0),
-                        );
-                        mm(
-                            this,
-                            &mut ops,
-                            idx_proj,
-                            &s.normed,
-                            0,
-                            n,
-                            &s.ia,
-                            256,
-                            288,
-                            t,
-                            (0, 0),
-                        );
-                        mm(this, &mut ops, q_a, &s.normed, 0, n, &s.c, 0, qa, t, (0, 0));
-                        mm(
-                            this,
-                            &mut ops,
-                            kv_a,
-                            &s.normed,
-                            0,
-                            n,
-                            &s.c,
-                            ql,
-                            qa,
-                            t,
-                            (0, 0),
-                        );
-                        ops.push(Op {
-                            kernel: &this.e.b.dsanorm,
-                            buffers: vec![&s.c, norms, &s.out, latents],
-                            constants: vec![
-                                ql as u32,
-                                lora as u32,
-                                pos as u32,
-                                f(hp.rms_eps),
-                                qa as u32,
-                                ql as u32,
-                            ],
-                            groups: [1, 1, tu],
-                            independent: false,
-                        });
-                        for phase in [1, 2] {
-                            ops.push(Op {
-                                kernel: &this.e.b.idxstore,
-                                buffers: vec![&s.ia, idx_params, idx_keys, idx_pooled],
-                                constants: vec![pos as u32, f(1e-6), 288, phase],
-                                groups: [1, 1, tu],
-                                independent: false,
-                            });
-                        }
-                        let kpool = hp.indexer_kpool;
-                        let keep = hp.indexer_top_k / kpool;
-                        let last_pools = (pos + t) / kpool;
-                        let score_st = (this.max_positions / 4).max(4);
-                        let idx_st = hp.indexer_top_k + kpool;
-                        if last_pools > keep {
-                            mm(
-                                this,
-                                &mut ops,
-                                idx_qb,
-                                &s.out,
-                                0,
-                                ql,
-                                &s.ib,
-                                0,
-                                4096,
-                                t,
-                                (0, 0),
-                            );
-                            ops.push(Op {
-                                kernel: &this.e.b.idxscore,
-                                buffers: vec![&s.ib, &s.ia, idx_pooled, &s.iscore],
-                                constants: vec![
-                                    0,
-                                    f(1.0 / ((128 * 32) as f32).sqrt()),
-                                    256,
-                                    pos as u32,
-                                    keep as u32,
-                                    kpool as u32,
-                                    288,
-                                    score_st as u32,
-                                ],
-                                groups: [(last_pools as u32).div_ceil(128), 1, tu],
-                                independent: false,
-                            });
-                            ops.push(Op {
-                                kernel: &this.e.b.idxselect,
-                                buffers: vec![&s.iscore, &s.iidx],
-                                constants: vec![
-                                    pos as u32,
-                                    keep as u32,
-                                    kpool as u32,
-                                    score_st as u32,
-                                    idx_st as u32,
-                                ],
-                                groups: [1, 1, tu],
-                                independent: false,
-                            });
-                        }
-                        let (hq, hl, hv) =
-                            (hp.heads * hp.qk_head, hp.heads * lora, hp.heads * hp.v_head);
-                        mm(this, &mut ops, q_b, &s.out, 0, ql, &s.a, 0, hq, t, (0, 0));
-                        mm(
-                            this,
-                            &mut ops,
-                            k_b,
-                            &s.a,
-                            0,
-                            hq,
-                            &s.b,
-                            0,
-                            hl,
-                            t,
-                            (lora, hp.qk_head),
-                        );
-                        ops.push(Op {
-                            kernel: &this.e.b.mla,
-                            buffers: vec![&s.b, latents, &s.c, &s.iidx],
-                            constants: vec![
-                                lora as u32,
-                                f(1.0 / (hp.qk_head as f32).sqrt()),
-                                pos as u32,
-                                hp.indexer_top_k as u32,
-                                kpool as u32,
-                                hl as u32,
-                                hl as u32,
-                                idx_st as u32,
-                            ],
-                            groups: [(hp.heads / 16) as u32, tu, 1],
-                            independent: false,
-                        });
-                        mm(
-                            this,
-                            &mut ops,
-                            v_b,
-                            &s.c,
-                            0,
-                            hl,
-                            &s.out,
-                            0,
-                            hv,
-                            t,
-                            (hp.v_head, lora),
-                        );
-                        mm(this, &mut ops, out, &s.out, 0, hv, &s.a, 0, n, t, (0, 0));
-                    }
-                }
+                attention_ops(this, &mut ops, il, &blk.attention, t, pos, 0, true);
                 let c = bmix(
                     this,
                     &hp,
@@ -747,13 +568,14 @@ impl<'m> Engine<'m> {
                         }
                         ops.push(Op {
                             kernel: &this.e.b.combine,
-                            buffers: vec![&s.gd, &s.c, &s.routed, &s.lists],
+                            buffers: vec![&s.gd, &s.c, &s.routed, &s.lists, &s.zeros],
                             constants: vec![
                                 n as u32,
                                 used as u32,
                                 (t * n) as u32,
                                 e_count as u32,
                                 lp as u32,
+                                0,
                             ],
                             groups: grid((t * n).div_ceil(256)),
                             independent: false,
@@ -777,29 +599,23 @@ impl<'m> Engine<'m> {
             }
             traces.push(self_mean_at(&this.gpu, &s.x[c], n, t - 1)?);
         }
-        ops.push(Op {
-            kernel: &this.e.copyoff,
-            buffers: vec![&s.x[c], &s.out],
-            constants: vec![(4 * n) as u32, ((t - 1) * 4 * n) as u32, 0],
-            groups: grid((4 * n).div_ceil(256)),
-            independent: false,
-        });
+        // Every token's final state (the NextN block's h), the head on the last.
         ops.push(Op {
             kernel: &this.e.fin,
-            buffers: vec![&s.out, &this.out_norm, &s.normed],
+            buffers: vec![&s.x[c], &this.out_norm, &this.hall],
             constants: vec![n as u32, f(hp.rms_eps)],
-            groups: [1, 1, 1],
+            groups: [1, 1, tu],
             independent: false,
         });
         mv(
             this,
             &mut ops,
             &this.output,
-            &s.normed,
+            &this.hall,
             0,
             &s.logits,
             0,
-            this.output.constants(0, 0, false),
+            this.output.constants((t - 1) * n, 0, false),
             false,
         );
         ops.push(Op {
@@ -809,6 +625,7 @@ impl<'m> Engine<'m> {
             groups: [1, 1, 1],
             independent: false,
         });
+        this.mtp_follow(&mut ops, t, pos, Some(t - 1));
         let last = submit(this, &mut ops)?;
         for p in pending.drain(..) {
             p.wait()?;
@@ -850,7 +667,7 @@ impl<'m> Engine<'m> {
 /// The routed experts of `src` (mode 0 gate|up, 1 down with the SwiGLU of the gate|up
 /// results, clamped at `limit`); `k`: the gate and down kinds, experts per token, experts,
 /// ff, tokens.
-fn mec_op<'a>(
+pub(super) fn mec_op<'a>(
     this: &'a Engine,
     src: &Source<'a>,
     mode: u32,
@@ -914,10 +731,230 @@ fn copy_op<'a>(this: &'a Engine, c: (&'a Buffer, &'a Buffer, u32, u32)) -> Op<'a
     }
 }
 
+/// Records a block's attention (KDA or DSA) for `t` tokens at positions from `pos`, input
+/// in normed, output in a. KDA: the state after each of the first `snaps` tokens goes to the
+/// block's snapshot buffer. DSA with `full` unset: only its caches are written (the NextN
+/// block catching up on positions it will attend to).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn attention_ops<'a>(
+    this: &'a Engine,
+    ops: &mut Vec<Op<'a>>,
+    il: usize,
+    attention: &'a Attention,
+    t: usize,
+    pos: usize,
+    snaps: u32,
+    full: bool,
+) {
+    let hp = &this.model.hp;
+    let s = &this.s;
+    let n = hp.embd;
+    let tu = t as u32;
+    let snap_buf = this.snap.get(il).and_then(|b| b.as_ref());
+    let snap = snap_buf.unwrap_or(&s.zeros);
+    let snaps = if snap_buf.is_some() { snaps } else { 0 };
+    match attention {
+        Attention::Kda {
+            qkv,
+            small,
+            fg_b,
+            conv,
+            params,
+            out,
+            hist,
+            state,
+        } => {
+            let d = hp.kda_head * hp.heads;
+            let sr = small.rows;
+            mm(this, ops, qkv, &s.normed, 0, n, &s.a, 0, 3 * d, t, (0, 0));
+            mm(this, ops, small, &s.normed, 0, n, &s.c, 0, sr, t, (0, 0));
+            mm(this, ops, fg_b, &s.c, 0, sr, &s.b, 0, 2 * d, t, (d, 128));
+            ops.push(Op {
+                kernel: &this.e.b.kda,
+                buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out, snap],
+                constants: vec![
+                    d as u32,
+                    f(hp.gate_lower_bound),
+                    f(hp.rms_eps),
+                    256,
+                    tu,
+                    (3 * d) as u32,
+                    (2 * d) as u32,
+                    sr as u32,
+                    d as u32,
+                    snaps,
+                ],
+                groups: [hp.heads as u32, 1, 1],
+                independent: false,
+            });
+            mm(this, ops, out, &s.out, 0, d, &s.a, 0, n, t, (0, 0));
+        }
+        Attention::Dsa {
+            q_a,
+            kv_a,
+            norms,
+            q_b,
+            k_b,
+            v_b,
+            out,
+            latents,
+            idx_kg,
+            idx_proj,
+            idx_qb,
+            idx_params,
+            idx_keys,
+            idx_pooled,
+        } => {
+            let (ql, lora) = (hp.q_lora, hp.kv_lora);
+            let qa = ql + lora;
+            mm(this, ops, idx_kg, &s.normed, 0, n, &s.ia, 0, 288, t, (0, 0));
+            mm(
+                this,
+                ops,
+                idx_proj,
+                &s.normed,
+                0,
+                n,
+                &s.ia,
+                256,
+                288,
+                t,
+                (0, 0),
+            );
+            mm(this, ops, q_a, &s.normed, 0, n, &s.c, 0, qa, t, (0, 0));
+            mm(this, ops, kv_a, &s.normed, 0, n, &s.c, ql, qa, t, (0, 0));
+            ops.push(Op {
+                kernel: &this.e.b.dsanorm,
+                buffers: vec![&s.c, norms, &s.out, latents],
+                constants: vec![
+                    ql as u32,
+                    lora as u32,
+                    pos as u32,
+                    f(hp.rms_eps),
+                    qa as u32,
+                    ql as u32,
+                ],
+                groups: [1, 1, tu],
+                independent: false,
+            });
+            for phase in [1, 2] {
+                ops.push(Op {
+                    kernel: &this.e.b.idxstore,
+                    buffers: vec![&s.ia, idx_params, idx_keys, idx_pooled],
+                    constants: vec![pos as u32, f(1e-6), 288, phase],
+                    groups: [1, 1, tu],
+                    independent: false,
+                });
+            }
+            if !full {
+                return;
+            }
+            let kpool = hp.indexer_kpool;
+            let keep = hp.indexer_top_k / kpool;
+            let last_pools = (pos + t) / kpool;
+            let score_st = (this.max_positions / 4).max(4);
+            let idx_st = hp.indexer_top_k + kpool;
+            if last_pools > keep {
+                mm(this, ops, idx_qb, &s.out, 0, ql, &s.ib, 0, 4096, t, (0, 0));
+                ops.push(Op {
+                    kernel: &this.e.b.idxscore,
+                    buffers: vec![&s.ib, &s.ia, idx_pooled, &s.iscore],
+                    constants: vec![
+                        0,
+                        f(1.0 / ((128 * 32) as f32).sqrt()),
+                        256,
+                        pos as u32,
+                        keep as u32,
+                        kpool as u32,
+                        288,
+                        score_st as u32,
+                    ],
+                    groups: [(last_pools as u32).div_ceil(128), 1, tu],
+                    independent: false,
+                });
+                ops.push(Op {
+                    kernel: &this.e.b.idxselect,
+                    buffers: vec![&s.iscore, &s.iidx],
+                    constants: vec![
+                        pos as u32,
+                        keep as u32,
+                        kpool as u32,
+                        score_st as u32,
+                        idx_st as u32,
+                    ],
+                    groups: [1, 1, tu],
+                    independent: false,
+                });
+            }
+            let (hq, hl, hv) = (hp.heads * hp.qk_head, hp.heads * lora, hp.heads * hp.v_head);
+            mm(this, ops, q_b, &s.out, 0, ql, &s.a, 0, hq, t, (0, 0));
+            mm(
+                this,
+                ops,
+                k_b,
+                &s.a,
+                0,
+                hq,
+                &s.b,
+                0,
+                hl,
+                t,
+                (lora, hp.qk_head),
+            );
+            // Small batches: each token's positions in runs over several workgroups
+            // (merged by mlac.comp), so the device has work for all its cores.
+            let splits = if t < 16 {
+                (64 / (4 * t)).clamp(1, 16) as u32
+            } else {
+                1
+            };
+            ops.push(Op {
+                kernel: &this.e.b.mla,
+                buffers: vec![&s.b, latents, &s.c, &s.iidx, &this.mpart],
+                constants: vec![
+                    lora as u32,
+                    f(1.0 / (hp.qk_head as f32).sqrt()),
+                    pos as u32,
+                    hp.indexer_top_k as u32,
+                    kpool as u32,
+                    hl as u32,
+                    hl as u32,
+                    idx_st as u32,
+                ],
+                groups: [(hp.heads / 16) as u32, tu, splits],
+                independent: false,
+            });
+            if splits > 1 {
+                ops.push(Op {
+                    kernel: &this.e.b.mlac,
+                    buffers: vec![&this.mpart, &s.c],
+                    constants: vec![lora as u32, splits, hl as u32, hp.heads as u32],
+                    groups: [hp.heads as u32, tu, 1],
+                    independent: false,
+                });
+            }
+            mm(
+                this,
+                ops,
+                v_b,
+                &s.c,
+                0,
+                hl,
+                &s.out,
+                0,
+                hv,
+                t,
+                (hp.v_head, lora),
+            );
+            mm(this, ops, out, &s.out, 0, hv, &s.a, 0, n, t, (0, 0));
+        }
+    }
+}
+
 /// Records the batched `m x` for `tokens` tokens: token i's input at i*x_st + x_off, its
 /// output at i*y_st + y_off; `group` (rows per input group, its stride) as `Mat::grouped`.
 #[allow(clippy::too_many_arguments)]
-fn mm<'a>(
+pub(super) fn mm<'a>(
     this: &'a Engine,
     ops: &mut Vec<Op<'a>>,
     m: &'a Mat,
@@ -932,6 +969,8 @@ fn mm<'a>(
 ) {
     debug_assert!(x_off.is_multiple_of(4) && x_st.is_multiple_of(4) && group.1.is_multiple_of(4));
     if let Some(mmc) = &this.e.b.mmc
+        && !this.exact.load(std::sync::atomic::Ordering::Relaxed)
+        && tokens >= 16
         && m.rows.is_multiple_of(128)
         && m.cols.is_multiple_of(32)
         && (m.kind == 0 || m.kind == 3)
@@ -986,7 +1025,7 @@ fn mm<'a>(
 
 /// The batched mixer (as `mix`): `prev` is the previous sublayer's mode, output o and its
 /// stride, and the routed experts' sum o2 and its stride (mode 2).
-fn bmix<'a>(
+pub(super) fn bmix<'a>(
     this: &'a Engine,
     hp: &crate::Hparams,
     ops: &mut Vec<Op<'a>>,
@@ -994,6 +1033,23 @@ fn bmix<'a>(
     cur: Option<usize>,
     mixer: &'a Mixer,
     prev: (u32, &'a Buffer, u32, &'a Buffer, u32),
+) -> usize {
+    let zeros = &this.s.zeros;
+    bmix3(this, hp, ops, tokens, cur, mixer, prev, (zeros, 0))
+}
+
+/// `bmix` with a third output summed in mode 2 (`o3`, its stride): the device's experts
+/// beside the CPU's (`o2`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn bmix3<'a>(
+    this: &'a Engine,
+    hp: &crate::Hparams,
+    ops: &mut Vec<Op<'a>>,
+    tokens: usize,
+    cur: Option<usize>,
+    mixer: &'a Mixer,
+    prev: (u32, &'a Buffer, u32, &'a Buffer, u32),
+    o3: (&'a Buffer, u32),
 ) -> usize {
     let s = &this.s;
     let n = hp.embd;
@@ -1014,9 +1070,9 @@ fn bmix<'a>(
             prev.1,
             xn,
             prev.3,
-            &s.zeros,
+            o3.0,
         ],
-        constants: vec![n as u32, mode, 0, prev.2, prev.4, 0],
+        constants: vec![n as u32, mode, 0, prev.2, prev.4, o3.1],
         groups: [32, 1, tokens as u32],
         independent: false,
     });
@@ -1177,7 +1233,7 @@ mod kernel_tests {
             .kernel(include_bytes!("../../shaders/kda.spv"), 8, 4, Some(16))
             .unwrap();
         let kdab = gpu
-            .kernel(include_bytes!("../../shaders/kdab.spv"), 8, 9, Some(16))
+            .kernel(include_bytes!("../../shaders/kdab.spv"), 9, 10, Some(16))
             .unwrap();
         let (sr, braw_off) = (320usize, 256usize);
         let qkv = noise(t * 3 * d, 1, 2.0);
@@ -1203,10 +1259,14 @@ mod kernel_tests {
             filled(&gpu, bytes_of(&braw)).unwrap(),
         );
         let out = gpu.buffer((t * d * 4) as u64).unwrap();
+        let per = heads * 128 * 128 + 9 * d;
+        let snap = gpu.buffer(((t - 1) * per * 4) as u64).unwrap();
         run(
             &gpu,
             &kdab,
-            &[&qb, &conv_b, &hist, &fb, &bb, &params_b, &state, &out],
+            &[
+                &qb, &conv_b, &hist, &fb, &bb, &params_b, &state, &out, &snap,
+            ],
             &[
                 d as u32,
                 lower.to_bits(),
@@ -1217,11 +1277,14 @@ mod kernel_tests {
                 (2 * d) as u32,
                 sr as u32,
                 d as u32,
+                (t - 1) as u32,
             ],
             [heads as u32, 1, 1],
         );
         let got = read(&gpu, &out, t * d);
         let got_state = read(&gpu, &state, heads * 128 * 128);
+        let got_snap = read(&gpu, &snap, (t - 1) * per);
+        let mut want_snap = Vec::new();
         // Steps.
         let (hist, state) = (
             filled(&gpu, bytes_of(&hist0)).unwrap(),
@@ -1241,11 +1304,16 @@ mod kernel_tests {
                 [heads as u32, 1, 1],
             );
             want.extend(read(&gpu, &o1, d));
+            if i + 1 < t {
+                want_snap.extend(read(&gpu, &state, heads * 128 * 128));
+                want_snap.extend(read(&gpu, &hist, 9 * d));
+            }
         }
         let want_state = read(&gpu, &state, heads * 128 * 128);
         let (wo, ws) = (worst(&got, &want), worst(&got_state, &want_state));
-        eprintln!("kda batched vs steps: outputs {wo:.2e}, state {ws:.2e}");
-        assert!(wo < 1e-4 && ws < 1e-4);
+        let wn = worst(&got_snap, &want_snap);
+        eprintln!("kda batched vs steps: outputs {wo:.2e}, state {ws:.2e}, snapshots {wn:.2e}");
+        assert!(wo < 1e-4 && ws < 1e-4 && wn < 1e-4);
     }
 
     /// mlab.comp's batch against mla.comp one token at a time, causal and indexed (a small
@@ -1260,7 +1328,10 @@ mod kernel_tests {
             .kernel(include_bytes!("../../shaders/mla.spv"), 4, 4, Some(16))
             .unwrap();
         let mlab = gpu
-            .kernel(include_bytes!("../../shaders/mlab.spv"), 4, 8, Some(16))
+            .kernel(include_bytes!("../../shaders/mlab.spv"), 5, 8, Some(16))
+            .unwrap();
+        let mlac = gpu
+            .kernel(include_bytes!("../../shaders/mlac.spv"), 2, 4, Some(16))
             .unwrap();
         let positions = pos + t;
         let q = noise(t * heads * lora, 11, 0.5);
@@ -1280,23 +1351,36 @@ mod kernel_tests {
         let ib = filled(&gpu, bytes_of(&idx)).unwrap();
         let out = gpu.buffer((t * heads * lora * 4) as u64).unwrap();
         let hl = (heads * lora) as u32;
-        run(
-            &gpu,
-            &mlab,
-            &[&qb, &lb, &out, &ib],
-            &[
-                lora as u32,
-                scale.to_bits(),
-                pos as u32,
-                top_k as u32,
-                kpool as u32,
-                hl,
-                hl,
-                idx_st as u32,
-            ],
-            [(heads / 16) as u32, t as u32, 1],
-        );
-        let got = read(&gpu, &out, t * heads * lora);
+        let part = gpu.buffer((t * heads * 4 * 514 * 4) as u64).unwrap();
+        let mut gots = Vec::new();
+        for splits in [1u32, 4] {
+            run(
+                &gpu,
+                &mlab,
+                &[&qb, &lb, &out, &ib, &part],
+                &[
+                    lora as u32,
+                    scale.to_bits(),
+                    pos as u32,
+                    top_k as u32,
+                    kpool as u32,
+                    hl,
+                    hl,
+                    idx_st as u32,
+                ],
+                [(heads / 16) as u32, t as u32, splits],
+            );
+            if splits > 1 {
+                run(
+                    &gpu,
+                    &mlac,
+                    &[&part, &out],
+                    &[lora as u32, splits, hl, heads as u32],
+                    [heads as u32, t as u32, 1],
+                );
+            }
+            gots.push(read(&gpu, &out, t * heads * lora));
+        }
         let mut want = Vec::new();
         for i in 0..t {
             let p = pos + i;
@@ -1319,8 +1403,10 @@ mod kernel_tests {
             );
             want.extend(read(&gpu, &o1, heads * lora));
         }
-        let w = worst(&got, &want);
-        eprintln!("attention batched vs steps: {w:.2e}");
-        assert!(w < 1e-4);
+        for (i, got) in gots.iter().enumerate() {
+            let w = worst(got, &want);
+            eprintln!("attention batched ({} runs) vs steps: {w:.2e}", [1, 4][i]);
+            assert!(w < 1e-4);
+        }
     }
 }

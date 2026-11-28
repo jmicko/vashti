@@ -3,7 +3,9 @@
 // rows [32p, 32p + 32) of the state's column j. Lanes p < 3 run the causal conv of part p
 // (q, k, v) for channel j. Per token the column's sums over rows are four partial sums,
 // added in shared memory. Token t's qkv at t*qkv_st, fg at t*fg_st, braw at t*braw_st +
-// braw_off, out at t*o_st.
+// braw_off, out at t*o_st. After each of the first `snaps` tokens the state and conv
+// history go to snap[t*(heads*128*128 + 9d) ..] (state, then history as laid out in Hist):
+// a verification's rollback point.
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 512) in;
@@ -15,7 +17,8 @@ layout(set = 0, binding = 4) readonly buffer Braw { float braw[]; };
 layout(set = 0, binding = 5) readonly buffer Params { float a[64]; float onorm[128]; float dt[]; };
 layout(set = 0, binding = 6) buffer State { float S[]; };
 layout(set = 0, binding = 7) writeonly buffer Out { float o[]; };
-layout(push_constant) uniform Constants { uint d; float lower; float eps; uint braw_off; uint tokens; uint qkv_st; uint fg_st; uint braw_st; uint o_st; } p;
+layout(set = 0, binding = 8) writeonly buffer Snap { float snap[]; };
+layout(push_constant) uniform Constants { uint d; float lower; float eps; uint braw_off; uint tokens; uint qkv_st; uint fg_st; uint braw_st; uint o_st; uint snaps; } p;
 
 shared float vals[3][128];
 shared float qs[128], ks[128], decay[128];
@@ -100,6 +103,16 @@ void main() {
         acc = (part[0][j] + part[1][j]) + (part[2][j] + part[3][j]);
         float on = total128(acc * acc, 2, g == 0);
         if (g == 0) o[ob + c] = acc / sqrt(on / 128.0 + p.eps) * onorm[j] * sigmoid(fg[fb + p.d + c]);
+        if (tk < p.snaps) {
+            uint sb = tk * (gl_NumWorkGroups.x * 128 * 128 + 9 * p.d);
+            for (uint r = 0; r < 32; r++) snap[sb + base + (g * 32 + r) * 128] = s[r];
+            if (g < 3) {
+                uint hb = sb + gl_NumWorkGroups.x * 128 * 128, ch = g * p.d + c;
+                snap[hb + ch] = h0;
+                snap[hb + 3 * p.d + ch] = h1;
+                snap[hb + 6 * p.d + ch] = h2;
+            }
+        }
         barrier();
     }
     for (uint r = 0; r < 32; r++) S[base + (g * 32 + r) * 128] = s[r];
